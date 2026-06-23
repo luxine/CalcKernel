@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "IntKernel",
+  "scopeName": "source.intkernel",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#functionDeclarations" },
+    { "include": "#structDeclarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#booleans" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": { "patterns": [{ "name": "comment.line.double-slash.intkernel", "match": "//.*$" }] },
+    "functionDeclarations": {
+      "patterns": [{
+        "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+        "captures": {
+          "1": { "name": "keyword.declaration.function.intkernel" },
+          "2": { "name": "entity.name.function.intkernel" }
+        }
+      }]
+    },
+    "structDeclarations": {
+      "patterns": [{
+        "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+        "captures": {
+          "1": { "name": "keyword.declaration.struct.intkernel" },
+          "2": { "name": "entity.name.type.struct.intkernel" }
+        }
+      }]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.intkernel", "match": "\\b(?:if|else|while|return)\\b" },
+        { "name": "keyword.declaration.intkernel", "match": "\\b(?:export|fn|let|struct)\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "storage.type.primitive.intkernel", "match": "\\b(?:i32|i64|u32|u64|bool)\\b" },
+        { "name": "storage.type.pointer.intkernel", "match": "\\bptr\\b" }
+      ]
+    },
+    "booleans": { "patterns": [{ "name": "constant.language.boolean.intkernel", "match": "\\b(?:true|false)\\b" }] },
+    "numbers": { "patterns": [{ "name": "constant.numeric.integer.intkernel", "match": "\\b[0-9]+\\b" }] },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.intkernel", "match": "==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!]" },
+        { "name": "punctuation.separator.intkernel", "match": "[;:,]" },
+        { "name": "punctuation.bracket.intkernel", "match": "[{}\\[\\]()]" }
+      ]
+    }
+  }
+}

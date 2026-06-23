@@ -1,0 +1,79 @@
+{
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "  ${2:field}: ${3:i64};",
+      "}"
+    ],
+    "description": "Define an IntKernel struct"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {",
+      "  return ${2:param};",
+      "}"
+    ],
+    "description": "Define an internal IntKernel function"
+  },
+  "Export Function": {
+    "prefix": "export fn",
+    "body": [
+      "export fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {",
+      "  return ${2:param};",
+      "}"
+    ],
+    "description": "Define an exported IntKernel function"
+  },
+  "Let Binding": {
+    "prefix": "let",
+    "body": [
+      "let ${1:name}: ${2:i64} = ${3:0};"
+    ],
+    "description": "Create a typed let binding"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "  ${2:return 0;}",
+      "}"
+    ],
+    "description": "Create an if statement"
+  },
+  "If Else Statement": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} {",
+      "  ${2:return 0;}",
+      "} else {",
+      "  ${3:return 1;}",
+      "}"
+    ],
+    "description": "Create an if/else statement"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} {",
+      "  ${2:i = i + 1;}",
+      "}"
+    ],
+    "description": "Create a while loop"
+  },
+  "Return Statement": {
+    "prefix": "return",
+    "body": [
+      "return ${1:0};"
+    ],
+    "description": "Return from a function"
+  },
+  "Pointer Type": {
+    "prefix": "ptr",
+    "body": [
+      "ptr<${1:Item}>"
+    ],
+    "description": "Insert a pointer type"
+  }
+}
