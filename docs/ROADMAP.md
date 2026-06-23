@@ -1,5 +1,7 @@
 # IntKernel Roadmap
 
+[简体中文](zh-CN/ROADMAP.md)
+
 This roadmap tracks likely work after V0. It is not a promise that every item
 will ship in this order.
 
@@ -75,12 +77,35 @@ language features.
 
 ## Phase 12 WASM Backend
 
-- Explore a WASM backend after the C ABI and V0 semantics are stable.
-- Define pointer, memory, and host integration rules explicitly.
-- Decide whether WASM should consume MIR directly or use a WASM-specific lower
-  layer.
-- Keep V0's no-runtime and caller-owned-memory constraints unless a separate
-  design explicitly changes them.
+Phase 12 WASM backend is complete for the current V0 language surface covered
+by MIR.
+
+- `docs/WASM_ABI.md` documents the WASM ABI.
+- The target is `wasm32`.
+- `ptr<T>` maps to `i32` linear-memory offsets.
+- Module memory is exported as `(memory (export "memory") 1)`.
+- Struct layout is deterministic and independent of host C compilers.
+- MIR-to-WAT code generation has stable snapshots.
+- `ikc emit-wat` emits stable WAT text.
+- `ikc emit-wasm` assembles WAT through the bundled `wabt` npm package.
+- Node.js and browser WebAssembly examples use `DataView` and `BigInt`.
+- `pricing.ik` has WASM e2e coverage.
+- The benchmark harness includes an unchecked WASM benchmark.
+
+Phase 12 v1 remains unchecked-only. `--overflow checked` for WASM must report a
+clear unsupported-mode error until checked WASM lowering is designed.
+
+Phase 12 does not add WASI, imports, an allocator, runtime support, strings,
+bounds checks, `slice<T>`, SIMD, threads, GC, or exceptions.
+
+Future WASM work:
+
+- checked WASM arithmetic
+- a simple optional WASM allocator
+- richer host-language examples
+- WASI integration if a future use case needs imports or host services
+- `slice<T>` / bounds-check support if the language gains length-carrying
+  pointer types
 
 ## Phase 13 LLVM Backend
 

@@ -1,6 +1,9 @@
 # IntKernel Compiler Architecture
 
-IntKernel is a source-to-C compiler implemented in TypeScript.
+[简体中文](zh-CN/COMPILER_ARCHITECTURE.md)
+
+IntKernel is a source-to-C and source-to-WASM compiler implemented in
+TypeScript.
 
 ## Pipeline
 
@@ -17,14 +20,36 @@ Current pipeline:
   -> CheckedProgram / Typed Program
   -> MIR lowering
   -> MIR validator
-  -> MIR C backend + header emitter
-  -> .c / .h
-  -> optional build command
-  -> dynamic library
+  -> C backend + header emitter
+       -> .c / .h
+       -> optional build command
+       -> dynamic library
+  -> WAT/WASM backend
+       -> .wat
+       -> .wasm
 ```
 
-The compiler intentionally stops at readable C in V0. Native compilation is
-delegated to an external C compiler such as clang.
+The native-library path intentionally stops at readable C. Native compilation
+is delegated to an external C compiler such as clang. The WASM path emits WAT
+and can assemble it to `.wasm` through `wabt`.
+
+Phase 12 adds an implemented WASM path after MIR:
+
+```text
+.ik source
+  -> lexer
+  -> parser
+  -> type checker
+  -> CheckedProgram / Typed Program
+  -> MIR lowering
+  -> MIR validator
+  -> MIR WAT backend
+  -> .wat
+  -> WAT-to-WASM assembly with wabt
+  -> .wasm
+```
+
+The C backend remains the reference backend while the WASM backend is hardened.
 
 ## Layer Responsibilities
 
@@ -154,6 +179,28 @@ The CLI `build` command emits C/header files and invokes clang with strict flags
 
 V0 does not bundle a runtime or compiler toolchain.
 
+### WASM Backend
+
+The Phase 12 WASM backend consumes validated MIR and emits stable WAT. The
+`emit-wasm` command assembles that WAT to a `.wasm` binary through the bundled
+`wabt` npm package. The target ABI is `wasm32`: `ptr<T>` becomes an `i32`
+linear-memory offset, `bool` uses `i32`, and `i64` / `u64` are exposed to
+JavaScript as `BigInt`.
+
+Phase 12 v1 is intentionally narrow:
+
+- unchecked arithmetic only
+- exported linear memory
+- deterministic IntKernel struct layout
+- scalar expressions, control flow, short-circuiting, function calls, and
+  ptr/index/field load/store patterns
+- no WASI imports
+- no allocator
+- no runtime
+- no bounds checks
+
+See [WASM ABI](WASM_ABI.md) for the Phase 12 ABI and usage model.
+
 ## Diagnostics Flow
 
 Diagnostics are collected as data and flow through the pipeline:
@@ -183,7 +230,8 @@ compiler bug after type checking rather than a user source-language diagnostic.
 
 ## Why C First
 
-V0 emits C instead of LLVM or WASM for pragmatic reasons:
+The original V0 compiler emitted C before adding MIR and WASM for pragmatic
+reasons:
 
 - C is easy to inspect and review.
 - C ABI integration is widely supported by Node.js, Python, Java, Rust, Go, C#,
@@ -192,8 +240,9 @@ V0 emits C instead of LLVM or WASM for pragmatic reasons:
   library generation.
 - It keeps the compiler small while the language and ABI stabilize.
 
-LLVM and WASM remain possible future backends, but V0 focuses on validating the
-language, type system, diagnostics, C ABI, and generated-code stability first.
+LLVM remains a future backend. WASM starts in Phase 12 after MIR becomes the
+default codegen pipeline, with C retained as the reference backend while the
+WASM backend is hardened.
 
 ## Future IR Direction
 

@@ -1,5 +1,7 @@
 # IntKernel Release Checklist
 
+[简体中文](zh-CN/RELEASE_CHECKLIST.md)
+
 Use this checklist before publishing or tagging a V0 release.
 
 ## Required Verification
@@ -14,6 +16,8 @@ Use this checklist before publishing or tagging a V0 release.
 - If clang is available, run the e2e clang compile and harness test.
 - Review generated C/header snapshot diffs.
 - Review docs for V0 language, compiler architecture, ABI, and roadmap accuracy.
+- Keep documentation bilingual: English remains the default entrypoint, and new
+  or changed docs must update the matching Chinese translation.
 
 ## MIR / Default Pipeline Verification
 
@@ -40,6 +44,24 @@ Use this checklist before publishing or tagging a V0 release.
   dependency are available.
 - Review `docs/CHECKED_ARITHMETIC.md`, `docs/ABI.md`, and README checked-mode
   sections for ABI and safety-boundary accuracy.
+
+## WASM Backend Verification
+
+- Confirm `emit-wat` tests pass as part of `pnpm test`.
+- Confirm `emit-wasm` tests pass as part of `pnpm test`.
+- Confirm WASM scalar e2e tests pass.
+- Confirm WASM control-flow, function-call, short-circuit, and memory e2e tests
+  pass.
+- Confirm `examples/pricing.ik` WASM e2e tests pass.
+- Confirm `emit-wat --overflow checked` and `emit-wasm --overflow checked`
+  fail with the documented unsupported-mode message.
+- Review WAT snapshot diffs.
+- Manually run the Node.js WASM example when `build/pricing.wasm` is available.
+- Manually run the browser WASM example through a local HTTP server.
+- Manually run `node bench/wasm_pricing_benchmark.mjs` after generating
+  `build/pricing.wasm`.
+- Review `docs/WASM_ABI.md` for type mapping, memory layout, examples, and
+  safety-boundary accuracy.
 
 ## Optional Publishing Checks
 

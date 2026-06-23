@@ -362,6 +362,8 @@ describe("ikc CLI", () => {
     expect(stdout).toContain("ikc check <file>");
     expect(stdout).toContain("ikc emit-c <file> --out <c-file> --header <h-file>");
     expect(stdout).toContain("ikc emit-mir <file> [--out <mir-file>]");
+    expect(stdout).toContain("ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]");
+    expect(stdout).toContain("ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]");
     expect(stdout).toContain("ikc build <file> --out <output-path>");
     expect(stdout).toContain("--overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.");
   });
@@ -614,6 +616,245 @@ describe("ikc CLI", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.mir"))).toBe(false);
+  });
+
+  it("emits WAT to --out for valid scalar source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+    const watFile = join(cwd, "build/scalar.wat");
+
+    const exitCode = runCli(["emit-wat", "scalar.ik", "--out", "build/scalar.wat"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WAT build/scalar.wat\n");
+    expect(readFileSync(watFile, "utf8")).toContain('(memory (export "memory") 1)');
+    expect(readFileSync(watFile, "utf8")).toContain('(func $add (export "add")');
+    expect(readFileSync(watFile, "utf8")).toContain("i64.add");
+  });
+
+  it("prints WAT to stdout when emit-wat has no --out", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wat", "scalar.ik"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("(module\n");
+    expect(stdout).toContain('(memory (export "memory") 1)');
+    expect(stdout).toContain('(func $add (export "add")');
+    expect(stdout).toContain("i64.add");
+    expect(stdout).not.toContain(cwd);
+  });
+
+  it("does not output WAT for invalid source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wat", "bad.ik", "--out", "build/bad.wat"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(existsSync(join(cwd, "build/bad.wat"))).toBe(false);
+  });
+
+  it("rejects checked overflow mode for emit-wat", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wat", "scalar.ik", "--out", "build/scalar.wat", "--overflow", "checked"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "error: WASM backend does not support --overflow checked yet.\n" +
+        "help: use --overflow unchecked, or use emit-c/build for checked C output.\n"
+    );
+    expect(stderr).toContain("WASM");
+    expect(stderr).toContain("checked");
+    expect(existsSync(join(cwd, "build/scalar.wat"))).toBe(false);
+  });
+
+  it("rejects invalid overflow modes for emit-wat", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wat", "scalar.ik", "--overflow", "fast"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Invalid value for --overflow: fast. Expected 'unchecked' or 'checked'.");
+  });
+
+  it("emits WASM binary to --out for valid scalar source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+    const wasmFile = join(cwd, "build/scalar.wasm");
+
+    const exitCode = runCli(["emit-wasm", "scalar.ik", "--out", "build/scalar.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM build/scalar.wasm\n");
+    const bytes = readFileSync(wasmFile);
+    expect(bytes.byteLength).toBeGreaterThan(8);
+    expect([...bytes.subarray(0, 4)]).toEqual([0x00, 0x61, 0x73, 0x6d]);
+  });
+
+  it("requires --out for emit-wasm", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "scalar.ik"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Usage error for 'emit-wasm': missing --out.");
+  });
+
+  it("creates output directories for emit-wasm", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+    const wasmFile = join(cwd, "nested/build/scalar.wasm");
+
+    const exitCode = runCli(["emit-wasm", "scalar.ik", "--out", "nested/build/scalar.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM nested/build/scalar.wasm\n");
+    const bytes = readFileSync(wasmFile);
+    expect([...bytes.subarray(0, 4)]).toEqual([0x00, 0x61, 0x73, 0x6d]);
+  });
+
+  it("does not output WASM for invalid source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "bad.ik", "--out", "build/bad.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(existsSync(join(cwd, "build/bad.wasm"))).toBe(false);
+  });
+
+  it("rejects checked overflow mode for emit-wasm", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "scalar.ik", "--out", "build/scalar.wasm", "--overflow", "checked"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "error: WASM backend does not support --overflow checked yet.\n" +
+        "help: use --overflow unchecked, or use emit-c/build for checked C output.\n"
+    );
+    expect(stderr).toContain("WASM");
+    expect(stderr).toContain("checked");
+    expect(existsSync(join(cwd, "build/scalar.wasm"))).toBe(false);
   });
 
   it("build emits C first and invokes clang with strict Linux shared library flags", () => {

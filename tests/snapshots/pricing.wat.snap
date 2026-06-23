@@ -1,0 +1,153 @@
+(module
+  (memory (export "memory") 1)
+
+  (func $calc_items (export "calc_items")
+    (param $items i32)
+    (param $len i32)
+    (param $out i32)
+    (result i32)
+    (local $i i32)
+    (local $subtotal i64)
+    (local $after_discount i64)
+    (local $tax i64)
+    (local $t0 i32)
+    (local $t1 i32)
+    (local $t2 i64)
+    (local $t3 i64)
+    (local $t4 i64)
+    (local $t5 i64)
+    (local $t6 i64)
+    (local $t7 i64)
+    (local $t8 i64)
+    (local $t9 i64)
+    (local $t10 i64)
+    (local $t11 i64)
+    (local $t12 i32)
+    (local $t13 i32)
+    (local $t14 i32)
+    (local $ik_bb i32)
+    (local $ik_ret i32)
+    i32.const 0
+    local.set $ik_bb
+    block $ik_exit
+      loop $ik_dispatch
+        block $ik_case0
+          block $ik_case1
+            block $ik_case2
+              block $ik_case3
+                local.get $ik_bb
+                br_table $ik_case0 $ik_case1 $ik_case2 $ik_case3 $ik_case0
+              end
+              i32.const 0
+              local.set $t14
+              local.get $t14
+              local.set $ik_ret
+              br $ik_exit
+            end
+            local.get $items
+            local.get $i
+            i32.const 32
+            i32.mul
+            i32.add
+            i64.load offset=0 align=8
+            local.set $t2
+            local.get $items
+            local.get $i
+            i32.const 32
+            i32.mul
+            i32.add
+            i32.const 8
+            i32.add
+            i64.load offset=0 align=8
+            local.set $t3
+            local.get $t2
+            local.get $t3
+            i64.mul
+            local.set $t4
+            local.get $t4
+            local.set $subtotal
+            local.get $items
+            local.get $i
+            i32.const 32
+            i32.mul
+            i32.add
+            i32.const 16
+            i32.add
+            i64.load offset=0 align=8
+            local.set $t5
+            local.get $subtotal
+            local.get $t5
+            i64.sub
+            local.set $t6
+            local.get $t6
+            local.set $after_discount
+            local.get $items
+            local.get $i
+            i32.const 32
+            i32.mul
+            i32.add
+            i32.const 24
+            i32.add
+            i64.load offset=0 align=8
+            local.set $t7
+            local.get $after_discount
+            local.get $t7
+            i64.mul
+            local.set $t8
+            i64.const 1000000
+            local.set $t9
+            local.get $t8
+            local.get $t9
+            i64.div_s
+            local.set $t10
+            local.get $t10
+            local.set $tax
+            local.get $after_discount
+            local.get $tax
+            i64.add
+            local.set $t11
+            local.get $out
+            local.get $i
+            i32.const 8
+            i32.mul
+            i32.add
+            local.get $t11
+            i64.store offset=0 align=8
+            i32.const 1
+            local.set $t12
+            local.get $i
+            local.get $t12
+            i32.add
+            local.set $t13
+            local.get $t13
+            local.set $i
+            i32.const 1
+            local.set $ik_bb
+            br $ik_dispatch
+          end
+          local.get $i
+          local.get $len
+          i32.lt_s
+          local.set $t1
+          local.get $t1
+          if
+            i32.const 2
+            local.set $ik_bb
+          else
+            i32.const 3
+            local.set $ik_bb
+          end
+          br $ik_dispatch
+        end
+        i32.const 0
+        local.set $t0
+        local.get $t0
+        local.set $i
+        i32.const 1
+        local.set $ik_bb
+        br $ik_dispatch
+      end
+    end
+    local.get $ik_ret
+  )
+)

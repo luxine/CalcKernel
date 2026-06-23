@@ -1,5 +1,7 @@
 # IntKernel MIR
 
+[简体中文](zh-CN/MIR.md)
+
 MIR is IntKernel's middle-level intermediate representation. It sits after type
 checking and before backend-specific code generation. Its job is to lower the
 Typed AST into a typed, normalized structure that is easier for C, WASM, LLVM,

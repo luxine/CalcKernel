@@ -1,8 +1,11 @@
 # Pricing Benchmark Harness
 
+[简体中文](README.zh-CN.md)
+
 This directory contains small benchmark harnesses for `examples/pricing.ik`.
-They are intended as rough local references, not as a stable CI performance
-suite.
+They compare a pure JavaScript baseline, generated native C, checked generated
+C, and generated unchecked WASM. They are intended as rough local references,
+not as a stable CI performance suite.
 
 The benchmark sizes are:
 
@@ -21,6 +24,19 @@ pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing
 pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
 ```
 
+## Generate WASM
+
+From the repository root:
+
+```sh
+pnpm build
+pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm --overflow unchecked
+```
+
+The Phase 12 WASM backend is unchecked-only. `--overflow checked` is rejected
+for `emit-wat` and `emit-wasm`; use the C backend when checked arithmetic is
+required.
+
 ## Run the JavaScript Baseline
 
 ```sh
@@ -29,6 +45,29 @@ node bench/pricing_baseline.js
 
 The JavaScript baseline uses `BigInt64Array` and `BigInt` arithmetic to stay
 close to the `i64` semantics used by `pricing.ik`.
+
+## Run the WASM Benchmark
+
+Generate `build/pricing.wasm` first, then run:
+
+```sh
+node bench/wasm_pricing_benchmark.mjs
+```
+
+The WASM benchmark instantiates `build/pricing.wasm`, writes batched `Item`
+arrays into exported linear memory with `DataView`, calls `calc_items`, and
+reads the output buffer back from memory. It uses the same item sizes as the JS
+and C harnesses:
+
+- 100 items
+- 1,000 items
+- 10,000 items
+- 100,000 items
+
+The generated WASM module starts with one 64 KiB memory page. The benchmark
+calls `memory.grow` on the host side when larger inputs need more space. This is
+only benchmark setup code; IntKernel V0 still does not provide a runtime,
+allocator, or memory-grow helper.
 
 ## Compile and Run the Unchecked C Benchmark
 
@@ -114,9 +153,15 @@ These numbers are only a rough reference. They can vary with CPU, compiler,
 optimization flags, thermal state, operating system, and JavaScript engine
 version.
 
-For cross-language calls, benchmark the shape you plan to ship. Native FFI call
-overhead can dominate if you call one item at a time. Prefer batching many items
-per native call, as `calc_items(items, len, out)` does here.
+For cross-language or WebAssembly calls, benchmark the shape you plan to ship.
+Native FFI or JS-to-WASM call overhead can dominate if you call one item at a
+time. Prefer batching many items per call, as `calc_items(items, len, out)` does
+here.
 
 Do not compare per-item native calls against batched JavaScript loops; that
 mostly measures FFI overhead. Compare batch calls of similar size.
+
+WASM unchecked benchmark results are not checked-arithmetic safety results.
+Unchecked WASM can be useful for portability and host integration experiments,
+but it does not report integer overflow, division-by-zero safety, pointer
+validity, or buffer length errors.

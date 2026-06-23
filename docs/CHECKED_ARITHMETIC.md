@@ -1,5 +1,7 @@
 # Checked Arithmetic Design
 
+[简体中文](zh-CN/CHECKED_ARITHMETIC.md)
+
 ## Goal
 
 IntKernel V0 defaults to unchecked arithmetic. Phase 10 adds an optional checked
@@ -8,6 +10,11 @@ arithmetic code generation mode for kernels that need safer integer behavior.
 Checked mode is intended for money, tax, discount, pricing-rule, and other
 integer-heavy domains where overflow or division by zero must be reported
 instead of silently becoming generated C behavior.
+
+Checked arithmetic currently applies to the C backend (`emit-c` and `build`).
+The Phase 12 WASM backend is unchecked-only: `emit-wat --overflow checked` and
+`emit-wasm --overflow checked` fail with a clear diagnostic. Checked WASM
+lowering is future work.
 
 ## CLI Design
 

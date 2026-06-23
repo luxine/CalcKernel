@@ -1,0 +1,48 @@
+(module
+  (memory (export "memory") 1)
+
+  (func $add_i64
+    (param $a i64)
+    (param $b i64)
+    (result i64)
+    (local $t0 i64)
+    local.get $a
+    local.get $b
+    i64.add
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $double_i64
+    (param $a i64)
+    (result i64)
+    (local $t0 i64)
+    (local $t1 i64)
+    i64.const 2
+    local.set $t0
+    local.get $a
+    local.get $t0
+    i64.mul
+    local.set $t1
+    local.get $t1
+    return
+  )
+
+  (func $calc (export "calc")
+    (param $a i64)
+    (param $b i64)
+    (result i64)
+    (local $t0 i64)
+    (local $t1 i64)
+    local.get $a
+    local.get $b
+    call $add_i64
+    local.set $t0
+    local.get $t0
+    call $double_i64
+    local.set $t1
+    local.get $t1
+    return
+  )
+)

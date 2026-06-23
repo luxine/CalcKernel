@@ -1,134 +1,132 @@
-# Python ctypes Pricing Example
+# Python ctypes Pricing 示例
 
-[简体中文](README.zh-CN.md)
+[English](README.md)
 
-This example calls the dynamic library generated from `examples/pricing.ik`
-using only Python's standard `ctypes` module.
+这个示例只使用 Python 标准库 `ctypes`，调用由 `examples/pricing.ik` 生成的动态库。
 
-## Build the Dynamic Library
+## 构建动态库
 
-From the repository root, build the TypeScript CLI first:
+从仓库根目录先构建 TypeScript CLI：
 
 ```sh
 pnpm build
 ```
 
-Then generate and compile the pricing dynamic library.
+然后生成并编译 pricing 动态库。
 
-On macOS:
+macOS：
 
 ```sh
 pnpm ikc build examples/pricing.ik --out build/libpricing
 ```
 
-This creates:
+生成：
 
 ```text
 build/libpricing.dylib
 ```
 
-On Linux:
+Linux：
 
 ```sh
 pnpm ikc build examples/pricing.ik --out build/libpricing
 ```
 
-This creates:
+生成：
 
 ```text
 build/libpricing.so
 ```
 
-On Windows:
+Windows：
 
 ```sh
 pnpm ikc build examples/pricing.ik --out build/pricing.dll
 ```
 
-This creates:
+生成：
 
 ```text
 build/pricing.dll
 ```
 
-## Run the Example
+## 运行示例
 
-From the repository root:
+从仓库根目录执行：
 
 ```sh
 python3 examples/python-ctypes-call/call_pricing.py
 ```
 
-On Windows:
+Windows：
 
 ```sh
 py examples\python-ctypes-call\call_pricing.py
 ```
 
-The script prints `OK` when `calc_items` returns `0` and the output buffer
-matches the expected values.
+当 `calc_items` 返回 `0`，且 output buffer 符合预期值时，脚本打印 `OK`。
 
 ## Checked Mode
 
-Checked mode has a different C ABI. The function returns `IK_Status`, and the
-original IntKernel return value is written through a final pointer argument.
+Checked mode 使用不同 C ABI。函数返回 `IK_Status`，原始 IntKernel return value
+通过最后一个 pointer 参数写出。
 
-Build the checked dynamic library from the repository root.
+从仓库根目录构建 checked dynamic library。
 
-On macOS:
+macOS：
 
 ```sh
 pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
 ```
 
-This creates:
+生成：
 
 ```text
 build/libpricing_checked.dylib
 ```
 
-On Linux:
+Linux：
 
 ```sh
 pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
 ```
 
-This creates:
+生成：
 
 ```text
 build/libpricing_checked.so
 ```
 
-On Windows, pass the desired `.dll` file name explicitly:
+Windows 上，显式传入期望 `.dll` 文件名：
 
 ```sh
 pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
 ```
 
-This creates:
+生成：
 
 ```text
 build/pricing_checked.dll
 ```
 
-Run the checked example:
+运行 checked 示例：
 
 ```sh
 python3 examples/python-ctypes-call/call_pricing_checked.py
 ```
 
-On Windows:
+Windows：
 
 ```sh
 py examples\python-ctypes-call\call_pricing_checked.py
 ```
 
-The script prints `OK` for the successful pricing call and `overflow check OK`
-for a case where `price * qty` overflows.
+脚本会对成功 pricing call 打印 `OK`，并对 `price * qty` overflow 的 case 打印
+`overflow check OK`。
 
-## ctypes Mapping
+## ctypes 映射
 
-The generated C header defines:
+生成的 C header 定义：
 
 ```c
 typedef struct Item {
@@ -141,25 +139,24 @@ typedef struct Item {
 IK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
 ```
 
-The Python binding mirrors this exactly:
+Python binding 精确镜像这个定义：
 
-- `i64` maps to `ctypes.c_int64`
-- `i32` maps to `ctypes.c_int32`
-- `ptr<Item>` maps to an array or pointer of `Item`
-- `ptr<i64>` maps to an array or pointer of `ctypes.c_int64`
+- `i64` -> `ctypes.c_int64`
+- `i32` -> `ctypes.c_int32`
+- `ptr<Item>` -> `Item` 的 array 或 pointer
+- `ptr<i64>` -> `ctypes.c_int64` 的 array 或 pointer
 
-The caller allocates both buffers:
+调用方分配两个 buffer：
 
 - `items = (Item * n)(...)`
 - `out = (ctypes.c_int64 * n)(...)`
 
-V0 does not allocate memory, free memory, perform bounds checks, or check integer
-overflow. The caller must pass valid pointers, valid lengths, and values that
-stay within the intended integer ranges.
+V0 不分配内存、不释放内存、不做 bounds check，也不检查 integer overflow。调用方
+必须传入有效 pointer、有效 length，以及保持在预期整数范围内的值。
 
-## Checked ctypes Mapping
+## Checked ctypes 映射
 
-The checked generated C header defines status values:
+Checked 生成的 C header 定义 status values：
 
 ```c
 typedef int32_t IK_Status;
@@ -170,13 +167,13 @@ typedef int32_t IK_Status;
 #define IK_ERR_NULL_POINTER ((IK_Status)3)
 ```
 
-The checked `calc_items` declaration is:
+Checked `calc_items` declaration 是：
 
 ```c
 IK_API IK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
 ```
 
-The Python binding maps this as:
+Python binding 映射为：
 
 ```python
 IK_Status = ctypes.c_int32
@@ -194,7 +191,7 @@ lib.calc_items.argtypes = [
 lib.calc_items.restype = ctypes.c_int32
 ```
 
-The caller still allocates `items`, `out`, and `ik_return`:
+调用方仍然分配 `items`、`out` 和 `ik_return`：
 
 ```python
 out = (ctypes.c_int64 * len(items))(0, 0, 0)
@@ -202,6 +199,5 @@ ik_return = ctypes.c_int32()
 status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
 ```
 
-Checked mode checks integer overflow, division by zero, and the generated
-`ik_return` pointer. It still does not perform bounds checks, validate user
-data pointers, or verify that output buffers are large enough.
+Checked mode 会检查 integer overflow、division by zero 和生成的 `ik_return` pointer。
+它仍然不做 bounds check，不验证用户 data pointer，也不确认 output buffer 是否足够大。

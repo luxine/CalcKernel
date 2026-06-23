@@ -19,7 +19,8 @@
     "docs",
     "examples",
     "bench",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -42,5 +43,8 @@
     "@types/node": "^24.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "wabt": "^1.0.39"
   }
 }

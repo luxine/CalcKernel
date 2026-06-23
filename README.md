@@ -1,5 +1,7 @@
 # IntKernel
 
+[简体中文](README.zh-CN.md)
+
 IntKernel is a small integer-computation DSL compiler. It is not a general
 purpose programming language. V0 compiles `.ik` source into readable C source
 and header files, which can then be compiled into a dynamic library for host
@@ -141,6 +143,66 @@ MIR is an internal compiler IR: it is typed, basic-block based, and designed for
 backend implementation and debugging. It is not a user-facing source language.
 Normal users should continue to use `check`, `emit-c`, and `build`.
 
+## WASM Backend
+
+Phase 12 adds a WASM backend that lowers validated MIR to WAT and then compiles
+WAT to WASM with the bundled `wabt` npm package:
+
+```sh
+pnpm ikc emit-wat examples/scalar.ik --out build/scalar.wat
+pnpm ikc emit-wasm examples/scalar.ik --out build/scalar.wasm
+pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+```
+
+The Phase 12 v1 ABI targets `wasm32`, exports linear memory, maps `ptr<T>` to
+`i32` memory offsets, uses `BigInt` for JavaScript `i64` / `u64` interop, and
+keeps arithmetic unchecked. The current backend covers scalar operations,
+control flow, internal function calls, short-circuit logic, and core
+ptr/index/field load/store patterns such as `pricing.ik`.
+
+The WASM backend currently supports unchecked mode only. `emit-wat --overflow
+checked` and `emit-wasm --overflow checked` fail with a clear error; use
+`emit-c` or `build` when checked arithmetic is required. Checked WASM code
+generation and bounds checks are not implemented yet.
+
+See [WASM ABI](docs/WASM_ABI.md) for the ABI, struct layout, memory model, WABT
+assembly step, and Node.js interop rules.
+
+## Node.js WASM Example
+
+The repository includes a no-dependency Node.js WASM example that calls
+`calc_items` through the built-in WebAssembly API. It does not need a native
+`.so`, `.dylib`, or `.dll`.
+
+```sh
+pnpm build
+pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+node examples/node-wasm-call/index.mjs
+```
+
+See [examples/node-wasm-call](examples/node-wasm-call/README.md) for the
+`DataView` memory writes, `Item` layout, pointer offsets, output buffer, and
+`BigInt` mapping.
+
+## Browser WASM Example
+
+The repository also includes a plain browser WASM example with no framework or
+bundler. Generate `pricing.wasm` into the browser example directory and serve it
+over HTTP:
+
+```sh
+pnpm build
+pnpm ikc emit-wasm examples/pricing.ik --out examples/browser-wasm-call/pricing.wasm
+cd examples/browser-wasm-call
+python3 -m http.server 8000
+```
+
+Open `http://localhost:8000/index.html` and click **Run pricing wasm**.
+
+Browsers generally cannot fetch WASM from `file://`, so use a local HTTP server.
+See [examples/browser-wasm-call](examples/browser-wasm-call/README.md) for the
+full browser memory and `DataView` notes.
+
 ## Python ctypes Example
 
 The repository includes a no-dependency Python example that calls the generated
@@ -232,19 +294,23 @@ struct, pointer, `BigInt`, and checked `IK_Status` mapping.
 ## Benchmarks
 
 The [bench](bench/README.md) directory contains a small pricing benchmark for a
-pure JavaScript baseline and the generated C implementation.
+pure JavaScript baseline, generated C, checked generated C, and generated
+unchecked WASM.
 
 ```sh
 pnpm build
 pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
+pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
 node bench/pricing_baseline.js
+node bench/wasm_pricing_benchmark.mjs
 clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL build/pricing.c bench/pricing_c_harness.c -I build -o build/pricing_c_bench
 ./build/pricing_c_bench
 ```
 
 The benchmark is a rough local reference. For host-language integration, batch
 work into larger native calls rather than calling one item at a time.
-The benchmark README also includes unchecked vs checked C benchmark commands.
+The benchmark README also includes unchecked vs checked C benchmark commands
+and notes that WASM is currently unchecked-only.
 
 ## Current V0 Limits
 
@@ -259,19 +325,37 @@ V0 supports only:
 - pointer indexing and struct field access
 
 V0 does not support strings, IO, heap allocation, GC, exceptions, async,
-classes, closures, modules, runtime libraries, LLVM, WASM, or JIT compilation.
+classes, closures, modules, runtime libraries, LLVM, or JIT compilation. The
+Phase 12 WASM backend is experimental and currently supports unchecked mode
+only.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
-`--overflow checked` code generation checks integer overflow and division by
-zero but still does not check pointer validity or buffer lengths. Callers own
-all input and output buffers and must pass valid pointers and lengths.
+`--overflow checked` C code generation checks integer overflow and division by
+zero but still does not check pointer validity or buffer lengths. The WASM
+backend rejects `--overflow checked` in Phase 12. Callers own all input and
+output buffers and must pass valid pointers and lengths.
 
 ## Documentation
+
+English is the default documentation language. Chinese translations are kept in
+parallel for every project document.
 
 - [Language Specification](docs/LANGUAGE_SPEC.md)
 - [Compiler Architecture](docs/COMPILER_ARCHITECTURE.md)
 - [MIR](docs/MIR.md)
 - [Checked Arithmetic](docs/CHECKED_ARITHMETIC.md)
 - [C ABI](docs/ABI.md)
+- [WASM ABI](docs/WASM_ABI.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
+
+Chinese:
+
+- [语言规格](docs/zh-CN/LANGUAGE_SPEC.md)
+- [编译器架构](docs/zh-CN/COMPILER_ARCHITECTURE.md)
+- [MIR](docs/zh-CN/MIR.md)
+- [Checked Arithmetic](docs/zh-CN/CHECKED_ARITHMETIC.md)
+- [C ABI](docs/zh-CN/ABI.md)
+- [WASM ABI](docs/zh-CN/WASM_ABI.md)
+- [路线图](docs/zh-CN/ROADMAP.md)
+- [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

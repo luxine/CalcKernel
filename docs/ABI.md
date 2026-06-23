@@ -1,5 +1,7 @@
 # IntKernel C ABI
 
+[简体中文](zh-CN/ABI.md)
+
 IntKernel V0 targets a plain C ABI. Generated `.h` and `.c` files are intended
 to be compiled by a C compiler and consumed from C, C++, Python, Node.js, Rust,
 Go, C#, and other host languages through their normal FFI mechanisms.

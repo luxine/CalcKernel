@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emitCFiles, buildSharedLibrary, type BuildPlatform, type CommandResult, type CommandRunner } from "./backend/c/c-build.js";
 import { defaultOverflowMode, type OverflowMode } from "./backend/c/c-options.js";
+import { emitMirWatModule } from "./backend/wasm/mir-wat-emitter.js";
+import { compileWatToWasm } from "./backend/wasm/wat-to-wasm.js";
 import { lowerToMir } from "./mir/lower.js";
 import { printMirModule } from "./mir/mir-printer.js";
 import { validateMirModule } from "./mir/mir-validator.js";
@@ -44,6 +46,10 @@ export function runCli(argv: string[] = process.argv.slice(2), options: RunCliOp
         return runEmitC(rest, context);
       case "emit-mir":
         return runEmitMir(rest, context);
+      case "emit-wat":
+        return runEmitWat(rest, context);
+      case "emit-wasm":
+        return runEmitWasm(rest, context);
       case "build":
         return runBuild(rest, context);
       default:
@@ -133,6 +139,83 @@ function runEmitMir(args: string[], context: Required<RunCliOptions>): number {
   return 0;
 }
 
+function runEmitWat(args: string[], context: Required<RunCliOptions>): number {
+  const parsed = parseFlags(args);
+  const file = requireSingleInput(parsed, "emit-wat");
+  const outFile = parsed.flags.get("--out");
+  const overflowMode = parseOverflowMode(parsed);
+
+  if (overflowMode === "checked") {
+    throw unsupportedCheckedWasmError();
+  }
+
+  const checked = checkFile(file, context.cwd);
+
+  if (checked.result.diagnostics.length > 0) {
+    context.stderr(formatDiagnostics(checked.source, checked.result.diagnostics));
+    return 1;
+  }
+
+  const mir = lowerToMir(checked.result.checkedProgram);
+  const validation = validateMirModule(mir);
+  if (validation.errors.length > 0) {
+    context.stderr("internal compiler error: MIR validation failed\n");
+    for (const error of validation.errors) {
+      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
+      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
+    }
+    return 1;
+  }
+
+  const text = emitMirWatModule(mir);
+
+  if (!outFile) {
+    context.stdout(text);
+    return 0;
+  }
+
+  const outPath = resolve(context.cwd, outFile);
+  writeFileAtomic(outPath, text);
+  context.stdout(`OK: emitted WAT ${outFile}\n`);
+  return 0;
+}
+
+function runEmitWasm(args: string[], context: Required<RunCliOptions>): number {
+  const parsed = parseFlags(args);
+  const file = requireSingleInput(parsed, "emit-wasm");
+  const outFile = requireFlag(parsed, "--out", "emit-wasm");
+  const overflowMode = parseOverflowMode(parsed);
+
+  if (overflowMode === "checked") {
+    throw unsupportedCheckedWasmError();
+  }
+
+  const checked = checkFile(file, context.cwd);
+
+  if (checked.result.diagnostics.length > 0) {
+    context.stderr(formatDiagnostics(checked.source, checked.result.diagnostics));
+    return 1;
+  }
+
+  const mir = lowerToMir(checked.result.checkedProgram);
+  const validation = validateMirModule(mir);
+  if (validation.errors.length > 0) {
+    context.stderr("internal compiler error: MIR validation failed\n");
+    for (const error of validation.errors) {
+      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
+      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
+    }
+    return 1;
+  }
+
+  const wat = emitMirWatModule(mir);
+  const wasm = compileWatToWasm(wat, file);
+  const outPath = resolve(context.cwd, outFile);
+  writeFileAtomic(outPath, wasm);
+  context.stdout(`OK: emitted WASM ${outFile}\n`);
+  return 0;
+}
+
 function runBuild(args: string[], context: Required<RunCliOptions>): number {
   const parsed = parseFlags(args);
   const file = requireSingleInput(parsed, "build");
@@ -217,6 +300,26 @@ function requireFlag(parsed: FlagParseResult, flag: string, command: string): st
   return value;
 }
 
+function writeFileAtomic(path: string, data: string | Uint8Array): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+
+  try {
+    writeFileSync(tempPath, data);
+    renameSync(tempPath, path);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
+}
+
+function unsupportedCheckedWasmError(): Error {
+  return new Error(
+    "error: WASM backend does not support --overflow checked yet.\n" +
+      "help: use --overflow unchecked, or use emit-c/build for checked C output."
+  );
+}
+
 function parseOverflowMode(parsed: FlagParseResult): OverflowMode {
   const value = parsed.flags.get("--overflow") ?? defaultOverflowMode;
   if (value === "unchecked" || value === "checked") {
@@ -252,6 +355,8 @@ function usage(): string {
     "  ikc check <file>",
     "  ikc emit-c <file> --out <c-file> --header <h-file> [--overflow <unchecked|checked>]",
     "  ikc emit-mir <file> [--out <mir-file>]",
+    "  ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]",
+    "  ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]",
     "  ikc build <file> --out <output-path> [--overflow <unchecked|checked>]",
     "",
     "Options:",

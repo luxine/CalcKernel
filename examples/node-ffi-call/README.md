@@ -1,5 +1,7 @@
 # Node.js FFI Pricing Example
 
+[简体中文](README.zh-CN.md)
+
 This example calls the dynamic library generated from `examples/pricing.ik`
 through Node.js. It is intentionally isolated from the root project so the main
 compiler package does not depend on a native FFI module.

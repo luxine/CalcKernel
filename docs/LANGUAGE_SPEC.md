@@ -1,5 +1,7 @@
 # IntKernel Language Specification
 
+[简体中文](zh-CN/LANGUAGE_SPEC.md)
+
 This document describes the IntKernel V0 language.
 
 IntKernel is a small DSL for pure integer computation. It is not a general
