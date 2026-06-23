@@ -1,0 +1,10 @@
+.vscode/
+.gitignore
+docs/
+node_modules/
+src/
+test/
+tsconfig.json
+vitest.config.ts
+esbuild.mjs
+*.vsix

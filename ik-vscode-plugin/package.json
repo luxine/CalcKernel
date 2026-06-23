@@ -1,0 +1,49 @@
+{
+  "name": "ik-vscode-plugin",
+  "displayName": "IntKernel",
+  "description": "VSCode language support for IntKernel .ik files.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:intkernel"],
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "languages": [
+      {
+        "id": "intkernel",
+        "aliases": ["IntKernel", "ik"],
+        "extensions": [".ik"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "intkernel",
+        "scopeName": "source.intkernel",
+        "path": "./syntaxes/intkernel.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      { "language": "intkernel", "path": "./snippets/intkernel.json" }
+    ]
+  },
+  "scripts": {
+    "precompile": "pnpm --dir .. build",
+    "compile": "pnpm run precompile && tsc -p . --noEmit && node esbuild.mjs",
+    "watch": "tsc -p . --noEmit --watch",
+    "test": "vitest run",
+    "vscode:prepublish": "pnpm run compile",
+    "package": "pnpm run compile && vsce package"
+  },
+  "dependencies": { "intkernel": "file:.." },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}
