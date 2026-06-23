@@ -29,7 +29,8 @@
 - Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/.vscode/tasks.json`
   - Gives the Extension Development Host launch config a concrete `pnpm compile` prelaunch task.
 - Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/language-configuration.json`
-  - Defines line comments, brackets, auto-closing pairs, and surrounding pairs.
+  - Defines line comments, brackets, auto-closing pairs, and surrounding pairs
+    for `{}`, `[]`, and `()` only.
 - Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/syntaxes/intkernel.tmLanguage.json`
   - Provides TextMate syntax highlighting for IntKernel.
 - Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/snippets/intkernel.json`
@@ -349,10 +350,6 @@ Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/language-configuration.json`
     [
       "(",
       ")"
-    ],
-    [
-      "<",
-      ">"
     ]
   ],
   "autoClosingPairs": [
@@ -367,10 +364,6 @@ Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/language-configuration.json`
     {
       "open": "(",
       "close": ")"
-    },
-    {
-      "open": "<",
-      "close": ">"
     }
   ],
   "surroundingPairs": [
@@ -385,14 +378,13 @@ Create `/Users/lynn/code/IntKernel/ik-vscode-plugin/language-configuration.json`
     {
       "open": "(",
       "close": ")"
-    },
-    {
-      "open": "<",
-      "close": ">"
     }
   ]
 }
 ```
+
+`ptr<T>` insertion is covered by snippets and completions, so `<` remains
+comfortable as a comparison operator.
 
 - [ ] **Step 2: Create TextMate grammar**
 

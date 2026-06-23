@@ -17,7 +17,8 @@ V1 includes:
 
 - `.ik` language registration.
 - TextMate syntax highlighting.
-- VSCode language configuration for comments, brackets, and auto-closing pairs.
+- VSCode language configuration for comments, brackets, and auto-closing pairs
+  for `{}`, `[]`, and `()` only.
 - Snippets for common IntKernel declarations and statements.
 - Basic completion items for keywords, primitive types, and common templates.
 - Diagnostics for the active workspace by calling IntKernel `SourceFile` and
@@ -141,6 +142,8 @@ V1 completions are static and context-light:
 
 The provider should not try to parse the document for symbol-aware completions.
 That avoids fragile partial-AST behavior in V1.
+`ptr<T>` insertion is covered by snippets and completions, so `<` remains
+comfortable as a comparison operator.
 
 ## Diagnostics
 
