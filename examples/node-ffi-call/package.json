@@ -1,0 +1,12 @@
+{
+  "name": "intkernel-node-ffi-call",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs",
+    "start:checked": "node checked.mjs"
+  },
+  "dependencies": {
+    "koffi": "^3.0.2"
+  }
+}

@@ -1,0 +1,59 @@
+# IntKernel Release Checklist
+
+Use this checklist before publishing or tagging a V0 release.
+
+## Required Verification
+
+- Run `pnpm test`.
+- Run `pnpm typecheck`.
+- Run `pnpm build`.
+- Run `pnpm ikc --help` or the equivalent installed `ikc --help` command and review output.
+- Run `pnpm ikc check examples/pricing.ik`.
+- Run `pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h`.
+- Review generated `pricing.c` and `pricing.h`.
+- If clang is available, run the e2e clang compile and harness test.
+- Review generated C/header snapshot diffs.
+- Review docs for V0 language, compiler architecture, ABI, and roadmap accuracy.
+
+## MIR / Default Pipeline Verification
+
+- Run `pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir`.
+- Review MIR output for stable formatting and absence of absolute paths,
+  timestamps, or random IDs.
+- Confirm MIR validator tests pass as part of `pnpm test`.
+- Confirm MIR lowering and MIR C emitter tests pass as part of `pnpm test`.
+- Confirm AST vs MIR regression tests pass while the legacy AST backend remains
+  in the repository.
+- Confirm default `emit-c` and `build` output is produced by the MIR pipeline.
+
+## Checked Mode Verification
+
+- Run the normal unchecked test suite.
+- Run checked arithmetic tests and confirm checked e2e cases pass when clang is
+  available.
+- Review checked generated C/header snapshots.
+- Confirm checked `emit-c` and `build` commands use `--overflow checked`.
+- Confirm checked dynamic library builds still use strict clang flags.
+- Manually run the checked Python `ctypes` example when the local platform has
+  a generated checked dynamic library available.
+- Manually run the checked Node.js FFI example when the local platform and FFI
+  dependency are available.
+- Review `docs/CHECKED_ARITHMETIC.md`, `docs/ABI.md`, and README checked-mode
+  sections for ABI and safety-boundary accuracy.
+
+## Optional Publishing Checks
+
+- Run `npm pack --dry-run` if the package is intended to be published to npm.
+- Confirm the package includes the built CLI entrypoint.
+- Confirm examples and docs intended for users are included.
+- Confirm no local build artifacts or temporary files are included by mistake.
+
+## Release Notes
+
+Before publishing, summarize:
+
+- language features supported in V0
+- known limitations
+- ABI compatibility notes
+- diagnostics and CLI changes
+- any intentionally changed generated C/header output

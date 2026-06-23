@@ -1,0 +1,25 @@
+#include "scalar.h"
+
+int64_t add_i64(int64_t a, int64_t b) {
+  int64_t ik_tmp0;
+
+  ik_tmp0 = a + b;
+  return ik_tmp0;
+}
+
+int32_t max_i32(int32_t a, int32_t b) {
+  bool ik_tmp0;
+
+  ik_tmp0 = a > b;
+  if (ik_tmp0) {
+    goto bb1;
+  } else {
+    goto bb2;
+  }
+
+bb1:
+  return a;
+
+bb2:
+  return b;
+}

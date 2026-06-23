@@ -1,0 +1,74 @@
+#include "scalar_checked.h"
+
+IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
+  int64_t ik_tmp0;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  if (__builtin_add_overflow(a, b, &ik_tmp0)) {
+    return IK_ERR_OVERFLOW;
+  }
+  *ik_return = ik_tmp0;
+  return IK_OK;
+}
+
+IK_Status mul_i64(int64_t a, int64_t b, int64_t* ik_return) {
+  int64_t ik_tmp0;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  if (__builtin_mul_overflow(a, b, &ik_tmp0)) {
+    return IK_ERR_OVERFLOW;
+  }
+  *ik_return = ik_tmp0;
+  return IK_OK;
+}
+
+IK_Status div_i64(int64_t a, int64_t b, int64_t* ik_return) {
+  int64_t ik_tmp0;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  if (b == 0) {
+    return IK_ERR_DIV_BY_ZERO;
+  }
+  if (a == INT64_MIN && b == -1) {
+    return IK_ERR_OVERFLOW;
+  }
+  ik_tmp0 = a / b;
+  *ik_return = ik_tmp0;
+  return IK_OK;
+}
+
+IK_Status neg_i64(int64_t a, int64_t* ik_return) {
+  int64_t ik_tmp0;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  if (a == INT64_MIN) {
+    return IK_ERR_OVERFLOW;
+  }
+  ik_tmp0 = -a;
+  *ik_return = ik_tmp0;
+  return IK_OK;
+}
+
+IK_Status less_i64(int64_t a, int64_t b, bool* ik_return) {
+  bool ik_tmp0;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  ik_tmp0 = a < b;
+  *ik_return = ik_tmp0;
+  return IK_OK;
+}

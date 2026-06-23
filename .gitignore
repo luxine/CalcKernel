@@ -1,0 +1,18 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+*.tgz
+
+# Temporary generated C/native outputs.
+*.c
+*.h
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Checked-in benchmark harnesses.
+!bench/
+!bench/*.c

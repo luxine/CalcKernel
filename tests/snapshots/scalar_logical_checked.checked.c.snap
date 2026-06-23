@@ -1,0 +1,123 @@
+#include "scalar_logical_checked.h"
+
+IK_Status and_short_circuit(int64_t a, int64_t b, bool* ik_return) {
+  bool ik_sc0;
+  int64_t ik_tmp0;
+  bool ik_tmp1;
+  int64_t ik_tmp2;
+  int64_t ik_tmp3;
+  bool ik_tmp4;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  ik_tmp0 = 0;
+  ik_tmp1 = a != ik_tmp0;
+  if (ik_tmp1) {
+    goto bb1;
+  } else {
+    goto bb2;
+  }
+
+bb1:
+  if (a == 0) {
+    return IK_ERR_DIV_BY_ZERO;
+  }
+  if (b == INT64_MIN && a == -1) {
+    return IK_ERR_OVERFLOW;
+  }
+  ik_tmp2 = b / a;
+  ik_tmp3 = 1;
+  ik_tmp4 = ik_tmp2 > ik_tmp3;
+  ik_sc0 = ik_tmp4;
+  goto bb3;
+
+bb2:
+  ik_sc0 = false;
+  goto bb3;
+
+bb3:
+  *ik_return = ik_sc0;
+  return IK_OK;
+}
+
+IK_Status or_short_circuit(int64_t a, int64_t b, bool* ik_return) {
+  bool ik_sc0;
+  int64_t ik_tmp0;
+  bool ik_tmp1;
+  int64_t ik_tmp2;
+  int64_t ik_tmp3;
+  bool ik_tmp4;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  ik_tmp0 = 0;
+  ik_tmp1 = a == ik_tmp0;
+  if (ik_tmp1) {
+    goto bb1;
+  } else {
+    goto bb2;
+  }
+
+bb1:
+  ik_sc0 = true;
+  goto bb3;
+
+bb2:
+  if (a == 0) {
+    return IK_ERR_DIV_BY_ZERO;
+  }
+  if (b == INT64_MIN && a == -1) {
+    return IK_ERR_OVERFLOW;
+  }
+  ik_tmp2 = b / a;
+  ik_tmp3 = 1;
+  ik_tmp4 = ik_tmp2 > ik_tmp3;
+  ik_sc0 = ik_tmp4;
+  goto bb3;
+
+bb3:
+  *ik_return = ik_sc0;
+  return IK_OK;
+}
+
+IK_Status and_rhs_error(bool run_rhs, int64_t numerator, int64_t divisor, bool* ik_return) {
+  bool ik_sc0;
+  int64_t ik_tmp0;
+  int64_t ik_tmp1;
+  bool ik_tmp2;
+
+  if (ik_return == NULL) {
+    return IK_ERR_NULL_POINTER;
+  }
+
+  if (run_rhs) {
+    goto bb1;
+  } else {
+    goto bb2;
+  }
+
+bb1:
+  if (divisor == 0) {
+    return IK_ERR_DIV_BY_ZERO;
+  }
+  if (numerator == INT64_MIN && divisor == -1) {
+    return IK_ERR_OVERFLOW;
+  }
+  ik_tmp0 = numerator / divisor;
+  ik_tmp1 = 1;
+  ik_tmp2 = ik_tmp0 > ik_tmp1;
+  ik_sc0 = ik_tmp2;
+  goto bb3;
+
+bb2:
+  ik_sc0 = false;
+  goto bb3;
+
+bb3:
+  *ik_return = ik_sc0;
+  return IK_OK;
+}

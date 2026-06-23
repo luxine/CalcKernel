@@ -1,0 +1,59 @@
+#include "pricing.h"
+
+int32_t calc_items(Item* items, int32_t len, int64_t* out) {
+  int32_t i;
+  int64_t subtotal;
+  int64_t after_discount;
+  int64_t tax;
+  int32_t ik_tmp0;
+  bool ik_tmp1;
+  int64_t ik_tmp2;
+  int64_t ik_tmp3;
+  int64_t ik_tmp4;
+  int64_t ik_tmp5;
+  int64_t ik_tmp6;
+  int64_t ik_tmp7;
+  int64_t ik_tmp8;
+  int64_t ik_tmp9;
+  int64_t ik_tmp10;
+  int64_t ik_tmp11;
+  int32_t ik_tmp12;
+  int32_t ik_tmp13;
+  int32_t ik_tmp14;
+
+  ik_tmp0 = 0;
+  i = ik_tmp0;
+  goto bb1;
+
+bb1:
+  ik_tmp1 = i < len;
+  if (ik_tmp1) {
+    goto bb2;
+  } else {
+    goto bb3;
+  }
+
+bb2:
+  ik_tmp2 = items[i].price;
+  ik_tmp3 = items[i].qty;
+  ik_tmp4 = ik_tmp2 * ik_tmp3;
+  subtotal = ik_tmp4;
+  ik_tmp5 = items[i].discount;
+  ik_tmp6 = subtotal - ik_tmp5;
+  after_discount = ik_tmp6;
+  ik_tmp7 = items[i].tax_rate_ppm;
+  ik_tmp8 = after_discount * ik_tmp7;
+  ik_tmp9 = 1000000;
+  ik_tmp10 = ik_tmp8 / ik_tmp9;
+  tax = ik_tmp10;
+  ik_tmp11 = after_discount + tax;
+  out[i] = ik_tmp11;
+  ik_tmp12 = 1;
+  ik_tmp13 = i + ik_tmp12;
+  i = ik_tmp13;
+  goto bb1;
+
+bb3:
+  ik_tmp14 = 0;
+  return ik_tmp14;
+}
