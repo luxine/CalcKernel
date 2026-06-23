@@ -40,7 +40,7 @@
   "dependencies": { "intkernel": "file:.." },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "1.90.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0",
