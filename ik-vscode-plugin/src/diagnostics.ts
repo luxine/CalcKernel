@@ -41,7 +41,15 @@ export function registerDiagnostics(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidCloseTextDocument((document) => {
       clearPending(document, pending);
       collection.delete(document.uri);
-    })
+    }),
+    {
+      dispose: () => {
+        for (const timeout of pending.values()) {
+          clearTimeout(timeout);
+        }
+        pending.clear();
+      }
+    }
   );
 
   for (const document of vscode.workspace.textDocuments) {
