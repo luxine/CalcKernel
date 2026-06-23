@@ -109,10 +109,29 @@ Future WASM work:
 
 ## Phase 13 LLVM Backend
 
-- Explore LLVM only after the language and IR are stable enough to justify the
-  added complexity.
-- Keep C backend as the reference backend until another backend is proven.
-- Define how checked arithmetic maps to LLVM intrinsics or explicit checks.
+Phase 13 starts the LLVM backend as textual LLVM IR generation from MIR.
+
+- Document the LLVM backend design in `docs/LLVM_BACKEND.md`.
+- Add MIR-to-LLVM IR text generation for a scalar subset.
+- Add `emit-llvm` for stable `.ll` output.
+- Add optional `build-llvm` or `build --backend llvm` through clang.
+- Keep C backend as the reference backend until LLVM e2e behavior is proven.
+- Keep LLVM v1 unchecked-only.
+- Reject `--overflow checked` for LLVM until checked LLVM lowering is designed.
+- Cover scalar, control flow, function call, ptr/index/field/store, and
+  `pricing` e2e cases before treating the backend as releasable.
+
+Phase 13 v1 does not add the LLVM C++ API, bitcode writing, JIT, optimizer,
+debug info, runtime support, allocator, bounds checks, `slice<T>`, strings, IO,
+or modules.
+
+Future LLVM work:
+
+- checked LLVM arithmetic
+- direct SSA lowering
+- optional optimizer pass pipeline
+- target data layout hardening
+- object/native-library build hardening
 
 ## Future Optimizer
 

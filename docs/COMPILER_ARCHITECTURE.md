@@ -3,7 +3,7 @@
 [简体中文](zh-CN/COMPILER_ARCHITECTURE.md)
 
 IntKernel is a source-to-C and source-to-WASM compiler implemented in
-TypeScript.
+TypeScript. Phase 13 designs a future source-to-LLVM path after MIR.
 
 ## Pipeline
 
@@ -27,6 +27,8 @@ Current pipeline:
   -> WAT/WASM backend
        -> .wat
        -> .wasm
+  -> future LLVM IR backend
+       -> .ll
 ```
 
 The native-library path intentionally stops at readable C. Native compilation
@@ -50,6 +52,8 @@ Phase 12 adds an implemented WASM path after MIR:
 ```
 
 The C backend remains the reference backend while the WASM backend is hardened.
+The LLVM backend is Phase 13 design work and is not part of the current default
+pipeline yet.
 
 ## Layer Responsibilities
 
@@ -201,6 +205,32 @@ Phase 12 v1 is intentionally narrow:
 
 See [WASM ABI](WASM_ABI.md) for the Phase 12 ABI and usage model.
 
+### Planned LLVM Backend
+
+Phase 13 designs a MIR-to-LLVM textual IR backend. The planned backend consumes
+validated MIR and emits stable `.ll` text. It intentionally does not embed LLVM
+libraries or use the LLVM C++ API in v1.
+
+The planned LLVM path is:
+
+```text
+.tk / .ik source
+  -> AST
+  -> CheckedProgram / Typed Program
+  -> MIR
+  -> MIR validator
+  -> LLVM IR text backend
+  -> .ll
+  -> optional clang / llc build
+```
+
+Phase 13 v1 is unchecked-only, alloca/load/store based, and focused on scalar
+operations, control flow, function calls, and ptr/index/field load/store. It
+does not add an optimizer, checked LLVM lowering, JIT, debug info, runtime,
+allocator, bounds checks, or `slice<T>`.
+
+See [LLVM Backend](LLVM_BACKEND.md) for the design.
+
 ## Diagnostics Flow
 
 Diagnostics are collected as data and flow through the pipeline:
@@ -240,9 +270,10 @@ reasons:
   library generation.
 - It keeps the compiler small while the language and ABI stabilize.
 
-LLVM remains a future backend. WASM starts in Phase 12 after MIR becomes the
-default codegen pipeline, with C retained as the reference backend while the
-WASM backend is hardened.
+WASM starts in Phase 12 after MIR becomes the default codegen pipeline, with C
+retained as the reference backend while the WASM backend is hardened. LLVM
+starts as Phase 13 design work and should be proven through textual IR and
+clang/llc validation before it becomes a production backend.
 
 ## Future IR Direction
 

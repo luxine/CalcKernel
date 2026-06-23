@@ -168,6 +168,20 @@ generation and bounds checks are not implemented yet.
 See [WASM ABI](docs/WASM_ABI.md) for the ABI, struct layout, memory model, WABT
 assembly step, and Node.js interop rules.
 
+## Planned LLVM Backend
+
+Phase 13 designs a MIR-to-LLVM backend that will emit textual LLVM IR (`.ll`)
+before any native LLVM integration:
+
+```text
+.tk / .ik source -> CheckedProgram -> MIR -> LLVM IR text
+```
+
+The planned v1 backend is unchecked-only and will not use LLVM C++ API
+bindings, JIT, an optimizer pipeline, debug info, runtime support, allocator,
+bounds checks, or `slice<T>`. See [LLVM Backend](docs/LLVM_BACKEND.md) for the
+design.
+
 ## Node.js WASM Example
 
 The repository includes a no-dependency Node.js WASM example that calls
@@ -346,6 +360,7 @@ parallel for every project document.
 - [Checked Arithmetic](docs/CHECKED_ARITHMETIC.md)
 - [C ABI](docs/ABI.md)
 - [WASM ABI](docs/WASM_ABI.md)
+- [LLVM Backend](docs/LLVM_BACKEND.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
@@ -357,5 +372,6 @@ Chinese:
 - [Checked Arithmetic](docs/zh-CN/CHECKED_ARITHMETIC.md)
 - [C ABI](docs/zh-CN/ABI.md)
 - [WASM ABI](docs/zh-CN/WASM_ABI.md)
+- [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

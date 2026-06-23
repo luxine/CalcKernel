@@ -63,6 +63,22 @@ Use this checklist before publishing or tagging a V0 release.
 - Review `docs/WASM_ABI.md` for type mapping, memory layout, examples, and
   safety-boundary accuracy.
 
+## LLVM Backend Verification
+
+- Review `docs/LLVM_BACKEND.md` before implementing or releasing LLVM backend
+  changes.
+- Confirm `emit-llvm` tests pass once the command exists.
+- Review LLVM IR snapshot diffs for stability and absence of absolute paths,
+  timestamps, or random IDs.
+- If clang is available, compile generated `.ll` in smoke tests.
+- If `build-llvm` exists, confirm it reports a friendly error when clang is not
+  available.
+- Confirm `emit-llvm --overflow checked` fails with the documented unsupported
+  message until checked LLVM lowering is implemented.
+- Confirm scalar, control-flow, function-call, ptr/index/field/store, and
+  pricing LLVM e2e tests pass before release.
+- Re-run C backend and WASM backend regression tests after LLVM backend changes.
+
 ## Optional Publishing Checks
 
 - Run `npm pack --dry-run` if the package is intended to be published to npm.

@@ -161,6 +161,19 @@ WASM backend 当前只支持 unchecked mode。`emit-wat --overflow checked` 和
 ABI、struct layout、memory model、WABT assembly step 和 Node.js interop 规则见
 [WASM ABI](docs/zh-CN/WASM_ABI.md)。
 
+## 计划中的 LLVM Backend
+
+Phase 13 设计 MIR-to-LLVM backend，先生成 textual LLVM IR（`.ll`），再考虑 native
+LLVM integration：
+
+```text
+.tk / .ik source -> CheckedProgram -> MIR -> LLVM IR text
+```
+
+计划中的 v1 backend 只支持 unchecked，不使用 LLVM C++ API binding、JIT、optimizer
+pipeline、debug info、runtime support、allocator、bounds check 或 `slice<T>`。
+设计见 [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)。
+
 ## Node.js WASM 示例
 
 仓库包含一个无额外依赖的 Node.js WASM 示例，通过内置 WebAssembly API 调用
@@ -333,6 +346,7 @@ English:
 - [Checked Arithmetic](docs/CHECKED_ARITHMETIC.md)
 - [C ABI](docs/ABI.md)
 - [WASM ABI](docs/WASM_ABI.md)
+- [LLVM Backend](docs/LLVM_BACKEND.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
@@ -344,5 +358,6 @@ English:
 - [Checked Arithmetic](docs/zh-CN/CHECKED_ARITHMETIC.md)
 - [C ABI](docs/zh-CN/ABI.md)
 - [WASM ABI](docs/zh-CN/WASM_ABI.md)
+- [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)
