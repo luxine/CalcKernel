@@ -6,7 +6,7 @@ VSCode language support for IntKernel `.ik` files.
 
 - `.ik` file recognition as the `intkernel` language.
 - TextMate syntax highlighting for IntKernel keywords, types, comments, numbers, function declarations, and struct declarations.
-- Language configuration for `//` comments and bracket auto-closing.
+- Language configuration for `//` comments and auto-closing braces, square brackets, and parentheses.
 - Snippets for common declarations and statements.
 - Basic keyword, primitive type, pointer type, and declaration completions.
 - Compiler-backed diagnostics using the local `intkernel` package.
@@ -36,6 +36,8 @@ Package:
 ```sh
 pnpm package
 ```
+
+The package script compiles and bundles the extension into `dist/extension.cjs`, then creates the VSIX while skipping dependency scanning because runtime dependencies are already bundled.
 
 ## Manual Verification
 

@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      intkernel:
-        specifier: file:..
-        version: file:..
     devDependencies:
       '@types/node':
         specifier: ^20.14.0
@@ -24,6 +20,9 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      intkernel:
+        specifier: file:..
+        version: file:..
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

@@ -35,14 +35,14 @@
     "watch": "tsc -p . --noEmit --watch",
     "test": "vitest run",
     "vscode:prepublish": "pnpm run compile",
-    "package": "pnpm run compile && vsce package"
+    "package": "pnpm run compile && vsce package --no-dependencies"
   },
-  "dependencies": { "intkernel": "file:.." },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "1.90.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.25.0",
+    "intkernel": "file:..",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   }
