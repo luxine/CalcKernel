@@ -1,0 +1,89 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+type Capture = {
+  name?: string;
+};
+
+type GrammarPattern = {
+  name?: string;
+  match?: string;
+  captures?: Record<string, Capture>;
+};
+
+type Grammar = {
+  repository: Record<string, { patterns: GrammarPattern[] }>;
+};
+
+const grammarPath = join(dirname(fileURLToPath(import.meta.url)), "..", "syntaxes", "intkernel.tmLanguage.json");
+const grammar = JSON.parse(readFileSync(grammarPath, "utf8")) as Grammar;
+
+describe("IntKernel TextMate grammar identifier scopes", () => {
+  it("scopes local variable declarations after let", () => {
+    expect(expectCaptureScope("localVariableDeclarations", "let subtotal: i64 = 0;", "subtotal")).toBe(
+      "variable.other.definition.local.intkernel"
+    );
+  });
+
+  it("scopes function parameters before their type annotations", () => {
+    expect(expectCaptureScope("parameters", "items: ptr<Item>", "items")).toBe("variable.parameter.intkernel");
+  });
+
+  it("scopes struct field declarations at the start of field lines", () => {
+    expect(expectCaptureScope("fieldDeclarations", "  tax_rate_ppm: i64;", "tax_rate_ppm")).toBe(
+      "variable.other.member.definition.intkernel"
+    );
+  });
+
+  it("scopes member access fields after a dot", () => {
+    expect(expectCaptureScope("memberAccess", ".price", "price")).toBe("variable.other.member.access.intkernel");
+  });
+
+  it("scopes lowercase variable references without overriding keywords or primitive types", () => {
+    expect(expectPatternScope("variableReferences", "after_discount")).toBe("variable.other.readwrite.intkernel");
+    expect(findNamedPatternMatch("variableReferences", "while")).toBeUndefined();
+    expect(findNamedPatternMatch("variableReferences", "i64")).toBeUndefined();
+  });
+});
+
+function expectCaptureScope(repositoryName: string, source: string, capturedText: string): string | undefined {
+  for (const pattern of patternsFor(repositoryName)) {
+    if (!pattern.match || !pattern.captures) {
+      continue;
+    }
+
+    const match = new RegExp(pattern.match, "m").exec(source);
+    if (!match) {
+      continue;
+    }
+
+    for (const [captureIndex, capture] of Object.entries(pattern.captures)) {
+      if (match[Number(captureIndex)] === capturedText) {
+        return capture.name;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function expectPatternScope(repositoryName: string, source: string): string | undefined {
+  return findNamedPatternMatch(repositoryName, source)?.name;
+}
+
+function findNamedPatternMatch(repositoryName: string, source: string): GrammarPattern | undefined {
+  return patternsFor(repositoryName).find((pattern) => {
+    if (!pattern.match || !pattern.name) {
+      return false;
+    }
+
+    const match = new RegExp(pattern.match, "m").exec(source);
+    return match?.[0] === source;
+  });
+}
+
+function patternsFor(repositoryName: string): GrammarPattern[] {
+  return grammar.repository[repositoryName]?.patterns ?? [];
+}

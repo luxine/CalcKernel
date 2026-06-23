@@ -6,11 +6,18 @@
     { "include": "#comments" },
     { "include": "#functionDeclarations" },
     { "include": "#structDeclarations" },
+    { "include": "#localVariableDeclarations" },
+    { "include": "#fieldDeclarations" },
+    { "include": "#parameters" },
+    { "include": "#memberAccess" },
+    { "include": "#functionCalls" },
     { "include": "#keywords" },
     { "include": "#types" },
+    { "include": "#typeReferences" },
     { "include": "#booleans" },
     { "include": "#numbers" },
-    { "include": "#operators" }
+    { "include": "#operators" },
+    { "include": "#variableReferences" }
   ],
   "repository": {
     "comments": { "patterns": [{ "name": "comment.line.double-slash.intkernel", "match": "//.*$" }] },
@@ -32,6 +39,48 @@
         }
       }]
     },
+    "localVariableDeclarations": {
+      "patterns": [{
+        "match": "\\b(let)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*:)",
+        "captures": {
+          "1": { "name": "keyword.declaration.intkernel" },
+          "2": { "name": "variable.other.definition.local.intkernel" }
+        }
+      }]
+    },
+    "fieldDeclarations": {
+      "patterns": [{
+        "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)(?=\\s*:)",
+        "captures": {
+          "1": { "name": "variable.other.member.definition.intkernel" }
+        }
+      }]
+    },
+    "parameters": {
+      "patterns": [{
+        "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*:\\s*(?:ptr\\b|i32\\b|i64\\b|u32\\b|u64\\b|bool\\b))",
+        "captures": {
+          "1": { "name": "variable.parameter.intkernel" }
+        }
+      }]
+    },
+    "memberAccess": {
+      "patterns": [{
+        "match": "(\\.)([A-Za-z_][A-Za-z0-9_]*)",
+        "captures": {
+          "1": { "name": "punctuation.accessor.intkernel" },
+          "2": { "name": "variable.other.member.access.intkernel" }
+        }
+      }]
+    },
+    "functionCalls": {
+      "patterns": [{
+        "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+        "captures": {
+          "1": { "name": "entity.name.function.call.intkernel" }
+        }
+      }]
+    },
     "keywords": {
       "patterns": [
         { "name": "keyword.control.intkernel", "match": "\\b(?:if|else|while|return)\\b" },
@@ -44,6 +93,9 @@
         { "name": "storage.type.pointer.intkernel", "match": "\\bptr\\b" }
       ]
     },
+    "typeReferences": {
+      "patterns": [{ "name": "entity.name.type.intkernel", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }]
+    },
     "booleans": { "patterns": [{ "name": "constant.language.boolean.intkernel", "match": "\\b(?:true|false)\\b" }] },
     "numbers": { "patterns": [{ "name": "constant.numeric.integer.intkernel", "match": "\\b[0-9]+\\b" }] },
     "operators": {
@@ -52,6 +104,12 @@
         { "name": "punctuation.separator.intkernel", "match": "[;:,]" },
         { "name": "punctuation.bracket.intkernel", "match": "[{}\\[\\]()]" }
       ]
+    },
+    "variableReferences": {
+      "patterns": [{
+        "name": "variable.other.readwrite.intkernel",
+        "match": "\\b(?!if\\b|else\\b|while\\b|return\\b|export\\b|fn\\b|let\\b|struct\\b|i32\\b|i64\\b|u32\\b|u64\\b|bool\\b|ptr\\b|true\\b|false\\b)[a-z_][A-Za-z0-9_]*\\b"
+      }]
     }
   }
 }

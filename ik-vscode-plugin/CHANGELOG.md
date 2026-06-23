@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Improve TextMate highlighting for local variables, parameters, struct fields, member access, function calls, and type references.
+
 ## 0.1.0
 
 - Add `.ik` language registration.
