@@ -362,7 +362,7 @@ function collectIndexExpressionReferences(
 }
 
 function addStructSymbols(sourceText: string, declaration: StructDeclaration, remember: (symbol: IntKernelSymbol) => void): void {
-  const structSymbol = symbolFromNode(sourceText, "struct", declaration.name.name, declaration.name.span, {
+  const structSymbol = symbolFromNode(sourceText, "struct", declaration.name.name, declaration.span, declaration.name.span, {
     detail: formatSymbolLabel("struct", declaration.name.name)
   });
   remember(structSymbol);
@@ -379,7 +379,7 @@ function addFunctionSymbols(
 ): void {
   const functionInfo = checkResult.checkedProgram.functionMap.get(declaration.name.name);
   const signatureLabel = functionInfo ? formatFunctionSignature(functionInfo) : undefined;
-  remember(symbolFromNode(sourceText, "function", declaration.name.name, declaration.name.span, { signatureLabel, detail: signatureLabel }));
+  remember(symbolFromNode(sourceText, "function", declaration.name.name, declaration.span, declaration.name.span, { signatureLabel, detail: signatureLabel }));
   const functionScopeRange = rangeFromCompilerSpan(sourceText, declaration.body.span);
   declaration.params.forEach((param, index) => {
     const type = functionInfo?.params[index]?.type;
@@ -394,16 +394,18 @@ function symbolFromNode(
   sourceText: string,
   kind: IntKernelSymbolKind,
   name: string,
-  span: SourceSpan,
+  rangeSpan: SourceSpan,
+  selectionSpan: SourceSpan,
   extra: Partial<IntKernelSymbol> = {}
 ): IntKernelSymbol {
-  const range = rangeFromCompilerSpan(sourceText, span);
-  return { kind, name, range, selectionRange: range, ...extra };
+  const range = rangeFromCompilerSpan(sourceText, rangeSpan);
+  const selectionRange = rangeFromCompilerSpan(sourceText, selectionSpan);
+  return { kind, name, range, selectionRange, ...extra };
 }
 
 function fieldSymbolFromNode(sourceText: string, containerName: string, field: StructField): IntKernelSymbol {
   const typeLabel = field.type.kind === "PrimitiveType" ? field.type.name : field.type.kind === "NamedType" ? field.type.name.name : undefined;
-  return symbolFromNode(sourceText, "field", field.name.name, field.name.span, {
+  return symbolFromNode(sourceText, "field", field.name.name, field.span, field.name.span, {
     typeLabel,
     containerName,
     detail: formatSymbolLabel("field", field.name.name, typeLabel, containerName)
@@ -417,7 +419,7 @@ function paramSymbolFromNode(
   scopeRange: vscode.Range,
   typeLabel?: string
 ): IntKernelSymbol {
-  return symbolFromNode(sourceText, "parameter", param.name.name, param.name.span, {
+  return symbolFromNode(sourceText, "parameter", param.name.name, param.span, param.name.span, {
     functionName,
     scopeRange,
     typeLabel,
@@ -462,7 +464,7 @@ function localSymbolFromNode(
   scopeRange: vscode.Range,
   typeLabel?: string
 ): IntKernelSymbol {
-  return symbolFromNode(sourceText, "local", statement.name.name, statement.name.span, {
+  return symbolFromNode(sourceText, "local", statement.name.name, statement.span, statement.name.span, {
     functionName,
     scopeRange,
     typeLabel,
