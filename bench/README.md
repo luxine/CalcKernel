@@ -14,6 +14,59 @@ The benchmark sizes are:
 - 10,000 items
 - 100,000 items
 
+## Local Hyperfine Performance Suite
+
+For repeatable local performance testing, use the hyperfine-based runner:
+
+```sh
+brew install hyperfine
+node bench/perf/run.mjs --quick
+node bench/perf/run.mjs --full
+```
+
+`--quick` is useful while developing benchmark code. `--full` is the default
+local performance run and uses more hyperfine samples and more work per command.
+
+The runner performs the full local setup:
+
+1. runs `pnpm build`
+2. emits unchecked C, checked C, and unchecked WASM into `build/perf/generated`
+3. compiles C benchmark executables into `build/perf/bin`
+4. smoke-runs each benchmark command for checksum validation
+5. runs `hyperfine`
+6. writes reports under `build/perf`
+
+Output files:
+
+- `build/perf/latest.hyperfine.json`
+- `build/perf/latest.hyperfine.md`
+- `build/perf/latest.summary.json`
+- `build/perf/latest.summary.md`
+
+To keep a private local baseline on this machine:
+
+```sh
+node bench/perf/run.mjs --full --save-baseline
+node bench/perf/run.mjs --full --compare
+```
+
+By default, comparison reports regressions without failing the process. Use
+`--fail-on-regression` when you want a non-zero exit code for local scripts:
+
+```sh
+node bench/perf/run.mjs --full --compare --fail-on-regression
+```
+
+The local baseline is stored in `build/perf/baseline.local.json`, which is not
+intended to be committed. Do not compare absolute numbers across machines.
+
+The first suite covers:
+
+- `pricing-c-unchecked`
+- `pricing-c-checked`
+- `pricing-wasm-unchecked`
+- `pricing-js-bigint`
+
 ## Generate C
 
 From the repository root:

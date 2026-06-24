@@ -13,6 +13,59 @@ Benchmark 规模：
 - 10,000 items
 - 100,000 items
 
+## 本机 Hyperfine 性能套件
+
+需要更稳定的本机 performance test 时，使用基于 hyperfine 的 runner：
+
+```sh
+brew install hyperfine
+node bench/perf/run.mjs --quick
+node bench/perf/run.mjs --full
+```
+
+`--quick` 适合开发 benchmark 代码时快速检查。`--full` 是默认的本机性能测试，
+会使用更多 hyperfine samples 和更多内部循环。
+
+runner 会完成完整本机准备工作：
+
+1. 运行 `pnpm build`
+2. 生成 unchecked C、checked C 和 unchecked WASM 到 `build/perf/generated`
+3. 编译 C benchmark 可执行文件到 `build/perf/bin`
+4. 先 smoke-run 每个 benchmark 命令并校验 checksum
+5. 运行 `hyperfine`
+6. 写出 `build/perf` 下的报告
+
+输出文件：
+
+- `build/perf/latest.hyperfine.json`
+- `build/perf/latest.hyperfine.md`
+- `build/perf/latest.summary.json`
+- `build/perf/latest.summary.md`
+
+在本机保存私有 baseline：
+
+```sh
+node bench/perf/run.mjs --full --save-baseline
+node bench/perf/run.mjs --full --compare
+```
+
+默认情况下，compare 只报告 regression，不会让进程失败。如果要给本机脚本使用
+非零退出码，加上 `--fail-on-regression`：
+
+```sh
+node bench/perf/run.mjs --full --compare --fail-on-regression
+```
+
+本机 baseline 保存在 `build/perf/baseline.local.json`，不应提交。不要跨机器比较
+绝对性能数字。
+
+第一版套件包含：
+
+- `pricing-c-unchecked`
+- `pricing-c-checked`
+- `pricing-wasm-unchecked`
+- `pricing-js-bigint`
+
 ## 生成 C
 
 从仓库根目录执行：
