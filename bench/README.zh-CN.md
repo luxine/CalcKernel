@@ -56,15 +56,70 @@ node bench/perf/run.mjs --full --compare
 node bench/perf/run.mjs --full --compare --fail-on-regression
 ```
 
+默认 regression 阈值是 median runtime 变慢 10%。可以用 `--threshold` 覆盖：
+
+```sh
+node bench/perf/run.mjs --full --compare --threshold 5
+node bench/perf/run.mjs --full --compare --threshold 10 --fail-on-regression
+```
+
+如果只想运行或比较部分 case，可以重复传入 `--case`。case filter 支持精确 case
+名称，也支持 case-name prefix：
+
+```sh
+node bench/perf/run.mjs --quick --case pricing-c-unchecked
+node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case pricing-wasm-unchecked
+```
+
 本机 baseline 保存在 `build/perf/baseline.local.json`，不应提交。不要跨机器比较
-绝对性能数字。
+绝对性能数字，也不要提交开发机器上的真实 baseline。仓库中的
+`bench/perf/baselines/example.summary.json` 只是格式示例，不是真实阈值文件。
 
-第一版套件包含：
+拆解后的套件包含：
 
-- `pricing-c-unchecked`
-- `pricing-c-checked`
-- `pricing-wasm-unchecked`
+- `pricing-c-unchecked-O0`
+- `pricing-c-unchecked-O2`
+- `pricing-c-unchecked-O3`
+- `pricing-c-unchecked-ik-O3`
+- `pricing-c-checked-O3`
+- `pricing-helpers-c-unchecked-ik-O0`
+- `pricing-helpers-c-unchecked-ik-O2`
+- `pricing-llvm-unchecked-O0`
+- `pricing-llvm-unchecked-O2`
+- `pricing-llvm-unchecked-O3`
+- `pricing-wasm-unchecked-total`
+- `pricing-wasm-unchecked-total-O3`
+- `pricing-wasm-unchecked-compute-only`
+- `pricing-wasm-unchecked-compute-only-O3`
+- `pricing-wasm-unchecked-memory-only`
+- `pricing-wasm-unchecked-call-overhead`
+- `pricing-js-number`
+- `pricing-js-typedarray-number`
 - `pricing-js-bigint`
+
+summary 会包含每个 case 的 category、optimization level、arithmetic mode、
+median runtime、p95 runtime，以及相对于 `pricing-c-unchecked-O3` 的倍数。
+
+启用 `--compare` 后，`build/perf/latest.summary.md` 还会包含 baseline comparison
+表。regression status 基于 median runtime：
+
+- `ok`：未超过配置阈值的一半
+- `warning`：超过阈值一半，但未超过完整阈值
+- `regression`：超过配置阈值
+
+comparison 表会输出当前 median、baseline median、runtime ratio 和变慢百分比。
+`--fail-on-regression` 只影响显式的性能运行；普通 `pnpm test` 不运行 hyperfine，
+也不会因为机器性能波动失败。
+
+`pricing-helpers-*` case 使用 `bench/perf/fixtures/pricing_helpers.ik`，
+它把相同 pricing 计算拆成小型 non-exported helper function。这个 fixture
+只用于测 MIR small-function inlining，不会改变 `examples/pricing.ik`。
+
+当前瓶颈分析和 Phase 14 优化优先级见
+[2026-06-24 性能画像](docs/2026-06-24-performance-profile.zh-CN.md)。
+当前 pipeline、本机最新 full-run 数字和回归流程的 release-level 总结见
+[Performance](../docs/zh-CN/PERFORMANCE.md) 和
+[Optimization](../docs/zh-CN/OPTIMIZATION.md)。
 
 ## 生成 C
 
@@ -96,6 +151,14 @@ node bench/pricing_baseline.js
 
 JavaScript baseline 使用 `BigInt64Array` 和 `BigInt` arithmetic，尽量贴近
 `pricing.ik` 使用的 `i64` 语义。
+
+本机 performance suite 还包含三个 JavaScript pricing case：
+
+- `pricing-js-number`：普通 JavaScript array 和 `Number` arithmetic。
+- `pricing-js-typedarray-number`：`Float64Array` input 和 `Number`
+  arithmetic。
+- `pricing-js-bigint`：`BigInt64Array` input 和 `BigInt` arithmetic，用于精确
+  模拟 `i64` 风格计算。
 
 ## 运行 WASM Benchmark
 
@@ -207,3 +270,14 @@ overhead。应比较相近规模的 batch call。
 WASM unchecked benchmark 结果不代表 checked arithmetic 安全性。Unchecked WASM 可用于
 portability 和 host integration 实验，但它不会报告 integer overflow、division by
 zero safety、pointer validity 或 buffer length 错误。
+
+拆解后的 WASM case 用来分离可能的瓶颈层：
+
+- `pricing-wasm-unchecked-total`：在被测 workload 中写 memory、调用
+  `calc_items`、再读取 checksum。
+- `pricing-wasm-unchecked-compute-only`：只预写一次 memory，之后重复调用
+  `calc_items`，最后读取一次 checksum。
+- `pricing-wasm-unchecked-memory-only`：只测 host 侧 `DataView` memory
+  write/read，不调用 WASM。
+- `pricing-wasm-unchecked-call-overhead`：重复调用一个极小 generated WASM
+  function，用来估算 JS-to-WASM 边界成本。

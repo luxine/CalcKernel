@@ -318,24 +318,22 @@ struct, pointer, `BigInt`, and checked `IK_Status` mapping.
 
 ## Benchmarks
 
-The [bench](bench/README.md) directory contains a small pricing benchmark for a
-pure JavaScript baseline, generated C, checked generated C, and generated
-unchecked WASM.
+The [bench](bench/README.md) directory contains the local pricing performance
+suite. It compares generated C, checked C, LLVM, WASM, and JavaScript baselines
+with checksum validation.
 
 ```sh
 pnpm build
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
-node bench/pricing_baseline.js
-node bench/wasm_pricing_benchmark.mjs
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL build/pricing.c bench/pricing_c_harness.c -I build -o build/pricing_c_bench
-./build/pricing_c_bench
+node bench/perf/run.mjs --quick
+node bench/perf/run.mjs --full --save-baseline
+node bench/perf/run.mjs --full --compare --threshold 10
 ```
 
-The benchmark is a rough local reference. For host-language integration, batch
-work into larger native calls rather than calling one item at a time.
-The benchmark README also includes unchecked vs checked C benchmark commands
-and notes that WASM is currently unchecked-only.
+The benchmark suite is a rough local reference, not a stable cross-machine
+score. For host-language integration, batch work into larger native calls rather
+than calling one item at a time. See [Performance](docs/PERFORMANCE.md) and
+[Optimization](docs/OPTIMIZATION.md) for the current Phase 14 pipeline, latest
+local full-run summary, regression baseline workflow, and backend bottlenecks.
 
 ## Current V0 Limits
 
@@ -350,9 +348,8 @@ V0 supports only:
 - pointer indexing and struct field access
 
 V0 does not support strings, IO, heap allocation, GC, exceptions, async,
-classes, closures, modules, runtime libraries, LLVM, or JIT compilation. The
-Phase 12 WASM backend is experimental and currently supports unchecked mode
-only.
+classes, closures, modules, runtime libraries, or JIT compilation. The WASM
+and LLVM backends currently support unchecked arithmetic only.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
 `--overflow checked` C code generation checks integer overflow and division by
@@ -372,6 +369,8 @@ parallel for every project document.
 - [C ABI](docs/ABI.md)
 - [WASM ABI](docs/WASM_ABI.md)
 - [LLVM Backend](docs/LLVM_BACKEND.md)
+- [Optimization](docs/OPTIMIZATION.md)
+- [Performance](docs/PERFORMANCE.md)
 - [Naming Conventions](docs/NAMING_CONVENTIONS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
@@ -385,6 +384,8 @@ Chinese:
 - [C ABI](docs/zh-CN/ABI.md)
 - [WASM ABI](docs/zh-CN/WASM_ABI.md)
 - [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)
+- [优化](docs/zh-CN/OPTIMIZATION.md)
+- [性能](docs/zh-CN/PERFORMANCE.md)
 - [命名规范](docs/zh-CN/NAMING_CONVENTIONS.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

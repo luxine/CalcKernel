@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "./lib/args.mjs";
+import { benchmarkCommands, nativeCompileJobs } from "./lib/cases.mjs";
 import { buildHyperfineArgs } from "./lib/hyperfine.mjs";
-import { compareSummaries, formatSummaryMarkdown, summarizeHyperfine } from "./lib/summary.mjs";
+import { compareSummaries, filterBenchmarkCommands, formatSummaryMarkdown, hasRegression, parseBaselineSummary, summarizeHyperfine } from "./lib/summary.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "../..");
@@ -35,9 +36,9 @@ function main() {
   const toolVersions = checkTools();
   run("pnpm", ["build"]);
   generateArtifacts();
-  compileCCommands();
+  compileNativeCommands();
 
-  const commands = benchmarkCommands(config);
+  const commands = filterBenchmarkCommands(benchmarkCommands(config, perfPaths()), config.cases);
   smoke(commands);
 
   const hyperfineArgs = buildHyperfineArgs(
@@ -50,10 +51,14 @@ function main() {
   );
   run("hyperfine", hyperfineArgs, { stdio: "inherit" });
 
-  const summary = summarizeHyperfine(JSON.parse(readFileSync(latestHyperfineJson, "utf8")), {
-    ...config,
-    ...metadata(toolVersions)
-  });
+  const summary = summarizeHyperfine(
+    JSON.parse(readFileSync(latestHyperfineJson, "utf8")),
+    {
+      ...config,
+      ...metadata(toolVersions)
+    },
+    commands
+  );
   let comparison = [];
 
   if (config.compare) {
@@ -61,7 +66,9 @@ function main() {
       throw new Error(`No local baseline found at ${relativeFromRoot(baselinePath)}. Run with --save-baseline first.`);
     }
 
-    comparison = compareSummaries(summary, JSON.parse(readFileSync(baselinePath, "utf8")));
+    comparison = compareSummaries(summary, parseBaselineSummary(readFileSync(baselinePath, "utf8"), relativeFromRoot(baselinePath)), {
+      thresholdPercent: config.thresholdPercent
+    });
   }
 
   writeFileSync(latestSummaryJson, `${JSON.stringify({ ...summary, comparison }, null, 2)}\n`);
@@ -77,7 +84,7 @@ function main() {
     process.stdout.write(`Saved local baseline to ${relativeFromRoot(baselinePath)}\n`);
   }
 
-  if (config.failOnRegression && comparison.some((entry) => entry.status === "regression")) {
+  if (config.failOnRegression && hasRegression(comparison)) {
     process.exitCode = 1;
   }
 }
@@ -129,7 +136,44 @@ function generateArtifacts() {
     "--header",
     relativeFromRoot(join(generatedDir, "pricing.checked.h")),
     "--overflow",
-    "checked"
+    "checked",
+    "-O3"
+  ]);
+  run("pnpm", [
+    "ikc",
+    "emit-c",
+    "examples/pricing.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "pricing_ik_o3.c")),
+    "--header",
+    relativeFromRoot(join(generatedDir, "pricing.h")),
+    "--overflow",
+    "unchecked",
+    "-O3"
+  ]);
+  run("pnpm", [
+    "ikc",
+    "emit-c",
+    "bench/perf/fixtures/pricing_helpers.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "pricing_helpers_ik_o0.c")),
+    "--header",
+    relativeFromRoot(join(generatedDir, "pricing_helpers.h")),
+    "--overflow",
+    "unchecked",
+    "-O0"
+  ]);
+  run("pnpm", [
+    "ikc",
+    "emit-c",
+    "bench/perf/fixtures/pricing_helpers.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "pricing_helpers_ik_o2.c")),
+    "--header",
+    relativeFromRoot(join(generatedDir, "pricing_helpers.h")),
+    "--overflow",
+    "unchecked",
+    "-O2"
   ]);
   run("pnpm", [
     "ikc",
@@ -140,50 +184,49 @@ function generateArtifacts() {
     "--overflow",
     "unchecked"
   ]);
+  run("pnpm", [
+    "ikc",
+    "emit-wasm",
+    "examples/pricing.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "pricing_o3.wasm")),
+    "--overflow",
+    "unchecked",
+    "-O3"
+  ]);
+  run("pnpm", [
+    "ikc",
+    "emit-wasm",
+    "examples/wasm_scalar.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "call_overhead.wasm")),
+    "--overflow",
+    "unchecked"
+  ]);
+  run("pnpm", [
+    "ikc",
+    "emit-llvm",
+    "examples/pricing.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "pricing.ll")),
+    "--overflow",
+    "unchecked"
+  ]);
 }
 
-function compileCCommands() {
-  const common = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror", "-DIK_BUILD_DLL"];
-  run("clang", [
-    ...common,
-    relativeFromRoot(join(generatedDir, "pricing.c")),
-    "bench/perf/cases/pricing-c-unchecked.c",
-    "-I",
-    relativeFromRoot(generatedDir),
-    "-o",
-    relativeFromRoot(join(binDir, executableName("pricing-c-unchecked")))
-  ]);
-  run("clang", [
-    ...common,
-    relativeFromRoot(join(generatedDir, "pricing.checked.c")),
-    "bench/perf/cases/pricing-c-checked.c",
-    "-I",
-    relativeFromRoot(generatedDir),
-    "-o",
-    relativeFromRoot(join(binDir, executableName("pricing-c-checked")))
-  ]);
+function compileNativeCommands() {
+  for (const job of nativeCompileJobs(perfPaths())) {
+    const common = ["-std=c11", `-${job.optLevel}`, "-Wall", "-Wextra", "-Werror", "-DIK_BUILD_DLL"];
+    run("clang", [...common, job.source, job.harness, "-I", relativeFromRoot(generatedDir), "-o", job.output]);
+  }
 }
 
-function benchmarkCommands(config) {
-  const itemArgs = `--items ${config.items} --iterations ${config.iterations}`;
-  return [
-    {
-      name: "pricing-c-unchecked",
-      command: `${relativeFromRoot(join(binDir, executableName("pricing-c-unchecked")))} ${itemArgs}`
-    },
-    {
-      name: "pricing-c-checked",
-      command: `${relativeFromRoot(join(binDir, executableName("pricing-c-checked")))} ${itemArgs}`
-    },
-    {
-      name: "pricing-wasm-unchecked",
-      command: `node bench/perf/cases/pricing-wasm.mjs --wasm ${relativeFromRoot(join(generatedDir, "pricing.wasm"))} ${itemArgs}`
-    },
-    {
-      name: "pricing-js-bigint",
-      command: `node bench/perf/cases/pricing-js-bigint.mjs ${itemArgs}`
-    }
-  ];
+function perfPaths() {
+  return {
+    generatedDir: relativeFromRoot(generatedDir),
+    binDir: relativeFromRoot(binDir),
+    executableSuffix: process.platform === "win32" ? ".exe" : ""
+  };
 }
 
 function smoke(commands) {

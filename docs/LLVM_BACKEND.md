@@ -59,7 +59,7 @@ Supported:
 Not supported:
 
 - checked LLVM backend
-- optimizer pass pipeline
+- LLVM-specific optimizer pass pipeline
 - LLVM C++ API bindings
 - LLVM bitcode writer
 - JIT
@@ -104,7 +104,14 @@ alloca/load/store lowering:
 - later clang/LLVM optimization can promote memory to registers with mem2reg
 
 This is not optimal IR. It is deliberately simple, correct, stable, and easy to
-debug. A future phase can add direct SSA lowering or a MIR-to-SSA transform.
+debug.
+
+Phase 14.14 adds a small SSA-like fast path for simple scalar straight-line
+functions at `-O2` and `-O3`. The fast path is limited to one basic block with
+no locals, no calls, no control flow, and no memory operations. More complex
+functions, including `examples/pricing.ik`, continue to use stack lowering and
+rely on clang `-O2`/`-O3` for promotion and native optimization. A future phase
+can broaden direct SSA lowering or add a MIR-to-SSA transform.
 
 ## Type Mapping
 
@@ -341,21 +348,27 @@ ikc build-llvm examples/pricing.ik --out build/libpricing
 
 Dynamic library output is the default:
 
+The selected IK optimization level is passed to clang as `-O0`, `-O1`, `-O2`,
+or `-O3`. The examples below show `--opt-level 3`.
+
 macOS:
 
 ```sh
-clang -O3 -shared -fPIC build/pricing.ll -o build/libpricing.dylib
+ikc build-llvm examples/pricing.ik --out build/libpricing --opt-level 3
+clang -O3 -shared -fPIC build/libpricing.ll -o build/libpricing.dylib
 ```
 
 Linux:
 
 ```sh
-clang -O3 -shared -fPIC build/pricing.ll -o build/libpricing.so
+ikc build-llvm examples/pricing.ik --out build/libpricing --opt-level 3
+clang -O3 -shared -fPIC build/libpricing.ll -o build/libpricing.so
 ```
 
 Windows:
 
 ```sh
+ikc build-llvm examples/pricing.ik --out build/pricing --opt-level 3
 clang -O3 -shared build/pricing.ll -o build/pricing.dll
 ```
 
@@ -367,7 +380,7 @@ filename is respected.
 Object output is available for user-managed linking:
 
 ```sh
-ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
+ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o --opt-level 3
 clang -O3 -c build/pricing.ll -o build/pricing.o
 ```
 
@@ -445,8 +458,12 @@ Generated LLVM IR must be stable:
 - LLVM backend supports unchecked arithmetic only.
 - `emit-llvm --overflow checked` and `build-llvm --overflow checked` fail with a
   documented unsupported-mode diagnostic.
-- v1 uses alloca/load/store lowering, not optimized SSA.
-- No optimizer pass pipeline is run by IntKernel.
+- general control-flow and memory functions still use alloca/load/store
+  lowering.
+- only simple scalar straight-line functions use SSA-like lowering at `-O2` and
+  `-O3`.
+- no LLVM-specific optimizer pass pipeline is run by IntKernel; backend input
+  still flows through the shared MIR pass manager.
 - `build-llvm` depends on external clang; IntKernel does not bundle clang,
   `llc`, LLVM libraries, or a custom linker.
 - No static library output is built by IntKernel yet.
@@ -460,7 +477,7 @@ Generated LLVM IR must be stable:
 ## Future Work
 
 - checked LLVM arithmetic lowering
-- direct SSA LLVM lowering
+- broader direct SSA LLVM lowering
 - optional optimizer pass pipeline
 - target-specific data layout emission
 - object/static library output improvements

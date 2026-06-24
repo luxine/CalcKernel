@@ -1,6 +1,8 @@
+import type { OptimizationOptions } from "../../optimization/options.js";
+
 export type OverflowMode = "unchecked" | "checked";
 
-export interface CCodegenOptions {
+export interface CCodegenOptions extends OptimizationOptions {
   overflowMode?: OverflowMode;
 }
 

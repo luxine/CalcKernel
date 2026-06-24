@@ -1,10 +1,16 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { lowerToMir } from "../../mir/lower.js";
+import { printMirModule } from "../../mir/mir-printer.js";
+import { runMirPassPipeline } from "../../opt/mir-pass-manager.js";
+import type { MirPassDebugFlags } from "../../opt/mir-pass.js";
+import { buildMirOptimizationPipeline } from "../../opt/pipeline.js";
+import { printMirPassPipeline } from "../../opt/pipeline.js";
+import { resolveOptimizationLevel } from "../../optimization/options.js";
 import { emitMirCSource } from "./mir-c-emitter.js";
 import type { CheckResult } from "../../typeck/checker.js";
 import { assertCanEmitC, emitCHeader } from "./c-header-emitter.js";
-import type { CCodegenOptions } from "./c-options.js";
+import { resolveOverflowMode, type CCodegenOptions } from "./c-options.js";
 
 export type BuildPlatform = "linux" | "darwin" | "win32" | NodeJS.Platform;
 
@@ -17,13 +23,20 @@ export interface CommandResult {
 
 export type CommandRunner = (command: string, args: string[]) => CommandResult;
 
+interface MirOptimizationDebugOptions {
+  mirDebug?: MirPassDebugFlags;
+  writeDebug?: (text: string) => void;
+}
+
 export interface EmitCFilesOptions extends CCodegenOptions {
   cFile: string;
   headerFile: string;
   headerFileName: string;
+  mirDebug?: MirPassDebugFlags;
+  writeDebug?: (text: string) => void;
 }
 
-export interface EmitDefaultCSourceOptions extends CCodegenOptions {
+export interface EmitDefaultCSourceOptions extends CCodegenOptions, MirOptimizationDebugOptions {
   headerFileName: string;
 }
 
@@ -45,7 +58,13 @@ let tempFileCounter = 0;
 
 export function emitCFiles(checked: CheckResult, options: EmitCFilesOptions): void {
   const headerText = emitCHeader(checked, { overflowMode: options.overflowMode });
-  const sourceText = emitDefaultCSource(checked, { headerFileName: options.headerFileName, overflowMode: options.overflowMode });
+  const sourceText = emitDefaultCSource(checked, {
+    headerFileName: options.headerFileName,
+    overflowMode: options.overflowMode,
+    optLevel: options.optLevel,
+    mirDebug: options.mirDebug,
+    writeDebug: options.writeDebug
+  });
 
   mkdirSync(dirname(options.cFile), { recursive: true });
   mkdirSync(dirname(options.headerFile), { recursive: true });
@@ -56,7 +75,35 @@ export function emitCFiles(checked: CheckResult, options: EmitCFilesOptions): vo
 export function emitDefaultCSource(checked: CheckResult, options: EmitDefaultCSourceOptions): string {
   assertCanEmitC(checked);
   const mir = lowerToMir(checked.checkedProgram);
-  return emitMirCSource(mir, { headerFileName: options.headerFileName, overflowMode: options.overflowMode });
+  const optLevel = resolveOptimizationLevel(options);
+  const overflowMode = resolveOverflowMode(options);
+  const pipeline = buildMirOptimizationPipeline(optLevel);
+  const debug = options.mirDebug ?? {};
+  const writeDebug = options.writeDebug ?? (() => {});
+
+  if (debug.printPassPipeline) {
+    writeDebug(`MIR pass pipeline: ${printMirPassPipeline(pipeline)}\n`);
+  }
+  if (debug.printMirBeforeOpt) {
+    writeDebug(`MIR before optimization:\n${printMirModule(mir)}`);
+  }
+
+  const optimized = runMirPassPipeline(mir, pipeline, {
+    optLevel,
+    overflowMode,
+    targetBackend: "c",
+    debug
+  });
+
+  if (debug.printMirAfterOpt) {
+    writeDebug(`MIR after optimization:\n${printMirModule(optimized.module)}`);
+  }
+
+  if (optimized.validationErrors.length > 0) {
+    throw new Error(`internal compiler error: MIR validation failed: ${optimized.validationErrors[0]!.message}`);
+  }
+
+  return emitMirCSource(optimized.module, { headerFileName: options.headerFileName, overflowMode, optLevel });
 }
 
 export function buildSharedLibrary(checked: CheckResult, options: BuildSharedLibraryOptions): BuildSharedLibraryResult {

@@ -42,11 +42,39 @@ function emitPricingExample(cwd: string): { cFile: string; headerFile: string } 
   return { cFile, headerFile };
 }
 
+function emitPricingO2Example(cwd: string): { cFile: string; headerFile: string } {
+  writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+  const cFile = join(cwd, "build/pricing_o2.c");
+  const headerFile = join(cwd, "build/pricing_o2.h");
+  const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile, "-O2"], {
+    cwd,
+    stdout: () => {},
+    stderr: () => {}
+  });
+
+  expect(exitCode).toBe(0);
+  return { cFile, headerFile };
+}
+
 function emitPricingCheckedExample(cwd: string): { cFile: string; headerFile: string } {
   writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
   const cFile = join(cwd, "build/pricing_checked.c");
   const headerFile = join(cwd, "build/pricing_checked.h");
   const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
+    cwd,
+    stdout: () => {},
+    stderr: () => {}
+  });
+
+  expect(exitCode).toBe(0);
+  return { cFile, headerFile };
+}
+
+function emitPricingCheckedO3Example(cwd: string): { cFile: string; headerFile: string } {
+  writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+  const cFile = join(cwd, "build/pricing_checked_o3.c");
+  const headerFile = join(cwd, "build/pricing_checked_o3.h");
+  const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked", "-O3"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -222,6 +250,31 @@ function emitMirShortCircuitUncheckedExample(cwd: string): { cFile: string; head
   return { cFile, headerFile };
 }
 
+function emitOptimizedShortCircuitUncheckedExample(cwd: string): { cFile: string; headerFile: string } {
+  writeFileSync(
+    join(cwd, "short_circuit_optimized.ik"),
+    `
+export fn and_short_circuit(a: i64, b: i64) -> bool {
+  return a != 0 && b / a > 1;
+}
+
+export fn or_short_circuit(a: i64, b: i64) -> bool {
+  return a == 0 || b / a > 1;
+}
+`.trimStart()
+  );
+  const cFile = join(cwd, "build/short_circuit_optimized.c");
+  const headerFile = join(cwd, "build/short_circuit_optimized.h");
+  const exitCode = runCli(["emit-c", "short_circuit_optimized.ik", "--out", cFile, "--header", headerFile, "-O2"], {
+    cwd,
+    stdout: () => {},
+    stderr: () => {}
+  });
+
+  expect(exitCode).toBe(0);
+  return { cFile, headerFile };
+}
+
 function emitMirCallsUncheckedExample(cwd: string): { cFile: string; headerFile: string } {
   const sourceText = `
     fn add_i64(a: i64, b: i64) -> i64 {
@@ -246,6 +299,35 @@ function emitMirCallsUncheckedExample(cwd: string): { cFile: string; headerFile:
   mkdirSync(join(cwd, "build"), { recursive: true });
   writeFileSync(headerFile, emitCHeader(checked));
   writeFileSync(cFile, emitMirCSource(mir, { headerFileName: "calls_mir.h" }));
+  return { cFile, headerFile };
+}
+
+function emitOptimizedCallsUncheckedExample(cwd: string): { cFile: string; headerFile: string } {
+  writeFileSync(
+    join(cwd, "calls_optimized.ik"),
+    `
+fn add_i64(a: i64, b: i64) -> i64 {
+  return a + b;
+}
+
+fn double_i64(a: i64) -> i64 {
+  return a * 2;
+}
+
+export fn calc(a: i64, b: i64) -> i64 {
+  return double_i64(add_i64(a, b));
+}
+`.trimStart()
+  );
+  const cFile = join(cwd, "build/calls_optimized.c");
+  const headerFile = join(cwd, "build/calls_optimized.h");
+  const exitCode = runCli(["emit-c", "calls_optimized.ik", "--out", cFile, "--header", headerFile, "-O2"], {
+    cwd,
+    stdout: () => {},
+    stderr: () => {}
+  });
+
+  expect(exitCode).toBe(0);
   return { cFile, headerFile };
 }
 
@@ -370,6 +452,11 @@ describe("ikc CLI", () => {
     expect(stdout).toContain("ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]");
     expect(stdout).toContain("ikc build <file> --out <output-path>");
     expect(stdout).toContain("--overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.");
+    expect(stdout).toContain("--opt-level <0|1|2|3>            MIR optimization level. Default: 0.");
+    expect(stdout).toContain("-O0, -O1, -O2, -O3              Alias for --opt-level.");
+    expect(stdout).toContain("--print-pass-pipeline           Print the selected MIR pass pipeline to stderr.");
+    expect(stdout).toContain("--print-mir-before-opt          Print MIR before optimization to stderr.");
+    expect(stdout).toContain("--print-mir-after-opt           Print MIR after optimization to stderr.");
   });
 
   it("checks valid files with a concise success message", () => {
@@ -508,6 +595,126 @@ describe("ikc CLI", () => {
     expect(stderr).toContain("Invalid value for --overflow: safe. Expected 'unchecked' or 'checked'.");
     expect(existsSync(join(cwd, "build/scalar.c"))).toBe(false);
     expect(existsSync(join(cwd, "build/scalar.h"))).toBe(false);
+  });
+
+  it("accepts explicit opt-level values without changing emitted C", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+
+    expect(
+      runCli(["emit-c", "scalar.ik", "--out", "build/default/scalar.c", "--header", "build/default/scalar.h"], {
+        cwd,
+        stdout: () => {},
+        stderr: () => {}
+      })
+    ).toBe(0);
+
+    for (const level of ["0", "1", "2", "3"]) {
+      const exitCode = runCli(
+        ["emit-c", "scalar.ik", "--out", `build/O${level}/scalar.c`, "--header", `build/O${level}/scalar.h`, "--opt-level", level],
+        {
+          cwd,
+          stdout: () => {},
+          stderr: () => {}
+        }
+      );
+      expect(exitCode).toBe(0);
+    }
+
+    expect(readFileSync(join(cwd, "build/default/scalar.c"), "utf8")).toBe(readFileSync(join(cwd, "build/O0/scalar.c"), "utf8"));
+    expect(readFileSync(join(cwd, "build/default/scalar.h"), "utf8")).toBe(readFileSync(join(cwd, "build/O0/scalar.h"), "utf8"));
+    expect(readFileSync(join(cwd, "build/O3/scalar.c"), "utf8")).toBe(readFileSync(join(cwd, "build/O0/scalar.c"), "utf8"));
+    expect(readFileSync(join(cwd, "build/O3/scalar.h"), "utf8")).toBe(readFileSync(join(cwd, "build/O0/scalar.h"), "utf8"));
+  });
+
+  it("accepts -O aliases across codegen commands", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    const runner: CommandRunner = () => ({ status: 0, stdout: "", stderr: "" });
+
+    expect(runCli(["emit-mir", "scalar.ik", "-O0"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-wat", "scalar.ik", "--out", "build/scalar.wat", "-O1"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-wasm", "scalar.ik", "--out", "build/scalar.wasm", "-O2"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/scalar.ll", "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["build", "scalar.ik", "--out", "build/libscalar", "-O2"], { cwd, runCommand: runner, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "-O1"], { cwd, runCommand: runner, stdout: () => {}, stderr: () => {} })).toBe(0);
+  });
+
+  it("prints MIR optimization debug output to stderr", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-mir", "scalar.ik", "-O3", "--print-pass-pipeline", "--print-mir-before-opt", "--print-mir-after-opt"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("export fn add");
+    expect(stderr).toContain(
+      "MIR pass pipeline: O3: constant-folding -> copy-propagation -> inline-small-functions -> constant-folding -> copy-propagation -> loop-analysis -> loop-invariant-code-motion -> induction-simplify -> constant-folding -> copy-propagation -> local-cse -> copy-propagation -> address-cse -> dead-code-elimination -> cfg-simplify -> dead-code-elimination"
+    );
+    expect(stderr).toContain("MIR before optimization:");
+    expect(stderr).toContain("MIR after optimization:");
+    expect(stderr).toContain("%t0: i64 = add a, b");
+  });
+
+  it("prints the pass pipeline for C emission to stderr", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(
+      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "-O3", "--print-pass-pipeline"],
+      {
+        cwd,
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: (text) => {
+          stderr += text;
+        }
+      }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("OK: emitted C with overflow=unchecked");
+    expect(stderr).toBe(
+      "MIR pass pipeline: O3: constant-folding -> copy-propagation -> inline-small-functions -> constant-folding -> copy-propagation -> loop-analysis -> loop-invariant-code-motion -> induction-simplify -> constant-folding -> copy-propagation -> local-cse -> copy-propagation -> address-cse -> dead-code-elimination -> cfg-simplify -> dead-code-elimination\n"
+    );
+  });
+
+  it("rejects invalid opt-level values", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+
+    for (const args of [
+      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "--opt-level", "4"],
+      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "--opt-level", "fast"],
+      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "-O9"]
+    ]) {
+      let stderr = "";
+      const exitCode = runCli(args, {
+        cwd,
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        }
+      });
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Invalid optimization level");
+    }
   });
 
   it("does not write emit-c outputs for invalid files", () => {
@@ -797,9 +1004,33 @@ describe("ikc CLI", () => {
       { command: "clang", args: ["--version"] },
       {
         command: "clang",
-        args: ["-O3", "-shared", "-fPIC", join(cwd, "build/libpricing.ll"), "-o", join(cwd, "build/libpricing.so")]
+        args: ["-O0", "-shared", "-fPIC", join(cwd, "build/libpricing.ll"), "-o", join(cwd, "build/libpricing.so")]
       }
     ]);
+  });
+
+  it("build-llvm passes explicit opt-level through to clang", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner: CommandRunner = (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: "", stderr: "" };
+    };
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "-O2"], {
+      cwd,
+      platform: "linux",
+      runCommand: runner,
+      stdout: () => {},
+      stderr: () => {}
+    });
+
+    expect(exitCode).toBe(0);
+    expect(calls.at(-1)).toEqual({
+      command: "clang",
+      args: ["-O2", "-shared", "-fPIC", join(cwd, "build/libpricing.ll"), "-o", join(cwd, "build/libpricing.so")]
+    });
   });
 
   it("build-llvm respects explicit output extensions and platform defaults", () => {
@@ -827,7 +1058,7 @@ describe("ikc CLI", () => {
       expect(exitCode).toBe(0);
       expect(calls.at(-1)).toEqual({
         command: "clang",
-        args: ["-O3", ...platformFlags, join(cwd, `${requestedOut}.ll`), "-o", join(cwd, expectedOut)]
+        args: ["-O0", ...platformFlags, join(cwd, `${requestedOut}.ll`), "-o", join(cwd, expectedOut)]
       });
     }
   });
@@ -880,7 +1111,7 @@ describe("ikc CLI", () => {
       { command: "clang", args: ["--version"] },
       {
         command: "clang",
-        args: ["-O3", "-c", join(cwd, "build/pricing.ll"), "-o", join(cwd, "build/pricing.o")]
+        args: ["-O0", "-c", join(cwd, "build/pricing.ll"), "-o", join(cwd, "build/pricing.o")]
       }
     ]);
   });
@@ -1520,6 +1751,63 @@ int main(void) {
   );
 
   it.skipIf(!clangAvailable)(
+    clangAvailable
+      ? "compiles and runs an O2 optimized C harness for calc_items with strict clang flags"
+      : "compiles and runs an O2 optimized C harness for calc_items (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile } = emitPricingO2Example(cwd);
+      const harnessFile = join(cwd, "build/pricing_o2_harness.c");
+      const executable = join(cwd, "build/pricing_o2_harness");
+      const generatedC = readFileSync(cFile, "utf8");
+
+      expect(generatedC).toContain("Item* ik_tmp_addr0;");
+      expect(generatedC).toContain("ik_tmp_addr0 = &items[i];");
+      expect(generatedC).toContain("ik_tmp_addr0->price");
+      expect(generatedC).toContain("ik_tmp_addr0->qty");
+      expect(generatedC).toContain("ik_tmp_addr0->discount");
+      expect(generatedC).toContain("ik_tmp_addr0->tax_rate_ppm");
+      expect(generatedC).toMatch(/int64_t\* ik_tmp_addr\d+;/);
+      expect(generatedC).toMatch(/ik_tmp_addr\d+ = &out\[i\];/);
+      expect(generatedC).toMatch(/\(\*ik_tmp_addr\d+\) = ik_tmp\d+;/);
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "pricing_o2.h"
+
+int main(void) {
+  Item items[2] = {
+    { .price = 10000, .qty = 2, .discount = 1000, .tax_rate_ppm = 82500 },
+    { .price = 2500, .qty = 4, .discount = 0, .tax_rate_ppm = 100000 }
+  };
+  int64_t out[2] = {0, 0};
+
+  if (calc_items(items, 2, out) != 0) {
+    return 10;
+  }
+  if (out[0] != 20567) {
+    return 20;
+  }
+  if (out[1] != 11000) {
+    return 21;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+
+  it.skipIf(!clangAvailable)(
     clangAvailable ? "compiles and runs a checked C harness for calc_items with strict clang flags" : "compiles and runs a checked C harness for calc_items (skipped because clang was not found)",
     () => {
       const cwd = tempDir();
@@ -1531,6 +1819,78 @@ int main(void) {
         harnessFile,
         `
 #include "pricing_checked.h"
+
+#include <limits.h>
+#include <stdint.h>
+
+int main(void) {
+  Item items[2] = {
+    { .price = 10000, .qty = 2, .discount = 1000, .tax_rate_ppm = 82500 },
+    { .price = 2500, .qty = 4, .discount = 0, .tax_rate_ppm = 100000 }
+  };
+  int64_t out[2] = {0, 0};
+  int32_t ik_return = -1;
+
+  IK_Status status = calc_items(items, 2, out, &ik_return);
+  if (status != IK_OK) {
+    return 10;
+  }
+  if (ik_return != 0) {
+    return 11;
+  }
+  if (out[0] != 20567) {
+    return 20;
+  }
+  if (out[1] != 11000) {
+    return 21;
+  }
+
+  Item overflow_items[1] = {
+    { .price = INT64_MAX, .qty = 2, .discount = 0, .tax_rate_ppm = 0 }
+  };
+  int64_t overflow_out[1] = {0};
+  ik_return = -1;
+
+  status = calc_items(overflow_items, 1, overflow_out, &ik_return);
+  if (status != IK_ERR_OVERFLOW) {
+    return 30;
+  }
+
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable
+      ? "compiles and runs an O3 optimized checked C harness for calc_items with strict clang flags"
+      : "compiles and runs an O3 optimized checked C harness for calc_items (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile } = emitPricingCheckedO3Example(cwd);
+      const generatedC = readFileSync(cFile, "utf8");
+      const harnessFile = join(cwd, "build/pricing_checked_o3_harness.c");
+      const executable = join(cwd, "build/pricing_checked_o3_harness");
+
+      expect(generatedC).not.toContain("__builtin_add_overflow(i,");
+      expect(generatedC).toContain("__builtin_mul_overflow");
+      expect(generatedC).toContain("__builtin_sub_overflow");
+      expect(generatedC).toContain("__builtin_add_overflow(after_discount, tax");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "pricing_checked_o3.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -1874,6 +2234,52 @@ int main(void) {
 
   it.skipIf(!clangAvailable)(
     clangAvailable
+      ? "compiles and runs an O2 optimized short-circuit harness with strict clang flags"
+      : "compiles and runs an O2 optimized short-circuit harness (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile } = emitOptimizedShortCircuitUncheckedExample(cwd);
+      const harnessFile = join(cwd, "build/short_circuit_optimized_harness.c");
+      const executable = join(cwd, "build/short_circuit_optimized_harness");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "short_circuit_optimized.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+int main(void) {
+  if (and_short_circuit(0, 10) != false) {
+    return 10;
+  }
+  if (and_short_circuit(2, 10) != true) {
+    return 11;
+  }
+  if (or_short_circuit(0, 10) != true) {
+    return 12;
+  }
+  if (or_short_circuit(2, 10) != true) {
+    return 13;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable
       ? "compiles and runs a function-call harness emitted from MIR with strict clang flags"
       : "compiles and runs a function-call harness emitted from MIR (skipped because clang was not found)",
     () => {
@@ -1897,6 +2303,53 @@ int main(void) {
 int main(void) {
   if (calc(1, 2) != 6) {
     return 10;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable
+      ? "compiles and runs an O2 optimized inlined function-call harness with strict clang flags"
+      : "compiles and runs an O2 optimized inlined function-call harness (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile, headerFile } = emitOptimizedCallsUncheckedExample(cwd);
+      const header = readFileSync(headerFile, "utf8");
+      const source = readFileSync(cFile, "utf8");
+      const harnessFile = join(cwd, "build/calls_optimized_harness.c");
+      const executable = join(cwd, "build/calls_optimized_harness");
+
+      expect(header).toContain("IK_API int64_t calc(int64_t a, int64_t b);");
+      expect(header).not.toContain("add_i64");
+      expect(header).not.toContain("double_i64");
+      expect(source).not.toContain("static int64_t add_i64");
+      expect(source).not.toContain("static int64_t double_i64");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "calls_optimized.h"
+
+#include <stdint.h>
+
+int main(void) {
+  if (calc(1, 2) != 6) {
+    return 10;
+  }
+  if (calc(3, 4) != 14) {
+    return 11;
   }
   return 0;
 }

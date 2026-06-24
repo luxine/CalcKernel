@@ -6,7 +6,9 @@ const defaultFull = {
   warmup: 3,
   saveBaseline: false,
   compare: false,
-  failOnRegression: false
+  failOnRegression: false,
+  thresholdPercent: 10,
+  cases: []
 };
 
 const quickOverrides = {
@@ -38,6 +40,14 @@ export function parseArgs(argv) {
       case "--fail-on-regression":
         config.failOnRegression = true;
         break;
+      case "--threshold":
+        config.thresholdPercent = requirePositiveNumber(argv, index, "--threshold");
+        index += 1;
+        break;
+      case "--case":
+        config.cases.push(requireNonEmptyValue(argv, index, "--case"));
+        index += 1;
+        break;
       case "--items":
         config.items = requirePositiveInteger(argv, index, "--items");
         index += 1;
@@ -60,6 +70,26 @@ export function parseArgs(argv) {
   }
 
   return config;
+}
+
+function requireNonEmptyValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a non-empty value`);
+  }
+
+  return value;
+}
+
+function requirePositiveNumber(argv, index, flag) {
+  const value = argv[index + 1];
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive number`);
+  }
+
+  return parsed;
 }
 
 function requirePositiveInteger(argv, index, flag) {

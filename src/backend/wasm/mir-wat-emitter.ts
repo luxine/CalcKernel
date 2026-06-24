@@ -13,13 +13,17 @@ import type {
   MirValue
 } from "../../mir/mir.js";
 import type { WasmValueType } from "./wasm-types.js";
+import { resolveOptimizationLevel, type OptimizationLevel, type OptimizationOptions } from "../../optimization/options.js";
 import { emitWatModule, type WatFunction, type WatLocal } from "./wat-emitter.js";
 import { toWasmIdentifier } from "./wasm-names.js";
 
-export function emitMirWatModule(module: MirModule): string {
+export interface EmitMirWatModuleOptions extends OptimizationOptions {}
+
+export function emitMirWatModule(module: MirModule, options: EmitMirWatModuleOptions = {}): string {
   const context = createMirWasmContext(module.structs);
+  const optLevel = resolveOptimizationLevel(options);
   return emitWatModule({
-    functions: module.functions.map((func) => emitMirWatFunction(func, context))
+    functions: module.functions.map((func) => emitMirWatFunction(func, context, optLevel))
   });
 }
 
@@ -42,10 +46,11 @@ interface MirStructFieldLayout {
   align: number;
 }
 
-function emitMirWatFunction(func: MirFunction, context: MirWasmContext): WatFunction {
-  const dispatcher = func.blocks.length > 1 ? createDispatcherContext(func) : null;
+function emitMirWatFunction(func: MirFunction, context: MirWasmContext, optLevel: OptimizationLevel): WatFunction {
+  const structuredWhile = optLevel >= 3 ? detectSimpleWhile(func) : null;
+  const dispatcher = !structuredWhile && func.blocks.length > 1 ? createDispatcherContext(func) : null;
   const locals = collectWatLocals(func, dispatcher);
-  const body = emitFunctionBody(func, dispatcher, context);
+  const body = emitFunctionBody(func, dispatcher, structuredWhile, context);
 
   return {
     name: func.name,
@@ -66,9 +71,22 @@ interface DispatcherContext {
   caseLabels: string[];
 }
 
-function emitFunctionBody(func: MirFunction, dispatcher: DispatcherContext | null, context: MirWasmContext): string[] {
+interface StructuredWhileContext {
+  entry: MirBlock;
+  header: MirBlock;
+  body: MirBlock;
+  exit: MirBlock;
+  loopLabel: string;
+  exitLabel: string;
+}
+
+function emitFunctionBody(func: MirFunction, dispatcher: DispatcherContext | null, structuredWhile: StructuredWhileContext | null, context: MirWasmContext): string[] {
   if (func.blocks.length === 1) {
     return emitSingleReturnBlock(func, func.blocks[0]!, context);
+  }
+
+  if (structuredWhile) {
+    return emitStructuredWhileFunction(structuredWhile, context);
   }
 
   if (!dispatcher) {
@@ -164,6 +182,97 @@ function uniqueInternalName(baseName: string, usedNames: Set<string>): string {
   }
 }
 
+function detectSimpleWhile(func: MirFunction): StructuredWhileContext | null {
+  if (func.blocks.length !== 4) {
+    return null;
+  }
+
+  const usedNames = collectFunctionNames(func);
+  const blocks = new Map(func.blocks.map((block) => [block.label, block]));
+  const entry = func.blocks[0]!;
+  if (entry.terminator.kind !== "jump") {
+    return null;
+  }
+
+  const header = blocks.get(entry.terminator.label);
+  if (!header || header.terminator.kind !== "branch") {
+    return null;
+  }
+
+  const body = blocks.get(header.terminator.thenLabel);
+  const exit = blocks.get(header.terminator.elseLabel);
+  if (!body || !exit || body.terminator.kind !== "jump" || body.terminator.label !== header.label || exit.terminator.kind !== "return") {
+    return null;
+  }
+
+  const matchedLabels = new Set([entry.label, header.label, body.label, exit.label]);
+  if (matchedLabels.size !== func.blocks.length) {
+    return null;
+  }
+
+  return {
+    entry,
+    header,
+    body,
+    exit,
+    loopLabel: uniqueInternalName("ik_loop", usedNames),
+    exitLabel: uniqueInternalName("ik_exit", usedNames)
+  };
+}
+
+function collectFunctionNames(func: MirFunction): Set<string> {
+  const names = new Set<string>();
+  for (const param of func.params) {
+    names.add(param.name);
+  }
+  for (const local of func.locals) {
+    names.add(local.name);
+  }
+  for (const block of func.blocks) {
+    names.add(block.label);
+    for (const instruction of block.instructions) {
+      const target = instructionTarget(instruction);
+      if (target?.kind === "temp") {
+        names.add(target.name);
+      }
+    }
+  }
+  return names;
+}
+
+function emitStructuredWhileFunction(loop: StructuredWhileContext, context: MirWasmContext): string[] {
+  const body: string[] = [];
+  emitBlockInstructions(body, loop.entry, context);
+  body.push(`block ${toWasmIdentifier(loop.exitLabel)}`);
+  body.push(`  loop ${toWasmIdentifier(loop.loopLabel)}`);
+
+  const headerLines: string[] = [];
+  emitBlockInstructions(headerLines, loop.header, context);
+  emitValue(headerLines, loop.header.terminator.kind === "branch" ? loop.header.terminator.condition : unreachableTerminatorCondition());
+  headerLines.push("i32.eqz");
+  headerLines.push(`br_if ${toWasmIdentifier(loop.exitLabel)}`);
+  for (const line of headerLines) {
+    body.push(`    ${line}`);
+  }
+
+  const bodyLines: string[] = [];
+  emitBlockInstructions(bodyLines, loop.body, context);
+  bodyLines.push(`br ${toWasmIdentifier(loop.loopLabel)}`);
+  for (const line of bodyLines) {
+    body.push(`    ${line}`);
+  }
+
+  body.push("  end");
+  body.push("end");
+  emitBlockInstructions(body, loop.exit, context);
+  emitTerminator(body, loop.exit.terminator);
+  return body;
+}
+
+function unreachableTerminatorCondition(): MirValue {
+  throw new Error("internal error: structured while header did not have a branch terminator.");
+}
+
 function emitDispatchedFunction(func: MirFunction, dispatcher: DispatcherContext, context: MirWasmContext): string[] {
   const body: string[] = [];
   const defaultLabel = dispatcher.caseLabels[0]!;
@@ -256,6 +365,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | null {
     case "binary":
     case "unary":
     case "compare":
+    case "address":
     case "load":
     case "call":
       return instruction.target;
@@ -291,6 +401,10 @@ function emitInstruction(body: string[], instruction: MirInstruction, context: M
       emitValue(body, instruction.left);
       emitValue(body, instruction.right);
       body.push(compareWatInstruction(instruction.op, instruction.left.type));
+      emitSet(body, instruction.target);
+      return;
+    case "address":
+      emitAddress(body, instruction.place, context);
       emitSet(body, instruction.target);
       return;
     case "load":
@@ -366,6 +480,9 @@ function emitAddress(body: string[], place: MirPlace, context: MirWasmContext): 
         throw new Error(`Cannot emit WASM address for non-pointer place '${place.name}'.`);
       }
       body.push(`local.get ${toWasmIdentifier(place.name)}`);
+      return;
+    case "deref":
+      emitValue(body, place.pointer);
       return;
     case "index": {
       if (place.base.type.kind !== "pointer") {

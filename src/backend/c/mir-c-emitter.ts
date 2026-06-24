@@ -1,5 +1,6 @@
 import { validateMirModule } from "../../mir/mir-validator.js";
 import type { MirBlock, MirFunction, MirInstruction, MirModule, MirPlace, MirTerminator, MirType, MirValue } from "../../mir/mir.js";
+import { resolveOptimizationLevel, type OptimizationLevel } from "../../optimization/options.js";
 import { emitCPrimitiveType, escapeCIncludePath } from "./c-common.js";
 import { resolveOverflowMode, type CCodegenOptions } from "./c-options.js";
 
@@ -14,10 +15,11 @@ export function emitMirCSource(module: MirModule, options: EmitMirCSourceOptions
   }
 
   const overflowMode = resolveOverflowMode(options);
+  const optLevel = resolveOptimizationLevel(options);
   const lines = [`#include "${escapeCIncludePath(options.headerFileName)}"`];
 
   for (const func of module.functions) {
-    lines.push("", overflowMode === "checked" ? emitCheckedFunction(func) : emitFunction(func));
+    lines.push("", overflowMode === "checked" ? emitCheckedFunction(func, optLevel) : emitFunction(func));
   }
 
   return `${lines.join("\n")}\n`;
@@ -51,7 +53,7 @@ function emitFunction(func: MirFunction): string {
   return lines.join("\n");
 }
 
-function emitCheckedFunction(func: MirFunction): string {
+function emitCheckedFunction(func: MirFunction, optLevel: OptimizationLevel): string {
   const prefix = func.exported ? "" : "static ";
   const params = func.params.map((param) => `${emitCType(param.type)} ${param.name}`);
   params.push(`${emitCType(func.returnType)}* ik_return`);
@@ -59,6 +61,7 @@ function emitCheckedFunction(func: MirFunction): string {
   const lines = [`${prefix}IK_Status ${func.name}(${params.join(", ")}) {`];
   const declarations = emitDeclarations(func);
   const referencedLabels = collectReferencedLabels(func);
+  const safeUncheckedBinaryTargets = optLevel >= 3 ? collectSafeCheckedInductionBinaryTargets(func) : new Set<string>();
 
   if (functionHasCall(func)) {
     declarations.push("IK_Status ik_status;");
@@ -79,7 +82,7 @@ function emitCheckedFunction(func: MirFunction): string {
       lines.push(`${block.label}:`);
     }
     for (const instruction of block.instructions) {
-      lines.push(...emitCheckedInstruction(instruction).map((line) => `  ${line}`));
+      lines.push(...emitCheckedInstruction(instruction, safeUncheckedBinaryTargets).map((line) => `  ${line}`));
     }
     lines.push(...emitCheckedTerminator(block.terminator).map((line) => `  ${line}`));
   });
@@ -146,6 +149,8 @@ function emitInstruction(instruction: MirInstruction): string {
       return `${emitValue(instruction.target)} = ${emitValue(instruction.left)} ${instruction.op} ${emitValue(instruction.right)};`;
     case "unary":
       return `${emitValue(instruction.target)} = ${instruction.op === "neg" ? "-" : "!"}${emitValue(instruction.operand)};`;
+    case "address":
+      return `${emitValue(instruction.target)} = &${emitPlace(instruction.place)};`;
     case "call":
       return `${emitValue(instruction.target)} = ${instruction.functionName}(${instruction.args.map(emitValue).join(", ")});`;
     case "load":
@@ -155,7 +160,7 @@ function emitInstruction(instruction: MirInstruction): string {
   }
 }
 
-function emitCheckedInstruction(instruction: MirInstruction): string[] {
+function emitCheckedInstruction(instruction: MirInstruction, safeUncheckedBinaryTargets: Set<string>): string[] {
   switch (instruction.kind) {
     case "const_int":
       return [`${emitValue(instruction.target)} = ${instruction.value};`];
@@ -168,7 +173,12 @@ function emitCheckedInstruction(instruction: MirInstruction): string[] {
     case "unary":
       return emitCheckedUnaryInstruction(instruction);
     case "binary":
+      if (safeUncheckedBinaryTargets.has(valueIdentity(instruction.target))) {
+        return [`${emitValue(instruction.target)} = ${emitValue(instruction.left)} ${instruction.op} ${emitValue(instruction.right)};`];
+      }
       return emitCheckedBinaryInstruction(instruction);
+    case "address":
+      return [`${emitValue(instruction.target)} = &${emitPlace(instruction.place)};`];
     case "call": {
       const args = [...instruction.args.map(emitValue), `&${emitValue(instruction.target)}`].join(", ");
       return [
@@ -254,6 +264,149 @@ function emitCheckedDivisionOrModulo(operator: "/" | "%", left: string, right: s
   return lines;
 }
 
+function collectSafeCheckedInductionBinaryTargets(func: MirFunction): Set<string> {
+  const safeTargets = new Set<string>();
+  const blocks = new Map(func.blocks.map((block) => [block.label, block]));
+
+  for (const header of func.blocks) {
+    if (header.terminator.kind !== "branch") {
+      continue;
+    }
+
+    const condition = findValueDef(header, header.terminator.condition);
+    if (!condition || condition.kind !== "compare" || condition.op !== "<" || condition.left.kind !== "local") {
+      continue;
+    }
+
+    const induction = condition.left;
+    const limit = condition.right;
+    if (!isI32OrU32(induction.type) || !sameMirType(induction.type, limit.type) || !isStableLimitValue(limit)) {
+      continue;
+    }
+
+    const body = blocks.get(header.terminator.thenLabel);
+    if (!body || body.terminator.kind !== "jump" || body.terminator.label !== header.label) {
+      continue;
+    }
+
+    const candidate = findBodyIncrementCandidate(body, induction, limit);
+    if (!candidate) {
+      continue;
+    }
+
+    const init = findZeroInitializationBefore(func, header, induction);
+    if (!init) {
+      continue;
+    }
+
+    if (hasUnexpectedAssignments(func, induction, new Set([init, candidate.move]))) {
+      continue;
+    }
+
+    safeTargets.add(valueIdentity(candidate.binary.target));
+  }
+
+  return safeTargets;
+}
+
+function findValueDef(block: MirBlock, value: MirValue): MirInstruction | undefined {
+  if (value.kind !== "temp") {
+    return undefined;
+  }
+
+  return block.instructions.find((instruction) => valueIdentity(instructionTarget(instruction)) === valueIdentity(value));
+}
+
+function findBodyIncrementCandidate(
+  body: MirBlock,
+  induction: Extract<MirValue, { kind: "local" }>,
+  limit: MirValue
+): { binary: Extract<MirInstruction, { kind: "binary" }>; move: Extract<MirInstruction, { kind: "move" }> } | undefined {
+  const intConstants = new Map<string, string>();
+  let candidateBinary: Extract<MirInstruction, { kind: "binary" }> | undefined;
+  let candidateMove: Extract<MirInstruction, { kind: "move" }> | undefined;
+
+  for (const instruction of body.instructions) {
+    if (instruction.kind === "const_int") {
+      intConstants.set(valueIdentity(instruction.target), instruction.value);
+      continue;
+    }
+
+    if (assignsValue(instruction, limit)) {
+      return undefined;
+    }
+
+    if (instruction.kind === "binary" && instruction.op === "+" && sameValue(instruction.left, induction) && intConstants.get(valueIdentity(instruction.right)) === "1") {
+      if (candidateBinary) {
+        return undefined;
+      }
+      candidateBinary = instruction;
+      continue;
+    }
+
+    if (instruction.kind === "move" && sameValue(instruction.target, induction)) {
+      if (!candidateBinary || !sameValue(instruction.value, candidateBinary.target) || candidateMove) {
+        return undefined;
+      }
+      candidateMove = instruction;
+      continue;
+    }
+
+    if (assignsValue(instruction, induction)) {
+      return undefined;
+    }
+  }
+
+  if (!candidateBinary || !candidateMove) {
+    return undefined;
+  }
+
+  return { binary: candidateBinary, move: candidateMove };
+}
+
+function findZeroInitializationBefore(func: MirFunction, header: MirBlock, induction: Extract<MirValue, { kind: "local" }>): MirInstruction | undefined {
+  const intConstants = new Map<string, string>();
+
+  for (const block of func.blocks) {
+    if (block === header) {
+      return undefined;
+    }
+
+    for (const instruction of block.instructions) {
+      if (instruction.kind === "const_int") {
+        intConstants.set(valueIdentity(instruction.target), instruction.value);
+        continue;
+      }
+
+      if (instruction.kind === "move" && sameValue(instruction.target, induction)) {
+        return intConstants.get(valueIdentity(instruction.value)) === "0" ? instruction : undefined;
+      }
+
+      if (assignsValue(instruction, induction)) {
+        return undefined;
+      }
+    }
+
+    if (block.terminator.kind === "jump" && block.terminator.label === header.label) {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function hasUnexpectedAssignments(func: MirFunction, value: Extract<MirValue, { kind: "local" }>, allowed: Set<MirInstruction>): boolean {
+  for (const block of func.blocks) {
+    for (const instruction of block.instructions) {
+      if (!allowed.has(instruction) && assignsValue(instruction, value)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function emitTerminator(terminator: MirTerminator): string[] {
   switch (terminator.kind) {
     case "return":
@@ -296,12 +449,69 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "address":
     case "load":
     case "call":
       return instruction.target;
     case "store":
       return undefined;
   }
+}
+
+function assignsValue(instruction: MirInstruction, value: MirValue): boolean {
+  if (value.kind !== "local" && value.kind !== "temp") {
+    return false;
+  }
+
+  return sameValue(instructionTarget(instruction), value);
+}
+
+function sameValue(left: MirValue | undefined, right: MirValue | undefined): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return valueIdentity(left) === valueIdentity(right);
+}
+
+function valueIdentity(value: MirValue | undefined): string {
+  if (!value) {
+    return "<none>";
+  }
+
+  switch (value.kind) {
+    case "param":
+    case "local":
+    case "temp":
+      return `${value.kind}:${value.name}`;
+    case "const_int":
+      return `const_int:${value.text}:${typeIdentity(value.type)}`;
+    case "const_bool":
+      return `const_bool:${value.value ? "true" : "false"}`;
+  }
+}
+
+function sameMirType(left: MirType, right: MirType): boolean {
+  return typeIdentity(left) === typeIdentity(right);
+}
+
+function typeIdentity(type: MirType): string {
+  switch (type.kind) {
+    case "primitive":
+      return type.name;
+    case "pointer":
+      return `ptr<${typeIdentity(type.elementType)}>`;
+    case "struct":
+      return `struct:${type.name}`;
+  }
+}
+
+function isI32OrU32(type: MirType): boolean {
+  return type.kind === "primitive" && (type.name === "i32" || type.name === "u32");
+}
+
+function isStableLimitValue(value: MirValue): boolean {
+  return value.kind === "param" || value.kind === "local";
 }
 
 function emitValue(value: MirValue): string {
@@ -323,9 +533,14 @@ function emitPlace(place: MirPlace): string {
     case "param":
     case "local":
       return place.name;
+    case "deref":
+      return `(*${emitValue(place.pointer)})`;
     case "index":
       return `${emitPlace(place.base)}[${emitValue(place.index)}]`;
     case "field":
+      if (place.base.kind === "deref") {
+        return `${emitValue(place.base.pointer)}->${place.fieldName}`;
+      }
       return `${emitPlace(place.base)}.${place.fieldName}`;
   }
 }

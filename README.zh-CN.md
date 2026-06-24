@@ -307,22 +307,22 @@ struct、pointer、`BigInt` 和 checked `IK_Status` 映射。
 
 ## Benchmarks
 
-[bench](bench/README.zh-CN.md) 目录包含一个小型 pricing benchmark，用于对比纯
-JavaScript baseline、生成的 C、生成的 checked C，以及生成的 unchecked WASM。
+[bench](bench/README.zh-CN.md) 目录包含本机 pricing performance suite，用于对比
+生成的 C、checked C、LLVM、WASM 和 JavaScript baseline，并且每个 case 都做
+checksum 校验。
 
 ```sh
 pnpm build
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
-node bench/pricing_baseline.js
-node bench/wasm_pricing_benchmark.mjs
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL build/pricing.c bench/pricing_c_harness.c -I build -o build/pricing_c_bench
-./build/pricing_c_bench
+node bench/perf/run.mjs --quick
+node bench/perf/run.mjs --full --save-baseline
+node bench/perf/run.mjs --full --compare --threshold 10
 ```
 
-Benchmark 只是粗略的本地参考。跨语言集成时，应把工作批量放进较大的 native
-调用，而不是一条 item 调一次 native 函数。Benchmark README 还包含 unchecked
-vs checked C benchmark 命令，并说明 WASM 当前只支持 unchecked。
+Benchmark 只是粗略的本地参考，不是跨机器稳定分数。跨语言集成时，应把工作批量
+放进较大的 native 调用，而不是一条 item 调一次 native 函数。当前 Phase 14
+pipeline、本机最新 full run 摘要、baseline/compare 流程和 backend 瓶颈见
+[Performance](docs/zh-CN/PERFORMANCE.md) 和
+[Optimization](docs/zh-CN/OPTIMIZATION.md)。
 
 ## 当前 V0 限制
 
@@ -337,8 +337,7 @@ V0 只支持：
 - 指针索引和 struct 字段访问
 
 V0 不支持字符串、IO、heap allocation、GC、异常、async、class、闭包、模块、
-runtime library、LLVM 或 JIT。Phase 12 WASM backend 仍是实验性能力，目前只支持
-unchecked mode。
+runtime library 或 JIT。WASM 和 LLVM backend 当前只支持 unchecked arithmetic。
 
 V0 不做 bounds check。默认 arithmetic 是 unchecked；可选
 `--overflow checked` C code generation 会检查整数 overflow 和除零，但仍不检查
@@ -358,6 +357,8 @@ English:
 - [C ABI](docs/ABI.md)
 - [WASM ABI](docs/WASM_ABI.md)
 - [LLVM Backend](docs/LLVM_BACKEND.md)
+- [Optimization](docs/OPTIMIZATION.md)
+- [Performance](docs/PERFORMANCE.md)
 - [Naming Conventions](docs/NAMING_CONVENTIONS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
@@ -371,6 +372,8 @@ English:
 - [C ABI](docs/zh-CN/ABI.md)
 - [WASM ABI](docs/zh-CN/WASM_ABI.md)
 - [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)
+- [优化](docs/zh-CN/OPTIMIZATION.md)
+- [性能](docs/zh-CN/PERFORMANCE.md)
 - [命名规范](docs/zh-CN/NAMING_CONVENTIONS.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

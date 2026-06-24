@@ -83,6 +83,20 @@ Use this checklist before publishing or tagging a V0 release.
 - Confirm C/WASM/LLVM backend regression comparison tests pass.
 - Re-run C backend and WASM backend regression tests after LLVM backend changes.
 
+## Optimization / Performance Verification
+
+- Review `docs/OPTIMIZATION.md` and `docs/PERFORMANCE.md`.
+- Confirm the optimization pipeline defaults to `-O0`.
+- Confirm `-O0`, `-O1`, `-O2`, and `-O3` tests pass as part of `pnpm test`.
+- Run `node --test bench/perf/tests/perf-core.test.mjs`.
+- Run `node bench/perf/run.mjs --quick`.
+- If a local baseline exists, run
+  `node bench/perf/run.mjs --quick --compare`.
+- For important release tags, optionally run
+  `node bench/perf/run.mjs --full --compare`.
+- Review `build/perf/latest.summary.md` and snapshot diffs.
+- Do not commit machine-local performance baselines from `build/perf`.
+
 ## Optional Publishing Checks
 
 - Run `npm pack --dry-run` if the package is intended to be published to npm.

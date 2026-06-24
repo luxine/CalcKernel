@@ -202,6 +202,19 @@ function validateInstruction(ctx: FunctionContext, block: MirBlock, instruction:
         addError(ctx, `Compare result for '${instruction.op}' in function '${ctx.func.name}' must be bool, got ${printMirType(instruction.target.type)}.`, block.label);
       }
       return;
+    case "address":
+      validateTarget(ctx, block, instruction.target);
+      validatePlace(ctx, block, instruction.place);
+      if (instruction.target.type.kind !== "pointer") {
+        addError(ctx, `Address result in function '${ctx.func.name}' must be pointer, got ${printMirType(instruction.target.type)}.`, block.label);
+      } else if (!sameType(instruction.target.type.elementType, instruction.place.type)) {
+        addError(
+          ctx,
+          `Address result in function '${ctx.func.name}' must point to ${printMirType(instruction.place.type)}, got ${printMirType(instruction.target.type)}.`,
+          block.label
+        );
+      }
+      return;
     case "load":
       validateTarget(ctx, block, instruction.target);
       validatePlace(ctx, block, instruction.place);
@@ -315,6 +328,14 @@ function validatePlace(ctx: FunctionContext, block: MirBlock, place: MirPlace): 
     case "local":
       validateValue(ctx, block, place);
       return;
+    case "deref":
+      validateValue(ctx, block, place.pointer);
+      if (place.pointer.type.kind !== "pointer") {
+        addError(ctx, `Deref place in function '${ctx.func.name}' requires pointer value, got ${printMirType(place.pointer.type)}.`, block.label);
+      } else if (!sameType(place.pointer.type.elementType, place.type)) {
+        addError(ctx, `Deref place type mismatch in function '${ctx.func.name}': pointer element is ${printMirType(place.pointer.type.elementType)}, place is ${printMirType(place.type)}.`, block.label);
+      }
+      return;
     case "index":
       validatePlace(ctx, block, place.base);
       validateValue(ctx, block, place.index);
@@ -384,6 +405,7 @@ function getInstructionTarget(instruction: MirInstruction): MirValue | undefined
     case "binary":
     case "unary":
     case "compare":
+    case "address":
     case "load":
     case "call":
       return instruction.target;

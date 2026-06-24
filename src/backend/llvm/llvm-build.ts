@@ -1,7 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { lowerToMir } from "../../mir/lower.js";
-import { validateMirModule } from "../../mir/mir-validator.js";
+import { printMirModule } from "../../mir/mir-printer.js";
+import { runMirPassPipeline } from "../../opt/mir-pass-manager.js";
+import type { MirPassDebugFlags } from "../../opt/mir-pass.js";
+import { buildMirOptimizationPipeline } from "../../opt/pipeline.js";
+import { printMirPassPipeline } from "../../opt/pipeline.js";
+import { resolveOptimizationLevel } from "../../optimization/options.js";
+import type { OptimizationOptions } from "../../optimization/options.js";
 import type { CheckResult } from "../../typeck/checker.js";
 import type { BuildPlatform, CommandRunner } from "../c/c-build.js";
 import { emitMirLlvmModule } from "./mir-llvm-emitter.js";
@@ -15,6 +21,9 @@ export interface BuildLlvmSharedLibraryOptions {
   sourceFileName: string;
   targetTriple?: string;
   writeFile: (path: string, text: string) => void;
+  optLevel?: OptimizationOptions["optLevel"];
+  mirDebug?: MirPassDebugFlags;
+  writeDebug?: (text: string) => void;
 }
 
 export interface BuildLlvmSharedLibraryResult {
@@ -26,11 +35,36 @@ export interface BuildLlvmSharedLibraryResult {
 
 export type LlvmBuildKind = "dynamic" | "object";
 
-export function emitDefaultLlvmIr(checked: CheckResult, options: { sourceFileName: string; targetTriple?: string }): string {
+export function emitDefaultLlvmIr(
+  checked: CheckResult,
+  options: { sourceFileName: string; targetTriple?: string; mirDebug?: MirPassDebugFlags; writeDebug?: (text: string) => void } & OptimizationOptions
+): string {
   const mir = lowerToMir(checked.checkedProgram);
-  const validation = validateMirModule(mir);
-  if (validation.errors.length > 0) {
-    const details = validation.errors
+  const optLevel = resolveOptimizationLevel(options);
+  const pipeline = buildMirOptimizationPipeline(optLevel);
+  const debug = options.mirDebug ?? {};
+  const writeDebug = options.writeDebug ?? (() => {});
+
+  if (debug.printPassPipeline) {
+    writeDebug(`MIR pass pipeline: ${printMirPassPipeline(pipeline)}\n`);
+  }
+  if (debug.printMirBeforeOpt) {
+    writeDebug(`MIR before optimization:\n${printMirModule(mir)}`);
+  }
+
+  const optimized = runMirPassPipeline(mir, pipeline, {
+    optLevel,
+    overflowMode: "unchecked",
+    targetBackend: "llvm",
+    debug
+  });
+
+  if (debug.printMirAfterOpt) {
+    writeDebug(`MIR after optimization:\n${printMirModule(optimized.module)}`);
+  }
+
+  if (optimized.validationErrors.length > 0) {
+    const details = optimized.validationErrors
       .map((error) => {
         const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
         return `  - ${location ? `${location}: ` : ""}${error.message}`;
@@ -39,11 +73,18 @@ export function emitDefaultLlvmIr(checked: CheckResult, options: { sourceFileNam
     throw new Error(`internal compiler error: MIR validation failed\n${details}`);
   }
 
-  return emitMirLlvmModule(mir, { sourceFileName: basename(options.sourceFileName), targetTriple: options.targetTriple });
+  return emitMirLlvmModule(optimized.module, { sourceFileName: basename(options.sourceFileName), targetTriple: options.targetTriple, optLevel });
 }
 
 export function buildLlvmSharedLibrary(checked: CheckResult, options: BuildLlvmSharedLibraryOptions): BuildLlvmSharedLibraryResult {
-  const llvmIr = emitDefaultLlvmIr(checked, { sourceFileName: options.sourceFileName, targetTriple: options.targetTriple });
+  const optLevel = resolveOptimizationLevel(options);
+  const llvmIr = emitDefaultLlvmIr(checked, {
+    sourceFileName: options.sourceFileName,
+    targetTriple: options.targetTriple,
+    optLevel,
+    mirDebug: options.mirDebug,
+    writeDebug: options.writeDebug
+  });
   options.writeFile(options.llFile, llvmIr);
 
   const outputPath = buildOutputPath(options.outputPath, options.platform, options.kind);
@@ -69,7 +110,7 @@ export function buildLlvmSharedLibrary(checked: CheckResult, options: BuildLlvmS
   }
 
   mkdirSync(dirname(outputPath), { recursive: true });
-  const result = options.runCommand("clang", clangArgs(options.llFile, outputPath, options.platform, options.kind));
+  const result = options.runCommand("clang", clangArgs(options.llFile, outputPath, options.platform, options.kind, optLevel));
   if (isMissingCommand(result)) {
     return {
       ok: false,
@@ -120,16 +161,18 @@ function buildOutputPath(outputPath: string, platform: BuildPlatform, kind: Llvm
   return kind === "object" ? objectOutputPath(outputPath, platform) : sharedLibraryOutputPath(outputPath, platform);
 }
 
-function clangArgs(llFile: string, outputPath: string, platform: BuildPlatform, kind: LlvmBuildKind): string[] {
+function clangArgs(llFile: string, outputPath: string, platform: BuildPlatform, kind: LlvmBuildKind, optLevel: number): string[] {
+  const optimizationFlag = `-O${optLevel}`;
+
   if (kind === "object") {
-    return ["-O3", "-c", llFile, "-o", outputPath];
+    return [optimizationFlag, "-c", llFile, "-o", outputPath];
   }
 
   if (platform === "win32") {
-    return ["-O3", "-shared", llFile, "-o", outputPath];
+    return [optimizationFlag, "-shared", llFile, "-o", outputPath];
   }
 
-  return ["-O3", "-shared", "-fPIC", llFile, "-o", outputPath];
+  return [optimizationFlag, "-shared", "-fPIC", llFile, "-o", outputPath];
 }
 
 function isMissingCommand(result: { error?: NodeJS.ErrnoException }): boolean {

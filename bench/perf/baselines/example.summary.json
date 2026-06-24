@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "mode": "full",
+    "items": 100000,
+    "iterations": 1000,
+    "runs": 20,
+    "warmup": 3,
+    "generatedAt": "2026-06-24T00:00:00.000Z",
+    "note": "Example format only. Do not use these numbers as release thresholds."
+  },
+  "results": [
+    {
+      "name": "pricing-c-unchecked-O3",
+      "category": "native",
+      "optLevel": "O3",
+      "overflowMode": "unchecked",
+      "medianSeconds": 0.06,
+      "p95Seconds": 0.063,
+      "ratioToCUncheckedO3": 1
+    },
+    {
+      "name": "pricing-wasm-unchecked-compute-only-O3",
+      "category": "wasm",
+      "optLevel": "IK-O3",
+      "overflowMode": "unchecked",
+      "medianSeconds": 0.12,
+      "p95Seconds": 0.13,
+      "ratioToCUncheckedO3": 2
+    }
+  ]
+}

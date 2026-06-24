@@ -11,11 +11,16 @@ import { detectNativeLlvmTargetTriple } from "./backend/llvm/llvm-target.js";
 import { emitMirWatModule } from "./backend/wasm/mir-wat-emitter.js";
 import { compileWatToWasm } from "./backend/wasm/wat-to-wasm.js";
 import { lowerToMir } from "./mir/lower.js";
+import type { MirModule } from "./mir/mir.js";
 import { printMirModule } from "./mir/mir-printer.js";
-import { validateMirModule } from "./mir/mir-validator.js";
+import type { MirValidationError } from "./mir/mir-validator.js";
+import { defaultOptimizationLevel, parseOptimizationLevel, type OptimizationLevel } from "./optimization/options.js";
+import { runMirPassPipeline } from "./opt/mir-pass-manager.js";
+import type { MirPassDebugFlags, MirPassOverflowMode, MirPassTargetBackend } from "./opt/mir-pass.js";
+import { buildMirOptimizationPipeline, printMirPassPipeline } from "./opt/pipeline.js";
 import { formatDiagnostics } from "./source/diagnostics.js";
 import { SourceFile } from "./source/source-file.js";
-import { check, type CheckResult } from "./typeck/checker.js";
+import { check, type CheckedProgram, type CheckResult } from "./typeck/checker.js";
 
 export type { CommandRunner };
 
@@ -31,6 +36,8 @@ interface FlagParseResult {
   positional: string[];
   flags: Map<string, string>;
 }
+
+const booleanFlags = new Set(["--print-pass-pipeline", "--print-mir-before-opt", "--print-mir-after-opt"]);
 
 export function runCli(argv: string[] = process.argv.slice(2), options: RunCliOptions = {}): number {
   const context = cliContext(options);
@@ -89,6 +96,8 @@ function runEmitC(args: string[], context: Required<RunCliOptions>): number {
   const cFile = requireFlag(parsed, "--out", "emit-c");
   const headerFile = requireFlag(parsed, "--header", "emit-c");
   const overflowMode = parseOverflowMode(parsed);
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
   const checked = checkFile(file, context.cwd);
 
   if (checked.result.diagnostics.length > 0) {
@@ -104,7 +113,10 @@ function runEmitC(args: string[], context: Required<RunCliOptions>): number {
     cFile: cPath,
     headerFile: headerPath,
     headerFileName: basename(headerPath),
-    overflowMode
+    overflowMode,
+    optLevel,
+    mirDebug: debug,
+    writeDebug: context.stderr
   });
   context.stdout(`OK: emitted C with overflow=${overflowMode}\nWrote ${cPath}\nWrote ${headerPath}\n`);
   return 0;
@@ -114,6 +126,8 @@ function runEmitMir(args: string[], context: Required<RunCliOptions>): number {
   const parsed = parseFlags(args);
   const file = requireSingleInput(parsed, "emit-mir");
   const outFile = parsed.flags.get("--out");
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
   const checked = checkFile(file, context.cwd);
 
   if (checked.result.diagnostics.length > 0) {
@@ -121,18 +135,19 @@ function runEmitMir(args: string[], context: Required<RunCliOptions>): number {
     return 1;
   }
 
-  const mir = lowerToMir(checked.result.checkedProgram);
-  const validation = validateMirModule(mir);
-  if (validation.errors.length > 0) {
-    context.stderr("internal compiler error: MIR validation failed\n");
-    for (const error of validation.errors) {
-      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
-      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
-    }
+  const optimizedMir = lowerAndOptimizeMir(checked.result.checkedProgram, {
+    optLevel,
+    overflowMode: "unchecked",
+    targetBackend: "mir",
+    debug,
+    stderr: context.stderr
+  });
+  if (!optimizedMir.ok) {
+    printInternalMirValidationErrors(context.stderr, optimizedMir.validationErrors);
     return 1;
   }
 
-  const text = printMirModule(mir);
+  const text = printMirModule(optimizedMir.module);
 
   if (!outFile) {
     context.stdout(text);
@@ -151,6 +166,8 @@ function runEmitLlvm(args: string[], context: Required<RunCliOptions>): number {
   const file = requireSingleInput(parsed, "emit-llvm");
   const outFile = parsed.flags.get("--out");
   const overflowMode = parseOverflowMode(parsed);
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
   const targetTriple = parsed.flags.get("--target");
 
   if (overflowMode === "checked") {
@@ -164,18 +181,19 @@ function runEmitLlvm(args: string[], context: Required<RunCliOptions>): number {
     return 1;
   }
 
-  const mir = lowerToMir(checked.result.checkedProgram);
-  const validation = validateMirModule(mir);
-  if (validation.errors.length > 0) {
-    context.stderr("internal compiler error: MIR validation failed\n");
-    for (const error of validation.errors) {
-      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
-      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
-    }
+  const optimizedMir = lowerAndOptimizeMir(checked.result.checkedProgram, {
+    optLevel,
+    overflowMode,
+    targetBackend: "llvm",
+    debug,
+    stderr: context.stderr
+  });
+  if (!optimizedMir.ok) {
+    printInternalMirValidationErrors(context.stderr, optimizedMir.validationErrors);
     return 1;
   }
 
-  const text = emitMirLlvmModule(mir, { sourceFileName: file, targetTriple: targetTriple ?? detectNativeLlvmTargetTriple() });
+  const text = emitMirLlvmModule(optimizedMir.module, { sourceFileName: file, targetTriple: targetTriple ?? detectNativeLlvmTargetTriple(), optLevel });
 
   if (!outFile) {
     context.stdout(text);
@@ -193,6 +211,8 @@ function runEmitWat(args: string[], context: Required<RunCliOptions>): number {
   const file = requireSingleInput(parsed, "emit-wat");
   const outFile = parsed.flags.get("--out");
   const overflowMode = parseOverflowMode(parsed);
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
 
   if (overflowMode === "checked") {
     throw unsupportedCheckedWasmError();
@@ -205,18 +225,19 @@ function runEmitWat(args: string[], context: Required<RunCliOptions>): number {
     return 1;
   }
 
-  const mir = lowerToMir(checked.result.checkedProgram);
-  const validation = validateMirModule(mir);
-  if (validation.errors.length > 0) {
-    context.stderr("internal compiler error: MIR validation failed\n");
-    for (const error of validation.errors) {
-      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
-      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
-    }
+  const optimizedMir = lowerAndOptimizeMir(checked.result.checkedProgram, {
+    optLevel,
+    overflowMode,
+    targetBackend: "wasm",
+    debug,
+    stderr: context.stderr
+  });
+  if (!optimizedMir.ok) {
+    printInternalMirValidationErrors(context.stderr, optimizedMir.validationErrors);
     return 1;
   }
 
-  const text = emitMirWatModule(mir);
+  const text = emitMirWatModule(optimizedMir.module, { optLevel });
 
   if (!outFile) {
     context.stdout(text);
@@ -234,6 +255,8 @@ function runEmitWasm(args: string[], context: Required<RunCliOptions>): number {
   const file = requireSingleInput(parsed, "emit-wasm");
   const outFile = requireFlag(parsed, "--out", "emit-wasm");
   const overflowMode = parseOverflowMode(parsed);
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
 
   if (overflowMode === "checked") {
     throw unsupportedCheckedWasmError();
@@ -246,18 +269,19 @@ function runEmitWasm(args: string[], context: Required<RunCliOptions>): number {
     return 1;
   }
 
-  const mir = lowerToMir(checked.result.checkedProgram);
-  const validation = validateMirModule(mir);
-  if (validation.errors.length > 0) {
-    context.stderr("internal compiler error: MIR validation failed\n");
-    for (const error of validation.errors) {
-      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
-      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
-    }
+  const optimizedMir = lowerAndOptimizeMir(checked.result.checkedProgram, {
+    optLevel,
+    overflowMode,
+    targetBackend: "wasm",
+    debug,
+    stderr: context.stderr
+  });
+  if (!optimizedMir.ok) {
+    printInternalMirValidationErrors(context.stderr, optimizedMir.validationErrors);
     return 1;
   }
 
-  const wat = emitMirWatModule(mir);
+  const wat = emitMirWatModule(optimizedMir.module, { optLevel });
   const wasm = compileWatToWasm(wat, file);
   const outPath = resolve(context.cwd, outFile);
   writeFileAtomic(outPath, wasm);
@@ -270,6 +294,8 @@ function runBuild(args: string[], context: Required<RunCliOptions>): number {
   const file = requireSingleInput(parsed, "build");
   const outputPath = requireFlag(parsed, "--out", "build");
   const overflowMode = parseOverflowMode(parsed);
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
   const checked = checkFile(file, context.cwd);
 
   if (checked.result.diagnostics.length > 0) {
@@ -287,7 +313,10 @@ function runBuild(args: string[], context: Required<RunCliOptions>): number {
     outputPath: absoluteOutputPath,
     platform: context.platform,
     runCommand: context.runCommand,
-    overflowMode
+    overflowMode,
+    optLevel,
+    mirDebug: debug,
+    writeDebug: context.stderr
   });
 
   if (!result.ok) {
@@ -304,6 +333,8 @@ function runBuildLlvm(args: string[], context: Required<RunCliOptions>): number 
   const file = requireSingleInput(parsed, "build-llvm");
   const outputPath = requireFlag(parsed, "--out", "build-llvm");
   const overflowMode = parseOverflowMode(parsed);
+  const optLevel = parseOptLevel(parsed);
+  const debug = parseMirDebugFlags(parsed);
   const targetTriple = parsed.flags.get("--target");
   const kind = parseLlvmBuildKind(parsed);
 
@@ -328,6 +359,9 @@ function runBuildLlvm(args: string[], context: Required<RunCliOptions>): number 
     runCommand: context.runCommand,
     sourceFileName: file,
     targetTriple,
+    optLevel,
+    mirDebug: debug,
+    writeDebug: context.stderr,
     writeFile: writeFileAtomic
   });
 
@@ -364,8 +398,18 @@ function parseFlags(args: string[]): FlagParseResult {
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
+    if (arg.startsWith("-O")) {
+      flags.set("--opt-level", arg.slice(2));
+      continue;
+    }
+
     if (!arg.startsWith("--")) {
       positional.push(arg);
+      continue;
+    }
+
+    if (booleanFlags.has(arg)) {
+      flags.set(arg, "true");
       continue;
     }
 
@@ -434,6 +478,78 @@ function parseOverflowMode(parsed: FlagParseResult): OverflowMode {
   throw new Error(`Invalid value for --overflow: ${value}. Expected 'unchecked' or 'checked'.`);
 }
 
+function parseMirDebugFlags(parsed: FlagParseResult): MirPassDebugFlags {
+  return {
+    printPassPipeline: parsed.flags.has("--print-pass-pipeline"),
+    printMirBeforeOpt: parsed.flags.has("--print-mir-before-opt"),
+    printMirAfterOpt: parsed.flags.has("--print-mir-after-opt")
+  };
+}
+
+function parseOptLevel(parsed: FlagParseResult): OptimizationLevel {
+  const value = parsed.flags.get("--opt-level");
+  if (value === undefined) {
+    return defaultOptimizationLevel;
+  }
+
+  const optLevel = parseOptimizationLevel(value);
+  if (optLevel !== undefined) {
+    return optLevel;
+  }
+
+  throw new Error(`Invalid optimization level: ${value}. Expected 0, 1, 2, or 3.`);
+}
+
+interface LowerAndOptimizeMirOptions {
+  optLevel: OptimizationLevel;
+  overflowMode: MirPassOverflowMode;
+  targetBackend: MirPassTargetBackend;
+  debug: MirPassDebugFlags;
+  stderr: (text: string) => void;
+}
+
+type LowerAndOptimizeMirResult =
+  | { ok: true; module: MirModule }
+  | { ok: false; validationErrors: MirValidationError[] };
+
+function lowerAndOptimizeMir(checkedProgram: CheckedProgram, options: LowerAndOptimizeMirOptions): LowerAndOptimizeMirResult {
+  const mir = lowerToMir(checkedProgram);
+  const pipeline = buildMirOptimizationPipeline(options.optLevel);
+
+  if (options.debug.printPassPipeline) {
+    options.stderr(`MIR pass pipeline: ${printMirPassPipeline(pipeline)}\n`);
+  }
+
+  if (options.debug.printMirBeforeOpt) {
+    options.stderr(`MIR before optimization:\n${printMirModule(mir)}`);
+  }
+
+  const result = runMirPassPipeline(mir, pipeline, {
+    optLevel: options.optLevel,
+    overflowMode: options.overflowMode,
+    targetBackend: options.targetBackend,
+    debug: options.debug
+  });
+
+  if (options.debug.printMirAfterOpt) {
+    options.stderr(`MIR after optimization:\n${printMirModule(result.module)}`);
+  }
+
+  if (result.validationErrors.length > 0) {
+    return { ok: false, validationErrors: result.validationErrors };
+  }
+
+  return { ok: true, module: result.module };
+}
+
+function printInternalMirValidationErrors(stderr: (text: string) => void, validationErrors: MirValidationError[]): void {
+  stderr("internal compiler error: MIR validation failed\n");
+  for (const error of validationErrors) {
+    const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
+    stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
+  }
+}
+
 function parseLlvmBuildKind(parsed: FlagParseResult): LlvmBuildKind {
   const value = parsed.flags.get("--kind") ?? "dynamic";
   if (value === "dynamic" || value === "object") {
@@ -467,16 +583,21 @@ function usage(): string {
   return [
     "Usage:",
     "  ikc check <file>",
-    "  ikc emit-c <file> --out <c-file> --header <h-file> [--overflow <unchecked|checked>]",
-    "  ikc emit-mir <file> [--out <mir-file>]",
-    "  ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked]",
-    "  ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]",
-    "  ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]",
-    "  ikc build <file> --out <output-path> [--overflow <unchecked|checked>]",
-    "  ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]",
+    "  ikc emit-c <file> --out <c-file> --header <h-file> [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
+    "  ikc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]",
+    "  ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ikc build <file> --out <output-path> [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
+    "  ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
     "",
     "Options:",
     "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.",
+    "  --opt-level <0|1|2|3>            MIR optimization level. Default: 0.",
+    "  -O0, -O1, -O2, -O3              Alias for --opt-level.",
+    "  --print-pass-pipeline           Print the selected MIR pass pipeline to stderr.",
+    "  --print-mir-before-opt          Print MIR before optimization to stderr.",
+    "  --print-mir-after-opt           Print MIR after optimization to stderr.",
     ""
   ].join("\n");
 }

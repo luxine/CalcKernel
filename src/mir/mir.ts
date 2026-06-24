@@ -55,6 +55,7 @@ export type MirValue =
 export type MirPlace =
   | { kind: "param"; name: string; type: MirType }
   | { kind: "local"; name: string; type: MirType }
+  | { kind: "deref"; pointer: MirValue; type: MirType }
   | { kind: "index"; base: MirPlace; index: MirValue; type: MirType }
   | { kind: "field"; base: MirPlace; fieldName: string; type: MirType };
 
@@ -69,6 +70,7 @@ export type MirInstruction =
   | MirBinaryInstruction
   | MirUnaryInstruction
   | MirCompareInstruction
+  | MirAddressInstruction
   | MirLoadInstruction
   | MirStoreInstruction
   | MirCallInstruction;
@@ -112,6 +114,12 @@ export interface MirCompareInstruction {
   op: MirCompareOp;
   left: MirValue;
   right: MirValue;
+}
+
+export interface MirAddressInstruction {
+  kind: "address";
+  target: MirValue;
+  place: MirPlace;
 }
 
 export interface MirLoadInstruction {

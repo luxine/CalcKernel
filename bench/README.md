@@ -57,15 +57,75 @@ By default, comparison reports regressions without failing the process. Use
 node bench/perf/run.mjs --full --compare --fail-on-regression
 ```
 
+The default regression threshold is 10% slower by median runtime. Override it
+with `--threshold`:
+
+```sh
+node bench/perf/run.mjs --full --compare --threshold 5
+node bench/perf/run.mjs --full --compare --threshold 10 --fail-on-regression
+```
+
+To run or compare a subset, repeat `--case`. Case filters match exact case names
+or case-name prefixes:
+
+```sh
+node bench/perf/run.mjs --quick --case pricing-c-unchecked
+node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case pricing-wasm-unchecked
+```
+
 The local baseline is stored in `build/perf/baseline.local.json`, which is not
-intended to be committed. Do not compare absolute numbers across machines.
+intended to be committed. Do not compare absolute numbers across machines, and
+do not commit a real baseline from a developer laptop. The checked-in
+`bench/perf/baselines/example.summary.json` file is only a format example; it is
+not a real threshold file.
 
-The first suite covers:
+The decomposed suite covers:
 
-- `pricing-c-unchecked`
-- `pricing-c-checked`
-- `pricing-wasm-unchecked`
+- `pricing-c-unchecked-O0`
+- `pricing-c-unchecked-O2`
+- `pricing-c-unchecked-O3`
+- `pricing-c-unchecked-ik-O3`
+- `pricing-c-checked-O3`
+- `pricing-helpers-c-unchecked-ik-O0`
+- `pricing-helpers-c-unchecked-ik-O2`
+- `pricing-llvm-unchecked-O0`
+- `pricing-llvm-unchecked-O2`
+- `pricing-llvm-unchecked-O3`
+- `pricing-wasm-unchecked-total`
+- `pricing-wasm-unchecked-total-O3`
+- `pricing-wasm-unchecked-compute-only`
+- `pricing-wasm-unchecked-compute-only-O3`
+- `pricing-wasm-unchecked-memory-only`
+- `pricing-wasm-unchecked-call-overhead`
+- `pricing-js-number`
+- `pricing-js-typedarray-number`
 - `pricing-js-bigint`
+
+The summary includes each case's category, optimization level, arithmetic mode,
+median runtime, p95 runtime, and ratio against `pricing-c-unchecked-O3`.
+
+When `--compare` is enabled, `build/perf/latest.summary.md` also includes a
+baseline comparison table. Regression status is based on median runtime:
+
+- `ok`: at or below half the configured threshold
+- `warning`: slower than half the threshold, but not over the threshold
+- `regression`: slower than the configured threshold
+
+The comparison table reports the current median, baseline median, runtime ratio,
+and slower percentage. `--fail-on-regression` only affects explicit performance
+runs; ordinary `pnpm test` does not run hyperfine and does not fail because of
+machine performance variance.
+
+The `pricing-helpers-*` cases use `bench/perf/fixtures/pricing_helpers.ik`,
+which expresses the same pricing math through small non-exported helper
+functions. It is a benchmark-only fixture for measuring MIR small-function
+inlining; it does not change `examples/pricing.ik`.
+
+See [2026-06-24 Performance Profile](docs/2026-06-24-performance-profile.md)
+for the current bottleneck analysis and Phase 14 optimization priorities.
+See [Performance](../docs/PERFORMANCE.md) and
+[Optimization](../docs/OPTIMIZATION.md) for the release-level summary of the
+current pipeline, latest local full-run numbers, and regression workflow.
 
 ## Generate C
 
@@ -98,6 +158,14 @@ node bench/pricing_baseline.js
 
 The JavaScript baseline uses `BigInt64Array` and `BigInt` arithmetic to stay
 close to the `i64` semantics used by `pricing.ik`.
+
+The local performance suite also includes three JavaScript pricing cases:
+
+- `pricing-js-number`: plain JavaScript arrays and `Number` arithmetic.
+- `pricing-js-typedarray-number`: `Float64Array` inputs and `Number`
+  arithmetic.
+- `pricing-js-bigint`: `BigInt64Array` inputs and `BigInt` arithmetic for
+  exact `i64`-style calculations.
 
 ## Run the WASM Benchmark
 
@@ -218,3 +286,14 @@ WASM unchecked benchmark results are not checked-arithmetic safety results.
 Unchecked WASM can be useful for portability and host integration experiments,
 but it does not report integer overflow, division-by-zero safety, pointer
 validity, or buffer length errors.
+
+The decomposed WASM cases separate likely bottleneck layers:
+
+- `pricing-wasm-unchecked-total`: writes memory, calls `calc_items`, and reads
+  the checksum inside the measured workload.
+- `pricing-wasm-unchecked-compute-only`: writes memory once, repeatedly calls
+  `calc_items`, and reads the checksum once.
+- `pricing-wasm-unchecked-memory-only`: measures host-side `DataView`
+  memory write/read work without calling WASM.
+- `pricing-wasm-unchecked-call-overhead`: repeatedly calls a tiny generated
+  WASM function to estimate JS-to-WASM boundary cost.

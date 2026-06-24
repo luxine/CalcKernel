@@ -257,6 +257,49 @@ describe("c emitter", () => {
     expect(source).toContain(" = !");
   });
 
+  it("keeps checked induction overflow checks at O0 and removes only proven-safe increments at O3", () => {
+    const checked = checkedSource(
+      "safe-induction.ik",
+      `
+        export fn fill(out: ptr<i64>, len: i32) -> i32 {
+          let i: i32 = 0;
+          while i < len {
+            out[i] = 0;
+            i = i + 1;
+          }
+          return 0;
+        }
+      `
+    );
+
+    const o0 = emitDefaultCSource(checked, { headerFileName: "safe-induction.h", overflowMode: "checked", optLevel: 0 });
+    const o3 = emitDefaultCSource(checked, { headerFileName: "safe-induction.h", overflowMode: "checked", optLevel: 3 });
+
+    expect(o0).toContain("__builtin_add_overflow(i,");
+    expect(o3).not.toContain("__builtin_add_overflow(i,");
+    expect(o3).toMatch(/ik_tmp\d+ = i \+ ik_tmp\d+;/);
+  });
+
+  it("does not remove checked induction overflow checks without the safe loop proof", () => {
+    const checked = checkedSource(
+      "unsafe-induction.ik",
+      `
+        export fn fill(out: ptr<i64>, len: i32) -> i32 {
+          let i: i32 = 1;
+          while i < len {
+            out[i] = 0;
+            i = i + 1;
+          }
+          return 0;
+        }
+      `
+    );
+
+    const source = emitDefaultCSource(checked, { headerFileName: "unsafe-induction.h", overflowMode: "checked", optLevel: 3 });
+
+    expect(source).toContain("__builtin_add_overflow(i,");
+  });
+
   describe("expression precedence", () => {
     it.each([
       {

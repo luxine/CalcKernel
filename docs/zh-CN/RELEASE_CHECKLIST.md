@@ -76,6 +76,20 @@
 - 确认 C/WASM/LLVM backend regression comparison tests 通过。
 - LLVM backend 变更后，重新运行 C backend 和 WASM backend regression tests。
 
+## Optimization / Performance 验证
+
+- Review `docs/OPTIMIZATION.md` 和 `docs/PERFORMANCE.md`。
+- 确认 optimization pipeline 默认是 `-O0`。
+- 确认 `-O0`、`-O1`、`-O2` 和 `-O3` tests 都在 `pnpm test` 中通过。
+- 运行 `node --test bench/perf/tests/perf-core.test.mjs`。
+- 运行 `node bench/perf/run.mjs --quick`。
+- 如果已有本机 baseline，运行
+  `node bench/perf/run.mjs --quick --compare`。
+- 重要 release tag 前，可选运行
+  `node bench/perf/run.mjs --full --compare`。
+- Review `build/perf/latest.summary.md` 和 snapshot diff。
+- 不要提交 `build/perf` 中的机器本地性能 baseline。
+
 ## 可选发布检查
 
 - 如果计划发布到 npm，运行 `npm pack --dry-run`。

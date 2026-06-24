@@ -79,6 +79,8 @@ function printMirInstruction(instruction: MirInstruction): string {
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = ${printUnaryOp(instruction.op)} ${printMirValue(instruction.operand)}`;
     case "compare":
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = ${printCompareOp(instruction.op)} ${printMirValue(instruction.left)}, ${printMirValue(instruction.right)}`;
+    case "address":
+      return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = address ${printMirPlace(instruction.place)}`;
     case "load":
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = load ${printMirPlace(instruction.place)}`;
     case "store":
@@ -118,6 +120,8 @@ function printMirPlace(place: MirPlace): string {
     case "param":
     case "local":
       return place.name;
+    case "deref":
+      return `deref(${printMirValue(place.pointer)})`;
     case "index":
       return `index(${printMirPlace(place.base)}, ${printMirValue(place.index)})`;
     case "field":

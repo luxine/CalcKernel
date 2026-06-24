@@ -51,4 +51,25 @@ describe("LLVM scalar straight-line emitter", () => {
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
+
+  it("emits SSA-like LLVM IR for simple scalar straight-line functions at O2", () => {
+    const sourceText = `
+      export fn add_i64(a: i64, b: i64) -> i64 {
+        return a + b;
+      }
+    `;
+    const checked = check(new SourceFile("llvm_scalar_o2.ik", sourceText));
+    expect(checked.diagnostics).toEqual([]);
+
+    const mir = lowerToMir(checked.checkedProgram);
+    expect(validateMirModule(mir).errors).toEqual([]);
+
+    const llvm = emitMirLlvmModule(mir, { sourceFileName: "llvm_scalar_o2.ik", optLevel: 2 });
+
+    expect(llvm).toContain("%v0 = add i64 %a, %b");
+    expect(llvm).toContain("ret i64 %v0");
+    expect(llvm).not.toContain("alloca");
+    expect(llvm).not.toContain("load i64");
+    expect(llvm).not.toContain("store i64");
+  });
 });

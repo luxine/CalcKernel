@@ -17,6 +17,7 @@ import type {
   MirUnaryInstruction,
   MirValue
 } from "../../mir/mir.js";
+import { resolveOptimizationLevel } from "../../optimization/options.js";
 import { formatLlvmFieldGep, formatLlvmPointerIndexGep, getIndexExtension } from "./llvm-gep.js";
 import { LlvmIrWriter } from "./llvm-ir-writer.js";
 import {
@@ -29,8 +30,9 @@ import {
 import { llvmBlockLabel, llvmFunctionName, llvmLocalName } from "./llvm-names.js";
 import { emitLlvmTargetTriple, type LlvmTargetOptions } from "./llvm-target.js";
 import { isSignedInteger, isUnsignedInteger, llvmParamType, llvmReturnType, llvmStorageType, llvmValueType } from "./llvm-types.js";
+import type { OptimizationOptions } from "../../optimization/options.js";
 
-export interface EmitMirLlvmModuleOptions extends LlvmTargetOptions {
+export interface EmitMirLlvmModuleOptions extends LlvmTargetOptions, OptimizationOptions {
   sourceFileName?: string;
 }
 
@@ -39,6 +41,7 @@ type AddressableValue = Extract<MirValue, { kind: "param" | "local" | "temp" }>;
 export function emitMirLlvmModule(module: MirModule, options: EmitMirLlvmModuleOptions = {}): string {
   const writer = new LlvmIrWriter();
   const layout = createLlvmLayout(module.structs);
+  const optLevel = resolveOptimizationLevel(options);
 
   writer.line("; ModuleID = 'intkernel'");
   writer.line(`source_filename = "${escapeLlvmString(stableSourceFileName(options.sourceFileName))}"`);
@@ -53,7 +56,7 @@ export function emitMirLlvmModule(module: MirModule, options: EmitMirLlvmModuleO
   }
 
   emitStructs(writer, layout.structs);
-  emitFunctions(writer, module.functions, layout);
+  emitFunctions(writer, module.functions, layout, optLevel);
 
   return writer.toString();
 }
@@ -68,9 +71,9 @@ function emitStructs(writer: LlvmIrWriter, structs: LlvmStructLayout[]): void {
   });
 }
 
-function emitFunctions(writer: LlvmIrWriter, functions: MirFunction[], layout: LlvmLayout): void {
+function emitFunctions(writer: LlvmIrWriter, functions: MirFunction[], layout: LlvmLayout, optLevel: number): void {
   functions.forEach((func, index) => {
-    emitFunctionSkeleton(writer, func, layout);
+    emitFunctionSkeleton(writer, func, layout, optLevel);
 
     if (index < functions.length - 1) {
       writer.blankLine();
@@ -78,7 +81,7 @@ function emitFunctions(writer: LlvmIrWriter, functions: MirFunction[], layout: L
   });
 }
 
-function emitFunctionSkeleton(writer: LlvmIrWriter, func: MirFunction, layout: LlvmLayout): void {
+function emitFunctionSkeleton(writer: LlvmIrWriter, func: MirFunction, layout: LlvmLayout, optLevel: number): void {
   const linkage = func.exported ? "" : "internal ";
   const returnType = llvmReturnType(func.returnType);
   const params = func.params.map((param) => `${llvmParamType(param.type)} ${llvmLocalName(param.name)}`).join(", ");
@@ -89,10 +92,160 @@ function emitFunctionSkeleton(writer: LlvmIrWriter, func: MirFunction, layout: L
     writer.indent(() => {
       writer.line(`ret ${returnType} ${zeroValueForType(func.returnType)}`);
     });
+  } else if (optLevel >= 2 && canEmitSsaLikeFunction(func)) {
+    emitSsaLikeFunctionBody(writer, func);
   } else {
     emitFunctionBody(writer, func, layout);
   }
   writer.line("}");
+}
+
+function canEmitSsaLikeFunction(func: MirFunction): boolean {
+  if (func.locals.length > 0 || func.blocks.length !== 1) {
+    return false;
+  }
+
+  const block = func.blocks[0]!;
+  if (block.terminator.kind !== "return") {
+    return false;
+  }
+
+  return block.instructions.every((instruction) =>
+    instruction.kind === "const_int" ||
+    instruction.kind === "const_bool" ||
+    instruction.kind === "move" ||
+    instruction.kind === "binary" ||
+    instruction.kind === "compare" ||
+    instruction.kind === "unary"
+  );
+}
+
+function emitSsaLikeFunctionBody(writer: LlvmIrWriter, func: MirFunction): void {
+  const context: SsaFunctionEmitContext = {
+    registerCounter: 0,
+    values: new Map()
+  };
+  const block = func.blocks[0]!;
+
+  writer.line("entry:");
+  writer.indent(() => {
+    for (const param of func.params) {
+      context.values.set(valueIdentity({ kind: "param", name: param.name, type: param.type }), llvmLocalName(param.name));
+    }
+
+    for (const instruction of block.instructions) {
+      emitSsaInstruction(writer, context, instruction);
+    }
+
+    const result = ssaValue(context, block.terminator.kind === "return" ? block.terminator.value : unreachableSsaTerminator());
+    writer.line(`ret ${llvmReturnType(func.returnType)} ${result}`);
+  });
+}
+
+interface SsaFunctionEmitContext {
+  registerCounter: number;
+  values: Map<string, string>;
+}
+
+function emitSsaInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContext, instruction: MirInstruction): void {
+  switch (instruction.kind) {
+    case "const_int":
+      context.values.set(valueIdentity(instruction.target), instruction.value);
+      return;
+    case "const_bool":
+      context.values.set(valueIdentity(instruction.target), instruction.value ? "1" : "0");
+      return;
+    case "move":
+      context.values.set(valueIdentity(instruction.target), ssaValue(context, instruction.value));
+      return;
+    case "binary": {
+      const left = ssaValue(context, instruction.left);
+      const right = ssaValue(context, instruction.right);
+      const result = nextSsaRegister(context);
+      const type = llvmValueType(instruction.target.type);
+      writer.line(`${result} = ${llvmBinaryOpcode(instruction.op, instruction.target.type)} ${type} ${left}, ${right}`);
+      context.values.set(valueIdentity(instruction.target), result);
+      return;
+    }
+    case "compare": {
+      const left = ssaValue(context, instruction.left);
+      const right = ssaValue(context, instruction.right);
+      const result = nextSsaRegister(context);
+      const operandType = llvmValueType(instruction.left.type);
+      writer.line(`${result} = icmp ${llvmComparePredicate(instruction.op, instruction.left.type)} ${operandType} ${left}, ${right}`);
+      context.values.set(valueIdentity(instruction.target), result);
+      return;
+    }
+    case "unary": {
+      const operand = ssaValue(context, instruction.operand);
+      const result = nextSsaRegister(context);
+      const type = llvmValueType(instruction.target.type);
+      if (instruction.op === "not") {
+        writer.line(`${result} = xor i1 ${operand}, true`);
+      } else {
+        writer.line(`${result} = sub ${type} 0, ${operand}`);
+      }
+      context.values.set(valueIdentity(instruction.target), result);
+      return;
+    }
+    case "address":
+    case "load":
+    case "store":
+    case "call":
+      throw unsupported(`SSA-like instruction ${instruction.kind}`);
+  }
+}
+
+function ssaValue(context: SsaFunctionEmitContext, value: MirValue): string {
+  switch (value.kind) {
+    case "const_int":
+      return value.text;
+    case "const_bool":
+      return value.value ? "1" : "0";
+    case "param":
+    case "local":
+    case "temp": {
+      const result = context.values.get(valueIdentity(value));
+      if (!result) {
+        throw unsupported(`SSA-like value '${value.name}' before definition`);
+      }
+      return result;
+    }
+  }
+}
+
+function valueIdentity(value: MirValue): string {
+  switch (value.kind) {
+    case "param":
+    case "local":
+    case "temp":
+      return `${value.kind}:${value.name}`;
+    case "const_int":
+      return `const_int:${value.text}:${typeIdentity(value.type)}`;
+    case "const_bool":
+      return `const_bool:${value.value ? "true" : "false"}:${typeIdentity(value.type)}`;
+  }
+}
+
+function typeIdentity(type: MirType): string {
+  switch (type.kind) {
+    case "primitive":
+      return type.name;
+    case "pointer":
+      return `ptr<${typeIdentity(type.elementType)}>`;
+    case "struct":
+      return `struct:${type.name}`;
+  }
+}
+
+function nextSsaRegister(context: SsaFunctionEmitContext): string {
+  const name = llvmLocalName(`v${context.registerCounter}`);
+  context.registerCounter += 1;
+  return name;
+}
+
+function unreachableSsaTerminator(): MirValue {
+  throw new Error("internal error: SSA-like LLVM function did not have a return terminator.");
 }
 
 function emitFunctionBody(writer: LlvmIrWriter, func: MirFunction, layout: LlvmLayout): void {
@@ -164,6 +317,9 @@ function emitInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, ins
     case "unary":
       emitUnaryInstruction(writer, context, instruction);
       return;
+    case "address":
+      emitAddressInstruction(writer, context, instruction);
+      return;
     case "call":
       emitCallInstruction(writer, context, instruction);
       return;
@@ -222,6 +378,11 @@ function emitCallInstruction(writer: LlvmIrWriter, context: FunctionEmitContext,
   writer.line(`store ${returnType} ${result}, ptr ${addressName(requireAddressable(instruction.target))}`);
 }
 
+function emitAddressInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, instruction: Extract<MirInstruction, { kind: "address" }>): void {
+  const pointer = emitPlacePointer(writer, context, instruction.place);
+  writer.line(`store ptr ${pointer}, ptr ${addressName(requireAddressable(instruction.target))}`);
+}
+
 function emitLoadInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, instruction: MirLoadInstruction): void {
   const pointer = emitPlacePointer(writer, context, instruction.place);
   const result = nextRegister(context);
@@ -266,6 +427,8 @@ function emitPlacePointer(writer: LlvmIrWriter, context: FunctionEmitContext, pl
       }
 
       return addressName({ kind: place.kind, name: place.name, type: place.type });
+    case "deref":
+      return loadValue(writer, context, place.pointer);
     case "index": {
       if (place.base.type.kind !== "pointer") {
         throw unsupported("index place on non-pointer base");
@@ -344,6 +507,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "address":
     case "load":
     case "call":
       return instruction.target;
