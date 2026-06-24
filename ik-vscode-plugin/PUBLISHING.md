@@ -26,12 +26,12 @@ The current manifest uses:
 {
   "name": "ik-vscode-plugin",
   "displayName": "IntKernel",
-  "publisher": "local",
+  "publisher": "luxine",
   "version": "0.1.0"
 }
 ```
 
-Before public publication, replace `publisher: "local"` with the real Marketplace publisher ID you create. The publisher ID becomes part of the public extension identifier, for example `<publisher-id>.ik-vscode-plugin`.
+The current Marketplace publisher target is `luxine`. The public extension identifier will be `luxine.ik-vscode-plugin`.
 
 ## One-Time Marketplace Setup
 
@@ -42,11 +42,11 @@ Before public publication, replace `publisher: "local"` with the real Marketplac
    https://marketplace.visualstudio.com/manage/publishers/
 
 4. Choose a stable publisher ID. This ID cannot be changed after creation.
-5. Update `package.json`:
+5. Confirm `package.json` uses the Marketplace publisher ID:
 
    ```json
    {
-     "publisher": "<publisher-id>"
+     "publisher": "luxine"
    }
    ```
 
@@ -164,7 +164,7 @@ For long-term CI after December 1, 2026, use Microsoft Entra ID based publishing
 After the extension appears on Marketplace:
 
 1. Install it from the VS Code Extensions view by searching `IntKernel`.
-2. Confirm the public extension ID is `<publisher-id>.ik-vscode-plugin`.
+2. Confirm the public extension ID is `luxine.ik-vscode-plugin`.
 3. Check the Marketplace page renders README, changelog, license, icon, and screenshots correctly.
 4. Keep release notes in `CHANGELOG.md` aligned with `package.json` `version`.
 5. Use a new semver version for every update. Marketplace versions cannot be reused after publication.
