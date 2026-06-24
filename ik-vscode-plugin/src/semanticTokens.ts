@@ -20,7 +20,7 @@ export function buildSemanticTokenData(analysis: IntKernelAnalysis): SemanticTok
     ...analysis.symbols.map(symbolToToken),
     ...analysis.references.map(referenceToToken)
   ];
-  return tokens.sort((left, right) => left.range.start.compareTo(right.range.start));
+  return tokens.filter(isNonEmptyToken).sort((left, right) => left.range.start.compareTo(right.range.start));
 }
 
 export function registerSemanticTokens(context: vscode.ExtensionContext): void {
@@ -64,6 +64,10 @@ function referenceToToken(reference: IntKernelReference): SemanticTokenData {
     tokenType: tokenTypeForKind(reference.kind),
     tokenModifiers: 0
   };
+}
+
+function isNonEmptyToken(token: SemanticTokenData): boolean {
+  return token.text.length > 0 && token.range.end.compareTo(token.range.start) > 0;
 }
 
 function tokenTypeForKind(kind: string): number {

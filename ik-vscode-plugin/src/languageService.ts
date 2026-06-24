@@ -500,6 +500,9 @@ function referenceFromExpression(
   }
 
   if (expression.kind === "FieldExpression") {
+    if (expression.field.name === "" || isZeroWidthSpan(expression.field.span)) {
+      return undefined;
+    }
     const objectType = getExprType(checkResult.checkedProgram, expression.object);
     const containerName = objectType?.kind === "struct" ? objectType.name : undefined;
     const target = symbolsByName
@@ -516,6 +519,10 @@ function referenceFromExpression(
   }
 
   return undefined;
+}
+
+function isZeroWidthSpan(span: SourceSpan): boolean {
+  return span.start.offset === span.end.offset;
 }
 
 function scopedIdentifierTarget(

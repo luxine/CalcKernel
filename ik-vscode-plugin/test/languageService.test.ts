@@ -237,6 +237,32 @@ fn clone_item(item: Item) -> Item {
     expect(itemTypeReferences.every((reference) => reference.target === itemStructSymbol)).toBe(true);
   });
 
+  it("does not index empty field references for incomplete member access", () => {
+    const incompleteMemberSourceText = `
+struct Item {
+  price: i64;
+}
+
+fn total(item: Item, configs: ptr<Item>) -> i64 {
+  return item.;
+}
+
+fn configured(configs: ptr<Item>) -> i64 {
+  return configs[0].;
+}
+`.trimStart();
+    const analysis = analyzeIntKernelDocument(createMemoryDocument(incompleteMemberSourceText, "memory:///incomplete-member.ik", 1));
+
+    expect(analysis.references.some((reference) => reference.name === "")).toBe(false);
+    expect(
+      analysis.references.some(
+        (reference) =>
+          reference.range.start.line === reference.range.end.line &&
+          reference.range.start.character === reference.range.end.character
+      )
+    ).toBe(false);
+  });
+
   it("falls back to a single diagnostic when check throws", () => {
     const document = createMemoryDocument(sourceText, "memory:///sample.ik", 1);
     const analysis = analyzeIntKernelDocument(document, {

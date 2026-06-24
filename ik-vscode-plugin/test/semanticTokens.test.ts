@@ -146,6 +146,33 @@ describe("semanticTokens", () => {
     expect(context.subscriptions).toHaveLength(1);
     expect(result?.data.length).toBeGreaterThan(0);
   });
+
+  it("does not emit empty or zero-width tokens for incomplete member access", () => {
+    const incompleteMemberSourceText = `
+struct Item {
+  price: i64;
+}
+
+fn total(item: Item, configs: ptr<Item>) -> i64 {
+  return item.;
+}
+
+fn configured(configs: ptr<Item>) -> i64 {
+  return configs[0].;
+}
+`.trimStart();
+    const analysis = analyzeIntKernelDocument(createMemoryDocument(incompleteMemberSourceText, "memory:///incomplete-member-tokens.ik", 1));
+    const tokens = buildSemanticTokenData(analysis);
+
+    expect(tokens.every((token) => token.text.length > 0)).toBe(true);
+    expect(
+      tokens.every(
+        (token) =>
+          token.range.end.line !== token.range.start.line ||
+          token.range.end.character > token.range.start.character
+      )
+    ).toBe(true);
+  });
 });
 
 function tokenAt(tokens: SemanticTokenData[], text: string, line: number, tokenType: number): SemanticTokenData | undefined {
