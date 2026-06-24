@@ -1,11 +1,13 @@
 import * as vscode from "vscode";
 import { registerCompletions } from "./completions";
 import { registerDiagnostics } from "./diagnostics";
+import { registerHover } from "./hover";
 import { registerSemanticTokens } from "./semanticTokens";
 
 export function activate(context: vscode.ExtensionContext): void {
   registerDiagnostics(context);
   registerCompletions(context);
+  registerHover(context);
   registerSemanticTokens(context);
 }
 
