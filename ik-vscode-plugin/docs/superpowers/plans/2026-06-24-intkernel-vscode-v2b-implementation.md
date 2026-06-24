@@ -1632,7 +1632,7 @@ In `README.md`, replace the feature list with:
 In `README.md`, replace the manual verification list with:
 
 ```md
-1. Open `/Users/lynn/code/IntKernel/demo/dijkstra.ik`.
+1. Open `/Users/lynn/code/IntKernel/examples/dijkstra.ik`.
 2. Confirm the language mode is `IntKernel`.
 3. Confirm semantic highlighting distinguishes variables, fields, parameters, functions, and types.
 4. Hover `settled_count`, `configs`, `DijkstraConfig`, `matrix_index`, and `node_count`.
@@ -1690,10 +1690,10 @@ Expected: `local.ik-vscode-plugin@0.1.0`.
 
 - [ ] **Step 7: Perform manual VSCode verification**
 
-Open the worktree plugin folder or installed extension in VSCode and use `/Users/lynn/code/IntKernel/demo/dijkstra.ik` for visual checks:
+Open the worktree plugin folder or installed extension in VSCode and use `/Users/lynn/code/IntKernel/examples/dijkstra.ik` for visual checks:
 
 ```sh
-'/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code' /Users/lynn/code/IntKernel/demo/dijkstra.ik
+'/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code' /Users/lynn/code/IntKernel/examples/dijkstra.ik
 ```
 
 Manual expected results:
@@ -1710,7 +1710,7 @@ Manual expected results:
 Run:
 
 ```sh
-git add ik-vscode-plugin/src/extension.ts ik-vscode-plugin/README.md ik-vscode-plugin/CHANGELOG.md
+git add ik-vscode-plugin/README.md ik-vscode-plugin/CHANGELOG.md ik-vscode-plugin/docs/superpowers/specs/2026-06-24-intkernel-vscode-v2b-design.md ik-vscode-plugin/docs/superpowers/plans/2026-06-24-intkernel-vscode-v2b-implementation.md
 git commit -m "docs: document intkernel vscode v2b"
 ```
 

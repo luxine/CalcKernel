@@ -288,7 +288,7 @@ pnpm package
 Manual verification:
 
 1. Install the generated VSIX.
-2. Open `/Users/lynn/code/IntKernel/demo/dijkstra.ik`.
+2. Open `/Users/lynn/code/IntKernel/examples/dijkstra.ik`.
 3. Confirm semantic highlighting distinguishes variables, fields, parameters, functions, and types.
 4. Hover representative symbols and confirm type/signature output.
 5. Type `configs[0].` and confirm struct field completions.
@@ -318,5 +318,5 @@ No root repository source files should be changed unless a compiler API gap bloc
 - `pnpm test`, `pnpm compile`, and `pnpm package` pass.
 - VSIX installs locally.
 - Semantic highlighting is AST/type aware for representative examples.
-- Hover, document-local completion, definition lookup, and outline work on `demo/dijkstra.ik`.
+- Hover, document-local completion, definition lookup, and outline work on `examples/dijkstra.ik`.
 - All implementation remains in `ik-vscode-plugin` unless a documented compiler API gap is approved separately.
