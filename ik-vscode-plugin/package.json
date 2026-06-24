@@ -3,7 +3,7 @@
   "displayName": "IntKernel",
   "description": "VSCode language support for IntKernel .ik files.",
   "version": "0.1.0",
-  "publisher": "local",
+  "publisher": "luxine",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Programming Languages"],

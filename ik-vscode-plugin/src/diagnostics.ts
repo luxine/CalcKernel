@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
-import { SourceFile, check, type Diagnostic as IntKernelDiagnostic } from "intkernel";
-import { spanToRangeCoordinates } from "./diagnosticMapping";
+import { analyzeIntKernelDocument, clearAnalysisCache } from "./languageService";
 
 const debounceMs = 250;
 
@@ -40,6 +39,7 @@ export function registerDiagnostics(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((event) => validateSoon(event.document)),
     vscode.workspace.onDidCloseTextDocument((document) => {
       clearPending(document, pending);
+      clearAnalysisCache(document.uri);
       collection.delete(document.uri);
     }),
     {
@@ -58,45 +58,8 @@ export function registerDiagnostics(context: vscode.ExtensionContext): void {
 }
 
 function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection): void {
-  try {
-    const source = new SourceFile(document.fileName, document.getText());
-    const result = check(source);
-    collection.set(
-      document.uri,
-      result.diagnostics.map((diagnostic) => toVscodeDiagnostic(document, diagnostic))
-    );
-  } catch (error) {
-    collection.set(document.uri, [unexpectedValidationDiagnostic(document, error)]);
-  }
-}
-
-function toVscodeDiagnostic(document: vscode.TextDocument, diagnostic: IntKernelDiagnostic): vscode.Diagnostic {
-  const coordinates = spanToRangeCoordinates(document.getText(), diagnostic.span);
-  const vscodeDiagnostic = new vscode.Diagnostic(
-    new vscode.Range(
-      coordinates.start.line,
-      coordinates.start.character,
-      coordinates.end.line,
-      coordinates.end.character
-    ),
-    diagnostic.message,
-    vscode.DiagnosticSeverity.Error
-  );
-  vscodeDiagnostic.code = diagnostic.code;
-  vscodeDiagnostic.source = "intkernel";
-  return vscodeDiagnostic;
-}
-
-function unexpectedValidationDiagnostic(document: vscode.TextDocument, error: unknown): vscode.Diagnostic {
-  const text = document.getText();
-  const endCharacter = Math.min(1, text.split(/\r\n|\r|\n/)[0]?.length ?? 0);
-  const diagnostic = new vscode.Diagnostic(
-    new vscode.Range(0, 0, 0, endCharacter),
-    `IntKernel validation failed: ${errorMessage(error)}`,
-    vscode.DiagnosticSeverity.Error
-  );
-  diagnostic.source = "intkernel";
-  return diagnostic;
+  const analysis = analyzeIntKernelDocument(document);
+  collection.set(document.uri, [...analysis.diagnostics]);
 }
 
 function isIntKernelDocument(document: vscode.TextDocument): boolean {
@@ -110,8 +73,4 @@ function clearPending(document: vscode.TextDocument, pending: Map<string, NodeJS
     clearTimeout(timeout);
     pending.delete(key);
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
