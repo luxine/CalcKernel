@@ -1,19 +1,118 @@
 import * as vscode from "vscode";
+import { analyzeIntKernelDocument } from "./languageService";
 
 const keywords = ["struct", "export", "fn", "let", "return", "if", "else", "while"];
 const primitiveTypes = ["i32", "i64", "u32", "u64", "bool"];
 
 export function registerCompletions(context: vscode.ExtensionContext): void {
-  const items = [...keywordCompletions(), ...typeCompletions(), ...snippetCompletions()];
-
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       { language: "intkernel" },
       {
-        provideCompletionItems: () => items
-      }
+        provideCompletionItems: (document, position) => {
+          const linePrefix = document.lineAt(position).text.slice(0, position.character);
+          return buildCompletionItems(analyzeIntKernelDocument(document), position, linePrefix);
+        }
+      },
+      "."
     )
   );
+}
+
+export function buildCompletionItems(
+  analysis?: import("./languageService").IntKernelAnalysis,
+  position?: vscode.Position,
+  linePrefix = ""
+): vscode.CompletionItem[] {
+  const items = [...keywordCompletions(), ...typeCompletions(), ...snippetCompletions()];
+  if (!analysis || !position) {
+    return items;
+  }
+
+  const receiverName = memberReceiverName(linePrefix);
+  if (receiverName) {
+    const receiver = nearestReceiverReference(analysis, receiverName, position) ?? visibleReceiverSymbol(analysis, receiverName, position);
+    const structName = receiver?.typeLabel;
+    return [
+      ...items,
+      ...analysis.symbols
+        .filter((symbol) => symbol.kind === "field" && symbol.containerName === structName)
+        .map((symbol) => memberFieldCompletion(symbol))
+    ];
+  }
+
+  return [
+    ...items,
+    ...analysis.symbols
+      .filter((symbol) => (symbol.kind === "local" || symbol.kind === "parameter") && isSymbolVisibleAtPosition(symbol, position))
+      .map((symbol) => symbolCompletion(symbol, vscode.CompletionItemKind.Variable)),
+    ...analysis.symbols
+      .filter((symbol) => symbol.kind === "function")
+      .map((symbol) => symbolCompletion(symbol, vscode.CompletionItemKind.Function)),
+    ...analysis.symbols
+      .filter((symbol) => symbol.kind === "struct")
+      .map((symbol) => symbolCompletion(symbol, vscode.CompletionItemKind.Struct))
+  ];
+}
+
+function isSymbolVisibleAtPosition(symbol: import("./languageService").IntKernelSymbol, position: vscode.Position): boolean {
+  if (comparePositions(symbol.selectionRange.start, position) > 0) {
+    return false;
+  }
+  return symbol.scopeRange?.contains(position) ?? true;
+}
+
+function symbolCompletion(
+  symbol: import("./languageService").IntKernelSymbol,
+  kind: vscode.CompletionItemKind
+): vscode.CompletionItem {
+  const item = new vscode.CompletionItem(symbol.name, kind);
+  item.detail = symbol.detail ?? symbol.signatureLabel;
+  item.sortText = `3_${symbol.kind}_${symbol.name}`;
+  return item;
+}
+
+function memberFieldCompletion(symbol: import("./languageService").IntKernelSymbol): vscode.CompletionItem {
+  const item = symbolCompletion(symbol, vscode.CompletionItemKind.Field);
+  item.sortText = `!_field_${symbol.name}`;
+  return item;
+}
+
+function nearestReceiverReference(
+  analysis: import("./languageService").IntKernelAnalysis,
+  receiverName: string,
+  position: vscode.Position
+): import("./languageService").IntKernelReference | undefined {
+  return analysis.references
+    .filter((reference) => reference.name === receiverName && comparePositions(reference.range.end, position) <= 0)
+    .sort((left, right) => comparePositions(right.range.end, left.range.end))[0];
+}
+
+function visibleReceiverSymbol(
+  analysis: import("./languageService").IntKernelAnalysis,
+  receiverName: string,
+  position: vscode.Position
+): import("./languageService").IntKernelSymbol | undefined {
+  return analysis.symbols
+    .filter((symbol) => {
+      if (symbol.name !== receiverName || (symbol.kind !== "local" && symbol.kind !== "parameter")) {
+        return false;
+      }
+      return isSymbolVisibleAtPosition(symbol, position);
+    })
+    .sort((left, right) => comparePositions(right.selectionRange.start, left.selectionRange.start))[0];
+}
+
+function memberReceiverName(linePrefix: string): string | undefined {
+  const match = /([A-Za-z_][A-Za-z0-9_]*)\.$/.exec(linePrefix);
+  return match?.[1];
+}
+
+function comparePositions(left: vscode.Position, right: vscode.Position): number {
+  if (left.line !== right.line) {
+    return left.line - right.line;
+  }
+  return left.character - right.character;
 }
 
 function keywordCompletions(): vscode.CompletionItem[] {
