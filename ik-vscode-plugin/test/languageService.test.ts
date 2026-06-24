@@ -250,4 +250,17 @@ fn clone_item(item: Item) -> Item {
     expect(analysis.symbols).toHaveLength(0);
     expect(analysis.references).toHaveLength(0);
   });
+
+  it("converts compiler diagnostics to vscode diagnostics", () => {
+    const invalid = `
+fn broken() -> i64 {
+  let value: i64 = true;
+  return value;
+}
+`.trimStart();
+    const analysis = analyzeIntKernelDocument(createMemoryDocument(invalid, "memory:///broken.ik", 1));
+    expect(analysis.diagnostics.length).toBeGreaterThan(0);
+    expect(analysis.diagnostics[0]?.source).toBe("intkernel");
+    expect(analysis.diagnostics.some((diagnostic) => diagnostic.message.includes("Cannot initialize"))).toBe(true);
+  });
 });
