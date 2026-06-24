@@ -5,6 +5,7 @@ coverage/
 *.tsbuildinfo
 *.tgz
 AGENTS.md
+/Ai_repository/
 
 # Temporary generated C/native outputs.
 *.c

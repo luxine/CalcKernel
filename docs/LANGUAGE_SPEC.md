@@ -2,12 +2,12 @@
 
 [简体中文](zh-CN/LANGUAGE_SPEC.md)
 
-This document describes the IntKernel V0 language.
+This document describes the IK / IntKernel V0 language.
 
-IntKernel is a small DSL for pure integer computation. It is not a general
-purpose programming language. V0 is designed to compile `.ik` source into
-readable C source and header files, which can then be compiled into native
-libraries for host languages.
+IK / IntKernel is a high-performance DSL for pure integer computation. It is
+not a general purpose programming language. V0 is designed to compile `.ik`
+source into C, WASM, and LLVM backend outputs for host languages and native
+toolchains.
 
 ## Source Files
 
@@ -27,6 +27,10 @@ V0 supports only these types:
 
 `ptr<T>` represents a caller-owned pointer to `T`. V0 has no owned arrays and
 no dynamic allocation.
+
+Floating point types are not implemented in V0.4.0. The language does not
+support `f64`, `f32`, implicit int/float conversion, fast-math, or SIMD.
+Floating point support, if added, is future-phase work.
 
 ## Supported Declarations
 
@@ -158,8 +162,10 @@ V0 does not support:
 - runtime library
 - checked overflow as a language syntax feature or default behavior
 - bounds checks
-- LLVM backend
-- WASM backend
+- floating point types such as `f64` or `f32`
+- implicit int/float conversion
+- fast-math
+- SIMD
 - JIT compilation
 
 ## Integer Overflow

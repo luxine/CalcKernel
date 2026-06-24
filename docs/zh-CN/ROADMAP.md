@@ -7,7 +7,8 @@
 ## V0 Stable
 
 - 保持语言刻意小而清晰。
-- 稳定 lexer、parser、type checker、diagnostics、C backend、CLI 和测试。
+- 稳定 lexer、parser、type checker、diagnostics、MIR、C backend、WASM backend、
+  LLVM backend、CLI 和测试。
 - 维护 generated C/header golden snapshots。
 - 在 clang 可用时保持 strict clang e2e 覆盖。
 
@@ -67,8 +68,9 @@ basic-block based，但不是 SSA。
 - 默认 `emit-c` 和 `build` pipeline 现在使用 MIR。
 - 旧 AST C backend 在迁移期间保留为 legacy/internal fallback。
 
-MIR v1 明确不包含 optimizer、constant folding、dead code elimination、register
-allocation、bounds checks、runtime support 或新语言功能。
+Phase 11 时，MIR v1 明确不包含 optimizer、register allocation、bounds checks、
+runtime support 或新语言功能。Phase 14 后续增加了保守 MIR optimizer，同时保持这些
+safety boundary。
 
 ## Phase 12 WASM Backend
 
@@ -118,26 +120,44 @@ Phase 13 LLVM backend 已覆盖当前 MIR 支持的 unchecked V0 语言面。
 - LLVM v1 仍只支持 unchecked。
 - 在 checked LLVM lowering 完成设计前，LLVM 会拒绝 `--overflow checked`。
 
-Phase 13 v1 不增加 LLVM C++ API、bitcode writer、JIT、optimizer、debug info、
-runtime support、allocator、bounds check、`slice<T>`、strings、IO 或 modules。
+Phase 13 v1 不增加 LLVM C++ API、bitcode writer、JIT、LLVM-specific optimizer
+pipeline、debug info、runtime support、allocator、bounds check、`slice<T>`、
+strings、IO 或 modules。
 
 未来 LLVM 工作：
 
 - checked LLVM arithmetic
-- direct SSA LLVM lowering
-- optional optimizer pass pipeline
+- 更广泛的 direct SSA LLVM lowering
 - target data layout hardening
 - object/static library improvements
 - debug info
 - 如果未来产品场景需要，再考虑 JIT
 - 语言具备携带长度的 pointer type 后，再支持 `slice<T>` / bounds check
 
-## Future Optimizer
+## Phase 14 Optimization and Performance
 
-- 只有在 MIR 至少经历一个 release 后仍稳定，才考虑单独 optimization phase。
-- 候选 pass 包括 constant folding、dead code elimination、common subexpression
-  elimination 和 range analysis。
-- 任何 optimizer 都必须保持 checked/unchecked semantics 和 generated ABI。
+Phase 14 optimization 和 performance 工作已经覆盖 v0.4.0。
+
+- `ikc` 支持 `--opt-level 0`、`--opt-level 1`、`--opt-level 2`、`--opt-level 3`，
+  以及 `-O0` 到 `-O3` alias。
+- `-O0` 仍是保守默认值，并让输出最接近 lowered MIR。
+- `-O1`、`-O2` 和 `-O3` 启用文档化的保守 MIR pass 分层。
+- Checked C 保留业务 overflow 和 division check；只有证明安全的 loop induction
+  increment 可以使用 checked C hot-path optimization。
+- WASM 和 LLVM 仍然是 unchecked-only，并拒绝 `--overflow checked`。
+- Performance suite 支持 quick/full run、private baseline、compare mode 和显式
+  regression guard。
+- Optimization 必须保持 checked/unchecked semantics 和 generated ABI，且不能对
+  `examples/pricing.ik` 做特判。
+
+未来 optimization 工作：
+
+- 更广泛的 WASM structured control-flow lowering
+- 更多 scalar control flow 的 direct SSA LLVM lowering
+- target data layout hardening
+- 默认 build 之外的可选 CPU-native/LTO 实验
+- 只有未来 floating point Phase 定义 strict semantics 后，才考虑 floating point
+  optimization
 
 ## Future `slice<T>` / Bounds Checks
 

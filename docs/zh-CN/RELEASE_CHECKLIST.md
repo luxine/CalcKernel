@@ -1,108 +1,159 @@
-# IntKernel 发布检查清单
+# IntKernel v0.4.0 发布检查清单
 
 [English](../RELEASE_CHECKLIST.md)
 
-发布或打 V0 tag 前使用这份检查清单。
+发布或打 `v0.4.0` tag 前使用这份检查清单。它是人工验收 gate；不要把 benchmark
+结果当作语言语义，也不要当作跨机器性能真相。
 
-## 必需验证
+## Release Scope
+
+- 确认语言和项目名称使用 IK / IntKernel。
+- 确认 CLI 示例使用 `ikc`。
+- 确认源码示例使用 `.ik`。
+- 确认 `package.json` version 是 `0.4.0`。
+- 确认计划使用的 git tag 是 `v0.4.0`。
+- 确认 package metadata 只暴露 `ikc` bin entrypoint。
+- 确认 v0.4.0 release notes 只宣传已经实现的 Phase 14 能力。
+- 确认不宣传 floating point support：`f64` 在 v0.4.0 尚未实现，属于未来
+  Phase 16。
+- 不要宣传未支持的 f32、implicit int/float conversion、fast-math、SIMD、JIT、
+  strings、IO、GC、runtime 或新 backend support。
+
+## 必跑命令
 
 - 运行 `pnpm test`。
 - 运行 `pnpm typecheck`。
 - 运行 `pnpm build`。
-- 运行 `pnpm ikc --help`，或等价的已安装 `ikc --help` 命令，并 review 输出。
+- 运行 `npm pack --dry-run`。
+- 运行 `pnpm ikc --help`，或等价的已安装 `ikc --help`，并 review 输出。
 - 运行 `pnpm ikc check examples/pricing.ik`。
 - 运行 `pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h`。
-- Review 生成的 `pricing.c` 和 `pricing.h`。
-- 如果 clang 可用，运行 e2e clang compile 和 harness test。
-- Review generated C/header snapshot diff。
-- Review V0 language、compiler architecture、ABI 和 roadmap 文档准确性。
-- 保持文档双语：英文为默认入口，新增或修改文档时同步更新中文译本。
-
-## MIR / Default Pipeline 验证
-
 - 运行 `pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir`。
-- Review MIR 输出格式稳定，且没有绝对路径、时间戳或随机 ID。
-- 确认 MIR validator tests 在 `pnpm test` 中通过。
-- 确认 MIR lowering 和 MIR C emitter tests 在 `pnpm test` 中通过。
-- 只要 legacy AST backend 仍在仓库中，就确认 AST vs MIR regression tests 通过。
-- 确认默认 `emit-c` 和 `build` 输出由 MIR pipeline 生成。
 
-## Checked Mode 验证
+## Naming Consistency
 
-- 运行普通 unchecked test suite。
-- 运行 checked arithmetic tests，并在 clang 可用时确认 checked e2e cases 通过。
+- 确认 `tests/naming-consistency.test.ts` 已作为 `pnpm test` 的一部分通过。
+- Review README、docs、examples、snapshots 和 CLI help 的标准命名。
+- 确认 package metadata、命令示例和 release docs 使用 IK / IntKernel、`ikc`
+  和 `.ik`。
+- 确认没有引入 compatibility alias 或替代源码后缀。
+
+## C Backend Regression
+
+- 确认 C emitter snapshot tests 通过。
+- 确认 C scalar expression 覆盖通过。
+- 确认 C if/else 和 while 覆盖通过。
+- 确认 C function-call 覆盖通过。
+- 确认 C short-circuit `&&` / `||` 覆盖通过。
+- 确认 C ptr/index、struct field，以及 `items[i].price` 这类 combined access
+  覆盖通过。
+- 确认 `examples/pricing.ik` C e2e 通过。
+- 确认 unchecked mode 仍是默认值，并保持 unchecked ABI。
+- 确认 checked C mode 的 scalar、control-flow、short-circuit、function-call 和
+  `examples/pricing.ik` e2e 覆盖通过。
 - Review checked generated C/header snapshots。
-- 确认 checked `emit-c` 和 `build` 命令使用 `--overflow checked`。
-- 确认 checked dynamic library build 仍使用 strict clang flags。
-- 当本地平台已有 generated checked dynamic library 时，手动运行 checked Python
-  `ctypes` 示例。
-- 当本地平台和 FFI dependency 可用时，手动运行 checked Node.js FFI 示例。
-- Review `docs/CHECKED_ARITHMETIC.md`、`docs/ABI.md` 和 README checked-mode 章节，
-  确认 ABI 和 safety boundary 准确。
 
-## WASM Backend 验证
+## WASM Backend Regression
 
-- 确认 `emit-wat` tests 在 `pnpm test` 中通过。
-- 确认 `emit-wasm` tests 在 `pnpm test` 中通过。
-- 确认 WASM scalar e2e tests 通过。
-- 确认 WASM control-flow、function-call、short-circuit 和 memory e2e tests 通过。
-- 确认 `examples/pricing.ik` WASM e2e tests 通过。
+- 确认 `emit-wat` tests 通过。
+- 确认 `emit-wasm` tests 通过。
+- 确认 WAT snapshots 通过。
+- 确认 WASM scalar e2e 通过。
+- 确认 WASM control-flow e2e 通过。
+- 确认 WASM function-call e2e 通过。
+- 确认 WASM short-circuit e2e 通过。
+- 确认 WASM memory / ptr e2e 通过。
+- 确认 WASM layout tests 通过。
+- 确认 `examples/pricing.ik` WASM e2e 通过。
 - 确认 `emit-wat --overflow checked` 和 `emit-wasm --overflow checked` 会以文档中的
   unsupported-mode message 失败。
-- Review WAT snapshot diff。
-- 当 `build/pricing.wasm` 可用时，手动运行 Node.js WASM 示例。
-- 通过本地 HTTP server 手动运行 browser WASM 示例。
-- 生成 `build/pricing.wasm` 后，手动运行
-  `node bench/wasm_pricing_benchmark.mjs`。
 - Review `docs/WASM_ABI.md`，确认 type mapping、memory layout、examples 和
   safety boundary 准确。
 
-## LLVM Backend 验证
+## LLVM Backend Regression
 
-- 发布 LLVM backend 变更前，先 review `docs/LLVM_BACKEND.md`。
 - 确认 `emit-llvm` CLI tests 通过。
 - 确认 `build-llvm` clang command tests 通过。
 - 确认 `build-llvm --kind object` tests 通过。
-- Review LLVM IR snapshot diff，确认格式稳定，且没有绝对路径、时间戳或随机 ID。
-- 如果 clang 可用，在 smoke tests 中编译生成的 `.ll`。
-- 如果 clang 可用，确认 LLVM pricing e2e 通过。
-- 确认 `build-llvm` 在 clang 不可用时会输出友好错误。
-- 在 checked LLVM lowering 实现前，确认 `emit-llvm --overflow checked` 会以文档中的
-  unsupported message 失败。
-- 在 checked LLVM lowering 实现前，确认 `build-llvm --overflow checked` 会以文档中的
-  unsupported message 失败。
-- 发布前确认 scalar、control-flow、function-call、ptr/index/field/store 和 pricing
-  LLVM e2e tests 通过。
+- 确认 LLVM IR snapshots 通过。
+- 确认 LLVM scalar e2e 通过。
+- 确认 LLVM control-flow e2e 通过。
+- 确认 LLVM function-call e2e 通过。
+- 确认 LLVM short-circuit e2e 通过。
+- 确认 LLVM ptr/index/field/store e2e 通过。
+- 确认 LLVM bool ABI e2e 通过。
+- 确认 `examples/pricing.ik` LLVM e2e 通过。
+- 确认 `emit-llvm --overflow checked` 和 `build-llvm --overflow checked` 会以文档中的
+  unsupported-mode message 失败。
+- Review `docs/LLVM_BACKEND.md`，确认 backend limits 和 release notes。
+
+## Cross-Backend Baseline
+
 - 确认 C/WASM/LLVM backend regression comparison tests 通过。
-- LLVM backend 变更后，重新运行 C backend 和 WASM backend regression tests。
+- 确认 shared comparison 覆盖 scalar、control flow、function calls、
+  short-circuit、memory 和 `examples/pricing.ik`。
+- 确认没有 backend output snapshot 发生非预期变化。
+- 如果 snapshot 有变化，必须先解释真实预期行为变化，再接受更新。不要为了让测试通过
+  而更新 snapshots。
 
-## Optimization / Performance 验证
+## Optimization Correctness
 
-- Review `docs/OPTIMIZATION.md` 和 `docs/PERFORMANCE.md`。
+- Review `docs/OPTIMIZATION.md`。
 - 确认 optimization pipeline 默认是 `-O0`。
-- 确认 `-O0`、`-O1`、`-O2` 和 `-O3` tests 都在 `pnpm test` 中通过。
+- 确认 `-O0`、`-O1`、`-O2` 和 `-O3` tests 都作为 `pnpm test` 的一部分通过。
+- 确认 optimizer correctness 覆盖 constant folding、copy propagation、dead code
+  elimination、CFG simplify、local CSE、address CSE、small-function inlining
+  和 loop optimization。
+- 确认 checked mode 保留 overflow 和 division checks，除文档化的已证明安全 loop
+  induction increment 外不移除检查。
+- 确认 short-circuit 语义在优化前后保持一致。
+- 确认 `examples/pricing.ik` 优化前后结果一致。
+- 确认没有为 `examples/pricing.ik` 添加 benchmark-specific special case。
+
+## Benchmark Smoke
+
+- Review `docs/PERFORMANCE.md`、`bench/README.md` 和 `bench/README.zh-CN.md`。
 - 运行 `node --test bench/perf/tests/perf-core.test.mjs`。
-- 运行 `node bench/perf/run.mjs --quick`。
-- 如果已有本机 baseline，运行
-  `node bench/perf/run.mjs --quick --compare`。
-- 重要 release tag 前，可选运行
-  `node bench/perf/run.mjs --full --compare`。
-- Review `build/perf/latest.summary.md` 和 snapshot diff。
-- 不要提交 `build/perf` 中的机器本地性能 baseline。
+- 可选手动运行 `node bench/perf/run.mjs --quick`，作为 benchmark smoke。
+- `node bench/perf/run.mjs --full` 是机器时间允许时的可选 tag-time 检查。
+- 不要把 benchmark threshold 加进普通 `pnpm test`。
+- 不要把本机 benchmark 结果当作跨机器绝对 baseline。
+- 如果保存 baseline，遵循现有策略：本机 baseline 放在被忽略的 `build/perf` 输出中，
+  `bench/perf/baselines/example.summary.json` 只是格式示例，不是真实阈值文件。
+- 不要提交机器本地 benchmark output、真实本机 baseline、cache 或临时文件。
 
-## 可选发布检查
+## Docs And Examples Review
 
-- 如果计划发布到 npm，运行 `npm pack --dry-run`。
-- 确认 package 包含已构建 CLI entrypoint。
-- 确认 intended-for-users 的 examples 和 docs 被包含。
-- 确认没有误包含本地 build artifact 或临时文件。
+- Review README 和 README.zh-CN，确认 v0.4.0 能力描述准确。
+- Review language、architecture、MIR、ABI、checked arithmetic、WASM、LLVM、
+  optimization、performance 和 roadmap docs。
+- 确认 docs 说明 IK / IntKernel 是纯计算 DSL，不是通用语言。
+- 确认 docs 说明当前 v0.4.0 计算能力主要面向整数。
+- 确认 docs 没有宣称 floating point、SIMD、JIT、runtime、IO、strings 或 GC 支持。
+- Review `examples/` 下的示例，确认命令使用 `ikc` 和 `.ik`。
+- 确认 `examples/pricing.ik` 仍是 release e2e fixture。
+- 保持文档双语：英文为默认入口，修改文档时同步更新中文译本。
 
-## Release Notes
+## Package Contents Review
 
-发布前总结：
+- 确认 `npm pack --dry-run` 报告 package `intkernel@0.4.0`。
+- 确认 package 包含 `dist/src`、docs、examples、bench files、README.md、
+  README.zh-CN.md 和 package.json。
+- 确认 package 包含 `ikc` bin mapping 指向的 built CLI entrypoint。
+- 确认 package `exports`、`files` 和 scripts 与已发布的 IK / IntKernel surface
+  一致。
+- 确认没有误包含本地 build artifact、benchmark output、真实本机 baseline、cache、
+  editor state 或临时日志。
 
-- V0 支持的语言特性
-- 已知限制
-- ABI compatibility notes
-- diagnostics 和 CLI 变更
-- 任何有意改变的 generated C/header output
+## Tag Gate
+
+- 确认上面的必跑命令和人工 review 都已完成。
+- 确认 working tree changes 都是有意且已理解的。
+- 确认 release notes 只总结已实现的 v0.4.0 能力：lexer、parser、type checker、
+  MIR、MIR validation、保守 MIR optimization levels、C/WASM/LLVM backends、checked
+  C integer arithmetic、backend regression 覆盖、`examples/pricing.ik` e2e 覆盖和
+  手动 performance suite。
+- 确认 known limitations 已列出：v0.4.0 没有 floating point、没有 implicit
+  int/float conversion、没有 fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、
+  没有 GC、没有 runtime，也没有 checked WASM/LLVM arithmetic。
+- 只有 checklist 完成后才创建 tag `v0.4.0`。

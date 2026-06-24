@@ -87,6 +87,11 @@ enabled by default, and Phase 14 does not add unsafe target-specific flags.
 `-O3` must still preserve the selected overflow mode, ABI, and language
 semantics.
 
+Correctness is the release gate for every level. No optimization may weaken
+checked integer arithmetic, change unchecked ABI shape, evaluate short-circuit
+RHS blocks early, or specialize generated code for `examples/pricing.ik` just to
+improve benchmark results.
+
 ## Pass Manager
 
 The MIR pass manager is the shared optimization entry point. It operates after
@@ -380,6 +385,11 @@ The pass set is still intentionally conservative. In checked mode,
 loop counter increment can be emitted as unchecked arithmetic after the proof
 succeeds. WASM and LLVM remain unchecked-only backends and reject
 `--overflow checked`.
+
+Floating point is not implemented in v0.4.0. The optimizer therefore has no
+`f64`, `f32`, fast-math, or implicit int/float conversion semantics. If floating
+point support is added in a later phase, f64 optimization must be guarded
+separately from integer algebra.
 
 ## Release Guidance
 

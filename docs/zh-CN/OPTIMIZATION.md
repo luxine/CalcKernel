@@ -84,6 +84,10 @@ ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h -O
 unsafe target-specific flag。`-O3` 仍然必须保留所选择的 overflow mode、ABI 和语言
 语义。
 
+Correctness 是每个 optimization level 的 release gate。任何优化都不能削弱 checked
+integer arithmetic、改变 unchecked ABI shape、提前计算 short-circuit RHS block，
+也不能为了提升 benchmark 结果而对 `examples/pricing.ik` 做特判。
+
 ## Pass Manager
 
 MIR pass manager 是共享 optimization 入口。它运行在 MIR lowering 之后、
@@ -368,6 +372,10 @@ command。
 业务 overflow 和 division check；只有 loop counter increment 会在证明成功后生成为
 unchecked arithmetic。WASM 和 LLVM 仍然是 unchecked-only backend，并会拒绝
 `--overflow checked`。
+
+v0.4.0 还没有实现 floating point。Optimizer 因此没有 `f64`、`f32`、fast-math 或
+implicit int/float conversion 语义。如果后续 Phase 增加 floating point support，
+f64 optimization 必须和整数代数优化分开保护。
 
 ## 发布建议
 

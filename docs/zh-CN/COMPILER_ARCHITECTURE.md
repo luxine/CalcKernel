@@ -131,13 +131,16 @@ call signature 和 load/store place。
 如果默认 pipeline 产生 invalid MIR，这是 internal compiler error。用户源码错误
 应该已经由 lexer、parser 或 type checker 报告。
 
-### MIR C Backend
+### MIR Optimization 和 C Backend
 
-默认 C source pipeline 会把 checked program 降低到 MIR，验证 MIR，再从 MIR
-生成 C。Legacy AST-to-C emitter 仍保留在代码库中，用于对比和 fallback。
+默认 code generation pipeline 会把 checked program 降低到 MIR，运行所选的保守
+MIR optimization pipeline，验证 MIR，然后生成目标 backend。Legacy AST-to-C
+emitter 仍保留在代码库中，用于对比和 fallback。
 
-MIR v1 不是 SSA，也不做优化。它不添加 bounds check、runtime 或新语言特性。
-MIR v1 设计见 [MIR](MIR.md)。
+MIR v1 不是 SSA。Phase 14 增加了保守的 MIR optimization levels，但这些 pass
+必须保持 checked/unchecked semantics、ABI 和可观察语言行为。Optimizer 不添加
+bounds check、runtime 或新语言特性。MIR v1 设计和 pass pipeline 见 [MIR](MIR.md)
+与 [Optimization](OPTIMIZATION.md)。
 
 MIR C backend 生成 `.c` 实现文件。它支持两种 overflow mode：
 
@@ -212,8 +215,8 @@ LLVM path：
 
 Phase 13 v1 仅支持 unchecked，采用 alloca/load/store lowering，重点覆盖 scalar
 operation、control flow、function call 和 ptr/index/field load/store。它不增加
-optimizer、checked LLVM lowering、JIT、debug info、runtime、allocator、bounds
-check 或 `slice<T>`。
+LLVM-specific optimizer pipeline、checked LLVM lowering、JIT、debug info、
+runtime、allocator、bounds check 或 `slice<T>`。
 
 `emit-llvm` 不依赖 clang。`build-llvm` 调用外部 clang 构建 dynamic library 或
 object file。Backend contract 和限制见 [LLVM Backend](LLVM_BACKEND.md)。
@@ -266,5 +269,6 @@ Phase 11 之前，backend 直接从 checked AST 生成 C。Phase 11 增加 Typed
 - 用 MIR 表示 control-flow lowering 和 backend-independent code generation
 - 面向 C、WASM 或 LLVM 做 backend-specific lowering
 
-MIR v1 刻意保守：无 SSA、无 optimizer、无 register allocation、无 bounds
-check，也不增加新语言特性。
+MIR v1 刻意保守：无 SSA、无 register allocation、无 bounds check、无 runtime，
+也不增加新语言特性。Optimization 仅限文档化的 MIR pass manager，并且必须优先保证
+correctness，而不是追求性能。

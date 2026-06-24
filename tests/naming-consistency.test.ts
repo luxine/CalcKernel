@@ -1,9 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
+import { runCli } from "../src/cli.js";
 
 const rootDir = process.cwd();
 const excludedDirs = new Set([".git", "node_modules", "dist", "build", "coverage", "release"]);
+const excludedLockfiles = new Set(["bun.lockb", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"]);
 const excludedFiles = new Set([
   "AGENTS.md",
   "docs/NAMING_CONVENTIONS.md",
@@ -11,7 +13,15 @@ const excludedFiles = new Set([
   "tests/naming-consistency.test.ts",
 ]);
 const excludedExtensions = new Set([".wasm", ".so", ".dylib", ".dll", ".exe", ".tgz"]);
-const forbiddenPatterns = [/tkc/g, /\.tk\b/g];
+const forbiddenPatterns = [
+  { label: "legacy language name", pattern: /\btk\b/g },
+  { label: "legacy compiler command", pattern: /\btkc\b/g },
+  { label: "legacy source extension", pattern: /\.tk\b/g },
+  { label: "invalid language rename", pattern: /\bLK\b/g },
+  { label: "invalid lowercase language rename", pattern: /\blk\b/g },
+  { label: "invalid compiler command rename", pattern: /\blkc\b/g },
+  { label: "invalid source extension rename", pattern: /\.lk\b/g }
+];
 
 function walk(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -28,7 +38,7 @@ function walk(dir: string): string[] {
       continue;
     }
 
-    if (!entry.isFile() || excludedFiles.has(relativePath) || shouldSkipByExtension(entry.name)) {
+    if (!entry.isFile() || excludedFiles.has(relativePath) || shouldSkipByExtension(entry.name) || excludedLockfiles.has(entry.name)) {
       continue;
     }
 
@@ -57,7 +67,7 @@ function isText(content: Buffer): boolean {
 }
 
 describe("naming consistency", () => {
-  it("does not reintroduce tkc or .tk aliases", () => {
+  it("does not reintroduce forbidden aliases or source extensions", () => {
     const violations: string[] = [];
 
     for (const file of walk(rootDir)) {
@@ -68,16 +78,39 @@ describe("naming consistency", () => {
 
       const text = content.toString("utf8");
       const lines = text.split(/\r?\n/);
-      for (const pattern of forbiddenPatterns) {
+      for (const { label, pattern } of forbiddenPatterns) {
         for (const [lineIndex, line] of lines.entries()) {
           pattern.lastIndex = 0;
           if (pattern.test(line)) {
-            violations.push(`${normalize(relative(rootDir, file))}:${lineIndex + 1}: ${line.trim()}`);
+            violations.push(`${normalize(relative(rootDir, file))}:${lineIndex + 1}: ${label}: ${line.trim()}`);
           }
         }
       }
     }
 
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps CLI help on the canonical ikc command name", () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+
+    const exitCode = runCli(["--help"], {
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text)
+    });
+
+    const helpText = stdout.join("");
+    const violations = forbiddenPatterns
+      .filter(({ pattern }) => {
+        pattern.lastIndex = 0;
+        return pattern.test(helpText);
+      })
+      .map(({ label }) => label);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(helpText).toContain("ikc check <file>");
     expect(violations).toEqual([]);
   });
 });

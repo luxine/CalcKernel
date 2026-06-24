@@ -1,7 +1,7 @@
 {
   "name": "intkernel",
-  "version": "0.3.0",
-  "description": "A small integer-only DSL compiler that emits readable C.",
+  "version": "0.4.0",
+  "description": "A small IK / IntKernel integer-computation DSL compiler with C, WASM, and LLVM backends.",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -30,9 +30,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [
+    "intkernel",
     "compiler",
     "dsl",
-    "c"
+    "c",
+    "wasm",
+    "llvm"
   ],
   "license": "MIT",
   "packageManager": "pnpm@9.15.9",

@@ -142,14 +142,18 @@ If the default pipeline produces invalid MIR, that is treated as an internal
 compiler error. User source errors should already have been reported by the
 lexer, parser, or type checker.
 
-### MIR C Backend
+### MIR Optimization and C Backend
 
-The default C source pipeline now lowers the checked program to MIR, validates
-the MIR, and emits C from MIR. The legacy AST-to-C emitter remains in the
+The default code generation pipeline now lowers the checked program to MIR,
+runs the selected conservative MIR optimization pipeline, validates the MIR, and
+then emits the target backend. The legacy AST-to-C emitter remains in the
 codebase for comparison and fallback while the MIR backend is hardened.
 
-MIR v1 is not SSA and does not optimize. It does not add bounds checks, a
-runtime, or new language features. See [MIR](MIR.md) for the MIR v1 design.
+MIR v1 is not SSA. Phase 14 adds conservative MIR optimization levels, but those
+passes must preserve checked/unchecked semantics, ABI, and observable language
+behavior. The optimizer does not add bounds checks, a runtime, or new language
+features. See [MIR](MIR.md) and [Optimization](OPTIMIZATION.md) for the MIR v1
+design and pass pipeline.
 
 The MIR C backend emits the `.c` implementation file. It supports both overflow
 modes:
@@ -230,8 +234,8 @@ The LLVM path is:
 
 Phase 13 v1 is unchecked-only, alloca/load/store based, and focused on scalar
 operations, control flow, function calls, and ptr/index/field load/store. It
-does not add an optimizer, checked LLVM lowering, JIT, debug info, runtime,
-allocator, bounds checks, or `slice<T>`.
+does not add an LLVM-specific optimizer pipeline, checked LLVM lowering, JIT,
+debug info, runtime, allocator, bounds checks, or `slice<T>`.
 
 `emit-llvm` does not require clang. `build-llvm` invokes external clang to build
 a dynamic library or object file. See [LLVM Backend](LLVM_BACKEND.md) for the
@@ -290,5 +294,6 @@ adds a Typed MIR layer with this long-term direction:
 - MIR for control-flow lowering and backend-independent code generation
 - backend-specific lowering for C, WASM, or LLVM
 
-MIR v1 is intentionally conservative: no SSA, no optimizer, no register
-allocation, no bounds checks, and no new language features.
+MIR v1 is intentionally conservative: no SSA, no register allocation, no bounds
+checks, no runtime, and no new language features. Optimization is limited to the
+documented MIR pass manager and must prioritize correctness over performance.

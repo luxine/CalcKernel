@@ -23,12 +23,12 @@ The default C codegen pipeline is:
   -> .c / .h
 ```
 
-Future backends should use the same MIR rather than each reinterpreting the AST:
+Backends use the same MIR rather than each reinterpreting the AST:
 
 ```text
-MIR -> C
-MIR -> WASM
-MIR -> LLVM
+MIR -> MIR pass manager at selected optimization levels -> C
+MIR -> MIR pass manager at selected optimization levels -> WASM
+MIR -> MIR pass manager at selected optimization levels -> LLVM
 ```
 
 MIR v1 must preserve the current source language semantics. It is an
@@ -40,16 +40,17 @@ remains available internally for regression comparison and fallback.
 
 ## Non-Goals
 
-MIR v1 deliberately does not implement:
+MIR v1 deliberately does not add:
 
 - SSA
-- optimizer
-- constant folding
-- dead code elimination
 - register allocation
 - bounds check
 - runtime
 - new language features
+
+Phase 14 adds a conservative MIR pass manager with documented O0/O1/O2/O3
+pipelines. Those passes operate on MIR v1, preserve the selected overflow mode
+and backend ABI, and are documented in [Optimization](OPTIMIZATION.md).
 
 MIR v1 should make later work easier, but it must not change V0 behavior,
 unchecked ABI, checked ABI, or diagnostics semantics.
@@ -356,25 +357,24 @@ arithmetic before the final place is used. MIR does not imply bounds checks.
 
 ## Why MIR v1 Is Not SSA
 
-MIR v1 deliberately avoids SSA so the project can migrate code generation
-without also introducing phi nodes, dominance rules, and an optimizer. The
-current language has mutable locals and structured loops; representing them as
-basic blocks with explicit moves and stores is enough for readable C emission
-and backend parity testing.
+MIR v1 deliberately avoids SSA so the project can share code generation across
+backends without also introducing phi nodes and dominance rules. The current
+language has mutable locals and structured loops; representing them as basic
+blocks with explicit moves and stores is enough for readable C emission,
+WASM/LLVM lowering, and backend parity testing.
 
-This keeps Phase 11 focused on architecture rather than optimization. It also
-keeps MIR snapshots easy to read while the C backend is being stabilized.
+This keeps MIR snapshots easy to read. Phase 14 optimizations remain
+conservative MIR-to-MIR passes rather than an SSA rewrite.
 
 ## Future SSA and Optimizer Work
 
-A future phase can introduce an SSA-based IR or an optional optimizer above MIR
-v1. Candidate future passes include:
+Future phases can introduce an SSA-based IR or broader optimizer work above MIR
+v1. Candidate future work includes:
 
-- constant folding
-- dead code elimination
-- common subexpression elimination
 - range analysis for future checked or bounds-safe features
 - lowering to backend-specific SSA for LLVM or WASM
+- broader floating point optimization only after floating point semantics exist
+- optional CPU-native or LTO experiments outside default builds
 
 Those passes should be added only after MIR v1 remains stable as the default C
 pipeline and after their effect on diagnostics, snapshots, and generated ABI is

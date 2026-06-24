@@ -4,8 +4,9 @@
 
 This directory contains small benchmark harnesses for `examples/pricing.ik`.
 They compare a pure JavaScript baseline, generated native C, checked generated
-C, and generated unchecked WASM. They are intended as rough local references,
-not as a stable CI performance suite.
+C, LLVM, and generated unchecked WASM. They are intended as rough local
+references, not as a stable CI performance suite. Results depend on the current
+machine, Node.js, clang, hyperfine, and system load.
 
 The benchmark sizes are:
 
@@ -26,6 +27,8 @@ node bench/perf/run.mjs --full
 
 `--quick` is useful while developing benchmark code. `--full` is the default
 local performance run and uses more hyperfine samples and more work per command.
+Both are manual commands; ordinary `pnpm test` does not run hyperfine and must
+not gain machine-specific performance thresholds.
 
 The runner performs the full local setup:
 
@@ -78,6 +81,10 @@ intended to be committed. Do not compare absolute numbers across machines, and
 do not commit a real baseline from a developer laptop. The checked-in
 `bench/perf/baselines/example.summary.json` file is only a format example; it is
 not a real threshold file.
+
+Use `--compare`, `--threshold`, and `--fail-on-regression` only for explicit
+local regression checks. They are not package correctness tests, and they should
+not be treated as cross-machine guarantees.
 
 The decomposed suite covers:
 
@@ -278,6 +285,10 @@ For cross-language or WebAssembly calls, benchmark the shape you plan to ship.
 Native FFI or JS-to-WASM call overhead can dominate if you call one item at a
 time. Prefer batching many items per call, as `calc_items(items, len, out)` does
 here.
+
+C, LLVM-built native binaries, WASM, JavaScript, and optional Python harnesses
+use different runtime and boundary models. Use benchmark comparisons as local
+engineering signals, not as semantic tests or absolute cross-runtime rankings.
 
 Do not compare per-item native calls against batched JavaScript loops; that
 mostly measures FFI overhead. Compare batch calls of similar size.

@@ -2,17 +2,18 @@
 
 [简体中文](README.zh-CN.md)
 
-IntKernel is a small integer-computation DSL compiler. It is not a general
-purpose programming language. V0 compiles `.ik` source into readable C source
-and header files, which can then be compiled into a dynamic library for host
-languages such as Node.js, Python, Java, Rust, Go, and C#.
+IK / IntKernel is a high-performance DSL for pure computation kernels. It is
+not a general purpose programming language. V0 compiles `.ik` source into
+readable C, WAT/WASM, or LLVM IR outputs for host languages and toolchains such
+as Node.js, Python, Java, Rust, Go, C#, clang, and WebAssembly.
 
 The project is intentionally narrow: pure integer kernels, caller-owned memory,
-no runtime, and no dynamic allocation.
+no IO, no strings, no runtime, and no dynamic allocation.
 
-V0.1 has ABI hardening for C/C++ headers, dynamic-library symbol exports,
-struct layout verification, Python `ctypes` integration, a Node.js FFI example,
-and a small benchmark harness.
+V0.4.0 has lexer, parser, type checker, MIR, MIR validation, conservative MIR
+optimization levels, C/WASM/LLVM backends, checked integer arithmetic for C
+output, host-language examples, backend regression coverage, and a manual
+performance suite.
 
 ## Quick Start
 
@@ -174,7 +175,7 @@ Phase 13 adds a MIR-to-LLVM backend that emits textual LLVM IR (`.ll`) and can
 optionally invoke clang to build a native dynamic library:
 
 ```text
-.ik / .ik source -> CheckedProgram -> MIR -> LLVM IR text
+.ik source -> CheckedProgram -> MIR -> LLVM IR text
 ```
 
 ```sh
@@ -330,8 +331,11 @@ node bench/perf/run.mjs --full --compare --threshold 10
 ```
 
 The benchmark suite is a rough local reference, not a stable cross-machine
-score. For host-language integration, batch work into larger native calls rather
-than calling one item at a time. See [Performance](docs/PERFORMANCE.md) and
+score. Results depend on the machine, Node.js, clang, hyperfine, and current
+system load. Do not commit machine-local baselines from `build/perf`, and do
+not move performance thresholds into ordinary `pnpm test`. For host-language
+integration, batch work into larger native calls rather than calling one item at
+a time. See [Performance](docs/PERFORMANCE.md) and
 [Optimization](docs/OPTIMIZATION.md) for the current Phase 14 pipeline, latest
 local full-run summary, regression baseline workflow, and backend bottlenecks.
 
@@ -350,6 +354,11 @@ V0 supports only:
 V0 does not support strings, IO, heap allocation, GC, exceptions, async,
 classes, closures, modules, runtime libraries, or JIT compilation. The WASM
 and LLVM backends currently support unchecked arithmetic only.
+
+Floating point is not implemented in V0.4.0: there is no `f64`, no `f32`, no
+implicit int/float conversion, no fast-math mode, and no SIMD support. Floating
+point support, if added, belongs to a future phase and must preserve the current
+integer semantics and backend contracts.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
 `--overflow checked` C code generation checks integer overflow and division by

@@ -4,7 +4,8 @@
 
 This document summarizes the Phase 14 local performance suite, current local
 results, and how to run regression checks. Numbers are local measurements only:
-do not compare absolute timings across machines.
+do not compare absolute timings across machines. Results depend on hardware,
+Node.js, clang, hyperfine, OS scheduling, power state, and current system load.
 
 ## Benchmark Suite
 
@@ -27,6 +28,10 @@ The standard workload is:
 - checksum validation for every case
 
 ## Running Benchmarks
+
+Benchmarks are manual release or development tools. They are intentionally not
+part of ordinary `pnpm test`, and their thresholds must not be moved into the
+unit test suite.
 
 Quick local smoke:
 
@@ -73,6 +78,10 @@ Baseline policy:
 - Ordinary `pnpm test` does not run hyperfine and does not fail due to
   performance variance.
 
+Do not treat a local baseline as a cross-machine contract. Use `--compare` and
+`--fail-on-regression` only for explicit local performance runs where the
+machine and toolchain context are understood.
+
 ## Current Full Run Summary
 
 Latest Phase 14 local full run on this machine, 2026-06-24:
@@ -118,6 +127,15 @@ and checksum reads, not by JS-to-WASM call overhead.
 JavaScript `BigInt` remains useful as an exact `i64` baseline, but it is slower
 than native C and LLVM. Typed-array `Number` is faster than `BigInt`, but it
 does not provide exact `i64` semantics for all values.
+
+The suite is not a NumPy-level or vectorized-library performance guarantee, and
+it does not promise that WASM is always faster than JavaScript typed arrays.
+WASM total time can be dominated by host memory marshaling.
+
+C, LLVM-built native binaries, WASM, JavaScript, and any optional Python harness
+do not share one runtime model. Use those comparisons to understand workload
+shape, boundary cost, and safety tradeoffs; do not treat them as language
+semantic tests or as absolute cross-runtime rankings.
 
 ## Batch Calling Principle
 

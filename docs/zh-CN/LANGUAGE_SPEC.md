@@ -2,11 +2,11 @@
 
 [English](../LANGUAGE_SPEC.md)
 
-本文描述 IntKernel V0 语言。
+本文描述 IK / IntKernel V0 语言。
 
-IntKernel 是一门用于纯整数计算的小型 DSL。它不是通用编程语言。V0 的目标是
-将 `.ik` 源码编译成可读的 C source 和 header，再由宿主平台编译成本地库，供
-宿主语言调用。
+IK / IntKernel 是一门面向高性能纯整数计算的 DSL。它不是通用编程语言。V0 的
+目标是将 `.ik` 源码编译成 C、WASM 和 LLVM backend 输出，供宿主语言和 native
+toolchain 使用。
 
 ## 源文件
 
@@ -26,6 +26,10 @@ V0 只支持以下类型：
 
 `ptr<T>` 表示调用方拥有的、指向 `T` 的指针。V0 没有 owned array，也没有动态
 分配。
+
+V0.4.0 还没有实现 floating point 类型。语言不支持 `f64`、`f32`、implicit
+int/float conversion、fast-math 或 SIMD。Floating point 支持如果出现，属于未来
+Phase。
 
 ## 支持的声明
 
@@ -154,8 +158,10 @@ V0 不支持：
 - runtime library
 - 将 checked overflow 作为语言语法特性或默认行为
 - bounds checks
-- LLVM backend
-- WASM backend
+- `f64` 或 `f32` 等 floating point 类型
+- implicit int/float conversion
+- fast-math
+- SIMD
 - JIT compilation
 
 ## 整数溢出

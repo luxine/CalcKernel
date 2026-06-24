@@ -3,7 +3,8 @@
 [English](../PERFORMANCE.md)
 
 本文总结 Phase 14 本机 performance suite、当前本机结果，以及如何运行性能回归检查。
-这些数字只代表本机测量结果；不要跨机器比较绝对耗时。
+这些数字只代表本机测量结果；不要跨机器比较绝对耗时。结果依赖硬件、Node.js、
+clang、hyperfine、OS scheduling、电源状态和当前系统负载。
 
 ## Benchmark Suite
 
@@ -26,6 +27,9 @@ helper-function fixture。当前覆盖：
 - 每个 case 都校验 checksum
 
 ## 运行 Benchmark
+
+Benchmark 是手动 release 或开发工具。它们故意不属于普通 `pnpm test`，性能阈值
+也不能被移入 unit test suite。
 
 快速本机 smoke：
 
@@ -71,6 +75,9 @@ Baseline 策略：
 - `bench/perf/baselines/example.summary.json` 只是格式示例。
 - 普通 `pnpm test` 不运行 hyperfine，也不会因为性能波动失败。
 
+不要把本机 baseline 当成跨机器契约。只有在明确机器和 toolchain context 的显式本机
+性能运行中，才使用 `--compare` 和 `--fail-on-regression`。
+
 ## 当前 Full Run 摘要
 
 本机最新 Phase 14 full run，2026-06-24：
@@ -112,6 +119,14 @@ address reuse 后有明显改善，但仍慢于 native C 和 LLVM。WASM total c
 
 JavaScript `BigInt` 适合作为精确 `i64` baseline，但慢于 native C 和 LLVM。
 Typed-array `Number` 比 `BigInt` 快，但不能对所有值提供精确 `i64` 语义。
+
+这套 benchmark 不是 NumPy 级或 vectorized-library 性能保证，也不承诺 WASM 一定快于
+JavaScript typed arrays。WASM total time 可能主要受 host memory marshaling 影响。
+
+C、LLVM 构建出的 native binary、WASM、JavaScript，以及任何可选 Python harness
+并不共享同一种 runtime model。它们的对比只用于理解 workload shape、boundary cost
+和 safety tradeoff；不要把这些结果当作语言语义测试，也不要当作跨 runtime 的绝对
+排名。
 
 ## Batch Calling 原则
 

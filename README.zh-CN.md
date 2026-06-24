@@ -2,15 +2,16 @@
 
 [English](README.md)
 
-IntKernel 是一门小型整数计算 DSL 编译器。它不是通用编程语言。V0 将 `.ik`
-源码编译成可读的 C 源文件和头文件，再由宿主平台的 C 编译器编译成动态库，
-供 Node.js、Python、Java、Rust、Go、C# 等语言调用。
+IK / IntKernel 是一门面向高性能纯计算 kernel 的 DSL。它不是通用编程语言。
+V0 会把 `.ik` 源码编译成可读的 C、WAT/WASM 或 LLVM IR 输出，供 Node.js、
+Python、Java、Rust、Go、C#、clang 和 WebAssembly 等宿主语言与工具链使用。
 
-项目边界刻意保持很窄：纯整数 kernel、调用方拥有内存、无 runtime、无动态
-分配。
+项目边界刻意保持很窄：纯整数 kernel、调用方拥有内存、无 IO、无字符串、无
+runtime、无动态分配。
 
-V0.1 已包含 C/C++ header ABI 加固、动态库符号导出、struct layout 验证、
-Python `ctypes` 集成、Node.js FFI 示例和一个小型 benchmark harness。
+V0.4.0 已包含 lexer、parser、type checker、MIR、MIR validation、保守的 MIR
+optimization levels、C/WASM/LLVM backends、C 输出的 checked integer arithmetic、
+宿主语言示例、backend regression 覆盖和手动 performance suite。
 
 ## 快速开始
 
@@ -167,7 +168,7 @@ Phase 13 增加 MIR-to-LLVM backend，可以生成 textual LLVM IR（`.ll`），
 通过 clang 构建 native dynamic library：
 
 ```text
-.ik / .ik source -> CheckedProgram -> MIR -> LLVM IR text
+.ik source -> CheckedProgram -> MIR -> LLVM IR text
 ```
 
 ```sh
@@ -318,11 +319,12 @@ node bench/perf/run.mjs --full --save-baseline
 node bench/perf/run.mjs --full --compare --threshold 10
 ```
 
-Benchmark 只是粗略的本地参考，不是跨机器稳定分数。跨语言集成时，应把工作批量
-放进较大的 native 调用，而不是一条 item 调一次 native 函数。当前 Phase 14
-pipeline、本机最新 full run 摘要、baseline/compare 流程和 backend 瓶颈见
-[Performance](docs/zh-CN/PERFORMANCE.md) 和
-[Optimization](docs/zh-CN/OPTIMIZATION.md)。
+Benchmark 只是粗略的本地参考，不是跨机器稳定分数。结果依赖本机硬件、Node.js、
+clang、hyperfine 和当前系统负载。不要提交 `build/perf` 中的机器本地 baseline，
+也不要把性能阈值放进普通 `pnpm test`。跨语言集成时，应把工作批量放进较大的
+native 调用，而不是一条 item 调一次 native 函数。当前 Phase 14 pipeline、本机
+最新 full run 摘要、baseline/compare 流程和 backend 瓶颈见
+[Performance](docs/zh-CN/PERFORMANCE.md) 和 [Optimization](docs/zh-CN/OPTIMIZATION.md)。
 
 ## 当前 V0 限制
 
@@ -338,6 +340,10 @@ V0 只支持：
 
 V0 不支持字符串、IO、heap allocation、GC、异常、async、class、闭包、模块、
 runtime library 或 JIT。WASM 和 LLVM backend 当前只支持 unchecked arithmetic。
+
+V0.4.0 还没有实现 floating point：没有 `f64`、没有 `f32`、没有 implicit
+int/float conversion、没有 fast-math mode，也没有 SIMD。Floating point 支持如果
+出现，只能作为未来 Phase，并且必须保持当前整数语义和 backend contract。
 
 V0 不做 bounds check。默认 arithmetic 是 unchecked；可选
 `--overflow checked` C code generation 会检查整数 overflow 和除零，但仍不检查

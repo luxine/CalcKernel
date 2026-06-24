@@ -8,7 +8,8 @@ will ship in this order.
 ## V0 Stable
 
 - Keep the language intentionally small.
-- Stabilize lexer, parser, type checker, diagnostics, C backend, CLI, and tests.
+- Stabilize lexer, parser, type checker, diagnostics, MIR, C backend, WASM
+  backend, LLVM backend, CLI, and tests.
 - Maintain generated C/header golden snapshots.
 - Keep strict clang e2e coverage where clang is available.
 
@@ -71,9 +72,9 @@ is typed, three-address, and basic-block based, but not SSA.
 - The default `emit-c` and `build` pipeline now uses MIR.
 - The old AST C backend remains as a legacy/internal fallback during migration.
 
-MIR v1 explicitly does not include an optimizer, constant folding, dead code
-elimination, register allocation, bounds checks, runtime support, or new
-language features.
+At Phase 11, MIR v1 did not include an optimizer, register allocation, bounds
+checks, runtime support, or new language features. Phase 14 later adds a
+conservative MIR optimizer while keeping those safety boundaries.
 
 ## Phase 12 WASM Backend
 
@@ -127,15 +128,14 @@ language surface.
 - `--overflow checked` is rejected for LLVM until checked LLVM lowering is
   designed.
 
-Phase 13 v1 does not add the LLVM C++ API, bitcode writing, JIT, optimizer,
-debug info, runtime support, allocator, bounds checks, `slice<T>`, strings, IO,
-or modules.
+Phase 13 v1 does not add the LLVM C++ API, bitcode writing, JIT, LLVM-specific
+optimizer pipeline, debug info, runtime support, allocator, bounds checks,
+`slice<T>`, strings, IO, or modules.
 
 Future LLVM work:
 
 - checked LLVM arithmetic
-- direct SSA LLVM lowering
-- optional optimizer pass pipeline
+- broader direct SSA LLVM lowering
 - target data layout hardening
 - object/static library improvements
 - debug info
@@ -143,13 +143,31 @@ Future LLVM work:
 - `slice<T>` / bounds check after the language has length-carrying pointer
   types
 
-## Future Optimizer
+## Phase 14 Optimization and Performance
 
-- Consider a separate optimization phase only after MIR remains stable across at
-  least one release.
-- Candidate passes include constant folding, dead code elimination, common
-  subexpression elimination, and range analysis.
-- Any optimizer must preserve checked/unchecked semantics and generated ABI.
+Phase 14 optimization and performance work is complete for v0.4.0.
+
+- `ikc` supports `--opt-level 0`, `--opt-level 1`, `--opt-level 2`, and
+  `--opt-level 3`, plus `-O0` through `-O3` aliases.
+- `-O0` remains the conservative default and keeps output closest to lowered
+  MIR.
+- `-O1`, `-O2`, and `-O3` enable the documented conservative MIR pass layers.
+- Checked C keeps business overflow and division checks; only proven-safe loop
+  induction increments can use the checked C hot-path optimization.
+- WASM and LLVM remain unchecked-only and reject `--overflow checked`.
+- The performance suite supports quick/full runs, private baselines, compare
+  mode, and explicit regression guards.
+- Optimizations must preserve checked/unchecked semantics and generated ABI, and
+  must not specialize for `examples/pricing.ik`.
+
+Future optimization work:
+
+- broader WASM structured control-flow lowering
+- broader direct SSA LLVM lowering for scalar control flow
+- target data layout hardening
+- optional CPU-native/LTO experiments outside default builds
+- floating point optimization only after a future floating point phase defines
+  strict semantics
 
 ## Future `slice<T>` / Bounds Checks
 
