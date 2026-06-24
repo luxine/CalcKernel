@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { getExprType, type Expression } from "intkernel";
+import { toZeroBased, walkProgram } from "./astTraversal";
 import { analyzeIntKernelDocument } from "./languageService";
 
 const keywords = ["struct", "export", "fn", "let", "return", "if", "else", "while"];
@@ -29,10 +31,13 @@ export function buildCompletionItems(
     return items;
   }
 
-  const receiverName = memberReceiverName(linePrefix);
-  if (receiverName) {
-    const receiver = nearestReceiverReference(analysis, receiverName, position) ?? visibleReceiverSymbol(analysis, receiverName, position);
-    const structName = receiver?.typeLabel;
+  const astStructName = memberReceiverStructName(analysis, position, linePrefix);
+  const receiverName = astStructName ? undefined : memberReceiverName(linePrefix);
+  if (astStructName || receiverName) {
+    const receiver = receiverName
+      ? nearestReceiverReference(analysis, receiverName, position) ?? visibleReceiverSymbol(analysis, receiverName, position)
+      : undefined;
+    const structName = astStructName ?? receiver?.typeLabel;
     return [
       ...items,
       ...analysis.symbols
@@ -103,9 +108,66 @@ function visibleReceiverSymbol(
     .sort((left, right) => comparePositions(right.selectionRange.start, left.selectionRange.start))[0];
 }
 
+function memberReceiverStructName(
+  analysis: import("./languageService").IntKernelAnalysis,
+  position: vscode.Position,
+  linePrefix: string
+): string | undefined {
+  if (!linePrefix.endsWith(".") || !analysis.checkResult) {
+    return undefined;
+  }
+
+  const expression = nearestFieldExpressionAtPosition(analysis.checkResult.ast, position);
+  if (!expression) {
+    return undefined;
+  }
+
+  const objectType = getExprType(analysis.checkResult.checkedProgram, expression.object);
+  return objectType?.kind === "struct" ? objectType.name : undefined;
+}
+
+function nearestFieldExpressionAtPosition(program: import("intkernel").Program, position: vscode.Position): Extract<Expression, { kind: "FieldExpression" }> | undefined {
+  let nearest: Extract<Expression, { kind: "FieldExpression" }> | undefined;
+  walkProgram(program, {
+    expression: (expression) => {
+      if (expression.kind !== "FieldExpression" || expression.field.name !== "") {
+        return;
+      }
+      if (!fieldExpressionMatchesPosition(expression, position)) {
+        return;
+      }
+      if (!nearest || comparePositions(spanStartPosition(expression.span), spanStartPosition(nearest.span)) > 0) {
+        nearest = expression;
+      }
+    }
+  });
+  return nearest;
+}
+
+function fieldExpressionMatchesPosition(expression: Extract<Expression, { kind: "FieldExpression" }>, position: vscode.Position): boolean {
+  const fieldStart = spanStartPosition(expression.field.span);
+  const expressionStart = spanStartPosition(expression.span);
+  const expressionEnd = spanEndPosition(expression.span);
+  return (
+    comparePositions(fieldStart, position) === 0 ||
+    comparePositions(expressionEnd, position) === 0 ||
+    (comparePositions(expressionStart, position) <= 0 && comparePositions(position, expressionEnd) <= 0)
+  );
+}
+
 function memberReceiverName(linePrefix: string): string | undefined {
   const match = /([A-Za-z_][A-Za-z0-9_]*)\.$/.exec(linePrefix);
   return match?.[1];
+}
+
+function spanStartPosition(span: import("intkernel").SourceSpan): vscode.Position {
+  const start = toZeroBased(span.start);
+  return new vscode.Position(start.line, start.character);
+}
+
+function spanEndPosition(span: import("intkernel").SourceSpan): vscode.Position {
+  const end = toZeroBased(span.end);
+  return new vscode.Position(end.line, end.character);
 }
 
 function comparePositions(left: vscode.Position, right: vscode.Position): number {

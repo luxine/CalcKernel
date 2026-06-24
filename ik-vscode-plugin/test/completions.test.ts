@@ -224,6 +224,27 @@ fn total(item: ptr<Item>) -> i64 {
     expect(labels).not.toContain("price");
   });
 
+  it("suggests struct fields after indexed member access", () => {
+    const indexedReceiverSourceText = `
+struct DijkstraConfig {
+  node_count: i64;
+  source: i64;
+  inf: i64;
+}
+
+fn use_configs(configs: ptr<DijkstraConfig>) -> i64 {
+  return configs[0].;
+}
+`.trimStart();
+    const analysis = analyzeIntKernelDocument(createMemoryDocument(indexedReceiverSourceText, "memory:///indexed-receiver-completions.ik"));
+    const items = buildCompletionItems(analysis, new vscode.Position(7, 20), "  return configs[0].");
+    const labels = items.map((item) => item.label.toString());
+
+    expect(labels).toContain("node_count");
+    expect(labels).toContain("source");
+    expect(labels).toContain("inf");
+  });
+
   it("registers dot-triggered provider completions for member access", () => {
     vscodeMockState.registeredProvider = undefined;
     vscodeMockState.triggerCharacters = [];
