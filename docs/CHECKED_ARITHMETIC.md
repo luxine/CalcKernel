@@ -13,8 +13,10 @@ instead of silently becoming generated C behavior.
 
 Checked arithmetic currently applies to the C backend (`emit-c` and `build`).
 The Phase 12 WASM backend is unchecked-only: `emit-wat --overflow checked` and
-`emit-wasm --overflow checked` fail with a clear diagnostic. Checked WASM
-lowering is future work.
+`emit-wasm --overflow checked` fail with a clear diagnostic. The Phase 13 LLVM
+backend is also unchecked-only: `emit-llvm --overflow checked` and
+`build-llvm --overflow checked` fail with a clear diagnostic. Checked WASM and
+checked LLVM lowering are future work.
 
 ## CLI Design
 

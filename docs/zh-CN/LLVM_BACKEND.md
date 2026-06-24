@@ -1,15 +1,15 @@
-# IntKernel / TK LLVM Backend 设计
+# IK / IntKernel LLVM Backend
 
 [English](../LLVM_BACKEND.md)
 
-本文档定义 Phase 13 v1 LLVM backend 设计。在 backend 实现前，它只是设计文档。
+本文档定义 Phase 13 v1 LLVM backend 的行为、ABI 假设、外部工具依赖、限制和未来工作。
 
 ## 目标
 
-IntKernel / TK 在 MIR 之后新增 LLVM backend：
+IK / IntKernel 在 MIR 之后新增 LLVM backend：
 
 ```text
-.tk source
+.ik source
   -> lexer
   -> parser
   -> AST
@@ -25,7 +25,7 @@ IntKernel / TK 在 MIR 之后新增 LLVM backend：
 
 Backend 必须消费已验证的 MIR，不能直接从 AST 生成 LLVM IR。
 
-未来 native-library pipeline：
+Native-library pipeline：
 
 ```text
 .ll
@@ -103,13 +103,13 @@ lowering 或 MIR-to-SSA transform。
 
 ## 类型映射
 
-| IntKernel / TK type | LLVM IR type |
+| IK / IntKernel type | LLVM IR type |
 | --- | --- |
 | `i32` | `i32` |
 | `u32` | `i32` |
 | `i64` | `i64` |
 | `u64` | `i64` |
-| `bool` internal | `i1` |
+| `bool` internal 和 exported scalar | `i1` |
 | `ptr<T>` | `ptr` |
 | `struct` | named LLVM struct type |
 
@@ -118,9 +118,33 @@ Phase 13 v1 使用 LLVM opaque pointer（`ptr`）。
 Signedness 不属于 integer type 本身。Signed/unsigned 差异通过 division、
 remainder 和 comparison 指令选择体现。
 
-`bool` ABI 在 v1 中保持保守。内部 boolean value 使用 `i1`。跨语言 bool ABI
-不是 Phase 13 v1 的重点；应先覆盖 scalar condition 和 boolean result，在将
-exported bool ABI 视为稳定前，需要谨慎记录。
+### Bool ABI
+
+Phase 13.7 保持策略 A：
+
+- internal bool value 使用 `i1`
+- condition 使用 `i1`
+- bool local 和 temporary 使用 `i1`
+- exported bool parameter 和 return value 使用 `i1`
+
+在当前 macOS clang target 上，编译等价 C：
+
+```c
+#include <stdbool.h>
+bool less_i64(long long a, long long b) { return a < b; }
+bool not_bool(bool a) { return !a; }
+int choose_bool(bool a, int x, int y) { return a ? x : y; }
+```
+
+会生成使用 `i1` 表示 bool parameter 和 return 的 LLVM IR，clang 会在部分
+signature 上附加 `zeroext` 等 ABI attribute。IntKernel LLVM v1 目前生成 plain
+`i1`；Phase 13.7 clang e2e 已验证当前 target 上，C harness 可以用 `bool` 调用
+exported LLVM functions，覆盖 bool return、bool parameter、bool local，以及
+基于 bool parameter 的 `if`。
+
+跨平台 bool ABI 仍是风险。如果 Windows 或其他 target 需要 `zeroext` 等 attribute
+才能稳定 interop，后续 hardening 阶段应增加 target-aware function parameter 和
+return attribute，而不是改变语言层面的 public type。
 
 ## Struct Types
 
@@ -241,15 +265,20 @@ LLVM struct type：
 store i64 %value, ptr %ptr_out_i
 ```
 
-Index expression 由 MIR 在 address lowering 前完成求值。Phase 13 v1 不添加 bounds
-check。
+Index expression 由 MIR 在 address lowering 前完成求值。Phase 13 v1 在把 index
+用于 LLVM `i64` GEP index 前，会对 `i32` 使用 `sext`，对 `u32` 使用 `zext`。
+Phase 13 v1 不添加 bounds check，也不检查 pointer 是否为 null。
+
+Phase 13 的 memory e2e 测试覆盖 integer pointer 和 integer struct field。
+Bool scalar ABI 单独覆盖，但 bool field 或 bool pointer 还不作为跨语言稳定的
+LLVM memory ABI。
 
 ## Target Triple
 
 `emit-llvm` 可以支持可选 target triple：
 
 ```sh
-tkc emit-llvm examples/pricing.tk --out build/pricing.ll --target x86_64-apple-darwin
+ikc emit-llvm examples/pricing.ik --out build/pricing.ll --target x86_64-apple-darwin
 ```
 
 常见 triple：
@@ -263,15 +292,26 @@ tkc emit-llvm examples/pricing.tk --out build/pricing.ll --target x86_64-apple-d
 如果没有提供 target，Phase 13 v1 可以省略 `target triple` 行，或使用 native target
 detection。初版 textual IR backend 可以接受省略。
 
-## CLI 设计
+`build-llvm --target <triple>` 会把 target triple 写入生成的 `.ll`。Phase 13.14
+不会把 `--target` 继续传给 clang；target-aware clang argument handling 是后续
+hardening 工作。
 
-建议命令：
+## CLI
+
+`emit-llvm` 写出 textual LLVM IR，不依赖 clang：
 
 ```sh
-tkc emit-llvm examples/pricing.tk --out build/pricing.ll
-tkc emit-llvm examples/pricing.tk --out build/pricing.ll --target x86_64-apple-darwin
+ikc emit-llvm examples/pricing.ik --out build/pricing.ll
+ikc emit-llvm examples/pricing.ik --out build/pricing.ll --target x86_64-apple-darwin
+```
 
-tkc build-llvm examples/pricing.tk --out build/libpricing
+如果省略 `--out`，`emit-llvm` 会把 `.ll` 文本输出到 stdout。
+
+`build-llvm` 会生成 LLVM IR，写入临时 `.ll`，并调用 clang：
+
+```sh
+ikc build-llvm examples/pricing.ik --out build/libpricing
+ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
 ```
 
 如果当前 package 仍暴露 `ikc`，可以先在同一 backend 上提供：
@@ -281,12 +321,14 @@ ikc emit-llvm examples/pricing.ik --out build/pricing.ll
 ikc build-llvm examples/pricing.ik --out build/libpricing
 ```
 
-`emit-llvm` 必须是纯文本生成，不依赖 clang 或 LLVM 工具。`build-llvm` 可以调用
-clang。
+`emit-llvm` 是纯文本生成，不依赖 clang 或 LLVM 工具。`build-llvm` 要求 `PATH`
+中存在 clang。
 
 ## build-llvm
 
 `build-llvm` 可以通过 clang 编译生成的 `.ll`。
+
+Dynamic library output 是默认目标：
 
 macOS：
 
@@ -306,31 +348,52 @@ Windows：
 clang -O3 -shared build/pricing.ll -o build/pricing.dll
 ```
 
-如果 clang 不可用，`build-llvm` 应输出友好错误。`emit-llvm` 必须在没有 clang 时
-仍可用。
+如果 `--out` 没有 dynamic-library 扩展名，`build-llvm` 会按平台补扩展：
+macOS 使用 `.dylib`，Linux 使用 `.so`，Windows 使用 `.dll`。如果用户传入以
+`.so`、`.dylib` 或 `.dll` 结尾的完整文件名，则尊重该文件名。
+
+Object output 可用于用户自己管理的链接流程：
+
+```sh
+ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
+clang -O3 -c build/pricing.ll -o build/pricing.o
+```
+
+macOS 和 Linux 通常使用 `.o`。Windows 上，
+`build-llvm --kind object --out build/pricing` 使用 `.obj`；如果用户显式传入
+`.o` 文件名，则允许 clang 生成该文件。Phase 13.15 不实现 static library
+output；调用方可以在 IntKernel 外部自行使用 linker、`ar` 或 `llvm-ar`。
+
+如果 clang 不可用，`build-llvm` 会输出友好错误，并提示仍可使用 `emit-llvm`
+在没有 clang 的情况下生成 LLVM IR。`emit-llvm` 必须在没有 clang 时仍可用。
 
 ## Checked Mode
 
 Phase 13 v1 不支持 checked LLVM code generation。
 
-如果用户执行：
+LLVM backend 会拒绝两个 LLVM 入口的 checked mode：
 
 ```sh
-tkc emit-llvm input.tk --overflow checked
+ikc emit-llvm input.ik --overflow checked
+ikc build-llvm input.ik --overflow checked
 ```
 
 编译器必须报告：
 
 ```text
 LLVM backend does not support --overflow checked yet.
+Use --overflow unchecked, or use the C backend for checked arithmetic.
 ```
 
-请求 checked mode 时，backend 不能静默生成 unchecked LLVM IR。
+请求 checked mode 时，backend 不能静默生成 unchecked LLVM IR。需要 checked
+arithmetic 时应使用 C backend（`emit-c` 或 `build`）。
 
 ## 测试策略
 
 需要的测试：
 
+- `emit-llvm` CLI tests
+- `build-llvm` clang command tests
 - LLVM IR golden snapshots
 - clang 可用时的 LLVM syntax smoke test
 - clang 可用时将 `.ll` 编译成 executable 或 native library
@@ -340,8 +403,10 @@ LLVM backend does not support --overflow checked yet.
 - ptr/index/field/store e2e
 - pricing e2e
 - checked-mode unsupported diagnostic tests
+- object output tests
 - C backend regression tests
 - WASM backend regression tests
+- C/WASM/LLVM backend behavior comparison tests
 
 生成的 LLVM IR 必须稳定：
 
@@ -352,7 +417,7 @@ LLVM backend does not support --overflow checked yet.
 
 ## 风险
 
-- bool ABI，以及 exported bool result 应使用 `i1`、`i8` 还是 `i32`
+- bool ABI attribute（例如 `zeroext`）可能需要 target-aware hardening
 - struct layout 和 target data layout 差异
 - opaque pointer syntax 与 host clang 版本的兼容性
 - Windows linking 和 symbol export 行为
@@ -360,12 +425,32 @@ LLVM backend does not support --overflow checked yet.
 - alloca-heavy IR 性能不是最终形态
 - 与 C backend ABI 行为保持一致，方便 host-language integration
 
+## 当前限制
+
+- LLVM backend 只支持 unchecked arithmetic。
+- `emit-llvm --overflow checked` 和 `build-llvm --overflow checked` 会以文档化的
+  unsupported-mode diagnostic 失败。
+- v1 使用 alloca/load/store lowering，而不是 optimized SSA。
+- IntKernel 不运行 optimizer pass pipeline。
+- `build-llvm` 依赖外部 clang；IntKernel 不捆绑 clang、`llc`、LLVM library 或
+  custom linker。
+- IntKernel 暂不生成 static library。
+- 不生成 debug info、DWARF、LTO 或 bitcode。
+- 不提供 runtime、allocator、JIT、strings、IO、modules、bounds checks 或
+  `slice<T>`。
+- Raw pointer validity 和 buffer size 仍是调用方责任。
+- 跨平台 bool ABI attribute 和 target-specific data layout 仍需要后续 hardening，
+  才能提供更广泛的 FFI 保证。
+
 ## 未来工作
 
-- direct SSA lowering
-- optional optimizer pipeline
 - checked LLVM arithmetic lowering
+- direct SSA LLVM lowering
+- optional optimizer pass pipeline
 - target-specific data layout emission
-- debug info
+- object/static library output improvements
+- target-aware clang argument handling
+- debug info 和 DWARF
 - bitcode emission
-- object/native-library build hardening
+- 如果未来产品场景需要，再考虑 JIT
+- 语言具备携带长度的 pointer type 后，再支持 `slice<T>` / bounds check

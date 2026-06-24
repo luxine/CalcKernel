@@ -109,17 +109,23 @@ Future WASM work:
 
 ## Phase 13 LLVM Backend
 
-Phase 13 starts the LLVM backend as textual LLVM IR generation from MIR.
+Phase 13 LLVM backend is complete for the current MIR-supported unchecked V0
+language surface.
 
-- Document the LLVM backend design in `docs/LLVM_BACKEND.md`.
-- Add MIR-to-LLVM IR text generation for a scalar subset.
-- Add `emit-llvm` for stable `.ll` output.
-- Add optional `build-llvm` or `build --backend llvm` through clang.
-- Keep C backend as the reference backend until LLVM e2e behavior is proven.
-- Keep LLVM v1 unchecked-only.
-- Reject `--overflow checked` for LLVM until checked LLVM lowering is designed.
-- Cover scalar, control flow, function call, ptr/index/field/store, and
-  `pricing` e2e cases before treating the backend as releasable.
+- `docs/LLVM_BACKEND.md` documents the LLVM backend contract.
+- MIR-to-LLVM IR text generation is implemented.
+- `ikc emit-llvm` emits stable `.ll` output.
+- `ikc build-llvm` can build dynamic libraries through clang.
+- `ikc build-llvm --kind object` can emit object files through clang.
+- LLVM IR snapshots cover scalar, control flow, function calls,
+  ptr/index/field/store, short-circuiting, and `pricing`.
+- LLVM clang e2e tests cover scalar, bool ABI, control flow, function calls,
+  short-circuiting, memory access, and `pricing`.
+- C/WASM/LLVM backend regression comparison tests cover scalar, control flow,
+  function call, short-circuit, memory, and pricing fixtures.
+- LLVM v1 remains unchecked-only.
+- `--overflow checked` is rejected for LLVM until checked LLVM lowering is
+  designed.
 
 Phase 13 v1 does not add the LLVM C++ API, bitcode writing, JIT, optimizer,
 debug info, runtime support, allocator, bounds checks, `slice<T>`, strings, IO,
@@ -128,10 +134,14 @@ or modules.
 Future LLVM work:
 
 - checked LLVM arithmetic
-- direct SSA lowering
+- direct SSA LLVM lowering
 - optional optimizer pass pipeline
 - target data layout hardening
-- object/native-library build hardening
+- object/static library improvements
+- debug info
+- JIT maybe, if a future product use case justifies it
+- `slice<T>` / bounds check after the language has length-carrying pointer
+  types
 
 ## Future Optimizer
 

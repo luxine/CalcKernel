@@ -4,6 +4,7 @@ build/
 coverage/
 *.tsbuildinfo
 *.tgz
+AGENTS.md
 
 # Temporary generated C/native outputs.
 *.c

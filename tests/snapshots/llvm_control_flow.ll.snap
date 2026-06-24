@@ -1,0 +1,69 @@
+; ModuleID = 'intkernel'
+source_filename = "llvm_control_flow.ik"
+
+define i32 @max_i32(i32 %a, i32 %b) {
+entry:
+  %a.addr = alloca i32
+  %b.addr = alloca i32
+  %ik_tmp0.addr = alloca i1
+  store i32 %a, ptr %a.addr
+  store i32 %b, ptr %b.addr
+  %v0 = load i32, ptr %a.addr
+  %v1 = load i32, ptr %b.addr
+  %v2 = icmp sgt i32 %v0, %v1
+  store i1 %v2, ptr %ik_tmp0.addr
+  %v3 = load i1, ptr %ik_tmp0.addr
+  br i1 %v3, label %bb1, label %bb2
+bb1:
+  %v4 = load i32, ptr %a.addr
+  ret i32 %v4
+bb2:
+  %v5 = load i32, ptr %b.addr
+  ret i32 %v5
+}
+
+define i64 @sum_to_n(i64 %n) {
+entry:
+  %n.addr = alloca i64
+  %i.addr = alloca i64
+  %sum.addr = alloca i64
+  %ik_tmp0.addr = alloca i64
+  %ik_tmp1.addr = alloca i64
+  %ik_tmp2.addr = alloca i1
+  %ik_tmp3.addr = alloca i64
+  %ik_tmp4.addr = alloca i64
+  %ik_tmp5.addr = alloca i64
+  store i64 %n, ptr %n.addr
+  store i64 0, ptr %ik_tmp0.addr
+  %v0 = load i64, ptr %ik_tmp0.addr
+  store i64 %v0, ptr %i.addr
+  store i64 0, ptr %ik_tmp1.addr
+  %v1 = load i64, ptr %ik_tmp1.addr
+  store i64 %v1, ptr %sum.addr
+  br label %bb1
+bb1:
+  %v2 = load i64, ptr %i.addr
+  %v3 = load i64, ptr %n.addr
+  %v4 = icmp slt i64 %v2, %v3
+  store i1 %v4, ptr %ik_tmp2.addr
+  %v5 = load i1, ptr %ik_tmp2.addr
+  br i1 %v5, label %bb2, label %bb3
+bb2:
+  %v6 = load i64, ptr %sum.addr
+  %v7 = load i64, ptr %i.addr
+  %v8 = add i64 %v6, %v7
+  store i64 %v8, ptr %ik_tmp3.addr
+  %v9 = load i64, ptr %ik_tmp3.addr
+  store i64 %v9, ptr %sum.addr
+  store i64 1, ptr %ik_tmp4.addr
+  %v10 = load i64, ptr %i.addr
+  %v11 = load i64, ptr %ik_tmp4.addr
+  %v12 = add i64 %v10, %v11
+  store i64 %v12, ptr %ik_tmp5.addr
+  %v13 = load i64, ptr %ik_tmp5.addr
+  store i64 %v13, ptr %i.addr
+  br label %bb1
+bb3:
+  %v14 = load i64, ptr %sum.addr
+  ret i64 %v14
+}

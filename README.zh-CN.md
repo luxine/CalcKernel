@@ -161,18 +161,29 @@ WASM backend 当前只支持 unchecked mode。`emit-wat --overflow checked` 和
 ABI、struct layout、memory model、WABT assembly step 和 Node.js interop 规则见
 [WASM ABI](docs/zh-CN/WASM_ABI.md)。
 
-## 计划中的 LLVM Backend
+## LLVM Backend
 
-Phase 13 设计 MIR-to-LLVM backend，先生成 textual LLVM IR（`.ll`），再考虑 native
-LLVM integration：
+Phase 13 增加 MIR-to-LLVM backend，可以生成 textual LLVM IR（`.ll`），也可以
+通过 clang 构建 native dynamic library：
 
 ```text
-.tk / .ik source -> CheckedProgram -> MIR -> LLVM IR text
+.ik / .ik source -> CheckedProgram -> MIR -> LLVM IR text
 ```
 
-计划中的 v1 backend 只支持 unchecked，不使用 LLVM C++ API binding、JIT、optimizer
-pipeline、debug info、runtime support、allocator、bounds check 或 `slice<T>`。
-设计见 [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)。
+```sh
+pnpm ikc emit-llvm examples/pricing.ik --out build/pricing.ll
+pnpm ikc build-llvm examples/pricing.ik --out build/libpricing
+pnpm ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
+pnpm ikc build-llvm examples/pricing.ik --out build/libpricing --target x86_64-unknown-linux-gnu
+```
+
+v1 backend 只支持 unchecked：`emit-llvm --overflow checked` 和
+`build-llvm --overflow checked` 会失败，不会静默生成 unchecked LLVM IR。需要
+checked arithmetic 时请使用 C backend。LLVM v1 不使用 LLVM C++ API binding、
+JIT、optimizer pipeline、debug info、runtime support、allocator、bounds check 或
+`slice<T>`。`build-llvm` 需要 clang；`emit-llvm` 不依赖 clang。Object output
+可用于用户自己的 link 流程；static library output 暂未实现。详见
+[LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)。
 
 ## Node.js WASM 示例
 
@@ -347,6 +358,7 @@ English:
 - [C ABI](docs/ABI.md)
 - [WASM ABI](docs/WASM_ABI.md)
 - [LLVM Backend](docs/LLVM_BACKEND.md)
+- [Naming Conventions](docs/NAMING_CONVENTIONS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
@@ -359,5 +371,6 @@ English:
 - [C ABI](docs/zh-CN/ABI.md)
 - [WASM ABI](docs/zh-CN/WASM_ABI.md)
 - [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)
+- [命名规范](docs/zh-CN/NAMING_CONVENTIONS.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

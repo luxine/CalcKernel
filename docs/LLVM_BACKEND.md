@@ -1,16 +1,16 @@
-# IntKernel / TK LLVM Backend Design
+# IK / IntKernel LLVM Backend
 
 [简体中文](zh-CN/LLVM_BACKEND.md)
 
-This document defines the Phase 13 v1 LLVM backend design. It is a design
-document only until the backend is implemented.
+This document defines the Phase 13 v1 LLVM backend behavior, ABI assumptions,
+external tool dependencies, limitations, and future work.
 
 ## Goal
 
-IntKernel / TK adds an LLVM backend after MIR:
+IK / IntKernel adds an LLVM backend after MIR:
 
 ```text
-.tk source
+.ik source
   -> lexer
   -> parser
   -> AST
@@ -27,7 +27,7 @@ IntKernel / TK adds an LLVM backend after MIR:
 The backend must consume validated MIR. It must not generate LLVM IR directly
 from AST.
 
-Future native-library pipeline:
+Native-library pipeline:
 
 ```text
 .ll
@@ -108,13 +108,13 @@ debug. A future phase can add direct SSA lowering or a MIR-to-SSA transform.
 
 ## Type Mapping
 
-| IntKernel / TK type | LLVM IR type |
+| IK / IntKernel type | LLVM IR type |
 | --- | --- |
 | `i32` | `i32` |
 | `u32` | `i32` |
 | `i64` | `i64` |
 | `u64` | `i64` |
-| `bool` internal | `i1` |
+| `bool` internal and exported scalar | `i1` |
 | `ptr<T>` | `ptr` |
 | `struct` | named LLVM struct type |
 
@@ -123,10 +123,34 @@ Phase 13 v1 uses LLVM opaque pointers (`ptr`).
 Signedness is not part of the integer type. Signed and unsigned differences are
 encoded by instruction choice for division, remainder, and comparison.
 
-`bool` ABI is intentionally conservative in v1. Internal boolean values are
-`i1`. Cross-language bool ABI is not the focus of Phase 13 v1; scalar
-conditions and boolean results should be covered first, and exported bool ABI
-should be documented carefully before being treated as stable.
+### Bool ABI
+
+Phase 13.7 keeps strategy A:
+
+- internal bool values use `i1`
+- conditions use `i1`
+- bool locals and temporaries use `i1`
+- exported bool parameters and return values use `i1`
+
+On the current macOS clang target, compiling equivalent C such as:
+
+```c
+#include <stdbool.h>
+bool less_i64(long long a, long long b) { return a < b; }
+bool not_bool(bool a) { return !a; }
+int choose_bool(bool a, int x, int y) { return a ? x : y; }
+```
+
+produces LLVM IR using `i1` for bool parameters and returns, with clang adding
+ABI attributes such as `zeroext` on some signatures. IntKernel's LLVM v1 emits
+plain `i1`; the Phase 13.7 clang e2e verifies that a C harness using `bool` can
+call exported LLVM functions for bool return, bool parameter, bool local, and
+`if` on a bool parameter on the current target.
+
+Cross-platform bool ABI remains a risk. If Windows or other targets require
+attributes such as `zeroext` for stable interop, a later hardening phase should
+add target-aware function parameter and return attributes rather than changing
+the public language type.
 
 ## Struct Types
 
@@ -250,14 +274,20 @@ store i64 %value, ptr %ptr_out_i
 ```
 
 Index expressions are evaluated by MIR before address lowering. Phase 13 v1
-does not add bounds checks.
+extends `i32` indexes with `sext` and `u32` indexes with `zext` before using
+them as LLVM `i64` GEP indexes. Phase 13 v1 does not add bounds checks and does
+not check pointer nullness.
+
+The Phase 13 memory e2e tests cover integer pointers and integer struct fields.
+Bool scalar ABI is covered separately, but bool fields or bool pointers are not
+treated as a cross-language stable LLVM memory ABI yet.
 
 ## Target Triple
 
 `emit-llvm` may support an optional target triple:
 
 ```sh
-tkc emit-llvm examples/pricing.tk --out build/pricing.ll --target x86_64-apple-darwin
+ikc emit-llvm examples/pricing.ik --out build/pricing.ll --target x86_64-apple-darwin
 ```
 
 Common triples:
@@ -272,15 +302,26 @@ If no target is provided, Phase 13 v1 may omit the `target triple` line or use
 native target detection. Omitting it is acceptable for the initial textual IR
 backend.
 
-## CLI Design
+`build-llvm --target <triple>` writes the target triple into the generated
+`.ll`. Phase 13.14 does not pass `--target` through to clang; target-aware clang
+argument handling is a later hardening step.
 
-Proposed commands:
+## CLI
+
+`emit-llvm` writes textual LLVM IR and does not require clang:
 
 ```sh
-tkc emit-llvm examples/pricing.tk --out build/pricing.ll
-tkc emit-llvm examples/pricing.tk --out build/pricing.ll --target x86_64-apple-darwin
+ikc emit-llvm examples/pricing.ik --out build/pricing.ll
+ikc emit-llvm examples/pricing.ik --out build/pricing.ll --target x86_64-apple-darwin
+```
 
-tkc build-llvm examples/pricing.tk --out build/libpricing
+If `--out` is omitted, `emit-llvm` writes the `.ll` text to stdout.
+
+`build-llvm` emits LLVM IR, writes a temporary `.ll`, and invokes clang:
+
+```sh
+ikc build-llvm examples/pricing.ik --out build/libpricing
+ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
 ```
 
 If the current package still exposes `ikc`, the same backend may be introduced
@@ -291,12 +332,14 @@ ikc emit-llvm examples/pricing.ik --out build/pricing.ll
 ikc build-llvm examples/pricing.ik --out build/libpricing
 ```
 
-`emit-llvm` must be pure text generation and must not require clang or LLVM
-tools. `build-llvm` may invoke clang.
+`emit-llvm` is pure text generation and does not require clang or LLVM tools.
+`build-llvm` requires clang on `PATH`.
 
 ## build-llvm
 
 `build-llvm` can compile generated `.ll` through clang.
+
+Dynamic library output is the default:
 
 macOS:
 
@@ -316,32 +359,56 @@ Windows:
 clang -O3 -shared build/pricing.ll -o build/pricing.dll
 ```
 
-If clang is not available, `build-llvm` should print a friendly error.
-`emit-llvm` must remain available without clang.
+If the `--out` value has no dynamic-library extension, `build-llvm` adds the
+platform extension: `.dylib` on macOS, `.so` on Linux, and `.dll` on Windows. If
+the user passes a complete filename ending in `.so`, `.dylib`, or `.dll`, the
+filename is respected.
+
+Object output is available for user-managed linking:
+
+```sh
+ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
+clang -O3 -c build/pricing.ll -o build/pricing.o
+```
+
+On macOS and Linux, object output conventionally uses `.o`. On Windows,
+`build-llvm --kind object --out build/pricing` uses `.obj`; if the user passes
+an explicit `.o` filename, clang is allowed to produce that file. Static library
+output is not implemented in Phase 13.15; callers can use their own linker,
+`ar`, or `llvm-ar` outside IntKernel if needed.
+
+If clang is not available, `build-llvm` prints a friendly error and recommends
+using `emit-llvm` to generate LLVM IR without clang. `emit-llvm` must remain
+available without clang.
 
 ## Checked Mode
 
 Phase 13 v1 does not support checked LLVM code generation.
 
-If a user runs:
+The LLVM backend rejects checked mode for both LLVM entry points:
 
 ```sh
-tkc emit-llvm input.tk --overflow checked
+ikc emit-llvm input.ik --overflow checked
+ikc build-llvm input.ik --overflow checked
 ```
 
 the compiler must report:
 
 ```text
 LLVM backend does not support --overflow checked yet.
+Use --overflow unchecked, or use the C backend for checked arithmetic.
 ```
 
 The backend must not silently generate unchecked LLVM IR when checked mode is
-requested.
+requested. Use the C backend (`emit-c` or `build`) when checked arithmetic is
+required.
 
 ## Testing Strategy
 
 Required tests:
 
+- `emit-llvm` CLI tests
+- `build-llvm` clang command tests
 - LLVM IR golden snapshots
 - LLVM syntax smoke test when clang is available
 - clang compile `.ll` to executable or native library when clang is available
@@ -351,8 +418,10 @@ Required tests:
 - ptr/index/field/store e2e
 - pricing e2e
 - checked-mode unsupported diagnostic tests
+- object output tests
 - C backend regression tests
 - WASM backend regression tests
+- C/WASM/LLVM backend behavior comparison tests
 
 Generated LLVM IR must be stable:
 
@@ -363,7 +432,7 @@ Generated LLVM IR must be stable:
 
 ## Risks
 
-- bool ABI and whether exported bool results should be `i1`, `i8`, or `i32`
+- bool ABI attributes such as `zeroext` may need target-aware hardening
 - struct layout and target data layout differences
 - opaque pointer syntax compatibility with host clang versions
 - Windows linking and symbol export behavior
@@ -371,12 +440,33 @@ Generated LLVM IR must be stable:
 - alloca-heavy IR performance is not the final shape
 - matching C backend ABI behavior for host-language integrations
 
+## Current Limitations
+
+- LLVM backend supports unchecked arithmetic only.
+- `emit-llvm --overflow checked` and `build-llvm --overflow checked` fail with a
+  documented unsupported-mode diagnostic.
+- v1 uses alloca/load/store lowering, not optimized SSA.
+- No optimizer pass pipeline is run by IntKernel.
+- `build-llvm` depends on external clang; IntKernel does not bundle clang,
+  `llc`, LLVM libraries, or a custom linker.
+- No static library output is built by IntKernel yet.
+- No debug info, DWARF, LTO, or bitcode writer.
+- No runtime, allocator, JIT, strings, IO, modules, bounds checks, or
+  `slice<T>`.
+- Raw pointer validity and buffer sizes remain caller responsibilities.
+- Cross-platform bool ABI attributes and target-specific data layout still need
+  additional hardening before broad FFI guarantees.
+
 ## Future Work
 
-- direct SSA lowering
-- optional optimizer pipeline
 - checked LLVM arithmetic lowering
+- direct SSA LLVM lowering
+- optional optimizer pass pipeline
 - target-specific data layout emission
-- debug info
+- object/static library output improvements
+- target-aware clang argument handling
+- debug info and DWARF
 - bitcode emission
-- object/native-library build hardening
+- JIT, if a future product use case justifies it
+- `slice<T>` / bounds-check support after the language has length-carrying
+  pointer types

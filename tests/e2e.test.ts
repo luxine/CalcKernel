@@ -344,6 +344,8 @@ function compileAndRunPipeline(cwd: string, name: string, pipeline: EmittedPipel
 }
 
 describe("ikc CLI", () => {
+  const llvmBuildClangAvailable = hasClang();
+
   it("prints help", () => {
     let stdout = "";
     let stderr = "";
@@ -364,6 +366,8 @@ describe("ikc CLI", () => {
     expect(stdout).toContain("ikc emit-mir <file> [--out <mir-file>]");
     expect(stdout).toContain("ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]");
     expect(stdout).toContain("ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]");
+    expect(stdout).toContain("ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked]");
+    expect(stdout).toContain("ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]");
     expect(stdout).toContain("ikc build <file> --out <output-path>");
     expect(stdout).toContain("--overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.");
   });
@@ -617,6 +621,430 @@ describe("ikc CLI", () => {
     expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.mir"))).toBe(false);
   });
+
+  it("emits LLVM IR to --out for valid scalar source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+    const llvmFile = join(cwd, "build/llvm_scalar.ll");
+
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/llvm_scalar.ll"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted LLVM IR build/llvm_scalar.ll\n");
+    expect(readFileSync(llvmFile, "utf8")).toContain("define i64 @add_i64(i64 %a, i64 %b)");
+    expect(readFileSync(llvmFile, "utf8")).toContain("%v2 = add i64 %v0, %v1");
+    expect(readFileSync(llvmFile, "utf8")).not.toContain(cwd);
+  });
+
+  it("prints LLVM IR to stdout when emit-llvm has no --out", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("; ModuleID = 'intkernel'");
+    expect(stdout).toContain('source_filename = "llvm_scalar.ik"');
+    expect(stdout).toContain("define i64 @add_i64(i64 %a, i64 %b)");
+    expect(stdout).not.toContain(cwd);
+  });
+
+  it("emits LLVM target triple when requested", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(
+      ["emit-llvm", "llvm_scalar.ik", "--out", "build/target.ll", "--target", "x86_64-unknown-linux-gnu"],
+      {
+        cwd,
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: (text) => {
+          stderr += text;
+        }
+      }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted LLVM IR build/target.ll\n");
+    expect(readFileSync(join(cwd, "build/target.ll"), "utf8")).toContain('target triple = "x86_64-unknown-linux-gnu"');
+  });
+
+  it("does not output LLVM IR for invalid source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-llvm", "bad.ik", "--out", "build/bad.ll"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(existsSync(join(cwd, "build/bad.ll"))).toBe(false);
+  });
+
+  it("rejects checked overflow mode for emit-llvm", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/llvm_scalar.ll", "--overflow", "checked"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "error: LLVM backend does not support --overflow checked yet.\n" +
+        "Use --overflow unchecked, or use the C backend for checked arithmetic.\n"
+    );
+    expect(stderr).toContain("LLVM");
+    expect(stderr).toContain("checked");
+    expect(existsSync(join(cwd, "build/llvm_scalar.ll"))).toBe(false);
+  });
+
+  it("rejects invalid overflow modes for emit-llvm", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--overflow", "fast"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Invalid value for --overflow: fast. Expected 'unchecked' or 'checked'.");
+  });
+
+  it("build-llvm emits LLVM IR and invokes clang with Linux shared library flags", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner: CommandRunner = (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing"], {
+      cwd,
+      platform: "linux",
+      runCommand: runner,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`OK: built LLVM library\n${join(cwd, "build/libpricing.so")}\n`);
+    expect(readFileSync(join(cwd, "build/libpricing.ll"), "utf8")).toContain("define i32 @calc_items");
+    expect(calls).toEqual([
+      { command: "clang", args: ["--version"] },
+      {
+        command: "clang",
+        args: ["-O3", "-shared", "-fPIC", join(cwd, "build/libpricing.ll"), "-o", join(cwd, "build/libpricing.so")]
+      }
+    ]);
+  });
+
+  it("build-llvm respects explicit output extensions and platform defaults", () => {
+    for (const [platform, requestedOut, expectedOut, platformFlags] of [
+      ["darwin", "build/libpricing", "build/libpricing.dylib", ["-shared", "-fPIC"]],
+      ["win32", "build/libpricing", "build/libpricing.dll", ["-shared"]],
+      ["linux", "build/custom.dylib", "build/custom.dylib", ["-shared", "-fPIC"]]
+    ] as const) {
+      const cwd = tempDir();
+      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      const calls: Array<{ command: string; args: string[] }> = [];
+      const runner: CommandRunner = (command, args) => {
+        calls.push({ command, args });
+        return { status: 0, stdout: "", stderr: "" };
+      };
+
+      const exitCode = runCli(["build-llvm", "pricing.ik", "--out", requestedOut], {
+        cwd,
+        platform,
+        runCommand: runner,
+        stdout: () => {},
+        stderr: () => {}
+      });
+
+      expect(exitCode).toBe(0);
+      expect(calls.at(-1)).toEqual({
+        command: "clang",
+        args: ["-O3", ...platformFlags, join(cwd, `${requestedOut}.ll`), "-o", join(cwd, expectedOut)]
+      });
+    }
+  });
+
+  it("build-llvm includes target triple in generated LLVM IR when requested", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    const runner: CommandRunner = () => ({ status: 0, stdout: "", stderr: "" });
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "--target", "x86_64-unknown-linux-gnu"], {
+      cwd,
+      platform: "linux",
+      runCommand: runner,
+      stdout: () => {},
+      stderr: () => {}
+    });
+
+    expect(exitCode).toBe(0);
+    expect(readFileSync(join(cwd, "build/libpricing.ll"), "utf8")).toContain('target triple = "x86_64-unknown-linux-gnu"');
+  });
+
+  it("build-llvm can emit an object file with clang -c", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner: CommandRunner = (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--kind", "object", "--out", "build/pricing.o"], {
+      cwd,
+      platform: "linux",
+      runCommand: runner,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`OK: built LLVM object\n${join(cwd, "build/pricing.o")}\n`);
+    expect(readFileSync(join(cwd, "build/pricing.ll"), "utf8")).toContain("define i32 @calc_items");
+    expect(calls).toEqual([
+      { command: "clang", args: ["--version"] },
+      {
+        command: "clang",
+        args: ["-O3", "-c", join(cwd, "build/pricing.ll"), "-o", join(cwd, "build/pricing.o")]
+      }
+    ]);
+  });
+
+  it("build-llvm rejects invalid output kind", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--kind", "static", "--out", "build/libpricing.a"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Invalid value for --kind: static. Expected 'dynamic' or 'object'.");
+  });
+
+  it("prints a friendly build-llvm error when clang is not found", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+    const runner: CommandRunner = () => ({
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: Object.assign(new Error("spawn clang ENOENT"), { code: "ENOENT" })
+    });
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing"], {
+      cwd,
+      platform: "linux",
+      runCommand: runner,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("clang was not found. Install clang and make sure it is available on PATH.");
+    expect(stderr).toContain("You can still run emit-llvm to generate LLVM IR without clang.");
+  });
+
+  it("does not build LLVM for invalid source", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["build-llvm", "bad.ik", "--out", "build/libbad"], {
+      cwd,
+      platform: "linux",
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(existsSync(join(cwd, "build/libbad.ll"))).toBe(false);
+  });
+
+  it("rejects checked overflow mode for build-llvm", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "--overflow", "checked"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "error: LLVM backend does not support --overflow checked yet.\n" +
+        "Use --overflow unchecked, or use the C backend for checked arithmetic.\n"
+    );
+    expect(stderr).toContain("LLVM");
+    expect(stderr).toContain("checked");
+    expect(existsSync(join(cwd, "build/libpricing.ll"))).toBe(false);
+    expect(existsSync(join(cwd, "build/libpricing"))).toBe(false);
+    expect(existsSync(join(cwd, "build/libpricing.so"))).toBe(false);
+    expect(existsSync(join(cwd, "build/libpricing.dylib"))).toBe(false);
+    expect(existsSync(join(cwd, "build/libpricing.dll"))).toBe(false);
+  });
+
+  it.skipIf(!llvmBuildClangAvailable)(
+    llvmBuildClangAvailable
+      ? "build-llvm builds a native dynamic library with real clang"
+      : "build-llvm builds a native dynamic library (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      let stdout = "";
+      let stderr = "";
+
+      const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing"], {
+        cwd,
+        platform: process.platform,
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: (text) => {
+          stderr += text;
+        }
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("OK: built LLVM library");
+      expect(existsSync(join(cwd, process.platform === "darwin" ? "build/libpricing.dylib" : process.platform === "win32" ? "build/libpricing.dll" : "build/libpricing.so"))).toBe(true);
+    }
+  );
+
+  it.skipIf(!llvmBuildClangAvailable)(
+    llvmBuildClangAvailable ? "build-llvm emits a real object file with clang" : "build-llvm emits an object file (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      let stdout = "";
+      let stderr = "";
+
+      const exitCode = runCli(["build-llvm", "pricing.ik", "--kind", "object", "--out", "build/pricing.o"], {
+        cwd,
+        platform: process.platform,
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: (text) => {
+          stderr += text;
+        }
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`OK: built LLVM object\n${join(cwd, "build/pricing.o")}\n`);
+      expect(existsSync(join(cwd, "build/pricing.o"))).toBe(true);
+      expect(readFileSync(join(cwd, "build/pricing.o")).byteLength).toBeGreaterThan(0);
+    }
+  );
 
   it("emits WAT to --out for valid scalar source", () => {
     const cwd = tempDir();

@@ -1,0 +1,82 @@
+; ModuleID = 'intkernel'
+source_filename = "llvm_short_circuit.ik"
+
+define i1 @and_short_circuit(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_sc0.addr = alloca i1
+  %ik_tmp0.addr = alloca i64
+  %ik_tmp1.addr = alloca i1
+  %ik_tmp2.addr = alloca i64
+  %ik_tmp3.addr = alloca i64
+  %ik_tmp4.addr = alloca i1
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  store i64 0, ptr %ik_tmp0.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %ik_tmp0.addr
+  %v2 = icmp ne i64 %v0, %v1
+  store i1 %v2, ptr %ik_tmp1.addr
+  %v3 = load i1, ptr %ik_tmp1.addr
+  br i1 %v3, label %bb1, label %bb2
+bb1:
+  %v4 = load i64, ptr %b.addr
+  %v5 = load i64, ptr %a.addr
+  %v6 = sdiv i64 %v4, %v5
+  store i64 %v6, ptr %ik_tmp2.addr
+  store i64 1, ptr %ik_tmp3.addr
+  %v7 = load i64, ptr %ik_tmp2.addr
+  %v8 = load i64, ptr %ik_tmp3.addr
+  %v9 = icmp sgt i64 %v7, %v8
+  store i1 %v9, ptr %ik_tmp4.addr
+  %v10 = load i1, ptr %ik_tmp4.addr
+  store i1 %v10, ptr %ik_sc0.addr
+  br label %bb3
+bb2:
+  store i1 0, ptr %ik_sc0.addr
+  br label %bb3
+bb3:
+  %v11 = load i1, ptr %ik_sc0.addr
+  ret i1 %v11
+}
+
+define i1 @or_short_circuit(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_sc0.addr = alloca i1
+  %ik_tmp0.addr = alloca i64
+  %ik_tmp1.addr = alloca i1
+  %ik_tmp2.addr = alloca i64
+  %ik_tmp3.addr = alloca i64
+  %ik_tmp4.addr = alloca i1
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  store i64 0, ptr %ik_tmp0.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %ik_tmp0.addr
+  %v2 = icmp eq i64 %v0, %v1
+  store i1 %v2, ptr %ik_tmp1.addr
+  %v3 = load i1, ptr %ik_tmp1.addr
+  br i1 %v3, label %bb1, label %bb2
+bb1:
+  store i1 1, ptr %ik_sc0.addr
+  br label %bb3
+bb2:
+  %v4 = load i64, ptr %b.addr
+  %v5 = load i64, ptr %a.addr
+  %v6 = sdiv i64 %v4, %v5
+  store i64 %v6, ptr %ik_tmp2.addr
+  store i64 1, ptr %ik_tmp3.addr
+  %v7 = load i64, ptr %ik_tmp2.addr
+  %v8 = load i64, ptr %ik_tmp3.addr
+  %v9 = icmp sgt i64 %v7, %v8
+  store i1 %v9, ptr %ik_tmp4.addr
+  %v10 = load i1, ptr %ik_tmp4.addr
+  store i1 %v10, ptr %ik_sc0.addr
+  br label %bb3
+bb3:
+  %v11 = load i1, ptr %ik_sc0.addr
+  ret i1 %v11
+}

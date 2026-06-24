@@ -2,8 +2,9 @@
 
 [简体中文](zh-CN/COMPILER_ARCHITECTURE.md)
 
-IntKernel is a source-to-C and source-to-WASM compiler implemented in
-TypeScript. Phase 13 designs a future source-to-LLVM path after MIR.
+IntKernel is a source-to-C, source-to-WASM, and source-to-LLVM-IR compiler
+implemented in TypeScript. All production code generation paths consume
+validated MIR.
 
 ## Pipeline
 
@@ -24,16 +25,19 @@ Current pipeline:
        -> .c / .h
        -> optional build command
        -> dynamic library
-  -> WAT/WASM backend
+  -> WASM backend
        -> .wat
        -> .wasm
-  -> future LLVM IR backend
+  -> LLVM backend
        -> .ll
+       -> optional build-llvm command
+       -> object file or dynamic library
 ```
 
-The native-library path intentionally stops at readable C. Native compilation
-is delegated to an external C compiler such as clang. The WASM path emits WAT
-and can assemble it to `.wasm` through `wabt`.
+The default native-library path still emits readable C. Native compilation is
+delegated to an external C compiler such as clang. The WASM path emits WAT and
+assembles it to `.wasm` through `wabt`. The LLVM path emits textual `.ll` and
+can invoke clang through `build-llvm`.
 
 Phase 12 adds an implemented WASM path after MIR:
 
@@ -51,9 +55,9 @@ Phase 12 adds an implemented WASM path after MIR:
   -> .wasm
 ```
 
-The C backend remains the reference backend while the WASM backend is hardened.
-The LLVM backend is Phase 13 design work and is not part of the current default
-pipeline yet.
+The C backend remains the default native backend. WASM and LLVM are optional
+MIR-based backends for users that need `.wasm`, `.ll`, object output, or
+LLVM-driven native builds.
 
 ## Layer Responsibilities
 
@@ -205,16 +209,16 @@ Phase 12 v1 is intentionally narrow:
 
 See [WASM ABI](WASM_ABI.md) for the Phase 12 ABI and usage model.
 
-### Planned LLVM Backend
+### LLVM Backend
 
-Phase 13 designs a MIR-to-LLVM textual IR backend. The planned backend consumes
-validated MIR and emits stable `.ll` text. It intentionally does not embed LLVM
-libraries or use the LLVM C++ API in v1.
+The Phase 13 LLVM backend consumes validated MIR and emits stable textual LLVM
+IR (`.ll`). It intentionally does not embed LLVM libraries or use the LLVM C++
+API in v1.
 
-The planned LLVM path is:
+The LLVM path is:
 
 ```text
-.tk / .ik source
+.ik / .ik source
   -> AST
   -> CheckedProgram / Typed Program
   -> MIR
@@ -229,7 +233,9 @@ operations, control flow, function calls, and ptr/index/field load/store. It
 does not add an optimizer, checked LLVM lowering, JIT, debug info, runtime,
 allocator, bounds checks, or `slice<T>`.
 
-See [LLVM Backend](LLVM_BACKEND.md) for the design.
+`emit-llvm` does not require clang. `build-llvm` invokes external clang to build
+a dynamic library or object file. See [LLVM Backend](LLVM_BACKEND.md) for the
+backend contract and limitations.
 
 ## Diagnostics Flow
 
@@ -270,10 +276,10 @@ reasons:
   library generation.
 - It keeps the compiler small while the language and ABI stabilize.
 
-WASM starts in Phase 12 after MIR becomes the default codegen pipeline, with C
-retained as the reference backend while the WASM backend is hardened. LLVM
-starts as Phase 13 design work and should be proven through textual IR and
-clang/llc validation before it becomes a production backend.
+WASM becomes an optional MIR backend in Phase 12. LLVM becomes an optional MIR
+backend in Phase 13. C remains the default native backend, while regression
+tests compare C, WASM, and LLVM behavior across scalar, control-flow,
+function-call, short-circuit, memory, and pricing fixtures.
 
 ## Future IR Direction
 

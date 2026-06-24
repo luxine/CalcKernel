@@ -1,0 +1,118 @@
+; ModuleID = 'intkernel'
+source_filename = "pricing.ik"
+
+%struct.Item = type { i64, i64, i64, i64 }
+
+define i32 @calc_items(ptr %items, i32 %len, ptr %out) {
+entry:
+  %items.addr = alloca ptr
+  %len.addr = alloca i32
+  %out.addr = alloca ptr
+  %i.addr = alloca i32
+  %subtotal.addr = alloca i64
+  %after_discount.addr = alloca i64
+  %tax.addr = alloca i64
+  %ik_tmp0.addr = alloca i32
+  %ik_tmp1.addr = alloca i1
+  %ik_tmp2.addr = alloca i64
+  %ik_tmp3.addr = alloca i64
+  %ik_tmp4.addr = alloca i64
+  %ik_tmp5.addr = alloca i64
+  %ik_tmp6.addr = alloca i64
+  %ik_tmp7.addr = alloca i64
+  %ik_tmp8.addr = alloca i64
+  %ik_tmp9.addr = alloca i64
+  %ik_tmp10.addr = alloca i64
+  %ik_tmp11.addr = alloca i64
+  %ik_tmp12.addr = alloca i32
+  %ik_tmp13.addr = alloca i32
+  %ik_tmp14.addr = alloca i32
+  store ptr %items, ptr %items.addr
+  store i32 %len, ptr %len.addr
+  store ptr %out, ptr %out.addr
+  store i32 0, ptr %ik_tmp0.addr
+  %v0 = load i32, ptr %ik_tmp0.addr
+  store i32 %v0, ptr %i.addr
+  br label %bb1
+bb1:
+  %v1 = load i32, ptr %i.addr
+  %v2 = load i32, ptr %len.addr
+  %v3 = icmp slt i32 %v1, %v2
+  store i1 %v3, ptr %ik_tmp1.addr
+  %v4 = load i1, ptr %ik_tmp1.addr
+  br i1 %v4, label %bb2, label %bb3
+bb2:
+  %v5 = load ptr, ptr %items.addr
+  %v6 = load i32, ptr %i.addr
+  %v7 = sext i32 %v6 to i64
+  %v8 = getelementptr %struct.Item, ptr %v5, i64 %v7
+  %v9 = getelementptr %struct.Item, ptr %v8, i32 0, i32 0
+  %v10 = load i64, ptr %v9
+  store i64 %v10, ptr %ik_tmp2.addr
+  %v11 = load ptr, ptr %items.addr
+  %v12 = load i32, ptr %i.addr
+  %v13 = sext i32 %v12 to i64
+  %v14 = getelementptr %struct.Item, ptr %v11, i64 %v13
+  %v15 = getelementptr %struct.Item, ptr %v14, i32 0, i32 1
+  %v16 = load i64, ptr %v15
+  store i64 %v16, ptr %ik_tmp3.addr
+  %v17 = load i64, ptr %ik_tmp2.addr
+  %v18 = load i64, ptr %ik_tmp3.addr
+  %v19 = mul i64 %v17, %v18
+  store i64 %v19, ptr %ik_tmp4.addr
+  %v20 = load i64, ptr %ik_tmp4.addr
+  store i64 %v20, ptr %subtotal.addr
+  %v21 = load ptr, ptr %items.addr
+  %v22 = load i32, ptr %i.addr
+  %v23 = sext i32 %v22 to i64
+  %v24 = getelementptr %struct.Item, ptr %v21, i64 %v23
+  %v25 = getelementptr %struct.Item, ptr %v24, i32 0, i32 2
+  %v26 = load i64, ptr %v25
+  store i64 %v26, ptr %ik_tmp5.addr
+  %v27 = load i64, ptr %subtotal.addr
+  %v28 = load i64, ptr %ik_tmp5.addr
+  %v29 = sub i64 %v27, %v28
+  store i64 %v29, ptr %ik_tmp6.addr
+  %v30 = load i64, ptr %ik_tmp6.addr
+  store i64 %v30, ptr %after_discount.addr
+  %v31 = load ptr, ptr %items.addr
+  %v32 = load i32, ptr %i.addr
+  %v33 = sext i32 %v32 to i64
+  %v34 = getelementptr %struct.Item, ptr %v31, i64 %v33
+  %v35 = getelementptr %struct.Item, ptr %v34, i32 0, i32 3
+  %v36 = load i64, ptr %v35
+  store i64 %v36, ptr %ik_tmp7.addr
+  %v37 = load i64, ptr %after_discount.addr
+  %v38 = load i64, ptr %ik_tmp7.addr
+  %v39 = mul i64 %v37, %v38
+  store i64 %v39, ptr %ik_tmp8.addr
+  store i64 1000000, ptr %ik_tmp9.addr
+  %v40 = load i64, ptr %ik_tmp8.addr
+  %v41 = load i64, ptr %ik_tmp9.addr
+  %v42 = sdiv i64 %v40, %v41
+  store i64 %v42, ptr %ik_tmp10.addr
+  %v43 = load i64, ptr %ik_tmp10.addr
+  store i64 %v43, ptr %tax.addr
+  %v44 = load i64, ptr %after_discount.addr
+  %v45 = load i64, ptr %tax.addr
+  %v46 = add i64 %v44, %v45
+  store i64 %v46, ptr %ik_tmp11.addr
+  %v47 = load ptr, ptr %out.addr
+  %v48 = load i32, ptr %i.addr
+  %v49 = sext i32 %v48 to i64
+  %v50 = getelementptr i64, ptr %v47, i64 %v49
+  %v51 = load i64, ptr %ik_tmp11.addr
+  store i64 %v51, ptr %v50
+  store i32 1, ptr %ik_tmp12.addr
+  %v52 = load i32, ptr %i.addr
+  %v53 = load i32, ptr %ik_tmp12.addr
+  %v54 = add i32 %v52, %v53
+  store i32 %v54, ptr %ik_tmp13.addr
+  %v55 = load i32, ptr %ik_tmp13.addr
+  store i32 %v55, ptr %i.addr
+  br label %bb1
+bb3:
+  store i32 0, ptr %ik_tmp14.addr
+  %v56 = load i32, ptr %ik_tmp14.addr
+  ret i32 %v56
+}

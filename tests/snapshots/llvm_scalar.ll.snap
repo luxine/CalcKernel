@@ -1,0 +1,62 @@
+; ModuleID = 'intkernel'
+source_filename = "llvm_scalar.ik"
+
+define i64 @add_i64(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_tmp0.addr = alloca i64
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %b.addr
+  %v2 = add i64 %v0, %v1
+  store i64 %v2, ptr %ik_tmp0.addr
+  %v3 = load i64, ptr %ik_tmp0.addr
+  ret i64 %v3
+}
+
+define i32 @mul_i32(i32 %a, i32 %b) {
+entry:
+  %a.addr = alloca i32
+  %b.addr = alloca i32
+  %ik_tmp0.addr = alloca i32
+  store i32 %a, ptr %a.addr
+  store i32 %b, ptr %b.addr
+  %v0 = load i32, ptr %a.addr
+  %v1 = load i32, ptr %b.addr
+  %v2 = mul i32 %v0, %v1
+  store i32 %v2, ptr %ik_tmp0.addr
+  %v3 = load i32, ptr %ik_tmp0.addr
+  ret i32 %v3
+}
+
+define i1 @less_i64(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_tmp0.addr = alloca i1
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %b.addr
+  %v2 = icmp slt i64 %v0, %v1
+  store i1 %v2, ptr %ik_tmp0.addr
+  %v3 = load i1, ptr %ik_tmp0.addr
+  ret i1 %v3
+}
+
+define i64 @div_u64(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_tmp0.addr = alloca i64
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %b.addr
+  %v2 = udiv i64 %v0, %v1
+  store i64 %v2, ptr %ik_tmp0.addr
+  %v3 = load i64, ptr %ik_tmp0.addr
+  ret i64 %v3
+}

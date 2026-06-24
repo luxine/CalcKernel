@@ -102,17 +102,21 @@ checks、`slice<T>`、SIMD、threads、GC 或 exceptions。
 
 ## Phase 13 LLVM Backend
 
-Phase 13 以从 MIR 生成 textual LLVM IR 作为 LLVM backend 起点。
+Phase 13 LLVM backend 已覆盖当前 MIR 支持的 unchecked V0 语言面。
 
-- 在 `docs/LLVM_BACKEND.md` 记录 LLVM backend 设计。
-- 为 scalar subset 增加 MIR-to-LLVM IR text generation。
-- 增加 `emit-llvm`，生成稳定 `.ll` output。
-- 通过 clang 增加可选 `build-llvm` 或 `build --backend llvm`。
-- 在 LLVM e2e 行为被证明前，保持 C backend 为 reference backend。
-- LLVM v1 仅支持 unchecked。
-- 在 checked LLVM lowering 完成设计前，LLVM 遇到 `--overflow checked` 应拒绝。
-- 在认为 backend 可发布前，覆盖 scalar、control flow、function call、
-  ptr/index/field/store 和 `pricing` e2e。
+- `docs/LLVM_BACKEND.md` 记录 LLVM backend contract。
+- MIR-to-LLVM IR text generation 已实现。
+- `ikc emit-llvm` 生成稳定 `.ll` output。
+- `ikc build-llvm` 可以通过 clang 构建 dynamic library。
+- `ikc build-llvm --kind object` 可以通过 clang 生成 object file。
+- LLVM IR snapshots 覆盖 scalar、control flow、function call、
+  ptr/index/field/store、short-circuit 和 `pricing`。
+- LLVM clang e2e tests 覆盖 scalar、bool ABI、control flow、function call、
+  short-circuit、memory access 和 `pricing`。
+- C/WASM/LLVM backend regression comparison tests 覆盖 scalar、control flow、
+  function call、short-circuit、memory 和 pricing fixtures。
+- LLVM v1 仍只支持 unchecked。
+- 在 checked LLVM lowering 完成设计前，LLVM 会拒绝 `--overflow checked`。
 
 Phase 13 v1 不增加 LLVM C++ API、bitcode writer、JIT、optimizer、debug info、
 runtime support、allocator、bounds check、`slice<T>`、strings、IO 或 modules。
@@ -120,10 +124,13 @@ runtime support、allocator、bounds check、`slice<T>`、strings、IO 或 modul
 未来 LLVM 工作：
 
 - checked LLVM arithmetic
-- direct SSA lowering
+- direct SSA LLVM lowering
 - optional optimizer pass pipeline
 - target data layout hardening
-- object/native-library build hardening
+- object/static library improvements
+- debug info
+- 如果未来产品场景需要，再考虑 JIT
+- 语言具备携带长度的 pointer type 后，再支持 `slice<T>` / bounds check
 
 ## Future Optimizer
 

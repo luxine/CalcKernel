@@ -1,0 +1,51 @@
+; ModuleID = 'intkernel'
+source_filename = "llvm_calls.ik"
+
+define internal i64 @add_i64(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_tmp0.addr = alloca i64
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %b.addr
+  %v2 = add i64 %v0, %v1
+  store i64 %v2, ptr %ik_tmp0.addr
+  %v3 = load i64, ptr %ik_tmp0.addr
+  ret i64 %v3
+}
+
+define internal i64 @double_i64(i64 %a) {
+entry:
+  %a.addr = alloca i64
+  %ik_tmp0.addr = alloca i64
+  %ik_tmp1.addr = alloca i64
+  store i64 %a, ptr %a.addr
+  store i64 2, ptr %ik_tmp0.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %ik_tmp0.addr
+  %v2 = mul i64 %v0, %v1
+  store i64 %v2, ptr %ik_tmp1.addr
+  %v3 = load i64, ptr %ik_tmp1.addr
+  ret i64 %v3
+}
+
+define i64 @calc(i64 %a, i64 %b) {
+entry:
+  %a.addr = alloca i64
+  %b.addr = alloca i64
+  %ik_tmp0.addr = alloca i64
+  %ik_tmp1.addr = alloca i64
+  store i64 %a, ptr %a.addr
+  store i64 %b, ptr %b.addr
+  %v0 = load i64, ptr %a.addr
+  %v1 = load i64, ptr %b.addr
+  %v2 = call i64 @add_i64(i64 %v0, i64 %v1)
+  store i64 %v2, ptr %ik_tmp0.addr
+  %v3 = load i64, ptr %ik_tmp0.addr
+  %v4 = call i64 @double_i64(i64 %v3)
+  store i64 %v4, ptr %ik_tmp1.addr
+  %v5 = load i64, ptr %ik_tmp1.addr
+  ret i64 %v5
+}

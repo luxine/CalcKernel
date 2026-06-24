@@ -1,0 +1,60 @@
+; ModuleID = 'intkernel'
+source_filename = "llvm_memory.ik"
+
+%struct.Item = type { i64, i64, i64, i64 }
+
+define i64 @first_price(ptr %items) {
+entry:
+  %items.addr = alloca ptr
+  %ik_tmp0.addr = alloca i32
+  %ik_tmp1.addr = alloca i64
+  store ptr %items, ptr %items.addr
+  store i32 0, ptr %ik_tmp0.addr
+  %v0 = load ptr, ptr %items.addr
+  %v1 = load i32, ptr %ik_tmp0.addr
+  %v2 = sext i32 %v1 to i64
+  %v3 = getelementptr %struct.Item, ptr %v0, i64 %v2
+  %v4 = getelementptr %struct.Item, ptr %v3, i32 0, i32 0
+  %v5 = load i64, ptr %v4
+  store i64 %v5, ptr %ik_tmp1.addr
+  %v6 = load i64, ptr %ik_tmp1.addr
+  ret i64 %v6
+}
+
+define i64 @get_price(ptr %items, i32 %i) {
+entry:
+  %items.addr = alloca ptr
+  %i.addr = alloca i32
+  %ik_tmp0.addr = alloca i64
+  store ptr %items, ptr %items.addr
+  store i32 %i, ptr %i.addr
+  %v0 = load ptr, ptr %items.addr
+  %v1 = load i32, ptr %i.addr
+  %v2 = sext i32 %v1 to i64
+  %v3 = getelementptr %struct.Item, ptr %v0, i64 %v2
+  %v4 = getelementptr %struct.Item, ptr %v3, i32 0, i32 0
+  %v5 = load i64, ptr %v4
+  store i64 %v5, ptr %ik_tmp0.addr
+  %v6 = load i64, ptr %ik_tmp0.addr
+  ret i64 %v6
+}
+
+define i32 @write_i64(ptr %out, i64 %value) {
+entry:
+  %out.addr = alloca ptr
+  %value.addr = alloca i64
+  %ik_tmp0.addr = alloca i32
+  %ik_tmp1.addr = alloca i32
+  store ptr %out, ptr %out.addr
+  store i64 %value, ptr %value.addr
+  store i32 0, ptr %ik_tmp0.addr
+  %v0 = load ptr, ptr %out.addr
+  %v1 = load i32, ptr %ik_tmp0.addr
+  %v2 = sext i32 %v1 to i64
+  %v3 = getelementptr i64, ptr %v0, i64 %v2
+  %v4 = load i64, ptr %value.addr
+  store i64 %v4, ptr %v3
+  store i32 0, ptr %ik_tmp1.addr
+  %v5 = load i32, ptr %ik_tmp1.addr
+  ret i32 %v5
+}

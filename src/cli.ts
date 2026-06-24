@@ -5,6 +5,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emitCFiles, buildSharedLibrary, type BuildPlatform, type CommandResult, type CommandRunner } from "./backend/c/c-build.js";
 import { defaultOverflowMode, type OverflowMode } from "./backend/c/c-options.js";
+import { buildLlvmSharedLibrary, type LlvmBuildKind } from "./backend/llvm/llvm-build.js";
+import { emitMirLlvmModule } from "./backend/llvm/mir-llvm-emitter.js";
+import { detectNativeLlvmTargetTriple } from "./backend/llvm/llvm-target.js";
 import { emitMirWatModule } from "./backend/wasm/mir-wat-emitter.js";
 import { compileWatToWasm } from "./backend/wasm/wat-to-wasm.js";
 import { lowerToMir } from "./mir/lower.js";
@@ -46,12 +49,16 @@ export function runCli(argv: string[] = process.argv.slice(2), options: RunCliOp
         return runEmitC(rest, context);
       case "emit-mir":
         return runEmitMir(rest, context);
+      case "emit-llvm":
+        return runEmitLlvm(rest, context);
       case "emit-wat":
         return runEmitWat(rest, context);
       case "emit-wasm":
         return runEmitWasm(rest, context);
       case "build":
         return runBuild(rest, context);
+      case "build-llvm":
+        return runBuildLlvm(rest, context);
       default:
         context.stderr(usage());
         return 2;
@@ -136,6 +143,48 @@ function runEmitMir(args: string[], context: Required<RunCliOptions>): number {
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, text);
   context.stdout(`OK: emitted MIR\nWrote ${outPath}\n`);
+  return 0;
+}
+
+function runEmitLlvm(args: string[], context: Required<RunCliOptions>): number {
+  const parsed = parseFlags(args);
+  const file = requireSingleInput(parsed, "emit-llvm");
+  const outFile = parsed.flags.get("--out");
+  const overflowMode = parseOverflowMode(parsed);
+  const targetTriple = parsed.flags.get("--target");
+
+  if (overflowMode === "checked") {
+    throw unsupportedCheckedLlvmError();
+  }
+
+  const checked = checkFile(file, context.cwd);
+
+  if (checked.result.diagnostics.length > 0) {
+    context.stderr(formatDiagnostics(checked.source, checked.result.diagnostics));
+    return 1;
+  }
+
+  const mir = lowerToMir(checked.result.checkedProgram);
+  const validation = validateMirModule(mir);
+  if (validation.errors.length > 0) {
+    context.stderr("internal compiler error: MIR validation failed\n");
+    for (const error of validation.errors) {
+      const location = [error.functionName, error.blockLabel].filter(Boolean).join(":");
+      context.stderr(`  - ${location ? `${location}: ` : ""}${error.message}\n`);
+    }
+    return 1;
+  }
+
+  const text = emitMirLlvmModule(mir, { sourceFileName: file, targetTriple: targetTriple ?? detectNativeLlvmTargetTriple() });
+
+  if (!outFile) {
+    context.stdout(text);
+    return 0;
+  }
+
+  const outPath = resolve(context.cwd, outFile);
+  writeFileAtomic(outPath, text);
+  context.stdout(`OK: emitted LLVM IR ${outFile}\n`);
   return 0;
 }
 
@@ -250,6 +299,55 @@ function runBuild(args: string[], context: Required<RunCliOptions>): number {
   return 0;
 }
 
+function runBuildLlvm(args: string[], context: Required<RunCliOptions>): number {
+  const parsed = parseFlags(args);
+  const file = requireSingleInput(parsed, "build-llvm");
+  const outputPath = requireFlag(parsed, "--out", "build-llvm");
+  const overflowMode = parseOverflowMode(parsed);
+  const targetTriple = parsed.flags.get("--target");
+  const kind = parseLlvmBuildKind(parsed);
+
+  if (overflowMode === "checked") {
+    throw unsupportedCheckedLlvmError();
+  }
+
+  const checked = checkFile(file, context.cwd);
+
+  if (checked.result.diagnostics.length > 0) {
+    context.stderr(formatDiagnostics(checked.source, checked.result.diagnostics));
+    return 1;
+  }
+
+  const absoluteOutputPath = resolve(context.cwd, outputPath);
+  const llFile = llvmIntermediateFilePath(absoluteOutputPath, kind);
+  const result = buildLlvmSharedLibrary(checked.result, {
+    kind,
+    llFile,
+    outputPath: absoluteOutputPath,
+    platform: context.platform,
+    runCommand: context.runCommand,
+    sourceFileName: file,
+    targetTriple,
+    writeFile: writeFileAtomic
+  });
+
+  if (!result.ok) {
+    context.stderr(`${result.message ?? "LLVM build failed."}\n`);
+    return 1;
+  }
+
+  context.stdout(`OK: built LLVM ${result.kind === "object" ? "object" : "library"}\n${result.outputPath}\n`);
+  return 0;
+}
+
+function llvmIntermediateFilePath(outputPath: string, kind: LlvmBuildKind): string {
+  if (kind === "object") {
+    return `${outputPath.replace(/\.(o|obj)$/i, "")}.ll`;
+  }
+
+  return `${outputPath}.ll`;
+}
+
 function checkFile(file: string, cwd: string): { result: CheckResult; source: SourceFile } {
   const path = resolve(cwd, file);
   const sourceText = readFileSync(path, "utf8");
@@ -320,6 +418,13 @@ function unsupportedCheckedWasmError(): Error {
   );
 }
 
+function unsupportedCheckedLlvmError(): Error {
+  return new Error(
+    "error: LLVM backend does not support --overflow checked yet.\n" +
+      "Use --overflow unchecked, or use the C backend for checked arithmetic."
+  );
+}
+
 function parseOverflowMode(parsed: FlagParseResult): OverflowMode {
   const value = parsed.flags.get("--overflow") ?? defaultOverflowMode;
   if (value === "unchecked" || value === "checked") {
@@ -327,6 +432,15 @@ function parseOverflowMode(parsed: FlagParseResult): OverflowMode {
   }
 
   throw new Error(`Invalid value for --overflow: ${value}. Expected 'unchecked' or 'checked'.`);
+}
+
+function parseLlvmBuildKind(parsed: FlagParseResult): LlvmBuildKind {
+  const value = parsed.flags.get("--kind") ?? "dynamic";
+  if (value === "dynamic" || value === "object") {
+    return value;
+  }
+
+  throw new Error(`Invalid value for --kind: ${value}. Expected 'dynamic' or 'object'.`);
 }
 
 function defaultCommandRunner(command: string, args: string[]): CommandResult {
@@ -355,9 +469,11 @@ function usage(): string {
     "  ikc check <file>",
     "  ikc emit-c <file> --out <c-file> --header <h-file> [--overflow <unchecked|checked>]",
     "  ikc emit-mir <file> [--out <mir-file>]",
+    "  ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked]",
     "  ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]",
     "  ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]",
     "  ikc build <file> --out <output-path> [--overflow <unchecked|checked>]",
+    "  ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]",
     "",
     "Options:",
     "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.",

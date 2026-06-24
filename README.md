@@ -168,19 +168,30 @@ generation and bounds checks are not implemented yet.
 See [WASM ABI](docs/WASM_ABI.md) for the ABI, struct layout, memory model, WABT
 assembly step, and Node.js interop rules.
 
-## Planned LLVM Backend
+## LLVM Backend
 
-Phase 13 designs a MIR-to-LLVM backend that will emit textual LLVM IR (`.ll`)
-before any native LLVM integration:
+Phase 13 adds a MIR-to-LLVM backend that emits textual LLVM IR (`.ll`) and can
+optionally invoke clang to build a native dynamic library:
 
 ```text
-.tk / .ik source -> CheckedProgram -> MIR -> LLVM IR text
+.ik / .ik source -> CheckedProgram -> MIR -> LLVM IR text
 ```
 
-The planned v1 backend is unchecked-only and will not use LLVM C++ API
-bindings, JIT, an optimizer pipeline, debug info, runtime support, allocator,
-bounds checks, or `slice<T>`. See [LLVM Backend](docs/LLVM_BACKEND.md) for the
-design.
+```sh
+pnpm ikc emit-llvm examples/pricing.ik --out build/pricing.ll
+pnpm ikc build-llvm examples/pricing.ik --out build/libpricing
+pnpm ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
+pnpm ikc build-llvm examples/pricing.ik --out build/libpricing --target x86_64-unknown-linux-gnu
+```
+
+The v1 backend is unchecked-only: `emit-llvm --overflow checked` and
+`build-llvm --overflow checked` fail instead of silently producing unchecked
+LLVM IR. Use the C backend when checked arithmetic is required. LLVM v1 does
+not use LLVM C++ API bindings, JIT, an optimizer pipeline, debug info, runtime
+support, allocator, bounds checks, or `slice<T>`. `build-llvm` requires clang;
+`emit-llvm` works without clang. Object output is available for custom link
+flows; static library output is not implemented yet. See
+[LLVM Backend](docs/LLVM_BACKEND.md) for the backend details.
 
 ## Node.js WASM Example
 
@@ -361,6 +372,7 @@ parallel for every project document.
 - [C ABI](docs/ABI.md)
 - [WASM ABI](docs/WASM_ABI.md)
 - [LLVM Backend](docs/LLVM_BACKEND.md)
+- [Naming Conventions](docs/NAMING_CONVENTIONS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
@@ -373,5 +385,6 @@ Chinese:
 - [C ABI](docs/zh-CN/ABI.md)
 - [WASM ABI](docs/zh-CN/WASM_ABI.md)
 - [LLVM Backend](docs/zh-CN/LLVM_BACKEND.md)
+- [命名规范](docs/zh-CN/NAMING_CONVENTIONS.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

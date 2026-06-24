@@ -59,15 +59,21 @@
 
 ## LLVM Backend 验证
 
-- 实现或发布 LLVM backend 变更前，先 review `docs/LLVM_BACKEND.md`。
-- `emit-llvm` 命令存在后，确认相关 tests 通过。
+- 发布 LLVM backend 变更前，先 review `docs/LLVM_BACKEND.md`。
+- 确认 `emit-llvm` CLI tests 通过。
+- 确认 `build-llvm` clang command tests 通过。
+- 确认 `build-llvm --kind object` tests 通过。
 - Review LLVM IR snapshot diff，确认格式稳定，且没有绝对路径、时间戳或随机 ID。
 - 如果 clang 可用，在 smoke tests 中编译生成的 `.ll`。
-- 如果存在 `build-llvm`，确认 clang 不可用时会输出友好错误。
+- 如果 clang 可用，确认 LLVM pricing e2e 通过。
+- 确认 `build-llvm` 在 clang 不可用时会输出友好错误。
 - 在 checked LLVM lowering 实现前，确认 `emit-llvm --overflow checked` 会以文档中的
+  unsupported message 失败。
+- 在 checked LLVM lowering 实现前，确认 `build-llvm --overflow checked` 会以文档中的
   unsupported message 失败。
 - 发布前确认 scalar、control-flow、function-call、ptr/index/field/store 和 pricing
   LLVM e2e tests 通过。
+- 确认 C/WASM/LLVM backend regression comparison tests 通过。
 - LLVM backend 变更后，重新运行 C backend 和 WASM backend regression tests。
 
 ## 可选发布检查
