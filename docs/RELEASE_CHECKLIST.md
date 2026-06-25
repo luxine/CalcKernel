@@ -137,9 +137,14 @@ semantics or as cross-machine performance truth.
 
 - Confirm language docs describe f64 primitive, float literals, arithmetic,
   unary minus, comparisons, `ptr<f64>`, and struct fields containing `f64`.
-- Confirm docs explicitly reject f32, implicit int/float conversion, explicit
-  numeric casts, `f64 %`, fast-math, SIMD, JIT, runtime, IO, strings, GC, NaN
-  literal syntax, infinity literal syntax, and float suffix literals.
+- Confirm docs state the f64-only policy: `f64` is the only floating point type,
+  `f32` is not planned, and no docs drift reintroduces f32 planning language.
+- Confirm docs explicitly reject implicit int/float conversion, explicit numeric
+  casts as current functionality, `f64 %`, fast-math, SIMD, JIT, runtime, IO,
+  strings, GC, NaN literal syntax, infinity literal syntax, and float suffix
+  literals.
+- Confirm docs describe explicit numeric casts as future work only and do not
+  promise that Phase 20 implements every cast direction.
 - Confirm checked arithmetic docs say f64 does not participate in integer
   overflow checks, f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`,
   and f64 overflow does not return `IK_ERR_OVERFLOW`.
@@ -242,8 +247,8 @@ semantics or as cross-machine performance truth.
 - Confirm all required commands and manual reviews above are complete.
 - Confirm working tree changes are intentional and understood.
 - Confirm release notes summarize only implemented capability.
-- Confirm known limitations are listed: no f32, no implicit int/float
-  conversion, no `f64 %`, no fast-math, no SIMD, no JIT, no IO, no strings, no
-  GC, no runtime, no float checked overflow, and no checked WASM/LLVM
-  arithmetic.
+- Confirm known limitations are listed: f64-only floating point, f32 not planned,
+  no implicit int/float conversion, no implemented explicit numeric casts, no
+  `f64 %`, no fast-math, no SIMD, no JIT, no IO, no strings, no GC, no runtime,
+  no float checked overflow, and no checked WASM/LLVM arithmetic.
 - Create the release tag only after the checklist is complete.

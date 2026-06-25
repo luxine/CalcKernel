@@ -63,6 +63,11 @@ Supported by the Phase 12 v1 design:
 - `f64` arithmetic, comparison, load, and store
 - WAT-to-WASM assembly through `wabt`
 
+WASM floating point follows the project-wide f64-only policy: `f64` is the only
+floating point type, `f32` is not planned, implicit int/float conversion is not
+supported, and explicit numeric casts are future work. Scalar f64 interop uses
+JavaScript `Number`.
+
 Not supported by Phase 12 v1:
 
 - checked overflow

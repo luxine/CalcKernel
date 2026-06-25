@@ -30,13 +30,15 @@ V0 supports these types:
 `ptr<T>` represents a caller-owned pointer to `T`. V0 has no owned arrays and
 no dynamic allocation.
 
-`f64` is strict floating point. It is intended for numerical kernels. It is not
+`f64` is strict floating point. It is intended for numerical kernels. It is the
+only floating point type in IK / IntKernel; `f32` is not planned. It is not
 recommended for money, tax, POS totals, or pricing-rule calculations; use `i64`
 fixed-point arithmetic for those domains so checked integer mode can report
 overflow and division errors explicitly.
 
 The language does not support `f32`, implicit int/float conversion, fast-math,
-SIMD, or float checked overflow.
+SIMD, or float checked overflow. Explicit numeric casts are future work and are
+not implemented in the current release; any future cast support must be explicit.
 
 ## Supported Declarations
 
@@ -225,10 +227,10 @@ V0 does not support:
 - runtime library
 - checked overflow as a language syntax feature or default behavior
 - bounds checks
-- `f32`
+- `f32` (not planned)
 - `f64 %`
 - implicit int/float conversion
-- explicit numeric casts
+- explicit numeric casts (future work only)
 - fast-math
 - SIMD
 - JIT compilation

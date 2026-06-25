@@ -159,6 +159,14 @@ Phase 14 optimization 和 performance 工作已经覆盖 v0.4.0。
 - 更广泛的 f64 optimization 需要后续 Phase 先明确 strict-safe floating point
   optimization rules
 
+Numeric roadmap lock：
+
+- IK / IntKernel 的 floating point 保持 f64-only。
+- 不规划 `f32`。
+- explicit numeric cast 是未来工作，必须保持 explicit，并应从窄范围 int-to-f64
+  builtin 开始，而不是一次性扩展为宽泛 conversion surface。
+- fast-math 和 SIMD 不属于当前 numeric roadmap。
+
 ## Future `slice<T>` / Bounds Checks
 
 - Raw `ptr<T>` 保持 unchecked。

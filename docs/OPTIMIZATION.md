@@ -402,6 +402,8 @@ succeeds. WASM and LLVM remain unchecked-only backends and reject
 
 Phase 16 f64 support is strict-safe:
 
+- `f64` is the only floating point type; `f32` is not planned
+- explicit numeric casts are future work and are not optimizer input today
 - no fast-math
 - no f64 constant folding
 - no f64 reassociation

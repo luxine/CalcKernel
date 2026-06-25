@@ -89,9 +89,9 @@ Strict mode 含义：
 
 - `f64` 映射到 C `double`、LLVM `double` 和 WASM `f64`
 - JavaScript WASM interop 对 `f64` 使用 `Number`
-- 不支持 `f32`
+- `f64` 是唯一 floating point type；不规划 `f32`
 - 不支持 implicit int/float conversion
-- 暂不支持 explicit numeric cast
+- explicit numeric cast 是未来工作，当前未实现
 - 不支持 `f64 %`
 - 不启用 fast-math flag 或 reassociation
 - 不支持 SIMD
@@ -418,10 +418,11 @@ V0 当前支持：
 V0 不支持字符串、IO、heap allocation、GC、异常、async、class、闭包、模块、
 runtime library 或 JIT。WASM 和 LLVM backend 当前只支持 unchecked arithmetic。
 
-Floating point 刻意保持很窄：当前支持 `f64` strict mode，但不支持 `f32`、
-implicit int/float conversion、`f64 %`、fast-math、SIMD 或 float checked
-overflow。IK / IntKernel 不保证所有 C、LLVM、WASM 和 JavaScript target 的浮点结果
-bit-identical。
+Floating point 刻意保持很窄：IK / IntKernel 是 f64-only。当前支持 `f64`
+strict mode，不规划 `f32`。implicit int/float conversion、explicit numeric
+cast、`f64 %`、fast-math、SIMD 或 float checked overflow 都未实现。未来如果
+支持 cast，也必须是 explicit。IK / IntKernel 不保证所有 C、LLVM、WASM 和
+JavaScript target 的浮点结果 bit-identical。
 
 V0 不做 bounds check。默认 arithmetic 是 unchecked；可选
 `--overflow checked` C code generation 会检查整数 overflow 和除零，但仍不检查

@@ -61,6 +61,10 @@ Phase 12 v1 设计支持：
 - `f64` arithmetic、comparison、load 和 store
 - 通过 `wabt` 完成 WAT-to-WASM assembly
 
+WASM floating point 遵循项目级 f64-only policy：`f64` 是唯一 floating point
+type，不规划 `f32`，不支持 implicit int/float conversion，explicit numeric cast
+是未来工作。scalar f64 interop 使用 JavaScript `Number`。
+
 Phase 12 v1 暂不支持：
 
 - checked overflow

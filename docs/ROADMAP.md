@@ -169,6 +169,14 @@ Future optimization work:
 - broader f64 optimization only after a future phase explicitly designs
   strict-safe floating point optimization rules
 
+Numeric roadmap lock:
+
+- IK / IntKernel remains f64-only for floating point.
+- `f32` is not planned.
+- Explicit numeric casts are future work, must be explicit, and should start
+  with narrow int-to-f64 builtins rather than a broad conversion surface.
+- Fast-math and SIMD are not part of the current numeric roadmap.
+
 ## Future `slice<T>` / Bounds Checks
 
 - Raw `ptr<T>` remains unchecked.

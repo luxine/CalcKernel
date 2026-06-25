@@ -29,9 +29,12 @@ alignment 8。IK / IntKernel 不承诺所有 C、LLVM、WASM 和 JavaScript targ
 
 f64 语义锁定：
 
+- `f64` 是唯一 floating point type；不规划 `f32`。
 - C 使用普通 `double` operation。
 - LLVM 生成不带 fast-math flag 的 `double` operation。
 - WASM 生成 `f64` operation，scalar f64 通过 JavaScript `Number` 暴露给 host。
+- 不支持 implicit int/float conversion。
+- explicit numeric cast 是未来工作，不属于当前 ABI。
 - NaN、infinity 和 `-0.0` 遵循 backend 的普通 IEEE-like 行为。
 - NaN payload 和跨 backend bit identity 不属于 ABI contract。
 - 有限值跨 backend 测试必须使用 tolerance；NaN、infinity、signed zero 和 bool

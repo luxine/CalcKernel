@@ -91,9 +91,9 @@ Strict mode means:
 
 - `f64` maps to C `double`, LLVM `double`, and WASM `f64`
 - JavaScript WASM interop uses `Number` for `f64`
-- no `f32`
+- `f64` is the only floating point type; `f32` is not planned
 - no implicit int/float conversion
-- no explicit numeric casts yet
+- explicit numeric casts are future work and are not implemented yet
 - no `f64 %`
 - no fast-math flags or reassociation
 - no SIMD
@@ -437,11 +437,12 @@ V0 does not support strings, IO, heap allocation, GC, exceptions, async,
 classes, closures, modules, runtime libraries, or JIT compilation. The WASM
 and LLVM backends currently support unchecked arithmetic only.
 
-Floating point is intentionally narrow: `f64` strict mode is supported, but
-`f32`, implicit int/float conversion, `f64 %`, fast-math, SIMD, and float
-checked overflow are not implemented. IK / IntKernel does not guarantee
-bit-identical floating point results across all C, LLVM, WASM, and JavaScript
-targets.
+Floating point is intentionally narrow: IK / IntKernel is f64-only. `f64` strict
+mode is supported; `f32` is not planned. Implicit int/float conversion, explicit
+numeric casts, `f64 %`, fast-math, SIMD, and float checked overflow are not
+implemented. Any future cast support must be explicit. IK / IntKernel does not
+guarantee bit-identical floating point results across all C, LLVM, WASM, and
+JavaScript targets.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
 `--overflow checked` C code generation checks integer overflow and division by

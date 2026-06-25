@@ -133,9 +133,13 @@
 
 - 确认语言文档描述 f64 primitive、float literal、arithmetic、unary minus、
   comparison、`ptr<f64>` 和包含 `f64` 的 struct field。
-- 确认文档明确拒绝 f32、implicit int/float conversion、explicit numeric cast、
-  `f64 %`、fast-math、SIMD、JIT、runtime、IO、strings、GC、NaN literal syntax、
-  infinity literal syntax 和 float suffix literal。
+- 确认文档写明 f64-only policy：`f64` 是唯一 floating point type，不规划 `f32`，
+  且没有 docs drift 重新引入 f32 planning 语言。
+- 确认文档明确拒绝 implicit int/float conversion、把 explicit numeric cast 写成
+  当前能力、`f64 %`、fast-math、SIMD、JIT、runtime、IO、strings、GC、NaN literal
+  syntax、infinity literal syntax 和 float suffix literal。
+- 确认文档只把 explicit numeric cast 描述为未来工作，不承诺 Phase 20 实现所有 cast
+  方向。
 - 确认 checked arithmetic 文档说明 f64 不参与 integer overflow check，f64
   division by zero 不返回 `IK_ERR_DIV_BY_ZERO`，f64 overflow 不返回
   `IK_ERR_OVERFLOW`。
@@ -226,8 +230,8 @@
 - 确认上面的必跑命令和人工 review 都已完成。
 - 确认 working tree changes 都是有意且已理解的。
 - 确认 release notes 只总结已实现能力。
-- 确认 known limitations 已列出：没有 f32、没有 implicit int/float conversion、
-  没有 `f64 %`、没有 fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、
-  没有 GC、没有 runtime、没有 float checked overflow，也没有 checked WASM/LLVM
-  arithmetic。
+- 确认 known limitations 已列出：floating point 是 f64-only、不规划 f32、没有
+  implicit int/float conversion、没有已实现的 explicit numeric cast、没有 `f64 %`、
+  没有 fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、没有 GC、没有 runtime、
+  没有 float checked overflow，也没有 checked WASM/LLVM arithmetic。
 - 只有 checklist 完成后才创建 release tag。

@@ -142,10 +142,11 @@ C、LLVM 构建出的 native binary、WASM、JavaScript，以及任何可选 Pyt
 对 f64 kernel，JavaScript `Array` `Number`、JavaScript `Float64Array`、IK C、
 IK LLVM、IK WASM、可选 Python list `float` 和可选 NumPy 属于不同 runtime model。
 NumPy 是 native-library baseline，不是默认 runner dependency。f64 suite 只假设
-strict IK floating point：不假设 f32、fast-math、SIMD、implicit int/float
-conversion 或 f64 checked overflow。JavaScript `Float64Array` 可以是很强的 host
-热循环 baseline。WASM compute-only 和 WASM total 回答的是不同问题，所以必须先确认
-测量的是哪个 phase，再判断 WASM 与 JavaScript 的相对表现。
+strict IK floating point：`f64` 是唯一 floating point type，不规划 `f32`，也不假设
+fast-math、SIMD、implicit int/float conversion、explicit numeric cast 或 f64
+checked overflow。JavaScript `Float64Array` 可以是很强的 host 热循环 baseline。
+WASM compute-only 和 WASM total 回答的是不同问题，所以必须先确认测量的是哪个
+phase，再判断 WASM 与 JavaScript 的相对表现。
 
 ## Batch Calling 原则
 

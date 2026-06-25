@@ -184,9 +184,10 @@ inlining; it does not change `examples/pricing.ik`.
 
 The `f64-*` cases use `bench/perf/fixtures/f64_kernels.ik`. Correctness checks
 use absolute and relative tolerance; they do not require cross-backend
-bit-identical floating point results. IK f64 remains strict mode: no f32,
-fast-math, SIMD, implicit int/float conversion, or f64 checked overflow is
-assumed by these benchmarks.
+bit-identical floating point results. IK f64 remains strict mode: `f64` is the
+only floating point type, `f32` is not planned, and no fast-math, SIMD, implicit
+int/float conversion, explicit numeric casts, or f64 checked overflow is assumed
+by these benchmarks.
 
 Python list `float` and NumPy can be useful optional manual baselines, but they
 are not default dependencies of this runner. NumPy is a native library baseline,

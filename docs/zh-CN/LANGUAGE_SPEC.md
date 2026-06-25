@@ -29,12 +29,14 @@ V0 支持以下类型：
 `ptr<T>` 表示调用方拥有的、指向 `T` 的指针。V0 没有 owned array，也没有动态
 分配。
 
-`f64` 是 strict floating point，适合数值 kernel。金额、税费、POS 总价或 pricing
-rule 计算不建议使用 `f64`；这些领域继续推荐 `i64` fixed-point arithmetic，这样
-checked integer mode 可以明确报告 overflow 和 division error。
+`f64` 是 strict floating point，适合数值 kernel。它是 IK / IntKernel 唯一
+floating point type；不规划 `f32`。金额、税费、POS 总价或 pricing rule 计算不建议
+使用 `f64`；这些领域继续推荐 `i64` fixed-point arithmetic，这样 checked integer
+mode 可以明确报告 overflow 和 division error。
 
 语言不支持 `f32`、implicit int/float conversion、fast-math、SIMD 或 float checked
-overflow。
+overflow。explicit numeric cast 是未来工作，当前版本未实现；未来如果支持 cast，也
+必须是 explicit。
 
 ## 支持的声明
 
@@ -220,10 +222,10 @@ V0 不支持：
 - runtime library
 - 将 checked overflow 作为语言语法特性或默认行为
 - bounds checks
-- `f32`
+- `f32`（不规划）
 - `f64 %`
 - implicit int/float conversion
-- explicit numeric cast
+- explicit numeric cast（仅作为未来工作）
 - fast-math
 - SIMD
 - JIT compilation
