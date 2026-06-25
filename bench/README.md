@@ -123,12 +123,30 @@ Each kernel has default comparison cases for:
 - JavaScript `Float64Array` with `Number` arithmetic
 - IK C O3
 - IK LLVM O3
-- IK WASM O3 compute-only
+- IK WASM O3 split phases
+- IK WASM O3 low-copy split phases
 
-The f64 WASM cases also include `total` and `memory-only` variants so host-side
-memory marshaling can be separated from compute time. WASM f64 host interop
-uses JavaScript `Number`; it does not use `BigInt`. Memory setup uses
-little-endian `DataView.setFloat64`/`getFloat64`.
+The f64 WASM cases include `setup`, `input-marshal`, `compute-only`,
+`output-readback`, `total`, and `memory-only` variants so host-side memory
+marshaling can be separated from compute time. `total` measures input marshal +
+WASM compute + output readback in one path. WASM f64 host interop uses
+JavaScript `Number`; it does not use `BigInt`. Memory setup uses little-endian
+`DataView.setFloat64`/`getFloat64` for the original compatibility path.
+
+Phase 18.3 adds low-copy WASM f64 cases named
+`f64-*-ik-wasm-o3-low-copy-*`. They use a `Float64Array` view over exported
+WASM memory, `Float64Array#set` for bulk input marshal, scalar return consume for
+`dot`/`sum`, and output checksum readback for in-place array kernels. The old
+DataView path is intentionally retained as a comparison point for byte-level
+marshaling overhead.
+
+For production-style homogeneous `f64` buffers, prefer the
+`examples/node-wasm-f64-array/` pattern: create a `Float64Array` over exported
+WASM memory, convert `ptr<f64>` byte offsets with `byteOffset / 8`, and use
+typed-array bulk operations in the hot path. Keep `DataView` for byte-level ABI
+tests and mixed-width structs. Low-copy is the recommended batch path, but it
+is not a guarantee that WASM total time always beats a JavaScript
+`Float64Array` loop; input placement and readback still count in total time.
 
 Run only f64 benchmarks with:
 
@@ -144,8 +162,8 @@ node bench/perf/run.mjs --quick --case f64-axpy
 node bench/perf/run.mjs --quick --case f64-dot
 ```
 
-The summary includes each case's category, optimization level, arithmetic mode,
-median runtime, p95 runtime, and ratio against `pricing-c-unchecked-O3`.
+The summary includes each case's category, phase, optimization level, arithmetic
+mode, median runtime, p95 runtime, and ratio against `pricing-c-unchecked-O3`.
 
 When `--compare` is enabled, `build/perf/latest.summary.md` also includes a
 baseline comparison table. Regression status is based on median runtime:
@@ -182,8 +200,12 @@ F64 benchmark runs are documentation and release smoke tools:
 - machine-local f64 baselines under `build/perf` must not be committed
 - JS `Array` `Number`, JS `Float64Array`, IK C, IK LLVM, IK WASM, optional
   Python, and optional NumPy are different runtime models
-- WASM total results may be dominated by host memory marshaling rather than
-  compute
+- WASM DataView total results may be dominated by host memory marshaling rather
+  than compute
+- WASM low-copy total results are closer to the recommended host pattern, but
+  still include host memory placement and readback work
+- always compare cases with the same phase label: setup, input-marshal,
+  compute-only, output-readback, total, or memory-only
 
 See [2026-06-24 Performance Profile](docs/2026-06-24-performance-profile.md)
 for the current bottleneck analysis and Phase 14 optimization priorities.

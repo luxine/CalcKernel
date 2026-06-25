@@ -95,6 +95,21 @@ export function expectedF64MemorySink(kernel, len, iterations) {
   return iterations * perIteration;
 }
 
+export function expectedF64OutputReadbackSink(kernel, len, iterations, factor = f64Factor) {
+  const { xSum, ySum } = f64InputSums(len);
+
+  switch (kernel) {
+    case "axpy":
+      return iterations * (xSum + ySum + factor * xSum);
+    case "dot":
+      return iterations * (xSum + ySum);
+    case "sum":
+      return iterations * xSum;
+    case "scale":
+      return iterations * factor * xSum;
+  }
+}
+
 export function usesF64Y(kernel) {
   return kernel === "axpy" || kernel === "dot";
 }

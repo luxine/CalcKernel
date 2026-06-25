@@ -68,6 +68,10 @@ semantics or as cross-machine performance truth.
 - Confirm WASM memory / ptr e2e passes.
 - Confirm WASM layout tests pass.
 - Confirm `examples/pricing.ik` WASM e2e passes.
+- Confirm the WASM f64 `Float64Array` example smoke passes for
+  `examples/node-wasm-f64-array/`.
+- Confirm docs describe `ptr<f64>` as an `i32` byte offset, `f64` size 8,
+  `byteOffset / 8` typed-array indexing, and host-owned memory management.
 - Confirm `emit-wat --overflow checked` and `emit-wasm --overflow checked`
   fail with the documented unsupported-mode message.
 - Review `docs/WASM_ABI.md` for type mapping, memory layout, examples, and
@@ -123,6 +127,7 @@ semantics or as cross-machine performance truth.
   - no f64 constant folding
   - no f64 reassociation
   - no f64 operand sorting in local CSE
+  - only same-order f64 `+`, `-`, `*`, and unary `-` local CSE is allowed
   - no f64 LICM hoisting
   - no f64 induction simplification
   - no LLVM fast-math flags
@@ -151,6 +156,10 @@ semantics or as cross-machine performance truth.
   `bench/README.zh-CN.md`.
 - Run `node --test bench/perf/tests/perf-core.test.mjs`.
 - Optionally run `node bench/perf/run.mjs --quick` as a manual benchmark smoke.
+- Confirm low-copy f64 WASM quick benchmark cases are available with
+  `node bench/perf/run.mjs --quick --case f64`.
+- Confirm f64 benchmark summaries distinguish setup, input marshal,
+  compute-only, output readback, total, memory-only, and low-copy phases.
 - Confirm f64 benchmark cases are discovered for axpy, dot product, sum, and
   scale.
 - Confirm f64 benchmark docs cover JavaScript `Array` `Number`, JavaScript

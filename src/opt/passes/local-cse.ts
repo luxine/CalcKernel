@@ -50,7 +50,7 @@ function cseKey(instruction: MirInstruction): string | undefined {
   switch (instruction.kind) {
     case "binary":
       if (isFloatType(instruction.target.type)) {
-        return undefined;
+        return floatBinaryCseKey(instruction);
       }
       return `binary:${instruction.op}:${printMirType(instruction.target.type)}:${orderedValueKeys(instruction.op, instruction.left, instruction.right).join(":")}`;
     case "compare":
@@ -60,12 +60,32 @@ function cseKey(instruction: MirInstruction): string | undefined {
       return `compare:${instruction.op}:${printMirType(instruction.left.type)}:${orderedValueKeys(instruction.op, instruction.left, instruction.right).join(":")}`;
     case "unary":
       if (isFloatType(instruction.target.type) || isFloatType(instruction.operand.type)) {
-        return undefined;
+        return floatUnaryCseKey(instruction);
       }
       return `unary:${instruction.op}:${printMirType(instruction.target.type)}:${valueKey(instruction.operand)}`;
     default:
       return undefined;
   }
+}
+
+function floatBinaryCseKey(instruction: Extract<MirInstruction, { kind: "binary" }>): string | undefined {
+  if (!isFloatType(instruction.target.type) || !isFloatType(instruction.left.type) || !isFloatType(instruction.right.type)) {
+    return undefined;
+  }
+  if (instruction.op !== "+" && instruction.op !== "-" && instruction.op !== "*") {
+    return undefined;
+  }
+  return `float-binary:${instruction.op}:${printMirType(instruction.target.type)}:${valueKey(instruction.left)}:${valueKey(instruction.right)}`;
+}
+
+function floatUnaryCseKey(instruction: Extract<MirInstruction, { kind: "unary" }>): string | undefined {
+  if (!isFloatType(instruction.target.type) || !isFloatType(instruction.operand.type)) {
+    return undefined;
+  }
+  if (instruction.op !== "neg") {
+    return undefined;
+  }
+  return `float-unary:${instruction.op}:${printMirType(instruction.target.type)}:${valueKey(instruction.operand)}`;
 }
 
 function orderedValueKeys(op: string, left: MirValue, right: MirValue): [string, string] {

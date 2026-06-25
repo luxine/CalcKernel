@@ -256,6 +256,23 @@ node examples/node-wasm-call/index.mjs
 `DataView` memory 写入、`Item` layout、pointer offset、output buffer 和
 `BigInt` 映射。
 
+## Node.js WASM f64 数组示例
+
+对于 homogeneous `ptr<f64>` buffer，推荐在 exported WASM memory 上创建
+`Float64Array` view，而不是在热路径逐元素使用 `DataView`：
+
+```sh
+pnpm build
+pnpm ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out examples/node-wasm-f64-array/f64_array.wasm
+node examples/node-wasm-f64-array/index.mjs
+```
+
+Pointer ABI 不变：WASM `ptr<f64>` 仍是 `i32` byte offset，`f64` size 是 8，
+`ptr<f64>[i]` 是 `base + i * 8`，`Float64Array` index 是 `byteOffset / 8`。
+byte offset 必须 8-byte aligned。如果 host 调用 `memory.grow`，继续使用前要重新
+创建 typed-array view。IK / IntKernel 不提供 WASM allocator 或 runtime；memory
+placement 和 buffer sizing 由 host 负责。
+
 ## Browser WASM 示例
 
 仓库还包含一个无框架、无 bundler 的纯浏览器 WASM 示例。把 `pricing.wasm`
@@ -378,7 +395,10 @@ node bench/perf/run.mjs --full --compare --threshold 10
 Benchmark 只是粗略的本地参考，不是跨机器稳定分数。结果依赖本机硬件、Node.js、
 clang、hyperfine 和当前系统负载。不要提交 `build/perf` 中的机器本地 baseline，
 也不要把性能阈值放进普通 `pnpm test`。跨语言集成时，应把工作批量放进较大的
-native 调用，而不是一条 item 调一次 native 函数。当前 optimization pipeline、
+native 调用，而不是一条 item 调一次 native 函数。WASM f64 结果要按拆分路径解读：
+compute-only 测 memory 已准备好后的 kernel，total 包含 input marshal 和 output
+readback。JavaScript `Float64Array` 是很强的 host 热循环 baseline；如果把 host
+memory movement 算进 total，WASM 不保证一定更快。当前 optimization pipeline、
 本机最新 full run 摘要、baseline/compare 流程、f64 benchmark 覆盖和 backend 瓶颈见
 [Performance](docs/zh-CN/PERFORMANCE.md) 和 [Optimization](docs/zh-CN/OPTIMIZATION.md)。
 

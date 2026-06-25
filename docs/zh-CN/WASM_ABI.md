@@ -390,12 +390,46 @@ writeItem(0, {
 const price = instance.exports.first_price(0);
 ```
 
-对于 `ptr<f64>` buffer，使用显式 little-endian float access：
+对于 `ptr<f64>` buffer，`DataView` 适合 byte-level ABI 测试和 mixed-width
+layout 检查：
 
 ```js
 view.setFloat64(valuesOffset + 8, 2.5, true);
 const value = view.getFloat64(valuesOffset + 8, true);
 ```
+
+对于大块 homogeneous `f64` 数组，推荐使用指向 exported WASM memory 的
+`Float64Array` view：
+
+```js
+const memory = instance.exports.memory;
+const values = new Float64Array(memory.buffer);
+const xOffset = 0;
+const yOffset = 64;
+const xIndex = xOffset / 8;
+const yIndex = yOffset / 8;
+
+values.set([1.0, 2.0, 3.0, 4.0], xIndex);
+values.set([0.5, 1.25, 1.25, 2.0], yIndex);
+
+const checksum = instance.exports.axpy_f64(1.25, xOffset, yOffset, 4);
+const y = values.subarray(yIndex, yIndex + 4);
+```
+
+同样的 pointer 规则仍然适用：
+
+- WASM `ptr<f64>` 是 `i32` byte offset。
+- `f64` size 是 8 bytes。
+- `ptr<f64>[i]` 使用 byte offset `base + i * 8`。
+- `Float64Array` index 是 `byteOffset / 8`。
+- `byteOffset` 必须 8-byte aligned。
+
+如果 host 调用了 `memory.grow`，旧的 `Float64Array` view 可能失效。请在 grow
+之后创建 view，并在后续任何 grow 后重新创建 view。IK 不提供 allocator 或 runtime；
+memory placement 和 buffer sizing 仍由 host 负责。这是 low-copy host pattern，
+不是所有输入来源都 zero-copy 的承诺：如果数据原本不在 WASM memory 中，host 仍需
+承担放置输入的成本。`DataView` 仍适合 byte-exact ABI test、mixed-width struct 和
+layout debugging。完整 Node.js 示例见 `examples/node-wasm-f64-array/`。
 
 ## Browser Interop
 

@@ -400,12 +400,48 @@ writeItem(0, {
 const price = instance.exports.first_price(0);
 ```
 
-For `ptr<f64>` buffers, use explicit little-endian float access:
+For `ptr<f64>` buffers, `DataView` is useful for byte-level ABI tests and
+mixed-width layout checks:
 
 ```js
 view.setFloat64(valuesOffset + 8, 2.5, true);
 const value = view.getFloat64(valuesOffset + 8, true);
 ```
+
+For large homogeneous `f64` arrays, prefer a `Float64Array` view over exported
+WASM memory:
+
+```js
+const memory = instance.exports.memory;
+const values = new Float64Array(memory.buffer);
+const xOffset = 0;
+const yOffset = 64;
+const xIndex = xOffset / 8;
+const yIndex = yOffset / 8;
+
+values.set([1.0, 2.0, 3.0, 4.0], xIndex);
+values.set([0.5, 1.25, 1.25, 2.0], yIndex);
+
+const checksum = instance.exports.axpy_f64(1.25, xOffset, yOffset, 4);
+const y = values.subarray(yIndex, yIndex + 4);
+```
+
+The same pointer rules still apply:
+
+- WASM `ptr<f64>` is an `i32` byte offset.
+- `f64` size is 8 bytes.
+- `ptr<f64>[i]` uses byte offset `base + i * 8`.
+- `Float64Array` index is `byteOffset / 8`.
+- `byteOffset` must be 8-byte aligned.
+
+If host code calls `memory.grow`, old `Float64Array` views may be detached.
+Create the view after growth, and recreate it after any later growth. IK does
+not provide an allocator or runtime; host code still owns memory placement and
+buffer sizing. This is a low-copy host pattern, not a promise that every input
+source is zero-copy: if data starts outside WASM memory, the host still pays to
+place it there. Keep `DataView` for byte-exact ABI tests, mixed-width structs,
+and layout debugging. See `examples/node-wasm-f64-array/` for a full Node.js
+example.
 
 ## Browser Interop
 

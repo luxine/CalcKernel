@@ -161,4 +161,45 @@ describe("Node.js memory WASM e2e", () => {
     expect(typeof total).toBe("number");
     expect(closeDouble(total, 21.75)).toBe(true);
   });
+
+  it("runs the official Float64Array over WASM memory f64 example", async () => {
+    const wasm = getWasmRuntime();
+    if (!wasm) {
+      console.warn("skipped because WebAssembly is unavailable");
+      return;
+    }
+
+    const exampleUrl = new URL("../examples/node-wasm-f64-array/index.mjs", import.meta.url).href;
+    const example = (await import(exampleUrl)) as {
+      byteOffsetToF64Index(byteOffset: number): number;
+      runExample(options: { wasmPath: string }): Promise<{ checksum: number; y: number[] }>;
+    };
+
+    expect(example.byteOffsetToF64Index(128)).toBe(16);
+    expect(() => example.byteOffsetToF64Index(130)).toThrow(/8-byte aligned/);
+
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "f64_array.ik"), readFileSync("examples/node-wasm-f64-array/f64_array.ik", "utf8"));
+    const wasmFile = join(cwd, "build/f64_array.wasm");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "f64_array.ik", "--out", "build/f64_array.wasm", "-O3"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM build/f64_array.wasm\n");
+
+    const result = await example.runExample({ wasmPath: wasmFile });
+    expect(closeDouble(result.checksum, 17.5)).toBe(true);
+    expect(result.y.every((value, index) => closeDouble(value, [1.75, 3.75, 5.0, 7.0][index]!))).toBe(true);
+  });
 });

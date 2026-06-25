@@ -4,6 +4,13 @@ import { describe, it } from "node:test";
 import { parseArgs } from "../lib/args.mjs";
 import { benchmarkCommands, nativeCompileJobs } from "../lib/cases.mjs";
 import { withinTolerance } from "../lib/f64-correctness.mjs";
+import {
+  byteOffsetToF64Index,
+  checksumOutputFloat64Array,
+  createLowCopyF64Inputs,
+  requiredBytesFor,
+  writeInputsFloat64Array
+} from "../lib/f64-wasm-memory.mjs";
 import { buildHyperfineArgs } from "../lib/hyperfine.mjs";
 import { compareSummaries, filterBenchmarkCommands, formatSummaryMarkdown, hasRegression, parseBaselineSummary, summarizeHyperfine } from "../lib/summary.mjs";
 import { median, percentile, relativeToFastest } from "../lib/stats.mjs";
@@ -110,6 +117,7 @@ describe("perf runner core", () => {
     assert.equal(summary.metadata.mode, "full");
     assert.equal(summary.results[0].name, "pricing-c-unchecked-O3");
     assert.equal(summary.results[0].category, "native");
+    assert.equal(summary.results[0].phase, "total");
     assert.equal(summary.results[0].optLevel, "O3");
     assert.equal(summary.results[0].overflowMode, "unchecked");
     assert.equal(summary.results[0].medianSeconds, 0.11);
@@ -205,30 +213,62 @@ describe("perf runner core", () => {
       "f64-axpy-js-float64array",
       "f64-axpy-ik-c-o3",
       "f64-axpy-ik-llvm-o3",
+      "f64-axpy-ik-wasm-o3-setup",
+      "f64-axpy-ik-wasm-o3-input-marshal",
       "f64-axpy-ik-wasm-o3-compute-only",
+      "f64-axpy-ik-wasm-o3-output-readback",
       "f64-axpy-ik-wasm-o3-total",
       "f64-axpy-wasm-memory-only",
+      "f64-axpy-ik-wasm-o3-low-copy-setup",
+      "f64-axpy-ik-wasm-o3-low-copy-input-marshal",
+      "f64-axpy-ik-wasm-o3-low-copy-compute-only",
+      "f64-axpy-ik-wasm-o3-low-copy-output-readback",
+      "f64-axpy-ik-wasm-o3-low-copy-total",
       "f64-dot-js-array-number",
       "f64-dot-js-float64array",
       "f64-dot-ik-c-o3",
       "f64-dot-ik-llvm-o3",
+      "f64-dot-ik-wasm-o3-setup",
+      "f64-dot-ik-wasm-o3-input-marshal",
       "f64-dot-ik-wasm-o3-compute-only",
+      "f64-dot-ik-wasm-o3-output-readback",
       "f64-dot-ik-wasm-o3-total",
       "f64-dot-wasm-memory-only",
+      "f64-dot-ik-wasm-o3-low-copy-setup",
+      "f64-dot-ik-wasm-o3-low-copy-input-marshal",
+      "f64-dot-ik-wasm-o3-low-copy-compute-only",
+      "f64-dot-ik-wasm-o3-low-copy-output-readback",
+      "f64-dot-ik-wasm-o3-low-copy-total",
       "f64-sum-js-array-number",
       "f64-sum-js-float64array",
       "f64-sum-ik-c-o3",
       "f64-sum-ik-llvm-o3",
+      "f64-sum-ik-wasm-o3-setup",
+      "f64-sum-ik-wasm-o3-input-marshal",
       "f64-sum-ik-wasm-o3-compute-only",
+      "f64-sum-ik-wasm-o3-output-readback",
       "f64-sum-ik-wasm-o3-total",
       "f64-sum-wasm-memory-only",
+      "f64-sum-ik-wasm-o3-low-copy-setup",
+      "f64-sum-ik-wasm-o3-low-copy-input-marshal",
+      "f64-sum-ik-wasm-o3-low-copy-compute-only",
+      "f64-sum-ik-wasm-o3-low-copy-output-readback",
+      "f64-sum-ik-wasm-o3-low-copy-total",
       "f64-scale-js-array-number",
       "f64-scale-js-float64array",
       "f64-scale-ik-c-o3",
       "f64-scale-ik-llvm-o3",
+      "f64-scale-ik-wasm-o3-setup",
+      "f64-scale-ik-wasm-o3-input-marshal",
       "f64-scale-ik-wasm-o3-compute-only",
+      "f64-scale-ik-wasm-o3-output-readback",
       "f64-scale-ik-wasm-o3-total",
-      "f64-scale-wasm-memory-only"
+      "f64-scale-wasm-memory-only",
+      "f64-scale-ik-wasm-o3-low-copy-setup",
+      "f64-scale-ik-wasm-o3-low-copy-input-marshal",
+      "f64-scale-ik-wasm-o3-low-copy-compute-only",
+      "f64-scale-ik-wasm-o3-low-copy-output-readback",
+      "f64-scale-ik-wasm-o3-low-copy-total"
     ]);
 
     const cCase = commands.find((command) => command.name === "f64-axpy-ik-c-o3");
@@ -243,12 +283,40 @@ describe("perf runner core", () => {
 
     const wasmCompute = commands.find((command) => command.name === "f64-sum-ik-wasm-o3-compute-only");
     assert.equal(wasmCompute.category, "wasm");
+    assert.equal(wasmCompute.phase, "compute");
     assert.equal(wasmCompute.optLevel, "IK-O3");
     assert.match(wasmCompute.command, /--mode compute-only/);
 
+    const wasmSetup = commands.find((command) => command.name === "f64-axpy-ik-wasm-o3-setup");
+    assert.equal(wasmSetup.category, "wasm");
+    assert.equal(wasmSetup.phase, "setup");
+    assert.match(wasmSetup.command, /--mode setup/);
+
+    const wasmInputMarshal = commands.find((command) => command.name === "f64-dot-ik-wasm-o3-input-marshal");
+    assert.equal(wasmInputMarshal.category, "memory");
+    assert.equal(wasmInputMarshal.phase, "input-marshal");
+    assert.match(wasmInputMarshal.command, /--mode input-marshal/);
+
+    const wasmOutputReadback = commands.find((command) => command.name === "f64-scale-ik-wasm-o3-output-readback");
+    assert.equal(wasmOutputReadback.category, "memory");
+    assert.equal(wasmOutputReadback.phase, "output-readback");
+    assert.match(wasmOutputReadback.command, /--mode output-readback/);
+
     const wasmMemory = commands.find((command) => command.name === "f64-scale-wasm-memory-only");
     assert.equal(wasmMemory.category, "memory");
+    assert.equal(wasmMemory.phase, "memory-only");
     assert.match(wasmMemory.command, /--mode memory-only/);
+
+    const wasmLowCopyTotal = commands.find((command) => command.name === "f64-axpy-ik-wasm-o3-low-copy-total");
+    assert.equal(wasmLowCopyTotal.category, "wasm-low-copy");
+    assert.equal(wasmLowCopyTotal.phase, "total");
+    assert.match(wasmLowCopyTotal.command, /--mode total/);
+    assert.match(wasmLowCopyTotal.command, /--copy-mode float64array/);
+
+    const wasmLowCopyInput = commands.find((command) => command.name === "f64-dot-ik-wasm-o3-low-copy-input-marshal");
+    assert.equal(wasmLowCopyInput.category, "memory-low-copy");
+    assert.equal(wasmLowCopyInput.phase, "input-marshal");
+    assert.match(wasmLowCopyInput.command, /--copy-mode float64array/);
   });
 
   it("defines native f64 compile jobs without changing pricing jobs", () => {
@@ -294,6 +362,29 @@ describe("perf runner core", () => {
       assert.equal(result.status, 0, result.stderr || result.stdout);
       assert.match(result.stdout, new RegExp(`f64-${kernel}-js-array-number`));
     }
+  });
+
+  it("smoke-runs the f64 WASM memory-only benchmark path without a module", () => {
+    const result = spawnSync(
+      "node",
+      [
+        "bench/perf/cases/f64-wasm.mjs",
+        "--kernel",
+        "axpy",
+        "--mode",
+        "memory-only",
+        "--label",
+        "f64-axpy-wasm-memory-only",
+        "--items",
+        "16",
+        "--iterations",
+        "2"
+      ],
+      { encoding: "utf8" }
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /f64-axpy-wasm-memory-only/);
   });
 
   it("compares summaries with configurable median regression thresholds", () => {
@@ -378,11 +469,40 @@ describe("perf runner core", () => {
         "f64-axpy-js-float64array",
         "f64-axpy-ik-c-o3",
         "f64-axpy-ik-llvm-o3",
+        "f64-axpy-ik-wasm-o3-setup",
+        "f64-axpy-ik-wasm-o3-input-marshal",
         "f64-axpy-ik-wasm-o3-compute-only",
+        "f64-axpy-ik-wasm-o3-output-readback",
         "f64-axpy-ik-wasm-o3-total",
-        "f64-axpy-wasm-memory-only"
+        "f64-axpy-wasm-memory-only",
+        "f64-axpy-ik-wasm-o3-low-copy-setup",
+        "f64-axpy-ik-wasm-o3-low-copy-input-marshal",
+        "f64-axpy-ik-wasm-o3-low-copy-compute-only",
+        "f64-axpy-ik-wasm-o3-low-copy-output-readback",
+        "f64-axpy-ik-wasm-o3-low-copy-total"
       ]
     );
+  });
+
+  it("writes and reads low-copy f64 WASM memory through Float64Array views", () => {
+    const layout = requiredBytesFor(4);
+    const values = new Float64Array(layout.totalBytes / 8);
+    const inputs = createLowCopyF64Inputs(4, "axpy");
+
+    assert.equal(byteOffsetToF64Index(layout.yOffset), 4);
+    assert.throws(() => byteOffsetToF64Index(6), /8-byte aligned/);
+
+    const checksum = writeInputsFloat64Array(values, layout, inputs, "axpy");
+    assert.equal(values[byteOffsetToF64Index(layout.xOffset)], 1.0);
+    assert.equal(values[byteOffsetToF64Index(layout.yOffset)], -2.0);
+    assert.equal(checksum, inputs.inputChecksum);
+
+    values[byteOffsetToF64Index(layout.yOffset)] = 10.0;
+    values[byteOffsetToF64Index(layout.yOffset) + 1] = 11.0;
+    values[byteOffsetToF64Index(layout.yOffset) + 2] = 12.0;
+    values[byteOffsetToF64Index(layout.yOffset) + 3] = 13.0;
+    assert.equal(checksumOutputFloat64Array(values, layout, 4, "axpy"), 46.0);
+    assert.equal(checksumOutputFloat64Array(values, layout, 4, "dot", 17.5), 17.5);
   });
 
   it("formats comparison markdown with ratio and slower percentage", () => {
@@ -407,6 +527,7 @@ describe("perf runner core", () => {
         {
           name: "pricing-c-unchecked-O3",
           category: "native",
+          phase: "total",
           optLevel: "O3",
           overflowMode: "unchecked",
           medianSeconds: 0.11,
@@ -432,6 +553,7 @@ describe("perf runner core", () => {
     ]);
 
     assert.match(markdown, /Baseline Comparison/);
+    assert.match(markdown, /\| Case \| Category \| Phase \| Opt \| Mode \|/);
     assert.match(markdown, /1\.10x/);
     assert.match(markdown, /10\.00%/);
   });

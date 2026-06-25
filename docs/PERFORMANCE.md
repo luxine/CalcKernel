@@ -24,7 +24,9 @@ compute kernels. It currently covers:
 - f64 kernels: axpy, dot product, sum, and scale
 - f64 comparison targets: JavaScript `Array` `Number`, JavaScript
   `Float64Array`, IK C O3, IK LLVM O3, and IK WASM O3
-- f64 WASM total, compute-only, and memory-only decomposition
+- f64 WASM setup, input marshal, compute-only, output readback, total, and
+  memory-only decomposition
+- f64 WASM low-copy variants using `Float64Array` views over exported memory
 
 The standard pricing workload is:
 
@@ -154,6 +156,10 @@ IK LLVM, IK WASM, optional Python list `float`, and optional NumPy are different
 runtime models. NumPy is a native-library baseline and is not a default runner
 dependency. The f64 suite uses strict IK floating point only: no f32, fast-math,
 SIMD, implicit int/float conversion, or f64 checked overflow is assumed.
+JavaScript `Float64Array` can be a strong baseline for tight host loops. WASM
+compute-only and WASM total answer different questions, so do not conclude that
+WASM is faster or slower than JavaScript without checking which phase is being
+measured.
 
 ## Batch Calling Principle
 
@@ -179,10 +185,38 @@ For performance analysis, separate:
 - memory-only time: host-side `DataView` work
 - call-overhead time: JS-to-WASM boundary overhead
 
-The f64 WASM benchmark follows the same separation for total, compute-only, and
-memory-only time. f64 parameters and returns use JavaScript `Number`; i64/u64
-pricing paths continue to use `BigInt` where required. f64 memory setup uses
-little-endian `DataView.setFloat64` and `DataView.getFloat64`.
+The f64 WASM benchmark exposes a more detailed Phase 18.1 split:
+
+- setup: instantiate the f64 WASM module and provision linear memory
+- input-marshal: write deterministic `f64` inputs into WASM memory
+- compute-only: prewritten memory + repeated WASM kernel calls
+- output-readback: read computed `f64` buffers back from WASM memory
+- total: input marshal + WASM compute + output readback in one measured path
+- memory-only: host-side write + readback without executing the WASM kernel
+
+The generated summary includes a `Phase` column so these paths are visible in
+`build/perf/latest.summary.md`. f64 parameters and returns use JavaScript
+`Number`; i64/u64 pricing paths continue to use `BigInt` where required.
+Phase 18.2 adds `examples/node-wasm-f64-array/` as the recommended host pattern
+for bulk `ptr<f64>` buffers: create a `Float64Array` view over exported WASM
+memory, convert byte offsets with `byteOffset / 8`, and use typed-array bulk
+operations instead of per-element `DataView` calls in the hot path. `DataView`
+remains the byte-level ABI tool for mixed-width struct checks.
+
+Phase 18.3 adds low-copy f64 WASM benchmark cases named
+`f64-*-ik-wasm-o3-low-copy-*`. These cases keep the same WASM pointer ABI but
+measure the recommended host path separately: `Float64Array#set` for input
+marshal, WASM compute, scalar return consume for `dot`/`sum`, and output checksum
+readback for in-place array kernels. The original DataView cases remain in the
+suite so byte-level marshaling overhead stays visible.
+
+Use the low-copy path for production-style homogeneous f64 buffers. Use
+DataView when byte offsets, mixed-width structs, and ABI precision matter more
+than hot-path throughput.
+
+`Float64Array` views must be recreated after `memory.grow`; IK does not provide
+a WASM allocator or runtime, so host code still owns memory placement and buffer
+sizing.
 
 Current largest WASM bottleneck: host-side memory setup/readback for total
 benchmarks. Compute-only WASM is much closer, but still slower than native code.
@@ -197,6 +231,8 @@ F64 benchmark interpretation is locked to strict semantics:
 - classify NaN, infinity, and `-0.0` instead of expecting bit-identical output
 - treat JS `Array` `Number`, JS `Float64Array`, WASM, native C, LLVM, optional
   Python, and optional NumPy as different runtime models
+- interpret DataView total and low-copy total separately; neither is a
+  cross-machine performance guarantee
 
 ## Checked vs Unchecked
 

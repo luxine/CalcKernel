@@ -84,7 +84,7 @@ describe("MIR CSE passes", () => {
     expect(optimized.functions[0]!.blocks[0]!.instructions[2]).toMatchObject({ kind: "compare", left: temp("t1", i64) });
   });
 
-  it("does not apply local CSE to f64 arithmetic or reorder f64 operands", () => {
+  it("applies same-order local CSE to f64 addition without reordering operands", () => {
     const func: MirFunction = {
       name: "calc_f64",
       exported: true,
@@ -111,10 +111,10 @@ describe("MIR CSE passes", () => {
     const instructions = optimized.functions[0]!.blocks[0]!.instructions;
 
     expect(instructions[1]).toEqual({ kind: "binary", target: temp("t1", f64), op: "+", left: param("b", f64), right: param("a", f64) });
-    expect(instructions[2]).toEqual({ kind: "binary", target: temp("t2", f64), op: "+", left: param("a", f64), right: param("b", f64) });
+    expect(instructions[2]).toEqual({ kind: "move", target: temp("t2", f64), value: temp("t0", f64) });
   });
 
-  it("does not treat f64 multiplication as a commutative integer CSE expression", () => {
+  it("applies same-order local CSE to f64 multiplication without treating it as commutative", () => {
     const func: MirFunction = {
       name: "mul_f64",
       exported: true,
@@ -142,7 +142,91 @@ describe("MIR CSE passes", () => {
 
     expect(instructions[0]).toEqual({ kind: "binary", target: temp("t0", f64), op: "*", left: param("a", f64), right: param("b", f64) });
     expect(instructions[1]).toEqual({ kind: "binary", target: temp("t1", f64), op: "*", left: param("b", f64), right: param("a", f64) });
-    expect(instructions[2]).toEqual({ kind: "binary", target: temp("t2", f64), op: "*", left: param("a", f64), right: param("b", f64) });
+    expect(instructions[2]).toEqual({ kind: "move", target: temp("t2", f64), value: temp("t0", f64) });
+  });
+
+  it("applies same-order local CSE to f64 subtraction and unary negation", () => {
+    const func: MirFunction = {
+      name: "sub_neg_f64",
+      exported: true,
+      params: [
+        { name: "a", type: f64 },
+        { name: "b", type: f64 }
+      ],
+      returnType: f64,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "binary", target: temp("t0", f64), op: "-", left: param("a", f64), right: param("b", f64) },
+            { kind: "binary", target: temp("t1", f64), op: "-", left: param("a", f64), right: param("b", f64) },
+            { kind: "unary", target: temp("t2", f64), op: "neg", operand: temp("t1", f64) },
+            { kind: "unary", target: temp("t3", f64), op: "neg", operand: temp("t1", f64) }
+          ],
+          terminator: { kind: "return", value: temp("t3", f64) }
+        }
+      ]
+    };
+
+    const optimized = runSinglePass({ structs: [], functions: [func] }, localCsePass);
+    const instructions = optimized.functions[0]!.blocks[0]!.instructions;
+
+    expect(instructions[1]).toEqual({ kind: "move", target: temp("t1", f64), value: temp("t0", f64) });
+    expect(instructions[3]).toEqual({ kind: "move", target: temp("t3", f64), value: temp("t2", f64) });
+  });
+
+  it("does not apply f64 local CSE to division or comparisons", () => {
+    const func: MirFunction = {
+      name: "div_compare_f64",
+      exported: true,
+      params: [
+        { name: "a", type: f64 },
+        { name: "b", type: f64 }
+      ],
+      returnType: boolType,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "binary", target: temp("t0", f64), op: "/", left: param("a", f64), right: param("b", f64) },
+            { kind: "binary", target: temp("t1", f64), op: "/", left: param("a", f64), right: param("b", f64) },
+            { kind: "compare", target: temp("t2", boolType), op: "==", left: temp("t0", f64), right: temp("t1", f64) },
+            { kind: "compare", target: temp("t3", boolType), op: "==", left: temp("t0", f64), right: temp("t1", f64) }
+          ],
+          terminator: { kind: "return", value: temp("t3", boolType) }
+        }
+      ]
+    };
+
+    const optimized = runSinglePass({ structs: [], functions: [func] }, localCsePass);
+    const instructions = optimized.functions[0]!.blocks[0]!.instructions;
+
+    expect(instructions[1]).toEqual({ kind: "binary", target: temp("t1", f64), op: "/", left: param("a", f64), right: param("b", f64) });
+    expect(instructions[3]).toEqual({ kind: "compare", target: temp("t3", boolType), op: "==", left: temp("t0", f64), right: temp("t1", f64) });
+  });
+
+  it("enables same-order f64 local CSE only at O2 and O3", () => {
+    const sourceText = `
+      export fn repeated(a: f64, b: f64) -> f64 {
+        let x: f64 = a + b;
+        let y: f64 = a + b;
+        return x + y;
+      }
+    `;
+
+    const o0 = printMirModule(optimizeForC(sourceText, 0));
+    const o1 = printMirModule(optimizeForC(sourceText, 1));
+    const o2 = printMirModule(optimizeForC(sourceText, 2));
+    const o3 = printMirModule(optimizeForC(sourceText, 3));
+
+    expect(o0.match(/add a, b/g)).toHaveLength(2);
+    expect(o1.match(/add a, b/g)).toHaveLength(2);
+    expect(o2.match(/add a, b/g)).toHaveLength(1);
+    expect(o3.match(/add a, b/g)).toHaveLength(1);
+    expect(o2).toContain("add x, y");
+    expect(o3).toContain("add x, y");
   });
 
   it("does not CSE ordinary loads across a store", () => {

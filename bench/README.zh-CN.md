@@ -116,12 +116,27 @@ node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case prici
 - JavaScript `Float64Array` + `Number` arithmetic
 - IK C O3
 - IK LLVM O3
-- IK WASM O3 compute-only
+- IK WASM O3 split phases
+- IK WASM O3 low-copy split phases
 
-f64 WASM case 还包含 `total` 和 `memory-only` 变体，用于把 host-side memory
-marshal time 和 compute time 拆开观察。WASM f64 host interop 使用 JavaScript
-`Number`，不使用 `BigInt`。memory setup 使用 little-endian
-`DataView.setFloat64`/`getFloat64`。
+f64 WASM case 包含 `setup`、`input-marshal`、`compute-only`、
+`output-readback`、`total` 和 `memory-only` 变体，用于把 host-side memory
+marshal time 和 compute time 拆开观察。`total` 测 input marshal + WASM compute
++ output readback 的端到端路径。WASM f64 host interop 使用 JavaScript `Number`，
+不使用 `BigInt`。memory setup 使用 little-endian `DataView.setFloat64`/
+`getFloat64`，这是保留的原始兼容路径。
+
+Phase 18.3 增加 `f64-*-ik-wasm-o3-low-copy-*` case。它们在 exported WASM
+memory 上创建 `Float64Array` view，用 `Float64Array#set` 做批量 input marshal；
+`dot`/`sum` 只消费 scalar return，in-place array kernel 则只读回 output checksum。
+原 DataView path 保留，用于对比逐元素 byte-level marshal 成本。
+
+对于 production-style homogeneous `f64` buffer，推荐参考
+`examples/node-wasm-f64-array/`：在 exported WASM memory 上创建 `Float64Array`，
+用 `byteOffset / 8` 把 `ptr<f64>` byte offset 转成 Float64Array index，并在 hot
+path 使用 typed-array bulk operation。`DataView` 仍适合 byte-level ABI 测试和
+mixed-width struct。Low-copy 是推荐的批量路径，但不保证 WASM total time 一定快于
+JavaScript `Float64Array` loop；input placement 和 readback 仍计入 total time。
 
 只运行 f64 benchmark：
 
@@ -137,8 +152,8 @@ node bench/perf/run.mjs --quick --case f64-axpy
 node bench/perf/run.mjs --quick --case f64-dot
 ```
 
-summary 会包含每个 case 的 category、optimization level、arithmetic mode、
-median runtime、p95 runtime，以及相对于 `pricing-c-unchecked-O3` 的倍数。
+summary 会包含每个 case 的 category、phase、optimization level、arithmetic
+mode、median runtime、p95 runtime，以及相对于 `pricing-c-unchecked-O3` 的倍数。
 
 启用 `--compare` 后，`build/perf/latest.summary.md` 还会包含 baseline comparison
 表。regression status 基于 median runtime：
@@ -171,7 +186,12 @@ f64 benchmark run 是文档和 release smoke 工具：
 - 不提交 `build/perf` 下的本机 f64 baseline
 - JS `Array` `Number`、JS `Float64Array`、IK C、IK LLVM、IK WASM、可选 Python
   和可选 NumPy 是不同 runtime model
-- WASM total 结果可能主要受 host memory marshal 影响，而不是 compute 本身
+- WASM DataView total 结果可能主要受 host memory marshal 影响，而不是 compute
+  本身
+- WASM low-copy total 更接近推荐 host pattern，但仍包含 host memory placement
+  和 readback 成本
+- 对比时必须确认 phase label 一致：setup、input-marshal、compute-only、
+  output-readback、total 或 memory-only
 
 当前瓶颈分析和 Phase 14 优化优先级见
 [2026-06-24 性能画像](docs/2026-06-24-performance-profile.zh-CN.md)。

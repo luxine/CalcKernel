@@ -267,6 +267,24 @@ See [examples/node-wasm-call](examples/node-wasm-call/README.md) for the
 `DataView` memory writes, `Item` layout, pointer offsets, output buffer, and
 `BigInt` mapping.
 
+## Node.js WASM f64 Array Example
+
+For homogeneous `ptr<f64>` buffers, prefer a `Float64Array` view over exported
+WASM memory instead of per-element `DataView` writes in the hot path:
+
+```sh
+pnpm build
+pnpm ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out examples/node-wasm-f64-array/f64_array.wasm
+node examples/node-wasm-f64-array/index.mjs
+```
+
+The pointer ABI does not change: a WASM `ptr<f64>` is still an `i32` byte
+offset, `f64` size is 8, `ptr<f64>[i]` is `base + i * 8`, and the
+`Float64Array` index is `byteOffset / 8`. The byte offset must be 8-byte
+aligned. If host code calls `memory.grow`, recreate the typed-array view before
+using it again. IK / IntKernel does not provide a WASM allocator or runtime;
+host code owns memory placement and buffer sizing.
+
 ## Browser WASM Example
 
 The repository also includes a plain browser WASM example with no framework or
@@ -393,7 +411,11 @@ score. Results depend on the machine, Node.js, clang, hyperfine, and current
 system load. Do not commit machine-local baselines from `build/perf`, and do
 not move performance thresholds into ordinary `pnpm test`. For host-language
 integration, batch work into larger native calls rather than calling one item at
-a time. See [Performance](docs/PERFORMANCE.md) and
+a time. WASM f64 results should be read as split paths: compute-only measures
+the kernel after memory is ready, while total includes input marshal and output
+readback. JavaScript `Float64Array` is a strong baseline for tight host loops,
+and WASM is not guaranteed to beat it once host memory movement is included. See
+[Performance](docs/PERFORMANCE.md) and
 [Optimization](docs/OPTIMIZATION.md) for the current optimization pipeline,
 latest local full-run summary, regression baseline workflow, f64 benchmark
 coverage, and backend bottlenecks.

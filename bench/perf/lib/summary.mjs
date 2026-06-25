@@ -9,6 +9,7 @@ export function summarizeHyperfine(data, metadata, commands = []) {
       return {
         name: result.command,
         category: command?.category ?? "unknown",
+        phase: command?.phase ?? "unknown",
         optLevel: command?.optLevel ?? "n/a",
         overflowMode: command?.overflowMode ?? "unknown",
         meanSeconds: result.mean,
@@ -134,12 +135,12 @@ export function formatSummaryMarkdown(summary, comparison = []) {
   lines.push("");
   lines.push("## Results");
   lines.push("");
-  lines.push("| Case | Category | Opt | Mode | Median ms | p95 ms | Min ms | Mean ms | Stddev ms | Fastest | vs C O3 |");
-  lines.push("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+  lines.push("| Case | Category | Phase | Opt | Mode | Median ms | p95 ms | Min ms | Mean ms | Stddev ms | Fastest | vs C O3 |");
+  lines.push("| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
   for (const result of summary.results) {
     lines.push(
-      `| ${result.name} | ${result.category} | ${result.optLevel} | ${result.overflowMode} | ${ms(result.medianSeconds)} | ${ms(result.p95Seconds)} | ${ms(result.minSeconds)} | ${ms(result.meanSeconds)} | ${ms(result.stddevSeconds)} | ${result.relativeToFastest.toFixed(2)}x | ${ratio(result.ratioToCUncheckedO3)} |`
+      `| ${result.name} | ${result.category} | ${result.phase ?? "unknown"} | ${result.optLevel} | ${result.overflowMode} | ${ms(result.medianSeconds)} | ${ms(result.p95Seconds)} | ${ms(result.minSeconds)} | ${ms(result.meanSeconds)} | ${ms(result.stddevSeconds)} | ${result.relativeToFastest.toFixed(2)}x | ${ratio(result.ratioToCUncheckedO3)} |`
     );
   }
 

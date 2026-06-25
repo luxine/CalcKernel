@@ -65,6 +65,10 @@
 - 确认 WASM memory / ptr e2e 通过。
 - 确认 WASM layout tests 通过。
 - 确认 `examples/pricing.ik` WASM e2e 通过。
+- 确认 `examples/node-wasm-f64-array/` 的 WASM f64 `Float64Array` example smoke
+  通过。
+- 确认文档说明 `ptr<f64>` 是 `i32` byte offset、`f64` size 是 8、
+  `byteOffset / 8` typed-array index，以及 memory management 由 host 负责。
 - 确认 `emit-wat --overflow checked` 和 `emit-wasm --overflow checked` 会以文档中的
   unsupported-mode message 失败。
 - Review `docs/WASM_ABI.md`，确认 type mapping、memory layout、examples 和
@@ -119,6 +123,7 @@
   - 不做 f64 constant folding
   - 不做 f64 reassociation
   - local CSE 不排序 f64 operand
+  - 只允许 same-order f64 `+`、`-`、`*` 和 unary `-` local CSE
   - 不做 f64 LICM hoisting
   - 不做 f64 induction simplification
   - 不生成 LLVM fast-math flag
@@ -145,6 +150,10 @@
 - Review `docs/PERFORMANCE.md`、`bench/README.md` 和 `bench/README.zh-CN.md`。
 - 运行 `node --test bench/perf/tests/perf-core.test.mjs`。
 - 可选手动运行 `node bench/perf/run.mjs --quick`，作为 benchmark smoke。
+- 确认 low-copy f64 WASM quick benchmark case 可通过
+  `node bench/perf/run.mjs --quick --case f64` 覆盖。
+- 确认 f64 benchmark summary 区分 setup、input marshal、compute-only、output
+  readback、total、memory-only 和 low-copy phase。
 - 确认 f64 benchmark case 覆盖 axpy、dot product、sum 和 scale。
 - 确认 f64 benchmark 文档覆盖 JavaScript `Array` `Number`、JavaScript
   `Float64Array`、IK C O3、IK LLVM O3 和 IK WASM O3 对比目标。

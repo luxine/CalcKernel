@@ -14,7 +14,8 @@ Phase 14.13 adds WASM hot-path lowering for simple while loops and indexed
 address reuse. Phase 14.14 adds LLVM build optimization flags and a small
 SSA-like LLVM lowering path for simple scalar straight-line functions.
 Phase 16.5 adds strict f64 safety gates so the existing integer-oriented
-optimizer cannot apply unsafe floating point algebra.
+optimizer cannot apply unsafe floating point algebra. Phase 18.5 allows only
+same-order local CSE for a narrow f64 subset while keeping strict-float guards.
 
 ## CLI
 
@@ -132,9 +133,10 @@ Current pipelines:
 - `-O0`: validator only
 - `-O1`: constant folding -> copy propagation -> dead code elimination -> CFG
   simplification
-- `-O2`: constant folding -> copy propagation -> local CSE -> copy
-  propagation -> address CSE -> dead code elimination -> CFG simplification ->
-  dead code elimination
+- `-O2`: constant folding -> copy propagation -> small-function inlining ->
+  constant folding -> copy propagation -> local CSE -> copy propagation ->
+  address CSE -> dead code elimination -> CFG simplification -> dead code
+  elimination
 - `-O3`: constant folding -> copy propagation -> small-function inlining ->
   constant folding -> copy propagation -> loop analysis -> loop-invariant code
   motion -> induction simplification -> constant folding -> copy propagation ->
@@ -208,7 +210,9 @@ Safety boundaries:
 
 - does not do global CSE
 - does not CSE ordinary loads
-- skips f64 binary, unary, and comparison expressions entirely
+- only CSEs f64 `+`, `-`, `*`, and unary `-` when op, type, and operand order
+  are exactly identical
+- skips f64 division and f64 comparison expressions
 - never sorts f64 `+`, `*`, `==`, or `!=` operands
 - clears its table at `store` and `call`
 - invalidates expressions that depend on a reassigned local
@@ -401,7 +405,8 @@ Phase 16 f64 support is strict-safe:
 - no fast-math
 - no f64 constant folding
 - no f64 reassociation
-- no f64 operand sorting in local CSE
+- no f64 operand sorting in local CSE; only exact same-order f64 `+`, `-`, `*`,
+  and unary `-` may be reused
 - no f64 LICM hoisting
 - no f64 induction simplification
 - copy propagation may rewrite f64 value uses without changing evaluation
