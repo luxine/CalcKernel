@@ -1,0 +1,138 @@
+(module
+  (memory (export "memory") 1)
+
+  (func $calc_f64 (export "calc_f64")
+    (param $a f64)
+    (param $b f64)
+    (result f64)
+    (local $one f64)
+    (local $sum f64)
+    (local $diff f64)
+    (local $prod f64)
+    (local $t0 f64)
+    (local $t1 f64)
+    (local $t2 f64)
+    (local $t3 f64)
+    (local $t4 f64)
+    (local $t5 f64)
+    f64.const 1.0
+    local.set $t0
+    local.get $t0
+    local.set $one
+    local.get $a
+    local.get $b
+    f64.add
+    local.set $t1
+    local.get $t1
+    local.set $sum
+    local.get $sum
+    local.get $one
+    f64.sub
+    local.set $t2
+    local.get $t2
+    local.set $diff
+    local.get $diff
+    local.get $b
+    f64.mul
+    local.set $t3
+    local.get $t3
+    local.set $prod
+    f64.const 2.0
+    local.set $t4
+    local.get $prod
+    local.get $t4
+    f64.div
+    local.set $t5
+    local.get $t5
+    return
+  )
+
+  (func $neg_f64 (export "neg_f64")
+    (param $a f64)
+    (result f64)
+    (local $t0 f64)
+    local.get $a
+    f64.neg
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $eq_f64 (export "eq_f64")
+    (param $a f64)
+    (param $b f64)
+    (result i32)
+    (local $t0 i32)
+    local.get $a
+    local.get $b
+    f64.eq
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $ne_f64 (export "ne_f64")
+    (param $a f64)
+    (param $b f64)
+    (result i32)
+    (local $t0 i32)
+    local.get $a
+    local.get $b
+    f64.ne
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $lt_f64 (export "lt_f64")
+    (param $a f64)
+    (param $b f64)
+    (result i32)
+    (local $t0 i32)
+    local.get $a
+    local.get $b
+    f64.lt
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $le_f64 (export "le_f64")
+    (param $a f64)
+    (param $b f64)
+    (result i32)
+    (local $t0 i32)
+    local.get $a
+    local.get $b
+    f64.le
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $gt_f64 (export "gt_f64")
+    (param $a f64)
+    (param $b f64)
+    (result i32)
+    (local $t0 i32)
+    local.get $a
+    local.get $b
+    f64.gt
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $ge_f64 (export "ge_f64")
+    (param $a f64)
+    (param $b f64)
+    (result i32)
+    (local $t0 i32)
+    local.get $a
+    local.get $b
+    f64.ge
+    local.set $t0
+    local.get $t0
+    return
+  )
+)

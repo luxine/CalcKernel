@@ -1,4 +1,4 @@
-export type MirPrimitiveTypeName = "i32" | "i64" | "u32" | "u64" | "bool";
+export type MirPrimitiveTypeName = "i32" | "i64" | "u32" | "u64" | "f64" | "bool";
 
 export type MirType =
   | { kind: "primitive"; name: MirPrimitiveTypeName }
@@ -50,6 +50,7 @@ export type MirValue =
   | { kind: "local"; name: string; type: MirType }
   | { kind: "temp"; name: string; type: MirType }
   | { kind: "const_int"; text: string; type: MirType }
+  | { kind: "const_float"; text: string; type: MirType }
   | { kind: "const_bool"; value: boolean; type: MirType };
 
 export type MirPlace =
@@ -65,6 +66,7 @@ export type MirUnaryOp = "neg" | "not";
 
 export type MirInstruction =
   | MirConstIntInstruction
+  | MirConstFloatInstruction
   | MirConstBoolInstruction
   | MirMoveInstruction
   | MirBinaryInstruction
@@ -77,6 +79,12 @@ export type MirInstruction =
 
 export interface MirConstIntInstruction {
   kind: "const_int";
+  target: MirValue;
+  value: string;
+}
+
+export interface MirConstFloatInstruction {
+  kind: "const_float";
   target: MirValue;
   value: string;
 }

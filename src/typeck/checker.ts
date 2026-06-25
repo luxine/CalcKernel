@@ -7,6 +7,7 @@ import type {
   Declaration,
   Expression,
   FieldExpression,
+  FloatLiteral,
   FunctionParam,
   FunctionDeclaration,
   IdentifierExpression,
@@ -32,8 +33,10 @@ import {
   canAssign,
   integerLiteralType,
   isBool,
+  isFloatType,
   isIndexInteger,
   isInteger,
+  isNumericType,
   isUnknown,
   materializeIntegerLiteral,
   pointerType,
@@ -329,6 +332,8 @@ class Checker {
         return this.checkIdentifierExpression(expression, scope);
       case "IntegerLiteral":
         return this.checkIntegerLiteral(expression, expectedType);
+      case "FloatLiteral":
+        return this.checkFloatLiteral(expression);
       case "BoolLiteral":
         return this.recordExpressionType(expression, { kind: "primitive", name: "bool" });
       case "UnaryExpression":
@@ -363,6 +368,10 @@ class Checker {
     return this.recordExpressionType(expression, type);
   }
 
+  private checkFloatLiteral(expression: FloatLiteral): IntKernelType {
+    return this.recordExpressionType(expression, primitiveType("f64"));
+  }
+
   private checkUnaryExpression(expression: UnaryExpression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
     if (expression.operator === "!") {
       const operandType = materializeIntegerLiteral(this.checkExpression(expression.operand, scope));
@@ -373,9 +382,9 @@ class Checker {
       return this.recordExpressionType(expression, primitiveType("bool"));
     }
 
-    const fallback = expectedType && isInteger(expectedType) ? expectedType : primitiveType("i32");
+    const fallback = integerLiteralFallback(expectedType);
     const operandType = materializeIntegerLiteral(this.checkExpression(expression.operand, scope, fallback), fallback);
-    if (!isUnknown(operandType) && !isInteger(operandType)) {
+    if (!isUnknown(operandType) && !isNumericType(operandType)) {
       this.error(expression.operand.span, `Unary operator '-' requires integer operand, got ${typeToString(operandType)}.`);
       return this.recordExpressionType(expression, unknownType);
     }
@@ -410,11 +419,16 @@ class Checker {
   private checkArithmeticExpression(expression: BinaryExpression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
     const leftRaw = this.checkExpression(expression.left, scope);
     const rightRaw = this.checkExpression(expression.right, scope);
-    const fallback = expectedType && isInteger(expectedType) ? expectedType : primitiveType("i32");
-    const leftType = materializeIntegerLiteral(leftRaw, rightRaw.kind === "integerLiteral" ? fallback : rightRaw);
-    const rightType = materializeIntegerLiteral(rightRaw, leftType);
+    const fallback = integerLiteralFallback(expectedType);
+    const leftType = materializeIntegerLiteral(leftRaw, rightRaw.kind === "integerLiteral" ? fallback : integerLiteralFallback(rightRaw));
+    const rightType = materializeIntegerLiteral(rightRaw, integerLiteralFallback(leftType));
 
-    if (!isUnknown(leftType) && !isUnknown(rightType) && (!isInteger(leftType) || !isInteger(rightType) || !sameType(leftType, rightType))) {
+    if (expression.operator === "%" && (isFloatType(leftType) || isFloatType(rightType))) {
+      this.error(expression.span, "Arithmetic operator '%' does not support f64 operands.");
+      return this.recordExpressionType(expression, unknownType);
+    }
+
+    if (!isUnknown(leftType) && !isUnknown(rightType) && (!isNumericType(leftType) || !isNumericType(rightType) || !sameType(leftType, rightType))) {
       this.error(expression.span, `Arithmetic operator '${expression.operator}' requires integer operands of the same type.`);
       return this.recordExpressionType(expression, unknownType);
     }
@@ -427,13 +441,13 @@ class Checker {
   private checkComparisonExpression(expression: BinaryExpression, scope: Scope): IntKernelType {
     const leftRaw = this.checkExpression(expression.left, scope);
     const rightRaw = this.checkExpression(expression.right, scope);
-    const leftType = materializeIntegerLiteral(leftRaw, rightRaw.kind === "integerLiteral" ? primitiveType("i32") : rightRaw);
-    const rightType = materializeIntegerLiteral(rightRaw, leftType);
+    const leftType = materializeIntegerLiteral(leftRaw, rightRaw.kind === "integerLiteral" ? primitiveType("i32") : integerLiteralFallback(rightRaw));
+    const rightType = materializeIntegerLiteral(rightRaw, integerLiteralFallback(leftType));
 
     const valid =
       expression.operator === "==" || expression.operator === "!="
         ? sameType(leftType, rightType)
-        : isInteger(leftType) && isInteger(rightType) && sameType(leftType, rightType);
+        : isNumericType(leftType) && isNumericType(rightType) && sameType(leftType, rightType);
 
     if (!isUnknown(leftType) && !isUnknown(rightType) && !valid) {
       this.error(expression.span, `Comparison operator '${expression.operator}' requires compatible operands.`);
@@ -684,6 +698,10 @@ function checkerDiagnosticCode(message: string): DiagnosticCode {
   }
 
   return "IK2004";
+}
+
+function integerLiteralFallback(type?: IntKernelType): IntKernelType {
+  return type?.kind === "primitive" && isInteger(type) ? type : primitiveType("i32");
 }
 
 function isArithmeticOperator(operator: string): boolean {

@@ -60,7 +60,7 @@ class Lexer {
     }
 
     if (isDigit(char)) {
-      this.scanInteger();
+      this.scanNumber();
       return;
     }
 
@@ -104,6 +104,10 @@ class Lexer {
         this.addToken(TokenKind.Semicolon, start);
         return;
       case ".":
+        if (isDigit(this.peekNext())) {
+          this.scanMalformedFloatStartingWithDot();
+          return;
+        }
         this.advance();
         this.addToken(TokenKind.Dot, start);
         return;
@@ -177,7 +181,7 @@ class Lexer {
     this.addToken(keywords.get(text) ?? TokenKind.Identifier, start);
   }
 
-  private scanInteger(): void {
+  private scanNumber(): void {
     const start = this.position();
     this.advance();
 
@@ -185,7 +189,50 @@ class Lexer {
       this.advance();
     }
 
-    this.addToken(TokenKind.Integer, start);
+    let isFloat = false;
+
+    if (this.peek() === ".") {
+      isFloat = true;
+      this.advance();
+      if (!isDigit(this.peek())) {
+        this.reportMalformedFloat(start);
+        return;
+      }
+
+      while (!this.isAtEnd() && isDigit(this.peek())) {
+        this.advance();
+      }
+    }
+
+    if (isExponentStart(this.peek())) {
+      isFloat = true;
+      this.advance();
+      if (this.peek() === "+" || this.peek() === "-") {
+        this.advance();
+      }
+
+      if (!isDigit(this.peek())) {
+        this.reportMalformedFloat(start);
+        return;
+      }
+
+      while (!this.isAtEnd() && isDigit(this.peek())) {
+        this.advance();
+      }
+    }
+
+    this.addToken(isFloat ? TokenKind.Float : TokenKind.Integer, start);
+  }
+
+  private scanMalformedFloatStartingWithDot(): void {
+    const start = this.position();
+    this.advance();
+
+    while (!this.isAtEnd() && isDigit(this.peek())) {
+      this.advance();
+    }
+
+    this.reportMalformedFloat(start);
   }
 
   private skipLineComment(): void {
@@ -207,6 +254,11 @@ class Lexer {
 
   private reportUnexpected(start: SourcePosition, char: string): void {
     this.diagnostics.push(errorAt(this.source, { start, end: this.position() }, "IK0001", `Unexpected character '${char}'.`));
+  }
+
+  private reportMalformedFloat(start: SourcePosition): void {
+    const text = this.source.text.slice(start.offset, this.offset);
+    this.diagnostics.push(errorAt(this.source, { start, end: this.position() }, "IK0001", `Malformed float literal '${text}'.`));
   }
 
   private match(expected: string): boolean {
@@ -259,6 +311,10 @@ function isWhitespace(char: string): boolean {
 
 function isDigit(char: string): boolean {
   return char >= "0" && char <= "9";
+}
+
+function isExponentStart(char: string): boolean {
+  return char === "e" || char === "E";
 }
 
 function isIdentifierStart(char: string): boolean {

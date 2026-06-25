@@ -6,6 +6,7 @@ import type {
   CallExpression,
   Expression,
   FieldExpression,
+  FloatLiteral,
   IdentifierExpression,
   IfStatement,
   IndexExpression,
@@ -273,6 +274,8 @@ function lowerExpression(context: FunctionLowerContext, expression: Expression):
       return requireValue(context, expression);
     case "IntegerLiteral":
       return lowerIntegerLiteral(context, expression);
+    case "FloatLiteral":
+      return lowerFloatLiteral(context, expression);
     case "BoolLiteral":
       return lowerBoolLiteral(context, expression);
     case "UnaryExpression":
@@ -308,6 +311,17 @@ function lowerIntegerLiteral(context: FunctionLowerContext, expression: IntegerL
   const target = context.builder.temp(type);
   emitInstruction(context, {
     kind: "const_int",
+    target,
+    value: expression.text
+  });
+  return target;
+}
+
+function lowerFloatLiteral(context: FunctionLowerContext, expression: FloatLiteral): MirValue {
+  const type = toMirType(requireExpressionType(context.checkedProgram, expression));
+  const target = context.builder.temp(type);
+  emitInstruction(context, {
+    kind: "const_float",
     target,
     value: expression.text
   });

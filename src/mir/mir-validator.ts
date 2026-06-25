@@ -5,6 +5,7 @@ import type {
   MirInstruction,
   MirModule,
   MirPlace,
+  MirPrimitiveTypeName,
   MirTerminator,
   MirType,
   MirValue
@@ -145,6 +146,12 @@ function validateInstruction(ctx: FunctionContext, block: MirBlock, instruction:
         addError(ctx, `const_int target in function '${ctx.func.name}' must be integer, got ${printMirType(instruction.target.type)}.`, block.label);
       }
       return;
+    case "const_float":
+      validateTarget(ctx, block, instruction.target);
+      if (!isFloatType(instruction.target.type)) {
+        addError(ctx, `const_float target in function '${ctx.func.name}' must be f64, got ${printMirType(instruction.target.type)}.`, block.label);
+      }
+      return;
     case "const_bool":
       validateTarget(ctx, block, instruction.target);
       if (!isBoolType(instruction.target.type)) {
@@ -165,8 +172,14 @@ function validateInstruction(ctx: FunctionContext, block: MirBlock, instruction:
       if (!sameType(instruction.left.type, instruction.right.type)) {
         addError(ctx, `Binary operands for '${instruction.op}' in function '${ctx.func.name}' must have the same type, got ${printMirType(instruction.left.type)} and ${printMirType(instruction.right.type)}.`, block.label);
       }
-      if (!isIntegerType(instruction.left.type) || !isIntegerType(instruction.right.type)) {
-        addError(ctx, `Binary operands for '${instruction.op}' in function '${ctx.func.name}' must be integers.`, block.label);
+      if (instruction.op === "%") {
+        if (isFloatType(instruction.left.type) || isFloatType(instruction.right.type)) {
+          addError(ctx, `Binary operator '%' in function '${ctx.func.name}' does not support f64 operands.`, block.label);
+        } else if (!isIntegerType(instruction.left.type) || !isIntegerType(instruction.right.type)) {
+          addError(ctx, `Binary operands for '%' in function '${ctx.func.name}' must be integers.`, block.label);
+        }
+      } else if (!isNumericType(instruction.left.type) || !isNumericType(instruction.right.type)) {
+        addError(ctx, `Binary operands for '${instruction.op}' in function '${ctx.func.name}' must be numeric.`, block.label);
       }
       if (!sameType(instruction.target.type, instruction.left.type)) {
         addError(ctx, `Binary result for '${instruction.op}' in function '${ctx.func.name}' must be ${printMirType(instruction.left.type)}, got ${printMirType(instruction.target.type)}.`, block.label);
@@ -176,8 +189,8 @@ function validateInstruction(ctx: FunctionContext, block: MirBlock, instruction:
       validateTarget(ctx, block, instruction.target);
       validateValue(ctx, block, instruction.operand);
       if (instruction.op === "neg") {
-        if (!isIntegerType(instruction.operand.type)) {
-          addError(ctx, `Unary neg in function '${ctx.func.name}' requires integer operand, got ${printMirType(instruction.operand.type)}.`, block.label);
+        if (!isNumericType(instruction.operand.type)) {
+          addError(ctx, `Unary neg in function '${ctx.func.name}' requires numeric operand, got ${printMirType(instruction.operand.type)}.`, block.label);
         }
         if (!sameType(instruction.target.type, instruction.operand.type)) {
           addError(ctx, `Unary neg result in function '${ctx.func.name}' must be ${printMirType(instruction.operand.type)}, got ${printMirType(instruction.target.type)}.`, block.label);
@@ -281,6 +294,7 @@ function validateTarget(ctx: FunctionContext, block: MirBlock, target: MirValue)
       validateValue(ctx, block, target);
       return;
     case "const_int":
+    case "const_float":
     case "const_bool":
       addError(ctx, `Instruction target in function '${ctx.func.name}' must be a temp, local, or param.`, block.label);
       return;
@@ -317,6 +331,7 @@ function validateValue(ctx: FunctionContext, block: MirBlock, value: MirValue): 
       return;
     }
     case "const_int":
+    case "const_float":
     case "const_bool":
       return;
   }
@@ -400,6 +415,7 @@ function validateCall(ctx: FunctionContext, block: MirBlock, functionName: strin
 function getInstructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -433,8 +449,20 @@ function isBoolType(type: MirType): boolean {
   return type.kind === "primitive" && type.name === "bool";
 }
 
+function isIntegerPrimitiveName(name: MirPrimitiveTypeName): boolean {
+  return name === "i32" || name === "i64" || name === "u32" || name === "u64";
+}
+
 function isIntegerType(type: MirType): boolean {
-  return type.kind === "primitive" && type.name !== "bool";
+  return type.kind === "primitive" && isIntegerPrimitiveName(type.name);
+}
+
+function isFloatType(type: MirType): boolean {
+  return type.kind === "primitive" && type.name === "f64";
+}
+
+function isNumericType(type: MirType): boolean {
+  return isIntegerType(type) || isFloatType(type);
 }
 
 function isIndexType(type: MirType): boolean {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -72,5 +72,120 @@ int main(void) {
 
     const run = spawnSync(executable, [], { encoding: "utf8" });
     expect(run.status, run.stderr || run.stdout).toBe(0);
+  });
+
+  it("compiles generated LLVM IR with a C harness and runs f64 scalar functions", () => {
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "llvm_f64.ik"),
+      `
+        export fn calc_f64(a: f64, b: f64) -> f64 {
+          let one: f64 = 1.0;
+          let sum: f64 = a + b;
+          let diff: f64 = sum - one;
+          let prod: f64 = diff * b;
+          return prod / 2.0;
+        }
+
+        export fn neg_f64(a: f64) -> f64 {
+          return -a;
+        }
+
+        export fn le_f64(a: f64, b: f64) -> bool {
+          return a <= b;
+        }
+      `
+    );
+
+    const emitExitCode = runCli(["emit-llvm", "llvm_f64.ik", "--out", "build/llvm_f64.ll"], {
+      cwd,
+      stdout: () => {},
+      stderr: () => {}
+    });
+
+    expect(emitExitCode).toBe(0);
+
+    if (!hasClang()) {
+      console.warn("skipped because clang was not found");
+      return;
+    }
+
+    const harnessFile = join(cwd, "build/harness.c");
+    const executable = join(cwd, "build/llvm_f64_test");
+    writeFileSync(
+      harnessFile,
+      `#include <math.h>
+#include <stdbool.h>
+
+double calc_f64(double a, double b);
+double neg_f64(double a);
+bool le_f64(double a, double b);
+
+static int close_double(double actual, double expected) {
+  return fabs(actual - expected) < 0.0000001;
+}
+
+int main(void) {
+  if (!close_double(calc_f64(5.0, 3.0), 10.5)) {
+    return 1;
+  }
+  if (!close_double(neg_f64(7.25), -7.25)) {
+    return 2;
+  }
+  if (!le_f64(3.5, 3.5)) {
+    return 3;
+  }
+  if (le_f64(4.5, 3.5)) {
+    return 4;
+  }
+  return 0;
+}
+`
+    );
+
+    const compile = spawnSync(
+      "clang",
+      [...strictClangFlags, join(cwd, "build/llvm_f64.ll"), harnessFile, "-o", executable],
+      { encoding: "utf8" }
+    );
+    expect(compile.status, compile.stderr || compile.stdout).toBe(0);
+
+    const run = spawnSync(executable, [], { encoding: "utf8" });
+    expect(run.status, run.stderr || run.stdout).toBe(0);
+  });
+
+  it("build-llvm emits a native object for f64 scalar functions when clang is available", () => {
+    if (!hasClang()) {
+      console.warn("skipped because clang was not found");
+      return;
+    }
+
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "llvm_f64.ik"),
+      `
+        export fn add_f64(a: f64, b: f64) -> f64 {
+          return a + b;
+        }
+      `
+    );
+
+    let stdout = "";
+    let stderr = "";
+    const exitCode = runCli(["build-llvm", "llvm_f64.ik", "--kind", "object", "--out", "build/llvm_f64.o"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`OK: built LLVM object\n${join(cwd, "build/llvm_f64.o")}\n`);
+    expect(existsSync(join(cwd, "build/llvm_f64.o"))).toBe(true);
+    expect(readFileSync(join(cwd, "build/llvm_f64.o")).byteLength).toBeGreaterThan(0);
   });
 });

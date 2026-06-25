@@ -134,4 +134,32 @@ describe("MIR C emitter scalar unchecked", () => {
       "
     `);
   });
+
+  it("emits f64 MIR as ordinary C double operations", () => {
+    const source = lowerAndEmit(`
+      struct Quote {
+        price: f64;
+        tax: f64;
+      }
+
+      export fn calc_f64(a: f64, b: f64, quotes: ptr<Quote>, out: ptr<f64>) -> bool {
+        let one: f64 = 1.0;
+        let sum: f64 = a + b;
+        let adjusted: f64 = sum - one;
+        let scaled: f64 = adjusted * quotes[0].price;
+        out[1] = scaled / quotes[0].tax;
+        return -out[1] <= 0.0;
+      }
+    `);
+
+    expect(source).toContain("bool calc_f64(double a, double b, Quote* quotes, double* out)");
+    expect(source).toContain("double one;");
+    expect(source).toContain("ik_tmp0 = 1.0;");
+    expect(source).toContain("ik_tmp1 = a + b;");
+    expect(source).toContain("ik_tmp4 = quotes[ik_tmp3].price;");
+    expect(source).toContain("ik_tmp5 = adjusted * ik_tmp4;");
+    expect(source).toContain("out[ik_tmp");
+    expect(source).toContain("ik_tmp");
+    expect(source).toContain(" <= ");
+  });
 });

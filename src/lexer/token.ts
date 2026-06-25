@@ -3,6 +3,7 @@ export enum TokenKind {
 
   Identifier = "Identifier",
   Integer = "Integer",
+  Float = "Float",
 
   Struct = "Struct",
   Export = "Export",
@@ -19,6 +20,7 @@ export enum TokenKind {
   I64 = "I64",
   U32 = "U32",
   U64 = "U64",
+  F64 = "F64",
   Bool = "Bool",
   Ptr = "Ptr",
 
@@ -75,6 +77,7 @@ export const keywords: ReadonlyMap<string, TokenKind> = new Map([
   ["i64", TokenKind.I64],
   ["u32", TokenKind.U32],
   ["u64", TokenKind.U64],
+  ["f64", TokenKind.F64],
   ["bool", TokenKind.Bool],
   ["ptr", TokenKind.Ptr]
 ]);

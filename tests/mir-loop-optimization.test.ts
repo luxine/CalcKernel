@@ -154,6 +154,31 @@ describe("MIR loop optimization", () => {
     expect(body.instructions.some((instruction) => instruction.kind === "binary" && instruction.op === "/")).toBe(true);
   });
 
+  it("does not hoist f64 arithmetic out of loops at O3", () => {
+    const optimized = runLicm(
+      lower(`
+        export fn calc(n: i64, a: f64, b: f64) -> f64 {
+          let i: i64 = 0;
+          let sum: f64 = 0.0;
+
+          while i < n {
+            let product: f64 = a * b;
+            sum = sum + product;
+            i = i + 1;
+          }
+
+          return sum;
+        }
+      `)
+    );
+    const func = firstFunction(optimized);
+    const preheader = func.blocks.find((block) => block.label === "bb0")!;
+    const body = func.blocks.find((block) => block.label === "bb2")!;
+
+    expect(preheader.instructions.some((instruction) => instruction.kind === "binary" && instruction.target.type.kind === "primitive" && instruction.target.type.name === "f64")).toBe(false);
+    expect(body.instructions.some((instruction) => instruction.kind === "binary" && instruction.op === "*" && instruction.target.type.kind === "primitive" && instruction.target.type.name === "f64")).toBe(true);
+  });
+
   it("does not hoist arithmetic in checked mode", () => {
     const optimized = runLicm(lower(invariantLoopSource()), "checked");
     const func = firstFunction(optimized);
@@ -185,6 +210,28 @@ describe("MIR loop optimization", () => {
     const after = printMirModule(module);
 
     expect(inductions).toEqual([{ localName: "i", step: "1", blockLabel: "bb2" }]);
+    expect(after).toBe(before);
+  });
+
+  it("skips f64 induction-like updates", () => {
+    const module = lower(`
+      export fn walk(n: f64) -> f64 {
+        let i: f64 = 0.0;
+
+        while i < n {
+          i = i + 1.0;
+        }
+
+        return i;
+      }
+    `);
+    const func = firstFunction(module);
+    const loop = analyzeNaturalLoops(func)[0]!;
+    const before = printMirModule(module);
+    const inductions = analyzeInductionVariables(func, loop);
+    const after = printMirModule(module);
+
+    expect(inductions).toEqual([]);
     expect(after).toBe(before);
   });
 

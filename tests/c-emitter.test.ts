@@ -208,6 +208,161 @@ describe("c emitter", () => {
     expect(emitDefaultCSource(checked, { headerFileName: "helper.h" })).toContain("static int64_t helper(int64_t value)");
   });
 
+  it("maps f64 ABI types to double in generated headers", () => {
+    const checked = checkedSource(
+      "f64-header.ik",
+      `
+        struct Quote {
+          qty: i32;
+          price: f64;
+        }
+
+        export fn scale(value: f64, out: ptr<f64>, quote: ptr<Quote>) -> f64 {
+          return value;
+        }
+      `
+    );
+
+    const header = emitCHeader(checked);
+
+    expect(header).toMatchInlineSnapshot(`
+      "#pragma once
+
+      #include <stdint.h>
+      #include <stdbool.h>
+
+      #if defined(_WIN32) || defined(__CYGWIN__)
+        #ifdef IK_BUILD_DLL
+          #define IK_API __declspec(dllexport)
+        #else
+          #define IK_API __declspec(dllimport)
+        #endif
+      #else
+        #define IK_API __attribute__((visibility("default")))
+      #endif
+
+      #ifdef __cplusplus
+      extern "C" {
+      #endif
+
+      typedef struct Quote {
+        int32_t qty;
+        double price;
+      } Quote;
+
+      IK_API double scale(double value, double* out, Quote* quote);
+
+      #ifdef __cplusplus
+      }
+      #endif
+      "
+    `);
+  });
+
+  it("emits f64 unchecked C source without integer checked helpers", () => {
+    const checked = checkedSource(
+      "f64-source.ik",
+      `
+        struct Quote {
+          price: f64;
+          tax: f64;
+        }
+
+        export fn calc(a: f64, b: f64, quotes: ptr<Quote>, out: ptr<f64>) -> bool {
+          let one: f64 = 1.0;
+          let sum: f64 = a + b;
+          let adjusted: f64 = sum - one;
+          let scaled: f64 = adjusted * quotes[0].price;
+          out[1] = scaled / quotes[0].tax;
+          return out[1] >= 0.5;
+        }
+      `
+    );
+
+    const source = emitDefaultCSource(checked, { headerFileName: "f64-source.h" });
+
+    expect(source).toMatchInlineSnapshot(`
+      "#include "f64-source.h"
+
+      bool calc(double a, double b, Quote* quotes, double* out) {
+        double one;
+        double sum;
+        double adjusted;
+        double scaled;
+        double ik_tmp0;
+        double ik_tmp1;
+        double ik_tmp2;
+        int32_t ik_tmp3;
+        double ik_tmp4;
+        double ik_tmp5;
+        int32_t ik_tmp6;
+        int32_t ik_tmp7;
+        double ik_tmp8;
+        double ik_tmp9;
+        int32_t ik_tmp10;
+        double ik_tmp11;
+        double ik_tmp12;
+        bool ik_tmp13;
+
+        ik_tmp0 = 1.0;
+        one = ik_tmp0;
+        ik_tmp1 = a + b;
+        sum = ik_tmp1;
+        ik_tmp2 = sum - one;
+        adjusted = ik_tmp2;
+        ik_tmp3 = 0;
+        ik_tmp4 = quotes[ik_tmp3].price;
+        ik_tmp5 = adjusted * ik_tmp4;
+        scaled = ik_tmp5;
+        ik_tmp6 = 1;
+        ik_tmp7 = 0;
+        ik_tmp8 = quotes[ik_tmp7].tax;
+        ik_tmp9 = scaled / ik_tmp8;
+        out[ik_tmp6] = ik_tmp9;
+        ik_tmp10 = 1;
+        ik_tmp11 = out[ik_tmp10];
+        ik_tmp12 = 0.5;
+        ik_tmp13 = ik_tmp11 >= ik_tmp12;
+        return ik_tmp13;
+      }
+      "
+    `);
+    expect(source).not.toContain("__builtin_add_overflow");
+    expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+  });
+
+  it("emits checked C for f64 using ordinary double arithmetic", () => {
+    const checked = checkedSource(
+      "f64-checked.ik",
+      `
+        export fn div_f64(a: f64, b: f64) -> f64 {
+          return a / b;
+        }
+
+        export fn neg_f64(a: f64) -> f64 {
+          return -a;
+        }
+      `
+    );
+
+    const source = emitDefaultCSource(checked, { headerFileName: "f64-checked.h", overflowMode: "checked" });
+
+    expect(source).toContain("IK_Status div_f64(double a, double b, double* ik_return)");
+    expect(source).toContain("ik_tmp0 = a / b;");
+    expect(source).toContain("ik_tmp0 = -a;");
+    expect(source).not.toContain("__builtin");
+    expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+    expect(source).not.toContain("IK_ERR_OVERFLOW");
+  });
+
+  it("does not reach C emission for f64 modulo", () => {
+    const checked = check(new SourceFile("bad-f64-mod.ik", "export fn bad(a: f64, b: f64) -> f64 { return a % b; }"));
+
+    expect(checked.diagnostics.map((diagnostic) => diagnostic.message)).toContain("Arithmetic operator '%' does not support f64 operands.");
+    expect(() => emitCHeader(checked)).toThrow("Cannot emit C for a program with diagnostics.");
+    expect(() => emitDefaultCSource(checked, { headerFileName: "bad-f64-mod.h" })).toThrow("Cannot emit C for a program with diagnostics.");
+  });
+
   it("requires a clean type checked result", () => {
     const checked = check(new SourceFile("bad.ik", "export fn bad() -> i32 { return missing; }"));
 

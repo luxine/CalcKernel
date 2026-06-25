@@ -1,5 +1,5 @@
 import { printMirType } from "../../mir/mir-printer.js";
-import type { MirInstruction, MirPlace, MirValue } from "../../mir/mir.js";
+import type { MirInstruction, MirPlace, MirType, MirValue } from "../../mir/mir.js";
 import type { MirPass } from "../mir-pass.js";
 
 interface CseEntry {
@@ -49,10 +49,19 @@ export const localCsePass: MirPass = {
 function cseKey(instruction: MirInstruction): string | undefined {
   switch (instruction.kind) {
     case "binary":
+      if (isFloatType(instruction.target.type)) {
+        return undefined;
+      }
       return `binary:${instruction.op}:${printMirType(instruction.target.type)}:${orderedValueKeys(instruction.op, instruction.left, instruction.right).join(":")}`;
     case "compare":
+      if (isFloatType(instruction.left.type) || isFloatType(instruction.right.type)) {
+        return undefined;
+      }
       return `compare:${instruction.op}:${printMirType(instruction.left.type)}:${orderedValueKeys(instruction.op, instruction.left, instruction.right).join(":")}`;
     case "unary":
+      if (isFloatType(instruction.target.type) || isFloatType(instruction.operand.type)) {
+        return undefined;
+      }
       return `unary:${instruction.op}:${printMirType(instruction.target.type)}:${valueKey(instruction.operand)}`;
     default:
       return undefined;
@@ -112,6 +121,8 @@ function valueKey(value: MirValue): string {
       return `${value.kind}:${value.name}:${printMirType(value.type)}`;
     case "const_int":
       return `const_int:${value.text}:${printMirType(value.type)}`;
+    case "const_float":
+      return `const_float:${value.text}:${printMirType(value.type)}`;
     case "const_bool":
       return `const_bool:${value.value ? "true" : "false"}`;
   }
@@ -120,6 +131,7 @@ function valueKey(value: MirValue): string {
 function instructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -132,6 +144,10 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "store":
       return undefined;
   }
+}
+
+function isFloatType(type: MirType): boolean {
+  return type.kind === "primitive" && type.name === "f64";
 }
 
 export function placeKey(place: MirPlace): string {

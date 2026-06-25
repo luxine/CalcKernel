@@ -9,6 +9,16 @@ function kindsOf(sourceText: string): TokenKind[] {
   return result.tokens.map((token) => token.kind);
 }
 
+function tokensOf(sourceText: string) {
+  const result = lex(new SourceFile("test.ik", sourceText));
+  expect(result.diagnostics).toEqual([]);
+  return result.tokens;
+}
+
+function diagnosticMessagesOf(sourceText: string): string[] {
+  return lex(new SourceFile("test.ik", sourceText)).diagnostics.map((diagnostic) => diagnostic.message);
+}
+
 describe("lexer", () => {
   it("emits tokens with kind, text, line, column, start, and end", () => {
     const result = lex(new SourceFile("test.ik", "let x: i32 = 42;"));
@@ -33,7 +43,7 @@ describe("lexer", () => {
   });
 
   it("tokenizes all V0 keywords and type keywords", () => {
-    expect(kindsOf("struct export fn let return if else while true false i32 i64 u32 u64 bool ptr")).toEqual([
+    expect(kindsOf("struct export fn let return if else while true false i32 i64 u32 u64 f64 bool ptr")).toEqual([
       TokenKind.Struct,
       TokenKind.Export,
       TokenKind.Fn,
@@ -48,6 +58,7 @@ describe("lexer", () => {
       TokenKind.I64,
       TokenKind.U32,
       TokenKind.U64,
+      TokenKind.F64,
       TokenKind.Bool,
       TokenKind.Ptr,
       TokenKind.Eof
@@ -125,6 +136,27 @@ describe("lexer", () => {
       TokenKind.Greater,
       TokenKind.Eof
     ]);
+  });
+
+  it("tokenizes supported float literals as single tokens", () => {
+    const tokens = tokensOf("1.0 0.5 1e3 1.0e-3 2E8 2E+8");
+
+    expect(tokens.map((token) => [token.kind, token.text])).toEqual([
+      [TokenKind.Float, "1.0"],
+      [TokenKind.Float, "0.5"],
+      [TokenKind.Float, "1e3"],
+      [TokenKind.Float, "1.0e-3"],
+      [TokenKind.Float, "2E8"],
+      [TokenKind.Float, "2E+8"],
+      [TokenKind.Eof, ""]
+    ]);
+  });
+
+  it("reports malformed float literals", () => {
+    expect(diagnosticMessagesOf("1.")).toEqual(["Malformed float literal '1.'."]);
+    expect(diagnosticMessagesOf(".5")).toEqual(["Malformed float literal '.5'."]);
+    expect(diagnosticMessagesOf("1e")).toEqual(["Malformed float literal '1e'."]);
+    expect(diagnosticMessagesOf("1e+")).toEqual(["Malformed float literal '1e+'."]);
   });
 
   it("tracks line and column for tokens", () => {

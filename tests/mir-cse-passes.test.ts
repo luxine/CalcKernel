@@ -12,6 +12,7 @@ import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
 const i64: MirType = { kind: "primitive", name: "i64" };
+const f64: MirType = { kind: "primitive", name: "f64" };
 const boolType: MirType = { kind: "primitive", name: "bool" };
 
 function param(name: string, type: MirType): MirValue {
@@ -83,6 +84,36 @@ describe("MIR CSE passes", () => {
     expect(optimized.functions[0]!.blocks[0]!.instructions[2]).toMatchObject({ kind: "compare", left: temp("t1", i64) });
   });
 
+  it("does not apply local CSE to f64 arithmetic or reorder f64 operands", () => {
+    const func: MirFunction = {
+      name: "calc_f64",
+      exported: true,
+      params: [
+        { name: "a", type: f64 },
+        { name: "b", type: f64 }
+      ],
+      returnType: f64,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "binary", target: temp("t0", f64), op: "+", left: param("a", f64), right: param("b", f64) },
+            { kind: "binary", target: temp("t1", f64), op: "+", left: param("b", f64), right: param("a", f64) },
+            { kind: "binary", target: temp("t2", f64), op: "+", left: param("a", f64), right: param("b", f64) }
+          ],
+          terminator: { kind: "return", value: temp("t2", f64) }
+        }
+      ]
+    };
+
+    const optimized = runSinglePass({ structs: [], functions: [func] }, localCsePass);
+    const instructions = optimized.functions[0]!.blocks[0]!.instructions;
+
+    expect(instructions[1]).toEqual({ kind: "binary", target: temp("t1", f64), op: "+", left: param("b", f64), right: param("a", f64) });
+    expect(instructions[2]).toEqual({ kind: "binary", target: temp("t2", f64), op: "+", left: param("a", f64), right: param("b", f64) });
+  });
+
   it("does not CSE ordinary loads across a store", () => {
     const optimized = optimizeForC(
       `
@@ -141,6 +172,24 @@ describe("MIR CSE passes", () => {
 
     expect(text).toContain("%addr0: ptr<i64> = address index(out, i)");
     expect(text).toContain("store deref(%addr0), value");
+  });
+
+  it("materializes ptr<f64> indexed places without changing value expressions", () => {
+    const optimized = runSinglePass(
+      lower(`
+        export fn write_f64(out: ptr<f64>, i: i32, value: f64) -> f64 {
+          out[i] = value;
+          return out[i];
+        }
+      `),
+      addressCsePass
+    );
+    const text = printMirModule(optimized);
+
+    expect(text).toContain("%addr0: ptr<f64> = address index(out, i)");
+    expect(text).toContain("store deref(%addr0), value");
+    expect(text).toContain("%addr1: ptr<f64> = address index(out, i)");
+    expect(text).toContain("load deref(%addr1)");
   });
 
   it("clears address CSE state after calls", () => {

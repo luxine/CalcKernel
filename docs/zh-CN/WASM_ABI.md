@@ -1,4 +1,4 @@
-# IntKernel WASM ABI
+# IK / IntKernel WASM ABI
 
 [English](../WASM_ABI.md)
 
@@ -50,6 +50,7 @@ Phase 12 v1 设计支持：
 - `i64`
 - `u32`
 - `u64`
+- `f64`
 - `bool`
 - `ptr<T>`
 - 确定性的 struct memory layout
@@ -57,6 +58,7 @@ Phase 12 v1 设计支持：
 - non-exported internal functions
 - exported linear memory
 - unchecked arithmetic
+- `f64` arithmetic、comparison、load 和 store
 - 通过 `wabt` 完成 WAT-to-WASM assembly
 
 Phase 12 v1 暂不支持：
@@ -78,6 +80,10 @@ Phase 12 v1 暂不支持：
 和 `out[i] = value` 这类 MIR place。它仍然不添加 bounds check 或 pointer
 validity check。
 
+Phase 16.9 支持 `f64` scalar arithmetic、comparison、load 和 store codegen。
+`f64` 的 size 是 8、alignment 是 8，scalar ABI type 是 `f64`，宿主 JavaScript
+interop 使用 `Number`，不是 `BigInt`。
+
 ## 类型映射
 
 | IntKernel type | WASM value type |
@@ -87,6 +93,7 @@ validity check。
 | `bool` | `i32` |
 | `i64` | `i64` |
 | `u64` | `i64` |
+| `f64` | `f64` |
 | `ptr<T>` | `i32` memory offset |
 
 WASM 没有独立的 `u32` 或 `u64` value type。Signedness 通过 division、
@@ -95,7 +102,8 @@ remainder 和 comparison 指令选择体现。
 `bool` 使用 `i32`：`0` 表示 false，任何非零值表示 true。Codegen 应该为
 IntKernel boolean 表达式生成规范化的 `0` 或 `1`。
 
-JavaScript 的 WebAssembly API 用 `BigInt` 表示 `i64` 和 `u64` 参数与返回值。
+JavaScript 的 WebAssembly API 用 `BigInt` 表示 `i64` 和 `u64` 参数与返回值，
+用 JavaScript `Number` 表示 `f64` 参数与返回值。
 
 ## Function ABI
 
@@ -138,7 +146,8 @@ export fn is_positive(a: i64) -> bool {
 
 ## Pointer ABI
 
-`ptr<T>` 是 `wasm32` linear-memory offset，用 `i32` 表示。
+`ptr<T>` 是 `wasm32` linear-memory offset，用 `i32` 表示。`ptr<f64>` 仍然是
+`i32` byte offset；indexing 每个元素前进 8 bytes。
 
 IntKernel 示例：
 
@@ -198,6 +207,7 @@ Primitive layout：
 | `ptr<T>` | 4 | 4 |
 | `i64` | 8 | 8 |
 | `u64` | 8 | 8 |
+| `f64` | 8 | 8 |
 
 Struct layout 规则：
 
@@ -251,9 +261,12 @@ Backend 根据 value type 选择 load/store 指令：
 
 - `i32.load` / `i32.store` 用于 `i32`、`u32`、`bool` 和 `ptr<T>`
 - `i64.load` / `i64.store` 用于 `i64` 和 `u64`
+- `f64.load` / `f64.store` 用于 `f64`
 
 所有宿主侧示例都应该使用 little-endian 读写。WebAssembly linear memory 是
-little-endian。
+little-endian。宿主测试和 harness 应对 `f64` buffer 使用
+`DataView.getFloat64(offset, true)` 和 `DataView.setFloat64(offset, value,
+true)`。
 
 ## Arithmetic 映射
 
@@ -263,6 +276,7 @@ Phase 12 v1 是 unchecked。
 
 - `i32.add`、`i32.sub`、`i32.mul`
 - `i64.add`、`i64.sub`、`i64.mul`
+- `f64.add`、`f64.sub`、`f64.mul`
 
 除法和取模必须选择 signed 或 unsigned 指令：
 
@@ -270,6 +284,9 @@ Phase 12 v1 是 unchecked。
 - `i64.div_s` / `i64.div_u`
 - `i32.rem_s` / `i32.rem_u`
 - `i64.rem_s` / `i64.rem_u`
+
+F64 division 使用 `f64.div`。F64 remainder 不支持。Unary `-f64` 降低为
+`f64.neg`；integer negation 继续使用现有 zero-subtraction lowering。
 
 比较也必须选择 signed 或 unsigned 指令：
 
@@ -286,6 +303,12 @@ Phase 12 v1 是 unchecked。
 
 - `i32.eq`、`i32.ne`
 - `i64.eq`、`i64.ne`
+
+F64 comparison 使用标准 WASM f64 predicates：
+
+- `f64.eq`、`f64.ne`
+- `f64.lt`、`f64.le`
+- `f64.gt`、`f64.ge`
 
 ## Checked Overflow
 
@@ -326,6 +349,7 @@ Interop 规则：
 - 使用 little-endian `DataView` 方法
 - 将 `ptr<T>` 作为 numeric memory offset 传入
 - `i64` / `u64` 参数和返回值使用 `BigInt`
+- `f64` 参数和返回值使用 JavaScript `Number`
 - 将 `bool` result 解释为 `result !== 0`
 
 宿主程序负责为输入和输出 buffer 选择不重叠的 memory region。
@@ -355,6 +379,13 @@ writeItem(0, {
 const price = instance.exports.first_price(0);
 ```
 
+对于 `ptr<f64>` buffer，使用显式 little-endian float access：
+
+```js
+view.setFloat64(valuesOffset + 8, 2.5, true);
+const value = view.getFloat64(valuesOffset + 8, true);
+```
+
 ## Browser Interop
 
 生成的 WASM 也可以通过标准 WebAssembly API 在浏览器中运行。
@@ -366,6 +397,7 @@ const price = instance.exports.first_price(0);
 - 用 `DataView` 做 little-endian memory 读写
 - 用 numeric memory offset 表示 `ptr<T>`
 - JS/WASM 边界上的 `i64` / `u64` 使用 `BigInt`
+- JS/WASM 边界上的 `f64` 使用 `Number`
 
 浏览器通常不能从 `file://` fetch `.wasm`。请通过本地 HTTP server 运行示例：
 

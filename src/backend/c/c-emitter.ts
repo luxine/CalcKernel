@@ -6,6 +6,7 @@ import type {
   CallExpression,
   Expression,
   FieldExpression,
+  FloatLiteral,
   FunctionDeclaration,
   IdentifierExpression,
   IfStatement,
@@ -228,6 +229,12 @@ function lowerCheckedExpression(context: CheckedEmitContext, expression: Express
         value: emitIntegerLiteral(expression),
         type: checkedExpressionType(context, expression)
       };
+    case "FloatLiteral":
+      return {
+        lines: [],
+        value: emitFloatLiteral(expression),
+        type: checkedExpressionType(context, expression)
+      };
     case "BoolLiteral":
       return {
         lines: [],
@@ -331,6 +338,14 @@ function lowerCheckedUnaryExpression(context: CheckedEmitContext, expression: Un
   const type = checkedExpressionType(context, expression);
   const cType = emitCheckedCType(type);
   const temp = nextCheckedTemp(context);
+
+  if (isF64Type(type)) {
+    return {
+      lines: [...operand.lines, `${cType} ${temp} = -${operand.value};`],
+      value: temp,
+      type
+    };
+  }
 
   if (isUnsignedIntegerType(type)) {
     return {
@@ -460,6 +475,17 @@ function lowerCheckedArithmeticExpression(
   const cType = emitCheckedCType(type);
   const temp = nextCheckedTemp(context);
   const prefixLines = [...left.lines, ...right.lines];
+
+  if (isF64Type(type)) {
+    if (expression.operator === "%") {
+      throw unsupportedCheckedCodegen("f64 modulo");
+    }
+    return {
+      lines: [...prefixLines, `${cType} ${temp} = (${left.value} ${expression.operator} ${right.value});`],
+      value: temp,
+      type
+    };
+  }
 
   switch (expression.operator) {
     case "+":
@@ -604,6 +630,8 @@ function emitExpression(expression: Expression): string {
       return emitIdentifierExpression(expression);
     case "IntegerLiteral":
       return emitIntegerLiteral(expression);
+    case "FloatLiteral":
+      return emitFloatLiteral(expression);
     case "BoolLiteral":
       return emitBoolLiteral(expression);
     case "UnaryExpression":
@@ -628,6 +656,10 @@ function emitIdentifierExpression(expression: IdentifierExpression): string {
 }
 
 function emitIntegerLiteral(expression: IntegerLiteral): string {
+  return expression.text;
+}
+
+function emitFloatLiteral(expression: FloatLiteral): string {
   return expression.text;
 }
 
@@ -698,6 +730,10 @@ function isSignedIntegerType(type: IntKernelType): boolean {
 
 function isUnsignedIntegerType(type: IntKernelType): boolean {
   return type.kind === "primitive" && (type.name === "u32" || type.name === "u64");
+}
+
+function isF64Type(type: IntKernelType): boolean {
+  return type.kind === "primitive" && type.name === "f64";
 }
 
 function nextCheckedTemp(context: CheckedEmitContext): string {

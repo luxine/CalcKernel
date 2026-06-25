@@ -177,6 +177,18 @@ function generateArtifacts() {
   ]);
   run("pnpm", [
     "ikc",
+    "emit-c",
+    "bench/perf/fixtures/f64_kernels.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "f64_kernels.c")),
+    "--header",
+    relativeFromRoot(join(generatedDir, "f64_kernels.h")),
+    "--overflow",
+    "unchecked",
+    "-O3"
+  ]);
+  run("pnpm", [
+    "ikc",
     "emit-wasm",
     "examples/pricing.ik",
     "--out",
@@ -205,12 +217,32 @@ function generateArtifacts() {
   ]);
   run("pnpm", [
     "ikc",
+    "emit-wasm",
+    "bench/perf/fixtures/f64_kernels.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "f64_kernels_o3.wasm")),
+    "--overflow",
+    "unchecked",
+    "-O3"
+  ]);
+  run("pnpm", [
+    "ikc",
     "emit-llvm",
     "examples/pricing.ik",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing.ll")),
     "--overflow",
     "unchecked"
+  ]);
+  run("pnpm", [
+    "ikc",
+    "emit-llvm",
+    "bench/perf/fixtures/f64_kernels.ik",
+    "--out",
+    relativeFromRoot(join(generatedDir, "f64_kernels.ll")),
+    "--overflow",
+    "unchecked",
+    "-O3"
   ]);
 }
 

@@ -4,10 +4,11 @@
 
 This document describes the IK / IntKernel V0 language.
 
-IK / IntKernel is a high-performance DSL for pure integer computation. It is
+IK / IntKernel is a high-performance DSL for pure computation kernels. It is
 not a general purpose programming language. V0 is designed to compile `.ik`
 source into C, WASM, and LLVM backend outputs for host languages and native
-toolchains.
+toolchains. Integer kernels remain the primary target; Phase 16 adds strict
+`f64` for numerical kernels.
 
 ## Source Files
 
@@ -15,12 +16,13 @@ IntKernel source files use the `.ik` extension.
 
 ## Supported Types
 
-V0 supports only these types:
+V0 supports these types:
 
 - `i32`
 - `i64`
 - `u32`
 - `u64`
+- `f64`
 - `bool`
 - `ptr<T>`
 - `struct`
@@ -28,9 +30,13 @@ V0 supports only these types:
 `ptr<T>` represents a caller-owned pointer to `T`. V0 has no owned arrays and
 no dynamic allocation.
 
-Floating point types are not implemented in V0.4.0. The language does not
-support `f64`, `f32`, implicit int/float conversion, fast-math, or SIMD.
-Floating point support, if added, is future-phase work.
+`f64` is strict floating point. It is intended for numerical kernels. It is not
+recommended for money, tax, POS totals, or pricing-rule calculations; use `i64`
+fixed-point arithmetic for those domains so checked integer mode can report
+overflow and division errors explicitly.
+
+The language does not support `f32`, implicit int/float conversion, fast-math,
+SIMD, or float checked overflow.
 
 ## Supported Declarations
 
@@ -90,6 +96,7 @@ ending without a return is a type error.
 ## Supported Expressions
 
 - integer literals
+- float literals
 - boolean literals: `true`, `false`
 - variable references
 - function calls
@@ -101,6 +108,32 @@ ending without a return is a type error.
 - struct field access: `item.price`
 - combined access: `items[i].price`
 - parentheses
+
+### Float Literals
+
+Float literals have type `f64`.
+
+Supported forms:
+
+- `1.0`
+- `0.5`
+- `1e3`
+- `1.0e-3`
+- `2E8`
+- `2E+8`
+
+Unsupported forms:
+
+- `1.`
+- `.5`
+- `1e`
+- `1e+`
+- suffixes such as `1.0f64`
+- underscores such as `1_000.0`
+- `NaN` or `Inf` literal syntax
+
+Negative numbers are parsed as unary `-` applied to a literal. For example,
+`-1.0` is unary minus plus a `FloatLiteral`, not a signed literal token.
 
 ## Operator Precedence
 
@@ -135,15 +168,30 @@ V0 type checking is intentionally strict:
 - Assignment targets must be variables, fields, or index expressions.
 - Assignment value type must be assignable to the target type.
 - Return value type must be assignable to the function return type.
-- Arithmetic operators require integer operands of the same type.
-- Ordered comparisons require integer operands of the same type.
+- Arithmetic operators require operands of the same numeric type.
+- Integer arithmetic supports `+`, `-`, `*`, `/`, and `%`.
+- f64 arithmetic supports `+`, `-`, `*`, and `/`.
+- `f64 % f64` is rejected.
+- Ordered comparisons require operands of the same numeric type.
 - Equality comparisons require compatible operand types.
 - Logical operators require `bool` operands and return `bool`.
 - Unary `!` requires `bool` and returns `bool`.
-- Unary `-` requires an integer operand and returns the same integer type.
+- Unary `-` requires an integer or `f64` operand and returns the same type.
+- Mixed integer/f64 arithmetic and comparisons are rejected.
+- Integer literals do not materialize to `f64`.
+- Float literals do not materialize to integer types.
 
 Integer literals are materialized to the expected integer type when context is
 available. Otherwise they default to `i32`.
+
+Examples rejected by the type checker:
+
+```ik
+let x: f64 = 1;
+let y: i64 = 1.0;
+let z: f64 = 1.0 + 2;
+let w: bool = 1.0 < 2;
+```
 
 ## V0 Non-Goals
 
@@ -162,7 +210,8 @@ V0 does not support:
 - runtime library
 - checked overflow as a language syntax feature or default behavior
 - bounds checks
-- floating point types such as `f64` or `f32`
+- `f32`
+- `f64 %`
 - implicit int/float conversion
 - fast-math
 - SIMD
@@ -183,5 +232,10 @@ division/modulo overflow such as `INT64_MIN / -1`.
 
 Checked arithmetic is a code generation mode, not new `.ik` syntax. It does not
 add bounds checks, pointer validity checks, heap allocation, runtime support, or
-exceptions. See [Checked Arithmetic](CHECKED_ARITHMETIC.md) for the full ABI and
-safety boundary.
+exceptions.
+
+`f64` arithmetic is not checked for overflow. In checked C mode, f64 operations
+use ordinary strict C `double` behavior: f64 division by zero does not return
+`IK_ERR_DIV_BY_ZERO`, and f64 overflow does not return `IK_ERR_OVERFLOW`. See
+[Checked Arithmetic](CHECKED_ARITHMETIC.md) for the full ABI and safety
+boundary.

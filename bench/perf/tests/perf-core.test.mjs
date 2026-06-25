@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import { parseArgs } from "../lib/args.mjs";
-import { benchmarkCommands } from "../lib/cases.mjs";
+import { benchmarkCommands, nativeCompileJobs } from "../lib/cases.mjs";
+import { withinTolerance } from "../lib/f64-correctness.mjs";
 import { buildHyperfineArgs } from "../lib/hyperfine.mjs";
 import { compareSummaries, filterBenchmarkCommands, formatSummaryMarkdown, hasRegression, parseBaselineSummary, summarizeHyperfine } from "../lib/summary.mjs";
 import { median, percentile, relativeToFastest } from "../lib/stats.mjs";
@@ -125,30 +127,27 @@ describe("perf runner core", () => {
       }
     );
 
-    assert.deepEqual(
-      commands.map((command) => command.name),
-      [
-        "pricing-c-unchecked-O0",
-        "pricing-c-unchecked-O2",
-        "pricing-c-unchecked-O3",
-        "pricing-c-unchecked-ik-O3",
-        "pricing-c-checked-O3",
-        "pricing-helpers-c-unchecked-ik-O0",
-        "pricing-helpers-c-unchecked-ik-O2",
-        "pricing-llvm-unchecked-O0",
-        "pricing-llvm-unchecked-O2",
-        "pricing-llvm-unchecked-O3",
-        "pricing-wasm-unchecked-total",
-        "pricing-wasm-unchecked-total-O3",
-        "pricing-wasm-unchecked-compute-only",
-        "pricing-wasm-unchecked-compute-only-O3",
-        "pricing-wasm-unchecked-memory-only",
-        "pricing-wasm-unchecked-call-overhead",
-        "pricing-js-number",
-        "pricing-js-typedarray-number",
-        "pricing-js-bigint"
-      ]
-    );
+    assert.deepEqual(commands.map((command) => command.name).slice(0, 19), [
+      "pricing-c-unchecked-O0",
+      "pricing-c-unchecked-O2",
+      "pricing-c-unchecked-O3",
+      "pricing-c-unchecked-ik-O3",
+      "pricing-c-checked-O3",
+      "pricing-helpers-c-unchecked-ik-O0",
+      "pricing-helpers-c-unchecked-ik-O2",
+      "pricing-llvm-unchecked-O0",
+      "pricing-llvm-unchecked-O2",
+      "pricing-llvm-unchecked-O3",
+      "pricing-wasm-unchecked-total",
+      "pricing-wasm-unchecked-total-O3",
+      "pricing-wasm-unchecked-compute-only",
+      "pricing-wasm-unchecked-compute-only-O3",
+      "pricing-wasm-unchecked-memory-only",
+      "pricing-wasm-unchecked-call-overhead",
+      "pricing-js-number",
+      "pricing-js-typedarray-number",
+      "pricing-js-bigint"
+    ]);
 
     const wasmCompute = commands.find((command) => command.name === "pricing-wasm-unchecked-compute-only");
     assert.equal(wasmCompute.category, "wasm");
@@ -189,6 +188,112 @@ describe("perf runner core", () => {
     assert.equal(checkedIkO3.category, "native");
     assert.equal(checkedIkO3.optLevel, "IK-O3/clang-O3");
     assert.equal(checkedIkO3.overflowMode, "checked");
+  });
+
+  it("defines f64 benchmark cases for each kernel and target", () => {
+    const commands = benchmarkCommands(
+      { mode: "quick", items: 1000, iterations: 10 },
+      {
+        binDir: "build/perf/bin",
+        generatedDir: "build/perf/generated"
+      }
+    );
+    const f64Names = commands.map((command) => command.name).filter((name) => name.startsWith("f64-"));
+
+    assert.deepEqual(f64Names, [
+      "f64-axpy-js-array-number",
+      "f64-axpy-js-float64array",
+      "f64-axpy-ik-c-o3",
+      "f64-axpy-ik-llvm-o3",
+      "f64-axpy-ik-wasm-o3-compute-only",
+      "f64-axpy-ik-wasm-o3-total",
+      "f64-axpy-wasm-memory-only",
+      "f64-dot-js-array-number",
+      "f64-dot-js-float64array",
+      "f64-dot-ik-c-o3",
+      "f64-dot-ik-llvm-o3",
+      "f64-dot-ik-wasm-o3-compute-only",
+      "f64-dot-ik-wasm-o3-total",
+      "f64-dot-wasm-memory-only",
+      "f64-sum-js-array-number",
+      "f64-sum-js-float64array",
+      "f64-sum-ik-c-o3",
+      "f64-sum-ik-llvm-o3",
+      "f64-sum-ik-wasm-o3-compute-only",
+      "f64-sum-ik-wasm-o3-total",
+      "f64-sum-wasm-memory-only",
+      "f64-scale-js-array-number",
+      "f64-scale-js-float64array",
+      "f64-scale-ik-c-o3",
+      "f64-scale-ik-llvm-o3",
+      "f64-scale-ik-wasm-o3-compute-only",
+      "f64-scale-ik-wasm-o3-total",
+      "f64-scale-wasm-memory-only"
+    ]);
+
+    const cCase = commands.find((command) => command.name === "f64-axpy-ik-c-o3");
+    assert.equal(cCase.category, "native");
+    assert.equal(cCase.optLevel, "IK-O3/clang-O3");
+    assert.equal(cCase.overflowMode, "unchecked");
+    assert.match(cCase.command, /--kernel axpy/);
+
+    const llvmCase = commands.find((command) => command.name === "f64-dot-ik-llvm-o3");
+    assert.equal(llvmCase.category, "native");
+    assert.equal(llvmCase.optLevel, "IK-O3\/LLVM-O3");
+
+    const wasmCompute = commands.find((command) => command.name === "f64-sum-ik-wasm-o3-compute-only");
+    assert.equal(wasmCompute.category, "wasm");
+    assert.equal(wasmCompute.optLevel, "IK-O3");
+    assert.match(wasmCompute.command, /--mode compute-only/);
+
+    const wasmMemory = commands.find((command) => command.name === "f64-scale-wasm-memory-only");
+    assert.equal(wasmMemory.category, "memory");
+    assert.match(wasmMemory.command, /--mode memory-only/);
+  });
+
+  it("defines native f64 compile jobs without changing pricing jobs", () => {
+    const jobs = nativeCompileJobs({
+      binDir: "build/perf/bin",
+      generatedDir: "build/perf/generated"
+    });
+
+    assert.deepEqual(
+      jobs.map((job) => job.name).slice(0, 10),
+      [
+        "pricing-c-unchecked-O0",
+        "pricing-c-unchecked-O2",
+        "pricing-c-unchecked-O3",
+        "pricing-c-unchecked-ik-O3",
+        "pricing-c-checked-O3",
+        "pricing-helpers-c-unchecked-ik-O0",
+        "pricing-helpers-c-unchecked-ik-O2",
+        "pricing-llvm-unchecked-O0",
+        "pricing-llvm-unchecked-O2",
+        "pricing-llvm-unchecked-O3"
+      ]
+    );
+    assert.deepEqual(jobs.map((job) => job.name).slice(10), ["f64-ik-c-o3", "f64-ik-llvm-o3"]);
+  });
+
+  it("compares f64 correctness with absolute and relative tolerance", () => {
+    assert.equal(withinTolerance(1.0, 1.0, { absTol: 1e-9, relTol: 1e-9 }), true);
+    assert.equal(withinTolerance(1.0 + 5e-10, 1.0, { absTol: 1e-9, relTol: 1e-12 }), true);
+    assert.equal(withinTolerance(1000000.001, 1000000.0, { absTol: 1e-12, relTol: 1e-8 }), true);
+    assert.equal(withinTolerance(1.1, 1.0, { absTol: 1e-9, relTol: 1e-9 }), false);
+    assert.equal(withinTolerance(Number.NaN, 1.0, { absTol: 1e-9, relTol: 1e-9 }), false);
+  });
+
+  it("smoke-runs f64 JavaScript benchmark kernels", () => {
+    for (const kernel of ["axpy", "dot", "sum", "scale"]) {
+      const result = spawnSync(
+        "node",
+        ["bench/perf/cases/f64-js-array-number.mjs", "--kernel", kernel, "--items", "16", "--iterations", "2"],
+        { encoding: "utf8" }
+      );
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.match(result.stdout, new RegExp(`f64-${kernel}-js-array-number`));
+    }
   });
 
   it("compares summaries with configurable median regression thresholds", () => {
@@ -255,6 +360,29 @@ describe("perf runner core", () => {
       ]
     );
     assert.throws(() => filterBenchmarkCommands(commands, ["does-not-exist"]), /No benchmark cases matched/);
+  });
+
+  it("filters f64 benchmark commands by kernel prefix", () => {
+    const commands = benchmarkCommands(
+      { mode: "full", items: 100000, iterations: 1000 },
+      {
+        binDir: "build/perf/bin",
+        generatedDir: "build/perf/generated"
+      }
+    );
+
+    assert.deepEqual(
+      filterBenchmarkCommands(commands, ["f64-axpy"]).map((command) => command.name),
+      [
+        "f64-axpy-js-array-number",
+        "f64-axpy-js-float64array",
+        "f64-axpy-ik-c-o3",
+        "f64-axpy-ik-llvm-o3",
+        "f64-axpy-ik-wasm-o3-compute-only",
+        "f64-axpy-ik-wasm-o3-total",
+        "f64-axpy-wasm-memory-only"
+      ]
+    );
   });
 
   it("formats comparison markdown with ratio and slower percentage", () => {

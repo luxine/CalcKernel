@@ -1,6 +1,6 @@
 {
   "name": "intkernel",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A small IK / IntKernel integer-computation DSL compiler with C, WASM, and LLVM backends.",
   "type": "module",
   "main": "./dist/src/index.js",

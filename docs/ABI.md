@@ -10,6 +10,26 @@ V0 does not provide a runtime. It does not allocate memory, free memory, or own
 the lifetime of any pointer passed across the ABI. The caller owns every input
 and output buffer.
 
+## Cross-Backend f64 Summary
+
+Phase 16 f64 strict mode uses these ABI mappings:
+
+| Backend | Scalar `f64` | `ptr<f64>` | Struct field `f64` |
+| --- | --- | --- | --- |
+| C | `double` | `double*` | C `double` field |
+| LLVM | `double` | opaque `ptr` with `getelementptr double` | LLVM `double` field |
+| WASM | `f64` value type | `i32` byte offset, 8-byte element step | deterministic size 8 / align 8 field |
+
+JavaScript WASM interop uses `Number` for f64 parameters and returns, not
+`BigInt`. WASM host memory access for `ptr<f64>` uses little-endian
+`DataView.setFloat64` and `DataView.getFloat64`.
+
+The WASM deterministic layout uses f64 size 8 and alignment 8. The C ABI uses
+the target C compiler's `double` layout; on the release targets covered by
+tests this is expected to be size 8 and alignment 8. IK / IntKernel does not
+promise bit-identical floating point results across all C, LLVM, WASM, and
+JavaScript targets.
+
 ## Type Mapping
 
 | IntKernel type | C ABI type |
@@ -18,6 +38,7 @@ and output buffer.
 | `i64` | `int64_t` |
 | `u32` | `uint32_t` |
 | `u64` | `uint64_t` |
+| `f64` | `double` |
 | `bool` | `bool` |
 | `ptr<T>` | `T*` |
 | `struct` | `typedef struct` |
@@ -99,6 +120,18 @@ emits:
 IK_API int32_t calc(Item* items, int32_t len, int64_t* out);
 ```
 
+An `f64` scalar maps to C `double`, and `ptr<f64>` maps to `double*`:
+
+```ik
+export fn scale(value: f64, out: ptr<f64>) -> f64
+```
+
+emits a header signature shaped as:
+
+```c
+IK_API double scale(double value, double* out);
+```
+
 Non-exported `fn` declarations are not emitted into the header. They are emitted
 as `static` functions in the generated `.c` file and are not part of the public
 ABI.
@@ -148,6 +181,10 @@ packed structs, `#pragma pack`, or custom alignment attributes.
 
 FFI bindings must define host-side structs with the same field order, field
 types, and C layout as the generated header. Do not assume packed layout.
+`f64` fields use the target C compiler's `double` size and alignment; on the
+release targets covered by tests, this is expected to be size 8 and alignment 8.
+The C ABI intentionally follows the C compiler's layout rather than promising a
+platform-independent binary layout.
 
 For `examples/pricing.ik`, the generated `Item` layout is:
 
@@ -190,6 +227,9 @@ V0 is deliberately close to C:
 - in unchecked mode, division by zero follows generated C behavior
 - in checked mode, arithmetic overflow and division by zero return `IK_Status`
   errors, but memory safety is still the caller's responsibility
+- `f64` maps to C `double` and the C backend supports scalar f64 arithmetic,
+  comparisons, `ptr<f64>`, and struct fields; checked mode does not add floating
+  overflow or floating division-by-zero errors
 
 Callers and DSL authors must choose sufficiently wide integer types, validate
 lengths, and pass correct buffers.
@@ -276,10 +316,12 @@ static IK_Status helper(int64_t a, int64_t* ik_return);
 
 Callers never call non-exported helpers directly.
 
-Checked mode reports arithmetic overflow, division by zero, signed division or
-modulo overflow such as `INT64_MIN / -1`, and unary minus overflow such as
-`-INT64_MIN`. It does not add pointer bounds checks or automatic checks for
-user-provided `ptr<T>` parameters.
+Checked mode reports integer arithmetic overflow, integer division by zero,
+signed integer division or modulo overflow such as `INT64_MIN / -1`, and integer
+unary minus overflow such as `-INT64_MIN`. `f64` arithmetic uses ordinary C
+`double` behavior in checked mode: f64 division by zero and f64 overflow do not
+return `IK_ERR_DIV_BY_ZERO` or `IK_ERR_OVERFLOW`. Checked mode does not add
+pointer bounds checks or automatic checks for user-provided `ptr<T>` parameters.
 
 Because checked mode changes signatures, unchecked and checked dynamic
 libraries should be treated as distinct ABI artifacts.

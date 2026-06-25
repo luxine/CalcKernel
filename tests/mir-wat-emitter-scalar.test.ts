@@ -64,4 +64,64 @@ describe("MIR WAT emitter scalar unchecked", () => {
 
     expect(wat).toBe(normalizeNewlines(readFileSync("tests/snapshots/scalar.wat.snap", "utf8")));
   });
+
+  it("emits f64 scalar arithmetic, unary neg, and comparisons as stable WAT", () => {
+    const wat = lowerAndEmitWat(`
+      export fn calc_f64(a: f64, b: f64) -> f64 {
+        let one: f64 = 1.0;
+        let sum: f64 = a + b;
+        let diff: f64 = sum - one;
+        let prod: f64 = diff * b;
+        return prod / 2.0;
+      }
+
+      export fn neg_f64(a: f64) -> f64 {
+        return -a;
+      }
+
+      export fn eq_f64(a: f64, b: f64) -> bool {
+        return a == b;
+      }
+
+      export fn ne_f64(a: f64, b: f64) -> bool {
+        return a != b;
+      }
+
+      export fn lt_f64(a: f64, b: f64) -> bool {
+        return a < b;
+      }
+
+      export fn le_f64(a: f64, b: f64) -> bool {
+        return a <= b;
+      }
+
+      export fn gt_f64(a: f64, b: f64) -> bool {
+        return a > b;
+      }
+
+      export fn ge_f64(a: f64, b: f64) -> bool {
+        return a >= b;
+      }
+    `);
+
+    expect(wat).toContain("(param $a f64)");
+    expect(wat).toContain("(result f64)");
+    expect(wat).toContain("f64.const 1.0");
+    expect(wat).toContain("f64.const 2.0");
+    expect(wat).toContain("f64.add");
+    expect(wat).toContain("f64.sub");
+    expect(wat).toContain("f64.mul");
+    expect(wat).toContain("f64.div");
+    expect(wat).toContain("f64.neg");
+    expect(wat).toContain("f64.eq");
+    expect(wat).toContain("f64.ne");
+    expect(wat).toContain("f64.lt");
+    expect(wat).toContain("f64.le");
+    expect(wat).toContain("f64.gt");
+    expect(wat).toContain("f64.ge");
+    expect(wat).not.toContain("f64.div_s");
+    expect(wat).not.toContain("f64.div_u");
+    expect(wat).not.toContain("f64.rem");
+    expect(wat).toBe(normalizeNewlines(readFileSync("tests/snapshots/wasm_f64_scalar.wat.snap", "utf8")));
+  });
 });

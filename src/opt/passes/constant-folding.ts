@@ -1,4 +1,4 @@
-import type { MirBinaryOp, MirCompareOp, MirInstruction, MirType, MirUnaryOp, MirValue } from "../../mir/mir.js";
+import type { MirBinaryOp, MirCompareOp, MirInstruction, MirPrimitiveTypeName, MirType, MirUnaryOp, MirValue } from "../../mir/mir.js";
 import type { MirPass } from "../mir-pass.js";
 
 type KnownConstant = { kind: "int"; value: bigint; type: MirType } | { kind: "bool"; value: boolean; type: MirType };
@@ -77,6 +77,8 @@ function rememberInstructionConstant(instruction: MirInstruction, constants: Map
     case "const_int":
       remember(instruction.target, { kind: "int", value: BigInt(instruction.value), type: instruction.target.type }, constants);
       return;
+    case "const_float":
+      return;
     case "const_bool":
       remember(instruction.target, { kind: "bool", value: instruction.value, type: instruction.target.type }, constants);
       return;
@@ -96,6 +98,8 @@ function getKnownConstant(value: MirValue, constants: Map<string, KnownConstant>
   switch (value.kind) {
     case "const_int":
       return { kind: "int", value: BigInt(value.text), type: value.type };
+    case "const_float":
+      return undefined;
     case "const_bool":
       return { kind: "bool", value: value.value, type: value.type };
     case "temp":
@@ -202,6 +206,7 @@ function integerMin(type: MirType): bigint {
     case "u32":
     case "u64":
       return 0n;
+    case "f64":
     case "bool":
       throw new Error("Expected integer MIR type.");
   }
@@ -220,13 +225,18 @@ function integerMax(type: MirType): bigint {
       return (1n << 32n) - 1n;
     case "u64":
       return (1n << 64n) - 1n;
+    case "f64":
     case "bool":
       throw new Error("Expected integer MIR type.");
   }
 }
 
+function isIntegerPrimitiveName(name: MirPrimitiveTypeName): boolean {
+  return name === "i32" || name === "i64" || name === "u32" || name === "u64";
+}
+
 function isIntegerType(type: MirType): boolean {
-  return type.kind === "primitive" && type.name !== "bool";
+  return type.kind === "primitive" && isIntegerPrimitiveName(type.name);
 }
 
 function isSignedIntegerType(type: MirType): boolean {

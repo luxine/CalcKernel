@@ -96,4 +96,41 @@ describe("MIR place lowering", () => {
       "
     `);
   });
+
+  it("lowers ptr<f64> and f64 struct field places", () => {
+    expect(
+      lowerAndPrint(
+        "f64-place.ik",
+        `
+          struct Quote {
+            price: f64;
+            qty: i64;
+          }
+
+          export fn update(items: ptr<Quote>, out: ptr<f64>, i: i32) -> f64 {
+            let price: f64 = items[i].price;
+            out[i] = price;
+            return out[i];
+          }
+        `
+      )
+    ).toMatchInlineSnapshot(`
+      "struct Quote {
+        price: f64
+        qty: i64
+      }
+
+      export fn update(items: ptr<Quote>, out: ptr<f64>, i: i32) -> f64 {
+        local price: f64
+
+      bb0:
+        %t0: f64 = load field(index(items, i), price)
+        price: f64 = move %t0
+        store index(out, i), price
+        %t1: f64 = load index(out, i)
+        return %t1
+      }
+      "
+    `);
+  });
 });

@@ -7,13 +7,15 @@ not a general purpose programming language. V0 compiles `.ik` source into
 readable C, WAT/WASM, or LLVM IR outputs for host languages and toolchains such
 as Node.js, Python, Java, Rust, Go, C#, clang, and WebAssembly.
 
-The project is intentionally narrow: pure integer kernels, caller-owned memory,
-no IO, no strings, no runtime, and no dynamic allocation.
+The project is intentionally narrow: pure computation kernels, caller-owned
+memory, no IO, no strings, no runtime, and no dynamic allocation. Integer
+kernels remain the primary target; Phase 16 adds strict `f64` for numerical
+kernels.
 
-V0.4.0 has lexer, parser, type checker, MIR, MIR validation, conservative MIR
-optimization levels, C/WASM/LLVM backends, checked integer arithmetic for C
-output, host-language examples, backend regression coverage, and a manual
-performance suite.
+The current development snapshot has lexer, parser, type checker, MIR, MIR
+validation, conservative MIR optimization levels, C/WASM/LLVM backends, strict
+`f64` support, checked integer arithmetic for C output, host-language examples,
+backend regression coverage, and a manual performance suite.
 
 ## Quick Start
 
@@ -61,6 +63,46 @@ export fn calc_items(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32 {
 }
 ```
 
+## f64 Strict Mode
+
+Phase 16 adds first-pass strict `f64` support for numerical kernels:
+
+```ik
+export fn axpy(a: f64, x: ptr<f64>, y: ptr<f64>, len: i32) -> f64 {
+  let i: i32 = 0;
+  let checksum: f64 = 0.0;
+
+  while i < len {
+    let value: f64 = a * x[i] + y[i];
+    y[i] = value;
+    checksum = checksum + value;
+    i = i + 1;
+  }
+
+  return checksum;
+}
+```
+
+Supported f64 operations are `+`, `-`, `*`, `/`, unary `-`, and comparisons
+`==`, `!=`, `<`, `<=`, `>`, `>=`. `ptr<f64>` and struct fields containing
+`f64` are supported by C, WASM, and LLVM backends.
+
+Strict mode means:
+
+- `f64` maps to C `double`, LLVM `double`, and WASM `f64`
+- JavaScript WASM interop uses `Number` for `f64`
+- no `f32`
+- no implicit int/float conversion
+- no `f64 %`
+- no fast-math flags or reassociation
+- no SIMD
+- no float checked overflow
+
+Use `f64` for numerical kernels such as axpy, dot product, sum, and scale.
+For money, tax, discounts, POS totals, and rule calculations, continue to use
+`i64` fixed-point arithmetic so checked integer mode can report overflow and
+division errors explicitly.
+
 ## Generate C
 
 Unchecked output is the default:
@@ -84,7 +126,9 @@ pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build
 The generated header includes `stdint.h`, `stdbool.h`, struct typedefs, and
 exported function declarations. Headers also include `IK_API` for dynamic
 library exports and an `extern "C"` guard for C++ consumers. The generated
-source includes the header and function implementations.
+source includes the header and function implementations. In strict f64 mode,
+the C backend maps `f64` to `double`, `ptr<f64>` to `double*`, and emits ordinary
+C double arithmetic and comparisons.
 
 ## Build a Dynamic Library
 
@@ -159,7 +203,9 @@ The Phase 12 v1 ABI targets `wasm32`, exports linear memory, maps `ptr<T>` to
 `i32` memory offsets, uses `BigInt` for JavaScript `i64` / `u64` interop, and
 keeps arithmetic unchecked. The current backend covers scalar operations,
 control flow, internal function calls, short-circuit logic, and core
-ptr/index/field load/store patterns such as `pricing.ik`.
+ptr/index/field load/store patterns such as `pricing.ik`. Phase 16 adds f64
+WASM codegen: scalar f64 parameters/returns use WASM `f64`, JavaScript interop
+uses `Number`, and `ptr<f64>` memory uses `f64.load` / `f64.store`.
 
 The WASM backend currently supports unchecked mode only. `emit-wat --overflow
 checked` and `emit-wasm --overflow checked` fail with a clear error; use
@@ -193,6 +239,8 @@ support, allocator, bounds checks, or `slice<T>`. `build-llvm` requires clang;
 `emit-llvm` works without clang. Object output is available for custom link
 flows; static library output is not implemented yet. See
 [LLVM Backend](docs/LLVM_BACKEND.md) for the backend details.
+Phase 16 adds f64 LLVM codegen using `double`, `fadd`, `fsub`, `fmul`, `fdiv`,
+`fcmp`, `load double`, and `store double`, without fast-math flags.
 
 ## Node.js WASM Example
 
@@ -319,9 +367,10 @@ struct, pointer, `BigInt`, and checked `IK_Status` mapping.
 
 ## Benchmarks
 
-The [bench](bench/README.md) directory contains the local pricing performance
-suite. It compares generated C, checked C, LLVM, WASM, and JavaScript baselines
-with checksum validation.
+The [bench](bench/README.md) directory contains the local pricing and f64
+performance suite. It compares generated C, checked C where applicable, LLVM,
+WASM, JavaScript `Array` `Number`, JavaScript `Float64Array`, and JavaScript
+`BigInt` baselines with checksum validation.
 
 ```sh
 pnpm build
@@ -336,35 +385,38 @@ system load. Do not commit machine-local baselines from `build/perf`, and do
 not move performance thresholds into ordinary `pnpm test`. For host-language
 integration, batch work into larger native calls rather than calling one item at
 a time. See [Performance](docs/PERFORMANCE.md) and
-[Optimization](docs/OPTIMIZATION.md) for the current Phase 14 pipeline, latest
-local full-run summary, regression baseline workflow, and backend bottlenecks.
+[Optimization](docs/OPTIMIZATION.md) for the current optimization pipeline,
+latest local full-run summary, regression baseline workflow, f64 benchmark
+coverage, and backend bottlenecks.
 
 ## Current V0 Limits
 
-V0 supports only:
+V0 currently supports:
 
-- `i32`, `i64`, `u32`, `u64`, `bool`
+- `i32`, `i64`, `u32`, `u64`, `f64`, `bool`
 - `ptr<T>`
 - `struct`
 - `fn` and `export fn`
 - `let`, assignment, `return`, `if` / `else`, `while`
-- integer arithmetic, comparison, logical operators
+- integer and strict `f64` arithmetic and comparisons
+- boolean logical operators
 - pointer indexing and struct field access
 
 V0 does not support strings, IO, heap allocation, GC, exceptions, async,
 classes, closures, modules, runtime libraries, or JIT compilation. The WASM
 and LLVM backends currently support unchecked arithmetic only.
 
-Floating point is not implemented in V0.4.0: there is no `f64`, no `f32`, no
-implicit int/float conversion, no fast-math mode, and no SIMD support. Floating
-point support, if added, belongs to a future phase and must preserve the current
-integer semantics and backend contracts.
+Floating point is intentionally narrow: `f64` strict mode is supported, but
+`f32`, implicit int/float conversion, `f64 %`, fast-math, SIMD, and float
+checked overflow are not implemented. IK / IntKernel does not guarantee
+bit-identical floating point results across all C, LLVM, WASM, and JavaScript
+targets.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
 `--overflow checked` C code generation checks integer overflow and division by
-zero but still does not check pointer validity or buffer lengths. The WASM
-backend rejects `--overflow checked` in Phase 12. Callers own all input and
-output buffers and must pass valid pointers and lengths.
+zero but still does not check pointer validity, buffer lengths, or f64 overflow.
+The WASM and LLVM backends reject `--overflow checked`. Callers own all input
+and output buffers and must pass valid pointers and lengths.
 
 ## Documentation
 

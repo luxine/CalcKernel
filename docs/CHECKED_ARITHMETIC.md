@@ -66,6 +66,7 @@ unless an ABI change is intentional.
 | C ABI | Original return type | `IK_Status` return plus final return pointer |
 | Integer overflow | Not checked | Returns `IK_ERR_OVERFLOW` |
 | Division by zero | Not checked | Returns `IK_ERR_DIV_BY_ZERO` |
+| `f64` overflow and division by zero | C `double` behavior | C `double` behavior, still returns `IK_OK` unless another checked error occurs |
 | User pointers | Not checked | Not checked, except generated `ik_return` |
 | Bounds checks | No | No |
 | Runtime dependency | None | None |
@@ -182,10 +183,12 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 
 ### `/`
 
-- If divisor is zero, return `IK_ERR_DIV_BY_ZERO`.
+- For integer operands, if divisor is zero, return `IK_ERR_DIV_BY_ZERO`.
 - For signed integers, `INT32_MIN / -1` and `INT64_MIN / -1` return
   `IK_ERR_OVERFLOW`.
 - Unsigned division only needs the zero-divisor check.
+- For `f64`, perform normal C `double` division. `1.0 / 0.0` does not return
+  `IK_ERR_DIV_BY_ZERO`.
 - Otherwise perform normal division.
 
 ### `%`
@@ -202,7 +205,20 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
   `IK_ERR_OVERFLOW`.
 - For unsigned integers, unary minus is lowered as checked subtraction from
   zero, so any non-zero value overflows.
+- For `f64`, perform normal C `double` negation.
 - Otherwise perform normal negation.
+
+### `f64`
+
+Checked C mode is still an integer checked arithmetic mode. Functions containing
+`f64` use the checked ABI when `--overflow checked` is selected, so they return
+`IK_Status` and write the source-level return value through `ik_return`. The f64
+operations themselves use ordinary strict C `double` behavior:
+
+- `f64 +`, `-`, `*`, and `/` do not call integer overflow builtins.
+- f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`.
+- f64 overflow does not return `IK_ERR_OVERFLOW`.
+- `f64 %` is not a language operation and is rejected before C emission.
 
 ## Logical Operators
 

@@ -10,6 +10,7 @@ import type { MirStruct, MirType } from "../src/mir/mir.js";
 const i32: MirType = { kind: "primitive", name: "i32" };
 const i64: MirType = { kind: "primitive", name: "i64" };
 const u32: MirType = { kind: "primitive", name: "u32" };
+const f64: MirType = { kind: "primitive", name: "f64" };
 const bool: MirType = { kind: "primitive", name: "bool" };
 
 describe("LLVM struct layout helpers", () => {
@@ -50,6 +51,48 @@ describe("LLVM struct layout helpers", () => {
     expect(getStructFieldIndex(layout, "Mixed", "b")).toBe(1);
     expect(getStructFieldIndex(layout, "Mixed", "c")).toBe(2);
     expect(getStructFieldIndex(layout, "Mixed", "d")).toBe(3);
+  });
+
+  it("emits f64 struct fields as double storage types", () => {
+    const withF64: MirStruct = {
+      name: "WithF64",
+      fields: [
+        { name: "a", type: i32 },
+        { name: "b", type: f64 }
+      ]
+    };
+    const mixedF64: MirStruct = {
+      name: "MixedF64",
+      fields: [
+        { name: "a", type: bool },
+        { name: "b", type: f64 },
+        { name: "c", type: i32 }
+      ]
+    };
+    const layout = createLlvmLayout([withF64, mixedF64]);
+
+    expect(emitLlvmStructDeclaration(layout.structs[0])).toBe("%struct.WithF64 = type { i32, double }");
+    expect(emitLlvmStructDeclaration(layout.structs[1])).toBe("%struct.MixedF64 = type { i1, double, i32 }");
+    expect(getStructFieldIndex(layout, "WithF64", "b")).toBe(1);
+    expect(getStructFieldIndex(layout, "MixedF64", "b")).toBe(1);
+  });
+
+  it("emits nested struct declarations when a nested struct contains f64", () => {
+    const inner: MirStruct = { name: "Inner", fields: [{ name: "x", type: f64 }] };
+    const outer: MirStruct = {
+      name: "Outer",
+      fields: [
+        { name: "a", type: i32 },
+        { name: "inner", type: { kind: "struct", name: "Inner" } },
+        { name: "b", type: f64 }
+      ]
+    };
+    const layout = createLlvmLayout([inner, outer]);
+
+    expect(emitLlvmStructDeclaration(layout.structs[0])).toBe("%struct.Inner = type { double }");
+    expect(emitLlvmStructDeclaration(layout.structs[1])).toBe("%struct.Outer = type { i32, %struct.Inner, double }");
+    expect(getStructFieldIndex(layout, "Outer", "inner")).toBe(1);
+    expect(getStructFieldIndex(layout, "Outer", "b")).toBe(2);
   });
 
   it("reports unknown structs and fields clearly", () => {

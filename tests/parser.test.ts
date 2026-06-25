@@ -52,6 +52,21 @@ describe("parser", () => {
     expect(result.ast.declarations[0]?.span.start.line).toBe(2);
   });
 
+  it("parses f64 primitive types", () => {
+    const result = parseSource(`
+      export fn scale(value: f64) -> f64 {
+        return value;
+      }
+    `);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.ast.declarations[0]).toMatchObject({
+      kind: "FunctionDeclaration",
+      params: [{ type: { kind: "PrimitiveType", name: "f64" } }],
+      returnType: { kind: "PrimitiveType", name: "f64" }
+    });
+  });
+
   it("parses export functions, params, return type, and core statements", () => {
     const result = parseSource(`
       export fn calc(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32 {
@@ -214,6 +229,36 @@ describe("parser", () => {
           operator: "*",
           left: { kind: "IntegerLiteral", text: "2" },
           right: { kind: "IntegerLiteral", text: "3" }
+        }
+      });
+    });
+
+    it("parses float literals", () => {
+      const expression = parseReturnExpression(`
+        export fn calc() -> f64 {
+          return 1.0;
+        }
+      `);
+
+      expect(expression).toMatchObject({
+        kind: "FloatLiteral",
+        text: "1.0"
+      });
+    });
+
+    it("parses unary minus before a float literal", () => {
+      const expression = parseReturnExpression(`
+        export fn calc() -> f64 {
+          return -1.0;
+        }
+      `);
+
+      expect(expression).toMatchObject({
+        kind: "UnaryExpression",
+        operator: "-",
+        operand: {
+          kind: "FloatLiteral",
+          text: "1.0"
         }
       });
     });

@@ -69,6 +69,7 @@ function collectCandidates(functions: MirFunction[], cyclicFunctions: Set<string
 function isInlineableInstruction(instruction: MirInstruction): boolean {
   return (
     instruction.kind === "const_int" ||
+    instruction.kind === "const_float" ||
     instruction.kind === "const_bool" ||
     instruction.kind === "move" ||
     instruction.kind === "binary" ||
@@ -141,6 +142,8 @@ function cloneInstruction(instruction: MirInstruction, maps: RewriteMaps, prefix
   switch (instruction.kind) {
     case "const_int":
       return { kind: "const_int", target: rewriteTarget(instruction.target, maps, prefix, existingNames), value: instruction.value };
+    case "const_float":
+      return { kind: "const_float", target: rewriteTarget(instruction.target, maps, prefix, existingNames), value: instruction.value };
     case "const_bool":
       return { kind: "const_bool", target: rewriteTarget(instruction.target, maps, prefix, existingNames), value: instruction.value };
     case "move":
@@ -193,6 +196,7 @@ function rewriteTarget(target: MirValue, maps: RewriteMaps, prefix: string, exis
     case "param":
       return cloneValue(target);
     case "const_int":
+    case "const_float":
     case "const_bool":
       return cloneValue(target);
   }
@@ -211,6 +215,7 @@ function rewriteValue(value: MirValue, maps: RewriteMaps): MirValue {
       return name ? { ...value, name } : cloneValue(value);
     }
     case "const_int":
+    case "const_float":
     case "const_bool":
       return cloneValue(value);
   }
@@ -249,6 +254,7 @@ function collectValueName(value: MirValue, names: Set<string>): void {
       names.add(value.name);
       return;
     case "const_int":
+    case "const_float":
     case "const_bool":
       return;
   }

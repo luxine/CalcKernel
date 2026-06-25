@@ -363,7 +363,7 @@ basic block、显式 move 和 store 表示它们，已经足够生成可读 C、
 
 - range analysis，用于未来 checked 或 bounds-safe 功能
 - lower 到 backend-specific SSA，供 LLVM 或 WASM 使用
-- 只有 floating point semantics 存在后，才做更广泛 floating point optimization
+- 更广泛的 f64 optimization 需要先明确 strict-safe floating point optimization rules
 - 默认 build 之外的可选 CPU-native 或 LTO 实验
 
 这些 pass 应该只在 MIR v1 作为默认 C pipeline 稳定至少一个 release 后添加，并且

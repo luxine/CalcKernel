@@ -69,6 +69,8 @@ function printMirInstruction(instruction: MirInstruction): string {
   switch (instruction.kind) {
     case "const_int":
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = const_int ${instruction.value}`;
+    case "const_float":
+      return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = const_float ${instruction.value}`;
     case "const_bool":
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = const_bool ${instruction.value ? "true" : "false"}`;
     case "move":
@@ -109,6 +111,8 @@ function printMirValue(value: MirValue): string {
     case "temp":
       return `%${value.name}`;
     case "const_int":
+      return value.text;
+    case "const_float":
       return value.text;
     case "const_bool":
       return value.value ? "true" : "false";

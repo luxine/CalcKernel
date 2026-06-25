@@ -346,6 +346,72 @@ function emitMirPricingUncheckedExample(cwd: string): { cFile: string; headerFil
   return { cFile, headerFile };
 }
 
+function emitF64CExample(cwd: string, overflowMode: PipelineOverflowMode = "unchecked"): { cFile: string; headerFile: string } {
+  writeFileSync(
+    join(cwd, "f64_c.ik"),
+    `
+struct Quote {
+  price: f64;
+  tax: f64;
+}
+
+export fn scalar_f64(value: f64) -> f64 {
+  return value;
+}
+
+export fn arithmetic_f64(a: f64, b: f64) -> f64 {
+  let one: f64 = 1.0;
+  let sum: f64 = a + b;
+  let adjusted: f64 = sum - one;
+  let product: f64 = adjusted * b;
+  return product / 2.0;
+}
+
+export fn neg_f64(value: f64) -> f64 {
+  return -value;
+}
+
+export fn le_f64(a: f64, b: f64) -> bool {
+  return a <= b;
+}
+
+export fn write_scale(values: ptr<f64>, index: i32, factor: f64) -> f64 {
+  let current: f64 = values[index];
+  let next: f64 = current * factor;
+  values[index] = next;
+  return next;
+}
+
+export fn quote_total(quotes: ptr<Quote>, index: i32) -> f64 {
+  return quotes[index].price + quotes[index].tax;
+}
+
+export fn div_f64(a: f64, b: f64) -> f64 {
+  return a / b;
+}
+
+export fn huge_mul_f64(a: f64, b: f64) -> f64 {
+  return a * b;
+}
+`.trimStart()
+  );
+
+  const cFile = join(cwd, `build/f64_c_${overflowMode}.c`);
+  const headerFile = join(cwd, `build/f64_c_${overflowMode}.h`);
+  const args = ["emit-c", "f64_c.ik", "--out", cFile, "--header", headerFile];
+  if (overflowMode === "checked") {
+    args.push("--overflow", "checked");
+  }
+  const exitCode = runCli(args, {
+    cwd,
+    stdout: () => {},
+    stderr: () => {}
+  });
+
+  expect(exitCode).toBe(0);
+  return { cFile, headerFile };
+}
+
 function emitMirCheckedExample(cwd: string, exampleName: string): { cFile: string; headerFile: string } {
   const sourceText = readFileSync(`examples/${exampleName}.ik`, "utf8");
   const checked = check(new SourceFile(`${exampleName}.ik`, sourceText));
@@ -2398,6 +2464,150 @@ int main(void) {
   }
   if (out[1] != 11000) {
     return 21;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+});
+
+describe("C f64 end-to-end", () => {
+  const clangAvailable = hasClang();
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable ? "compiles and runs f64 scalar, ptr, struct, arithmetic, comparison, and unary C code" : "compiles and runs f64 C code (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile, headerFile } = emitF64CExample(cwd);
+      const headerName = headerFile.substring(headerFile.lastIndexOf("/") + 1);
+      const header = readFileSync(headerFile, "utf8");
+      const source = readFileSync(cFile, "utf8");
+      const harnessFile = join(cwd, "build/f64_c_harness.c");
+      const executable = join(cwd, "build/f64_c_harness");
+
+      expect(header).toContain("IK_API double scalar_f64(double value);");
+      expect(header).toContain("IK_API double write_scale(double* values, int32_t index, double factor);");
+      expect(header).toContain("double price;");
+      expect(source).toContain("double ik_tmp");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "${headerName}"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+static int close_double(double left, double right) {
+  double diff = left - right;
+  if (diff < 0.0) {
+    diff = -diff;
+  }
+  return diff <= 0.000000001;
+}
+
+int main(void) {
+  double values[3] = {1.5, 2.0, 3.0};
+  Quote quotes[2] = {
+    { .price = 2.5, .tax = 0.25 },
+    { .price = 4.5, .tax = 0.75 }
+  };
+
+  if (!close_double(scalar_f64(2.25), 2.25)) {
+    return 10;
+  }
+  if (!close_double(arithmetic_f64(3.5, 1.5), 3.0)) {
+    return 11;
+  }
+  if (!close_double(neg_f64(4.25), -4.25)) {
+    return 12;
+  }
+  if (!le_f64(2.0, 2.0)) {
+    return 13;
+  }
+  if (le_f64(3.0, 2.0)) {
+    return 14;
+  }
+  if (!close_double(write_scale(values, 1, 2.5), 5.0)) {
+    return 15;
+  }
+  if (!close_double(values[1], 5.0)) {
+    return 16;
+  }
+  if (!close_double(quote_total(quotes, 1), 5.25)) {
+    return 17;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable ? "compiles and runs checked f64 C with ordinary double behavior" : "compiles and runs checked f64 C (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile, headerFile } = emitF64CExample(cwd, "checked");
+      const headerName = headerFile.substring(headerFile.lastIndexOf("/") + 1);
+      const source = readFileSync(cFile, "utf8");
+      const harnessFile = join(cwd, "build/f64_c_checked_harness.c");
+      const executable = join(cwd, "build/f64_c_checked_harness");
+
+      expect(source).not.toContain("__builtin");
+      expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+      expect(source).not.toContain("IK_ERR_OVERFLOW");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "${headerName}"
+
+#include <stdint.h>
+
+static int close_double(double left, double right) {
+  double diff = left - right;
+  if (diff < 0.0) {
+    diff = -diff;
+  }
+  return diff <= 0.000000001;
+}
+
+int main(void) {
+  double value = 0.0;
+
+  if (arithmetic_f64(3.5, 1.5, &value) != IK_OK || !close_double(value, 3.0)) {
+    return 10;
+  }
+  if (div_f64(1.0, 0.0, &value) != IK_OK) {
+    return 11;
+  }
+  if (huge_mul_f64(1.0e308, 1.0e308, &value) != IK_OK) {
+    return 12;
+  }
+  if (!(value > 1.0e308)) {
+    return 13;
+  }
+  if (arithmetic_f64(3.5, 1.5, 0) != IK_ERR_NULL_POINTER) {
+    return 14;
   }
   return 0;
 }

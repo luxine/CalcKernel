@@ -13,6 +13,8 @@ checked C hot-path optimization for proven-safe loop induction increments.
 Phase 14.13 adds WASM hot-path lowering for simple while loops and indexed
 address reuse. Phase 14.14 adds LLVM build optimization flags and a small
 SSA-like LLVM lowering path for simple scalar straight-line functions.
+Phase 16.5 adds strict f64 safety gates so the existing integer-oriented
+optimizer cannot apply unsafe floating point algebra.
 
 ## CLI
 
@@ -154,6 +156,7 @@ Safety boundaries:
 - does not fold signed min / -1 division or modulo
 - does not fold integer operations whose result is outside the target integer
   type range
+- does not fold `const_float` or any `f64` arithmetic/comparison
 - does not fold memory access, stores, calls, or control-flow effects
 
 ### Copy Propagation
@@ -174,6 +177,7 @@ The dead code elimination pass removes unused pure temp definitions.
 It may remove unused:
 
 - `const_int`
+- `const_float`
 - `const_bool`
 - pure `move` to temp
 - pure `binary`
@@ -204,6 +208,8 @@ Safety boundaries:
 
 - does not do global CSE
 - does not CSE ordinary loads
+- skips f64 binary, unary, and comparison expressions entirely
+- never sorts f64 `+`, `*`, `==`, or `!=` operands
 - clears its table at `store` and `call`
 - invalidates expressions that depend on a reassigned local
 - relies on later copy propagation and DCE to clean up replacement moves
@@ -308,6 +314,7 @@ More complex functions, including `examples/pricing.ik`, continue to use
 stack lowering. Clang `-O2`/`-O3` can then promote many stack slots and optimize
 the resulting native code. The backend still does not emit unsafe `nsw`/`nuw`
 flags, does not add bounds checks, and does not support checked LLVM arithmetic.
+For f64, the LLVM backend emits strict operations without fast-math flags.
 
 `build-llvm` now passes the selected IK optimization level through to clang as
 `-O0`, `-O1`, `-O2`, or `-O3`.
@@ -338,6 +345,9 @@ Checks intentionally kept:
 - signed min / `-1` checks
 - unary minus overflow checks
 - any induction update that is not proven safe by the exact rule above
+
+The induction analysis only recognizes integer constants and integer local
+updates. It does not classify or simplify f64 loop variables.
 
 ### CFG Simplification
 
@@ -386,10 +396,18 @@ loop counter increment can be emitted as unchecked arithmetic after the proof
 succeeds. WASM and LLVM remain unchecked-only backends and reject
 `--overflow checked`.
 
-Floating point is not implemented in v0.4.0. The optimizer therefore has no
-`f64`, `f32`, fast-math, or implicit int/float conversion semantics. If floating
-point support is added in a later phase, f64 optimization must be guarded
-separately from integer algebra.
+Phase 16 f64 support is strict-safe:
+
+- no fast-math
+- no f64 constant folding
+- no f64 reassociation
+- no f64 operand sorting in local CSE
+- no f64 LICM hoisting
+- no f64 induction simplification
+- copy propagation may rewrite f64 value uses without changing evaluation
+  order
+- DCE may remove unused pure f64 temporaries, but must not remove loads, stores,
+  calls, branch conditions, return values, or control flow
 
 ## Release Guidance
 

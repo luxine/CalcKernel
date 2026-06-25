@@ -2,14 +2,14 @@
 
 [English](../PERFORMANCE.md)
 
-本文总结 Phase 14 本机 performance suite、当前本机结果，以及如何运行性能回归检查。
-这些数字只代表本机测量结果；不要跨机器比较绝对耗时。结果依赖硬件、Node.js、
-clang、hyperfine、OS scheduling、电源状态和当前系统负载。
+本文总结本机 performance suite、当前本机结果，以及如何运行性能回归检查。这些数字
+只代表本机测量结果；不要跨机器比较绝对耗时。结果依赖硬件、Node.js、clang、
+hyperfine、OS scheduling、电源状态和当前系统负载。
 
 ## Benchmark Suite
 
-基于 hyperfine 的套件位于 `bench/perf`，主要针对 `examples/pricing.ik` 和一个
-helper-function fixture。当前覆盖：
+基于 hyperfine 的套件位于 `bench/perf`，主要针对 `examples/pricing.ik`、一个
+helper-function fixture，以及第一版 strict `f64` compute kernel。当前覆盖：
 
 - native C unchecked：`pricing-c-unchecked-O0`、`pricing-c-unchecked-O2`、
   `pricing-c-unchecked-O3`、`pricing-c-unchecked-ik-O3`
@@ -19,12 +19,20 @@ helper-function fixture。当前覆盖：
 - WASM unchecked total 和 compute-only，分别覆盖 `IK-O0` 和 `IK-O3`
 - WASM memory-only 和 JS-to-WASM call-overhead 拆解
 - JavaScript baseline：`Number`、typed-array `Number`、`BigInt`
+- f64 kernel：axpy、dot product、sum、scale
+- f64 对比目标：JavaScript `Array` `Number`、JavaScript `Float64Array`、
+  IK C O3、IK LLVM O3、IK WASM O3
+- f64 WASM total、compute-only 和 memory-only 拆解
 
-标准 workload：
+标准 pricing workload：
 
 - 100,000 items
 - 1,000 次 `calc_items` iteration
 - 每个 case 都校验 checksum
+
+标准 f64 workload 使用 deterministic `Float64` input，消费每个结果 checksum，并用
+absolute tolerance 加 relative tolerance 校验。它不要求 C、LLVM、WASM 和 JavaScript
+之间的浮点结果 bit-identical。
 
 ## 运行 Benchmark
 
@@ -48,6 +56,8 @@ node bench/perf/run.mjs --full
 ```sh
 node bench/perf/run.mjs --quick --case pricing-c-unchecked
 node bench/perf/run.mjs --full --case pricing-llvm-unchecked --case pricing-wasm-unchecked-compute-only
+node bench/perf/run.mjs --quick --case f64
+node bench/perf/run.mjs --quick --case f64-axpy
 ```
 
 ## Baseline 和回归检查
@@ -128,6 +138,12 @@ C、LLVM 构建出的 native binary、WASM、JavaScript，以及任何可选 Pyt
 和 safety tradeoff；不要把这些结果当作语言语义测试，也不要当作跨 runtime 的绝对
 排名。
 
+对 f64 kernel，JavaScript `Array` `Number`、JavaScript `Float64Array`、IK C、
+IK LLVM、IK WASM、可选 Python list `float` 和可选 NumPy 属于不同 runtime model。
+NumPy 是 native-library baseline，不是默认 runner dependency。f64 suite 只假设
+strict IK floating point：不假设 f32、fast-math、SIMD、implicit int/float
+conversion 或 f64 checked overflow。
+
 ## Batch Calling 原则
 
 应该 benchmark 并发布批量调用：
@@ -150,6 +166,10 @@ Host code 负责 memory layout、`DataView` little-endian 写入和 output buffe
 - compute-only time：预写 memory + 重复 WASM call
 - memory-only time：host 侧 `DataView` 工作
 - call-overhead time：JS-to-WASM 边界开销
+
+f64 WASM benchmark 也按 total、compute-only 和 memory-only 拆分。f64 参数和返回值
+使用 JavaScript `Number`；pricing 的 i64/u64 path 仍在需要时使用 `BigInt`。f64
+memory setup 使用 little-endian `DataView.setFloat64` 和 `DataView.getFloat64`。
 
 当前 WASM 最大瓶颈：total benchmark 中的 host-side memory setup/readback。
 compute-only WASM 已接近很多，但仍慢于 native code。

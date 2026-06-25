@@ -13,6 +13,7 @@ import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
 const i64: MirType = { kind: "primitive", name: "i64" };
+const f64: MirType = { kind: "primitive", name: "f64" };
 const boolType: MirType = { kind: "primitive", name: "bool" };
 const ptrI64: MirType = { kind: "pointer", elementType: i64 };
 
@@ -136,6 +137,41 @@ describe("MIR optimization passes", () => {
     expect(printMirModule(mir)).toContain("%t2: i64 = add %t0, %t1");
   });
 
+  it("does not constant fold f64 at O1", () => {
+    const mir = optimize(
+      lower(`
+        export fn calc() -> f64 {
+          return 1.0 + 2.0;
+        }
+      `),
+      1
+    );
+    const text = printMirModule(mir);
+
+    expect(text).toContain("const_float 1.0");
+    expect(text).toContain("const_float 2.0");
+    expect(text).toContain("add %t0, %t1");
+  });
+
+  it("keeps f64 emit-mir valid at O0, O1, O2, and O3", () => {
+    const source = `
+      export fn calc(a: f64, b: f64) -> f64 {
+        let x: f64 = 1.0 + 2.0;
+        return a + b + x;
+      }
+    `;
+    const lowered = printMirModule(lower(source));
+    const o0 = printMirModule(optimize(lower(source), 0));
+
+    expect(o0).toBe(lowered);
+    for (const level of [1, 2, 3] as const) {
+      const text = printMirModule(optimize(lower(source), level));
+      expect(text).toContain("const_float 1.0");
+      expect(text).toContain("const_float 2.0");
+      expect(text).toContain("add");
+    }
+  });
+
   it("propagates simple temp copies without crossing calls or stores", () => {
     const module: MirModule = {
       structs: [],
@@ -182,6 +218,34 @@ describe("MIR optimization passes", () => {
     expect(optimized.functions[0]!.blocks[0]!.terminator).toEqual({ kind: "return", value: temp("t4", i64) });
   });
 
+  it("propagates f64 temp copies as a type-agnostic rewrite", () => {
+    const module: MirModule = {
+      structs: [],
+      functions: [
+        {
+          name: "copy_f64",
+          exported: true,
+          params: [{ name: "a", type: f64 }],
+          returnType: f64,
+          locals: [],
+          blocks: [
+            {
+              label: "bb0",
+              instructions: [
+                { kind: "move", target: temp("t0", f64), value: param("a", f64) },
+                { kind: "binary", target: temp("t1", f64), op: "+", left: temp("t0", f64), right: param("a", f64) }
+              ],
+              terminator: { kind: "return", value: temp("t1", f64) }
+            }
+          ]
+        }
+      ]
+    };
+
+    const optimized = runSinglePass(module, "copy-propagation");
+    expect(optimized.functions[0]!.blocks[0]!.instructions[1]).toMatchObject({ kind: "binary", left: param("a", f64) });
+  });
+
   it("deletes unused pure temp instructions", () => {
     const module: MirModule = {
       structs: [],
@@ -211,6 +275,36 @@ describe("MIR optimization passes", () => {
 
     const optimized = runSinglePass(module, "dead-code-elimination");
     expect(optimized.functions[0]!.blocks[0]!.instructions).toEqual([{ kind: "move", target: temp("used", i64), value: param("a", i64) }]);
+  });
+
+  it("deletes unused f64 pure instructions without touching control flow", () => {
+    const module: MirModule = {
+      structs: [],
+      functions: [
+        {
+          name: "dce_f64",
+          exported: true,
+          params: [{ name: "a", type: f64 }],
+          returnType: f64,
+          locals: [],
+          blocks: [
+            {
+              label: "bb0",
+              instructions: [
+                { kind: "const_float", target: temp("unused_const", f64), value: "1.0" },
+                { kind: "binary", target: temp("unused_binary", f64), op: "+", left: param("a", f64), right: param("a", f64) },
+                { kind: "move", target: temp("used", f64), value: param("a", f64) }
+              ],
+              terminator: { kind: "return", value: temp("used", f64) }
+            }
+          ]
+        }
+      ]
+    };
+
+    const optimized = runSinglePass(module, "dead-code-elimination");
+    expect(optimized.functions[0]!.blocks[0]!.instructions).toEqual([{ kind: "move", target: temp("used", f64), value: param("a", f64) }]);
+    expect(optimized.functions[0]!.blocks[0]!.terminator).toEqual({ kind: "return", value: temp("used", f64) });
   });
 
   it("keeps stores, calls, and terminator values", () => {

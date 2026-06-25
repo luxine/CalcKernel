@@ -2,10 +2,10 @@
 
 [English](README.md)
 
-本目录包含针对 `examples/pricing.ik` 的小型 benchmark harness，用于对比纯
-JavaScript baseline、生成的 native C、生成的 checked C，以及生成的 unchecked
-WASM 和 LLVM。它们只是粗略的本地参考，不是稳定的 CI 性能套件。结果依赖当前
-机器、Node.js、clang、hyperfine 和系统负载。
+本目录包含针对 `examples/pricing.ik` 和 strict `f64` compute kernel 的小型
+benchmark harness，用于对比纯 JavaScript baseline、生成的 native C、可适用时
+的 checked C、LLVM，以及生成的 WASM。它们只是粗略的本地参考，不是稳定的 CI
+性能套件。结果依赖当前机器、Node.js、clang、hyperfine 和系统负载。
 
 Benchmark 规模：
 
@@ -31,7 +31,8 @@ node bench/perf/run.mjs --full
 runner 会完成完整本机准备工作：
 
 1. 运行 `pnpm build`
-2. 生成 unchecked C、checked C 和 unchecked WASM 到 `build/perf/generated`
+2. 生成 unchecked C、checked C、unchecked WASM、LLVM IR 和 f64 artifacts 到
+   `build/perf/generated`
 3. 编译 C benchmark 可执行文件到 `build/perf/bin`
 4. 先 smoke-run 每个 benchmark 命令并校验 checksum
 5. 运行 `hyperfine`
@@ -102,6 +103,40 @@ node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case prici
 - `pricing-js-typedarray-number`
 - `pricing-js-bigint`
 
+第一版 f64 套件覆盖四个 strict-float kernel：
+
+- `axpy`：`y[i] = a * x[i] + y[i]`
+- `dot`：`sum += x[i] * y[i]`
+- `sum`：`sum += x[i]`
+- `scale`：`x[i] = a * x[i]`
+
+每个 kernel 默认包含以下对比 case：
+
+- JavaScript `Array` + `Number` arithmetic
+- JavaScript `Float64Array` + `Number` arithmetic
+- IK C O3
+- IK LLVM O3
+- IK WASM O3 compute-only
+
+f64 WASM case 还包含 `total` 和 `memory-only` 变体，用于把 host-side memory
+marshal time 和 compute time 拆开观察。WASM f64 host interop 使用 JavaScript
+`Number`，不使用 `BigInt`。memory setup 使用 little-endian
+`DataView.setFloat64`/`getFloat64`。
+
+只运行 f64 benchmark：
+
+```sh
+node bench/perf/run.mjs --quick --case f64
+node bench/perf/run.mjs --full --case f64
+```
+
+只运行单个 f64 kernel：
+
+```sh
+node bench/perf/run.mjs --quick --case f64-axpy
+node bench/perf/run.mjs --quick --case f64-dot
+```
+
 summary 会包含每个 case 的 category、optimization level、arithmetic mode、
 median runtime、p95 runtime，以及相对于 `pricing-c-unchecked-O3` 的倍数。
 
@@ -119,6 +154,14 @@ comparison 表会输出当前 median、baseline median、runtime ratio 和变慢
 `pricing-helpers-*` case 使用 `bench/perf/fixtures/pricing_helpers.ik`，
 它把相同 pricing 计算拆成小型 non-exported helper function。这个 fixture
 只用于测 MIR small-function inlining，不会改变 `examples/pricing.ik`。
+
+`f64-*` case 使用 `bench/perf/fixtures/f64_kernels.ik`。正确性检查使用 absolute
+tolerance 和 relative tolerance；不要求跨 backend 浮点结果 bit-identical。
+IK f64 仍是 strict mode：这些 benchmark 不假设 f32、fast-math、SIMD、隐式
+int/float conversion 或 f64 checked overflow。
+
+Python list `float` 和 NumPy 可以作为可选手动 baseline，但不是本 runner 的默认
+依赖。NumPy 是 native library baseline，不是语言语义 oracle。
 
 当前瓶颈分析和 Phase 14 优化优先级见
 [2026-06-24 性能画像](docs/2026-06-24-performance-profile.zh-CN.md)。

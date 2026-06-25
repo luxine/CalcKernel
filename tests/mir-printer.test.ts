@@ -4,6 +4,7 @@ import type { MirModule, MirType } from "../src/mir/mir.js";
 
 const i32: MirType = { kind: "primitive", name: "i32" };
 const i64: MirType = { kind: "primitive", name: "i64" };
+const f64: MirType = { kind: "primitive", name: "f64" };
 
 describe("MIR printer", () => {
   it("prints structs and functions in a stable text format", () => {
@@ -117,6 +118,46 @@ describe("MIR printer", () => {
 
       bb2:
         return b
+      }
+      "
+    `);
+  });
+
+  it("prints const_float with source-stable text", () => {
+    const module: MirModule = {
+      structs: [],
+      functions: [
+        {
+          name: "literal_f64",
+          exported: true,
+          params: [],
+          returnType: f64,
+          locals: [],
+          blocks: [
+            {
+              label: "bb0",
+              instructions: [
+                {
+                  kind: "const_float",
+                  target: { kind: "temp", name: "t0", type: f64 },
+                  value: "1.0e-3"
+                }
+              ],
+              terminator: {
+                kind: "return",
+                value: { kind: "temp", name: "t0", type: f64 }
+              }
+            }
+          ]
+        }
+      ]
+    };
+
+    expect(printMirModule(module)).toMatchInlineSnapshot(`
+      "export fn literal_f64() -> f64 {
+      bb0:
+        %t0: f64 = const_float 1.0e-3
+        return %t0
       }
       "
     `);

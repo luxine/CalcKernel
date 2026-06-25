@@ -19,7 +19,9 @@ describe("WASM layout", () => {
     expect(toWasmAbiType(primitiveType("bool"))).toEqual({ valueType: "i32" });
     expect(toWasmAbiType(primitiveType("i64"))).toEqual({ valueType: "i64" });
     expect(toWasmAbiType(primitiveType("u64"))).toEqual({ valueType: "i64" });
+    expect(toWasmAbiType(primitiveType("f64"))).toEqual({ valueType: "f64" });
     expect(toWasmAbiType(pointerType(primitiveType("i64")))).toEqual({ valueType: "i32" });
+    expect(toWasmAbiType(pointerType(primitiveType("f64")))).toEqual({ valueType: "i32" });
   });
 
   it("computes primitive and pointer sizes and alignments", () => {
@@ -33,8 +35,18 @@ describe("WASM layout", () => {
     expect(alignOfWasmType(primitiveType("i64"))).toBe(8);
     expect(sizeOfWasmType(primitiveType("u64"))).toBe(8);
     expect(alignOfWasmType(primitiveType("u64"))).toBe(8);
+    expect(sizeOfWasmType(primitiveType("f64"))).toBe(8);
+    expect(alignOfWasmType(primitiveType("f64"))).toBe(8);
     expect(sizeOfWasmType(pointerType(primitiveType("i64")))).toBe(4);
     expect(alignOfWasmType(pointerType(primitiveType("i64")))).toBe(4);
+    expect(sizeOfWasmType(pointerType(primitiveType("f64")))).toBe(4);
+    expect(alignOfWasmType(pointerType(primitiveType("f64")))).toBe(4);
+  });
+
+  it("uses an 8-byte element step for ptr<f64> indexing", () => {
+    const elementSize = sizeOfWasmType(primitiveType("f64"));
+
+    expect([0, 1, 2].map((index) => index * elementSize)).toEqual([0, 8, 16]);
   });
 
   it("computes the pricing Item layout from examples/pricing.ik", () => {
@@ -87,6 +99,113 @@ describe("WASM layout", () => {
         { name: "b", type: primitiveType("i64"), offset: 8, size: 8, align: 8 },
         { name: "c", type: primitiveType("bool"), offset: 16, size: 4, align: 4 },
         { name: "d", type: primitiveType("u32"), offset: 20, size: 4, align: 4 }
+      ]
+    });
+  });
+
+  it("computes struct layout for i32 followed by f64", () => {
+    const program = checkedProgram(
+      "with-f64.ik",
+      `
+        struct WithF64 {
+          a: i32;
+          b: f64;
+        }
+
+        export fn ok() -> i32 {
+          return 0;
+        }
+      `
+    );
+    const withF64 = getStructInfo(program, "WithF64");
+    expect(withF64).toBeDefined();
+
+    const layout = computeWasmStructLayout(withF64!);
+
+    expect(layout).toEqual({
+      name: "WithF64",
+      size: 16,
+      align: 8,
+      fields: [
+        { name: "a", type: primitiveType("i32"), offset: 0, size: 4, align: 4 },
+        { name: "b", type: primitiveType("f64"), offset: 8, size: 8, align: 8 }
+      ]
+    });
+  });
+
+  it("computes struct layout for bool, f64, and i32 fields", () => {
+    const program = checkedProgram(
+      "mixed-f64.ik",
+      `
+        struct MixedF64 {
+          a: bool;
+          b: f64;
+          c: i32;
+        }
+
+        export fn ok() -> i32 {
+          return 0;
+        }
+      `
+    );
+    const mixed = getStructInfo(program, "MixedF64");
+    expect(mixed).toBeDefined();
+
+    const layout = computeWasmStructLayout(mixed!);
+
+    expect(layout).toEqual({
+      name: "MixedF64",
+      size: 24,
+      align: 8,
+      fields: [
+        { name: "a", type: primitiveType("bool"), offset: 0, size: 4, align: 4 },
+        { name: "b", type: primitiveType("f64"), offset: 8, size: 8, align: 8 },
+        { name: "c", type: primitiveType("i32"), offset: 16, size: 4, align: 4 }
+      ]
+    });
+  });
+
+  it("computes nested struct layout when the nested struct contains f64", () => {
+    const program = checkedProgram(
+      "nested-f64.ik",
+      `
+        struct Inner {
+          x: f64;
+        }
+
+        struct Outer {
+          a: i32;
+          inner: Inner;
+          b: f64;
+        }
+
+        export fn ok() -> i32 {
+          return 0;
+        }
+      `
+    );
+    const inner = getStructInfo(program, "Inner");
+    const outer = getStructInfo(program, "Outer");
+    expect(inner).toBeDefined();
+    expect(outer).toBeDefined();
+
+    const innerLayout = computeWasmStructLayout(inner!);
+    const outerLayout = computeWasmStructLayout(outer!, { structs: new Map([["Inner", innerLayout]]) });
+
+    expect(innerLayout).toEqual({
+      name: "Inner",
+      size: 8,
+      align: 8,
+      fields: [{ name: "x", type: primitiveType("f64"), offset: 0, size: 8, align: 8 }]
+    });
+    expect(outerLayout).toEqual({
+      name: "Outer",
+      size: 24,
+      align: 8,
+      fields: [
+        { name: "a", type: primitiveType("i32"), offset: 0, size: 4, align: 4 },
+        { name: "inner", type: { kind: "struct", name: "Inner" }, offset: 8, size: 8, align: 8 },
+        { name: "b", type: primitiveType("f64"), offset: 16, size: 8, align: 8 }
       ]
     });
   });

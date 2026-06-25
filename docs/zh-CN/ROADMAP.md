@@ -156,8 +156,8 @@ Phase 14 optimization 和 performance 工作已经覆盖 v0.4.0。
 - 更多 scalar control flow 的 direct SSA LLVM lowering
 - target data layout hardening
 - 默认 build 之外的可选 CPU-native/LTO 实验
-- 只有未来 floating point Phase 定义 strict semantics 后，才考虑 floating point
-  optimization
+- 更广泛的 f64 optimization 需要后续 Phase 先明确 strict-safe floating point
+  optimization rules
 
 ## Future `slice<T>` / Bounds Checks
 

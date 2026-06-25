@@ -1,4 +1,4 @@
-export type PrimitiveTypeName = "i32" | "i64" | "u32" | "u64" | "bool";
+export type PrimitiveTypeName = "i32" | "i64" | "u32" | "u64" | "f64" | "bool";
 
 export type IntKernelType =
   | { kind: "primitive"; name: PrimitiveTypeName }
@@ -9,6 +9,10 @@ export type IntKernelType =
 
 export const unknownType: IntKernelType = { kind: "unknown" };
 export const integerLiteralType: IntKernelType = { kind: "integerLiteral" };
+
+const integerPrimitiveNames: readonly PrimitiveTypeName[] = ["i32", "i64", "u32", "u64"];
+const indexIntegerPrimitiveNames: readonly PrimitiveTypeName[] = ["i32", "u32"];
+const floatPrimitiveNames: readonly PrimitiveTypeName[] = ["f64"];
 
 export function primitiveType(name: PrimitiveTypeName): IntKernelType {
   return { kind: "primitive", name };
@@ -30,15 +34,32 @@ export function isBool(type: IntKernelType): boolean {
   return type.kind === "primitive" && type.name === "bool";
 }
 
+export function isIntegerPrimitiveName(name: PrimitiveTypeName): boolean {
+  return integerPrimitiveNames.includes(name);
+}
+
+export function isFloatPrimitiveName(name: PrimitiveTypeName): boolean {
+  return floatPrimitiveNames.includes(name);
+}
+
+export function isIntegerPrimitive(type: IntKernelType): boolean {
+  return type.kind === "primitive" && isIntegerPrimitiveName(type.name);
+}
+
+export function isFloatType(type: IntKernelType): boolean {
+  return type.kind === "primitive" && isFloatPrimitiveName(type.name);
+}
+
 export function isInteger(type: IntKernelType): boolean {
-  return (
-    type.kind === "integerLiteral" ||
-    (type.kind === "primitive" && ["i32", "i64", "u32", "u64"].includes(type.name))
-  );
+  return type.kind === "integerLiteral" || isIntegerPrimitive(type);
+}
+
+export function isNumericType(type: IntKernelType): boolean {
+  return isInteger(type) || isFloatType(type);
 }
 
 export function isIndexInteger(type: IntKernelType): boolean {
-  return type.kind === "integerLiteral" || (type.kind === "primitive" && (type.name === "i32" || type.name === "u32"));
+  return type.kind === "integerLiteral" || (type.kind === "primitive" && indexIntegerPrimitiveNames.includes(type.name));
 }
 
 export function sameType(left: IntKernelType, right: IntKernelType): boolean {

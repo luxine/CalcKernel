@@ -81,7 +81,12 @@ function isHoistableInstruction(
     case "const_int":
     case "const_bool":
       return instruction.target.kind === "temp";
+    case "const_float":
+      return false;
     case "binary":
+      if (isFloatValue(instruction.target) || isFloatValue(instruction.left) || isFloatValue(instruction.right)) {
+        return false;
+      }
       return (
         instruction.target.kind === "temp" &&
         (instruction.op === "+" || instruction.op === "-" || instruction.op === "*") &&
@@ -103,6 +108,7 @@ function isInvariantValue(value: MirValue, loopDefinedTemps: Set<string>, loopAs
   switch (value.kind) {
     case "const_int":
     case "const_bool":
+    case "const_float":
     case "param":
       return true;
     case "local":
@@ -173,6 +179,7 @@ function rememberHoistedTarget(instruction: MirInstruction, hoistedTemps: Set<st
 function instructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -185,4 +192,8 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "store":
       return undefined;
   }
+}
+
+function isFloatValue(value: MirValue): boolean {
+  return value.type.kind === "primitive" && value.type.name === "f64";
 }

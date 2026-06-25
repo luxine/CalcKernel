@@ -1,8 +1,8 @@
-# IntKernel v0.4.0 Release Checklist
+# IntKernel Release Checklist
 
 [简体中文](zh-CN/RELEASE_CHECKLIST.md)
 
-Use this checklist before publishing or tagging `v0.4.0`. It is an artificial
+Use this checklist before publishing or tagging a release. It is an artificial
 release gate for human review; do not use benchmark results as language
 semantics or as cross-machine performance truth.
 
@@ -11,14 +11,15 @@ semantics or as cross-machine performance truth.
 - Confirm the language and project are documented as IK / IntKernel.
 - Confirm CLI examples use `ikc`.
 - Confirm source examples use `.ik`.
-- Confirm `package.json` version is `0.4.0`.
-- Confirm the intended git tag is `v0.4.0`.
+- Confirm `package.json` version matches the intended release.
+- Confirm the intended git tag matches the package version.
 - Confirm the package metadata exposes only the `ikc` bin entrypoint.
-- Confirm v0.4.0 release notes only advertise implemented Phase 14 behavior.
-- Confirm floating point support is not advertised: `f64` is not implemented in
-  v0.4.0 and belongs to a future Phase 16.
-- Do not advertise unsupported f32, implicit int/float conversion, fast-math,
-  SIMD, JIT, strings, IO, GC, runtime, or new backend support.
+- Confirm release notes only advertise implemented behavior.
+- Confirm f64 is documented as strict Phase 16 support, not as fast-math or
+  SIMD support.
+- Do not advertise unsupported f32, implicit int/float conversion, `f64 %`,
+  fast-math, SIMD, JIT, strings, IO, GC, runtime, checked WASM/LLVM arithmetic,
+  or new backend support.
 
 ## Required Commands
 
@@ -94,6 +95,8 @@ semantics or as cross-machine performance truth.
 - Confirm C/WASM/LLVM backend regression comparison tests pass.
 - Confirm the shared comparison includes scalar, control flow, function calls,
   short-circuit, memory, and `examples/pricing.ik`.
+- Confirm f64 scalar, ptr, struct-field, arithmetic, comparison, unary minus,
+  and backend parity regressions pass where implemented.
 - Confirm no backend output snapshot changed unexpectedly.
 - If any snapshot changes, explain the real expected behavior change before
   accepting the update. Do not update snapshots just to make tests pass.
@@ -112,6 +115,12 @@ semantics or as cross-machine performance truth.
 - Confirm `examples/pricing.ik` produces matching results before and after
   optimization.
 - Confirm there is no benchmark-specific special case for `examples/pricing.ik`.
+- Confirm f64 strict-safety tests pass:
+  - no f64 constant folding
+  - no f64 reassociation
+  - no f64 operand sorting in local CSE
+  - no f64 LICM hoisting
+  - no f64 induction simplification
 
 ## Benchmark Smoke
 
@@ -119,6 +128,10 @@ semantics or as cross-machine performance truth.
   `bench/README.zh-CN.md`.
 - Run `node --test bench/perf/tests/perf-core.test.mjs`.
 - Optionally run `node bench/perf/run.mjs --quick` as a manual benchmark smoke.
+- Confirm f64 benchmark cases are discovered for axpy, dot product, sum, and
+  scale.
+- Confirm f64 benchmark docs cover JavaScript `Array` `Number`, JavaScript
+  `Float64Array`, IK C O3, IK LLVM O3, and IK WASM O3 comparison targets.
 - Treat `node bench/perf/run.mjs --full` as an optional tag-time check when
   machine time allows.
 - Do not add benchmark thresholds to ordinary `pnpm test`.
@@ -131,14 +144,26 @@ semantics or as cross-machine performance truth.
 
 ## Docs And Examples Review
 
-- Review README and README.zh-CN for v0.4.0 capability accuracy.
+- Review README and README.zh-CN for current capability accuracy.
 - Review language, architecture, MIR, ABI, checked arithmetic, WASM, LLVM,
   optimization, performance, and roadmap docs.
 - Confirm docs say IK / IntKernel is a pure computation DSL, not a general
   purpose language.
-- Confirm docs say current v0.4.0 computation is primarily integer-focused.
-- Confirm docs do not claim floating point, SIMD, JIT, runtime, IO, strings, or
-  GC support.
+- Confirm docs say integer kernels remain the primary target and strict f64 is
+  available for numerical kernels.
+- Confirm docs recommend `i64` fixed-point for money, tax, POS totals, and
+  pricing-rule calculations.
+- Confirm docs do not claim f32, implicit int/float conversion, `f64 %`,
+  fast-math, SIMD, JIT, runtime, IO, strings, or GC support.
+- Confirm docs/spec/ABI updates cover:
+  - lexer/parser f64 and float literals
+  - checker f64 arithmetic/comparison and mixed int/f64 rejection
+  - MIR `const_float`
+  - optimizer f64 safety gates
+  - C f64 regression and checked f64 boundary
+  - LLVM f64 regression and no fast-math
+  - WASM f64 regression and JS `Number` interop
+  - `ptr<f64>` and struct f64 layout rules
 - Review examples under `examples/` for `ikc` and `.ik` commands.
 - Confirm `examples/pricing.ik` remains the release e2e fixture.
 - Keep documentation bilingual: English remains the default entrypoint, and
@@ -146,7 +171,7 @@ semantics or as cross-machine performance truth.
 
 ## Package Contents Review
 
-- Confirm `npm pack --dry-run` reports package `intkernel@0.4.0`.
+- Confirm `npm pack --dry-run` reports package `intkernel@0.5.0`.
 - Confirm the package includes `dist/src`, docs, examples, bench files,
   README.md, README.zh-CN.md, and package.json.
 - Confirm the package includes the built CLI entrypoint referenced by the
@@ -160,12 +185,9 @@ semantics or as cross-machine performance truth.
 
 - Confirm all required commands and manual reviews above are complete.
 - Confirm working tree changes are intentional and understood.
-- Confirm release notes summarize only implemented v0.4.0 capability:
-  lexer, parser, type checker, MIR, MIR validation, conservative MIR
-  optimization levels, C/WASM/LLVM backends, checked C integer arithmetic,
-  backend regression coverage, `examples/pricing.ik` e2e coverage, and manual
-  performance suite.
-- Confirm known limitations are listed: no floating point in v0.4.0, no
-  implicit int/float conversion, no fast-math, no SIMD, no JIT, no IO, no
-  strings, no GC, no runtime, and no checked WASM/LLVM arithmetic.
-- Create tag `v0.4.0` only after the checklist is complete.
+- Confirm release notes summarize only implemented capability.
+- Confirm known limitations are listed: no f32, no implicit int/float
+  conversion, no `f64 %`, no fast-math, no SIMD, no JIT, no IO, no strings, no
+  GC, no runtime, no float checked overflow, and no checked WASM/LLVM
+  arithmetic.
+- Create the release tag only after the checklist is complete.

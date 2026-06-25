@@ -2,11 +2,12 @@
 
 [简体中文](README.zh-CN.md)
 
-This directory contains small benchmark harnesses for `examples/pricing.ik`.
-They compare a pure JavaScript baseline, generated native C, checked generated
-C, LLVM, and generated unchecked WASM. They are intended as rough local
-references, not as a stable CI performance suite. Results depend on the current
-machine, Node.js, clang, hyperfine, and system load.
+This directory contains small benchmark harnesses for `examples/pricing.ik`
+and strict `f64` compute kernels. They compare pure JavaScript baselines,
+generated native C, checked generated C where applicable, LLVM, and generated
+WASM. They are intended as rough local references, not as a stable CI
+performance suite. Results depend on the current machine, Node.js, clang,
+hyperfine, and system load.
 
 The benchmark sizes are:
 
@@ -33,7 +34,8 @@ not gain machine-specific performance thresholds.
 The runner performs the full local setup:
 
 1. runs `pnpm build`
-2. emits unchecked C, checked C, and unchecked WASM into `build/perf/generated`
+2. emits unchecked C, checked C, unchecked WASM, LLVM IR, and f64 artifacts
+   into `build/perf/generated`
 3. compiles C benchmark executables into `build/perf/bin`
 4. smoke-runs each benchmark command for checksum validation
 5. runs `hyperfine`
@@ -108,6 +110,40 @@ The decomposed suite covers:
 - `pricing-js-typedarray-number`
 - `pricing-js-bigint`
 
+The first f64 suite covers four strict-float kernels:
+
+- `axpy`: `y[i] = a * x[i] + y[i]`
+- `dot`: `sum += x[i] * y[i]`
+- `sum`: `sum += x[i]`
+- `scale`: `x[i] = a * x[i]`
+
+Each kernel has default comparison cases for:
+
+- JavaScript `Array` with `Number` arithmetic
+- JavaScript `Float64Array` with `Number` arithmetic
+- IK C O3
+- IK LLVM O3
+- IK WASM O3 compute-only
+
+The f64 WASM cases also include `total` and `memory-only` variants so host-side
+memory marshaling can be separated from compute time. WASM f64 host interop
+uses JavaScript `Number`; it does not use `BigInt`. Memory setup uses
+little-endian `DataView.setFloat64`/`getFloat64`.
+
+Run only f64 benchmarks with:
+
+```sh
+node bench/perf/run.mjs --quick --case f64
+node bench/perf/run.mjs --full --case f64
+```
+
+Run one f64 kernel with:
+
+```sh
+node bench/perf/run.mjs --quick --case f64-axpy
+node bench/perf/run.mjs --quick --case f64-dot
+```
+
 The summary includes each case's category, optimization level, arithmetic mode,
 median runtime, p95 runtime, and ratio against `pricing-c-unchecked-O3`.
 
@@ -127,6 +163,16 @@ The `pricing-helpers-*` cases use `bench/perf/fixtures/pricing_helpers.ik`,
 which expresses the same pricing math through small non-exported helper
 functions. It is a benchmark-only fixture for measuring MIR small-function
 inlining; it does not change `examples/pricing.ik`.
+
+The `f64-*` cases use `bench/perf/fixtures/f64_kernels.ik`. Correctness checks
+use absolute and relative tolerance; they do not require cross-backend
+bit-identical floating point results. IK f64 remains strict mode: no f32,
+fast-math, SIMD, implicit int/float conversion, or f64 checked overflow is
+assumed by these benchmarks.
+
+Python list `float` and NumPy can be useful optional manual baselines, but they
+are not default dependencies of this runner. NumPy is a native library baseline,
+not a language semantics oracle.
 
 See [2026-06-24 Performance Profile](docs/2026-06-24-performance-profile.md)
 for the current bottleneck analysis and Phase 14 optimization priorities.

@@ -1,6 +1,6 @@
 import type { IntKernelType } from "../../typeck/types.js";
 
-export type WasmValueType = "i32" | "i64";
+export type WasmValueType = "i32" | "i64" | "f64";
 
 export interface WasmAbiType {
   valueType: WasmValueType;
@@ -21,6 +21,8 @@ export function toWasmValueType(type: IntKernelType): WasmValueType {
         case "i64":
         case "u64":
           return "i64";
+        case "f64":
+          return "f64";
       }
     case "pointer":
       return "i32";

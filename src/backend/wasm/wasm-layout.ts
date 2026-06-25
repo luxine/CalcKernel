@@ -30,6 +30,7 @@ export function sizeOfWasmType(type: IntKernelType, context: WasmLayoutContext =
           return 4;
         case "i64":
         case "u64":
+        case "f64":
           return 8;
       }
     case "pointer":
@@ -53,6 +54,7 @@ export function alignOfWasmType(type: IntKernelType, context: WasmLayoutContext 
           return 4;
         case "i64":
         case "u64":
+        case "f64":
           return 8;
       }
     case "pointer":

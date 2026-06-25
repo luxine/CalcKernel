@@ -139,6 +139,8 @@ function emitInstruction(instruction: MirInstruction): string {
   switch (instruction.kind) {
     case "const_int":
       return `${emitValue(instruction.target)} = ${instruction.value};`;
+    case "const_float":
+      return `${emitValue(instruction.target)} = ${instruction.value};`;
     case "const_bool":
       return `${emitValue(instruction.target)} = ${instruction.value ? "true" : "false"};`;
     case "move":
@@ -163,6 +165,8 @@ function emitInstruction(instruction: MirInstruction): string {
 function emitCheckedInstruction(instruction: MirInstruction, safeUncheckedBinaryTargets: Set<string>): string[] {
   switch (instruction.kind) {
     case "const_int":
+      return [`${emitValue(instruction.target)} = ${instruction.value};`];
+    case "const_float":
       return [`${emitValue(instruction.target)} = ${instruction.value};`];
     case "const_bool":
       return [`${emitValue(instruction.target)} = ${instruction.value ? "true" : "false"};`];
@@ -203,6 +207,10 @@ function emitCheckedUnaryInstruction(instruction: Extract<MirInstruction, { kind
     return [`${target} = !${operand};`];
   }
 
+  if (isF64Type(instruction.target.type)) {
+    return [`${target} = -${operand};`];
+  }
+
   if (isUnsignedIntegerType(instruction.target.type)) {
     return [
       `if (__builtin_sub_overflow((${emitCType(instruction.target.type)})0, ${operand}, &${target})) {`,
@@ -223,6 +231,13 @@ function emitCheckedBinaryInstruction(instruction: Extract<MirInstruction, { kin
   const target = emitValue(instruction.target);
   const left = emitValue(instruction.left);
   const right = emitValue(instruction.right);
+
+  if (isF64Type(instruction.target.type)) {
+    if (instruction.op === "%") {
+      throw new Error("MIR C emitter cannot emit f64 modulo.");
+    }
+    return [`${target} = ${left} ${instruction.op} ${right};`];
+  }
 
   switch (instruction.op) {
     case "+":
@@ -444,6 +459,7 @@ function emitCheckedTerminator(terminator: MirTerminator): string[] {
 function instructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -486,6 +502,8 @@ function valueIdentity(value: MirValue | undefined): string {
       return `${value.kind}:${value.name}`;
     case "const_int":
       return `const_int:${value.text}:${typeIdentity(value.type)}`;
+    case "const_float":
+      return `const_float:${value.text}:${typeIdentity(value.type)}`;
     case "const_bool":
       return `const_bool:${value.value ? "true" : "false"}`;
   }
@@ -522,6 +540,8 @@ function emitValue(value: MirValue): string {
     case "temp":
       return emitTempName(value.name);
     case "const_int":
+      return value.text;
+    case "const_float":
       return value.text;
     case "const_bool":
       return value.value ? "true" : "false";
@@ -582,4 +602,8 @@ function isSignedIntegerType(type: MirType): boolean {
 
 function isUnsignedIntegerType(type: MirType): boolean {
   return type.kind === "primitive" && (type.name === "u32" || type.name === "u64");
+}
+
+function isF64Type(type: MirType): boolean {
+  return type.kind === "primitive" && type.name === "f64";
 }

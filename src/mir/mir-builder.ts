@@ -42,6 +42,10 @@ export class MirBuilder {
     return { kind: "const_int", text, type };
   }
 
+  constFloat(text: string, type: MirType): MirValue {
+    return { kind: "const_float", text, type };
+  }
+
   constBool(value: boolean): MirValue {
     return { kind: "const_bool", value, type: mirPrimitive("bool") };
   }

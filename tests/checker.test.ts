@@ -425,6 +425,127 @@ describe("checker", () => {
     });
   });
 
+  it("accepts f64 variables and float literals", () => {
+    const result = checkSource(`
+      export fn id(value: f64) -> f64 {
+        let local: f64 = 1.0;
+        return value;
+      }
+    `);
+
+    expect(result.diagnostics).toEqual([]);
+    const fn = getFunctionInfo(result.checkedProgram, "id");
+    expect(fn?.params[0]?.type).toEqual({ kind: "primitive", name: "f64" });
+    expect(fn?.returnType).toEqual({ kind: "primitive", name: "f64" });
+    expect([...result.typedAst.expressionTypes.values()].some((type) => type.kind === "primitive" && type.name === "f64")).toBe(true);
+  });
+
+  it("accepts f64 arithmetic and unary minus", () => {
+    const result = checkSource(`
+      export fn calc(a: f64, b: f64) -> f64 {
+        let sum: f64 = a + b;
+        let diff: f64 = sum - a;
+        let prod: f64 = diff * b;
+        let neg: f64 = -prod;
+        return neg / a;
+      }
+    `);
+
+    expect(result.diagnostics).toEqual([]);
+    const fn = getFunctionInfo(result.checkedProgram, "calc");
+    expect(fn?.returnType).toEqual({ kind: "primitive", name: "f64" });
+  });
+
+  it("accepts f64 comparisons", () => {
+    const result = checkSource(`
+      export fn cmp(a: f64, b: f64) -> bool {
+        return a == b || a != b || a < b || a <= b || a > b || a >= b;
+      }
+    `);
+
+    expect(result.diagnostics).toEqual([]);
+    const fn = getFunctionInfo(result.checkedProgram, "cmp");
+    expect(fn?.returnType).toEqual({ kind: "primitive", name: "bool" });
+  });
+
+  it("rejects f64 modulo", () => {
+    expect(messagesOf(`
+      export fn bad(a: f64, b: f64) -> f64 {
+        return a % b;
+      }
+    `)).toContain("Arithmetic operator '%' does not support f64 operands.");
+  });
+
+  it.each([
+    {
+      name: "i32 + f64",
+      source: "export fn bad(a: i32, b: f64) -> i32 { return a + b; }",
+      keywords: ["arithmetic", "+", "same", "type"]
+    },
+    {
+      name: "i64 + f64",
+      source: "export fn bad(a: i64, b: f64) -> i64 { return a + b; }",
+      keywords: ["arithmetic", "+", "same", "type"]
+    },
+    {
+      name: "u32 + f64",
+      source: "export fn bad(a: u32, b: f64) -> u32 { return a + b; }",
+      keywords: ["arithmetic", "+", "same", "type"]
+    },
+    {
+      name: "u64 + f64",
+      source: "export fn bad(a: u64, b: f64) -> u64 { return a + b; }",
+      keywords: ["arithmetic", "+", "same", "type"]
+    },
+    {
+      name: "f64 + i32",
+      source: "export fn bad(a: f64, b: i32) -> f64 { return a + b; }",
+      keywords: ["arithmetic", "+", "same", "type"]
+    },
+    {
+      name: "f64 + i64",
+      source: "export fn bad(a: f64, b: i64) -> f64 { return a + b; }",
+      keywords: ["arithmetic", "+", "same", "type"]
+    },
+    {
+      name: "f64 < i64",
+      source: "export fn bad(a: f64, b: i64) -> bool { return a < b; }",
+      keywords: ["comparison", "<", "compatible"]
+    },
+    {
+      name: "i64 < f64",
+      source: "export fn bad(a: i64, b: f64) -> bool { return a < b; }",
+      keywords: ["comparison", "<", "compatible"]
+    },
+    {
+      name: "int literal assigned to f64",
+      source: "export fn bad() -> f64 { let x: f64 = 1; return 1.0; }",
+      keywords: ["initialize", "x", "expected", "f64", "i32"]
+    },
+    {
+      name: "float literal assigned to integer",
+      source: "export fn bad() -> i64 { let y: i64 = 1.0; return y; }",
+      keywords: ["initialize", "y", "expected", "i64", "f64"]
+    },
+    {
+      name: "integer return from f64 function",
+      source: "export fn bad() -> f64 { return 1; }",
+      keywords: ["return", "expected", "f64", "i32"]
+    },
+    {
+      name: "float return from integer function",
+      source: "export fn bad() -> i64 { return 1.0; }",
+      keywords: ["return", "expected", "i64", "f64"]
+    },
+    {
+      name: "f64 pointer index",
+      source: "export fn bad(items: ptr<i64>, idx: f64) -> i64 { return items[idx]; }",
+      keywords: ["index", "i32", "u32", "f64"]
+    }
+  ])("rejects strict f64 violation: $name", ({ source, keywords }) => {
+    expectDiagnosticWithKeywords(source, keywords);
+  });
+
   describe("negative cases", () => {
     it.each(negativeCheckerCases)("$name", ({ source, keywords }) => {
       expectDiagnosticWithKeywords(source, keywords);

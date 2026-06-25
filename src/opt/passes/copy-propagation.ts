@@ -40,6 +40,7 @@ function rewriteInstruction(instruction: MirInstruction, copies: Map<string, Mir
   let changed = false;
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
       return false;
     case "move": {
@@ -183,6 +184,7 @@ function resolveCopy(value: MirValue, copies: Map<string, MirValue>): MirValue {
 function getInstructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":

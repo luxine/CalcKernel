@@ -197,6 +197,7 @@ function dependencyKey(value: Extract<MirValue, { kind: "local" | "param" }>): s
 function instructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -251,6 +252,8 @@ function valueKey(value: MirValue): string {
       return `${value.kind}:${value.name}:${printMirType(value.type)}`;
     case "const_int":
       return `const_int:${value.text}:${printMirType(value.type)}`;
+    case "const_float":
+      return `const_float:${value.text}:${printMirType(value.type)}`;
     case "const_bool":
       return `const_bool:${value.value ? "true" : "false"}`;
   }

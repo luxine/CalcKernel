@@ -48,7 +48,7 @@ export type TypeNode = PrimitiveTypeNode | PointerTypeNode | NamedTypeNode | Err
 
 export interface PrimitiveTypeNode extends AstNode {
   kind: "PrimitiveType";
-  name: "i32" | "i64" | "u32" | "u64" | "bool";
+  name: "i32" | "i64" | "u32" | "u64" | "f64" | "bool";
 }
 
 export interface PointerTypeNode extends AstNode {
@@ -117,6 +117,7 @@ export interface ErrorStatement extends AstNode {
 export type Expression =
   | IdentifierExpression
   | IntegerLiteral
+  | FloatLiteral
   | BoolLiteral
   | UnaryExpression
   | BinaryExpression
@@ -133,6 +134,11 @@ export interface IdentifierExpression extends AstNode {
 
 export interface IntegerLiteral extends AstNode {
   kind: "IntegerLiteral";
+  text: string;
+}
+
+export interface FloatLiteral extends AstNode {
+  kind: "FloatLiteral";
   text: string;
 }
 

@@ -34,6 +34,7 @@ export function getIndexExtension(indexType: MirType): LlvmIndexExtension {
     case "i64":
     case "u64":
       return { kind: "none", type: "i64" };
+    case "f64":
     case "bool":
       throw new Error("LLVM GEP index must be an integer.");
   }

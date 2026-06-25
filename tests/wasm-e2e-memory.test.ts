@@ -34,6 +34,10 @@ function writeItem(view: DataView, offset: number, fields: { price: bigint; qty:
   view.setBigInt64(offset + 24, fields.taxRatePpm, true);
 }
 
+function closeDouble(actual: number, expected: number): boolean {
+  return Math.abs(actual - expected) < 0.0000001;
+}
+
 describe("Node.js memory WASM e2e", () => {
   const wasmAvailable = getWasmRuntime() !== undefined && typeof BigInt === "function";
 
@@ -85,4 +89,76 @@ describe("Node.js memory WASM e2e", () => {
       expect(view.getBigInt64(outOffset + priceOffset, true)).toBe(123n);
     }
   );
+
+  it("loads and stores ptr<f64> and struct f64 fields through exported memory", async () => {
+    const wasm = getWasmRuntime();
+    if (!wasm) {
+      console.warn("skipped because WebAssembly is unavailable");
+      return;
+    }
+
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "wasm_f64_memory.ik"),
+      `
+        struct Quote {
+          price: f64;
+          tax: f64;
+        }
+
+        export fn write_scale(values: ptr<f64>, i: i32, factor: f64) -> f64 {
+          values[i] = values[i] * factor;
+          return values[i];
+        }
+
+        export fn quote_total(quotes: ptr<Quote>, i: i32) -> f64 {
+          return quotes[i].price + quotes[i].tax;
+        }
+      `
+    );
+    const wasmFile = join(cwd, "build/wasm_f64_memory.wasm");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "wasm_f64_memory.ik", "--out", "build/wasm_f64_memory.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM build/wasm_f64_memory.wasm\n");
+
+    const bytes = readFileSync(wasmFile);
+    const { instance } = await wasm.instantiate(bytes);
+    const memory = instance.exports.memory as WasmMemoryLike;
+    const view = new DataView(memory.buffer);
+    const writeScale = instance.exports.write_scale as (values: number, i: number, factor: number) => number;
+    const quoteTotal = instance.exports.quote_total as (quotes: number, i: number) => number;
+
+    const valuesOffset = 128;
+    view.setFloat64(valuesOffset + 0, 1.0, true);
+    view.setFloat64(valuesOffset + 8, 2.5, true);
+    view.setFloat64(valuesOffset + 16, 4.0, true);
+
+    const scaled = writeScale(valuesOffset, 1, 4.0);
+    expect(typeof scaled).toBe("number");
+    expect(closeDouble(scaled, 10.0)).toBe(true);
+    expect(closeDouble(view.getFloat64(valuesOffset + 8, true), 10.0)).toBe(true);
+
+    const quotesOffset = 512;
+    view.setFloat64(quotesOffset + 0, 10.25, true);
+    view.setFloat64(quotesOffset + 8, 0.75, true);
+    view.setFloat64(quotesOffset + 16, 20.5, true);
+    view.setFloat64(quotesOffset + 24, 1.25, true);
+
+    const total = quoteTotal(quotesOffset, 1);
+    expect(typeof total).toBe("number");
+    expect(closeDouble(total, 21.75)).toBe(true);
+  });
 });

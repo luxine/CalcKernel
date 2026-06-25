@@ -373,7 +373,8 @@ v1. Candidate future work includes:
 
 - range analysis for future checked or bounds-safe features
 - lowering to backend-specific SSA for LLVM or WASM
-- broader floating point optimization only after floating point semantics exist
+- broader f64 optimization only after strict-safe floating point optimization
+  rules are explicitly designed
 - optional CPU-native or LTO experiments outside default builds
 
 Those passes should be added only after MIR v1 remains stable as the default C

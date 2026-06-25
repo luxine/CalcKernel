@@ -112,6 +112,7 @@ function canEmitSsaLikeFunction(func: MirFunction): boolean {
 
   return block.instructions.every((instruction) =>
     instruction.kind === "const_int" ||
+    instruction.kind === "const_float" ||
     instruction.kind === "const_bool" ||
     instruction.kind === "move" ||
     instruction.kind === "binary" ||
@@ -152,6 +153,9 @@ function emitSsaInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContex
     case "const_int":
       context.values.set(valueIdentity(instruction.target), instruction.value);
       return;
+    case "const_float":
+      context.values.set(valueIdentity(instruction.target), instruction.value);
+      return;
     case "const_bool":
       context.values.set(valueIdentity(instruction.target), instruction.value ? "1" : "0");
       return;
@@ -172,7 +176,9 @@ function emitSsaInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContex
       const right = ssaValue(context, instruction.right);
       const result = nextSsaRegister(context);
       const operandType = llvmValueType(instruction.left.type);
-      writer.line(`${result} = icmp ${llvmComparePredicate(instruction.op, instruction.left.type)} ${operandType} ${left}, ${right}`);
+      writer.line(
+        `${result} = ${llvmCompareInstruction(instruction.left.type)} ${llvmComparePredicate(instruction.op, instruction.left.type)} ${operandType} ${left}, ${right}`
+      );
       context.values.set(valueIdentity(instruction.target), result);
       return;
     }
@@ -182,6 +188,8 @@ function emitSsaInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContex
       const type = llvmValueType(instruction.target.type);
       if (instruction.op === "not") {
         writer.line(`${result} = xor i1 ${operand}, true`);
+      } else if (isF64Type(instruction.target.type)) {
+        writer.line(`${result} = fneg ${type} ${operand}`);
       } else {
         writer.line(`${result} = sub ${type} 0, ${operand}`);
       }
@@ -199,6 +207,8 @@ function emitSsaInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContex
 function ssaValue(context: SsaFunctionEmitContext, value: MirValue): string {
   switch (value.kind) {
     case "const_int":
+      return value.text;
+    case "const_float":
       return value.text;
     case "const_bool":
       return value.value ? "1" : "0";
@@ -222,6 +232,8 @@ function valueIdentity(value: MirValue): string {
       return `${value.kind}:${value.name}`;
     case "const_int":
       return `const_int:${value.text}:${typeIdentity(value.type)}`;
+    case "const_float":
+      return `const_float:${value.text}:${typeIdentity(value.type)}`;
     case "const_bool":
       return `const_bool:${value.value ? "true" : "false"}:${typeIdentity(value.type)}`;
   }
@@ -300,6 +312,9 @@ function emitInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, ins
     case "const_int":
       writer.line(`store ${llvmStorageType(instruction.target.type)} ${instruction.value}, ptr ${addressName(requireAddressable(instruction.target))}`);
       return;
+    case "const_float":
+      writer.line(`store ${llvmStorageType(instruction.target.type)} ${instruction.value}, ptr ${addressName(requireAddressable(instruction.target))}`);
+      return;
     case "const_bool":
       writer.line(`store i1 ${instruction.value ? "1" : "0"}, ptr ${addressName(requireAddressable(instruction.target))}`);
       return;
@@ -348,7 +363,7 @@ function emitCompareInstruction(writer: LlvmIrWriter, context: FunctionEmitConte
   const result = nextRegister(context);
   const operandType = llvmValueType(instruction.left.type);
 
-  writer.line(`${result} = icmp ${llvmComparePredicate(instruction.op, instruction.left.type)} ${operandType} ${left}, ${right}`);
+  writer.line(`${result} = ${llvmCompareInstruction(instruction.left.type)} ${llvmComparePredicate(instruction.op, instruction.left.type)} ${operandType} ${left}, ${right}`);
   writer.line(`store i1 ${result}, ptr ${addressName(requireAddressable(instruction.target))}`);
 }
 
@@ -359,6 +374,8 @@ function emitUnaryInstruction(writer: LlvmIrWriter, context: FunctionEmitContext
 
   if (instruction.op === "not") {
     writer.line(`${result} = xor i1 ${operand}, true`);
+  } else if (isF64Type(instruction.target.type)) {
+    writer.line(`${result} = fneg ${type} ${operand}`);
   } else {
     writer.line(`${result} = sub ${type} 0, ${operand}`);
   }
@@ -470,6 +487,8 @@ function loadValue(writer: LlvmIrWriter, context: FunctionEmitContext, value: Mi
   switch (value.kind) {
     case "const_int":
       return value.text;
+    case "const_float":
+      return value.text;
     case "const_bool":
       return value.value ? "1" : "0";
     case "param":
@@ -502,6 +521,7 @@ function collectTempSlots(func: MirFunction): AddressableValue[] {
 function instructionTarget(instruction: MirInstruction): MirValue | undefined {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -544,6 +564,21 @@ function requireAddressable(value: MirValue): AddressableValue {
 }
 
 function llvmBinaryOpcode(op: MirBinaryOp, type: MirType): string {
+  if (isF64Type(type)) {
+    switch (op) {
+      case "+":
+        return "fadd";
+      case "-":
+        return "fsub";
+      case "*":
+        return "fmul";
+      case "/":
+        return "fdiv";
+      case "%":
+        throw unsupported("f64 modulo");
+    }
+  }
+
   switch (op) {
     case "+":
       return "add";
@@ -558,7 +593,28 @@ function llvmBinaryOpcode(op: MirBinaryOp, type: MirType): string {
   }
 }
 
+function llvmCompareInstruction(type: MirType): "icmp" | "fcmp" {
+  return isF64Type(type) ? "fcmp" : "icmp";
+}
+
 function llvmComparePredicate(op: MirCompareOp, type: MirType): string {
+  if (isF64Type(type)) {
+    switch (op) {
+      case "==":
+        return "oeq";
+      case "!=":
+        return "une";
+      case "<":
+        return "olt";
+      case "<=":
+        return "ole";
+      case ">":
+        return "ogt";
+      case ">=":
+        return "oge";
+    }
+  }
+
   switch (op) {
     case "==":
       return "eq";
@@ -590,12 +646,20 @@ function integerComparisonPrefix(type: MirType): "s" | "u" {
 function zeroValueForType(type: MirType): string {
   switch (type.kind) {
     case "primitive":
+      if (type.name === "f64") {
+        return "0.0";
+      }
+
       return "0";
     case "pointer":
       return "null";
     case "struct":
       return "zeroinitializer";
   }
+}
+
+function isF64Type(type: MirType): boolean {
+  return type.kind === "primitive" && type.name === "f64";
 }
 
 function stableSourceFileName(sourceFileName?: string): string {

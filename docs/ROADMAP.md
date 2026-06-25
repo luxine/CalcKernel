@@ -166,8 +166,8 @@ Future optimization work:
 - broader direct SSA LLVM lowering for scalar control flow
 - target data layout hardening
 - optional CPU-native/LTO experiments outside default builds
-- floating point optimization only after a future floating point phase defines
-  strict semantics
+- broader f64 optimization only after a future phase explicitly designs
+  strict-safe floating point optimization rules
 
 ## Future `slice<T>` / Bounds Checks
 

@@ -10,7 +10,8 @@ Node.js, clang, hyperfine, OS scheduling, power state, and current system load.
 ## Benchmark Suite
 
 The hyperfine-based suite lives under `bench/perf` and targets
-`examples/pricing.ik` plus a helper-function fixture. It currently covers:
+`examples/pricing.ik`, a helper-function fixture, and first-pass strict `f64`
+compute kernels. It currently covers:
 
 - native C unchecked: `pricing-c-unchecked-O0`, `pricing-c-unchecked-O2`,
   `pricing-c-unchecked-O3`, and `pricing-c-unchecked-ik-O3`
@@ -20,12 +21,21 @@ The hyperfine-based suite lives under `bench/perf` and targets
 - WASM unchecked total and compute-only cases, both at `IK-O0` and `IK-O3`
 - WASM memory-only and JS-to-WASM call-overhead decomposition
 - JavaScript baselines: `Number`, typed-array `Number`, and `BigInt`
+- f64 kernels: axpy, dot product, sum, and scale
+- f64 comparison targets: JavaScript `Array` `Number`, JavaScript
+  `Float64Array`, IK C O3, IK LLVM O3, and IK WASM O3
+- f64 WASM total, compute-only, and memory-only decomposition
 
-The standard workload is:
+The standard pricing workload is:
 
 - 100,000 items
 - 1,000 `calc_items` iterations
 - checksum validation for every case
+
+The standard f64 workload uses deterministic `Float64` inputs, consumes every
+result checksum, and validates with absolute plus relative tolerance. It does
+not require bit-identical floating point results across C, LLVM, WASM, and
+JavaScript.
 
 ## Running Benchmarks
 
@@ -50,6 +60,8 @@ Run selected cases:
 ```sh
 node bench/perf/run.mjs --quick --case pricing-c-unchecked
 node bench/perf/run.mjs --full --case pricing-llvm-unchecked --case pricing-wasm-unchecked-compute-only
+node bench/perf/run.mjs --quick --case f64
+node bench/perf/run.mjs --quick --case f64-axpy
 ```
 
 ## Baselines and Regression Checks
@@ -137,6 +149,12 @@ do not share one runtime model. Use those comparisons to understand workload
 shape, boundary cost, and safety tradeoffs; do not treat them as language
 semantic tests or as absolute cross-runtime rankings.
 
+For f64 kernels, JavaScript `Array` `Number`, JavaScript `Float64Array`, IK C,
+IK LLVM, IK WASM, optional Python list `float`, and optional NumPy are different
+runtime models. NumPy is a native-library baseline and is not a default runner
+dependency. The f64 suite uses strict IK floating point only: no f32, fast-math,
+SIMD, implicit int/float conversion, or f64 checked overflow is assumed.
+
 ## Batch Calling Principle
 
 Always benchmark and ship batched calls:
@@ -160,6 +178,11 @@ For performance analysis, separate:
 - compute-only time: prewritten memory + repeated WASM calls
 - memory-only time: host-side `DataView` work
 - call-overhead time: JS-to-WASM boundary overhead
+
+The f64 WASM benchmark follows the same separation for total, compute-only, and
+memory-only time. f64 parameters and returns use JavaScript `Number`; i64/u64
+pricing paths continue to use `BigInt` where required. f64 memory setup uses
+little-endian `DataView.setFloat64` and `DataView.getFloat64`.
 
 Current largest WASM bottleneck: host-side memory setup/readback for total
 benchmarks. Compute-only WASM is much closer, but still slower than native code.

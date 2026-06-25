@@ -43,6 +43,10 @@ function supportsWasmI64BigInt(): boolean {
   }
 }
 
+function closeDouble(actual: number, expected: number): boolean {
+  return Math.abs(actual - expected) < 0.0000001;
+}
+
 describe("Node.js scalar WASM e2e", () => {
   const wasmI64BigIntAvailable = supportsWasmI64BigInt();
 
@@ -86,4 +90,67 @@ describe("Node.js scalar WASM e2e", () => {
       expect(divU64(10n, 2n)).toBe(5n);
     }
   );
+
+  it("loads generated f64 scalar WASM and calls exported functions with JS Number values", async () => {
+    const wasm = getWasmRuntime();
+    if (!wasm) {
+      console.warn("skipped because WebAssembly is unavailable");
+      return;
+    }
+
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "wasm_f64.ik"),
+      `
+        export fn calc_f64(a: f64, b: f64) -> f64 {
+          let one: f64 = 1.0;
+          let sum: f64 = a + b;
+          let diff: f64 = sum - one;
+          let prod: f64 = diff * b;
+          return prod / 2.0;
+        }
+
+        export fn neg_f64(a: f64) -> f64 {
+          return -a;
+        }
+
+        export fn le_f64(a: f64, b: f64) -> bool {
+          return a <= b;
+        }
+      `
+    );
+    const wasmFile = join(cwd, "build/wasm_f64.wasm");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "wasm_f64.ik", "--out", "build/wasm_f64.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM build/wasm_f64.wasm\n");
+
+    const bytes = readFileSync(wasmFile);
+    const { instance } = await wasm.instantiate(bytes);
+    const calcF64 = instance.exports.calc_f64 as (a: number, b: number) => number;
+    const negF64 = instance.exports.neg_f64 as (a: number) => number;
+    const leF64 = instance.exports.le_f64 as (a: number, b: number) => number;
+
+    const calcResult = calcF64(5.0, 3.0);
+    const negResult = negF64(7.25);
+
+    expect(typeof calcResult).toBe("number");
+    expect(typeof negResult).toBe("number");
+    expect(closeDouble(calcResult, 10.5)).toBe(true);
+    expect(closeDouble(negResult, -7.25)).toBe(true);
+    expect(leF64(3.5, 3.5)).toBe(1);
+    expect(leF64(4.5, 3.5)).toBe(0);
+  });
 });

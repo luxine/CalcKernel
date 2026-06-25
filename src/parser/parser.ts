@@ -14,6 +14,7 @@ import type {
   ErrorTypeNode,
   Expression,
   FieldExpression,
+  FloatLiteral,
   FunctionDeclaration,
   FunctionParam,
   IdentifierExpression,
@@ -171,6 +172,7 @@ class Parser {
       case TokenKind.I64:
       case TokenKind.U32:
       case TokenKind.U64:
+      case TokenKind.F64:
       case TokenKind.Bool:
         this.advance();
         return {
@@ -418,6 +420,14 @@ class Parser {
         text: token.text,
         span: this.spanFromToken(token)
       } satisfies IntegerLiteral;
+    }
+
+    if (this.match(TokenKind.Float)) {
+      return {
+        kind: "FloatLiteral",
+        text: token.text,
+        span: this.spanFromToken(token)
+      } satisfies FloatLiteral;
     }
 
     if (this.match(TokenKind.True) || this.match(TokenKind.False)) {

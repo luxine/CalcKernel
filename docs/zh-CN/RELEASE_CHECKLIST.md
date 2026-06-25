@@ -1,8 +1,8 @@
-# IntKernel v0.4.0 发布检查清单
+# IntKernel 发布检查清单
 
 [English](../RELEASE_CHECKLIST.md)
 
-发布或打 `v0.4.0` tag 前使用这份检查清单。它是人工验收 gate；不要把 benchmark
+发布或打 release tag 前使用这份检查清单。它是人工验收 gate；不要把 benchmark
 结果当作语言语义，也不要当作跨机器性能真相。
 
 ## Release Scope
@@ -10,14 +10,14 @@
 - 确认语言和项目名称使用 IK / IntKernel。
 - 确认 CLI 示例使用 `ikc`。
 - 确认源码示例使用 `.ik`。
-- 确认 `package.json` version 是 `0.4.0`。
-- 确认计划使用的 git tag 是 `v0.4.0`。
+- 确认 `package.json` version 与计划 release 一致。
+- 确认计划使用的 git tag 与 package version 一致。
 - 确认 package metadata 只暴露 `ikc` bin entrypoint。
-- 确认 v0.4.0 release notes 只宣传已经实现的 Phase 14 能力。
-- 确认不宣传 floating point support：`f64` 在 v0.4.0 尚未实现，属于未来
-  Phase 16。
-- 不要宣传未支持的 f32、implicit int/float conversion、fast-math、SIMD、JIT、
-  strings、IO、GC、runtime 或新 backend support。
+- 确认 release notes 只宣传已经实现的能力。
+- 确认 f64 被记录为 Phase 16 strict support，而不是 fast-math 或 SIMD support。
+- 不要宣传未支持的 f32、implicit int/float conversion、`f64 %`、fast-math、
+  SIMD、JIT、strings、IO、GC、runtime、checked WASM/LLVM arithmetic 或新 backend
+  support。
 
 ## 必跑命令
 
@@ -92,6 +92,8 @@
 - 确认 C/WASM/LLVM backend regression comparison tests 通过。
 - 确认 shared comparison 覆盖 scalar、control flow、function calls、
   short-circuit、memory 和 `examples/pricing.ik`。
+- 确认已实现 backend 的 f64 scalar、ptr、struct-field、arithmetic、comparison、
+  unary minus 和 backend parity regression 通过。
 - 确认没有 backend output snapshot 发生非预期变化。
 - 如果 snapshot 有变化，必须先解释真实预期行为变化，再接受更新。不要为了让测试通过
   而更新 snapshots。
@@ -109,12 +111,21 @@
 - 确认 short-circuit 语义在优化前后保持一致。
 - 确认 `examples/pricing.ik` 优化前后结果一致。
 - 确认没有为 `examples/pricing.ik` 添加 benchmark-specific special case。
+- 确认 f64 strict-safety tests 通过：
+  - 不做 f64 constant folding
+  - 不做 f64 reassociation
+  - local CSE 不排序 f64 operand
+  - 不做 f64 LICM hoisting
+  - 不做 f64 induction simplification
 
 ## Benchmark Smoke
 
 - Review `docs/PERFORMANCE.md`、`bench/README.md` 和 `bench/README.zh-CN.md`。
 - 运行 `node --test bench/perf/tests/perf-core.test.mjs`。
 - 可选手动运行 `node bench/perf/run.mjs --quick`，作为 benchmark smoke。
+- 确认 f64 benchmark case 覆盖 axpy、dot product、sum 和 scale。
+- 确认 f64 benchmark 文档覆盖 JavaScript `Array` `Number`、JavaScript
+  `Float64Array`、IK C O3、IK LLVM O3 和 IK WASM O3 对比目标。
 - `node bench/perf/run.mjs --full` 是机器时间允许时的可选 tag-time 检查。
 - 不要把 benchmark threshold 加进普通 `pnpm test`。
 - 不要把本机 benchmark 结果当作跨机器绝对 baseline。
@@ -124,19 +135,31 @@
 
 ## Docs And Examples Review
 
-- Review README 和 README.zh-CN，确认 v0.4.0 能力描述准确。
+- Review README 和 README.zh-CN，确认当前能力描述准确。
 - Review language、architecture、MIR、ABI、checked arithmetic、WASM、LLVM、
   optimization、performance 和 roadmap docs。
 - 确认 docs 说明 IK / IntKernel 是纯计算 DSL，不是通用语言。
-- 确认 docs 说明当前 v0.4.0 计算能力主要面向整数。
-- 确认 docs 没有宣称 floating point、SIMD、JIT、runtime、IO、strings 或 GC 支持。
+- 确认 docs 说明整数 kernel 仍是主要目标，strict f64 可用于数值 kernel。
+- 确认 docs 推荐金额、税费、POS 总价和 pricing-rule 计算继续使用 `i64`
+  fixed-point。
+- 确认 docs 没有宣称 f32、implicit int/float conversion、`f64 %`、fast-math、
+  SIMD、JIT、runtime、IO、strings 或 GC 支持。
+- 确认 docs/spec/ABI updates 覆盖：
+  - lexer/parser f64 和 float literal
+  - checker f64 arithmetic/comparison 以及 mixed int/f64 rejection
+  - MIR `const_float`
+  - optimizer f64 safety gates
+  - C f64 regression 和 checked f64 boundary
+  - LLVM f64 regression 和 no fast-math
+  - WASM f64 regression 和 JS `Number` interop
+  - `ptr<f64>` 和 struct f64 layout rules
 - Review `examples/` 下的示例，确认命令使用 `ikc` 和 `.ik`。
 - 确认 `examples/pricing.ik` 仍是 release e2e fixture。
 - 保持文档双语：英文为默认入口，修改文档时同步更新中文译本。
 
 ## Package Contents Review
 
-- 确认 `npm pack --dry-run` 报告 package `intkernel@0.4.0`。
+- 确认 `npm pack --dry-run` 报告 package `intkernel@0.5.0`。
 - 确认 package 包含 `dist/src`、docs、examples、bench files、README.md、
   README.zh-CN.md 和 package.json。
 - 确认 package 包含 `ikc` bin mapping 指向的 built CLI entrypoint。
@@ -149,11 +172,9 @@
 
 - 确认上面的必跑命令和人工 review 都已完成。
 - 确认 working tree changes 都是有意且已理解的。
-- 确认 release notes 只总结已实现的 v0.4.0 能力：lexer、parser、type checker、
-  MIR、MIR validation、保守 MIR optimization levels、C/WASM/LLVM backends、checked
-  C integer arithmetic、backend regression 覆盖、`examples/pricing.ik` e2e 覆盖和
-  手动 performance suite。
-- 确认 known limitations 已列出：v0.4.0 没有 floating point、没有 implicit
-  int/float conversion、没有 fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、
-  没有 GC、没有 runtime，也没有 checked WASM/LLVM arithmetic。
-- 只有 checklist 完成后才创建 tag `v0.4.0`。
+- 确认 release notes 只总结已实现能力。
+- 确认 known limitations 已列出：没有 f32、没有 implicit int/float conversion、
+  没有 `f64 %`、没有 fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、
+  没有 GC、没有 runtime、没有 float checked overflow，也没有 checked WASM/LLVM
+  arithmetic。
+- 只有 checklist 完成后才创建 release tag。

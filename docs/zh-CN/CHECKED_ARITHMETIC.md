@@ -64,6 +64,7 @@ Unchecked mode 保持原始 C ABI。默认 backend 变化时，生成的 C sourc
 | C ABI | 原始 return type | `IK_Status` return 加最后 return pointer |
 | Integer overflow | 不检查 | 返回 `IK_ERR_OVERFLOW` |
 | Division by zero | 不检查 | 返回 `IK_ERR_DIV_BY_ZERO` |
+| `f64` overflow 和 division by zero | C `double` 行为 | C `double` 行为，除非发生其他 checked error，否则仍返回 `IK_OK` |
 | User pointers | 不检查 | 不检查，除了生成的 `ik_return` |
 | Bounds checks | 无 | 无 |
 | Runtime dependency | 无 | 无 |
@@ -177,10 +178,12 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 
 ### `/`
 
-- Divisor 为零时，返回 `IK_ERR_DIV_BY_ZERO`。
+- 对 integer operands，divisor 为零时，返回 `IK_ERR_DIV_BY_ZERO`。
 - 对 signed integer，`INT32_MIN / -1` 和 `INT64_MIN / -1` 返回
   `IK_ERR_OVERFLOW`。
 - Unsigned division 只需要 zero-divisor check。
+- 对 `f64`，执行普通 C `double` division。`1.0 / 0.0` 不返回
+  `IK_ERR_DIV_BY_ZERO`。
 - 其他情况执行普通 division。
 
 ### `%`
@@ -196,7 +199,19 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 - 对 signed integer，`-INT32_MIN` 和 `-INT64_MIN` 返回 `IK_ERR_OVERFLOW`。
 - 对 unsigned integer，unary minus 降低为从零开始的 checked subtraction，所以任意
   非零值都会 overflow。
+- 对 `f64`，执行普通 C `double` negation。
 - 其他情况执行普通 negation。
+
+### `f64`
+
+Checked C mode 仍然是 integer checked arithmetic mode。选择 `--overflow checked`
+时，包含 `f64` 的函数也使用 checked ABI，因此返回 `IK_Status`，并通过 `ik_return`
+写出 source-level return value。f64 operation 本身使用普通 strict C `double` 行为：
+
+- `f64 +`、`-`、`*`、`/` 不调用 integer overflow builtin。
+- f64 division by zero 不返回 `IK_ERR_DIV_BY_ZERO`。
+- f64 overflow 不返回 `IK_ERR_OVERFLOW`。
+- `f64 %` 不是语言操作，会在 C emission 前被拒绝。
 
 ## Logical Operators
 

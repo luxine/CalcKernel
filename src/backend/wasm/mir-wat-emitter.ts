@@ -360,6 +360,7 @@ function indent(level: number): string {
 function instructionTarget(instruction: MirInstruction): MirValue | null {
   switch (instruction.kind) {
     case "const_int":
+    case "const_float":
     case "const_bool":
     case "move":
     case "binary":
@@ -378,6 +379,10 @@ function emitInstruction(body: string[], instruction: MirInstruction, context: M
   switch (instruction.kind) {
     case "const_int":
       body.push(`${mirTypeToWasmValueType(instruction.target.type)}.const ${instruction.value}`);
+      emitSet(body, instruction.target);
+      return;
+    case "const_float":
+      body.push(`f64.const ${instruction.value}`);
       emitSet(body, instruction.target);
       return;
     case "const_bool":
@@ -430,6 +435,13 @@ function emitInstruction(body: string[], instruction: MirInstruction, context: M
 function emitUnaryInstruction(body: string[], op: MirUnaryOp, operand: MirValue, target: MirValue): void {
   switch (op) {
     case "neg":
+      if (isF64Type(operand.type)) {
+        emitValue(body, operand);
+        body.push("f64.neg");
+        emitSet(body, target);
+        return;
+      }
+
       body.push(`${mirTypeToWasmValueType(operand.type)}.const 0`);
       emitValue(body, operand);
       body.push(`${mirTypeToWasmValueType(operand.type)}.sub`);
@@ -465,6 +477,9 @@ function emitValue(body: string[], value: MirValue): void {
       return;
     case "const_int":
       body.push(`${mirTypeToWasmValueType(value.type)}.const ${value.text}`);
+      return;
+    case "const_float":
+      body.push(`f64.const ${value.text}`);
       return;
     case "const_bool":
       body.push(`i32.const ${value.value ? "1" : "0"}`);
@@ -518,6 +533,7 @@ function emitSet(body: string[], target: MirValue): void {
       body.push(`local.set ${toWasmIdentifier(target.name)}`);
       return;
     case "const_int":
+    case "const_float":
     case "const_bool":
       throw new Error("Cannot assign to a MIR constant value.");
   }
@@ -525,6 +541,21 @@ function emitSet(body: string[], target: MirValue): void {
 
 function binaryWatInstruction(op: MirBinaryOp, type: MirType): string {
   const wasmType = mirTypeToWasmValueType(type);
+  if (isF64Type(type)) {
+    switch (op) {
+      case "+":
+        return "f64.add";
+      case "-":
+        return "f64.sub";
+      case "*":
+        return "f64.mul";
+      case "/":
+        return "f64.div";
+      case "%":
+        throw new Error("WASM backend does not support f64 modulo.");
+    }
+  }
+
   switch (op) {
     case "+":
       return `${wasmType}.add`;
@@ -541,6 +572,23 @@ function binaryWatInstruction(op: MirBinaryOp, type: MirType): string {
 
 function compareWatInstruction(op: MirCompareOp, type: MirType): string {
   const wasmType = mirTypeToWasmValueType(type);
+  if (isF64Type(type)) {
+    switch (op) {
+      case "==":
+        return "f64.eq";
+      case "!=":
+        return "f64.ne";
+      case "<":
+        return "f64.lt";
+      case "<=":
+        return "f64.le";
+      case ">":
+        return "f64.gt";
+      case ">=":
+        return "f64.ge";
+    }
+  }
+
   switch (op) {
     case "==":
       return `${wasmType}.eq`;
@@ -624,6 +672,7 @@ function sizeOfMirWasmType(type: MirType, context: MirWasmContext): number {
           return 4;
         case "i64":
         case "u64":
+        case "f64":
           return 8;
       }
     case "pointer":
@@ -643,6 +692,7 @@ function alignOfMirWasmType(type: MirType, context: MirWasmContext): number {
           return 4;
         case "i64":
         case "u64":
+        case "f64":
           return 8;
       }
     case "pointer":
@@ -692,6 +742,8 @@ function mirTypeToWasmValueType(type: MirType): WasmValueType {
         case "i64":
         case "u64":
           return "i64";
+        case "f64":
+          return "f64";
       }
     case "pointer":
       return "i32";
@@ -702,4 +754,8 @@ function mirTypeToWasmValueType(type: MirType): WasmValueType {
 
 function isUnsignedIntegerType(type: MirType): boolean {
   return type.kind === "primitive" && (type.name === "u32" || type.name === "u64");
+}
+
+function isF64Type(type: MirType): boolean {
+  return type.kind === "primitive" && type.name === "f64";
 }

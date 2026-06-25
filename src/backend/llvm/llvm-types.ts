@@ -15,6 +15,8 @@ export function llvmValueType(type: LlvmSourceType): LlvmType {
         case "i64":
         case "u64":
           return "i64";
+        case "f64":
+          return "double";
         case "bool":
           return "i1";
       }

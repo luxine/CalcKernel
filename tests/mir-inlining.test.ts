@@ -114,6 +114,27 @@ describe("small function inlining", () => {
     expect(text).toContain("mul");
   });
 
+  it("inlines f64 helper values without adding float algebra assumptions", () => {
+    const optimized = optimize(
+      `
+        fn add_one(x: f64) -> f64 {
+          return x + 1.0;
+        }
+
+        export fn calc(a: f64) -> f64 {
+          return add_one(a);
+        }
+      `,
+      2
+    );
+    const text = printMirModule(optimized);
+
+    expect(text).not.toContain("call add_one");
+    expect(text).not.toContain("fn add_one");
+    expect(text).toContain("const_float 1.0");
+    expect(text).toContain("add a,");
+  });
+
   it("does not inline exported functions", () => {
     const optimized = optimize(
       `

@@ -50,10 +50,12 @@ Supported:
 - internal non-exported functions
 - scalar arithmetic
 - comparisons
+- `f64` scalar arithmetic and comparisons
 - `if` / `else`
 - `while`
 - function calls
 - ptr/index/field load and store
+- `ptr<f64>` and struct fields containing `f64`
 - unchecked arithmetic
 
 Not supported:
@@ -121,11 +123,16 @@ can broaden direct SSA lowering or add a MIR-to-SSA transform.
 | `u32` | `i32` |
 | `i64` | `i64` |
 | `u64` | `i64` |
+| `f64` | `double` |
 | `bool` internal and exported scalar | `i1` |
 | `ptr<T>` | `ptr` |
 | `struct` | named LLVM struct type |
 
 Phase 13 v1 uses LLVM opaque pointers (`ptr`).
+Phase 16.8 supports `f64` as LLVM `double`, including scalar parameters and
+returns, `ptr<f64>` memory access, struct fields as `double`, arithmetic,
+unary negation, and comparisons. LLVM f64 codegen does not add fast-math flags
+and does not promise bit-identical results across every backend.
 
 Signedness is not part of the integer type. Signed and unsigned differences are
 encoded by instruction choice for division, remainder, and comparison.
@@ -167,6 +174,12 @@ Structs lower to named LLVM struct types:
 %struct.Item = type { i64, i64, i64, i64 }
 ```
 
+An `f64` field lowers to `double`:
+
+```llvm
+%struct.WithF64 = type { i32, double }
+```
+
 Field order follows the source declaration order. Layout is ultimately
 interpreted by the LLVM target data layout during native compilation, so Phase
 13 tests must verify important ABI expectations with clang on supported hosts.
@@ -175,13 +188,16 @@ interpreted by the LLVM target data layout during native compilation, so Phase
 
 Unchecked arithmetic:
 
-| MIR op | Signed type | Unsigned type |
-| --- | --- | --- |
-| `+` | `add` | `add` |
-| `-` | `sub` | `sub` |
-| `*` | `mul` | `mul` |
-| `/` | `sdiv` | `udiv` |
-| `%` | `srem` | `urem` |
+| MIR op | Signed integer | Unsigned integer | `f64` |
+| --- | --- | --- | --- |
+| `+` | `add` | `add` | `fadd` |
+| `-` | `sub` | `sub` | `fsub` |
+| `*` | `mul` | `mul` | `fmul` |
+| `/` | `sdiv` | `udiv` | `fdiv` |
+| `%` | `srem` | `urem` | unsupported |
+
+Unary `-f64` lowers to `fneg double`. The backend must not lower f64 negation
+through integer zero subtraction.
 
 Phase 13 v1 must not add checked arithmetic guards. If checked mode is
 requested, the backend must report an unsupported-mode error.
@@ -206,6 +222,15 @@ Unsigned ordering:
 - `<=` -> `icmp ule`
 - `>` -> `icmp ugt`
 - `>=` -> `icmp uge`
+
+F64 comparison:
+
+- `==` -> `fcmp oeq`
+- `!=` -> `fcmp une`
+- `<` -> `fcmp olt`
+- `<=` -> `fcmp ole`
+- `>` -> `fcmp ogt`
+- `>=` -> `fcmp oge`
 
 Comparison results are `i1`.
 
@@ -288,6 +313,12 @@ not check pointer nullness.
 The Phase 13 memory e2e tests cover integer pointers and integer struct fields.
 Bool scalar ABI is covered separately, but bool fields or bool pointers are not
 treated as a cross-language stable LLVM memory ABI yet.
+
+`ptr<f64>` uses opaque `ptr` at the function boundary and lowers indexed access
+with `getelementptr double`. F64 loads and stores use `load double` and
+`store double`. Struct fields declared as `f64` use `double` in the named LLVM
+struct declaration, and field access uses the same struct GEP pattern as
+integer fields.
 
 ## Target Triple
 
@@ -429,6 +460,8 @@ Required tests:
 - control-flow e2e
 - function-call e2e
 - ptr/index/field/store e2e
+- f64 scalar, pointer, and struct-field e2e
+- no-fast-math regression for f64 LLVM IR
 - pricing e2e
 - checked-mode unsupported diagnostic tests
 - object output tests
@@ -452,6 +485,8 @@ Generated LLVM IR must be stable:
 - LLVM tool availability in local and CI environments
 - alloca-heavy IR performance is not the final shape
 - matching C backend ABI behavior for host-language integrations
+- cross-backend f64 precision and NaN behavior may differ in target-specific
+  edge cases
 
 ## Current Limitations
 
@@ -462,6 +497,9 @@ Generated LLVM IR must be stable:
   lowering.
 - only simple scalar straight-line functions use SSA-like lowering at `-O2` and
   `-O3`.
+- f64 codegen is strict by default and does not emit fast-math flags.
+- f64 `%`, f32, implicit int/float conversion, float checked overflow, SIMD,
+  and JIT remain unsupported.
 - no LLVM-specific optimizer pass pipeline is run by IntKernel; backend input
   still flows through the shared MIR pass manager.
 - `build-llvm` depends on external clang; IntKernel does not bundle clang,

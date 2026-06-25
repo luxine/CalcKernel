@@ -1,4 +1,4 @@
-# IntKernel WASM ABI
+# IK / IntKernel WASM ABI
 
 [简体中文](zh-CN/WASM_ABI.md)
 
@@ -52,6 +52,7 @@ Supported by the Phase 12 v1 design:
 - `i64`
 - `u32`
 - `u64`
+- `f64`
 - `bool`
 - `ptr<T>`
 - deterministic struct memory layout
@@ -59,6 +60,7 @@ Supported by the Phase 12 v1 design:
 - non-exported internal functions
 - exported linear memory
 - unchecked arithmetic
+- `f64` arithmetic, comparison, load, and store
 - WAT-to-WASM assembly through `wabt`
 
 Not supported by Phase 12 v1:
@@ -80,6 +82,10 @@ The current `emit-wasm` implementation supports `ptr<T>` load/store codegen for
 MIR places such as `items[i].price` and `out[i] = value`. It still does not add
 bounds checks or pointer validity checks.
 
+Phase 16.9 supports `f64` scalar arithmetic, comparison, load, and store
+codegen. `f64` has size 8, alignment 8, scalar ABI type `f64`, and host
+JavaScript interop uses `Number`, not `BigInt`.
+
 ## Type Mapping
 
 | IntKernel type | WASM value type |
@@ -89,6 +95,7 @@ bounds checks or pointer validity checks.
 | `bool` | `i32` |
 | `i64` | `i64` |
 | `u64` | `i64` |
+| `f64` | `f64` |
 | `ptr<T>` | `i32` memory offset |
 
 WASM does not have distinct `u32` or `u64` value types. Signedness is selected
@@ -98,7 +105,8 @@ by instruction choice for division, remainder, and comparisons.
 produce canonical `0` or `1` results for IntKernel boolean expressions.
 
 JavaScript's WebAssembly API represents `i64` and `u64` parameters and return
-values as `BigInt`.
+values as `BigInt`. It represents `f64` parameters and return values as
+JavaScript `Number`.
 
 ## Function ABI
 
@@ -144,6 +152,8 @@ an export entry.
 ## Pointer ABI
 
 `ptr<T>` is a `wasm32` linear-memory offset represented as an `i32`.
+`ptr<f64>` is still an `i32` byte offset; indexing advances by 8 bytes per
+element.
 
 Example IntKernel:
 
@@ -203,6 +213,7 @@ Primitive layout:
 | `ptr<T>` | 4 | 4 |
 | `i64` | 8 | 8 |
 | `u64` | 8 | 8 |
+| `f64` | 8 | 8 |
 
 Struct layout rules:
 
@@ -256,9 +267,12 @@ The backend chooses the load/store instruction from the value type:
 
 - `i32.load` / `i32.store` for `i32`, `u32`, `bool`, and `ptr<T>`
 - `i64.load` / `i64.store` for `i64` and `u64`
+- `f64.load` / `f64.store` for `f64`
 
 All host-side examples should use little-endian reads and writes. WebAssembly
-linear memory is little-endian.
+linear memory is little-endian. Host tests and harnesses should use
+`DataView.getFloat64(offset, true)` and `DataView.setFloat64(offset, value,
+true)` for `f64` buffers.
 
 ## Arithmetic Mapping
 
@@ -269,6 +283,7 @@ types use the same WASM arithmetic instruction for a given width:
 
 - `i32.add`, `i32.sub`, `i32.mul`
 - `i64.add`, `i64.sub`, `i64.mul`
+- `f64.add`, `f64.sub`, `f64.mul`
 
 Division and remainder must choose signed or unsigned instructions:
 
@@ -276,6 +291,10 @@ Division and remainder must choose signed or unsigned instructions:
 - `i64.div_s` / `i64.div_u`
 - `i32.rem_s` / `i32.rem_u`
 - `i64.rem_s` / `i64.rem_u`
+
+F64 division uses `f64.div`. F64 remainder is not supported. Unary `-f64`
+lowers to `f64.neg`; integer negation keeps the existing zero-subtraction
+lowering.
 
 Comparisons must also choose signed or unsigned instructions:
 
@@ -292,6 +311,12 @@ Equality comparisons use the same instruction regardless of signedness:
 
 - `i32.eq`, `i32.ne`
 - `i64.eq`, `i64.ne`
+
+F64 comparisons use the standard WASM f64 predicates:
+
+- `f64.eq`, `f64.ne`
+- `f64.lt`, `f64.le`
+- `f64.gt`, `f64.ge`
 
 ## Checked Overflow
 
@@ -333,6 +358,7 @@ Interop rules:
 - use little-endian `DataView` methods
 - pass `ptr<T>` values as numeric memory offsets
 - pass and receive `i64` / `u64` values as `BigInt`
+- pass and receive `f64` values as JavaScript `Number`
 - interpret `bool` results as `result !== 0`
 
 The host is responsible for choosing non-overlapping memory regions for input
@@ -363,6 +389,13 @@ writeItem(0, {
 const price = instance.exports.first_price(0);
 ```
 
+For `ptr<f64>` buffers, use explicit little-endian float access:
+
+```js
+view.setFloat64(valuesOffset + 8, 2.5, true);
+const value = view.getFloat64(valuesOffset + 8, true);
+```
+
 ## Browser Interop
 
 Generated WASM can also run in browsers through the standard WebAssembly API.
@@ -374,6 +407,7 @@ The browser example in `examples/browser-wasm-call/` uses:
 - `DataView` for little-endian memory writes and reads
 - numeric memory offsets for `ptr<T>` values
 - `BigInt` for any `i64` / `u64` values crossing the JS/WASM boundary
+- `Number` for any `f64` values crossing the JS/WASM boundary
 
 Browsers usually cannot fetch `.wasm` from `file://`. Serve the example through
 a local HTTP server, for example:
