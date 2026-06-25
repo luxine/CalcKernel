@@ -30,6 +30,17 @@ tests this is expected to be size 8 and alignment 8. IK / IntKernel does not
 promise bit-identical floating point results across all C, LLVM, WASM, and
 JavaScript targets.
 
+Semantic lock for f64:
+
+- C uses ordinary `double` operations.
+- LLVM emits `double` operations without fast-math flags.
+- WASM emits `f64` operations and exposes scalar f64 values to JavaScript as
+  `Number`.
+- NaN, infinity, and `-0.0` follow ordinary backend IEEE-like behavior.
+- NaN payloads and cross-backend bit identity are not part of the ABI contract.
+- Finite cross-backend tests must use tolerance; NaN, infinity, signed zero,
+  and bool comparison results must be classified explicitly.
+
 ## Type Mapping
 
 | IntKernel type | C ABI type |

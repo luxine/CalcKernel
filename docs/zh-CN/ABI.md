@@ -27,6 +27,16 @@ C 编译器的 `double` layout；当前 release targets 覆盖的测试预期 si
 alignment 8。IK / IntKernel 不承诺所有 C、LLVM、WASM 和 JavaScript target 的浮点
 结果 bit-identical。
 
+f64 语义锁定：
+
+- C 使用普通 `double` operation。
+- LLVM 生成不带 fast-math flag 的 `double` operation。
+- WASM 生成 `f64` operation，scalar f64 通过 JavaScript `Number` 暴露给 host。
+- NaN、infinity 和 `-0.0` 遵循 backend 的普通 IEEE-like 行为。
+- NaN payload 和跨 backend bit identity 不属于 ABI contract。
+- 有限值跨 backend 测试必须使用 tolerance；NaN、infinity、signed zero 和 bool
+  comparison result 必须显式分类。
+
 ## 类型映射
 
 | IntKernel type | C ABI type |

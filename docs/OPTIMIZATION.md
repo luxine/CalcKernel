@@ -409,6 +409,17 @@ Phase 16 f64 support is strict-safe:
 - DCE may remove unused pure f64 temporaries, but must not remove loads, stores,
   calls, branch conditions, return values, or control flow
 
+Future optimizer passes must prove strict-float safety before touching f64.
+The default rule is to skip f64 rather than infer algebraic identities from
+integer arithmetic. In particular:
+
+- do not fold `x * 0.0` to `0.0`, because `NaN * 0.0` is `NaN`
+- do not fold `x / x` to `1.0`, because `0.0 / 0.0` is `NaN`
+- do not fold or reorder `x + 0.0`, because signed zero can be observable
+- do not sort operands of f64 `+`, `*`, `==`, or `!=`
+- do not hoist f64 division or other f64 arithmetic speculatively out of loops
+- do not emit LLVM fast-math flags or rely on target-specific fast-float modes
+
 ## Release Guidance
 
 Before releasing optimization changes:

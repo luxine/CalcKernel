@@ -163,6 +163,16 @@ int/float conversion 或 f64 checked overflow。
 Python list `float` 和 NumPy 可以作为可选手动 baseline，但不是本 runner 的默认
 依赖。NumPy 是 native library baseline，不是语言语义 oracle。
 
+f64 benchmark run 是文档和 release smoke 工具：
+
+- `--quick` 是 smoke check
+- `--full` 是 tag 前可选手动检查
+- 不把 f64 阈值加入普通 `pnpm test`
+- 不提交 `build/perf` 下的本机 f64 baseline
+- JS `Array` `Number`、JS `Float64Array`、IK C、IK LLVM、IK WASM、可选 Python
+  和可选 NumPy 是不同 runtime model
+- WASM total 结果可能主要受 host memory marshal 影响，而不是 compute 本身
+
 当前瓶颈分析和 Phase 14 优化优先级见
 [2026-06-24 性能画像](docs/2026-06-24-performance-profile.zh-CN.md)。
 当前 pipeline、本机最新 full-run 数字和回归流程的 release-level 总结见

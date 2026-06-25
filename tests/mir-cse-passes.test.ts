@@ -114,6 +114,37 @@ describe("MIR CSE passes", () => {
     expect(instructions[2]).toEqual({ kind: "binary", target: temp("t2", f64), op: "+", left: param("a", f64), right: param("b", f64) });
   });
 
+  it("does not treat f64 multiplication as a commutative integer CSE expression", () => {
+    const func: MirFunction = {
+      name: "mul_f64",
+      exported: true,
+      params: [
+        { name: "a", type: f64 },
+        { name: "b", type: f64 }
+      ],
+      returnType: f64,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "binary", target: temp("t0", f64), op: "*", left: param("a", f64), right: param("b", f64) },
+            { kind: "binary", target: temp("t1", f64), op: "*", left: param("b", f64), right: param("a", f64) },
+            { kind: "binary", target: temp("t2", f64), op: "*", left: param("a", f64), right: param("b", f64) }
+          ],
+          terminator: { kind: "return", value: temp("t2", f64) }
+        }
+      ]
+    };
+
+    const optimized = runSinglePass({ structs: [], functions: [func] }, localCsePass);
+    const instructions = optimized.functions[0]!.blocks[0]!.instructions;
+
+    expect(instructions[0]).toEqual({ kind: "binary", target: temp("t0", f64), op: "*", left: param("a", f64), right: param("b", f64) });
+    expect(instructions[1]).toEqual({ kind: "binary", target: temp("t1", f64), op: "*", left: param("b", f64), right: param("a", f64) });
+    expect(instructions[2]).toEqual({ kind: "binary", target: temp("t2", f64), op: "*", left: param("a", f64), right: param("b", f64) });
+  });
+
   it("does not CSE ordinary loads across a store", () => {
     const optimized = optimizeForC(
       `

@@ -174,6 +174,17 @@ memory setup 使用 little-endian `DataView.setFloat64` 和 `DataView.getFloat64
 当前 WASM 最大瓶颈：total benchmark 中的 host-side memory setup/readback。
 compute-only WASM 已接近很多，但仍慢于 native code。
 
+f64 benchmark 解读锁定为 strict semantics：
+
+- quick run 是 smoke check，不是 release performance claim
+- full run 是可选手动 release check
+- 不把 f64 性能阈值放入普通 `pnpm test`
+- 不提交本机 f64 baseline
+- 有限 f64 结果使用 absolute tolerance 和 relative tolerance 对比
+- NaN、infinity 和 `-0.0` 用分类判断，不要求 bit-identical output
+- JS `Array` `Number`、JS `Float64Array`、WASM、native C、LLVM、可选 Python
+  和可选 NumPy 都是不同 runtime model
+
 ## Checked vs Unchecked
 
 输入已被证明安全且最大吞吐最重要时，使用 unchecked mode。金额、税费、优惠或规则

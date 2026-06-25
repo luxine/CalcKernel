@@ -94,6 +94,10 @@
   short-circuit、memory 和 `examples/pricing.ik`。
 - 确认已实现 backend 的 f64 scalar、ptr、struct-field、arithmetic、comparison、
   unary minus 和 backend parity regression 通过。
+- 确认 cross-backend f64 behavior matrix 覆盖有限值、NaN、infinity、`-0.0`、
+  f64 comparison、`ptr<f64>` 和 struct f64 field。
+- 确认有限 f64 值使用 tolerance，NaN、infinity 和 signed zero 使用分类判断，而不是
+  exact bit comparison。
 - 确认没有 backend output snapshot 发生非预期变化。
 - 如果 snapshot 有变化，必须先解释真实预期行为变化，再接受更新。不要为了让测试通过
   而更新 snapshots。
@@ -117,6 +121,24 @@
   - local CSE 不排序 f64 operand
   - 不做 f64 LICM hoisting
   - 不做 f64 induction simplification
+  - 不生成 LLVM fast-math flag
+  - 不做 NaN、infinity 或 `-0.0` 敏感的代数重写
+
+## Float Semantics Lock
+
+- 确认语言文档描述 f64 primitive、float literal、arithmetic、unary minus、
+  comparison、`ptr<f64>` 和包含 `f64` 的 struct field。
+- 确认文档明确拒绝 f32、implicit int/float conversion、explicit numeric cast、
+  `f64 %`、fast-math、SIMD、JIT、runtime、IO、strings、GC、NaN literal syntax、
+  infinity literal syntax 和 float suffix literal。
+- 确认 checked arithmetic 文档说明 f64 不参与 integer overflow check，f64
+  division by zero 不返回 `IK_ERR_DIV_BY_ZERO`，f64 overflow 不返回
+  `IK_ERR_OVERFLOW`。
+- 确认 ABI/backend 文档说明 C 使用 `double`，LLVM 使用不带 fast-math flag 的
+  `double`，WASM 使用 `f64`，JavaScript interop 使用 `Number`。
+- 确认文档不承诺 NaN payload 稳定，也不承诺跨 backend 浮点结果 bit-identical。
+- 确认 optimizer 文档要求未来 pass 在改变 f64 expression 前必须证明
+  strict-float safety。
 
 ## Benchmark Smoke
 
@@ -167,6 +189,28 @@
   一致。
 - 确认没有误包含本地 build artifact、benchmark output、真实本机 baseline、cache、
   editor state 或临时日志。
+
+## Package Fresh Install Smoke
+
+- 在仓库根目录运行 `npm pack`，记录生成的 tarball 名称。
+- 不要提交生成的 `.tgz` tarball。
+- 在仓库外创建临时目录，并运行 `npm init -y`。
+- 使用 `npm install /absolute/path/to/intkernel-<version>.tgz` 安装生成的 tarball。
+- 确认 `node_modules/.bin/ikc --help` 可以运行，并且 help 使用 `ikc` 命令和
+  `.ik` source examples。
+- 在临时目录创建最小 `.ik` 文件，并运行：
+  - `node_modules/.bin/ikc check smoke.ik`
+  - `node_modules/.bin/ikc emit-mir smoke.ik -o build/smoke.mir`
+  - `node_modules/.bin/ikc emit-c smoke.ik -o build/smoke.c`
+  - `node_modules/.bin/ikc emit-wat smoke.ik -o build/smoke.wat`
+  - `node_modules/.bin/ikc emit-wasm smoke.ik -o build/smoke.wasm`
+  - `node_modules/.bin/ikc emit-llvm smoke.ik -o build/smoke.ll`
+  - 如果环境有 clang，运行
+    `node_modules/.bin/ikc build-llvm smoke.ik --kind object -o build/smoke.o`。
+- 确认 emitted C source 和默认生成的 C header 都存在且非空。
+- smoke source 应覆盖 f64 params/returns、f64 arithmetic、unary minus、f64
+  comparison、`ptr<f64>` 和包含 `f64` 的 struct field。
+- smoke 完成后删除临时目录和生成的 tarball；如果有本地 artifact 留下，必须明确报告。
 
 ## Tag Gate
 

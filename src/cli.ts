@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emitCFiles, buildSharedLibrary, type BuildPlatform, type CommandResult, type CommandRunner } from "./backend/c/c-build.js";
@@ -94,7 +94,7 @@ function runEmitC(args: string[], context: Required<RunCliOptions>): number {
   const parsed = parseFlags(args);
   const file = requireSingleInput(parsed, "emit-c");
   const cFile = requireFlag(parsed, "--out", "emit-c");
-  const headerFile = requireFlag(parsed, "--header", "emit-c");
+  const headerFile = parsed.flags.get("--header") ?? defaultHeaderFileForCOutput(cFile);
   const overflowMode = parseOverflowMode(parsed);
   const optLevel = parseOptLevel(parsed);
   const debug = parseMirDebugFlags(parsed);
@@ -398,6 +398,17 @@ function parseFlags(args: string[]): FlagParseResult {
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
+    if (arg === "-o") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("Missing value for -o.");
+      }
+
+      flags.set("--out", value);
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith("-O")) {
       flags.set("--opt-level", arg.slice(2));
       continue;
@@ -440,6 +451,15 @@ function requireFlag(parsed: FlagParseResult, flag: string, command: string): st
   }
 
   return value;
+}
+
+function defaultHeaderFileForCOutput(cFile: string): string {
+  const dir = dirname(cFile);
+  const fileName = basename(cFile);
+  const extensionIndex = fileName.lastIndexOf(".");
+  const baseName = extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
+  const headerName = `${baseName}.h`;
+  return dir === "." ? headerName : join(dir, headerName);
 }
 
 function writeFileAtomic(path: string, data: string | Uint8Array): void {
@@ -583,7 +603,7 @@ function usage(): string {
   return [
     "Usage:",
     "  ikc check <file>",
-    "  ikc emit-c <file> --out <c-file> --header <h-file> [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
+    "  ikc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
     "  ikc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]",
     "  ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
     "  ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
@@ -593,6 +613,7 @@ function usage(): string {
     "",
     "Options:",
     "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.",
+    "  -o <file>                         Alias for --out <file>.",
     "  --opt-level <0|1|2|3>            MIR optimization level. Default: 0.",
     "  -O0, -O1, -O2, -O3              Alias for --opt-level.",
     "  --print-pass-pipeline           Print the selected MIR pass pipeline to stderr.",
@@ -602,9 +623,23 @@ function usage(): string {
   ].join("\n");
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
-const modulePath = fileURLToPath(import.meta.url);
+export function isCliEntrypoint(invokedPath: string | undefined, moduleUrl: string): boolean {
+  if (!invokedPath) {
+    return false;
+  }
 
-if (invokedPath === modulePath) {
+  return realpathOrResolved(invokedPath) === realpathOrResolved(fileURLToPath(moduleUrl));
+}
+
+function realpathOrResolved(path: string): string {
+  const resolvedPath = resolve(path);
+  try {
+    return realpathSync(resolvedPath);
+  } catch {
+    return resolvedPath;
+  }
+}
+
+if (isCliEntrypoint(process.argv[1], import.meta.url)) {
   process.exit(runCli());
 }

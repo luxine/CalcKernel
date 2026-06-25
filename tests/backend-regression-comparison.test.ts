@@ -153,6 +153,37 @@ function calcExpected(fields: { price: bigint; qty: bigint; discount: bigint; ta
   return afterDiscount + tax;
 }
 
+function classifyF64(value: number): string {
+  if (Number.isNaN(value)) {
+    return "nan";
+  }
+  if (value === Infinity) {
+    return "+inf";
+  }
+  if (value === -Infinity) {
+    return "-inf";
+  }
+  if (Object.is(value, -0)) {
+    return "-0";
+  }
+  if (Object.is(value, 0)) {
+    return "+0";
+  }
+  return "finite";
+}
+
+function closeF64(actual: number, expected: number): boolean {
+  const diff = Math.abs(actual - expected);
+  const scale = Math.max(1, Math.abs(actual), Math.abs(expected));
+  return diff <= 1e-12 * scale || diff <= 1e-12;
+}
+
+type MatrixResult = [name: string, passed: boolean];
+
+function formatF64MatrixResults(results: readonly MatrixResult[]): string {
+  return `f64_matrix:${results.map(([name, passed]) => `${name}=${passed ? "ok" : "fail"}`).join(";")}`;
+}
+
 function cHarness(headerName: string, body: string): string {
   return `#include "${headerName}"
 #include <stdbool.h>
@@ -238,6 +269,141 @@ const pricingBody = `int main(void) {
     status,
     (long long)out[0],
     (long long)out[1]);
+  return 0;
+}`;
+
+const f64MatrixCaseNames = [
+  "finite_add",
+  "finite_sub",
+  "finite_mul",
+  "finite_div",
+  "tolerance_calc",
+  "finite_less",
+  "finite_less_equal",
+  "finite_equal",
+  "pos_inf",
+  "neg_inf",
+  "nan",
+  "neg_zero",
+  "zero_eq_neg_zero",
+  "nan_eq_nan",
+  "nan_ne_nan",
+  "nan_lt_one",
+  "nan_le_one",
+  "nan_gt_one",
+  "nan_ge_one",
+  "inf_plus",
+  "inf_minus_inf",
+  "overflow",
+  "underflow",
+  "inf_gt_finite",
+  "neg_inf_lt_finite",
+  "ptr_load",
+  "ptr_store",
+  "struct_read",
+  "struct_write",
+  "nested_struct_read",
+  "nested_struct_write"
+] as const;
+
+const f64MatrixExpected = `f64_matrix:${f64MatrixCaseNames.map((name) => `${name}=ok`).join(";")}`;
+
+const f64MatrixTypes = `typedef struct Quote {
+  double price;
+  double tax;
+} Quote;
+
+typedef struct NestedQuote {
+  Quote quote;
+  double fee;
+} NestedQuote;`;
+
+const f64MatrixBody = `#include <math.h>
+#include <string.h>
+
+static const char* class_f64(double value) {
+  if (isnan(value)) {
+    return "nan";
+  }
+  if (isinf(value)) {
+    return signbit(value) ? "-inf" : "+inf";
+  }
+  if (value == 0.0 && signbit(value)) {
+    return "-0";
+  }
+  if (value == 0.0) {
+    return "+0";
+  }
+  return "finite";
+}
+
+static const char* ok(int pass) {
+  return pass ? "ok" : "fail";
+}
+
+static int class_is(double value, const char* expected) {
+  return strcmp(class_f64(value), expected) == 0;
+}
+
+static int close_f64(double actual, double expected) {
+  double diff = fabs(actual - expected);
+  double scale = fabs(actual);
+  double expected_abs = fabs(expected);
+  if (expected_abs > scale) {
+    scale = expected_abs;
+  }
+  if (scale < 1.0) {
+    scale = 1.0;
+  }
+  return diff <= 0.000000000001 * scale || diff <= 0.000000000001;
+}
+
+int main(void) {
+  double values[3] = {1.0, 2.5, 4.0};
+  Quote quotes[2] = {
+    { .price = 10.25, .tax = 0.75 },
+    { .price = 20.5, .tax = 1.25 }
+  };
+  NestedQuote nested[2] = {
+    { .quote = { .price = 1.25, .tax = 0.75 }, .fee = 2.0 },
+    { .quote = { .price = 10.0, .tax = 2.0 }, .fee = 3.0 }
+  };
+  double ptr_store_value = ptr_write(values, 1, 8.75);
+  double struct_write_value = struct_write(quotes, 1, 0.5);
+  double nested_write_value = nested_struct_write(nested, 1, 1.5);
+
+  printf("f64_matrix:");
+  printf("finite_add=%s;", ok(close_f64(finite_add(), 4.0)));
+  printf("finite_sub=%s;", ok(close_f64(finite_sub(), 3.5)));
+  printf("finite_mul=%s;", ok(close_f64(finite_mul(), 3.75)));
+  printf("finite_div=%s;", ok(close_f64(finite_div(), 3.5)));
+  printf("tolerance_calc=%s;", ok(close_f64(tolerance_calc(), 10.0)));
+  printf("finite_less=%s;", ok(finite_less() == true));
+  printf("finite_less_equal=%s;", ok(finite_less_equal() == true));
+  printf("finite_equal=%s;", ok(finite_equal() == true));
+  printf("pos_inf=%s;", ok(class_is(positive_infinity(), "+inf")));
+  printf("neg_inf=%s;", ok(class_is(negative_infinity(), "-inf")));
+  printf("nan=%s;", ok(class_is(not_a_number(), "nan")));
+  printf("neg_zero=%s;", ok(class_is(negative_zero(), "-0")));
+  printf("zero_eq_neg_zero=%s;", ok(zero_equals_negative_zero() == true));
+  printf("nan_eq_nan=%s;", ok(nan_equals_nan() == false));
+  printf("nan_ne_nan=%s;", ok(nan_not_equals_nan() == true));
+  printf("nan_lt_one=%s;", ok(nan_less_than_one() == false));
+  printf("nan_le_one=%s;", ok(nan_less_equal_one() == false));
+  printf("nan_gt_one=%s;", ok(nan_greater_than_one() == false));
+  printf("nan_ge_one=%s;", ok(nan_greater_equal_one() == false));
+  printf("inf_plus=%s;", ok(class_is(infinity_plus_finite(), "+inf")));
+  printf("inf_minus_inf=%s;", ok(class_is(infinity_minus_infinity(), "nan")));
+  printf("overflow=%s;", ok(class_is(overflow_to_infinity(), "+inf")));
+  printf("underflow=%s;", ok(class_is(underflow_smoke(), "+0")));
+  printf("inf_gt_finite=%s;", ok(infinity_greater_than_finite() == true));
+  printf("neg_inf_lt_finite=%s;", ok(negative_infinity_less_than_finite() == true));
+  printf("ptr_load=%s;", ok(close_f64(ptr_read(values, 2), 4.0)));
+  printf("ptr_store=%s;", ok(close_f64(ptr_store_value, 8.75) && close_f64(values[1], 8.75)));
+  printf("struct_read=%s;", ok(close_f64(struct_read(quotes, 0), 11.0)));
+  printf("struct_write=%s;", ok(close_f64(struct_write_value, 21.0) && close_f64(quotes[1].tax, 0.5)));
+  printf("nested_struct_read=%s;", ok(close_f64(nested_struct_read(nested, 0), 4.0)));
+  printf("nested_struct_write=%s\\n", ok(close_f64(nested_write_value, 14.5) && close_f64(nested[1].quote.tax, 1.5)));
   return 0;
 }`;
 
@@ -330,6 +496,139 @@ int32_t write_i64(int64_t* out, int64_t value);`,
       const outOffset = 512;
       const status = writeI64(outOffset, 123n);
       return `memory:first=${firstPrice(0)};second=${getPrice(0, 1)};status=${status};out=${view.getBigInt64(outOffset, true)}`;
+    }
+  },
+  {
+    name: "f64_matrix",
+    sourceFile: "tests/fixtures/f64_edges.ik",
+    expected: f64MatrixExpected,
+    cHarness: (headerName) => cHarness(headerName, f64MatrixBody),
+    llvmHarness: llvmHarness(
+      `${f64MatrixTypes}
+
+double finite_add(void);
+double finite_sub(void);
+double finite_mul(void);
+double finite_div(void);
+double tolerance_calc(void);
+bool finite_less(void);
+bool finite_less_equal(void);
+bool finite_equal(void);
+double negative_infinity(void);
+double positive_infinity(void);
+double not_a_number(void);
+double negative_zero(void);
+bool zero_equals_negative_zero(void);
+bool nan_equals_nan(void);
+bool nan_not_equals_nan(void);
+bool nan_less_than_one(void);
+bool nan_less_equal_one(void);
+bool nan_greater_than_one(void);
+bool nan_greater_equal_one(void);
+double infinity_plus_finite(void);
+double infinity_minus_infinity(void);
+double overflow_to_infinity(void);
+double underflow_smoke(void);
+bool infinity_greater_than_finite(void);
+bool negative_infinity_less_than_finite(void);
+double ptr_read(double* values, int32_t index);
+double ptr_write(double* values, int32_t index, double value);
+double struct_read(Quote* quotes, int32_t index);
+double struct_write(Quote* quotes, int32_t index, double value);
+double nested_struct_read(NestedQuote* nested, int32_t index);
+double nested_struct_write(NestedQuote* nested, int32_t index, double value);`,
+      f64MatrixBody
+    ),
+    runWasm: (instance) => {
+      const memory = instance.exports.memory as WasmMemoryLike;
+      const view = new DataView(memory.buffer);
+      const finiteAdd = instance.exports.finite_add as () => number;
+      const finiteSub = instance.exports.finite_sub as () => number;
+      const finiteMul = instance.exports.finite_mul as () => number;
+      const finiteDiv = instance.exports.finite_div as () => number;
+      const toleranceCalc = instance.exports.tolerance_calc as () => number;
+      const finiteLess = instance.exports.finite_less as () => number;
+      const finiteLessEqual = instance.exports.finite_less_equal as () => number;
+      const finiteEqual = instance.exports.finite_equal as () => number;
+      const positiveInfinity = instance.exports.positive_infinity as () => number;
+      const negativeInfinity = instance.exports.negative_infinity as () => number;
+      const notANumber = instance.exports.not_a_number as () => number;
+      const negativeZero = instance.exports.negative_zero as () => number;
+      const zeroEqualsNegativeZero = instance.exports.zero_equals_negative_zero as () => number;
+      const nanEqualsNan = instance.exports.nan_equals_nan as () => number;
+      const nanNotEqualsNan = instance.exports.nan_not_equals_nan as () => number;
+      const nanLessThanOne = instance.exports.nan_less_than_one as () => number;
+      const nanLessEqualOne = instance.exports.nan_less_equal_one as () => number;
+      const nanGreaterThanOne = instance.exports.nan_greater_than_one as () => number;
+      const nanGreaterEqualOne = instance.exports.nan_greater_equal_one as () => number;
+      const infinityPlusFinite = instance.exports.infinity_plus_finite as () => number;
+      const infinityMinusInfinity = instance.exports.infinity_minus_infinity as () => number;
+      const overflowToInfinity = instance.exports.overflow_to_infinity as () => number;
+      const underflowSmoke = instance.exports.underflow_smoke as () => number;
+      const infinityGreaterThanFinite = instance.exports.infinity_greater_than_finite as () => number;
+      const negativeInfinityLessThanFinite = instance.exports.negative_infinity_less_than_finite as () => number;
+      const ptrRead = instance.exports.ptr_read as (values: number, index: number) => number;
+      const ptrWrite = instance.exports.ptr_write as (values: number, index: number, value: number) => number;
+      const structRead = instance.exports.struct_read as (quotes: number, index: number) => number;
+      const structWrite = instance.exports.struct_write as (quotes: number, index: number, value: number) => number;
+      const nestedStructRead = instance.exports.nested_struct_read as (nested: number, index: number) => number;
+      const nestedStructWrite = instance.exports.nested_struct_write as (nested: number, index: number, value: number) => number;
+
+      const valuesOffset = 128;
+      view.setFloat64(valuesOffset + 0, 1.0, true);
+      view.setFloat64(valuesOffset + 8, 2.5, true);
+      view.setFloat64(valuesOffset + 16, 4.0, true);
+      const ptrStoreValue = ptrWrite(valuesOffset, 1, 8.75);
+
+      const quotesOffset = 512;
+      view.setFloat64(quotesOffset + 0, 10.25, true);
+      view.setFloat64(quotesOffset + 8, 0.75, true);
+      view.setFloat64(quotesOffset + 16, 20.5, true);
+      view.setFloat64(quotesOffset + 24, 1.25, true);
+      const structWriteValue = structWrite(quotesOffset, 1, 0.5);
+
+      const nestedOffset = 1024;
+      view.setFloat64(nestedOffset + 0, 1.25, true);
+      view.setFloat64(nestedOffset + 8, 0.75, true);
+      view.setFloat64(nestedOffset + 16, 2.0, true);
+      view.setFloat64(nestedOffset + 24, 10.0, true);
+      view.setFloat64(nestedOffset + 32, 2.0, true);
+      view.setFloat64(nestedOffset + 40, 3.0, true);
+      const nestedWriteValue = nestedStructWrite(nestedOffset, 1, 1.5);
+
+      return formatF64MatrixResults([
+        ["finite_add", closeF64(finiteAdd(), 4.0)],
+        ["finite_sub", closeF64(finiteSub(), 3.5)],
+        ["finite_mul", closeF64(finiteMul(), 3.75)],
+        ["finite_div", closeF64(finiteDiv(), 3.5)],
+        ["tolerance_calc", closeF64(toleranceCalc(), 10.0)],
+        ["finite_less", finiteLess() === 1],
+        ["finite_less_equal", finiteLessEqual() === 1],
+        ["finite_equal", finiteEqual() === 1],
+        ["pos_inf", classifyF64(positiveInfinity()) === "+inf"],
+        ["neg_inf", classifyF64(negativeInfinity()) === "-inf"],
+        ["nan", classifyF64(notANumber()) === "nan"],
+        ["neg_zero", classifyF64(negativeZero()) === "-0"],
+        ["zero_eq_neg_zero", zeroEqualsNegativeZero() === 1],
+        ["nan_eq_nan", nanEqualsNan() === 0],
+        ["nan_ne_nan", nanNotEqualsNan() === 1],
+        ["nan_lt_one", nanLessThanOne() === 0],
+        ["nan_le_one", nanLessEqualOne() === 0],
+        ["nan_gt_one", nanGreaterThanOne() === 0],
+        ["nan_ge_one", nanGreaterEqualOne() === 0],
+        ["inf_plus", classifyF64(infinityPlusFinite()) === "+inf"],
+        ["inf_minus_inf", classifyF64(infinityMinusInfinity()) === "nan"],
+        ["overflow", classifyF64(overflowToInfinity()) === "+inf"],
+        ["underflow", classifyF64(underflowSmoke()) === "+0"],
+        ["inf_gt_finite", infinityGreaterThanFinite() === 1],
+        ["neg_inf_lt_finite", negativeInfinityLessThanFinite() === 1],
+        ["ptr_load", closeF64(ptrRead(valuesOffset, 2), 4.0)],
+        ["ptr_store", closeF64(ptrStoreValue, 8.75) && closeF64(view.getFloat64(valuesOffset + 8, true), 8.75)],
+        ["struct_read", closeF64(structRead(quotesOffset, 0), 11.0)],
+        ["struct_write", closeF64(structWriteValue, 21.0) && closeF64(view.getFloat64(quotesOffset + 24, true), 0.5)],
+        ["nested_struct_read", closeF64(nestedStructRead(nestedOffset, 0), 4.0)],
+        ["nested_struct_write", closeF64(nestedWriteValue, 14.5) && closeF64(view.getFloat64(nestedOffset + 32, true), 1.5)]
+      ]);
     }
   },
   {

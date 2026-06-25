@@ -179,6 +179,33 @@ describe("MIR loop optimization", () => {
     expect(body.instructions.some((instruction) => instruction.kind === "binary" && instruction.op === "*" && instruction.target.type.kind === "primitive" && instruction.target.type.name === "f64")).toBe(true);
   });
 
+  it("does not hoist f64 division or speculative f64 operations out of loops at O3", () => {
+    const optimized = runLicm(
+      lower(`
+        export fn calc(n: i64, a: f64, b: f64) -> f64 {
+          let i: i64 = 0;
+          let sum: f64 = 0.0;
+
+          while i < n {
+            let quotient: f64 = a / b;
+            let shifted: f64 = quotient + 0.0;
+            sum = sum + shifted;
+            i = i + 1;
+          }
+
+          return sum;
+        }
+      `)
+    );
+    const func = firstFunction(optimized);
+    const preheader = func.blocks.find((block) => block.label === "bb0")!;
+    const body = func.blocks.find((block) => block.label === "bb2")!;
+
+    expect(preheader.instructions.some((instruction) => instruction.kind === "binary" && instruction.target.type.kind === "primitive" && instruction.target.type.name === "f64")).toBe(false);
+    expect(body.instructions.some((instruction) => instruction.kind === "binary" && instruction.op === "/" && instruction.target.type.kind === "primitive" && instruction.target.type.name === "f64")).toBe(true);
+    expect(body.instructions.some((instruction) => instruction.kind === "binary" && instruction.op === "+" && instruction.target.type.kind === "primitive" && instruction.target.type.name === "f64")).toBe(true);
+  });
+
   it("does not hoist arithmetic in checked mode", () => {
     const optimized = runLicm(lower(invariantLoopSource()), "checked");
     const func = firstFunction(optimized);

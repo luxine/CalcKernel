@@ -91,10 +91,18 @@ Strict mode 含义：
 - JavaScript WASM interop 对 `f64` 使用 `Number`
 - 不支持 `f32`
 - 不支持 implicit int/float conversion
+- 暂不支持 explicit numeric cast
 - 不支持 `f64 %`
 - 不启用 fast-math flag 或 reassociation
 - 不支持 SIMD
 - 不做 float checked overflow
+- 不支持 `NaN`、`Infinity` 或 float suffix literal 语法
+- 不承诺跨 backend 浮点结果 bit-identical
+
+`NaN`、正负 infinity 和 `-0.0` 遵循所选 backend 的普通 strict floating point
+行为。它们可以由 arithmetic 产生，但 IK / IntKernel 不提供专用 literal 语法，也不
+承诺稳定的 NaN payload。测试和 benchmark 对有限 f64 结果使用 tolerance，对 NaN、
+infinity 和 signed zero 分别做分类判断。
 
 `f64` 适合 axpy、dot product、sum、scale 这类数值 kernel。金额、税费、优惠、
 POS 总价和规则计算仍建议使用 `i64` fixed-point arithmetic，这样 checked integer

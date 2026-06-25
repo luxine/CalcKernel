@@ -218,7 +218,14 @@ operations themselves use ordinary strict C `double` behavior:
 - `f64 +`, `-`, `*`, and `/` do not call integer overflow builtins.
 - f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`.
 - f64 overflow does not return `IK_ERR_OVERFLOW`.
+- f64 NaN, infinity, and `-0.0` are ordinary floating point results, not checked
+  arithmetic status values.
 - `f64 %` is not a language operation and is rejected before C emission.
+
+This boundary is intentional: checked mode protects integer arithmetic. It does
+not turn floating point into a trapping or exact decimal arithmetic mode.
+Money, tax, POS totals, and pricing rules should continue to use `i64`
+fixed-point arithmetic when exact checked failure reporting is required.
 
 ## Logical Operators
 

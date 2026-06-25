@@ -93,10 +93,19 @@ Strict mode means:
 - JavaScript WASM interop uses `Number` for `f64`
 - no `f32`
 - no implicit int/float conversion
+- no explicit numeric casts yet
 - no `f64 %`
 - no fast-math flags or reassociation
 - no SIMD
 - no float checked overflow
+- no `NaN`, `Infinity`, or float suffix literal syntax
+- no cross-backend bit-identical floating point guarantee
+
+`NaN`, positive/negative infinity, and `-0.0` follow the ordinary strict
+floating point behavior of the selected backend. They can be produced by
+arithmetic, but IK / IntKernel does not provide dedicated literal syntax and
+does not promise stable NaN payloads. Tests and benchmarks compare finite f64
+results with tolerance and classify NaN, infinity, and signed zero separately.
 
 Use `f64` for numerical kernels such as axpy, dot product, sum, and scale.
 For money, tax, discounts, POS totals, and rule calculations, continue to use

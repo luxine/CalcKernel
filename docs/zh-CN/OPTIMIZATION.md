@@ -395,6 +395,16 @@ Phase 16 f64 support 是 strict-safe：
 - DCE 可以删除未使用的 pure f64 temporary，但不能删除 load、store、call、
   branch condition、return value 或 control flow
 
+未来新增 optimizer pass 在处理 f64 前必须先证明 strict-float safe。默认规则是跳过
+f64，而不是把 integer arithmetic 的代数恒等式套到 f64 上。尤其是：
+
+- 不把 `x * 0.0` 折叠为 `0.0`，因为 `NaN * 0.0` 是 `NaN`
+- 不把 `x / x` 折叠为 `1.0`，因为 `0.0 / 0.0` 是 `NaN`
+- 不随意折叠或重排 `x + 0.0`，因为 signed zero 可能可观察
+- 不排序 f64 `+`、`*`、`==` 或 `!=` 的 operand
+- 不 speculative hoist f64 division 或其他 f64 arithmetic 出 loop
+- 不生成 LLVM fast-math flag，也不依赖 target-specific fast-float mode
+
 ## 发布建议
 
 发布 optimization 变更前：

@@ -211,7 +211,14 @@ Checked C mode 仍然是 integer checked arithmetic mode。选择 `--overflow ch
 - `f64 +`、`-`、`*`、`/` 不调用 integer overflow builtin。
 - f64 division by zero 不返回 `IK_ERR_DIV_BY_ZERO`。
 - f64 overflow 不返回 `IK_ERR_OVERFLOW`。
+- f64 NaN、infinity 和 `-0.0` 是普通 floating point 结果，不是 checked
+  arithmetic status value。
 - `f64 %` 不是语言操作，会在 C emission 前被拒绝。
+
+这个边界是有意设计：checked mode 保护 integer arithmetic。它不会把 floating
+point 变成 trapping 或 exact decimal arithmetic mode。金额、税费、POS 总价和
+pricing rule 需要精确 checked failure reporting 时，仍应使用 `i64` fixed-point
+arithmetic。
 
 ## Logical Operators
 

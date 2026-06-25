@@ -135,6 +135,21 @@ Unsupported forms:
 Negative numbers are parsed as unary `-` applied to a literal. For example,
 `-1.0` is unary minus plus a `FloatLiteral`, not a signed literal token.
 
+### f64 Edge Semantics
+
+IK / IntKernel f64 semantics are strict and intentionally narrow:
+
+- `NaN` and infinity do not have literal syntax; they can only be produced by
+  arithmetic such as `0.0 / 0.0` or `1.0 / 0.0`.
+- `-0.0` is observable through backend floating point behavior and must not be
+  optimized away by algebraic rewrites.
+- NaN comparisons follow the selected backend's ordinary IEEE-like behavior;
+  tests classify NaN with `isNaN` and do not compare NaN payloads.
+- Infinity is classified by sign.
+- Finite cross-backend e2e checks use absolute and relative tolerance.
+- IK / IntKernel does not guarantee bit-identical floating point results across
+  C, LLVM, WASM, and JavaScript hosts.
+
 ## Operator Precedence
 
 Operators are listed from highest precedence to lowest precedence.
@@ -213,9 +228,14 @@ V0 does not support:
 - `f32`
 - `f64 %`
 - implicit int/float conversion
+- explicit numeric casts
 - fast-math
 - SIMD
 - JIT compilation
+- `NaN` literal syntax
+- `Infinity` literal syntax
+- float suffix literal syntax
+- cross-backend bit-identical floating point guarantees
 
 ## Integer Overflow
 

@@ -165,4 +165,33 @@ describe("LLVM scalar straight-line emitter", () => {
     expect(llvm).not.toContain("store double");
     expect(llvm).not.toContain("fast");
   });
+
+  it("emits no fast-math flags for f64-sensitive expressions at O3", () => {
+    const llvm = emitSourceLlvm(
+      `
+        export fn nan_mul_zero(x: f64) -> f64 {
+          return x * 0.0;
+        }
+
+        export fn nan_div_self(x: f64) -> f64 {
+          return x / x;
+        }
+
+        export fn signed_zero_add(x: f64) -> f64 {
+          return x + 0.0;
+        }
+
+        export fn inf_div_zero() -> f64 {
+          return 1.0 / 0.0;
+        }
+      `,
+      "llvm_f64_strict_o3.ik",
+      3
+    );
+
+    expect(llvm).toContain("fmul double");
+    expect(llvm).toContain("fdiv double");
+    expect(llvm).toContain("fadd double");
+    expect(llvm).not.toMatch(/\bfast\b|\bnnan\b|\bninf\b|\bnsz\b|\breassoc\b|\barcp\b|\bcontract\b|\bafn\b/);
+  });
 });

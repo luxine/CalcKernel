@@ -131,6 +131,21 @@ Float literal 的类型是 `f64`。
 负数不会作为 literal token 的一部分解析。`-1.0` 是 unary minus 加
 `FloatLiteral`，不是带符号 literal token。
 
+### f64 边界语义
+
+IK / IntKernel 的 f64 语义是 strict 且刻意保持窄范围：
+
+- `NaN` 和 infinity 没有 literal 语法；只能通过 `0.0 / 0.0` 或 `1.0 / 0.0`
+  这类 arithmetic 产生。
+- `-0.0` 会通过 backend floating point 行为体现，optimizer 不能用代数重写把它
+  随意消掉。
+- NaN comparison 遵循所选 backend 的普通 IEEE-like 行为；测试用 `isNaN` 分类，
+  不比较 NaN payload。
+- Infinity 按符号分类。
+- 有限值跨 backend e2e 检查使用 absolute tolerance 和 relative tolerance。
+- IK / IntKernel 不保证 C、LLVM、WASM 和 JavaScript host 之间的浮点结果
+  bit-identical。
+
 ## 运算符优先级
 
 下表从最高优先级列到最低优先级。
@@ -208,9 +223,14 @@ V0 不支持：
 - `f32`
 - `f64 %`
 - implicit int/float conversion
+- explicit numeric cast
 - fast-math
 - SIMD
 - JIT compilation
+- `NaN` literal syntax
+- `Infinity` literal syntax
+- float suffix literal syntax
+- cross-backend bit-identical floating point guarantee
 
 ## 整数溢出
 

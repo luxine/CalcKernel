@@ -174,6 +174,17 @@ Python list `float` and NumPy can be useful optional manual baselines, but they
 are not default dependencies of this runner. NumPy is a native library baseline,
 not a language semantics oracle.
 
+F64 benchmark runs are documentation and release smoke tools:
+
+- `--quick` is a smoke check
+- `--full` is optional before tags when machine time allows
+- f64 thresholds must not be added to ordinary `pnpm test`
+- machine-local f64 baselines under `build/perf` must not be committed
+- JS `Array` `Number`, JS `Float64Array`, IK C, IK LLVM, IK WASM, optional
+  Python, and optional NumPy are different runtime models
+- WASM total results may be dominated by host memory marshaling rather than
+  compute
+
 See [2026-06-24 Performance Profile](docs/2026-06-24-performance-profile.md)
 for the current bottleneck analysis and Phase 14 optimization priorities.
 See [Performance](../docs/PERFORMANCE.md) and

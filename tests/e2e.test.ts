@@ -393,6 +393,14 @@ export fn div_f64(a: f64, b: f64) -> f64 {
 export fn huge_mul_f64(a: f64, b: f64) -> f64 {
   return a * b;
 }
+
+export fn neg_zero_f64() -> f64 {
+  return 0.0 * -1.0;
+}
+
+export fn tiny_underflow_f64() -> f64 {
+  return 1.0e-308 * 1.0e-308;
+}
 `.trimStart()
   );
 
@@ -510,7 +518,7 @@ describe("ikc CLI", () => {
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
     expect(stdout).toContain("ikc check <file>");
-    expect(stdout).toContain("ikc emit-c <file> --out <c-file> --header <h-file>");
+    expect(stdout).toContain("ikc emit-c <file> --out <c-file> [--header <h-file>]");
     expect(stdout).toContain("ikc emit-mir <file> [--out <mir-file>]");
     expect(stdout).toContain("ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]");
     expect(stdout).toContain("ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]");
@@ -518,6 +526,7 @@ describe("ikc CLI", () => {
     expect(stdout).toContain("ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]");
     expect(stdout).toContain("ikc build <file> --out <output-path>");
     expect(stdout).toContain("--overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.");
+    expect(stdout).toContain("-o <file>                         Alias for --out <file>.");
     expect(stdout).toContain("--opt-level <0|1|2|3>            MIR optimization level. Default: 0.");
     expect(stdout).toContain("-O0, -O1, -O2, -O3              Alias for --opt-level.");
     expect(stdout).toContain("--print-pass-pipeline           Print the selected MIR pass pipeline to stderr.");
@@ -2581,6 +2590,7 @@ int main(void) {
         `
 #include "${headerName}"
 
+#include <math.h>
 #include <stdint.h>
 
 static int close_double(double left, double right) {
@@ -2591,23 +2601,36 @@ static int close_double(double left, double right) {
   return diff <= 0.000000001;
 }
 
+static int is_negative_zero(double value) {
+  return value == 0.0 && signbit(value);
+}
+
 int main(void) {
   double value = 0.0;
 
   if (arithmetic_f64(3.5, 1.5, &value) != IK_OK || !close_double(value, 3.0)) {
     return 10;
   }
-  if (div_f64(1.0, 0.0, &value) != IK_OK) {
+  if (div_f64(1.0, 0.0, &value) != IK_OK || !isinf(value) || signbit(value)) {
     return 11;
   }
-  if (huge_mul_f64(1.0e308, 1.0e308, &value) != IK_OK) {
+  if (div_f64(-1.0, 0.0, &value) != IK_OK || !isinf(value) || !signbit(value)) {
     return 12;
   }
-  if (!(value > 1.0e308)) {
+  if (div_f64(0.0, 0.0, &value) != IK_OK || !isnan(value)) {
     return 13;
   }
-  if (arithmetic_f64(3.5, 1.5, 0) != IK_ERR_NULL_POINTER) {
+  if (huge_mul_f64(1.0e308, 1.0e308, &value) != IK_OK || !isinf(value) || signbit(value)) {
     return 14;
+  }
+  if (neg_zero_f64(&value) != IK_OK || !is_negative_zero(value)) {
+    return 15;
+  }
+  if (tiny_underflow_f64(&value) != IK_OK || value != 0.0) {
+    return 16;
+  }
+  if (arithmetic_f64(3.5, 1.5, 0) != IK_ERR_NULL_POINTER) {
+    return 17;
   }
   return 0;
 }

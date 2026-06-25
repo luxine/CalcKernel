@@ -234,6 +234,17 @@ F64 comparison:
 
 Comparison results are `i1`.
 
+F64 semantics are locked to strict LLVM IR:
+
+- emit `fadd`, `fsub`, `fmul`, `fdiv`, `fneg`, and `fcmp` without fast-math
+  flags
+- do not use reassociation, reciprocal, no-NaN, no-infinity, signed-zero-ignore,
+  or other fast-float assumptions
+- NaN, infinity, and `-0.0` follow the compiled target's ordinary IEEE-like
+  behavior
+- do not promise stable NaN payloads or bit-identical behavior against C, WASM,
+  or JavaScript hosts
+
 ## Control Flow
 
 MIR blocks map directly to LLVM basic blocks.

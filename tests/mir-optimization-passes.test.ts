@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { lowerToMir } from "../src/mir/lower.js";
-import type { MirFunction, MirModule, MirType, MirValue } from "../src/mir/mir.js";
+import type { MirFunction, MirInstruction, MirModule, MirType, MirValue } from "../src/mir/mir.js";
 import { printMirModule } from "../src/mir/mir-printer.js";
 import { validateMirModule } from "../src/mir/mir-validator.js";
 import { runMirPassPipeline } from "../src/opt/mir-pass-manager.js";
@@ -39,6 +39,50 @@ function lower(sourceText: string): MirModule {
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
   return mir;
+}
+
+function functionByName(module: MirModule, name: string): MirFunction {
+  const func = module.functions.find((candidate) => candidate.name === name);
+  expect(func).toBeDefined();
+  return func!;
+}
+
+function functionInstructions(module: MirModule, name: string): MirInstruction[] {
+  return functionByName(module, name).blocks.flatMap((block) => block.instructions);
+}
+
+function hasF64Binary(module: MirModule, functionName: string, op: "+" | "-" | "*" | "/"): boolean {
+  return functionInstructions(module, functionName).some(
+    (instruction) =>
+      instruction.kind === "binary" &&
+      instruction.op === op &&
+      instruction.target.type.kind === "primitive" &&
+      instruction.target.type.name === "f64"
+  );
+}
+
+function hasConstFloat(module: MirModule, functionName: string, value: string): boolean {
+  return functionInstructions(module, functionName).some((instruction) => instruction.kind === "const_float" && instruction.value === value);
+}
+
+function f64SensitiveOptimizationSource(): string {
+  return `
+    export fn nan_mul_zero(x: f64) -> f64 {
+      return x * 0.0;
+    }
+
+    export fn nan_div_self(x: f64) -> f64 {
+      return x / x;
+    }
+
+    export fn signed_zero_add(x: f64) -> f64 {
+      return x + 0.0;
+    }
+
+    export fn inf_div_zero() -> f64 {
+      return 1.0 / 0.0;
+    }
+  `;
 }
 
 function optimize(module: MirModule, optLevel: 0 | 1 | 2 | 3, overflowMode: "unchecked" | "checked" = "unchecked"): MirModule {
@@ -170,6 +214,56 @@ describe("MIR optimization passes", () => {
       expect(text).toContain("const_float 2.0");
       expect(text).toContain("add");
     }
+  });
+
+  it("keeps NaN, signed-zero, and Infinity-sensitive f64 algebra unchanged across O0, O1, O2, and O3", () => {
+    const source = f64SensitiveOptimizationSource();
+    const lowered = printMirModule(lower(source));
+
+    expect(printMirModule(optimize(lower(source), 0))).toBe(lowered);
+
+    for (const level of [1, 2, 3] as const) {
+      const optimized = optimize(lower(source), level);
+
+      expect(hasF64Binary(optimized, "nan_mul_zero", "*")).toBe(true);
+      expect(hasConstFloat(optimized, "nan_mul_zero", "0.0")).toBe(true);
+      expect(hasF64Binary(optimized, "nan_div_self", "/")).toBe(true);
+      expect(hasF64Binary(optimized, "signed_zero_add", "+")).toBe(true);
+      expect(hasConstFloat(optimized, "signed_zero_add", "0.0")).toBe(true);
+      expect(hasF64Binary(optimized, "inf_div_zero", "/")).toBe(true);
+      expect(hasConstFloat(optimized, "inf_div_zero", "1.0")).toBe(true);
+      expect(hasConstFloat(optimized, "inf_div_zero", "0.0")).toBe(true);
+    }
+  });
+
+  it("keeps f64 division by zero as ordinary f64 MIR in checked optimization mode", () => {
+    const optimized = optimize(
+      lower(`
+        export fn div_zero_f64() -> f64 {
+          return 1.0 / 0.0;
+        }
+      `),
+      3,
+      "checked"
+    );
+
+    expect(hasF64Binary(optimized, "div_zero_f64", "/")).toBe(true);
+    expect(hasConstFloat(optimized, "div_zero_f64", "1.0")).toBe(true);
+    expect(hasConstFloat(optimized, "div_zero_f64", "0.0")).toBe(true);
+  });
+
+  it("keeps checked integer arithmetic unfurled at O3", () => {
+    const optimized = optimize(
+      lower(`
+        export fn calc() -> i64 {
+          return 1 + 2;
+        }
+      `),
+      3,
+      "checked"
+    );
+
+    expect(printMirModule(optimized)).toContain("%t2: i64 = add %t0, %t1");
   });
 
   it("propagates simple temp copies without crossing calls or stores", () => {

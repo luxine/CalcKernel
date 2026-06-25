@@ -97,6 +97,10 @@ semantics or as cross-machine performance truth.
   short-circuit, memory, and `examples/pricing.ik`.
 - Confirm f64 scalar, ptr, struct-field, arithmetic, comparison, unary minus,
   and backend parity regressions pass where implemented.
+- Confirm cross-backend f64 behavior matrix coverage for finite values, NaN,
+  infinity, `-0.0`, f64 comparisons, `ptr<f64>`, and struct f64 fields.
+- Confirm finite f64 values use tolerance and that NaN, infinity, and signed
+  zero are classified rather than compared by exact bits.
 - Confirm no backend output snapshot changed unexpectedly.
 - If any snapshot changes, explain the real expected behavior change before
   accepting the update. Do not update snapshots just to make tests pass.
@@ -121,6 +125,25 @@ semantics or as cross-machine performance truth.
   - no f64 operand sorting in local CSE
   - no f64 LICM hoisting
   - no f64 induction simplification
+  - no LLVM fast-math flags
+  - no NaN, infinity, or `-0.0` sensitive algebraic rewrites
+
+## Float Semantics Lock
+
+- Confirm language docs describe f64 primitive, float literals, arithmetic,
+  unary minus, comparisons, `ptr<f64>`, and struct fields containing `f64`.
+- Confirm docs explicitly reject f32, implicit int/float conversion, explicit
+  numeric casts, `f64 %`, fast-math, SIMD, JIT, runtime, IO, strings, GC, NaN
+  literal syntax, infinity literal syntax, and float suffix literals.
+- Confirm checked arithmetic docs say f64 does not participate in integer
+  overflow checks, f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`,
+  and f64 overflow does not return `IK_ERR_OVERFLOW`.
+- Confirm ABI/backend docs say C uses `double`, LLVM uses `double` without
+  fast-math flags, WASM uses `f64`, and JavaScript interop uses `Number`.
+- Confirm docs do not promise NaN payload stability or cross-backend
+  bit-identical floating point results.
+- Confirm optimizer docs require future passes to prove strict-float safety
+  before changing f64 expressions.
 
 ## Benchmark Smoke
 
@@ -180,6 +203,30 @@ semantics or as cross-machine performance truth.
   IntKernel surface.
 - Confirm no local build artifacts, benchmark output, real local baselines,
   caches, editor state, or temporary logs are included.
+
+## Package Fresh Install Smoke
+
+- Run `npm pack` from the repository root and note the generated tarball name.
+- Do not commit the generated `.tgz` tarball.
+- Create a temporary directory outside the repository and run `npm init -y`.
+- Install the generated tarball with `npm install /absolute/path/to/intkernel-<version>.tgz`.
+- Confirm `node_modules/.bin/ikc --help` runs and documents `ikc` commands with
+  `.ik` source examples.
+- In the temporary directory, create a minimal `.ik` file and run:
+  - `node_modules/.bin/ikc check smoke.ik`
+  - `node_modules/.bin/ikc emit-mir smoke.ik -o build/smoke.mir`
+  - `node_modules/.bin/ikc emit-c smoke.ik -o build/smoke.c`
+  - `node_modules/.bin/ikc emit-wat smoke.ik -o build/smoke.wat`
+  - `node_modules/.bin/ikc emit-wasm smoke.ik -o build/smoke.wasm`
+  - `node_modules/.bin/ikc emit-llvm smoke.ik -o build/smoke.ll`
+  - `node_modules/.bin/ikc build-llvm smoke.ik --kind object -o build/smoke.o`
+    when clang is available.
+- Confirm the emitted C source and the default generated C header both exist
+  and are non-empty.
+- The smoke source should include f64 params/returns, f64 arithmetic, unary
+  minus, f64 comparison, `ptr<f64>`, and a struct field containing `f64`.
+- Remove the temporary directory and generated tarball after the smoke, or
+  explicitly report any leftover local artifacts.
 
 ## Tag Gate
 

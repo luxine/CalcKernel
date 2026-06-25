@@ -108,6 +108,17 @@ JavaScript's WebAssembly API represents `i64` and `u64` parameters and return
 values as `BigInt`. It represents `f64` parameters and return values as
 JavaScript `Number`.
 
+F64 semantics are intentionally strict and ordinary for WebAssembly:
+
+- arithmetic uses `f64.add`, `f64.sub`, `f64.mul`, `f64.div`, and `f64.neg`
+- comparisons use `f64.eq`, `f64.ne`, `f64.lt`, `f64.le`, `f64.gt`, and
+  `f64.ge`
+- memory uses `f64.load` and `f64.store`
+- NaN, infinity, and `-0.0` follow WebAssembly f64 behavior
+- host tests must use `Number.isNaN`, signed infinity checks, `Object.is` for
+  `-0`, and tolerance for finite values instead of bit equality
+- `f64` is never passed as `BigInt`
+
 ## Function ABI
 
 Exported IntKernel functions are exported from the WASM module with their

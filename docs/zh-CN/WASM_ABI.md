@@ -105,6 +105,17 @@ IntKernel boolean 表达式生成规范化的 `0` 或 `1`。
 JavaScript 的 WebAssembly API 用 `BigInt` 表示 `i64` 和 `u64` 参数与返回值，
 用 JavaScript `Number` 表示 `f64` 参数与返回值。
 
+f64 语义刻意保持为 WebAssembly 的普通 strict 行为：
+
+- arithmetic 使用 `f64.add`、`f64.sub`、`f64.mul`、`f64.div` 和 `f64.neg`
+- comparison 使用 `f64.eq`、`f64.ne`、`f64.lt`、`f64.le`、`f64.gt` 和
+  `f64.ge`
+- memory 使用 `f64.load` 和 `f64.store`
+- NaN、infinity 和 `-0.0` 遵循 WebAssembly f64 行为
+- host 测试应使用 `Number.isNaN`、带符号 infinity 判断、`Object.is` 判断 `-0`，
+  并对有限值使用 tolerance，而不是 bit equality
+- `f64` 绝不使用 `BigInt` 传递
+
 ## Function ABI
 
 导出的 IntKernel 函数以源码中的名称从 WASM module 导出。

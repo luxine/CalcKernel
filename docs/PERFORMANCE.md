@@ -187,6 +187,17 @@ little-endian `DataView.setFloat64` and `DataView.getFloat64`.
 Current largest WASM bottleneck: host-side memory setup/readback for total
 benchmarks. Compute-only WASM is much closer, but still slower than native code.
 
+F64 benchmark interpretation is locked to strict semantics:
+
+- quick runs are smoke checks, not release performance claims
+- full runs are optional manual release checks
+- do not put f64 performance thresholds into ordinary `pnpm test`
+- do not commit machine-local f64 baselines
+- compare finite f64 results with absolute and relative tolerance
+- classify NaN, infinity, and `-0.0` instead of expecting bit-identical output
+- treat JS `Array` `Number`, JS `Float64Array`, WASM, native C, LLVM, optional
+  Python, and optional NumPy as different runtime models
+
 ## Checked vs Unchecked
 
 Use unchecked mode when inputs are proven safe and maximum throughput matters.

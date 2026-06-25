@@ -226,6 +226,14 @@ F64 comparison：
 
 Comparison result 是 `i1`。
 
+f64 语义锁定为 strict LLVM IR：
+
+- 生成不带 fast-math flag 的 `fadd`、`fsub`、`fmul`、`fdiv`、`fneg` 和 `fcmp`
+- 不使用 reassociation、reciprocal、no-NaN、no-infinity、signed-zero-ignore
+  或其他 fast-float 假设
+- NaN、infinity 和 `-0.0` 遵循编译目标的普通 IEEE-like 行为
+- 不承诺 NaN payload 稳定，也不承诺和 C、WASM 或 JavaScript host bit-identical
+
 ## Control Flow
 
 MIR block 直接映射到 LLVM basic block。
