@@ -103,6 +103,27 @@ export interface CheckResult {
   symbols: SymbolTable;
 }
 
+interface CompilerBuiltin {
+  name: string;
+  params: IntKernelType[];
+  returnType: IntKernelType;
+}
+
+const compilerBuiltins = new Map<string, CompilerBuiltin>(
+  [
+    {
+      name: "i32_to_f64",
+      params: [primitiveType("i32")],
+      returnType: primitiveType("f64")
+    },
+    {
+      name: "u32_to_f64",
+      params: [primitiveType("u32")],
+      returnType: primitiveType("f64")
+    }
+  ].map((builtin) => [builtin.name, builtin])
+);
+
 export function check(source: SourceFile): CheckResult {
   const parseResult = parse(source);
   const checker = new Checker(source, parseResult.ast, [...parseResult.diagnostics]);
@@ -189,6 +210,11 @@ class Checker {
       }
 
       const name = declaration.name.name;
+      if (compilerBuiltins.has(name)) {
+        this.error(declaration.name.span, `Cannot define reserved compiler builtin '${name}'.`);
+        continue;
+      }
+
       if (this.symbols.functions.has(name)) {
         this.error(declaration.name.span, `Duplicate function '${name}'.`);
         continue;
@@ -467,6 +493,11 @@ class Checker {
       return this.recordExpressionType(expression, unknownType);
     }
 
+    const builtin = compilerBuiltins.get(expression.callee.name);
+    if (builtin) {
+      return this.checkCompilerBuiltinCall(expression, scope, builtin);
+    }
+
     const functionSymbol = this.symbols.functions.get(expression.callee.name);
     if (!functionSymbol) {
       this.error(expression.callee.span, `Unknown function '${expression.callee.name}'.`);
@@ -494,6 +525,27 @@ class Checker {
     });
 
     return this.recordExpressionType(expression, functionSymbol.returnType);
+  }
+
+  private checkCompilerBuiltinCall(expression: CallExpression, scope: Scope, builtin: CompilerBuiltin): IntKernelType {
+    this.recordExpressionType(expression.callee, builtin.returnType);
+
+    if (expression.args.length !== builtin.params.length) {
+      this.error(
+        expression.span,
+        `Compiler builtin '${builtin.name}' expects ${builtin.params.length} argument${builtin.params.length === 1 ? "" : "s"} but got ${expression.args.length}.`
+      );
+    }
+
+    expression.args.forEach((arg, index) => {
+      const expected = builtin.params[index];
+      const argType = this.checkExpression(arg, scope, expected);
+      if (expected && !isUnknown(expected) && !isUnknown(argType) && !canAssign(expected, argType)) {
+        this.error(arg.span, `Argument ${index + 1} of compiler builtin '${builtin.name}' expects ${typeToString(expected)} but got ${typeToString(argType)}.`);
+      }
+    });
+
+    return this.recordExpressionType(expression, builtin.returnType);
   }
 
   private checkFieldExpression(expression: FieldExpression, scope: Scope): IntKernelType {

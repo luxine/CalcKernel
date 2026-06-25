@@ -156,11 +156,12 @@ IK LLVM, IK WASM, optional Python list `float`, and optional NumPy are different
 runtime models. NumPy is a native-library baseline and is not a default runner
 dependency. The f64 suite uses strict IK floating point only: `f64` is the only
 floating point type, `f32` is not planned, and no fast-math, SIMD, implicit
-int/float conversion, explicit numeric casts, or f64 checked overflow is
-assumed. JavaScript `Float64Array` can be a strong baseline for tight host
-loops. WASM compute-only and WASM total answer different questions, so do not
-conclude that WASM is faster or slower than JavaScript without checking which
-phase is being measured.
+int/float conversion, broad casts, or f64 checked overflow is assumed. The only
+current numeric casts are exact explicit `i32_to_f64` and `u32_to_f64` builtins.
+JavaScript `Float64Array` can be a strong baseline for tight host loops. WASM
+compute-only and WASM total answer different questions, so do not conclude that
+WASM is faster or slower than JavaScript without checking which phase is being
+measured.
 
 ## Batch Calling Principle
 

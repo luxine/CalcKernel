@@ -12,6 +12,8 @@ import { deadCodeEliminationPass } from "../src/opt/passes/dead-code-elimination
 import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
+const i32: MirType = { kind: "primitive", name: "i32" };
+const u32: MirType = { kind: "primitive", name: "u32" };
 const i64: MirType = { kind: "primitive", name: "i64" };
 const f64: MirType = { kind: "primitive", name: "f64" };
 const boolType: MirType = { kind: "primitive", name: "bool" };
@@ -216,6 +218,25 @@ describe("MIR optimization passes", () => {
     }
   });
 
+  it("keeps explicit int to f64 casts unfurled across O0, O1, O2, and O3", () => {
+    const source = `
+      export fn calc(a: i32, b: u32) -> f64 {
+        return i32_to_f64(a) + u32_to_f64(b) + i32_to_f64(1);
+      }
+    `;
+    const lowered = printMirModule(lower(source));
+
+    expect(printMirModule(optimize(lower(source), 0))).toBe(lowered);
+    for (const level of [1, 2, 3] as const) {
+      const text = printMirModule(optimize(lower(source), level));
+      expect(text).toContain("cast i32_to_f64 a");
+      expect(text).toContain("cast u32_to_f64 b");
+      expect(text).toContain("const_int 1");
+      expect(text).toContain("cast i32_to_f64");
+      expect(text).not.toContain("const_float 1");
+    }
+  });
+
   it("keeps NaN, signed-zero, and Infinity-sensitive f64 algebra unchanged across O0, O1, O2, and O3", () => {
     const source = f64SensitiveOptimizationSource();
     const lowered = printMirModule(lower(source));
@@ -340,6 +361,39 @@ describe("MIR optimization passes", () => {
     expect(optimized.functions[0]!.blocks[0]!.instructions[1]).toMatchObject({ kind: "binary", left: param("a", f64) });
   });
 
+  it("propagates temp copies into explicit cast inputs without changing cast kind", () => {
+    const module: MirModule = {
+      structs: [],
+      functions: [
+        {
+          name: "copy_cast",
+          exported: true,
+          params: [{ name: "a", type: i32 }],
+          returnType: f64,
+          locals: [],
+          blocks: [
+            {
+              label: "bb0",
+              instructions: [
+                { kind: "move", target: temp("t0", i32), value: param("a", i32) },
+                { kind: "cast", target: temp("t1", f64), op: "i32_to_f64", value: temp("t0", i32) }
+              ],
+              terminator: { kind: "return", value: temp("t1", f64) }
+            }
+          ]
+        }
+      ]
+    };
+
+    const optimized = runSinglePass(module, "copy-propagation");
+    expect(optimized.functions[0]!.blocks[0]!.instructions[1]).toEqual({
+      kind: "cast",
+      target: temp("t1", f64),
+      op: "i32_to_f64",
+      value: param("a", i32)
+    });
+  });
+
   it("deletes unused pure temp instructions", () => {
     const module: MirModule = {
       structs: [],
@@ -399,6 +453,40 @@ describe("MIR optimization passes", () => {
     const optimized = runSinglePass(module, "dead-code-elimination");
     expect(optimized.functions[0]!.blocks[0]!.instructions).toEqual([{ kind: "move", target: temp("used", f64), value: param("a", f64) }]);
     expect(optimized.functions[0]!.blocks[0]!.terminator).toEqual({ kind: "return", value: temp("used", f64) });
+  });
+
+  it("deletes unused explicit casts as pure instructions without folding them", () => {
+    const module: MirModule = {
+      structs: [],
+      functions: [
+        {
+          name: "dce_casts",
+          exported: true,
+          params: [
+            { name: "a", type: i32 },
+            { name: "b", type: u32 }
+          ],
+          returnType: f64,
+          locals: [],
+          blocks: [
+            {
+              label: "bb0",
+              instructions: [
+                { kind: "cast", target: temp("unused_i32", f64), op: "i32_to_f64", value: param("a", i32) },
+                { kind: "cast", target: temp("unused_u32", f64), op: "u32_to_f64", value: param("b", u32) },
+                { kind: "cast", target: temp("used", f64), op: "i32_to_f64", value: param("a", i32) }
+              ],
+              terminator: { kind: "return", value: temp("used", f64) }
+            }
+          ]
+        }
+      ]
+    };
+
+    const optimized = runSinglePass(module, "dead-code-elimination");
+    expect(optimized.functions[0]!.blocks[0]!.instructions).toEqual([
+      { kind: "cast", target: temp("used", f64), op: "i32_to_f64", value: param("a", i32) }
+    ]);
   });
 
   it("keeps stores, calls, and terminator values", () => {

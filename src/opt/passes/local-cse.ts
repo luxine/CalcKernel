@@ -63,6 +63,8 @@ function cseKey(instruction: MirInstruction): string | undefined {
         return floatUnaryCseKey(instruction);
       }
       return `unary:${instruction.op}:${printMirType(instruction.target.type)}:${valueKey(instruction.operand)}`;
+    case "cast":
+      return `cast:${instruction.op}:${printMirType(instruction.value.type)}:${printMirType(instruction.target.type)}:${valueKey(instruction.value)}`;
     default:
       return undefined;
   }
@@ -107,6 +109,9 @@ function collectInstructionDependencies(instruction: MirInstruction): Set<string
       break;
     case "unary":
       collectValueDependencies(instruction.operand, dependencies);
+      break;
+    case "cast":
+      collectValueDependencies(instruction.value, dependencies);
       break;
     default:
       break;
@@ -157,6 +162,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

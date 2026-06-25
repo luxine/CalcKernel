@@ -93,7 +93,9 @@ Strict mode means:
 - JavaScript WASM interop uses `Number` for `f64`
 - `f64` is the only floating point type; `f32` is not planned
 - no implicit int/float conversion
-- explicit numeric casts are future work and are not implemented yet
+- exact explicit int-to-f64 casts are supported for `i32` and `u32` only:
+  `i32_to_f64(x)` and `u32_to_f64(x)`
+- no `i64_to_f64`, `u64_to_f64`, or f64-to-int casts
 - no `f64 %`
 - no fast-math flags or reassociation
 - no SIMD
@@ -111,6 +113,24 @@ Use `f64` for numerical kernels such as axpy, dot product, sum, and scale.
 For money, tax, discounts, POS totals, and rule calculations, continue to use
 `i64` fixed-point arithmetic so checked integer mode can report overflow and
 division errors explicitly.
+
+Explicit casts do not create implicit conversion paths. These functions are
+compiler builtins, not runtime calls:
+
+```ik
+export fn avg_i32(sum: i32, count: i32) -> f64 {
+  return i32_to_f64(sum) / i32_to_f64(count);
+}
+
+export fn ratio_u32(a: u32, b: u32) -> f64 {
+  return u32_to_f64(a) / u32_to_f64(b);
+}
+```
+
+`i32_to_f64` and `u32_to_f64` are exact because every `i32` and `u32` value is
+representable as `f64`. Division by zero in examples like these follows ordinary
+strict f64 behavior and may produce infinity or NaN; it is not a checked integer
+error.
 
 ## Generate C
 
@@ -438,11 +458,11 @@ classes, closures, modules, runtime libraries, or JIT compilation. The WASM
 and LLVM backends currently support unchecked arithmetic only.
 
 Floating point is intentionally narrow: IK / IntKernel is f64-only. `f64` strict
-mode is supported; `f32` is not planned. Implicit int/float conversion, explicit
-numeric casts, `f64 %`, fast-math, SIMD, and float checked overflow are not
-implemented. Any future cast support must be explicit. IK / IntKernel does not
-guarantee bit-identical floating point results across all C, LLVM, WASM, and
-JavaScript targets.
+mode is supported; `f32` is not planned. Only exact explicit `i32_to_f64` and
+`u32_to_f64` casts are implemented. Implicit int/float conversion, `i64/u64` to
+f64 casts, f64-to-int casts, `f64 %`, fast-math, SIMD, and float checked
+overflow are not implemented. IK / IntKernel does not guarantee bit-identical
+floating point results across all C, LLVM, WASM, and JavaScript targets.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
 `--overflow checked` C code generation checks integer overflow and division by

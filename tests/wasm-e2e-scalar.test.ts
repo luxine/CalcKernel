@@ -153,4 +153,70 @@ describe("Node.js scalar WASM e2e", () => {
     expect(leF64(3.5, 3.5)).toBe(1);
     expect(leF64(4.5, 3.5)).toBe(0);
   });
+
+  it("loads generated WASM for explicit i32/u32 to f64 casts and returns JS Number values", async () => {
+    const wasm = getWasmRuntime();
+    if (!wasm) {
+      console.warn("skipped because WebAssembly is unavailable");
+      return;
+    }
+
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "wasm_casts.ik"),
+      `
+        export fn cast_i32_to_f64(value: i32) -> f64 {
+          return i32_to_f64(value);
+        }
+
+        export fn cast_u32_to_f64(value: u32) -> f64 {
+          return u32_to_f64(value);
+        }
+
+        export fn cast_expr(a: i32, b: u32) -> f64 {
+          return i32_to_f64(a) * 2.0 + u32_to_f64(b) / 2.0;
+        }
+
+        export fn cast_le(a: i32, b: u32, limit: f64) -> bool {
+          return i32_to_f64(a) + u32_to_f64(b) <= limit;
+        }
+      `
+    );
+    const wasmFile = join(cwd, "build/wasm_casts.wasm");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-wasm", "wasm_casts.ik", "--out", "build/wasm_casts.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM build/wasm_casts.wasm\n");
+
+    const bytes = readFileSync(wasmFile);
+    const { instance } = await wasm.instantiate(bytes);
+    const castI32ToF64 = instance.exports.cast_i32_to_f64 as (value: number) => number;
+    const castU32ToF64 = instance.exports.cast_u32_to_f64 as (value: number) => number;
+    const castExpr = instance.exports.cast_expr as (a: number, b: number) => number;
+    const castLe = instance.exports.cast_le as (a: number, b: number, limit: number) => number;
+
+    const i32Result = castI32ToF64(-7);
+    const u32Result = castU32ToF64(0xffff_fffe);
+    const exprResult = castExpr(4, 6);
+
+    expect(typeof i32Result).toBe("number");
+    expect(typeof u32Result).toBe("number");
+    expect(closeDouble(i32Result, -7.0)).toBe(true);
+    expect(closeDouble(u32Result, 4294967294.0)).toBe(true);
+    expect(closeDouble(exprResult, 11.0)).toBe(true);
+    expect(castLe(2, 3, 5.0)).toBe(1);
+    expect(castLe(2, 3, 4.0)).toBe(0);
+  });
 });

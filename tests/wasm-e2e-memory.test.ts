@@ -162,6 +162,78 @@ describe("Node.js memory WASM e2e", () => {
     expect(closeDouble(total, 21.75)).toBe(true);
   });
 
+  it("stores explicit i32/u32 to f64 cast results through ptr<f64>", async () => {
+    const wasm = getWasmRuntime();
+    if (!wasm) {
+      console.warn("skipped because WebAssembly is unavailable");
+      return;
+    }
+
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "wasm_cast_memory.ik"),
+      `
+        export fn write_casts(out: ptr<f64>, a: i32, b: u32) -> f64 {
+          out[0] = i32_to_f64(a);
+          out[1] = u32_to_f64(b);
+          return out[0] + out[1];
+        }
+      `
+    );
+    const watFile = join(cwd, "build/wasm_cast_memory.wat");
+    const wasmFile = join(cwd, "build/wasm_cast_memory.wasm");
+    let stdout = "";
+    let stderr = "";
+
+    const emitWatExitCode = runCli(["emit-wat", "wasm_cast_memory.ik", "--out", "build/wasm_cast_memory.wat"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(emitWatExitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WAT build/wasm_cast_memory.wat\n");
+    const wat = readFileSync(watFile, "utf8");
+    expect(wat).toContain("f64.convert_i32_s");
+    expect(wat).toContain("f64.convert_i32_u");
+    expect(wat).toContain("f64.store offset=0 align=8");
+
+    stdout = "";
+    stderr = "";
+    const emitWasmExitCode = runCli(["emit-wasm", "wasm_cast_memory.ik", "--out", "build/wasm_cast_memory.wasm"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(emitWasmExitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK: emitted WASM build/wasm_cast_memory.wasm\n");
+
+    const bytes = readFileSync(wasmFile);
+    const { instance } = await wasm.instantiate(bytes);
+    const memory = instance.exports.memory as WasmMemoryLike;
+    const view = new DataView(memory.buffer);
+    const writeCasts = instance.exports.write_casts as (out: number, a: number, b: number) => number;
+
+    const outOffset = 128;
+    const sum = writeCasts(outOffset, -7, 0xffff_fffe);
+
+    expect(typeof sum).toBe("number");
+    expect(closeDouble(view.getFloat64(outOffset, true), -7.0)).toBe(true);
+    expect(closeDouble(view.getFloat64(outOffset + 8, true), 4294967294.0)).toBe(true);
+    expect(closeDouble(sum, 4294967287.0)).toBe(true);
+  });
+
   it("runs the official Float64Array over WASM memory f64 example", async () => {
     const wasm = getWasmRuntime();
     if (!wasm) {

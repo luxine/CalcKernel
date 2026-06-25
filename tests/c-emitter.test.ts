@@ -355,6 +355,26 @@ describe("c emitter", () => {
     expect(source).not.toContain("IK_ERR_OVERFLOW");
   });
 
+  it("emits checked C casts without treating casts as checked arithmetic", () => {
+    const checked = checkedSource(
+      "cast-checked.ik",
+      `
+        export fn checked_cast_mix(a: i32, b: u32) -> f64 {
+          let next: i32 = a + 1;
+          return i32_to_f64(next) + u32_to_f64(b);
+        }
+      `
+    );
+
+    const source = emitDefaultCSource(checked, { headerFileName: "cast-checked.h", overflowMode: "checked" });
+
+    expect(source).toContain("IK_Status checked_cast_mix(int32_t a, uint32_t b, double* ik_return)");
+    expect(source).toContain("__builtin_add_overflow");
+    expect(source).toMatch(/ik_tmp\d+ = \(double\)next;/);
+    expect(source).toMatch(/ik_tmp\d+ = \(double\)b;/);
+    expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+  });
+
   it("does not reach C emission for f64 modulo", () => {
     const checked = check(new SourceFile("bad-f64-mod.ik", "export fn bad(a: f64, b: f64) -> f64 { return a % b; }"));
 

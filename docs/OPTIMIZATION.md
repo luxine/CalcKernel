@@ -16,6 +16,8 @@ SSA-like LLVM lowering path for simple scalar straight-line functions.
 Phase 16.5 adds strict f64 safety gates so the existing integer-oriented
 optimizer cannot apply unsafe floating point algebra. Phase 18.5 allows only
 same-order local CSE for a narrow f64 subset while keeping strict-float guards.
+Phase 20.6 adds optimizer guard coverage for explicit `i32_to_f64` and
+`u32_to_f64` casts without introducing cast folding.
 
 ## CLI
 
@@ -185,6 +187,7 @@ It may remove unused:
 - pure `binary`
 - pure `unary`
 - pure `compare`
+- pure explicit int-to-f64 `cast`
 
 It does not remove:
 
@@ -205,6 +208,8 @@ It can reuse:
 - pure binary arithmetic
 - pure unary expressions
 - comparisons
+- explicit int-to-f64 casts with the same cast kind, source type, target type,
+  and operand
 
 Safety boundaries:
 
@@ -212,6 +217,9 @@ Safety boundaries:
 - does not CSE ordinary loads
 - only CSEs f64 `+`, `-`, `*`, and unary `-` when op, type, and operand order
   are exactly identical
+- only CSEs explicit casts when cast kind, source type, target type, and operand
+  are exactly identical
+- never merges `i32_to_f64` with `u32_to_f64`
 - skips f64 division and f64 comparison expressions
 - never sorts f64 `+`, `*`, `==`, or `!=` operands
 - clears its table at `store` and `call`
@@ -400,10 +408,12 @@ loop counter increment can be emitted as unchecked arithmetic after the proof
 succeeds. WASM and LLVM remain unchecked-only backends and reject
 `--overflow checked`.
 
-Phase 16 f64 support is strict-safe:
+Phase 16 f64 support and Phase 20 explicit int-to-f64 casts are strict-safe:
 
 - `f64` is the only floating point type; `f32` is not planned
-- explicit numeric casts are future work and are not optimizer input today
+- only explicit `i32_to_f64` and `u32_to_f64` casts are supported today
+- no implicit int/float conversion
+- no cast constant folding; `i32_to_f64(1)` must not become `const_float 1.0`
 - no fast-math
 - no f64 constant folding
 - no f64 reassociation
@@ -413,8 +423,12 @@ Phase 16 f64 support is strict-safe:
 - no f64 induction simplification
 - copy propagation may rewrite f64 value uses without changing evaluation
   order
-- DCE may remove unused pure f64 temporaries, but must not remove loads, stores,
-  calls, branch conditions, return values, or control flow
+- copy propagation may rewrite explicit cast inputs without changing cast kind
+- DCE may remove unused pure f64 temporaries and unused pure explicit casts, but
+  must not remove loads, stores, calls, branch conditions, return values, or
+  control flow
+- local CSE may reuse exact same-kind explicit casts, but must not merge
+  different cast kinds
 
 Future optimizer passes must prove strict-float safety before touching f64.
 The default rule is to skip f64 rather than infer algebraic identities from

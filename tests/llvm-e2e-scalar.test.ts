@@ -154,6 +154,83 @@ int main(void) {
     expect(run.status, run.stderr || run.stdout).toBe(0);
   });
 
+  it("compiles generated LLVM IR with explicit i32/u32 to f64 casts and runs them from C", () => {
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "llvm_casts.ik"),
+      `
+        export fn cast_i32_to_f64(value: i32) -> f64 {
+          return i32_to_f64(value);
+        }
+
+        export fn cast_u32_to_f64(value: u32) -> f64 {
+          return u32_to_f64(value);
+        }
+
+        export fn cast_expr(a: i32, b: u32) -> f64 {
+          return i32_to_f64(a) * 2.0 + u32_to_f64(b) / 2.0;
+        }
+      `
+    );
+
+    const emitExitCode = runCli(["emit-llvm", "llvm_casts.ik", "--out", "build/llvm_casts.ll"], {
+      cwd,
+      stdout: () => {},
+      stderr: () => {}
+    });
+
+    expect(emitExitCode).toBe(0);
+    const llvm = readFileSync(join(cwd, "build/llvm_casts.ll"), "utf8");
+    expect(llvm).toContain("sitofp i32");
+    expect(llvm).toContain("uitofp i32");
+    expect(llvm).not.toContain("fast");
+
+    if (!hasClang()) {
+      console.warn("skipped because clang was not found");
+      return;
+    }
+
+    const harnessFile = join(cwd, "build/harness.c");
+    const executable = join(cwd, "build/llvm_casts_test");
+    writeFileSync(
+      harnessFile,
+      `#include <math.h>
+#include <stdint.h>
+
+double cast_i32_to_f64(int32_t value);
+double cast_u32_to_f64(uint32_t value);
+double cast_expr(int32_t a, uint32_t b);
+
+static int close_double(double actual, double expected) {
+  return fabs(actual - expected) < 0.0000001;
+}
+
+int main(void) {
+  if (!close_double(cast_i32_to_f64(-7), -7.0)) {
+    return 1;
+  }
+  if (!close_double(cast_u32_to_f64((uint32_t)0xfffffffeu), 4294967294.0)) {
+    return 2;
+  }
+  if (!close_double(cast_expr(4, (uint32_t)6), 11.0)) {
+    return 3;
+  }
+  return 0;
+}
+`
+    );
+
+    const compile = spawnSync(
+      "clang",
+      [...strictClangFlags, join(cwd, "build/llvm_casts.ll"), harnessFile, "-o", executable],
+      { encoding: "utf8" }
+    );
+    expect(compile.status, compile.stderr || compile.stdout).toBe(0);
+
+    const run = spawnSync(executable, [], { encoding: "utf8" });
+    expect(run.status, run.stderr || run.stdout).toBe(0);
+  });
+
   it("build-llvm emits a native object for f64 scalar functions when clang is available", () => {
     if (!hasClang()) {
       console.warn("skipped because clang was not found");
@@ -187,5 +264,42 @@ int main(void) {
     expect(stdout).toBe(`OK: built LLVM object\n${join(cwd, "build/llvm_f64.o")}\n`);
     expect(existsSync(join(cwd, "build/llvm_f64.o"))).toBe(true);
     expect(readFileSync(join(cwd, "build/llvm_f64.o")).byteLength).toBeGreaterThan(0);
+  });
+
+  it("build-llvm emits a native object for explicit i32/u32 to f64 casts when clang is available", () => {
+    if (!hasClang()) {
+      console.warn("skipped because clang was not found");
+      return;
+    }
+
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, "llvm_casts.ik"),
+      `
+        export fn cast_expr(a: i32, b: u32) -> f64 {
+          return i32_to_f64(a) + u32_to_f64(b);
+        }
+      `
+    );
+
+    let stdout = "";
+    let stderr = "";
+    const exitCode = runCli(["build-llvm", "llvm_casts.ik", "--kind", "object", "--out", "build/llvm_casts.o"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`OK: built LLVM object\n${join(cwd, "build/llvm_casts.o")}\n`);
+    expect(readFileSync(join(cwd, "build/llvm_casts.ll"), "utf8")).toContain("sitofp i32");
+    expect(readFileSync(join(cwd, "build/llvm_casts.ll"), "utf8")).toContain("uitofp i32");
+    expect(existsSync(join(cwd, "build/llvm_casts.o"))).toBe(true);
+    expect(readFileSync(join(cwd, "build/llvm_casts.o")).byteLength).toBeGreaterThan(0);
   });
 });

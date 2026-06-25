@@ -173,8 +173,10 @@ Numeric roadmap lock:
 
 - IK / IntKernel remains f64-only for floating point.
 - `f32` is not planned.
-- Explicit numeric casts are future work, must be explicit, and should start
-  with narrow int-to-f64 builtins rather than a broad conversion surface.
+- Phase 20 starts explicit numeric casts with exact `i32_to_f64` and
+  `u32_to_f64` builtins only.
+- `i64_to_f64`, `u64_to_f64`, f64-to-int casts, overloaded casts, and cast
+  expression syntax remain future design work.
 - Fast-math and SIMD are not part of the current numeric roadmap.
 
 ## Future `slice<T>` / Bounds Checks

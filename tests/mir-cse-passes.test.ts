@@ -12,6 +12,8 @@ import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
 const i64: MirType = { kind: "primitive", name: "i64" };
+const i32: MirType = { kind: "primitive", name: "i32" };
+const u32: MirType = { kind: "primitive", name: "u32" };
 const f64: MirType = { kind: "primitive", name: "f64" };
 const boolType: MirType = { kind: "primitive", name: "bool" };
 
@@ -205,6 +207,39 @@ describe("MIR CSE passes", () => {
 
     expect(instructions[1]).toEqual({ kind: "binary", target: temp("t1", f64), op: "/", left: param("a", f64), right: param("b", f64) });
     expect(instructions[3]).toEqual({ kind: "compare", target: temp("t3", boolType), op: "==", left: temp("t0", f64), right: temp("t1", f64) });
+  });
+
+  it("applies same-kind local CSE to explicit casts without merging different cast kinds", () => {
+    const func: MirFunction = {
+      name: "cast_cse",
+      exported: true,
+      params: [
+        { name: "a", type: i32 },
+        { name: "b", type: u32 }
+      ],
+      returnType: f64,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "cast", target: temp("t0", f64), op: "i32_to_f64", value: param("a", i32) },
+            { kind: "cast", target: temp("t1", f64), op: "u32_to_f64", value: param("b", u32) },
+            { kind: "cast", target: temp("t2", f64), op: "i32_to_f64", value: param("a", i32) },
+            { kind: "cast", target: temp("t3", f64), op: "u32_to_f64", value: param("b", u32) },
+            { kind: "binary", target: temp("t4", f64), op: "+", left: temp("t2", f64), right: temp("t3", f64) }
+          ],
+          terminator: { kind: "return", value: temp("t4", f64) }
+        }
+      ]
+    };
+
+    const optimized = runSinglePass({ structs: [], functions: [func] }, localCsePass);
+    const instructions = optimized.functions[0]!.blocks[0]!.instructions;
+
+    expect(instructions[1]).toEqual({ kind: "cast", target: temp("t1", f64), op: "u32_to_f64", value: param("b", u32) });
+    expect(instructions[2]).toEqual({ kind: "move", target: temp("t2", f64), value: temp("t0", f64) });
+    expect(instructions[3]).toEqual({ kind: "move", target: temp("t3", f64), value: temp("t1", f64) });
   });
 
   it("enables same-order f64 local CSE only at O2 and O3", () => {

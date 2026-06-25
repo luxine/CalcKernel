@@ -171,6 +171,13 @@ function cloneInstruction(instruction: MirInstruction, maps: RewriteMaps, prefix
         left: rewriteValue(instruction.left, maps),
         right: rewriteValue(instruction.right, maps)
       };
+    case "cast":
+      return {
+        kind: "cast",
+        target: rewriteTarget(instruction.target, maps, prefix, existingNames),
+        op: instruction.op,
+        value: rewriteValue(instruction.value, maps)
+      };
     case "address":
     case "load":
     case "store":
@@ -358,6 +365,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

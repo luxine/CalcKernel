@@ -211,6 +211,8 @@ Checked C mode 仍然是 integer checked arithmetic mode。选择 `--overflow ch
 - `f64 +`、`-`、`*`、`/` 不调用 integer overflow builtin。
 - f64 division by zero 不返回 `IK_ERR_DIV_BY_ZERO`。
 - f64 overflow 不返回 `IK_ERR_OVERFLOW`。
+- `i32_to_f64` 和 `u32_to_f64` cast 不返回 `IK_ERR_OVERFLOW`；它们是进入普通
+  strict f64 value 的 exact explicit conversion。
 - f64 NaN、infinity 和 `-0.0` 是普通 floating point 结果，不是 checked
   arithmetic status value。
 - `f64 %` 不是语言操作，会在 C emission 前被拒绝。

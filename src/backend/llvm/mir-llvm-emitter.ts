@@ -3,6 +3,7 @@ import type {
   MirBinaryInstruction,
   MirBinaryOp,
   MirBlock,
+  MirCastInstruction,
   MirCallInstruction,
   MirCompareInstruction,
   MirCompareOp,
@@ -117,6 +118,7 @@ function canEmitSsaLikeFunction(func: MirFunction): boolean {
     instruction.kind === "move" ||
     instruction.kind === "binary" ||
     instruction.kind === "compare" ||
+    instruction.kind === "cast" ||
     instruction.kind === "unary"
   );
 }
@@ -196,6 +198,9 @@ function emitSsaInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContex
       context.values.set(valueIdentity(instruction.target), result);
       return;
     }
+    case "cast":
+      emitSsaCastInstruction(writer, context, instruction);
+      return;
     case "address":
     case "load":
     case "store":
@@ -332,6 +337,9 @@ function emitInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, ins
     case "unary":
       emitUnaryInstruction(writer, context, instruction);
       return;
+    case "cast":
+      emitCastInstruction(writer, context, instruction);
+      return;
     case "address":
       emitAddressInstruction(writer, context, instruction);
       return;
@@ -381,6 +389,35 @@ function emitUnaryInstruction(writer: LlvmIrWriter, context: FunctionEmitContext
   }
 
   writer.line(`store ${type} ${result}, ptr ${addressName(requireAddressable(instruction.target))}`);
+}
+
+function emitSsaCastInstruction(writer: LlvmIrWriter, context: SsaFunctionEmitContext, instruction: MirCastInstruction): void {
+  const value = ssaValue(context, instruction.value);
+  const result = nextSsaRegister(context);
+  const sourceType = llvmValueType(instruction.value.type);
+  const targetType = llvmValueType(instruction.target.type);
+
+  writer.line(`${result} = ${llvmCastOpcode(instruction)} ${sourceType} ${value} to ${targetType}`);
+  context.values.set(valueIdentity(instruction.target), result);
+}
+
+function emitCastInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, instruction: MirCastInstruction): void {
+  const value = loadValue(writer, context, instruction.value);
+  const result = nextRegister(context);
+  const sourceType = llvmValueType(instruction.value.type);
+  const targetType = llvmValueType(instruction.target.type);
+
+  writer.line(`${result} = ${llvmCastOpcode(instruction)} ${sourceType} ${value} to ${targetType}`);
+  writer.line(`store ${targetType} ${result}, ptr ${addressName(requireAddressable(instruction.target))}`);
+}
+
+function llvmCastOpcode(instruction: MirCastInstruction): "sitofp" | "uitofp" {
+  switch (instruction.op) {
+    case "i32_to_f64":
+      return "sitofp";
+    case "u32_to_f64":
+      return "uitofp";
+  }
 }
 
 function emitCallInstruction(writer: LlvmIrWriter, context: FunctionEmitContext, instruction: MirCallInstruction): void {
@@ -527,6 +564,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

@@ -133,6 +133,8 @@ Phase 16.8 supports `f64` as LLVM `double`, including scalar parameters and
 returns, `ptr<f64>` memory access, struct fields as `double`, arithmetic,
 unary negation, and comparisons. LLVM f64 codegen does not add fast-math flags
 and does not promise bit-identical results across every backend.
+Phase 20 supports exact explicit `i32_to_f64` and `u32_to_f64` casts using
+`sitofp` and `uitofp`.
 
 Signedness is not part of the integer type. Signed and unsigned differences are
 encoded by instruction choice for division, remainder, and comparison.
@@ -238,6 +240,8 @@ F64 semantics are locked to strict LLVM IR:
 
 - emit `fadd`, `fsub`, `fmul`, `fdiv`, `fneg`, and `fcmp` without fast-math
   flags
+- emit `i32_to_f64` as `sitofp i32 ... to double`
+- emit `u32_to_f64` as `uitofp i32 ... to double`
 - do not use reassociation, reciprocal, no-NaN, no-infinity, signed-zero-ignore,
   or other fast-float assumptions
 - NaN, infinity, and `-0.0` follow the compiled target's ordinary IEEE-like
@@ -509,8 +513,8 @@ Generated LLVM IR must be stable:
 - only simple scalar straight-line functions use SSA-like lowering at `-O2` and
   `-O3`.
 - f64 codegen is strict by default and does not emit fast-math flags.
-- f64 `%`, f32, implicit int/float conversion, float checked overflow, SIMD,
-  and JIT remain unsupported.
+- f64 `%`, f32, implicit int/float conversion, `i64_to_f64`, `u64_to_f64`,
+  f64-to-int casts, float checked overflow, SIMD, and JIT remain unsupported.
 - no LLVM-specific optimizer pass pipeline is run by IntKernel; backend input
   still flows through the shared MIR pass manager.
 - `build-llvm` depends on external clang; IntKernel does not bundle clang,

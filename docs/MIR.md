@@ -60,6 +60,8 @@ unchecked ABI, checked ABI, or diagnostics semantics.
 MIR v1 covers the current V0 language surface:
 
 - scalar integer and boolean expressions
+- strict `f64` expressions
+- exact explicit `i32_to_f64` / `u32_to_f64` casts
 - `let`, assignment, and `return`
 - `if` / `else`
 - `while`
@@ -101,11 +103,13 @@ MIR v1 instructions should describe simple operations with explicit result
 values or explicit places:
 
 - `ConstInt`
+- `ConstFloat`
 - `ConstBool`
 - `Move`
 - `Binary`
 - `Unary`
 - `Compare`
+- `Cast`
 - `Load`
 - `Store`
 - `Call`
@@ -116,7 +120,12 @@ example:
 ```text
 %t0: i64 = add a, b
 %t1: bool = lt %t0, c
+%t2: f64 = cast i32_to_f64 i
 ```
+
+The only MIR cast operations today are `i32_to_f64` and `u32_to_f64`. MIR
+validator rejects all other cast kinds, wrong input types, and wrong result
+types.
 
 ### Terminators
 
@@ -155,6 +164,7 @@ Every MIR value must have a resolved IntKernel type:
 - `i64`
 - `u32`
 - `u64`
+- `f64`
 - `bool`
 - `ptr<T>`
 - `struct`

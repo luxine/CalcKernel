@@ -34,7 +34,9 @@ f64 语义锁定：
 - LLVM 生成不带 fast-math flag 的 `double` operation。
 - WASM 生成 `f64` operation，scalar f64 通过 JavaScript `Number` 暴露给 host。
 - 不支持 implicit int/float conversion。
-- explicit numeric cast 是未来工作，不属于当前 ABI。
+- 支持 exact explicit `i32_to_f64` 和 `u32_to_f64` cast，且不改变任何 exported
+  ABI shape。
+- 不支持 `i64_to_f64`、`u64_to_f64` 或 f64-to-int cast。
 - NaN、infinity 和 `-0.0` 遵循 backend 的普通 IEEE-like 行为。
 - NaN payload 和跨 backend bit identity 不属于 ABI contract。
 - 有限值跨 backend 测试必须使用 tolerance；NaN、infinity、signed zero 和 bool
@@ -52,6 +54,19 @@ f64 语义锁定：
 | `bool` | `bool` |
 | `ptr<T>` | `T*` |
 | `struct` | `typedef struct` |
+
+## Explicit Cast Lowering
+
+Phase 20 只支持 exact explicit `i32`/`u32` 到 `f64` 的 compiler builtin：
+
+| IK builtin | C lowering | WASM lowering | LLVM lowering |
+| --- | --- | --- | --- |
+| `i32_to_f64(x)` | `(double)x` | `f64.convert_i32_s` | `sitofp i32 ... to double` |
+| `u32_to_f64(x)` | `(double)x` | `f64.convert_i32_u` | `uitofp i32 ... to double` |
+
+这些 cast 不是 runtime call，也不表示 assignment conversion 或 mixed arithmetic
+conversion。`let x: f64 = 1` 和 `i32_value + 1.0` 仍然是类型错误。cast 后如果发生
+除以零，结果遵循普通 strict f64 行为，不产生 checked integer error。
 
 示例：
 

@@ -38,7 +38,9 @@ Semantic lock for f64:
 - WASM emits `f64` operations and exposes scalar f64 values to JavaScript as
   `Number`.
 - Implicit int/float conversion is not supported.
-- Explicit numeric casts are future work and are not part of the current ABI.
+- Exact explicit `i32_to_f64` and `u32_to_f64` casts are supported and do not
+  change any exported ABI shape.
+- `i64_to_f64`, `u64_to_f64`, and f64-to-int casts are not supported.
 - NaN, infinity, and `-0.0` follow ordinary backend IEEE-like behavior.
 - NaN payloads and cross-backend bit identity are not part of the ABI contract.
 - Finite cross-backend tests must use tolerance; NaN, infinity, signed zero,
@@ -56,6 +58,20 @@ Semantic lock for f64:
 | `bool` | `bool` |
 | `ptr<T>` | `T*` |
 | `struct` | `typedef struct` |
+
+## Explicit Cast Lowering
+
+Phase 20 supports only exact explicit `i32`/`u32` to `f64` compiler builtins:
+
+| IK builtin | C lowering | WASM lowering | LLVM lowering |
+| --- | --- | --- | --- |
+| `i32_to_f64(x)` | `(double)x` | `f64.convert_i32_s` | `sitofp i32 ... to double` |
+| `u32_to_f64(x)` | `(double)x` | `f64.convert_i32_u` | `uitofp i32 ... to double` |
+
+These casts are not runtime calls and do not imply assignment conversion or
+mixed arithmetic conversion. `let x: f64 = 1` and `i32_value + 1.0` remain type
+errors. Division by zero after a cast follows ordinary strict f64 behavior and
+does not produce checked integer errors.
 
 Example:
 

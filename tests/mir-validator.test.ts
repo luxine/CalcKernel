@@ -146,6 +146,65 @@ describe("MIR validator", () => {
     expect(validateMirModule(module).errors).toEqual([]);
   });
 
+  it("accepts explicit i32 and u32 to f64 cast MIR", () => {
+    const fn: MirFunction = {
+      name: "casts",
+      exported: true,
+      params: [
+        { name: "a", type: i32 },
+        { name: "b", type: { kind: "primitive", name: "u32" } }
+      ],
+      returnType: f64,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "cast", target: temp("t0", f64), op: "i32_to_f64", value: param("a", i32) },
+            { kind: "cast", target: temp("t1", f64), op: "u32_to_f64", value: param("b", { kind: "primitive", name: "u32" }) },
+            { kind: "binary", target: temp("t2", f64), op: "+", left: temp("t0", f64), right: temp("t1", f64) }
+          ],
+          terminator: { kind: "return", value: temp("t2", f64) }
+        }
+      ]
+    };
+
+    expect(validateMirModule(moduleWith([fn])).errors).toEqual([]);
+  });
+
+  it("rejects invalid explicit cast MIR", () => {
+    const u32: MirType = { kind: "primitive", name: "u32" };
+    const fn: MirFunction = {
+      name: "bad_casts",
+      exported: true,
+      params: [
+        { name: "a", type: u32 },
+        { name: "flag", type: boolType }
+      ],
+      returnType: f64,
+      locals: [],
+      blocks: [
+        {
+          label: "bb0",
+          instructions: [
+            { kind: "cast", target: temp("t0", f64), op: "i32_to_f64", value: param("a", u32) },
+            { kind: "cast", target: temp("t1", i32), op: "u32_to_f64", value: param("a", u32) },
+            { kind: "cast", target: temp("t2", f64), op: "i64_to_f64" as "i32_to_f64", value: param("flag", boolType) }
+          ],
+          terminator: { kind: "return", value: temp("t0", f64) }
+        }
+      ]
+    };
+
+    expect(errorMessages(moduleWith([fn]))).toEqual(
+      expect.arrayContaining([
+        "Cast 'i32_to_f64' input in function 'bad_casts' must be i32, got u32.",
+        "Cast 'u32_to_f64' result in function 'bad_casts' must be f64, got i32.",
+        "Unsupported cast 'i64_to_f64' in function 'bad_casts'."
+      ])
+    );
+  });
+
   it("rejects duplicate block labels", () => {
     const fn = validAddFunction();
     fn.blocks.push({

@@ -63,6 +63,7 @@ export type MirPlace =
 export type MirBinaryOp = "+" | "-" | "*" | "/" | "%";
 export type MirCompareOp = "==" | "!=" | "<" | "<=" | ">" | ">=";
 export type MirUnaryOp = "neg" | "not";
+export type MirCastOp = "i32_to_f64" | "u32_to_f64";
 
 export type MirInstruction =
   | MirConstIntInstruction
@@ -72,6 +73,7 @@ export type MirInstruction =
   | MirBinaryInstruction
   | MirUnaryInstruction
   | MirCompareInstruction
+  | MirCastInstruction
   | MirAddressInstruction
   | MirLoadInstruction
   | MirStoreInstruction
@@ -122,6 +124,13 @@ export interface MirCompareInstruction {
   op: MirCompareOp;
   left: MirValue;
   right: MirValue;
+}
+
+export interface MirCastInstruction {
+  kind: "cast";
+  target: MirValue;
+  op: MirCastOp;
+  value: MirValue;
 }
 
 export interface MirAddressInstruction {

@@ -61,12 +61,13 @@ Supported by the Phase 12 v1 design:
 - exported linear memory
 - unchecked arithmetic
 - `f64` arithmetic, comparison, load, and store
+- exact explicit `i32_to_f64` / `u32_to_f64` casts
 - WAT-to-WASM assembly through `wabt`
 
 WASM floating point follows the project-wide f64-only policy: `f64` is the only
 floating point type, `f32` is not planned, implicit int/float conversion is not
-supported, and explicit numeric casts are future work. Scalar f64 interop uses
-JavaScript `Number`.
+supported, and only exact explicit `i32_to_f64` / `u32_to_f64` casts are
+available. Scalar f64 interop uses JavaScript `Number`.
 
 Not supported by Phase 12 v1:
 
@@ -333,6 +334,15 @@ F64 comparisons use the standard WASM f64 predicates:
 - `f64.eq`, `f64.ne`
 - `f64.lt`, `f64.le`
 - `f64.gt`, `f64.ge`
+
+Phase 20 supports explicit int-to-f64 casts:
+
+- `i32_to_f64(x)` lowers to `f64.convert_i32_s`.
+- `u32_to_f64(x)` lowers to `f64.convert_i32_u`.
+- `i64_to_f64`, `u64_to_f64`, f64-to-int casts, and implicit conversion remain
+  unsupported.
+- Cast results are ordinary WASM `f64` values and use JavaScript `Number` at
+  the host boundary.
 
 ## Checked Overflow
 

@@ -162,4 +162,30 @@ describe("MIR C emitter scalar unchecked", () => {
     expect(source).toContain("ik_tmp");
     expect(source).toContain(" <= ");
   });
+
+  it("emits explicit int to f64 MIR casts as C double casts", () => {
+    const source = lowerAndEmit(`
+      export fn cast_i32(value: i32) -> f64 {
+        return i32_to_f64(value);
+      }
+
+      export fn cast_u32(value: u32) -> f64 {
+        return u32_to_f64(value);
+      }
+
+      export fn cast_expr(a: i32, b: u32, limit: f64) -> bool {
+        let sum: f64 = i32_to_f64(a) + u32_to_f64(b);
+        return sum <= limit;
+      }
+    `);
+
+    expect(source).toContain("double cast_i32(int32_t value)");
+    expect(source).toContain("double cast_u32(uint32_t value)");
+    expect(source).toContain("bool cast_expr(int32_t a, uint32_t b, double limit)");
+    expect(source).toContain("ik_tmp0 = (double)value;");
+    expect(source).toContain("ik_tmp0 = (double)a;");
+    expect(source).toContain("ik_tmp1 = (double)b;");
+    expect(source).toContain("ik_tmp2 = ik_tmp0 + ik_tmp1;");
+    expect(source).toContain("ik_tmp3 = sum <= limit;");
+  });
 });

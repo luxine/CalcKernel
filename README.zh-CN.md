@@ -91,7 +91,9 @@ Strict mode 含义：
 - JavaScript WASM interop 对 `f64` 使用 `Number`
 - `f64` 是唯一 floating point type；不规划 `f32`
 - 不支持 implicit int/float conversion
-- explicit numeric cast 是未来工作，当前未实现
+- 支持 exact explicit int-to-f64 cast，仅限 `i32_to_f64(x)` 和
+  `u32_to_f64(x)`
+- 不支持 `i64_to_f64`、`u64_to_f64` 或 f64-to-int cast
 - 不支持 `f64 %`
 - 不启用 fast-math flag 或 reassociation
 - 不支持 SIMD
@@ -107,6 +109,23 @@ infinity 和 signed zero 分别做分类判断。
 `f64` 适合 axpy、dot product、sum、scale 这类数值 kernel。金额、税费、优惠、
 POS 总价和规则计算仍建议使用 `i64` fixed-point arithmetic，这样 checked integer
 mode 可以明确报告 overflow 和 division error。
+
+Explicit cast 不会打开 implicit conversion。下面两个函数是 compiler builtin，不是
+runtime call：
+
+```ik
+export fn avg_i32(sum: i32, count: i32) -> f64 {
+  return i32_to_f64(sum) / i32_to_f64(count);
+}
+
+export fn ratio_u32(a: u32, b: u32) -> f64 {
+  return u32_to_f64(a) / u32_to_f64(b);
+}
+```
+
+`i32_to_f64` 和 `u32_to_f64` 是 exact，因为所有 `i32` 和 `u32` 值都可以被 `f64`
+精确表示。如果这类示例中发生除以零，结果遵循普通 strict f64 行为，可能产生
+infinity 或 NaN；这不是 checked integer error。
 
 ## 生成 C
 
@@ -419,10 +438,11 @@ V0 不支持字符串、IO、heap allocation、GC、异常、async、class、闭
 runtime library 或 JIT。WASM 和 LLVM backend 当前只支持 unchecked arithmetic。
 
 Floating point 刻意保持很窄：IK / IntKernel 是 f64-only。当前支持 `f64`
-strict mode，不规划 `f32`。implicit int/float conversion、explicit numeric
-cast、`f64 %`、fast-math、SIMD 或 float checked overflow 都未实现。未来如果
-支持 cast，也必须是 explicit。IK / IntKernel 不保证所有 C、LLVM、WASM 和
-JavaScript target 的浮点结果 bit-identical。
+strict mode，不规划 `f32`。当前只实现 exact explicit `i32_to_f64` 和
+`u32_to_f64` cast。implicit int/float conversion、`i64/u64` to f64 cast、
+f64-to-int cast、`f64 %`、fast-math、SIMD 或 float checked overflow 都未实现。
+IK / IntKernel 不保证所有 C、LLVM、WASM 和 JavaScript target 的浮点结果
+bit-identical。
 
 V0 不做 bounds check。默认 arithmetic 是 unchecked；可选
 `--overflow checked` C code generation 会检查整数 overflow 和除零，但仍不检查

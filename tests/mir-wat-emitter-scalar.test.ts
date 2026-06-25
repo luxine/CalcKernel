@@ -124,4 +124,27 @@ describe("MIR WAT emitter scalar unchecked", () => {
     expect(wat).not.toContain("f64.rem");
     expect(wat).toBe(normalizeNewlines(readFileSync("tests/snapshots/wasm_f64_scalar.wat.snap", "utf8")));
   });
+
+  it("emits explicit i32/u32 to f64 casts with signed and unsigned WASM conversion opcodes", () => {
+    const wat = lowerAndEmitWat(`
+      export fn cast_i32(value: i32) -> f64 {
+        return i32_to_f64(value);
+      }
+
+      export fn cast_u32(value: u32) -> f64 {
+        return u32_to_f64(value);
+      }
+
+      export fn cast_expr(a: i32, b: u32) -> f64 {
+        return i32_to_f64(a) + u32_to_f64(b);
+      }
+    `);
+
+    expect(wat).toContain("f64.convert_i32_s");
+    expect(wat).toContain("f64.convert_i32_u");
+    expect(wat).toContain("f64.add");
+    expect(wat).not.toContain("f64.convert_i64_s");
+    expect(wat).not.toContain("f64.convert_i64_u");
+    expect(wat).toBe(normalizeNewlines(readFileSync("tests/snapshots/wasm_casts.wat.snap", "utf8")));
+  });
 });

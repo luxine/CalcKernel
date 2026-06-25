@@ -127,6 +127,8 @@ Phase 16.8 支持把 `f64` 映射为 LLVM `double`，包括 scalar parameter/ret
 `ptr<f64>` memory access、struct field `double`、arithmetic、unary negation 和
 comparison。LLVM f64 codegen 不添加 fast-math flags，也不承诺所有 backend 的结果
 bit-identical。
+Phase 20 支持 exact explicit `i32_to_f64` 和 `u32_to_f64` cast，分别使用
+`sitofp` 和 `uitofp`。
 
 Signedness 不属于 integer type 本身。Signed/unsigned 差异通过 division、
 remainder 和 comparison 指令选择体现。
@@ -229,6 +231,8 @@ Comparison result 是 `i1`。
 f64 语义锁定为 strict LLVM IR：
 
 - 生成不带 fast-math flag 的 `fadd`、`fsub`、`fmul`、`fdiv`、`fneg` 和 `fcmp`
+- `i32_to_f64` 生成 `sitofp i32 ... to double`
+- `u32_to_f64` 生成 `uitofp i32 ... to double`
 - 不使用 reassociation、reciprocal、no-NaN、no-infinity、signed-zero-ignore
   或其他 fast-float 假设
 - NaN、infinity 和 `-0.0` 遵循编译目标的普通 IEEE-like 行为
@@ -487,8 +491,8 @@ arithmetic 时应使用 C backend（`emit-c` 或 `build`）。
 - 只有简单 scalar straight-line function 在 `-O2` 和 `-O3` 下使用 SSA-like
   lowering。
 - f64 codegen 默认 strict，不输出 fast-math flags。
-- f64 `%`、f32、implicit int/float conversion、float checked overflow、SIMD 和
-  JIT 仍未支持。
+- f64 `%`、f32、implicit int/float conversion、`i64_to_f64`、`u64_to_f64`、
+  f64-to-int cast、float checked overflow、SIMD 和 JIT 仍未支持。
 - IntKernel 不运行 LLVM-specific optimizer pass pipeline；backend input 仍会经过
   共享 MIR pass manager。
 - `build-llvm` 依赖外部 clang；IntKernel 不捆绑 clang、`llc`、LLVM library 或

@@ -37,8 +37,9 @@ fixed-point arithmetic for those domains so checked integer mode can report
 overflow and division errors explicitly.
 
 The language does not support `f32`, implicit int/float conversion, fast-math,
-SIMD, or float checked overflow. Explicit numeric casts are future work and are
-not implemented in the current release; any future cast support must be explicit.
+SIMD, or float checked overflow. Phase 20 adds only exact explicit `i32`/`u32`
+to `f64` casts through compiler builtins. Other cast directions remain
+unsupported.
 
 ## Supported Declarations
 
@@ -137,6 +138,44 @@ Unsupported forms:
 Negative numbers are parsed as unary `-` applied to a literal. For example,
 `-1.0` is unary minus plus a `FloatLiteral`, not a signed literal token.
 
+### Explicit int-to-f64 Casts
+
+IK / IntKernel supports two exact compiler builtins for crossing from 32-bit
+integers into strict `f64` code:
+
+```ik
+export fn avg_i32(sum: i32, count: i32) -> f64 {
+  return i32_to_f64(sum) / i32_to_f64(count);
+}
+
+export fn ratio_u32(a: u32, b: u32) -> f64 {
+  return u32_to_f64(a) / u32_to_f64(b);
+}
+```
+
+- `i32_to_f64(i32) -> f64`
+- `u32_to_f64(u32) -> f64`
+
+Both conversions are exact because every `i32` and `u32` value is representable
+as `f64`. They are compiler builtins, not runtime functions, and their names are
+reserved.
+
+The following remain unsupported:
+
+- `i64_to_f64`
+- `u64_to_f64`
+- any `f64_to_*` cast
+- overloaded `to_f64(x)`
+- `x as f64`
+- constructor-like `f64(x)`
+- implicit conversions
+
+`let x: f64 = 1` and `i32_value + 1.0` are still type errors. Use
+`i32_to_f64(i32_value) + 1.0` when an explicit conversion is intended.
+If an explicit cast result participates in division by zero, the result follows
+ordinary strict f64 behavior and may be infinity or NaN; it is not a checked
+integer error.
+
 ### f64 Edge Semantics
 
 IK / IntKernel f64 semantics are strict and intentionally narrow:
@@ -230,7 +269,9 @@ V0 does not support:
 - `f32` (not planned)
 - `f64 %`
 - implicit int/float conversion
-- explicit numeric casts (future work only)
+- `i64_to_f64` / `u64_to_f64`
+- f64-to-int casts
+- broad or overloaded cast systems
 - fast-math
 - SIMD
 - JIT compilation

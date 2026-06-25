@@ -1,0 +1,49 @@
+; ModuleID = 'intkernel'
+source_filename = "llvm_casts.ik"
+
+define double @cast_i32(i32 %value) {
+entry:
+  %value.addr = alloca i32
+  %ik_tmp0.addr = alloca double
+  store i32 %value, ptr %value.addr
+  %v0 = load i32, ptr %value.addr
+  %v1 = sitofp i32 %v0 to double
+  store double %v1, ptr %ik_tmp0.addr
+  %v2 = load double, ptr %ik_tmp0.addr
+  ret double %v2
+}
+
+define double @cast_u32(i32 %value) {
+entry:
+  %value.addr = alloca i32
+  %ik_tmp0.addr = alloca double
+  store i32 %value, ptr %value.addr
+  %v0 = load i32, ptr %value.addr
+  %v1 = uitofp i32 %v0 to double
+  store double %v1, ptr %ik_tmp0.addr
+  %v2 = load double, ptr %ik_tmp0.addr
+  ret double %v2
+}
+
+define double @cast_expr(i32 %a, i32 %b) {
+entry:
+  %a.addr = alloca i32
+  %b.addr = alloca i32
+  %ik_tmp0.addr = alloca double
+  %ik_tmp1.addr = alloca double
+  %ik_tmp2.addr = alloca double
+  store i32 %a, ptr %a.addr
+  store i32 %b, ptr %b.addr
+  %v0 = load i32, ptr %a.addr
+  %v1 = sitofp i32 %v0 to double
+  store double %v1, ptr %ik_tmp0.addr
+  %v2 = load i32, ptr %b.addr
+  %v3 = uitofp i32 %v2 to double
+  store double %v3, ptr %ik_tmp1.addr
+  %v4 = load double, ptr %ik_tmp0.addr
+  %v5 = load double, ptr %ik_tmp1.addr
+  %v6 = fadd double %v4, %v5
+  store double %v6, ptr %ik_tmp2.addr
+  %v7 = load double, ptr %ik_tmp2.addr
+  ret double %v7
+}

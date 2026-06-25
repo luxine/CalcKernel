@@ -17,6 +17,8 @@ semantics or as cross-machine performance truth.
 - Confirm release notes only advertise implemented behavior.
 - Confirm f64 is documented as strict Phase 16 support, not as fast-math or
   SIMD support.
+- Confirm exact explicit `i32_to_f64` / `u32_to_f64` casts are documented as
+  Phase 20 support, not as a general cast system.
 - Do not advertise unsupported f32, implicit int/float conversion, `f64 %`,
   fast-math, SIMD, JIT, strings, IO, GC, runtime, checked WASM/LLVM arithmetic,
   or new backend support.
@@ -30,6 +32,7 @@ semantics or as cross-machine performance truth.
 - Run `pnpm ikc --help`, or the equivalent installed `ikc --help`, and review
   the output.
 - Run `pnpm ikc check examples/pricing.ik`.
+- Run `pnpm ikc check examples/explicit_casts.ik`.
 - Run `pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h`.
 - Run `pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir`.
 
@@ -54,6 +57,8 @@ semantics or as cross-machine performance truth.
 - Confirm unchecked mode remains the default and keeps the unchecked ABI.
 - Confirm checked C mode passes scalar, control-flow, short-circuit,
   function-call, and `examples/pricing.ik` e2e coverage.
+- Confirm C explicit cast regression passes for `i32_to_f64` and `u32_to_f64`,
+  including checked C mode where casts remain ordinary exact f64 conversions.
 - Review checked generated C/header snapshots.
 
 ## WASM Backend Regression
@@ -68,6 +73,8 @@ semantics or as cross-machine performance truth.
 - Confirm WASM memory / ptr e2e passes.
 - Confirm WASM layout tests pass.
 - Confirm `examples/pricing.ik` WASM e2e passes.
+- Confirm WASM explicit cast regression passes and WAT output contains
+  `f64.convert_i32_s` / `f64.convert_i32_u`.
 - Confirm the WASM f64 `Float64Array` example smoke passes for
   `examples/node-wasm-f64-array/`.
 - Confirm docs describe `ptr<f64>` as an `i32` byte offset, `f64` size 8,
@@ -90,6 +97,8 @@ semantics or as cross-machine performance truth.
 - Confirm LLVM ptr/index/field/store e2e passes.
 - Confirm LLVM bool ABI e2e passes.
 - Confirm `examples/pricing.ik` LLVM e2e passes.
+- Confirm LLVM explicit cast regression passes and IR output contains `sitofp`
+  / `uitofp` without fast-math flags.
 - Confirm `emit-llvm --overflow checked` and `build-llvm --overflow checked`
   fail with the documented unsupported-mode message.
 - Review `docs/LLVM_BACKEND.md` for backend limits and release notes.
@@ -101,6 +110,8 @@ semantics or as cross-machine performance truth.
   short-circuit, memory, and `examples/pricing.ik`.
 - Confirm f64 scalar, ptr, struct-field, arithmetic, comparison, unary minus,
   and backend parity regressions pass where implemented.
+- Confirm explicit `i32_to_f64` / `u32_to_f64` backend regressions pass for C,
+  WASM, and LLVM.
 - Confirm cross-backend f64 behavior matrix coverage for finite values, NaN,
   infinity, `-0.0`, f64 comparisons, `ptr<f64>`, and struct f64 fields.
 - Confirm finite f64 values use tolerance and that NaN, infinity, and signed
@@ -132,6 +143,8 @@ semantics or as cross-machine performance truth.
   - no f64 induction simplification
   - no LLVM fast-math flags
   - no NaN, infinity, or `-0.0` sensitive algebraic rewrites
+  - no cast constant folding
+  - explicit cast local CSE only reuses exact same-kind casts
 
 ## Float Semantics Lock
 
@@ -139,17 +152,18 @@ semantics or as cross-machine performance truth.
   unary minus, comparisons, `ptr<f64>`, and struct fields containing `f64`.
 - Confirm docs state the f64-only policy: `f64` is the only floating point type,
   `f32` is not planned, and no docs drift reintroduces f32 planning language.
-- Confirm docs explicitly reject implicit int/float conversion, explicit numeric
-  casts as current functionality, `f64 %`, fast-math, SIMD, JIT, runtime, IO,
-  strings, GC, NaN literal syntax, infinity literal syntax, and float suffix
-  literals.
-- Confirm docs describe explicit numeric casts as future work only and do not
-  promise that Phase 20 implements every cast direction.
+- Confirm docs explicitly reject implicit int/float conversion, general numeric
+  casts, `i64_to_f64`, `u64_to_f64`, f64-to-int casts, `f64 %`, fast-math, SIMD,
+  JIT, runtime, IO, strings, GC, NaN literal syntax, infinity literal syntax,
+  and float suffix literals.
+- Confirm docs describe only `i32_to_f64` and `u32_to_f64` as current explicit
+  cast support and do not promise other cast directions.
 - Confirm checked arithmetic docs say f64 does not participate in integer
   overflow checks, f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`,
   and f64 overflow does not return `IK_ERR_OVERFLOW`.
-- Confirm ABI/backend docs say C uses `double`, LLVM uses `double` without
-  fast-math flags, WASM uses `f64`, and JavaScript interop uses `Number`.
+- Confirm ABI/backend docs say C uses `(double)x`, WASM uses
+  `f64.convert_i32_s` / `f64.convert_i32_u`, LLVM uses `sitofp` / `uitofp`, and
+  JavaScript interop uses `Number` for f64 values.
 - Confirm docs do not promise NaN payload stability or cross-backend
   bit-identical floating point results.
 - Confirm optimizer docs require future passes to prove strict-float safety
@@ -248,7 +262,8 @@ semantics or as cross-machine performance truth.
 - Confirm working tree changes are intentional and understood.
 - Confirm release notes summarize only implemented capability.
 - Confirm known limitations are listed: f64-only floating point, f32 not planned,
-  no implicit int/float conversion, no implemented explicit numeric casts, no
-  `f64 %`, no fast-math, no SIMD, no JIT, no IO, no strings, no GC, no runtime,
-  no float checked overflow, and no checked WASM/LLVM arithmetic.
+  no implicit int/float conversion, only exact explicit `i32_to_f64` /
+  `u32_to_f64` casts, no `i64/u64` to f64 casts, no f64-to-int casts, no `f64 %`,
+  no fast-math, no SIMD, no JIT, no IO, no strings, no GC, no runtime, no float
+  checked overflow, and no checked WASM/LLVM arithmetic.
 - Create the release tag only after the checklist is complete.

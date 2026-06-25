@@ -194,4 +194,31 @@ describe("LLVM scalar straight-line emitter", () => {
     expect(llvm).toContain("fadd double");
     expect(llvm).not.toMatch(/\bfast\b|\bnnan\b|\bninf\b|\bnsz\b|\breassoc\b|\barcp\b|\bcontract\b|\bafn\b/);
   });
+
+  it("emits explicit i32/u32 to f64 casts with signed and unsigned LLVM conversions", () => {
+    const llvm = emitSourceLlvm(
+      `
+        export fn cast_i32(value: i32) -> f64 {
+          return i32_to_f64(value);
+        }
+
+        export fn cast_u32(value: u32) -> f64 {
+          return u32_to_f64(value);
+        }
+
+        export fn cast_expr(a: i32, b: u32) -> f64 {
+          return i32_to_f64(a) + u32_to_f64(b);
+        }
+      `,
+      "llvm_casts.ik"
+    );
+
+    expect(llvm).toContain("sitofp i32");
+    expect(llvm).toContain("uitofp i32");
+    expect(llvm).toContain("fadd double");
+    expect(llvm).not.toContain("sitofp i64");
+    expect(llvm).not.toContain("uitofp i64");
+    expect(llvm).not.toMatch(/\bfast\b|\bnnan\b|\bninf\b|\bnsz\b|\breassoc\b|\barcp\b|\bcontract\b|\bafn\b/);
+    expect(llvm).toBe(normalizeNewlines(readFileSync("tests/snapshots/llvm_casts.ll.snap", "utf8")));
+  });
 });

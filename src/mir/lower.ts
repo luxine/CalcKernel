@@ -33,6 +33,7 @@ import { MirBuilder } from "./mir-builder.js";
 import type {
   MirBinaryOp,
   MirBlock,
+  MirCastOp,
   MirCompareOp,
   MirFunction,
   MirInstruction,
@@ -451,6 +452,23 @@ function lowerCallExpression(context: FunctionLowerContext, expression: CallExpr
     throw unsupported(`${expression.callee.kind} call callee`);
   }
 
+  const castOp = castBuiltinOp(expression.callee.name);
+  if (castOp) {
+    if (expression.args.length !== 1) {
+      throw new Error(`MIR lowering invariant violation: compiler builtin '${expression.callee.name}' expects one argument.`);
+    }
+
+    const value = lowerExpression(context, expression.args[0]);
+    const target = context.builder.temp(toMirType(requireExpressionType(context.checkedProgram, expression)));
+    emitInstruction(context, {
+      kind: "cast",
+      target,
+      op: castOp,
+      value
+    });
+    return target;
+  }
+
   const args = expression.args.map((arg) => lowerExpression(context, arg));
   const target = context.builder.temp(toMirType(requireExpressionType(context.checkedProgram, expression)));
   emitInstruction(context, {
@@ -460,6 +478,16 @@ function lowerCallExpression(context: FunctionLowerContext, expression: CallExpr
     args
   });
   return target;
+}
+
+function castBuiltinOp(name: string): MirCastOp | null {
+  switch (name) {
+    case "i32_to_f64":
+    case "u32_to_f64":
+      return name;
+    default:
+      return null;
+  }
 }
 
 function lowerParenthesizedExpression(context: FunctionLowerContext, expression: ParenthesizedExpression): MirValue {

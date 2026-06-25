@@ -173,8 +173,9 @@ comparison 表会输出当前 median、baseline median、runtime ratio 和变慢
 `f64-*` case 使用 `bench/perf/fixtures/f64_kernels.ik`。正确性检查使用 absolute
 tolerance 和 relative tolerance；不要求跨 backend 浮点结果 bit-identical。
 IK f64 仍是 strict mode：`f64` 是唯一 floating point type，不规划 `f32`；这些
-benchmark 不假设 fast-math、SIMD、隐式 int/float conversion、explicit numeric
-cast 或 f64 checked overflow。
+benchmark 不假设 fast-math、SIMD、隐式 int/float conversion、broad cast 或 f64
+checked overflow。当前唯一 numeric cast 是 exact explicit `i32_to_f64` 和
+`u32_to_f64` builtin。
 
 Python list `float` 和 NumPy 可以作为可选手动 baseline，但不是本 runner 的默认
 依赖。NumPy 是 native library baseline，不是语言语义 oracle。

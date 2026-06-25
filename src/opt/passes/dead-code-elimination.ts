@@ -45,7 +45,10 @@ function isRemovableUnusedInstruction(instruction: MirInstruction, usedTemps: Se
 
 function isPureRemovableInstruction(
   instruction: MirInstruction
-): instruction is Extract<MirInstruction, { kind: "const_int" | "const_float" | "const_bool" | "move" | "binary" | "unary" | "compare" | "address" }> {
+): instruction is Extract<
+  MirInstruction,
+  { kind: "const_int" | "const_float" | "const_bool" | "move" | "binary" | "unary" | "compare" | "cast" | "address" }
+> {
   return (
     instruction.kind === "const_int" ||
     instruction.kind === "const_float" ||
@@ -54,6 +57,7 @@ function isPureRemovableInstruction(
     instruction.kind === "binary" ||
     instruction.kind === "unary" ||
     instruction.kind === "compare" ||
+    instruction.kind === "cast" ||
     instruction.kind === "address"
   );
 }
@@ -87,6 +91,9 @@ function collectInstructionUses(instruction: MirInstruction, used: Set<string>):
       return;
     case "unary":
       collectValueUse(instruction.operand, used);
+      return;
+    case "cast":
+      collectValueUse(instruction.value, used);
       return;
     case "address":
       collectPlaceUses(instruction.place, used);

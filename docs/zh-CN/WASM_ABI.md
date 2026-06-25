@@ -59,11 +59,13 @@ Phase 12 v1 设计支持：
 - exported linear memory
 - unchecked arithmetic
 - `f64` arithmetic、comparison、load 和 store
+- exact explicit `i32_to_f64` / `u32_to_f64` cast
 - 通过 `wabt` 完成 WAT-to-WASM assembly
 
 WASM floating point 遵循项目级 f64-only policy：`f64` 是唯一 floating point
-type，不规划 `f32`，不支持 implicit int/float conversion，explicit numeric cast
-是未来工作。scalar f64 interop 使用 JavaScript `Number`。
+type，不规划 `f32`，不支持 implicit int/float conversion，当前只支持 exact
+explicit `i32_to_f64` / `u32_to_f64` cast。scalar f64 interop 使用 JavaScript
+`Number`。
 
 Phase 12 v1 暂不支持：
 
@@ -119,6 +121,9 @@ f64 语义刻意保持为 WebAssembly 的普通 strict 行为：
 - host 测试应使用 `Number.isNaN`、带符号 infinity 判断、`Object.is` 判断 `-0`，
   并对有限值使用 tolerance，而不是 bit equality
 - `f64` 绝不使用 `BigInt` 传递
+- `i32_to_f64(x)` lowering 为 `f64.convert_i32_s`
+- `u32_to_f64(x)` lowering 为 `f64.convert_i32_u`
+- `i64_to_f64`、`u64_to_f64`、f64-to-int cast 和 implicit conversion 仍不支持
 
 ## Function ABI
 
@@ -324,6 +329,11 @@ F64 comparison 使用标准 WASM f64 predicates：
 - `f64.eq`、`f64.ne`
 - `f64.lt`、`f64.le`
 - `f64.gt`、`f64.ge`
+
+Phase 20 explicit int-to-f64 cast 使用标准 WASM conversion opcode：
+
+- `i32_to_f64(x)` 使用 `f64.convert_i32_s`
+- `u32_to_f64(x)` 使用 `f64.convert_i32_u`
 
 ## Checked Overflow
 

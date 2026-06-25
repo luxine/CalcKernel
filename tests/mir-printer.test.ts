@@ -162,4 +162,45 @@ describe("MIR printer", () => {
       "
     `);
   });
+
+  it("prints explicit int to f64 casts in a stable text format", () => {
+    const module: MirModule = {
+      structs: [],
+      functions: [
+        {
+          name: "from_i32",
+          exported: true,
+          params: [{ name: "a", type: i32 }],
+          returnType: f64,
+          locals: [],
+          blocks: [
+            {
+              label: "bb0",
+              instructions: [
+                {
+                  kind: "cast",
+                  target: { kind: "temp", name: "t0", type: f64 },
+                  op: "i32_to_f64",
+                  value: { kind: "param", name: "a", type: i32 }
+                }
+              ],
+              terminator: {
+                kind: "return",
+                value: { kind: "temp", name: "t0", type: f64 }
+              }
+            }
+          ]
+        }
+      ]
+    };
+
+    expect(printMirModule(module)).toMatchInlineSnapshot(`
+      "export fn from_i32(a: i32) -> f64 {
+      bb0:
+        %t0: f64 = cast i32_to_f64 a
+        return %t0
+      }
+      "
+    `);
+  });
 });

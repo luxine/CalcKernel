@@ -15,6 +15,8 @@
 - 确认 package metadata 只暴露 `ikc` bin entrypoint。
 - 确认 release notes 只宣传已经实现的能力。
 - 确认 f64 被记录为 Phase 16 strict support，而不是 fast-math 或 SIMD support。
+- 确认 exact explicit `i32_to_f64` / `u32_to_f64` cast 被记录为 Phase 20
+  support，而不是通用 cast system。
 - 不要宣传未支持的 f32、implicit int/float conversion、`f64 %`、fast-math、
   SIMD、JIT、strings、IO、GC、runtime、checked WASM/LLVM arithmetic 或新 backend
   support。
@@ -27,6 +29,7 @@
 - 运行 `npm pack --dry-run`。
 - 运行 `pnpm ikc --help`，或等价的已安装 `ikc --help`，并 review 输出。
 - 运行 `pnpm ikc check examples/pricing.ik`。
+- 运行 `pnpm ikc check examples/explicit_casts.ik`。
 - 运行 `pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h`。
 - 运行 `pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir`。
 
@@ -51,6 +54,8 @@
 - 确认 unchecked mode 仍是默认值，并保持 unchecked ABI。
 - 确认 checked C mode 的 scalar、control-flow、short-circuit、function-call 和
   `examples/pricing.ik` e2e 覆盖通过。
+- 确认 C explicit cast regression 通过 `i32_to_f64` 和 `u32_to_f64`，包括
+  checked C mode 下 cast 仍是普通 exact f64 conversion。
 - Review checked generated C/header snapshots。
 
 ## WASM Backend Regression
@@ -65,6 +70,8 @@
 - 确认 WASM memory / ptr e2e 通过。
 - 确认 WASM layout tests 通过。
 - 确认 `examples/pricing.ik` WASM e2e 通过。
+- 确认 WASM explicit cast regression 通过，并且 WAT output 包含
+  `f64.convert_i32_s` / `f64.convert_i32_u`。
 - 确认 `examples/node-wasm-f64-array/` 的 WASM f64 `Float64Array` example smoke
   通过。
 - 确认文档说明 `ptr<f64>` 是 `i32` byte offset、`f64` size 是 8、
@@ -87,6 +94,8 @@
 - 确认 LLVM ptr/index/field/store e2e 通过。
 - 确认 LLVM bool ABI e2e 通过。
 - 确认 `examples/pricing.ik` LLVM e2e 通过。
+- 确认 LLVM explicit cast regression 通过，IR output 包含不带 fast-math flag 的
+  `sitofp` / `uitofp`。
 - 确认 `emit-llvm --overflow checked` 和 `build-llvm --overflow checked` 会以文档中的
   unsupported-mode message 失败。
 - Review `docs/LLVM_BACKEND.md`，确认 backend limits 和 release notes。
@@ -98,6 +107,8 @@
   short-circuit、memory 和 `examples/pricing.ik`。
 - 确认已实现 backend 的 f64 scalar、ptr、struct-field、arithmetic、comparison、
   unary minus 和 backend parity regression 通过。
+- 确认 explicit `i32_to_f64` / `u32_to_f64` backend regression 在 C、WASM、LLVM
+  上通过。
 - 确认 cross-backend f64 behavior matrix 覆盖有限值、NaN、infinity、`-0.0`、
   f64 comparison、`ptr<f64>` 和 struct f64 field。
 - 确认有限 f64 值使用 tolerance，NaN、infinity 和 signed zero 使用分类判断，而不是
@@ -128,6 +139,8 @@
   - 不做 f64 induction simplification
   - 不生成 LLVM fast-math flag
   - 不做 NaN、infinity 或 `-0.0` 敏感的代数重写
+  - 不做 cast constant folding
+  - explicit cast local CSE 只复用完全相同 kind 的 cast
 
 ## Float Semantics Lock
 
@@ -135,16 +148,18 @@
   comparison、`ptr<f64>` 和包含 `f64` 的 struct field。
 - 确认文档写明 f64-only policy：`f64` 是唯一 floating point type，不规划 `f32`，
   且没有 docs drift 重新引入 f32 planning 语言。
-- 确认文档明确拒绝 implicit int/float conversion、把 explicit numeric cast 写成
-  当前能力、`f64 %`、fast-math、SIMD、JIT、runtime、IO、strings、GC、NaN literal
-  syntax、infinity literal syntax 和 float suffix literal。
-- 确认文档只把 explicit numeric cast 描述为未来工作，不承诺 Phase 20 实现所有 cast
-  方向。
+- 确认文档明确拒绝 implicit int/float conversion、general numeric cast、
+  `i64_to_f64`、`u64_to_f64`、f64-to-int cast、`f64 %`、fast-math、SIMD、JIT、
+  runtime、IO、strings、GC、NaN literal syntax、infinity literal syntax 和 float
+  suffix literal。
+- 确认文档只把 `i32_to_f64` 和 `u32_to_f64` 描述为当前 explicit cast support，
+  不承诺其他 cast 方向。
 - 确认 checked arithmetic 文档说明 f64 不参与 integer overflow check，f64
   division by zero 不返回 `IK_ERR_DIV_BY_ZERO`，f64 overflow 不返回
   `IK_ERR_OVERFLOW`。
-- 确认 ABI/backend 文档说明 C 使用 `double`，LLVM 使用不带 fast-math flag 的
-  `double`，WASM 使用 `f64`，JavaScript interop 使用 `Number`。
+- 确认 ABI/backend 文档说明 C 使用 `(double)x`，WASM 使用 `f64.convert_i32_s` /
+  `f64.convert_i32_u`，LLVM 使用 `sitofp` / `uitofp`，f64 value 的 JavaScript
+  interop 使用 `Number`。
 - 确认文档不承诺 NaN payload 稳定，也不承诺跨 backend 浮点结果 bit-identical。
 - 确认 optimizer 文档要求未来 pass 在改变 f64 expression 前必须证明
   strict-float safety。
@@ -231,7 +246,8 @@
 - 确认 working tree changes 都是有意且已理解的。
 - 确认 release notes 只总结已实现能力。
 - 确认 known limitations 已列出：floating point 是 f64-only、不规划 f32、没有
-  implicit int/float conversion、没有已实现的 explicit numeric cast、没有 `f64 %`、
-  没有 fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、没有 GC、没有 runtime、
+  implicit int/float conversion、只有 exact explicit `i32_to_f64` / `u32_to_f64`
+  cast、没有 `i64/u64` to f64 cast、没有 f64-to-int cast、没有 `f64 %`、没有
+  fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、没有 GC、没有 runtime、
   没有 float checked overflow，也没有 checked WASM/LLVM arithmetic。
 - 只有 checklist 完成后才创建 release tag。

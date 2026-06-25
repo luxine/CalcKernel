@@ -81,6 +81,8 @@ function printMirInstruction(instruction: MirInstruction): string {
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = ${printUnaryOp(instruction.op)} ${printMirValue(instruction.operand)}`;
     case "compare":
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = ${printCompareOp(instruction.op)} ${printMirValue(instruction.left)}, ${printMirValue(instruction.right)}`;
+    case "cast":
+      return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = cast ${instruction.op} ${printMirValue(instruction.value)}`;
     case "address":
       return `${printMirValue(instruction.target)}: ${printMirType(instruction.target.type)} = address ${printMirPlace(instruction.place)}`;
     case "load":

@@ -468,6 +468,116 @@ describe("checker", () => {
     expect(fn?.returnType).toEqual({ kind: "primitive", name: "bool" });
   });
 
+  it("accepts explicit i32 and u32 to f64 compiler builtins", () => {
+    const result = checkSource(`
+      export fn from_i32(n: i32) -> f64 {
+        let x: f64 = i32_to_f64(n);
+        return x + 1.0;
+      }
+
+      export fn from_u32(n: u32) -> f64 {
+        return u32_to_f64(n);
+      }
+    `);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(getFunctionInfo(result.checkedProgram, "from_i32")?.returnType).toEqual({ kind: "primitive", name: "f64" });
+    expect(getFunctionInfo(result.checkedProgram, "from_u32")?.returnType).toEqual({ kind: "primitive", name: "f64" });
+  });
+
+  it("materializes integer literals for explicit int to f64 compiler builtins", () => {
+    expect(messagesOf(`
+      export fn calc() -> f64 {
+        return i32_to_f64(1) + u32_to_f64(2);
+      }
+    `)).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "i32_to_f64 with no arguments",
+      source: "export fn bad(n: i32) -> f64 { return i32_to_f64(); }",
+      keywords: ["builtin", "i32_to_f64", "expects", "1", "got", "0"]
+    },
+    {
+      name: "i32_to_f64 with two arguments",
+      source: "export fn bad(a: i32, b: i32) -> f64 { return i32_to_f64(a, b); }",
+      keywords: ["builtin", "i32_to_f64", "expects", "1", "got", "2"]
+    },
+    {
+      name: "i32_to_f64 with u32 argument",
+      source: "export fn bad(n: u32) -> f64 { return i32_to_f64(n); }",
+      keywords: ["argument", "1", "builtin", "i32_to_f64", "expects", "i32", "u32"]
+    },
+    {
+      name: "i32_to_f64 with i64 argument",
+      source: "export fn bad(n: i64) -> f64 { return i32_to_f64(n); }",
+      keywords: ["argument", "1", "builtin", "i32_to_f64", "expects", "i32", "i64"]
+    },
+    {
+      name: "i32_to_f64 with f64 argument",
+      source: "export fn bad(n: f64) -> f64 { return i32_to_f64(n); }",
+      keywords: ["argument", "1", "builtin", "i32_to_f64", "expects", "i32", "f64"]
+    },
+    {
+      name: "u32_to_f64 with i32 argument",
+      source: "export fn bad(n: i32) -> f64 { return u32_to_f64(n); }",
+      keywords: ["argument", "1", "builtin", "u32_to_f64", "expects", "u32", "i32"]
+    },
+    {
+      name: "u32_to_f64 with u64 argument",
+      source: "export fn bad(n: u64) -> f64 { return u32_to_f64(n); }",
+      keywords: ["argument", "1", "builtin", "u32_to_f64", "expects", "u32", "u64"]
+    },
+    {
+      name: "u32_to_f64 with f64 argument",
+      source: "export fn bad(n: f64) -> f64 { return u32_to_f64(n); }",
+      keywords: ["argument", "1", "builtin", "u32_to_f64", "expects", "u32", "f64"]
+    },
+    {
+      name: "unsupported i64_to_f64",
+      source: "export fn bad(n: i64) -> f64 { return i64_to_f64(n); }",
+      keywords: ["unknown", "function", "i64_to_f64"]
+    },
+    {
+      name: "unsupported u64_to_f64",
+      source: "export fn bad(n: u64) -> f64 { return u64_to_f64(n); }",
+      keywords: ["unknown", "function", "u64_to_f64"]
+    },
+    {
+      name: "unsupported f64_to_i32",
+      source: "export fn bad(n: f64) -> i32 { return f64_to_i32(n); }",
+      keywords: ["unknown", "function", "f64_to_i32"]
+    },
+    {
+      name: "unsupported overloaded to_f64",
+      source: "export fn bad(n: i32) -> f64 { return to_f64(n); }",
+      keywords: ["unknown", "function", "to_f64"]
+    },
+    {
+      name: "constructor-like f64 call is not a cast",
+      source: "export fn bad(n: i32) -> f64 { return f64(n); }",
+      keywords: ["expected", "expression"]
+    }
+  ])("rejects invalid explicit int to f64 builtin call: $name", ({ source, keywords }) => {
+    expectDiagnosticWithKeywords(source, keywords);
+  });
+
+  it.each([
+    {
+      name: "i32_to_f64",
+      source: "export fn i32_to_f64(n: i32) -> f64 { return 1.0; }",
+      keywords: ["reserved", "builtin", "i32_to_f64"]
+    },
+    {
+      name: "u32_to_f64",
+      source: "export fn u32_to_f64(n: u32) -> f64 { return 1.0; }",
+      keywords: ["reserved", "builtin", "u32_to_f64"]
+    }
+  ])("rejects redefining reserved compiler builtin: $name", ({ source, keywords }) => {
+    expectDiagnosticWithKeywords(source, keywords);
+  });
+
   it("rejects f64 modulo", () => {
     expect(messagesOf(`
       export fn bad(a: f64, b: f64) -> f64 {

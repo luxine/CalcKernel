@@ -203,6 +203,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

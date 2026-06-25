@@ -149,6 +149,8 @@ function emitInstruction(instruction: MirInstruction): string {
       return `${emitValue(instruction.target)} = ${emitValue(instruction.left)} ${instruction.op} ${emitValue(instruction.right)};`;
     case "compare":
       return `${emitValue(instruction.target)} = ${emitValue(instruction.left)} ${instruction.op} ${emitValue(instruction.right)};`;
+    case "cast":
+      return emitCastInstruction(instruction);
     case "unary":
       return `${emitValue(instruction.target)} = ${instruction.op === "neg" ? "-" : "!"}${emitValue(instruction.operand)};`;
     case "address":
@@ -174,6 +176,8 @@ function emitCheckedInstruction(instruction: MirInstruction, safeUncheckedBinary
       return [`${emitValue(instruction.target)} = ${emitValue(instruction.value)};`];
     case "compare":
       return [`${emitValue(instruction.target)} = ${emitValue(instruction.left)} ${instruction.op} ${emitValue(instruction.right)};`];
+    case "cast":
+      return [emitCastInstruction(instruction)];
     case "unary":
       return emitCheckedUnaryInstruction(instruction);
     case "binary":
@@ -196,6 +200,14 @@ function emitCheckedInstruction(instruction: MirInstruction, safeUncheckedBinary
       return [`${emitValue(instruction.target)} = ${emitPlace(instruction.place)};`];
     case "store":
       return [`${emitPlace(instruction.place)} = ${emitValue(instruction.value)};`];
+  }
+}
+
+function emitCastInstruction(instruction: Extract<MirInstruction, { kind: "cast" }>): string {
+  switch (instruction.op) {
+    case "i32_to_f64":
+    case "u32_to_f64":
+      return `${emitValue(instruction.target)} = (double)${emitValue(instruction.value)};`;
   }
 }
 
@@ -465,6 +477,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | undefined {
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

@@ -215,6 +215,11 @@ function validateInstruction(ctx: FunctionContext, block: MirBlock, instruction:
         addError(ctx, `Compare result for '${instruction.op}' in function '${ctx.func.name}' must be bool, got ${printMirType(instruction.target.type)}.`, block.label);
       }
       return;
+    case "cast":
+      validateTarget(ctx, block, instruction.target);
+      validateValue(ctx, block, instruction.value);
+      validateCast(ctx, block, instruction.op, instruction.value.type, instruction.target.type);
+      return;
     case "address":
       validateTarget(ctx, block, instruction.target);
       validatePlace(ctx, block, instruction.place);
@@ -249,6 +254,31 @@ function validateInstruction(ctx: FunctionContext, block: MirBlock, instruction:
       }
       validateCall(ctx, block, instruction.functionName, instruction.args, instruction.target);
       return;
+  }
+}
+
+function validateCast(ctx: FunctionContext, block: MirBlock, op: string, inputType: MirType, resultType: MirType): void {
+  let expectedInput: MirType | null = null;
+
+  switch (op) {
+    case "i32_to_f64":
+      expectedInput = { kind: "primitive", name: "i32" };
+      break;
+    case "u32_to_f64":
+      expectedInput = { kind: "primitive", name: "u32" };
+      break;
+    default:
+      addError(ctx, `Unsupported cast '${op}' in function '${ctx.func.name}'.`, block.label);
+      return;
+  }
+
+  if (!sameType(inputType, expectedInput)) {
+    addError(ctx, `Cast '${op}' input in function '${ctx.func.name}' must be ${printMirType(expectedInput)}, got ${printMirType(inputType)}.`, block.label);
+  }
+
+  const expectedResult: MirType = { kind: "primitive", name: "f64" };
+  if (!sameType(resultType, expectedResult)) {
+    addError(ctx, `Cast '${op}' result in function '${ctx.func.name}' must be f64, got ${printMirType(resultType)}.`, block.label);
   }
 }
 
@@ -421,6 +451,7 @@ function getInstructionTarget(instruction: MirInstruction): MirValue | undefined
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

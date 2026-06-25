@@ -85,6 +85,14 @@ function rewriteInstruction(instruction: MirInstruction, copies: Map<string, Mir
       }
       return changed;
     }
+    case "cast": {
+      const value = resolveCopy(instruction.value, copies);
+      if (value !== instruction.value) {
+        instruction.value = value;
+        changed = true;
+      }
+      return changed;
+    }
     case "address":
       return rewritePlace(instruction.place, copies);
     case "load":
@@ -190,6 +198,7 @@ function getInstructionTarget(instruction: MirInstruction): MirValue | undefined
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":

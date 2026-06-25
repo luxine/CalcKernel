@@ -420,6 +420,49 @@ export fn tiny_underflow_f64() -> f64 {
   return { cFile, headerFile };
 }
 
+function emitCastCExample(cwd: string, overflowMode: PipelineOverflowMode = "unchecked"): { cFile: string; headerFile: string } {
+  writeFileSync(
+    join(cwd, "cast_c.ik"),
+    `
+export fn cast_i32_to_f64(value: i32) -> f64 {
+  return i32_to_f64(value);
+}
+
+export fn cast_u32_to_f64(value: u32) -> f64 {
+  return u32_to_f64(value);
+}
+
+export fn cast_expr(a: i32, b: u32) -> f64 {
+  return i32_to_f64(a) * 2.0 + u32_to_f64(b) / 2.0;
+}
+
+export fn cast_le(a: i32, b: u32, limit: f64) -> bool {
+  return i32_to_f64(a) + u32_to_f64(b) <= limit;
+}
+
+export fn checked_cast_mix(a: i32, b: u32) -> f64 {
+  let next: i32 = a + 1;
+  return i32_to_f64(next) + u32_to_f64(b);
+}
+`.trimStart()
+  );
+
+  const cFile = join(cwd, `build/cast_c_${overflowMode}.c`);
+  const headerFile = join(cwd, `build/cast_c_${overflowMode}.h`);
+  const args = ["emit-c", "cast_c.ik", "--out", cFile, "--header", headerFile];
+  if (overflowMode === "checked") {
+    args.push("--overflow", "checked");
+  }
+  const exitCode = runCli(args, {
+    cwd,
+    stdout: () => {},
+    stderr: () => {}
+  });
+
+  expect(exitCode).toBe(0);
+  return { cFile, headerFile };
+}
+
 function emitMirCheckedExample(cwd: string, exampleName: string): { cFile: string; headerFile: string } {
   const sourceText = readFileSync(`examples/${exampleName}.ik`, "utf8");
   const checked = check(new SourceFile(`${exampleName}.ik`, sourceText));
@@ -552,6 +595,27 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout).toBe("OK: scalar.ik\n");
+    expect(stderr).toBe("");
+  });
+
+  it("checks the explicit cast example", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "explicit_casts.ik"), readFileSync("examples/explicit_casts.ik", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["check", "explicit_casts.ik"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("OK: explicit_casts.ik\n");
     expect(stderr).toBe("");
   });
 
@@ -836,6 +900,28 @@ describe("ikc CLI", () => {
     expect(stdout).toContain("export fn add(a: i64, b: i64) -> i64 {");
     expect(stdout).toContain("%t0: i64 = add a, b");
     expect(stdout).toContain("return %t0");
+  });
+
+  it("prints explicit int to f64 casts in emit-mir output", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "casts.ik"), "export fn cast_i32(a: i32) -> f64 {\n  return i32_to_f64(a);\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["emit-mir", "casts.ik"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("%t0: f64 = cast i32_to_f64 a");
+    expect(stdout).not.toContain("call i32_to_f64");
   });
 
   it("emits MIR for pricing with stable struct and store output", () => {
@@ -2631,6 +2717,142 @@ int main(void) {
   }
   if (arithmetic_f64(3.5, 1.5, 0) != IK_ERR_NULL_POINTER) {
     return 17;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+});
+
+describe("C explicit int to f64 cast end-to-end", () => {
+  const clangAvailable = hasClang();
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable ? "compiles and runs explicit i32/u32 to f64 casts in unchecked C" : "compiles and runs explicit int to f64 casts in unchecked C (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile, headerFile } = emitCastCExample(cwd);
+      const headerName = headerFile.substring(headerFile.lastIndexOf("/") + 1);
+      const source = readFileSync(cFile, "utf8");
+      const harnessFile = join(cwd, "build/cast_c_harness.c");
+      const executable = join(cwd, "build/cast_c_harness");
+
+      expect(source).toContain("(double)value");
+      expect(source).toContain("(double)a");
+      expect(source).toContain("(double)b");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "${headerName}"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+static int close_double(double left, double right) {
+  double diff = left - right;
+  if (diff < 0.0) {
+    diff = -diff;
+  }
+  return diff <= 0.000000001;
+}
+
+int main(void) {
+  if (!close_double(cast_i32_to_f64(-7), -7.0)) {
+    return 10;
+  }
+  if (!close_double(cast_u32_to_f64((uint32_t)9), 9.0)) {
+    return 11;
+  }
+  if (!close_double(cast_expr(4, (uint32_t)6), 11.0)) {
+    return 12;
+  }
+  if (!cast_le(2, (uint32_t)3, 5.0)) {
+    return 13;
+  }
+  if (cast_le(2, (uint32_t)3, 4.0)) {
+    return 14;
+  }
+  if (!close_double(checked_cast_mix(4, (uint32_t)5), 10.0)) {
+    return 15;
+  }
+  return 0;
+}
+`.trimStart()
+      );
+
+      const compile = spawnSync("clang", [...strictClangFlags, buildDllFlag, cFile, harnessFile, "-I", join(cwd, "build"), "-o", executable], {
+        encoding: "utf8"
+      });
+      expect(compile.status, compile.stderr).toBe(0);
+
+      const run = spawnSync(executable, [], { encoding: "utf8" });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+    }
+  );
+
+  it.skipIf(!clangAvailable)(
+    clangAvailable ? "compiles and runs explicit i32/u32 to f64 casts in checked C" : "compiles and runs explicit int to f64 casts in checked C (skipped because clang was not found)",
+    () => {
+      const cwd = tempDir();
+      const { cFile, headerFile } = emitCastCExample(cwd, "checked");
+      const headerName = headerFile.substring(headerFile.lastIndexOf("/") + 1);
+      const source = readFileSync(cFile, "utf8");
+      const harnessFile = join(cwd, "build/cast_c_checked_harness.c");
+      const executable = join(cwd, "build/cast_c_checked_harness");
+
+      expect(source).toContain("__builtin_add_overflow");
+      expect(source).toContain("(double)next");
+      expect(source).toContain("(double)b");
+      expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+
+      writeFileSync(
+        harnessFile,
+        `
+#include "${headerName}"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+static int close_double(double left, double right) {
+  double diff = left - right;
+  if (diff < 0.0) {
+    diff = -diff;
+  }
+  return diff <= 0.000000001;
+}
+
+int main(void) {
+  double value = 0.0;
+  bool flag = false;
+
+  if (cast_i32_to_f64(-7, &value) != IK_OK || !close_double(value, -7.0)) {
+    return 10;
+  }
+  if (cast_u32_to_f64((uint32_t)9, &value) != IK_OK || !close_double(value, 9.0)) {
+    return 11;
+  }
+  if (cast_expr(4, (uint32_t)6, &value) != IK_OK || !close_double(value, 11.0)) {
+    return 12;
+  }
+  if (cast_le(2, (uint32_t)3, 5.0, &flag) != IK_OK || !flag) {
+    return 13;
+  }
+  if (cast_le(2, (uint32_t)3, 4.0, &flag) != IK_OK || flag) {
+    return 14;
+  }
+  if (checked_cast_mix(4, (uint32_t)5, &value) != IK_OK || !close_double(value, 10.0)) {
+    return 15;
   }
   return 0;
 }

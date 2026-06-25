@@ -1,0 +1,46 @@
+(module
+  (memory (export "memory") 1)
+
+  (func $cast_i32 (export "cast_i32")
+    (param $value i32)
+    (result f64)
+    (local $t0 f64)
+    local.get $value
+    f64.convert_i32_s
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $cast_u32 (export "cast_u32")
+    (param $value i32)
+    (result f64)
+    (local $t0 f64)
+    local.get $value
+    f64.convert_i32_u
+    local.set $t0
+    local.get $t0
+    return
+  )
+
+  (func $cast_expr (export "cast_expr")
+    (param $a i32)
+    (param $b i32)
+    (result f64)
+    (local $t0 f64)
+    (local $t1 f64)
+    (local $t2 f64)
+    local.get $a
+    f64.convert_i32_s
+    local.set $t0
+    local.get $b
+    f64.convert_i32_u
+    local.set $t1
+    local.get $t0
+    local.get $t1
+    f64.add
+    local.set $t2
+    local.get $t2
+    return
+  )
+)

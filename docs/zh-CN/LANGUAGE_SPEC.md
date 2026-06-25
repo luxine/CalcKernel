@@ -35,8 +35,8 @@ floating point type；不规划 `f32`。金额、税费、POS 总价或 pricing 
 mode 可以明确报告 overflow 和 division error。
 
 语言不支持 `f32`、implicit int/float conversion、fast-math、SIMD 或 float checked
-overflow。explicit numeric cast 是未来工作，当前版本未实现；未来如果支持 cast，也
-必须是 explicit。
+overflow。Phase 20 只增加 exact explicit `i32`/`u32` 到 `f64` 的 compiler
+builtin cast；其他 cast 方向仍不支持。
 
 ## 支持的声明
 
@@ -133,6 +133,41 @@ Float literal 的类型是 `f64`。
 负数不会作为 literal token 的一部分解析。`-1.0` 是 unary minus 加
 `FloatLiteral`，不是带符号 literal token。
 
+### Explicit int-to-f64 Cast
+
+IK / IntKernel 支持两个 exact compiler builtin，用于从 32-bit integer 显式进入
+strict `f64` 代码：
+
+```ik
+export fn avg_i32(sum: i32, count: i32) -> f64 {
+  return i32_to_f64(sum) / i32_to_f64(count);
+}
+
+export fn ratio_u32(a: u32, b: u32) -> f64 {
+  return u32_to_f64(a) / u32_to_f64(b);
+}
+```
+
+- `i32_to_f64(i32) -> f64`
+- `u32_to_f64(u32) -> f64`
+
+这两个转换是 exact，因为所有 `i32` 和 `u32` 值都可以被 `f64` 精确表示。它们是
+compiler builtin，不是 runtime function；名称是 reserved。
+
+以下仍不支持：
+
+- `i64_to_f64`
+- `u64_to_f64`
+- 任何 `f64_to_*` cast
+- overloaded `to_f64(x)`
+- `x as f64`
+- constructor-like `f64(x)`
+- implicit conversion
+
+`let x: f64 = 1` 和 `i32_value + 1.0` 仍然是类型错误。需要转换时应写
+`i32_to_f64(i32_value) + 1.0`。如果 explicit cast 的结果参与除以零，结果遵循普通
+strict f64 行为，可能产生 infinity 或 NaN；这不是 checked integer error。
+
 ### f64 边界语义
 
 IK / IntKernel 的 f64 语义是 strict 且刻意保持窄范围：
@@ -225,7 +260,9 @@ V0 不支持：
 - `f32`（不规划）
 - `f64 %`
 - implicit int/float conversion
-- explicit numeric cast（仅作为未来工作）
+- `i64_to_f64` / `u64_to_f64`
+- f64-to-int cast
+- broad 或 overloaded cast system
 - fast-math
 - SIMD
 - JIT compilation

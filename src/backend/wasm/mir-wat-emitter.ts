@@ -366,6 +366,7 @@ function instructionTarget(instruction: MirInstruction): MirValue | null {
     case "binary":
     case "unary":
     case "compare":
+    case "cast":
     case "address":
     case "load":
     case "call":
@@ -408,6 +409,9 @@ function emitInstruction(body: string[], instruction: MirInstruction, context: M
       body.push(compareWatInstruction(instruction.op, instruction.left.type));
       emitSet(body, instruction.target);
       return;
+    case "cast":
+      emitCastInstruction(body, instruction);
+      return;
     case "address":
       emitAddress(body, instruction.place, context);
       emitSet(body, instruction.target);
@@ -427,6 +431,20 @@ function emitInstruction(body: string[], instruction: MirInstruction, context: M
         emitValue(body, arg);
       }
       body.push(`call ${toWasmIdentifier(instruction.functionName)}`);
+      emitSet(body, instruction.target);
+      return;
+  }
+}
+
+function emitCastInstruction(body: string[], instruction: Extract<MirInstruction, { kind: "cast" }>): void {
+  emitValue(body, instruction.value);
+  switch (instruction.op) {
+    case "i32_to_f64":
+      body.push("f64.convert_i32_s");
+      emitSet(body, instruction.target);
+      return;
+    case "u32_to_f64":
+      body.push("f64.convert_i32_u");
       emitSet(body, instruction.target);
       return;
   }
