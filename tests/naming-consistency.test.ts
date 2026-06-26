@@ -21,9 +21,10 @@ const historicalOrMigrationPrefixes = [
   "docs/plans/",
   "bench/docs/2026-06-24-",
   "bench/plans/2026-06-24-",
-  "ik-vscode-plugin/docs/superpowers/specs/",
-  "ik-vscode-plugin/docs/superpowers/plans/"
+  "ck-vscode-plugin/docs/superpowers/specs/",
+  "ck-vscode-plugin/docs/superpowers/plans/"
 ];
+const legacyVsCodePluginDir = "i" + "k-vscode-plugin";
 const excludedExtensions = new Set([".wasm", ".so", ".dylib", ".dll", ".exe", ".tgz"]);
 const forbiddenPatterns = [
   { label: "legacy source extension", pattern: new RegExp("\\." + "i" + "k\\b", "g") },
@@ -43,6 +44,7 @@ const forbiddenPatterns = [
   { label: "legacy C ABI prefix", pattern: /\bIK_/g },
   { label: "legacy checked return parameter", pattern: /\bik_return\b/g },
   { label: "legacy checked return variable", pattern: /\bikReturn\b/g },
+  { label: "legacy VS Code plugin directory", pattern: new RegExp(`\\b${legacyVsCodePluginDir}\\b`, "g") },
   { label: "legacy language name", pattern: /\btk\b/g },
   { label: "legacy compiler command", pattern: /\btkc\b/g },
   { label: "legacy source extension", pattern: /\.tk\b/g },
@@ -156,7 +158,7 @@ describe("naming consistency", () => {
   });
 
   it("keeps VS Code extension metadata on the canonical CalcKernel language identity", () => {
-    const pkg = JSON.parse(readFileSync(join(rootDir, "ik-vscode-plugin", "package.json"), "utf8")) as {
+    const pkg = JSON.parse(readFileSync(join(rootDir, "ck-vscode-plugin", "package.json"), "utf8")) as {
       name?: string;
       displayName?: string;
       description?: string;
@@ -169,7 +171,7 @@ describe("naming consistency", () => {
       devDependencies?: Record<string, string>;
     };
 
-    expect(pkg.name).toBe("calckernel-vscode-plugin");
+    expect(pkg.name).toBe("ck-vscode-plugin");
     expect(pkg.displayName).toBe("CalcKernel");
     expect(pkg.description).toContain("CalcKernel");
     expect(pkg.activationEvents).toEqual(["onLanguage:calckernel"]);

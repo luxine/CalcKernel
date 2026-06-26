@@ -1,6 +1,6 @@
 # Publishing the CalcKernel VS Code Extension
 
-This document describes how to package and publish `calckernel-vscode-plugin` so other users can install it from the Visual Studio Marketplace.
+This document describes how to package and publish `ck-vscode-plugin` so other users can install it from the Visual Studio Marketplace.
 
 Official references:
 
@@ -13,7 +13,7 @@ Official references:
 The extension package is already buildable with `vsce`:
 
 ```sh
-cd <repo>/ik-vscode-plugin
+cd <repo>/ck-vscode-plugin
 pnpm install
 pnpm test
 pnpm compile
@@ -24,14 +24,14 @@ The current manifest uses:
 
 ```json
 {
-  "name": "calckernel-vscode-plugin",
+  "name": "ck-vscode-plugin",
   "displayName": "CalcKernel",
   "publisher": "luxine",
   "version": "0.1.0"
 }
 ```
 
-The current Marketplace publisher target is `luxine`. The public extension identifier will be `luxine.calckernel-vscode-plugin`.
+The current Marketplace publisher target is `luxine`. The public extension identifier will be `luxine.ck-vscode-plugin`.
 
 ## One-Time Marketplace Setup
 
@@ -67,11 +67,11 @@ Microsoft's current VS Code documentation says global Azure DevOps PATs retire o
 Run these checks before every public release:
 
 ```sh
-cd <repo>/ik-vscode-plugin
+cd <repo>/ck-vscode-plugin
 pnpm test
 pnpm compile
 pnpm package
-code --install-extension calckernel-vscode-plugin-0.1.0.vsix --force
+code --install-extension ck-vscode-plugin-0.1.0.vsix --force
 ```
 
 Then verify in VS Code:
@@ -98,7 +98,7 @@ Recommended Marketplace polish before the first public release:
 After `publisher` is set and `vsce login` succeeds:
 
 ```sh
-cd <repo>/ik-vscode-plugin
+cd <repo>/ck-vscode-plugin
 pnpm test
 pnpm compile
 pnpm exec vsce publish --no-dependencies
@@ -119,7 +119,7 @@ Be careful with `vsce publish patch|minor|major`: when run inside a git reposito
 If you do not want the CLI to publish directly:
 
 ```sh
-cd <repo>/ik-vscode-plugin
+cd <repo>/ck-vscode-plugin
 pnpm package
 ```
 
@@ -164,7 +164,7 @@ For long-term CI after December 1, 2026, use Microsoft Entra ID based publishing
 After the extension appears on Marketplace:
 
 1. Install it from the VS Code Extensions view by searching `CalcKernel`.
-2. Confirm the public extension ID is `luxine.calckernel-vscode-plugin`.
+2. Confirm the public extension ID is `luxine.ck-vscode-plugin`.
 3. Check the Marketplace page renders README, changelog, license, icon, and screenshots correctly.
 4. Keep release notes in `CHANGELOG.md` aligned with `package.json` `version`.
 5. Use a new semver version for every update. Marketplace versions cannot be reused after publication.

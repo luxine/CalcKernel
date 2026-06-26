@@ -1,5 +1,5 @@
 {
-  "name": "calckernel-vscode-plugin",
+  "name": "ck-vscode-plugin",
   "displayName": "CalcKernel",
   "description": "VSCode language support for CalcKernel .ck files.",
   "version": "0.1.0",

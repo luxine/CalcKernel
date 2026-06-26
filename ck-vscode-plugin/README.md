@@ -22,7 +22,7 @@ CalcKernel for Visual Studio Code adds editor support for `.ck` source files. It
 If you received a packaged `.vsix` file, install it from the command line:
 
 ```sh
-code --install-extension calckernel-vscode-plugin-0.1.0.vsix
+code --install-extension ck-vscode-plugin-0.1.0.vsix
 ```
 
 Or install it inside VS Code:
@@ -30,7 +30,7 @@ Or install it inside VS Code:
 1. Open the Extensions view.
 2. Select `...` in the Extensions view title bar.
 3. Choose `Install from VSIX...`.
-4. Select the packaged `calckernel-vscode-plugin-0.1.0.vsix` file.
+4. Select the packaged `ck-vscode-plugin-0.1.0.vsix` file.
 
 ### Install from Marketplace
 
