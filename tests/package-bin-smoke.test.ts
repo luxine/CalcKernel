@@ -41,6 +41,7 @@ function expectPackageContentsClean(paths: string[]): void {
   const forbiddenPatterns = [
     /^node_modules\//,
     /(^|\/)node_modules\//,
+    /^docs\/plans\//,
     /^bench\/docs\//,
     /^bench\/plans\//,
     /^coverage\//,
@@ -74,8 +75,7 @@ function expectActivePackageDocsUseCurrentNames(paths: string[]): void {
     { label: "legacy C ABI prefix", pattern: /\bIK_/g }
   ];
   const historicalPackageDocs = [
-    /^docs\/(?:zh-CN\/)?MIGRATION(?:_IK_TO_CK)?\.md$/,
-    /^docs\/plans\/PHASE_21_RENAME_/
+    /^docs\/(?:zh-CN\/)?MIGRATION(?:_IK_TO_CK)?\.md$/
   ];
   const scannedExtensions = /\.(?:md|ts|js|mjs|json|snap|ck|wat)$/;
   const hits: string[] = [];

@@ -18,7 +18,6 @@ const historicalOrMigrationPrefixes = [
   "docs/MIGRATION.md",
   "docs/zh-CN/MIGRATION_IK_TO_CK.md",
   "docs/zh-CN/MIGRATION.md",
-  "docs/plans/",
   "bench/docs/2026-06-24-",
   "bench/plans/2026-06-24-",
   "ck-vscode-plugin/docs/superpowers/specs/",
