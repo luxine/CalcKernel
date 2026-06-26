@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Sync editor support with the CalcKernel rename, `.ck` language mode, and `calckernel` compiler package.
+- Add plugin support for `f64` syntax highlighting, completions, snippets, and float literal highlighting.
+- Add completion and highlighting support for `i32_to_f64` and `u32_to_f64` compiler builtins.
 - Improve TextMate highlighting for local variables, parameters, struct fields, member access, function calls, and type references.
 - Add compiler-aware semantic highlighting.
 - Add hover information for CalcKernel symbols.

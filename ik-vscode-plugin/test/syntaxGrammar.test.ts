@@ -29,6 +29,7 @@ describe("CalcKernel TextMate grammar identifier scopes", () => {
 
   it("scopes function parameters before their type annotations", () => {
     expect(expectCaptureScope("parameters", "items: ptr<Item>", "items")).toBe("variable.parameter.calckernel");
+    expect(expectCaptureScope("parameters", "ratio: f64", "ratio")).toBe("variable.parameter.calckernel");
   });
 
   it("scopes struct field declarations at the start of field lines", () => {
@@ -41,10 +42,23 @@ describe("CalcKernel TextMate grammar identifier scopes", () => {
     expect(expectCaptureScope("memberAccess", ".price", "price")).toBe("variable.other.member.access.calckernel");
   });
 
+  it("scopes compiler builtin calls", () => {
+    expect(expectPatternScope("builtinFunctions", "u32_to_f64")).toBe("support.function.builtin.calckernel");
+    expect(expectPatternScope("builtinFunctions", "i32_to_f64")).toBe("support.function.builtin.calckernel");
+  });
+
   it("scopes lowercase variable references without overriding keywords or primitive types", () => {
     expect(expectPatternScope("variableReferences", "after_discount")).toBe("variable.other.readwrite.calckernel");
     expect(findNamedPatternMatch("variableReferences", "while")).toBeUndefined();
     expect(findNamedPatternMatch("variableReferences", "i64")).toBeUndefined();
+    expect(findNamedPatternMatch("variableReferences", "f64")).toBeUndefined();
+  });
+
+  it("scopes f64 and float literals", () => {
+    expect(expectPatternScope("types", "f64")).toBe("storage.type.primitive.calckernel");
+    expect(expectPatternScope("numbers", "1.25")).toBe("constant.numeric.float.calckernel");
+    expect(expectPatternScope("numbers", "1e-3")).toBe("constant.numeric.float.calckernel");
+    expect(expectPatternScope("numbers", "42")).toBe("constant.numeric.integer.calckernel");
   });
 });
 

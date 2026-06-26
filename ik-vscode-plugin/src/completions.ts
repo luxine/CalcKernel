@@ -4,7 +4,11 @@ import { toZeroBased, walkProgram } from "./astTraversal";
 import { analyzeCalcKernelDocument } from "./languageService";
 
 const keywords = ["struct", "export", "fn", "let", "return", "if", "else", "while"];
-const primitiveTypes = ["i32", "i64", "u32", "u64", "bool"];
+const primitiveTypes = ["i32", "i64", "u32", "u64", "f64", "bool"];
+const compilerBuiltins = [
+  { label: "i32_to_f64", detail: "CalcKernel builtin: i32 -> f64" },
+  { label: "u32_to_f64", detail: "CalcKernel builtin: u32 -> f64" }
+];
 
 export function registerCompletions(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -26,7 +30,7 @@ export function buildCompletionItems(
   position?: vscode.Position,
   linePrefix = ""
 ): vscode.CompletionItem[] {
-  const items = [...keywordCompletions(), ...typeCompletions(), ...snippetCompletions()];
+  const items = [...keywordCompletions(), ...typeCompletions(), ...builtinCompletions(), ...snippetCompletions()];
   if (!analysis || !position) {
     return items;
   }
@@ -198,12 +202,24 @@ function typeCompletions(): vscode.CompletionItem[] {
   ];
 }
 
+function builtinCompletions(): vscode.CompletionItem[] {
+  return compilerBuiltins.map((builtin) => {
+    const item = new vscode.CompletionItem(builtin.label, vscode.CompletionItemKind.Function);
+    item.detail = builtin.detail;
+    item.sortText = `2_builtin_${builtin.label}`;
+    return item;
+  });
+}
+
 function snippetCompletions(): vscode.CompletionItem[] {
   return [
     snippetItem("struct declaration", "struct ${1:Name} {\n  ${2:field}: ${3:i64};\n}", "CalcKernel struct declaration", "0_struct"),
     snippetItem("function declaration", "fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {\n  return ${2:param};\n}", "CalcKernel internal function", "0_fn"),
     snippetItem("export function", "export fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {\n  return ${2:param};\n}", "CalcKernel exported function", "0_export_fn"),
     snippetItem("let binding", "let ${1:name}: ${2:i64} = ${3:0};", "CalcKernel let binding", "0_let"),
+    snippetItem("f64 let binding", "let ${1:name}: f64 = ${2:0.0};", "CalcKernel f64 let binding", "0_let_f64"),
+    snippetItem("u32 to f64", "u32_to_f64(${1:value})", "CalcKernel u32 to f64 cast", "0_u32_to_f64"),
+    snippetItem("i32 to f64", "i32_to_f64(${1:value})", "CalcKernel i32 to f64 cast", "0_i32_to_f64"),
     snippetItem("if statement", "if ${1:condition} {\n  ${2:return 0;}\n}", "CalcKernel if statement", "0_if"),
     snippetItem("if else statement", "if ${1:condition} {\n  ${2:return 0;}\n} else {\n  ${3:return 1;}\n}", "CalcKernel if/else statement", "0_if_else"),
     snippetItem("while loop", "while ${1:condition} {\n  ${2:i = i + 1;}\n}", "CalcKernel while loop", "0_while"),

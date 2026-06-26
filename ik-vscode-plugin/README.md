@@ -5,11 +5,11 @@ CalcKernel for Visual Studio Code adds editor support for `.ck` source files. It
 ## Features
 
 - Automatic language detection for `.ck` files.
-- Syntax highlighting for CalcKernel keywords, declarations, primitive types, pointer types, comments, booleans, numbers, operators, variables, and fields.
+- Syntax highlighting for CalcKernel keywords, declarations, primitive types including `f64`, pointer types, comments, booleans, integer and float literals, operators, variables, and fields.
 - Semantic highlighting for structs, functions, parameters, local variables, fields, and references.
 - Compiler-backed diagnostics from the local CalcKernel compiler package.
 - Hover information for variable types, field types, function signatures, and struct declarations.
-- Completion suggestions for keywords, snippets, primitive types, pointer types, declarations, document symbols, and struct fields.
+- Completion suggestions for keywords, snippets, primitive types, pointer types, declarations, document symbols, compiler builtins such as `i32_to_f64` and `u32_to_f64`, and struct fields.
 - Field completion after direct and indexed receivers, such as `config.` and `configs[0].`.
 - Go to Definition for structs, functions, fields, parameters, and local variables.
 - Document symbols and Outline support for source navigation.
@@ -45,6 +45,7 @@ Useful checks after installation:
 - Open an CalcKernel source file and confirm keywords, types, variables, and fields are highlighted.
 - Hover over a symbol to inspect its type or signature.
 - Type after a struct value, for example `config.`, to see field completions.
+- Type `f64`, `i32_to_f64`, or `u32_to_f64` to see current CalcKernel numeric completions.
 - Use `Go to Definition` on functions, structs, fields, parameters, or locals.
 - Open the Outline view to navigate top-level declarations and nested symbols.
 - Introduce a type error and confirm the Problems panel reports an `calckernel` diagnostic.

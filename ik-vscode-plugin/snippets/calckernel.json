@@ -33,6 +33,27 @@
     ],
     "description": "Create a typed let binding"
   },
+  "F64 Let Binding": {
+    "prefix": "letf64",
+    "body": [
+      "let ${1:name}: f64 = ${2:0.0};"
+    ],
+    "description": "Create an f64 let binding"
+  },
+  "I32 To F64": {
+    "prefix": "i32tof64",
+    "body": [
+      "i32_to_f64(${1:value})"
+    ],
+    "description": "Convert an i32 value to f64"
+  },
+  "U32 To F64": {
+    "prefix": "u32tof64",
+    "body": [
+      "u32_to_f64(${1:value})"
+    ],
+    "description": "Convert a u32 value to f64"
+  },
   "If Statement": {
     "prefix": "if",
     "body": [

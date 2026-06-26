@@ -10,6 +10,7 @@
     { "include": "#fieldDeclarations" },
     { "include": "#parameters" },
     { "include": "#memberAccess" },
+    { "include": "#builtinFunctions" },
     { "include": "#functionCalls" },
     { "include": "#keywords" },
     { "include": "#types" },
@@ -58,7 +59,7 @@
     },
     "parameters": {
       "patterns": [{
-        "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*:\\s*(?:ptr\\b|i32\\b|i64\\b|u32\\b|u64\\b|bool\\b))",
+        "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*:\\s*(?:ptr\\b|i32\\b|i64\\b|u32\\b|u64\\b|f64\\b|bool\\b))",
         "captures": {
           "1": { "name": "variable.parameter.calckernel" }
         }
@@ -71,6 +72,12 @@
           "1": { "name": "punctuation.accessor.calckernel" },
           "2": { "name": "variable.other.member.access.calckernel" }
         }
+      }]
+    },
+    "builtinFunctions": {
+      "patterns": [{
+        "name": "support.function.builtin.calckernel",
+        "match": "\\b(?:i32_to_f64|u32_to_f64)\\b"
       }]
     },
     "functionCalls": {
@@ -89,7 +96,7 @@
     },
     "types": {
       "patterns": [
-        { "name": "storage.type.primitive.calckernel", "match": "\\b(?:i32|i64|u32|u64|bool)\\b" },
+        { "name": "storage.type.primitive.calckernel", "match": "\\b(?:i32|i64|u32|u64|f64|bool)\\b" },
         { "name": "storage.type.pointer.calckernel", "match": "\\bptr\\b" }
       ]
     },
@@ -97,7 +104,12 @@
       "patterns": [{ "name": "entity.name.type.calckernel", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }]
     },
     "booleans": { "patterns": [{ "name": "constant.language.boolean.calckernel", "match": "\\b(?:true|false)\\b" }] },
-    "numbers": { "patterns": [{ "name": "constant.numeric.integer.calckernel", "match": "\\b[0-9]+\\b" }] },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.calckernel", "match": "\\b[0-9]+(?:\\.[0-9]+|[eE][+-]?[0-9]+|\\.[0-9]+[eE][+-]?[0-9]+)\\b" },
+        { "name": "constant.numeric.integer.calckernel", "match": "\\b[0-9]+\\b" }
+      ]
+    },
     "operators": {
       "patterns": [
         { "name": "keyword.operator.calckernel", "match": "==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!]" },
@@ -108,7 +120,7 @@
     "variableReferences": {
       "patterns": [{
         "name": "variable.other.readwrite.calckernel",
-        "match": "\\b(?!if\\b|else\\b|while\\b|return\\b|export\\b|fn\\b|let\\b|struct\\b|i32\\b|i64\\b|u32\\b|u64\\b|bool\\b|ptr\\b|true\\b|false\\b)[a-z_][A-Za-z0-9_]*\\b"
+        "match": "\\b(?!if\\b|else\\b|while\\b|return\\b|export\\b|fn\\b|let\\b|struct\\b|i32\\b|i64\\b|u32\\b|u64\\b|f64\\b|bool\\b|ptr\\b|true\\b|false\\b)[a-z_][A-Za-z0-9_]*\\b"
       }]
     }
   }

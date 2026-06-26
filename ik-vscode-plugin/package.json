@@ -30,12 +30,12 @@
     ]
   },
   "scripts": {
-    "precompile": "pnpm --dir .. build",
-    "compile": "pnpm run precompile && tsc -p . --noEmit && node esbuild.mjs",
+    "precompile": "npm --prefix .. run build",
+    "compile": "npm run precompile && tsc -p . --noEmit && node esbuild.mjs",
     "watch": "tsc -p . --noEmit --watch",
     "test": "vitest run",
-    "vscode:prepublish": "pnpm run compile",
-    "package": "pnpm run compile && vsce package --no-dependencies"
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

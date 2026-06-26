@@ -126,6 +126,9 @@ describe("completions", () => {
     const items = buildCompletionItems(analysis, new vscode.Position(7, 9));
     const labels = items.map((item) => item.label.toString());
     expect(labels).toContain("while");
+    expect(labels).toContain("f64");
+    expect(labels).toContain("i32_to_f64");
+    expect(labels).toContain("u32_to_f64");
     expect(labels).toContain("subtotal");
     expect(labels).toContain("total");
     expect(labels).toContain("Item");

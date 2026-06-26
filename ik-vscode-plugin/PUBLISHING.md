@@ -31,7 +31,7 @@ The current manifest uses:
 }
 ```
 
-The current Marketplace publisher target is `luxine`. The public extension identifier will be `luxine.ck-vscode-plugin`.
+The current Marketplace publisher target is `luxine`. The public extension identifier will be `luxine.calckernel-vscode-plugin`.
 
 ## One-Time Marketplace Setup
 
@@ -164,7 +164,7 @@ For long-term CI after December 1, 2026, use Microsoft Entra ID based publishing
 After the extension appears on Marketplace:
 
 1. Install it from the VS Code Extensions view by searching `CalcKernel`.
-2. Confirm the public extension ID is `luxine.ck-vscode-plugin`.
+2. Confirm the public extension ID is `luxine.calckernel-vscode-plugin`.
 3. Check the Marketplace page renders README, changelog, license, icon, and screenshots correctly.
 4. Keep release notes in `CHANGELOG.md` aligned with `package.json` `version`.
 5. Use a new semver version for every update. Marketplace versions cannot be reused after publication.
