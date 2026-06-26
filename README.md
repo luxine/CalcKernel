@@ -286,7 +286,9 @@ node examples/node-wasm-call/index.mjs
 
 See [examples/node-wasm-call](examples/node-wasm-call/README.md) for the
 `DataView` memory writes, `Item` layout, pointer offsets, output buffer, and
-`BigInt` mapping.
+`BigInt` mapping. That example is a byte-exact ABI walkthrough. For hot pricing
+paths, prefer SoA resident memory and typed-array bulk copy rather than
+per-field `DataView` marshaling.
 
 ## Node.js WASM f64 Array Example
 
@@ -305,6 +307,43 @@ offset, `f64` size is 8, `ptr<f64>[i]` is `base + i * 8`, and the
 aligned. If host code calls `memory.grow`, recreate the typed-array view before
 using it again. CK / CalcKernel does not provide a WASM allocator or runtime;
 host code owns memory placement and buffer sizing.
+
+## WASM Interop Performance
+
+Do not read CK / CalcKernel WASM results as "WASM is always faster than
+JavaScript." The accurate Phase 22 claim is narrower:
+
+- CK WASM compute-only paths are competitive on the current pricing and f64
+  workloads.
+- Batched, resident-memory workloads can avoid most JS/WASM boundary cost.
+- For homogeneous `f64`, use `Float64Array` views over WASM memory. `f64-sum`
+  is the recommended read-only/scalar-return shape; `f64-axpy` should keep
+  output as a WASM memory view when the caller can consume it there.
+- For pricing-style integer fixed-point data, prefer SoA arrays plus
+  `BigInt64Array#set` bulk copy when host data can be shaped that way.
+- `DataView` remains useful for fallback/debug ABI checks and mixed-width struct
+  packing, but it is not the recommended high-throughput path.
+- Copy-out/readback is explicit work. A JS-owned output copy can erase a WASM
+  compute advantage.
+
+Minimal typed-array interop using the package helper:
+
+```ts
+import { CKWasmArena } from "calckernel";
+
+const { instance } = await WebAssembly.instantiate(bytes);
+const arena = CKWasmArena.fromExports(instance.exports, { heapBase: 0 });
+
+const input = new Float64Array([1.0, 2.0, 3.0, 4.0]);
+const { ptr, view } = arena.copyInF64(input);
+const sum = instance.exports.sum_f64(ptr, input.length);
+```
+
+The helper is not a CK runtime or allocator in generated code. It manages
+host-side aligned offsets, typed-array views, bulk copy, and `memory.grow` view
+refresh. See [WASM interop](docs/wasm-interop.md) and
+[Performance](docs/PERFORMANCE.md) for the Phase 22 benchmark layering and
+current local result tables.
 
 ## Browser WASM Example
 
@@ -428,18 +467,29 @@ node bench/perf/run.mjs --full --compare --threshold 10
 ```
 
 The benchmark suite is a rough local reference, not a stable cross-machine
-score. Results depend on the machine, Node.js, clang, hyperfine, and current
-system load. Do not commit machine-local baselines from `build/perf`, and do
-not move performance thresholds into ordinary `pnpm test`. For host-language
-integration, batch work into larger native calls rather than calling one item at
-a time. WASM f64 results should be read as split paths: compute-only measures
-the kernel after memory is ready, while total includes input marshal and output
-readback. JavaScript `Float64Array` is a strong baseline for tight host loops,
-and WASM is not guaranteed to beat it once host memory movement is included. See
-[Performance](docs/PERFORMANCE.md) and
-[Optimization](docs/OPTIMIZATION.md) for the current optimization pipeline,
-latest local full-run summary, regression baseline workflow, f64 benchmark
-coverage, and backend bottlenecks.
+score. Results depend on the machine, Node.js/V8, clang, hyperfine, workload
+size, and current system load. Do not commit machine-local baselines from
+`build/perf`, and do not move performance thresholds into ordinary `pnpm test`.
+For host-language integration, batch work into larger native calls rather than
+calling one item at a time.
+
+WASM benchmark results are intentionally layered:
+
+- compute-only: memory is already prepared; measures repeated kernel calls
+- setup/copy-in: memory growth, aligned allocation, and input copy
+- readback/copy-out: output view checksum or JS-owned output copy
+- low-copy total: typed-array copy plus compute in one path
+- resident total: input stays in WASM memory; output usually remains a view
+- DataView fallback total: byte-level AoS/ABI path, often dominated by host
+  marshaling
+
+Current Phase 22 local runs show `f64-sum` optimized low-copy and pricing SoA
+resident paths beating their JS typed-array baselines on this machine, while
+DataView total paths are much slower. That is a workload- and machine-specific
+result, not a general "WASM beats JS" claim. See
+[Performance](docs/PERFORMANCE.md), [WASM interop](docs/wasm-interop.md), and
+[Optimization](docs/OPTIMIZATION.md) for the current result tables, regression
+baseline workflow, benchmark coverage, and backend bottlenecks.
 
 ## Current V0 Limits
 

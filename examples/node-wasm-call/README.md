@@ -61,6 +61,13 @@ The host writes memory with `DataView`. WebAssembly memory is little-endian, so
 all `DataView` reads and writes in this example pass `true` for the
 `littleEndian` parameter.
 
+This example is intentionally byte-level: it demonstrates the mixed-width
+`Item` ABI and output buffer layout. It is not the recommended high-throughput
+pricing interop path. For large pricing batches, prefer a SoA benchmark shape
+with homogeneous `ptr<i64>` arrays, `BigInt64Array#set` copy-in, resident WASM
+memory, and output kept as a WASM memory view. See
+[`docs/wasm-interop.md`](../../docs/wasm-interop.md).
+
 ## Item Layout
 
 `pricing.ck` defines:

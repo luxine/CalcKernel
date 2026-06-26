@@ -62,6 +62,17 @@ per-element `DataView.setFloat64` / `DataView.getFloat64`.
 `DataView` remains useful for byte-level ABI tests and mixed-width struct
 packing. `Float64Array` is the bulk path for homogeneous `f64` buffers.
 
+Phase 22 benchmark paths use this shape in two recommended ways:
+
+- read-only reductions such as `sum_f64`: copy input with `Float64Array#set`,
+  keep input resident in WASM memory, and consume the scalar `f64` return
+- output kernels such as `axpy_f64`: let the kernel write output into WASM
+  memory and return a `Float64Array` view when the caller does not need a
+  JS-owned copy
+
+If a caller needs JS-owned output, copy it explicitly and measure that path
+separately. Copy-output is correct, but it is a slower interop shape.
+
 ## Memory Ownership
 
 CK / CalcKernel currently provides no WASM allocator, runtime, or bounds checks.

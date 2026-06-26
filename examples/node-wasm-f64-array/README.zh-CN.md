@@ -62,6 +62,16 @@ hot path 使用 `Float64Array#set` 和 `Float64Array#subarray`，不在循环中
 `DataView` 仍适合 byte-level ABI 测试和 mixed-width struct packing。
 `Float64Array` 是 homogeneous `f64` buffer 的批量推荐路径。
 
+Phase 22 benchmark 中推荐用两类形态：
+
+- `sum_f64` 这类 read-only reduction：用 `Float64Array#set` copy input，将
+  input 保持在 WASM memory 中，并直接消费 scalar `f64` 返回值。
+- `axpy_f64` 这类 output kernel：让 kernel 写入 WASM memory 中的 output，并
+  在调用方不需要 JS-owned copy 时返回 `Float64Array` view。
+
+如果调用方确实需要 JS-owned output，应显式 copy，并单独测量这条路径。
+copy-output 是正确路径，但它是较慢的 interop 形态。
+
 ## Memory Ownership
 
 CK / CalcKernel 当前没有 WASM allocator、runtime 或 bounds checks。host 必须负责

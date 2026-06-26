@@ -10,6 +10,12 @@ export function summarizeHyperfine(data, metadata, commands = []) {
         name: result.command,
         category: command?.category ?? "unknown",
         phase: command?.phase ?? "unknown",
+        benchmarkLayer: command?.benchmarkLayer ?? "unknown",
+        dataViewHotPath: command?.dataViewHotPath ?? "unknown",
+        copyInput: command?.copyInput ?? "unknown",
+        copyOutput: command?.copyOutput ?? "unknown",
+        outputOwnership: command?.outputOwnership ?? "unknown",
+        memoryGrow: command?.memoryGrow ?? "unknown",
         optLevel: command?.optLevel ?? "n/a",
         overflowMode: command?.overflowMode ?? "unknown",
         meanSeconds: result.mean,
@@ -114,7 +120,7 @@ export function formatSummaryMarkdown(summary, comparison = []) {
   const lines = [];
   const metadata = summary.metadata;
 
-  lines.push("# CalcKernel Local Performance Summary");
+  lines.push("# CK / CalcKernel Local Performance Summary");
   lines.push("");
   lines.push(`Generated at: ${metadata.generatedAt}`);
   lines.push("");
@@ -133,14 +139,27 @@ export function formatSummaryMarkdown(summary, comparison = []) {
   lines.push(`- Platform: ${metadata.platform} ${metadata.arch}`);
   lines.push(`- CPU: ${metadata.cpuModel}`);
   lines.push("");
+  lines.push("## Interpretation Notes");
+  lines.push("");
+  lines.push("- Local benchmark results depend on hardware, Node.js/V8, clang, hyperfine, workload size, OS scheduling, and system load.");
+  lines.push("- Do not interpret these results as a claim that CK / CalcKernel WASM is always faster than JavaScript.");
+  lines.push("- Compute-only measures repeated kernel calls after memory has already been prepared.");
+  lines.push("- Setup/copy-in measures memory provisioning, aligned allocation, and input copy.");
+  lines.push("- Readback/copy-out measures output view checksums or explicit JS-owned copies.");
+  lines.push("- Low-copy and resident paths are the recommended WASM interop shapes when data can stay in typed arrays over WASM memory.");
+  lines.push("- DataView total paths are fallback/debug ABI paths; mixed-width struct marshaling and large output readback can dominate total time.");
+  lines.push("- Ordinary `pnpm test` does not run hyperfine and must not contain machine-specific performance thresholds.");
+  lines.push("");
   lines.push("## Results");
   lines.push("");
-  lines.push("| Case | Category | Phase | Opt | Mode | Median ms | p95 ms | Min ms | Mean ms | Stddev ms | Fastest | vs C O3 |");
-  lines.push("| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+  lines.push(
+    "| Case | Category | Phase | Layer | DataView Hot | Copy In | Copy Out | Output | Grow | Opt | Mode | Median ms | p95 ms | Min ms | Mean ms | Stddev ms | Fastest | vs C O3 |"
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
   for (const result of summary.results) {
     lines.push(
-      `| ${result.name} | ${result.category} | ${result.phase ?? "unknown"} | ${result.optLevel} | ${result.overflowMode} | ${ms(result.medianSeconds)} | ${ms(result.p95Seconds)} | ${ms(result.minSeconds)} | ${ms(result.meanSeconds)} | ${ms(result.stddevSeconds)} | ${result.relativeToFastest.toFixed(2)}x | ${ratio(result.ratioToCUncheckedO3)} |`
+      `| ${result.name} | ${result.category} | ${result.phase ?? "unknown"} | ${result.benchmarkLayer ?? "unknown"} | ${result.dataViewHotPath ?? "unknown"} | ${result.copyInput ?? "unknown"} | ${result.copyOutput ?? "unknown"} | ${result.outputOwnership ?? "unknown"} | ${result.memoryGrow ?? "unknown"} | ${result.optLevel} | ${result.overflowMode} | ${ms(result.medianSeconds)} | ${ms(result.p95Seconds)} | ${ms(result.minSeconds)} | ${ms(result.meanSeconds)} | ${ms(result.stddevSeconds)} | ${result.relativeToFastest.toFixed(2)}x | ${ratio(result.ratioToCUncheckedO3)} |`
     );
   }
 

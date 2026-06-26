@@ -52,3 +52,8 @@ http://localhost:8000/index.html
 
 调用方必须选择有效 memory offset，并为输入 `Item` 数组和输出 `i64` buffer
 分配足够空间。
+
+这个浏览器示例刻意使用 `DataView`，因为它演示的是 mixed-width pricing `Item`
+ABI。它应被视为 ABI/debug fallback，而不是高吞吐 pricing 推荐路径。大批量
+pricing 场景应优先使用 SoA resident memory、`BigInt64Array` bulk copy 和
+output view，详见 `docs/wasm-interop.md`。

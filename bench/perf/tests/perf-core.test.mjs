@@ -98,6 +98,15 @@ describe("perf runner core", () => {
             max: 0.15,
             median: 0.11,
             times: [0.1, 0.11, 0.15]
+          },
+          {
+            command: "pricing-wasm-unchecked-total-O3",
+            mean: 0.26,
+            stddev: 0.02,
+            min: 0.22,
+            max: 0.3,
+            median: 0.25,
+            times: [0.22, 0.25, 0.3]
           }
         ]
       },
@@ -124,6 +133,13 @@ describe("perf runner core", () => {
     assert.equal(summary.results[0].p95Seconds, 0.15);
     assert.equal(summary.results[0].relativeToFastest, 1);
     assert.equal(summary.results[0].ratioToCUncheckedO3, 1);
+    assert.equal(summary.results[1].benchmarkLayer, "wasm-dataview-total");
+    assert.equal(summary.results[1].dataViewHotPath, "yes");
+    assert.equal(summary.results[1].copyInput, "dataview-per-iteration");
+    assert.equal(summary.results[1].copyOutput, "dataview-per-iteration");
+    assert.equal(summary.results[1].outputOwnership, "js-owned-copy");
+    assert.equal(summary.results[1].memoryGrow, "if-needed");
+    assert.equal(summary.results[1].ratioToCUncheckedO3, 0.25 / 0.11);
   });
 
   it("defines decomposed benchmark cases with metadata", () => {
@@ -135,7 +151,7 @@ describe("perf runner core", () => {
       }
     );
 
-    assert.deepEqual(commands.map((command) => command.name).slice(0, 19), [
+    assert.deepEqual(commands.map((command) => command.name).slice(0, 23), [
       "pricing-c-unchecked-O0",
       "pricing-c-unchecked-O2",
       "pricing-c-unchecked-O3",
@@ -152,6 +168,10 @@ describe("perf runner core", () => {
       "pricing-wasm-unchecked-compute-only-O3",
       "pricing-wasm-unchecked-memory-only",
       "pricing-wasm-unchecked-call-overhead",
+      "pricing-wasm-soa-setup-copy-in-O3",
+      "pricing-wasm-soa-resident-total-O3",
+      "pricing-wasm-soa-readback-cost-O3",
+      "pricing-wasm-soa-total-with-final-readback-O3",
       "pricing-js-number",
       "pricing-js-typedarray-number",
       "pricing-js-bigint"
@@ -167,35 +187,99 @@ describe("perf runner core", () => {
     assert.equal(wasmComputeO3.category, "wasm");
     assert.equal(wasmComputeO3.optLevel, "CK-O3");
     assert.equal(wasmComputeO3.overflowMode, "unchecked");
+    assert.equal(wasmComputeO3.benchmarkLayer, "wasm-compute-only");
+    assert.equal(wasmComputeO3.dataViewHotPath, "no");
+    assert.equal(wasmComputeO3.copyInput, "dataview-setup-once");
+    assert.equal(wasmComputeO3.copyOutput, "dataview-final-checksum");
+    assert.equal(wasmComputeO3.outputOwnership, "js-owned-copy");
+    assert.equal(wasmComputeO3.memoryGrow, "if-needed");
     assert.match(wasmComputeO3.command, /pricing_o3\.wasm/);
+
+    const wasmTotalO3 = commands.find((command) => command.name === "pricing-wasm-unchecked-total-O3");
+    assert.equal(wasmTotalO3.benchmarkLayer, "wasm-dataview-total");
+    assert.equal(wasmTotalO3.dataViewHotPath, "yes");
+    assert.equal(wasmTotalO3.copyInput, "dataview-per-iteration");
+    assert.equal(wasmTotalO3.copyOutput, "dataview-per-iteration");
+    assert.equal(wasmTotalO3.outputOwnership, "js-owned-copy");
+    assert.equal(wasmTotalO3.memoryGrow, "if-needed");
 
     const memoryOnly = commands.find((command) => command.name === "pricing-wasm-unchecked-memory-only");
     assert.equal(memoryOnly.category, "memory");
+    assert.equal(memoryOnly.benchmarkLayer, "wasm-dataview-memory-only");
+    assert.equal(memoryOnly.dataViewHotPath, "yes");
     assert.match(memoryOnly.command, /--mode memory-only/);
 
     const callOverhead = commands.find((command) => command.name === "pricing-wasm-unchecked-call-overhead");
     assert.equal(callOverhead.category, "call-overhead");
+    assert.equal(callOverhead.benchmarkLayer, "wasm-kernel-call");
+    assert.equal(callOverhead.dataViewHotPath, "no");
     assert.match(callOverhead.command, /--calls 10000/);
+
+    const soaSetup = commands.find((command) => command.name === "pricing-wasm-soa-setup-copy-in-O3");
+    assert.equal(soaSetup.category, "wasm-low-copy");
+    assert.equal(soaSetup.optLevel, "CK-O3");
+    assert.equal(soaSetup.benchmarkLayer, "wasm-soa-setup-copy-in");
+    assert.equal(soaSetup.dataViewHotPath, "no");
+    assert.equal(soaSetup.copyInput, "bigint64array-set-setup-once");
+    assert.equal(soaSetup.copyOutput, "none");
+    assert.equal(soaSetup.outputOwnership, "wasm-memory-view");
+    assert.equal(soaSetup.memoryGrow, "pre-grown");
+    assert.match(soaSetup.command, /pricing_soa_o3\.wasm/);
+    assert.match(soaSetup.command, /--mode soa-setup-copy-in/);
+
+    const soaResident = commands.find((command) => command.name === "pricing-wasm-soa-resident-total-O3");
+    assert.equal(soaResident.benchmarkLayer, "wasm-soa-resident-total");
+    assert.equal(soaResident.dataViewHotPath, "no");
+    assert.equal(soaResident.copyInput, "bigint64array-set-setup-once");
+    assert.equal(soaResident.copyOutput, "none");
+    assert.equal(soaResident.outputOwnership, "wasm-memory-view");
+    assert.equal(soaResident.memoryGrow, "pre-grown");
+    assert.match(soaResident.command, /--mode soa-resident-total/);
+
+    const soaReadback = commands.find((command) => command.name === "pricing-wasm-soa-readback-cost-O3");
+    assert.equal(soaReadback.benchmarkLayer, "wasm-soa-readback-cost");
+    assert.equal(soaReadback.dataViewHotPath, "no");
+    assert.equal(soaReadback.copyInput, "bigint64array-set-setup-once");
+    assert.equal(soaReadback.copyOutput, "bigint64array-view-checksum-per-iteration");
+    assert.equal(soaReadback.outputOwnership, "wasm-memory-view");
+    assert.equal(soaReadback.memoryGrow, "pre-grown");
+    assert.match(soaReadback.command, /--mode soa-readback-cost/);
+
+    const soaTotalWithReadback = commands.find((command) => command.name === "pricing-wasm-soa-total-with-final-readback-O3");
+    assert.equal(soaTotalWithReadback.benchmarkLayer, "wasm-soa-total-final-readback");
+    assert.equal(soaTotalWithReadback.dataViewHotPath, "no");
+    assert.equal(soaTotalWithReadback.copyInput, "bigint64array-set-setup-once");
+    assert.equal(soaTotalWithReadback.copyOutput, "bigint64array-view-checksum-once");
+    assert.equal(soaTotalWithReadback.outputOwnership, "wasm-memory-view");
+    assert.equal(soaTotalWithReadback.memoryGrow, "pre-grown");
+    assert.match(soaTotalWithReadback.command, /--mode soa-total-with-final-readback/);
+
+    const pricingTypedArray = commands.find((command) => command.name === "pricing-js-typedarray-number");
+    assert.equal(pricingTypedArray.benchmarkLayer, "js-typedarray-total");
+    assert.equal(pricingTypedArray.dataViewHotPath, "no");
+    assert.equal(pricingTypedArray.copyInput, "none");
+    assert.equal(pricingTypedArray.copyOutput, "none");
+    assert.equal(pricingTypedArray.outputOwnership, "js-owned");
 
     const helperO2 = commands.find((command) => command.name === "pricing-helpers-c-unchecked-ck-O2");
     assert.equal(helperO2.category, "native");
     assert.equal(helperO2.optLevel, "CK-O2/clang-O3");
     assert.equal(helperO2.overflowMode, "unchecked");
 
-    const pricingIkO3 = commands.find((command) => command.name === "pricing-c-unchecked-ck-O3");
-    assert.equal(pricingIkO3.category, "native");
-    assert.equal(pricingIkO3.optLevel, "CK-O3/clang-O3");
-    assert.equal(pricingIkO3.overflowMode, "unchecked");
+    const pricingCkO3 = commands.find((command) => command.name === "pricing-c-unchecked-ck-O3");
+    assert.equal(pricingCkO3.category, "native");
+    assert.equal(pricingCkO3.optLevel, "CK-O3/clang-O3");
+    assert.equal(pricingCkO3.overflowMode, "unchecked");
 
     const llvmO2 = commands.find((command) => command.name === "pricing-llvm-unchecked-O2");
     assert.equal(llvmO2.category, "native");
     assert.equal(llvmO2.optLevel, "O2");
     assert.equal(llvmO2.overflowMode, "unchecked");
 
-    const checkedIkO3 = commands.find((command) => command.name === "pricing-c-checked-O3");
-    assert.equal(checkedIkO3.category, "native");
-    assert.equal(checkedIkO3.optLevel, "CK-O3/clang-O3");
-    assert.equal(checkedIkO3.overflowMode, "checked");
+    const checkedCkO3 = commands.find((command) => command.name === "pricing-c-checked-O3");
+    assert.equal(checkedCkO3.category, "native");
+    assert.equal(checkedCkO3.optLevel, "CK-O3/clang-O3");
+    assert.equal(checkedCkO3.overflowMode, "checked");
   });
 
   it("defines f64 benchmark cases for each kernel and target", () => {
@@ -224,6 +308,8 @@ describe("perf runner core", () => {
       "f64-axpy-ck-wasm-o3-low-copy-compute-only",
       "f64-axpy-ck-wasm-o3-low-copy-output-readback",
       "f64-axpy-ck-wasm-o3-low-copy-total",
+      "f64-axpy-ck-wasm-o3-view-output-total",
+      "f64-axpy-ck-wasm-o3-copy-output-total",
       "f64-dot-js-array-number",
       "f64-dot-js-float64array",
       "f64-dot-ck-c-o3",
@@ -254,6 +340,7 @@ describe("perf runner core", () => {
       "f64-sum-ck-wasm-o3-low-copy-compute-only",
       "f64-sum-ck-wasm-o3-low-copy-output-readback",
       "f64-sum-ck-wasm-o3-low-copy-total",
+      "f64-sum-ck-wasm-o3-optimized-low-copy-total",
       "f64-scale-js-array-number",
       "f64-scale-js-float64array",
       "f64-scale-ck-c-o3",
@@ -285,38 +372,96 @@ describe("perf runner core", () => {
     assert.equal(wasmCompute.category, "wasm");
     assert.equal(wasmCompute.phase, "compute");
     assert.equal(wasmCompute.optLevel, "CK-O3");
+    assert.equal(wasmCompute.benchmarkLayer, "wasm-compute-only");
+    assert.equal(wasmCompute.dataViewHotPath, "no");
+    assert.equal(wasmCompute.copyInput, "dataview-setup-once");
     assert.match(wasmCompute.command, /--mode compute-only/);
 
     const wasmSetup = commands.find((command) => command.name === "f64-axpy-ck-wasm-o3-setup");
     assert.equal(wasmSetup.category, "wasm");
     assert.equal(wasmSetup.phase, "setup");
+    assert.equal(wasmSetup.benchmarkLayer, "wasm-setup");
     assert.match(wasmSetup.command, /--mode setup/);
 
     const wasmInputMarshal = commands.find((command) => command.name === "f64-dot-ck-wasm-o3-input-marshal");
     assert.equal(wasmInputMarshal.category, "memory");
     assert.equal(wasmInputMarshal.phase, "input-marshal");
+    assert.equal(wasmInputMarshal.benchmarkLayer, "wasm-setup-copy-in");
+    assert.equal(wasmInputMarshal.dataViewHotPath, "yes");
+    assert.equal(wasmInputMarshal.copyInput, "dataview-per-iteration");
     assert.match(wasmInputMarshal.command, /--mode input-marshal/);
 
     const wasmOutputReadback = commands.find((command) => command.name === "f64-scale-ck-wasm-o3-output-readback");
     assert.equal(wasmOutputReadback.category, "memory");
     assert.equal(wasmOutputReadback.phase, "output-readback");
+    assert.equal(wasmOutputReadback.benchmarkLayer, "wasm-readback-copy-out");
+    assert.equal(wasmOutputReadback.dataViewHotPath, "yes");
+    assert.equal(wasmOutputReadback.copyOutput, "dataview-per-iteration");
     assert.match(wasmOutputReadback.command, /--mode output-readback/);
 
     const wasmMemory = commands.find((command) => command.name === "f64-scale-wasm-memory-only");
     assert.equal(wasmMemory.category, "memory");
     assert.equal(wasmMemory.phase, "memory-only");
+    assert.equal(wasmMemory.benchmarkLayer, "wasm-dataview-memory-only");
+    assert.equal(wasmMemory.dataViewHotPath, "yes");
     assert.match(wasmMemory.command, /--mode memory-only/);
 
     const wasmLowCopyTotal = commands.find((command) => command.name === "f64-axpy-ck-wasm-o3-low-copy-total");
     assert.equal(wasmLowCopyTotal.category, "wasm-low-copy");
     assert.equal(wasmLowCopyTotal.phase, "total");
+    assert.equal(wasmLowCopyTotal.benchmarkLayer, "wasm-low-copy-total");
+    assert.equal(wasmLowCopyTotal.dataViewHotPath, "no");
+    assert.equal(wasmLowCopyTotal.copyInput, "float64array-set-per-iteration");
+    assert.equal(wasmLowCopyTotal.copyOutput, "float64array-view-checksum-per-iteration");
+    assert.equal(wasmLowCopyTotal.outputOwnership, "wasm-memory-view");
+    assert.equal(wasmLowCopyTotal.memoryGrow, "if-needed");
     assert.match(wasmLowCopyTotal.command, /--mode total/);
     assert.match(wasmLowCopyTotal.command, /--copy-mode float64array/);
 
     const wasmLowCopyInput = commands.find((command) => command.name === "f64-dot-ck-wasm-o3-low-copy-input-marshal");
     assert.equal(wasmLowCopyInput.category, "memory-low-copy");
     assert.equal(wasmLowCopyInput.phase, "input-marshal");
+    assert.equal(wasmLowCopyInput.benchmarkLayer, "wasm-setup-copy-in");
+    assert.equal(wasmLowCopyInput.dataViewHotPath, "no");
+    assert.equal(wasmLowCopyInput.copyInput, "float64array-set-per-iteration");
     assert.match(wasmLowCopyInput.command, /--copy-mode float64array/);
+
+    const sumLowCopyTotal = commands.find((command) => command.name === "f64-sum-ck-wasm-o3-low-copy-total");
+    assert.equal(sumLowCopyTotal.copyOutput, "scalar-return");
+    assert.equal(sumLowCopyTotal.outputOwnership, "scalar-return");
+
+    const sumOptimizedTotal = commands.find((command) => command.name === "f64-sum-ck-wasm-o3-optimized-low-copy-total");
+    assert.equal(sumOptimizedTotal.category, "wasm-low-copy");
+    assert.equal(sumOptimizedTotal.phase, "optimized-total");
+    assert.equal(sumOptimizedTotal.benchmarkLayer, "wasm-optimized-low-copy-total");
+    assert.equal(sumOptimizedTotal.dataViewHotPath, "no");
+    assert.equal(sumOptimizedTotal.copyInput, "float64array-set-setup-once");
+    assert.equal(sumOptimizedTotal.copyOutput, "scalar-return");
+    assert.equal(sumOptimizedTotal.outputOwnership, "scalar-return");
+    assert.equal(sumOptimizedTotal.memoryGrow, "pre-grown");
+    assert.match(sumOptimizedTotal.command, /--mode optimized-total/);
+
+    const axpyViewOutput = commands.find((command) => command.name === "f64-axpy-ck-wasm-o3-view-output-total");
+    assert.equal(axpyViewOutput.category, "wasm-low-copy");
+    assert.equal(axpyViewOutput.phase, "view-output-total");
+    assert.equal(axpyViewOutput.benchmarkLayer, "wasm-view-output-total");
+    assert.equal(axpyViewOutput.dataViewHotPath, "no");
+    assert.equal(axpyViewOutput.copyInput, "float64array-set-x-once-y-per-iteration");
+    assert.equal(axpyViewOutput.copyOutput, "none");
+    assert.equal(axpyViewOutput.outputOwnership, "wasm-memory-view");
+    assert.equal(axpyViewOutput.memoryGrow, "pre-grown");
+    assert.match(axpyViewOutput.command, /--mode view-output-total/);
+
+    const axpyCopyOutput = commands.find((command) => command.name === "f64-axpy-ck-wasm-o3-copy-output-total");
+    assert.equal(axpyCopyOutput.category, "wasm-low-copy");
+    assert.equal(axpyCopyOutput.phase, "copy-output-total");
+    assert.equal(axpyCopyOutput.benchmarkLayer, "wasm-copy-output-total");
+    assert.equal(axpyCopyOutput.dataViewHotPath, "no");
+    assert.equal(axpyCopyOutput.copyInput, "float64array-set-x-once-y-per-iteration");
+    assert.equal(axpyCopyOutput.copyOutput, "copyout-f64-per-iteration");
+    assert.equal(axpyCopyOutput.outputOwnership, "js-owned-copy");
+    assert.equal(axpyCopyOutput.memoryGrow, "pre-grown");
+    assert.match(axpyCopyOutput.command, /--mode copy-output-total/);
   });
 
   it("defines native f64 compile jobs without changing pricing jobs", () => {
@@ -479,7 +624,9 @@ describe("perf runner core", () => {
         "f64-axpy-ck-wasm-o3-low-copy-input-marshal",
         "f64-axpy-ck-wasm-o3-low-copy-compute-only",
         "f64-axpy-ck-wasm-o3-low-copy-output-readback",
-        "f64-axpy-ck-wasm-o3-low-copy-total"
+        "f64-axpy-ck-wasm-o3-low-copy-total",
+        "f64-axpy-ck-wasm-o3-view-output-total",
+        "f64-axpy-ck-wasm-o3-copy-output-total"
       ]
     );
   });
@@ -528,6 +675,12 @@ describe("perf runner core", () => {
           name: "pricing-c-unchecked-O3",
           category: "native",
           phase: "total",
+          benchmarkLayer: "native-total",
+          dataViewHotPath: "no",
+          copyInput: "none",
+          copyOutput: "none",
+          outputOwnership: "native-process",
+          memoryGrow: "no",
           optLevel: "O3",
           overflowMode: "unchecked",
           medianSeconds: 0.11,
@@ -553,7 +706,7 @@ describe("perf runner core", () => {
     ]);
 
     assert.match(markdown, /Baseline Comparison/);
-    assert.match(markdown, /\| Case \| Category \| Phase \| Opt \| Mode \|/);
+    assert.match(markdown, /\| Case \| Category \| Phase \| Layer \| DataView Hot \| Copy In \| Copy Out \| Output \| Grow \| Opt \| Mode \|/);
     assert.match(markdown, /1\.10x/);
     assert.match(markdown, /10\.00%/);
   });

@@ -99,6 +99,10 @@ node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case prici
 - `pricing-wasm-unchecked-compute-only-O3`
 - `pricing-wasm-unchecked-memory-only`
 - `pricing-wasm-unchecked-call-overhead`
+- `pricing-wasm-soa-setup-copy-in-O3`
+- `pricing-wasm-soa-resident-total-O3`
+- `pricing-wasm-soa-readback-cost-O3`
+- `pricing-wasm-soa-total-with-final-readback-O3`
 - `pricing-js-number`
 - `pricing-js-typedarray-number`
 - `pricing-js-bigint`
@@ -118,6 +122,7 @@ node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case prici
 - CK LLVM O3
 - CK WASM O3 split phases
 - CK WASM O3 low-copy split phases
+- CK WASM O3 optimized resident/output-view phases
 
 f64 WASM case 包含 `setup`、`input-marshal`、`compute-only`、
 `output-readback`、`total` 和 `memory-only` 变体，用于把 host-side memory
@@ -130,6 +135,20 @@ Phase 18.3 增加 `f64-*-ck-wasm-o3-low-copy-*` case。它们在 exported WASM
 memory 上创建 `Float64Array` view，用 `Float64Array#set` 做批量 input marshal；
 `dot`/`sum` 只消费 scalar return，in-place array kernel 则只读回 output checksum。
 原 DataView path 保留，用于对比逐元素 byte-level marshal 成本。
+
+Phase 22 增加推荐的 f64 和 pricing interop case：
+
+- `f64-sum-ck-wasm-o3-optimized-low-copy-total`：resident input 加 scalar return，
+  不做 output readback。
+- `f64-axpy-ck-wasm-o3-view-output-total`：resident input，output 保持 WASM memory
+  view。
+- `f64-axpy-ck-wasm-o3-copy-output-total`：显式 JS-owned output copy，作为慢路径单独
+  测量。
+- `pricing-wasm-soa-resident-total-O3`：`BigInt64Array#set` SoA 一次性 copy-in，
+  input resident，output 保持 WASM memory view。
+- `pricing-wasm-soa-readback-cost-O3`：重复 output view readback 成本。
+- `pricing-wasm-soa-total-with-final-readback-O3`：resident compute 加一次最终 output
+  view checksum。
 
 对于 production-style homogeneous `f64` buffer，推荐参考
 `examples/node-wasm-f64-array/`：在 exported WASM memory 上创建 `Float64Array`，
@@ -154,6 +173,13 @@ node bench/perf/run.mjs --quick --case f64-dot
 
 summary 会包含每个 case 的 category、phase、optimization level、arithmetic
 mode、median runtime、p95 runtime，以及相对于 `pricing-c-unchecked-O3` 的倍数。
+它也报告 interop metadata：
+
+- `DataView Hot`：hot path 是否包含逐元素/逐字段 DataView 工作
+- `Copy In`：none、setup-once、per-iteration 或 typed-array bulk copy
+- `Copy Out`：none、checksum/readback 或 JS-owned copy
+- `Output`：scalar return、WASM memory view 或 JS-owned output
+- `Grow`：memory growth 是否属于被测路径
 
 启用 `--compare` 后，`build/perf/latest.summary.md` 还会包含 baseline comparison
 表。regression status 基于 median runtime：
@@ -192,8 +218,34 @@ f64 benchmark run 是文档和 release smoke 工具：
   本身
 - WASM low-copy total 更接近推荐 host pattern，但仍包含 host memory placement
   和 readback 成本
+- WASM resident total 会把 input 保持在 WASM memory，并通常让 output 保持为 view
+- copy-output case 是需要 JS-owned output 时的显式慢路径
 - 对比时必须确认 phase label 一致：setup、input-marshal、compute-only、
-  output-readback、total 或 memory-only
+  setup/copy-in、readback/copy-out、low-copy total、resident total、DataView
+  fallback total 或 memory-only
+
+## Phase 22 本机结果
+
+本机最新 full run，2026-06-26：
+
+| Case | Median ms | 解读 |
+| --- | ---: | --- |
+| `pricing-js-typedarray-number` | 123.519 | JS typed-array `Number` baseline |
+| `pricing-js-bigint` | 181.427 | 精确 JS `BigInt` baseline |
+| `pricing-wasm-unchecked-compute-only-O3` | 118.215 | 有竞争力的 compute path |
+| `pricing-wasm-unchecked-total-O3` | 2562.414 | DataView AoS fallback total |
+| `pricing-wasm-soa-resident-total-O3` | 111.615 | 推荐 SoA resident path |
+| `pricing-wasm-soa-total-with-final-readback-O3` | 118.219 | resident compute 加一次最终 readback |
+| `f64-sum-js-float64array` | 112.375 | JS `Float64Array` baseline |
+| `f64-sum-ck-wasm-o3-optimized-low-copy-total` | 89.150 | 推荐 resident/scalar-return path |
+| `f64-axpy-js-float64array` | 114.551 | JS `Float64Array` baseline |
+| `f64-axpy-ck-wasm-o3-view-output-total` | 114.269 | 推荐 output-view path |
+| `f64-axpy-ck-wasm-o3-copy-output-total` | 204.850 | 显式 copy-output path |
+
+这些数字不是“CK WASM 普遍比 JavaScript 快”的宣传。它们说明当前 WASM path 有竞争力
+的条件：批量调用、resident memory、SoA 或 homogeneous buffers、typed-array bulk
+copy、scalar return 和 output view。DataView fallback total 以及重复 readback/
+copy-out 可能明显慢于 JavaScript typed-array loop。
 
 当前瓶颈分析和 Phase 14 优化优先级见
 [2026-06-24 性能画像](docs/2026-06-24-performance-profile.zh-CN.md)。

@@ -56,3 +56,9 @@ the computed output buffer.
 
 The caller must choose valid memory offsets and allocate enough space for the
 input `Item` array and output `i64` buffer.
+
+This browser example intentionally uses `DataView` because it demonstrates the
+mixed-width pricing `Item` ABI. Treat it as an ABI/debug fallback, not as the
+recommended high-throughput pricing path. For large pricing batches, prefer SoA
+resident memory, `BigInt64Array` bulk copy, and output views as described in
+`docs/wasm-interop.md`.

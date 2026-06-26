@@ -106,6 +106,10 @@ The decomposed suite covers:
 - `pricing-wasm-unchecked-compute-only-O3`
 - `pricing-wasm-unchecked-memory-only`
 - `pricing-wasm-unchecked-call-overhead`
+- `pricing-wasm-soa-setup-copy-in-O3`
+- `pricing-wasm-soa-resident-total-O3`
+- `pricing-wasm-soa-readback-cost-O3`
+- `pricing-wasm-soa-total-with-final-readback-O3`
 - `pricing-js-number`
 - `pricing-js-typedarray-number`
 - `pricing-js-bigint`
@@ -125,6 +129,7 @@ Each kernel has default comparison cases for:
 - CK LLVM O3
 - CK WASM O3 split phases
 - CK WASM O3 low-copy split phases
+- CK WASM O3 optimized resident/output-view phases
 
 The f64 WASM cases include `setup`, `input-marshal`, `compute-only`,
 `output-readback`, `total`, and `memory-only` variants so host-side memory
@@ -139,6 +144,20 @@ WASM memory, `Float64Array#set` for bulk input marshal, scalar return consume fo
 `dot`/`sum`, and output checksum readback for in-place array kernels. The old
 DataView path is intentionally retained as a comparison point for byte-level
 marshaling overhead.
+
+Phase 22 adds the recommended f64 and pricing interop cases:
+
+- `f64-sum-ck-wasm-o3-optimized-low-copy-total`: resident input plus scalar
+  return, with no output readback.
+- `f64-axpy-ck-wasm-o3-view-output-total`: resident input plus output retained
+  as a WASM memory view.
+- `f64-axpy-ck-wasm-o3-copy-output-total`: explicit JS-owned output copy,
+  measured as a slow path.
+- `pricing-wasm-soa-resident-total-O3`: `BigInt64Array#set` SoA copy-in once,
+  resident input, output retained as a WASM memory view.
+- `pricing-wasm-soa-readback-cost-O3`: repeated output view readback cost.
+- `pricing-wasm-soa-total-with-final-readback-O3`: resident compute plus one
+  final output view checksum.
 
 For production-style homogeneous `f64` buffers, prefer the
 `examples/node-wasm-f64-array/` pattern: create a `Float64Array` over exported
@@ -164,6 +183,13 @@ node bench/perf/run.mjs --quick --case f64-dot
 
 The summary includes each case's category, phase, optimization level, arithmetic
 mode, median runtime, p95 runtime, and ratio against `pricing-c-unchecked-O3`.
+It also reports interop metadata:
+
+- `DataView Hot`: whether per-element/per-field DataView work is in the hot path
+- `Copy In`: none, setup-once, per-iteration, or typed-array bulk copy
+- `Copy Out`: none, checksum/readback, or JS-owned copy
+- `Output`: scalar return, WASM memory view, or JS-owned output
+- `Grow`: whether memory growth is part of the measured path
 
 When `--compare` is enabled, `build/perf/latest.summary.md` also includes a
 baseline comparison table. Regression status is based on median runtime:
@@ -206,8 +232,36 @@ F64 benchmark runs are documentation and release smoke tools:
   than compute
 - WASM low-copy total results are closer to the recommended host pattern, but
   still include host memory placement and readback work
+- WASM resident total results keep input in WASM memory and usually keep output
+  as a view
+- copy-output cases are explicit slow paths when JS-owned output is required
 - always compare cases with the same phase label: setup, input-marshal,
-  compute-only, output-readback, total, or memory-only
+  compute-only, setup/copy-in, readback/copy-out, low-copy total, resident
+  total, DataView fallback total, or memory-only
+
+## Phase 22 Local Results
+
+Latest local full runs on this machine, 2026-06-26:
+
+| Case | Median ms | Interpretation |
+| --- | ---: | --- |
+| `pricing-js-typedarray-number` | 123.519 | JS typed-array `Number` baseline |
+| `pricing-js-bigint` | 181.427 | exact JS `BigInt` baseline |
+| `pricing-wasm-unchecked-compute-only-O3` | 118.215 | competitive compute path |
+| `pricing-wasm-unchecked-total-O3` | 2562.414 | DataView AoS fallback total |
+| `pricing-wasm-soa-resident-total-O3` | 111.615 | recommended SoA resident path |
+| `pricing-wasm-soa-total-with-final-readback-O3` | 118.219 | resident compute plus one final readback |
+| `f64-sum-js-float64array` | 112.375 | JS `Float64Array` baseline |
+| `f64-sum-ck-wasm-o3-optimized-low-copy-total` | 89.150 | recommended resident/scalar-return path |
+| `f64-axpy-js-float64array` | 114.551 | JS `Float64Array` baseline |
+| `f64-axpy-ck-wasm-o3-view-output-total` | 114.269 | recommended output-view path |
+| `f64-axpy-ck-wasm-o3-copy-output-total` | 204.850 | explicit copy-output path |
+
+These numbers are not a general claim that CK WASM is faster than JavaScript.
+They show the conditions where the current WASM path can be competitive:
+batched calls, resident memory, SoA or homogeneous buffers, typed-array bulk
+copy, scalar returns, and output views. DataView fallback totals and repeated
+readback/copy-out can be much slower than JavaScript typed-array loops.
 
 See [2026-06-24 Performance Profile](docs/2026-06-24-performance-profile.md)
 for the current bottleneck analysis and Phase 14 optimization priorities.

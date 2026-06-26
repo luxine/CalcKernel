@@ -144,7 +144,7 @@ function generateArtifacts() {
     "emit-c",
     "examples/pricing.ck",
     "--out",
-    relativeFromRoot(join(generatedDir, "pricing_ik_o3.c")),
+    relativeFromRoot(join(generatedDir, "pricing_ck_o3.c")),
     "--header",
     relativeFromRoot(join(generatedDir, "pricing.h")),
     "--overflow",
@@ -156,7 +156,7 @@ function generateArtifacts() {
     "emit-c",
     "bench/perf/fixtures/pricing_helpers.ck",
     "--out",
-    relativeFromRoot(join(generatedDir, "pricing_helpers_ik_o0.c")),
+    relativeFromRoot(join(generatedDir, "pricing_helpers_ck_o0.c")),
     "--header",
     relativeFromRoot(join(generatedDir, "pricing_helpers.h")),
     "--overflow",
@@ -168,7 +168,7 @@ function generateArtifacts() {
     "emit-c",
     "bench/perf/fixtures/pricing_helpers.ck",
     "--out",
-    relativeFromRoot(join(generatedDir, "pricing_helpers_ik_o2.c")),
+    relativeFromRoot(join(generatedDir, "pricing_helpers_ck_o2.c")),
     "--header",
     relativeFromRoot(join(generatedDir, "pricing_helpers.h")),
     "--overflow",
@@ -202,6 +202,16 @@ function generateArtifacts() {
     "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing_o3.wasm")),
+    "--overflow",
+    "unchecked",
+    "-O3"
+  ]);
+  run("pnpm", [
+    "ckc",
+    "emit-wasm",
+    "bench/perf/fixtures/pricing_soa.ck",
+    "--out",
+    relativeFromRoot(join(generatedDir, "pricing_soa_o3.wasm")),
     "--overflow",
     "unchecked",
     "-O3"

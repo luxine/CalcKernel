@@ -45,6 +45,14 @@ async function runMode(config) {
       return runMemoryOnly(config);
     case "call-overhead":
       return runCallOverhead(config);
+    case "soa-setup-copy-in":
+      return runSoASetupCopyIn(config);
+    case "soa-resident-total":
+      return runSoAResidentTotal(config);
+    case "soa-readback-cost":
+      return runSoAReadbackCost(config);
+    case "soa-total-with-final-readback":
+      return runSoATotalWithFinalReadback(config);
   }
 }
 
@@ -57,10 +65,21 @@ function positiveInteger(value, flag) {
 }
 
 function requireMode(value) {
-  if (value === "total" || value === "compute-only" || value === "memory-only" || value === "call-overhead") {
+  if (
+    value === "total" ||
+    value === "compute-only" ||
+    value === "memory-only" ||
+    value === "call-overhead" ||
+    value === "soa-setup-copy-in" ||
+    value === "soa-resident-total" ||
+    value === "soa-readback-cost" ||
+    value === "soa-total-with-final-readback"
+  ) {
     return value;
   }
-  throw new Error(`--mode must be total, compute-only, memory-only, or call-overhead`);
+  throw new Error(
+    "--mode must be total, compute-only, memory-only, call-overhead, soa-setup-copy-in, soa-resident-total, soa-readback-cost, or soa-total-with-final-readback"
+  );
 }
 
 async function instantiate(path) {
@@ -151,6 +170,83 @@ async function runCallOverhead(config) {
   return `pricing-wasm-unchecked-call-overhead calls=${config.calls} checksum=${actual}`;
 }
 
+async function runSoASetupCopyIn(config) {
+  const inputs = makeSoAInput(config.items);
+  const runtime = await pricingSoAInstance(config);
+  copySoAInputs(runtime, inputs);
+
+  const actual = soaSetupGuard(runtime, config.items);
+  const expected = soaInputGuard(inputs, config.items);
+  if (actual !== expected) {
+    throw new Error(`setup guard mismatch: expected ${expected}, got ${actual}`);
+  }
+
+  return `pricing-wasm-soa-setup-copy-in-O3 items=${config.items} iterations=${config.iterations} checksum=${actual}`;
+}
+
+async function runSoAResidentTotal(config) {
+  const inputs = makeSoAInput(config.items);
+  const runtime = await pricingSoAInstance(config);
+  copySoAInputs(runtime, inputs);
+
+  let actual = 0;
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    actual += callPricingSoA(runtime, config.items);
+  }
+
+  if (actual !== 0) {
+    throw new Error(`status mismatch: expected 0, got ${actual}`);
+  }
+
+  return `pricing-wasm-soa-resident-total-O3 items=${config.items} iterations=${config.iterations} status=${actual}`;
+}
+
+async function runSoAReadbackCost(config) {
+  const inputs = makeSoAInput(config.items);
+  const runtime = await pricingSoAInstance(config);
+  copySoAInputs(runtime, inputs);
+
+  const status = callPricingSoA(runtime, config.items);
+  const expectedKernelChecksum = expectedChecksum(config.items);
+  if (status !== 0) {
+    throw new Error(`pricing_soa returned ${status}`);
+  }
+
+  let actual = 0n;
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    actual += checksumBigInt64Array(runtime.outTotalsView, config.items);
+  }
+
+  const expected = expectedKernelChecksum * BigInt(config.iterations);
+  if (actual !== expected) {
+    throw new Error(`readback checksum mismatch: expected ${expected}, got ${actual}`);
+  }
+
+  return `pricing-wasm-soa-readback-cost-O3 items=${config.items} iterations=${config.iterations} checksum=${actual}`;
+}
+
+async function runSoATotalWithFinalReadback(config) {
+  const inputs = makeSoAInput(config.items);
+  const runtime = await pricingSoAInstance(config);
+  copySoAInputs(runtime, inputs);
+
+  let actual = 0;
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    actual += callPricingSoA(runtime, config.items);
+  }
+
+  const expectedSingle = expectedChecksum(config.items);
+  const finalOutputChecksum = checksumBigInt64Array(runtime.outTotalsView, config.items);
+  if (actual !== 0) {
+    throw new Error(`status mismatch: expected 0, got ${actual}`);
+  }
+  if (finalOutputChecksum !== expectedSingle) {
+    throw new Error(`final readback checksum mismatch: expected ${expectedSingle}, got ${finalOutputChecksum}`);
+  }
+
+  return `pricing-wasm-soa-total-with-final-readback-O3 items=${config.items} iterations=${config.iterations} status=${actual} checksum=${finalOutputChecksum}`;
+}
+
 async function pricingInstance(config) {
   const instance = await instantiate(config.wasm);
   const memory = instance.exports.memory;
@@ -165,6 +261,45 @@ async function pricingInstance(config) {
 
   const layout = requiredBytesFor(config.items);
   return { view: ensureMemory(memory, layout.totalBytes), calcItems, layout };
+}
+
+async function pricingSoAInstance(config) {
+  const instance = await instantiate(config.wasm);
+  const memory = instance.exports.memory;
+  const pricingSoA = instance.exports.pricing_soa;
+
+  if (!(memory instanceof WebAssembly.Memory)) {
+    throw new Error("pricing SoA wasm does not export WebAssembly memory");
+  }
+  if (typeof pricingSoA !== "function") {
+    throw new Error("pricing SoA wasm does not export pricing_soa");
+  }
+
+  const { CKWasmArena } = await import("../../../dist/src/wasm/ck-wasm-arena.js");
+  const arena = new CKWasmArena(memory, { heapBase: 0 });
+  const pricesOffset = arena.allocI64(config.items);
+  const quantitiesOffset = arena.allocI64(config.items);
+  const discountsOffset = arena.allocI64(config.items);
+  const taxRatesPpmOffset = arena.allocI64(config.items);
+  const outTotalsOffset = arena.allocI64(config.items);
+  const totalBytes = outTotalsOffset + config.items * BigInt64Array.BYTES_PER_ELEMENT;
+  arena.ensureBytes(totalBytes);
+
+  return {
+    pricingSoA,
+    layout: {
+      pricesOffset,
+      quantitiesOffset,
+      discountsOffset,
+      taxRatesPpmOffset,
+      outTotalsOffset
+    },
+    pricesView: arena.viewI64(pricesOffset, config.items),
+    quantitiesView: arena.viewI64(quantitiesOffset, config.items),
+    discountsView: arena.viewI64(discountsOffset, config.items),
+    taxRatesPpmView: arena.viewI64(taxRatesPpmOffset, config.items),
+    outTotalsView: arena.viewI64(outTotalsOffset, config.items)
+  };
 }
 
 function alignTo(value, align) {
@@ -207,6 +342,68 @@ function writeItems(view, offset, len) {
   }
 }
 
+function makeSoAInput(len) {
+  const prices = new BigInt64Array(len);
+  const quantities = new BigInt64Array(len);
+  const discounts = new BigInt64Array(len);
+  const taxRatesPpm = new BigInt64Array(len);
+
+  for (let i = 0; i < len; i += 1) {
+    prices[i] = BigInt(1000 + (i % 997));
+    quantities[i] = BigInt(1 + (i % 9));
+    discounts[i] = BigInt(i % 113);
+    taxRatesPpm[i] = BigInt(50_000 + (i % 17) * 2500);
+  }
+
+  return { prices, quantities, discounts, taxRatesPpm };
+}
+
+function copySoAInputs(runtime, inputs) {
+  runtime.pricesView.set(inputs.prices);
+  runtime.quantitiesView.set(inputs.quantities);
+  runtime.discountsView.set(inputs.discounts);
+  runtime.taxRatesPpmView.set(inputs.taxRatesPpm);
+}
+
+function callPricingSoA(runtime, len) {
+  return runtime.pricingSoA(
+    runtime.layout.pricesOffset,
+    runtime.layout.quantitiesOffset,
+    runtime.layout.discountsOffset,
+    runtime.layout.taxRatesPpmOffset,
+    runtime.layout.outTotalsOffset,
+    len
+  );
+}
+
+function soaInputGuard(inputs, len) {
+  const last = len - 1;
+  return (
+    inputs.prices[0] +
+    inputs.quantities[0] +
+    inputs.discounts[0] +
+    inputs.taxRatesPpm[0] +
+    inputs.prices[last] +
+    inputs.quantities[last] +
+    inputs.discounts[last] +
+    inputs.taxRatesPpm[last]
+  );
+}
+
+function soaSetupGuard(runtime, len) {
+  const last = len - 1;
+  return (
+    runtime.pricesView[0] +
+    runtime.quantitiesView[0] +
+    runtime.discountsView[0] +
+    runtime.taxRatesPpmView[0] +
+    runtime.pricesView[last] +
+    runtime.quantitiesView[last] +
+    runtime.discountsView[last] +
+    runtime.taxRatesPpmView[last]
+  );
+}
+
 function writeExpectedOut(view, offset, len) {
   for (let i = 0; i < len; i += 1) {
     const price = BigInt(1000 + (i % 997));
@@ -241,6 +438,14 @@ function checksum(view, offset, len) {
   let total = 0n;
   for (let i = 0; i < len; i += 1) {
     total += view.getBigInt64(offset + i * 8, true);
+  }
+  return total;
+}
+
+function checksumBigInt64Array(values, len) {
+  let total = 0n;
+  for (let i = 0; i < len; i += 1) {
+    total += values[i];
   }
   return total;
 }

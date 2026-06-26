@@ -58,6 +58,12 @@ JavaScript `number` 传递。
 宿主侧用 `DataView` 写入 memory。WebAssembly memory 是 little-endian，所以
 本示例中所有 `DataView` 读写都为 `littleEndian` 参数传入 `true`。
 
+这个示例刻意保持 byte-level：它用于展示 mixed-width `Item` ABI 和 output buffer
+layout，不是推荐的高吞吐 pricing interop 路径。大批量 pricing 数据优先使用 SoA
+形态：homogeneous `ptr<i64>` arrays、`BigInt64Array#set` copy-in、resident WASM
+memory，并让 output 保持 WASM memory view。详见
+[`docs/wasm-interop.md`](../../docs/wasm-interop.md)。
+
 ## Item Layout
 
 `pricing.ck` 定义：

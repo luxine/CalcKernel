@@ -274,7 +274,8 @@ node examples/node-wasm-call/index.mjs
 
 详见 [examples/node-wasm-call](examples/node-wasm-call/README.zh-CN.md)，了解
 `DataView` memory 写入、`Item` layout、pointer offset、output buffer 和
-`BigInt` 映射。
+`BigInt` 映射。这个示例是 byte-exact ABI walkthrough。对 pricing 热路径，优先使用
+SoA resident memory 和 typed-array bulk copy，而不是逐字段 `DataView` marshal。
 
 ## Node.js WASM f64 数组示例
 
@@ -292,6 +293,40 @@ Pointer ABI 不变：WASM `ptr<f64>` 仍是 `i32` byte offset，`f64` size 是 8
 byte offset 必须 8-byte aligned。如果 host 调用 `memory.grow`，继续使用前要重新
 创建 typed-array view。CK / CalcKernel 不提供 WASM allocator 或 runtime；memory
 placement 和 buffer sizing 由 host 负责。
+
+## WASM Interop 性能口径
+
+不要把 CK / CalcKernel WASM 结果解读成“WASM 总是比 JavaScript 快”。Phase 22 的准确
+口径更窄：
+
+- CK WASM compute-only path 在当前 pricing 和 f64 workload 上已有竞争力。
+- 批量 resident-memory workload 可以减少大部分 JS/WASM 边界成本。
+- homogeneous `f64` 推荐使用 WASM memory 上的 `Float64Array` view。`f64-sum`
+  是推荐的 read-only/scalar-return 形态；`f64-axpy` 在调用方能消费 WASM memory
+  时应优先保留 output view。
+- pricing 风格的整数 fixed-point 数据，如果 host 能整理成 SoA，推荐使用 SoA arrays
+  加 `BigInt64Array#set` bulk copy。
+- `DataView` 仍适合 fallback/debug ABI 检查和 mixed-width struct packing，但不是
+  推荐的高吞吐路径。
+- copy-out/readback 是显式成本。JS-owned output copy 可能抵消 WASM compute 优势。
+
+使用 package helper 的最小 typed-array interop 示例：
+
+```ts
+import { CKWasmArena } from "calckernel";
+
+const { instance } = await WebAssembly.instantiate(bytes);
+const arena = CKWasmArena.fromExports(instance.exports, { heapBase: 0 });
+
+const input = new Float64Array([1.0, 2.0, 3.0, 4.0]);
+const { ptr, view } = arena.copyInF64(input);
+const sum = instance.exports.sum_f64(ptr, input.length);
+```
+
+这个 helper 不是生成代码中的 CK runtime 或 allocator。它只管理 host 侧 aligned
+offset、typed-array view、bulk copy 和 `memory.grow` 后的 view refresh。Phase 22
+benchmark 分层和当前本机结果表见 [WASM interop](docs/wasm-interop.md) 和
+[性能](docs/zh-CN/PERFORMANCE.md)。
 
 ## Browser WASM 示例
 
@@ -412,15 +447,25 @@ node bench/perf/run.mjs --full --save-baseline
 node bench/perf/run.mjs --full --compare --threshold 10
 ```
 
-Benchmark 只是粗略的本地参考，不是跨机器稳定分数。结果依赖本机硬件、Node.js、
-clang、hyperfine 和当前系统负载。不要提交 `build/perf` 中的机器本地 baseline，
-也不要把性能阈值放进普通 `pnpm test`。跨语言集成时，应把工作批量放进较大的
-native 调用，而不是一条 item 调一次 native 函数。WASM f64 结果要按拆分路径解读：
-compute-only 测 memory 已准备好后的 kernel，total 包含 input marshal 和 output
-readback。JavaScript `Float64Array` 是很强的 host 热循环 baseline；如果把 host
-memory movement 算进 total，WASM 不保证一定更快。当前 optimization pipeline、
-本机最新 full run 摘要、baseline/compare 流程、f64 benchmark 覆盖和 backend 瓶颈见
-[Performance](docs/zh-CN/PERFORMANCE.md) 和 [Optimization](docs/zh-CN/OPTIMIZATION.md)。
+Benchmark 只是粗略的本地参考，不是跨机器稳定分数。结果依赖本机硬件、Node.js/V8、
+clang、hyperfine、workload 规模和当前系统负载。不要提交 `build/perf` 中的机器
+本地 baseline，也不要把性能阈值放进普通 `pnpm test`。跨语言集成时，应把工作批量
+放进较大的 native 调用，而不是一条 item 调一次 native 函数。
+
+WASM benchmark 需要按分层解读：
+
+- compute-only：memory 已准备好，测重复 kernel call
+- setup/copy-in：memory growth、aligned allocation 和 input copy
+- readback/copy-out：output view checksum 或 JS-owned output copy
+- low-copy total：typed-array copy 加 compute 的同一路径
+- resident total：input 留在 WASM memory，output 通常保留为 view
+- DataView fallback total：byte-level AoS/ABI 路径，通常主要受 host marshal 影响
+
+当前 Phase 22 本机 run 显示，`f64-sum` optimized low-copy 和 pricing SoA resident
+路径在这台机器上快于对应 JS typed-array baseline，而 DataView total 明显更慢。这是
+workload 和机器相关结果，不是“WASM 普遍比 JS 快”的宣传。当前结果表、baseline/
+compare 流程、benchmark 覆盖和 backend 瓶颈见 [Performance](docs/zh-CN/PERFORMANCE.md)、
+[WASM interop](docs/wasm-interop.md) 和 [Optimization](docs/zh-CN/OPTIMIZATION.md)。
 
 ## 当前 V0 限制
 

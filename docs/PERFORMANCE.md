@@ -2,7 +2,7 @@
 
 [简体中文](zh-CN/PERFORMANCE.md)
 
-This document summarizes the Phase 14 local performance suite, current local
+This document summarizes the Phase 22 local performance suite, current local
 results, and how to run regression checks. Numbers are local measurements only:
 do not compare absolute timings across machines. Results depend on hardware,
 Node.js, clang, hyperfine, OS scheduling, power state, and current system load.
@@ -20,6 +20,8 @@ compute kernels. It currently covers:
   and `pricing-llvm-unchecked-O3`
 - WASM unchecked total and compute-only cases, both at `CK-O0` and `CK-O3`
 - WASM memory-only and JS-to-WASM call-overhead decomposition
+- WASM pricing SoA resident-memory cases using `BigInt64Array` views over
+  exported memory
 - JavaScript baselines: `Number`, typed-array `Number`, and `BigInt`
 - f64 kernels: axpy, dot product, sum, and scale
 - f64 comparison targets: JavaScript `Array` `Number`, JavaScript
@@ -62,6 +64,7 @@ Run selected cases:
 ```sh
 node bench/perf/run.mjs --quick --case pricing-c-unchecked
 node bench/perf/run.mjs --full --case pricing-llvm-unchecked --case pricing-wasm-unchecked-compute-only
+node bench/perf/run.mjs --full --case pricing-wasm-soa
 node bench/perf/run.mjs --quick --case f64
 node bench/perf/run.mjs --quick --case f64-axpy
 ```
@@ -98,25 +101,37 @@ machine and toolchain context are understood.
 
 ## Current Full Run Summary
 
-Latest Phase 14 local full run on this machine, 2026-06-24:
+Latest Phase 22 local full runs on this machine, 2026-06-26:
 
-| Case | Median ms | vs C O3 |
-| --- | ---: | ---: |
-| `pricing-c-unchecked-O0` | 620.272 | 10.75x |
-| `pricing-c-unchecked-O2` | 56.983 | 0.99x |
-| `pricing-c-unchecked-O3` | 57.696 | 1.00x |
-| `pricing-c-unchecked-ck-O3` | 58.855 | 1.02x |
-| `pricing-c-checked-O3` | 80.702 | 1.40x |
-| `pricing-llvm-unchecked-O0` | 617.271 | 10.70x |
-| `pricing-llvm-unchecked-O2` | 57.952 | 1.00x |
-| `pricing-llvm-unchecked-O3` | 57.796 | 1.00x |
-| `pricing-wasm-unchecked-compute-only` | 216.873 | 3.76x |
-| `pricing-wasm-unchecked-compute-only-O3` | 115.737 | 2.01x |
-| `pricing-wasm-unchecked-total` | 2721.645 | 47.17x |
-| `pricing-wasm-unchecked-total-O3` | 2614.619 | 45.32x |
-| `pricing-wasm-unchecked-memory-only` | 4765.740 | 82.60x |
-| `pricing-js-typedarray-number` | 122.546 | 2.12x |
-| `pricing-js-bigint` | 181.888 | 3.15x |
+| Case | Median ms | Interpretation |
+| --- | ---: | --- |
+| `pricing-js-typedarray-number` | 123.519 | JS typed-array `Number` baseline |
+| `pricing-js-bigint` | 181.427 | exact JS `BigInt` baseline |
+| `pricing-wasm-unchecked-compute-only-O3` | 118.215 | WASM compute path, prewritten memory |
+| `pricing-wasm-unchecked-total-O3` | 2562.414 | DataView AoS fallback total |
+| `pricing-wasm-soa-setup-copy-in-O3` | 30.465 | one-time SoA resident copy-in |
+| `pricing-wasm-soa-resident-total-O3` | 111.615 | recommended SoA resident path |
+| `pricing-wasm-soa-readback-cost-O3` | 261.313 | repeated output readback cost |
+| `pricing-wasm-soa-total-with-final-readback-O3` | 118.219 | resident compute plus one final readback |
+
+| Case | Median ms | Interpretation |
+| --- | ---: | --- |
+| `f64-sum-js-float64array` | 112.375 | JS `Float64Array` baseline |
+| `f64-sum-ck-wasm-o3-compute-only` | 90.739 | WASM compute path |
+| `f64-sum-ck-wasm-o3-optimized-low-copy-total` | 89.150 | recommended resident/scalar-return path |
+| `f64-sum-ck-wasm-o3-total` | 1033.140 | DataView fallback total |
+| `f64-axpy-js-float64array` | 114.551 | JS `Float64Array` baseline |
+| `f64-axpy-ck-wasm-o3-compute-only` | 99.539 | WASM compute path |
+| `f64-axpy-ck-wasm-o3-view-output-total` | 114.269 | recommended output-view path |
+| `f64-axpy-ck-wasm-o3-copy-output-total` | 204.850 | explicit copy-output path |
+| `f64-axpy-ck-wasm-o3-total` | 1147.689 | DataView fallback total |
+
+These tables do not mean "CK WASM is faster than JS" in general. They show that
+the CK WASM compute path is competitive, and that resident memory, SoA layout,
+typed-array bulk copy, scalar returns, and output views can make selected
+batched workloads faster than the corresponding JavaScript typed-array
+baseline. Mixed-width struct marshaling with `DataView` and large output
+copy/readback can make WASM total time much slower.
 
 ## Backend Comparison
 
@@ -137,6 +152,26 @@ WASM improved substantially in compute-only mode after simple while-loop
 structured lowering and indexed address reuse. It remains slower than native C
 and LLVM. The total WASM case is dominated by host-side `DataView` memory setup
 and checksum reads, not by JS-to-WASM call overhead.
+
+For pricing, Phase 22 adds a recommended SoA resident-memory benchmark fixture:
+
+```ck
+export fn pricing_soa(
+  prices: ptr<i64>,
+  quantities: ptr<i64>,
+  discounts: ptr<i64>,
+  tax_rates_ppm: ptr<i64>,
+  out_totals: ptr<i64>,
+  n: i32
+) -> i32
+```
+
+The fixture keeps the same integer fixed-point arithmetic as `calc_items`, but
+lays input out as homogeneous arrays. JavaScript uses `BigInt64Array#set` to
+bulk-copy inputs once into WASM memory, keeps output in WASM memory, and reports
+readback cost separately. This is the recommended pricing interop shape for
+large resident batches. The original mixed-width/AoS `DataView` path remains a
+fallback/debug ABI comparison.
 
 JavaScript `BigInt` remains useful as an exact `i64` baseline, but it is slower
 than native C and LLVM. Typed-array `Number` is faster than `BigInt`, but it
@@ -212,9 +247,43 @@ marshal, WASM compute, scalar return consume for `dot`/`sum`, and output checksu
 readback for in-place array kernels. The original DataView cases remain in the
 suite so byte-level marshaling overhead stays visible.
 
-Use the low-copy path for production-style homogeneous f64 buffers. Use
-DataView when byte offsets, mixed-width structs, and ABI precision matter more
-than hot-path throughput.
+Phase 22 adds CKWasmArena-backed f64 optimized benchmark cases for the two
+primary JS/WASM interop shapes:
+
+- `f64-sum-ck-wasm-o3-optimized-low-copy-total` copies `Float64Array` input into
+  WASM memory once, keeps it resident, repeatedly calls the strict `sum_f64`
+  kernel, and consumes the scalar `f64` return without output readback. This is
+  the recommended CK WASM shape when the workload is a reduction over resident
+  homogeneous `f64` data.
+- `f64-axpy-ck-wasm-o3-view-output-total` copies resident `x` input once,
+  refreshes `y`/output with `Float64Array#set`, lets the WASM kernel write
+  output into WASM memory, and keeps output as a WASM memory view. This is the
+  recommended in-place/output buffer shape.
+- `f64-axpy-ck-wasm-o3-copy-output-total` explicitly copies output to a
+  JS-owned `Float64Array`. Use this when ownership requires it, but expect copy
+  out to weaken or remove the WASM advantage.
+
+Use the CKWasmArena low-copy/view-output path for production-style homogeneous
+f64 buffers. Use DataView when byte offsets, mixed-width structs, and ABI
+precision matter more than hot-path throughput. The DataView total cases remain
+fallback comparisons, not the recommended path for large f64 buffers.
+
+Phase 22 also adds CKWasmArena-backed pricing SoA cases:
+
+- `pricing-wasm-soa-setup-copy-in-O3` measures one-time arena allocation,
+  memory growth, and `BigInt64Array#set` copy-in for resident pricing arrays.
+- `pricing-wasm-soa-resident-total-O3` copies input once, repeatedly calls
+  `pricing_soa`, checks the scalar `i32` status return, and leaves output as a
+  WASM memory view.
+- `pricing-wasm-soa-readback-cost-O3` isolates repeated `BigInt64Array` output
+  view checksum/readback cost.
+- `pricing-wasm-soa-total-with-final-readback-O3` measures resident compute plus
+  one final output view checksum.
+
+Prefer SoA plus resident memory for pricing workloads when JavaScript can keep
+data in homogeneous typed arrays. Do not use the `DataView` pricing total as the
+recommended performance path; it exists to keep mixed-width struct ABI cost
+visible.
 
 `Float64Array` views must be recreated after `memory.grow`; CK does not provide
 a WASM allocator or runtime, so host code still owns memory placement and buffer
@@ -247,14 +316,19 @@ Checked mode currently applies to C output only. WASM and LLVM backends reject
 
 ## Current Biggest Bottlenecks
 
-1. WASM total benchmark: host `DataView` memory setup and checksum readback.
-2. WASM compute-only: generated WAT/VM execution is still about 2x native C O3.
-3. Checked C: business overflow checks remain necessary and cost about 40%.
-4. LLVM O0: stack lowering is intentionally slow without clang optimization.
+1. WASM DataView total benchmark: host `DataView` memory setup and checksum
+   readback.
+2. Pricing and f64 copy-out/readback: large output reads can erase compute-only
+   WASM gains.
+3. WASM compute-only: generated WAT/VM execution is still slower than native C
+   O3.
+4. Checked C: business overflow checks remain necessary and cost about 40%.
+5. LLVM O0: stack lowering is intentionally slow without clang optimization.
 
 Most valuable future work:
 
 - broader WASM structured control-flow lowering
-- reducing WASM i64 memory marshaling overhead in examples/benchmarks
+- preferring pricing SoA resident-memory interop over mixed-width AoS DataView
+  hot paths
 - broader direct SSA LLVM lowering for non-memory scalar control flow
 - optional, explicitly unsafe CPU-native/LTO experiments outside default builds

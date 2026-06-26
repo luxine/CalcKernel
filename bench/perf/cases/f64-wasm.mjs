@@ -97,6 +97,12 @@ async function runMode(config) {
         return runTotalLowCopy(config);
       }
       return runTotal(config);
+    case "optimized-total":
+      return runOptimizedTotal(config);
+    case "view-output-total":
+      return runViewOutputTotal(config);
+    case "copy-output-total":
+      return runCopyOutputTotal(config);
     case "memory-only":
       return runMemoryOnly(config);
   }
@@ -109,11 +115,16 @@ function requireMode(value) {
     value === "compute-only" ||
     value === "output-readback" ||
     value === "total" ||
+    value === "optimized-total" ||
+    value === "view-output-total" ||
+    value === "copy-output-total" ||
     value === "memory-only"
   ) {
     return value;
   }
-  throw new Error("--mode must be setup, input-marshal, compute-only, output-readback, total, or memory-only");
+  throw new Error(
+    "--mode must be setup, input-marshal, compute-only, output-readback, total, optimized-total, view-output-total, copy-output-total, or memory-only"
+  );
 }
 
 function requireCopyMode(value) {
@@ -241,6 +252,71 @@ async function runTotalLowCopy(config) {
   return `${label(config)} items=${config.items} iterations=${config.iterations} checksum=${actual}`;
 }
 
+async function runOptimizedTotal(config) {
+  if (config.kernel !== "sum") {
+    throw new Error("--mode optimized-total is currently defined for f64-sum only");
+  }
+
+  const { exports, layout, xView } = await f64ArenaInstance(config, false);
+  const inputs = createLowCopyF64Inputs(config.items, config.kernel);
+  xView.set(inputs.x);
+
+  let actual = 0.0;
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    actual += callKernel(exports, config.kernel, layout, config.items);
+  }
+
+  const expected = expectedF64ComputeSink(config.kernel, config.items, config.iterations, f64Factor);
+  assertWithinTolerance(actual, expected, label(config));
+  return `${label(config)} items=${config.items} iterations=${config.iterations} checksum=${actual}`;
+}
+
+async function runViewOutputTotal(config) {
+  if (config.kernel !== "axpy") {
+    throw new Error("--mode view-output-total is currently defined for f64-axpy only");
+  }
+
+  const { exports, layout, xView, yView } = await f64ArenaInstance(config, true);
+  const inputs = createLowCopyF64Inputs(config.items, config.kernel);
+  xView.set(inputs.x);
+
+  let actual = 0.0;
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    yView.set(inputs.y);
+    actual += callKernel(exports, config.kernel, layout, config.items);
+  }
+
+  const finalOutputChecksum = checksumFloat64Array(yView, 0, config.items);
+  const expectedCalls = expectedF64ResetSink(config.kernel, config.items, config.iterations, f64Factor);
+  const expectedFinalOutput = expectedF64ResetSink(config.kernel, config.items, 1, f64Factor);
+  assertWithinTolerance(actual, expectedCalls, label(config));
+  assertWithinTolerance(finalOutputChecksum, expectedFinalOutput, `${label(config)} final output view`);
+  return `${label(config)} items=${config.items} iterations=${config.iterations} checksum=${actual}`;
+}
+
+async function runCopyOutputTotal(config) {
+  if (config.kernel !== "axpy") {
+    throw new Error("--mode copy-output-total is currently defined for f64-axpy only");
+  }
+
+  const { arena, exports, layout, xView, yView } = await f64ArenaInstance(config, true);
+  const inputs = createLowCopyF64Inputs(config.items, config.kernel);
+  xView.set(inputs.x);
+
+  let actual = 0.0;
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    yView.set(inputs.y);
+    const scalarResult = callKernel(exports, config.kernel, layout, config.items);
+    const outputCopy = arena.copyOutF64(layout.yOffset, config.items);
+    actual += scalarResult;
+    actual += checksumFloat64Array(outputCopy, 0, config.items);
+  }
+
+  const expected = 2 * expectedF64ResetSink(config.kernel, config.items, config.iterations, f64Factor);
+  assertWithinTolerance(actual, expected, label(config));
+  return `${label(config)} items=${config.items} iterations=${config.iterations} checksum=${actual}`;
+}
+
 async function runOutputReadback(config) {
   const { view, exports, layout } = await f64Instance(config);
   writeInputs(view, layout, config.items, config.kernel);
@@ -292,6 +368,41 @@ async function f64Instance(config) {
   const instance = await instantiate(config.wasm);
   const layout = requiredBytesFor(config.items);
   return f64Runtime(instance, layout, config.copyMode);
+}
+
+async function f64ArenaInstance(config, needsY) {
+  const instance = await instantiate(config.wasm);
+  const memory = instance.exports.memory;
+  if (!(memory instanceof WebAssembly.Memory)) {
+    throw new Error("f64 benchmark wasm does not export WebAssembly memory");
+  }
+
+  const requiredExports = ["axpy_f64", "dot_f64", "sum_f64", "scale_f64"];
+  for (const exportName of requiredExports) {
+    if (typeof instance.exports[exportName] !== "function") {
+      throw new Error(`f64 benchmark wasm does not export ${exportName}`);
+    }
+  }
+
+  const { CKWasmArena } = await import("../../../dist/src/wasm/ck-wasm-arena.js");
+  const arena = new CKWasmArena(memory, { heapBase: 0 });
+  const xOffset = arena.allocF64(config.items);
+  const yOffset = needsY ? arena.allocF64(config.items) : xOffset;
+  const totalBytes = needsY ? yOffset + config.items * 8 : xOffset + config.items * 8;
+  arena.ensureBytes(totalBytes);
+
+  const runtime = {
+    arena,
+    exports: instance.exports,
+    layout: { xOffset, yOffset, totalBytes },
+    xView: arena.viewF64(xOffset, config.items)
+  };
+
+  if (needsY) {
+    return { ...runtime, yView: arena.viewF64(yOffset, config.items) };
+  }
+
+  return runtime;
 }
 
 function f64Runtime(instance, layout, copyMode) {
@@ -353,9 +464,26 @@ function checksumMemory(view, layout, len, kernel) {
   return checksum;
 }
 
+function checksumFloat64Array(values, start, len) {
+  let checksum = 0.0;
+  for (let index = 0; index < len; index += 1) {
+    checksum += values[start + index];
+  }
+  return checksum;
+}
+
 function label(config) {
   if (config.label) {
     return config.label;
+  }
+  if (config.mode === "optimized-total") {
+    return `f64-${config.kernel}-ck-wasm-o3-optimized-low-copy-total`;
+  }
+  if (config.mode === "view-output-total") {
+    return `f64-${config.kernel}-ck-wasm-o3-view-output-total`;
+  }
+  if (config.mode === "copy-output-total") {
+    return `f64-${config.kernel}-ck-wasm-o3-copy-output-total`;
   }
   if (config.copyMode === "float64array") {
     return `f64-${config.kernel}-ck-wasm-o3-low-copy-${config.mode}`;

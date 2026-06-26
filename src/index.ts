@@ -34,3 +34,5 @@ export type {
   EmitCFilesOptions,
   EmitDefaultCSourceOptions as EmitCSourceOptions
 } from "./backend/c/c-build.js";
+export { CKWasmArena } from "./wasm/ck-wasm-arena.js";
+export type { CKWasmArenaCopy, CKWasmArenaOptions, CKWasmGlobal, CKWasmMemory } from "./wasm/ck-wasm-arena.js";
