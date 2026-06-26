@@ -4,7 +4,7 @@
 
 ## 目标
 
-IntKernel V0 默认使用 unchecked arithmetic。Phase 10 增加一个可选 checked
+CalcKernel V0 默认使用 unchecked arithmetic。Phase 10 增加一个可选 checked
 arithmetic code generation mode，用于需要更安全整数行为的 kernel。
 
 Checked mode 面向金额、税费、优惠、定价规则等整数密集领域。这些场景需要显式
@@ -22,18 +22,18 @@ checked LLVM lowering 属于未来工作。
 Unchecked mode 仍是默认：
 
 ```sh
-ikc emit-c input.ik --out build/input.c --header build/input.h
-ikc build input.ik --out build/libinput
+ckc emit-c input.ck --out build/input.c --header build/input.h
+ckc build input.ck --out build/libinput
 ```
 
 显式形式：
 
 ```sh
-ikc emit-c input.ik --out build/input.c --header build/input.h --overflow unchecked
-ikc emit-c input.ik --out build/input.c --header build/input.h --overflow checked
+ckc emit-c input.ck --out build/input.c --header build/input.h --overflow unchecked
+ckc emit-c input.ck --out build/input.c --header build/input.h --overflow checked
 
-ikc build input.ik --out build/libinput --overflow unchecked
-ikc build input.ik --out build/libinput --overflow checked
+ckc build input.ck --out build/libinput --overflow unchecked
+ckc build input.ck --out build/libinput --overflow checked
 ```
 
 默认值：
@@ -61,10 +61,10 @@ Unchecked mode 保持原始 C ABI。默认 backend 变化时，生成的 C sourc
 | 主题 | `--overflow unchecked` | `--overflow checked` |
 | --- | --- | --- |
 | 默认 | 是 | 否 |
-| C ABI | 原始 return type | `IK_Status` return 加最后 return pointer |
-| Integer overflow | 不检查 | 返回 `IK_ERR_OVERFLOW` |
-| Division by zero | 不检查 | 返回 `IK_ERR_DIV_BY_ZERO` |
-| `f64` overflow 和 division by zero | C `double` 行为 | C `double` 行为，除非发生其他 checked error，否则仍返回 `IK_OK` |
+| C ABI | 原始 return type | `CK_Status` return 加最后 return pointer |
+| Integer overflow | 不检查 | 返回 `CK_ERR_OVERFLOW` |
+| Division by zero | 不检查 | 返回 `CK_ERR_DIV_BY_ZERO` |
+| `f64` overflow 和 division by zero | C `double` 行为 | C `double` 行为，除非发生其他 checked error，否则仍返回 `CK_OK` |
 | User pointers | 不检查 | 不检查，除了生成的 `ik_return` |
 | Bounds checks | 无 | 无 |
 | Runtime dependency | 无 | 无 |
@@ -74,7 +74,7 @@ Unchecked mode 保持原始 C ABI。默认 backend 变化时，生成的 C sourc
 
 Checked mode 改变导出函数 ABI：
 
-- exported function 返回 `IK_Status`
+- exported function 返回 `CK_Status`
 - 原始 return value 通过最后一个 output pointer 写出
 - 生成的 C 在 overflow、division by zero 或 checked return pointer 为 null 时提前返回
 - 生成的 C 自包含
@@ -84,8 +84,8 @@ Checked mode 改变导出函数 ABI：
 
 Checked mode 是 code generation mode，不是新语言功能。
 
-Checked mode 下，所有 IntKernel 函数都使用 checked ABI。导出函数在生成 header 中
-以 `IK_API` 出现；非导出函数在生成 `.c` 文件中生成为 `static IK_Status` helper。
+Checked mode 下，所有 CalcKernel 函数都使用 checked ABI。导出函数在生成 header 中
+以 `CK_API` 出现；非导出函数在生成 `.c` 文件中生成为 `static CK_Status` helper。
 
 从 Phase 11 开始，checked C generation 基于 MIR pipeline：
 
@@ -94,7 +94,7 @@ Typed Program -> MIR lowering -> MIR validator -> MIR C backend
 ```
 
 MIR 表示普通 typed arithmetic、call、place 和 control flow。Checked MIR C backend
-插入 overflow guard、division check、`IK_Status` propagation 和 return-pointer
+插入 overflow guard、division check、`CK_Status` propagation 和 return-pointer
 处理，同时保持 checked ABI。
 
 ## Status Values
@@ -102,24 +102,24 @@ MIR 表示普通 typed arithmetic、call、place 和 control flow。Checked MIR 
 Checked header 定义：
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 ```
 
-- `IK_OK`：计算成功。
-- `IK_ERR_OVERFLOW`：checked arithmetic 检测到 overflow。
-- `IK_ERR_DIV_BY_ZERO`：division 或 modulo divisor 为零。
-- `IK_ERR_NULL_POINTER`：生成的 checked return pointer `ik_return` 为 `NULL`。
+- `CK_OK`：计算成功。
+- `CK_ERR_OVERFLOW`：checked arithmetic 检测到 overflow。
+- `CK_ERR_DIV_BY_ZERO`：division 或 modulo divisor 为零。
+- `CK_ERR_NULL_POINTER`：生成的 checked return pointer `ik_return` 为 `NULL`。
 
 ## Checked ABI 示例
 
-IntKernel 源码：
+CalcKernel 源码：
 
-```ik
+```ck
 export fn add_i64(a: i64, b: i64) -> i64 {
   return a + b;
 }
@@ -128,31 +128,31 @@ export fn add_i64(a: i64, b: i64) -> i64 {
 Checked header：
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 
-IK_API IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
 ```
 
 Checked implementation：
 
 ```c
-IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
   if (ik_return == NULL) {
-    return IK_ERR_NULL_POINTER;
+    return CK_ERR_NULL_POINTER;
   }
 
   int64_t ik_tmp0;
   if (__builtin_add_overflow(a, b, &ik_tmp0)) {
-    return IK_ERR_OVERFLOW;
+    return CK_ERR_OVERFLOW;
   }
 
   *ik_return = ik_tmp0;
-  return IK_OK;
+  return CK_OK;
 }
 ```
 
@@ -162,41 +162,41 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 
 - 执行 checked addition。
 - Signed 和 unsigned integer type 都检查。
-- Overflow 返回 `IK_ERR_OVERFLOW`。
+- Overflow 返回 `CK_ERR_OVERFLOW`。
 
 ### `-`
 
 - 执行 checked subtraction。
 - Signed 和 unsigned integer type 都检查。
-- Overflow 返回 `IK_ERR_OVERFLOW`。
+- Overflow 返回 `CK_ERR_OVERFLOW`。
 
 ### `*`
 
 - 执行 checked multiplication。
 - Signed 和 unsigned integer type 都检查。
-- Overflow 返回 `IK_ERR_OVERFLOW`。
+- Overflow 返回 `CK_ERR_OVERFLOW`。
 
 ### `/`
 
-- 对 integer operands，divisor 为零时，返回 `IK_ERR_DIV_BY_ZERO`。
+- 对 integer operands，divisor 为零时，返回 `CK_ERR_DIV_BY_ZERO`。
 - 对 signed integer，`INT32_MIN / -1` 和 `INT64_MIN / -1` 返回
-  `IK_ERR_OVERFLOW`。
+  `CK_ERR_OVERFLOW`。
 - Unsigned division 只需要 zero-divisor check。
 - 对 `f64`，执行普通 C `double` division。`1.0 / 0.0` 不返回
-  `IK_ERR_DIV_BY_ZERO`。
+  `CK_ERR_DIV_BY_ZERO`。
 - 其他情况执行普通 division。
 
 ### `%`
 
-- Divisor 为零时，返回 `IK_ERR_DIV_BY_ZERO`。
+- Divisor 为零时，返回 `CK_ERR_DIV_BY_ZERO`。
 - 对 signed integer，`INT32_MIN % -1` 和 `INT64_MIN % -1` 返回
-  `IK_ERR_OVERFLOW`。
+  `CK_ERR_OVERFLOW`。
 - Unsigned modulo 只需要 zero-divisor check。
 - 其他情况执行普通 modulo。
 
 ### Unary `-`
 
-- 对 signed integer，`-INT32_MIN` 和 `-INT64_MIN` 返回 `IK_ERR_OVERFLOW`。
+- 对 signed integer，`-INT32_MIN` 和 `-INT64_MIN` 返回 `CK_ERR_OVERFLOW`。
 - 对 unsigned integer，unary minus 降低为从零开始的 checked subtraction，所以任意
   非零值都会 overflow。
 - 对 `f64`，执行普通 C `double` negation。
@@ -205,13 +205,13 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 ### `f64`
 
 Checked C mode 仍然是 integer checked arithmetic mode。选择 `--overflow checked`
-时，包含 `f64` 的函数也使用 checked ABI，因此返回 `IK_Status`，并通过 `ik_return`
+时，包含 `f64` 的函数也使用 checked ABI，因此返回 `CK_Status`，并通过 `ik_return`
 写出 source-level return value。f64 operation 本身使用普通 strict C `double` 行为：
 
 - `f64 +`、`-`、`*`、`/` 不调用 integer overflow builtin。
-- f64 division by zero 不返回 `IK_ERR_DIV_BY_ZERO`。
-- f64 overflow 不返回 `IK_ERR_OVERFLOW`。
-- `i32_to_f64` 和 `u32_to_f64` cast 不返回 `IK_ERR_OVERFLOW`；它们是进入普通
+- f64 division by zero 不返回 `CK_ERR_DIV_BY_ZERO`。
+- f64 overflow 不返回 `CK_ERR_OVERFLOW`。
+- `i32_to_f64` 和 `u32_to_f64` cast 不返回 `CK_ERR_OVERFLOW`；它们是进入普通
   strict f64 value 的 exact explicit conversion。
 - f64 NaN、infinity 和 `-0.0` 是普通 floating point 结果，不是 checked
   arithmetic status value。
@@ -228,7 +228,7 @@ arithmetic。
 
 示例：
 
-```ik
+```ck
 a != 0 && b / a > 0
 ```
 
@@ -240,42 +240,42 @@ Phase 11 MIR lowering 将 `&&` 和 `||` 表示成 control flow。Checked MIR C b
 
 ## Function Calls
 
-Checked mode 下，调用另一个 IntKernel 函数使用 checked ABI：
+Checked mode 下，调用另一个 CalcKernel 函数使用 checked ABI：
 
 - 传入原始参数
 - 传入临时变量地址接收 callee return value
-- 检查返回的 `IK_Status`
-- 如果 status 不是 `IK_OK`，当前函数直接返回该 status
+- 检查返回的 `CK_Status`
+- 如果 status 不是 `CK_OK`，当前函数直接返回该 status
 - 否则使用临时值作为 call expression result
 
 概念上：
 
 ```c
 int64_t ik_tmp0;
-IK_Status ik_status0 = add_i64(a, b, &ik_tmp0);
-if (ik_status0 != IK_OK) {
+CK_Status ik_status0 = add_i64(a, b, &ik_tmp0);
+if (ik_status0 != CK_OK) {
   return ik_status0;
 }
 ```
 
 Function argument 本身也是 checked expression。例如：
 
-```ik
+```ck
 return add(a + 1, b * 2);
 ```
 
 会先检查 `a + 1` 和 `b * 2`，再把临时值传给 `add`。如果 callee 返回任何非
-`IK_OK` status，caller 立即返回相同 status。
+`CK_OK` status，caller 立即返回相同 status。
 
 在 MIR 中，call expression 是带 result temporary 的显式 `Call` instruction。
 Checked C emission 会把该 instruction 降低成 checked ABI call，传入 `&temporary`
-作为最后 return pointer，检查返回的 `IK_Status`，并传播任何非 `IK_OK` status。
+作为最后 return pointer，检查返回的 `CK_Status`，并传播任何非 `CK_OK` status。
 
 ## Pointer、Index 和 Field Access
 
 Checked mode 支持 V0 pointer、index 和 struct field access：
 
-```ik
+```ck
 items[i].price
 items[i].qty
 out[i] = value;
@@ -284,11 +284,11 @@ out[i] = value;
 生成代码会通过 checked expression lowering path evaluate index expression。如果
 index expression 包含 arithmetic，该 arithmetic 会在 pointer access 生成前被检查：
 
-```ik
+```ck
 items[i + 1].price
 ```
 
-这个例子中，`i + 1` 可能返回 `IK_ERR_OVERFLOW`。
+这个例子中，`i + 1` 可能返回 `CK_ERR_OVERFLOW`。
 
 Phase 10 仍不添加 bounds checking。
 
@@ -336,7 +336,7 @@ Checked mode 实现目前依赖 Clang/GCC 风格 overflow builtins：
 - `__builtin_sub_overflow`
 - `__builtin_mul_overflow`
 
-当前项目 build path 使用 clang。如果 IntKernel 未来要支持没有 clang-compatible
+当前项目 build path 使用 clang。如果 CalcKernel 未来要支持没有 clang-compatible
 builtins 的原生 MSVC 编译，backend 应增加 portable fallback 或 MSVC-specific
 lowering，用于 checked add、subtract 和 multiply。
 
@@ -350,7 +350,7 @@ Checked mode 预计比 unchecked mode 慢。Overhead 来自：
 - overflow builtin call 或等价 compiler-lowered check
 - division-by-zero branch
 - signed division/modulo overflow branch
-- IntKernel function call 后的 `IK_Status` check
+- CalcKernel function call 后的 `CK_Status` check
 - 额外 temporary 和最终 `ik_return` 写入
 
 当 correctness 和显式 arithmetic failure reporting 比最大吞吐更重要时使用 checked

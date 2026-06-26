@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "input.ik"
+; ModuleID = 'calckernel'
+source_filename = "input.ck"
 target triple = "x86_64-unknown-linux-gnu"
 
 %struct.Item = type { i64, i64, i64, i64 }

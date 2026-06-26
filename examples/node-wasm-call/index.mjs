@@ -28,8 +28,8 @@ function expectedTotal(item) {
 if (!existsSync(wasmPath)) {
   throw new Error(
     `WASM file not found: ${wasmPath}\n` +
-      "Generate it first with `ikc emit-wasm ../../examples/pricing.ik --out ../../build/pricing.wasm` " +
-      "from examples/node-wasm-call, or `pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm` " +
+      "Generate it first with `ckc emit-wasm ../../examples/pricing.ck --out ../../build/pricing.wasm` " +
+      "from examples/node-wasm-call, or `pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm` " +
       "from the repository root."
   );
 }

@@ -52,7 +52,7 @@ function runCfg(module: MirModule, optLevel: 1 | 2 | 3): MirModule {
 }
 
 function optimizeSource(sourceText: string, optLevel: 0 | 1 | 2 | 3): MirModule {
-  const checked = check(new SourceFile("cfg.ik", sourceText));
+  const checked = check(new SourceFile("cfg.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);

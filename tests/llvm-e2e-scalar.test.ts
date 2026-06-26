@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM scalar end-to-end", () => {
   it("compiles generated LLVM IR with a C harness and runs scalar functions", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/llvm_scalar.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_scalar.ck", "--out", "build/llvm_scalar.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}
@@ -77,7 +77,7 @@ int main(void) {
   it("compiles generated LLVM IR with a C harness and runs f64 scalar functions", () => {
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "llvm_f64.ik"),
+      join(cwd, "llvm_f64.ck"),
       `
         export fn calc_f64(a: f64, b: f64) -> f64 {
           let one: f64 = 1.0;
@@ -97,7 +97,7 @@ int main(void) {
       `
     );
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_f64.ik", "--out", "build/llvm_f64.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_f64.ck", "--out", "build/llvm_f64.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}
@@ -157,7 +157,7 @@ int main(void) {
   it("compiles generated LLVM IR with explicit i32/u32 to f64 casts and runs them from C", () => {
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "llvm_casts.ik"),
+      join(cwd, "llvm_casts.ck"),
       `
         export fn cast_i32_to_f64(value: i32) -> f64 {
           return i32_to_f64(value);
@@ -173,7 +173,7 @@ int main(void) {
       `
     );
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_casts.ik", "--out", "build/llvm_casts.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_casts.ck", "--out", "build/llvm_casts.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}
@@ -239,7 +239,7 @@ int main(void) {
 
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "llvm_f64.ik"),
+      join(cwd, "llvm_f64.ck"),
       `
         export fn add_f64(a: f64, b: f64) -> f64 {
           return a + b;
@@ -249,7 +249,7 @@ int main(void) {
 
     let stdout = "";
     let stderr = "";
-    const exitCode = runCli(["build-llvm", "llvm_f64.ik", "--kind", "object", "--out", "build/llvm_f64.o"], {
+    const exitCode = runCli(["build-llvm", "llvm_f64.ck", "--kind", "object", "--out", "build/llvm_f64.o"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -274,7 +274,7 @@ int main(void) {
 
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "llvm_casts.ik"),
+      join(cwd, "llvm_casts.ck"),
       `
         export fn cast_expr(a: i32, b: u32) -> f64 {
           return i32_to_f64(a) + u32_to_f64(b);
@@ -284,7 +284,7 @@ int main(void) {
 
     let stdout = "";
     let stderr = "";
-    const exitCode = runCli(["build-llvm", "llvm_casts.ik", "--kind", "object", "--out", "build/llvm_casts.o"], {
+    const exitCode = runCli(["build-llvm", "llvm_casts.ck", "--kind", "object", "--out", "build/llvm_casts.o"], {
       cwd,
       stdout: (text) => {
         stdout += text;

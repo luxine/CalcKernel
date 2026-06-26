@@ -13,7 +13,7 @@ function checkedProgram(fileName: string, sourceText: string) {
 }
 
 describe("WASM layout", () => {
-  it("maps IntKernel ABI types to WASM value types", () => {
+  it("maps CalcKernel ABI types to WASM value types", () => {
     expect(toWasmAbiType(primitiveType("i32"))).toEqual({ valueType: "i32" });
     expect(toWasmAbiType(primitiveType("u32"))).toEqual({ valueType: "i32" });
     expect(toWasmAbiType(primitiveType("bool"))).toEqual({ valueType: "i32" });
@@ -49,8 +49,8 @@ describe("WASM layout", () => {
     expect([0, 1, 2].map((index) => index * elementSize)).toEqual([0, 8, 16]);
   });
 
-  it("computes the pricing Item layout from examples/pricing.ik", () => {
-    const program = checkedProgram("pricing.ik", readFileSync("examples/pricing.ik", "utf8"));
+  it("computes the pricing Item layout from examples/pricing.ck", () => {
+    const program = checkedProgram("pricing.ck", readFileSync("examples/pricing.ck", "utf8"));
     const item = getStructInfo(program, "Item");
     expect(item).toBeDefined();
 
@@ -71,7 +71,7 @@ describe("WASM layout", () => {
 
   it("adds padding for mixed-width struct fields", () => {
     const program = checkedProgram(
-      "mixed.ik",
+      "mixed.ck",
       `
         struct Mixed {
           a: i32;
@@ -105,7 +105,7 @@ describe("WASM layout", () => {
 
   it("computes struct layout for i32 followed by f64", () => {
     const program = checkedProgram(
-      "with-f64.ik",
+      "with-f64.ck",
       `
         struct WithF64 {
           a: i32;
@@ -135,7 +135,7 @@ describe("WASM layout", () => {
 
   it("computes struct layout for bool, f64, and i32 fields", () => {
     const program = checkedProgram(
-      "mixed-f64.ik",
+      "mixed-f64.ck",
       `
         struct MixedF64 {
           a: bool;
@@ -167,7 +167,7 @@ describe("WASM layout", () => {
 
   it("computes nested struct layout when the nested struct contains f64", () => {
     const program = checkedProgram(
-      "nested-f64.ik",
+      "nested-f64.ck",
       `
         struct Inner {
           x: f64;

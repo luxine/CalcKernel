@@ -6,6 +6,8 @@ import { emitCSource } from "../src/backend/c/c-emitter.js";
 import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
+const legacyAbiPrefix = "I" + "K_";
+
 function checkedSource(fileName: string, text: string) {
   const result = check(new SourceFile(fileName, text));
   expect(result.diagnostics).toEqual([]);
@@ -20,8 +22,8 @@ type SnapshotExample = "pricing" | "scalar";
 type CheckedSnapshotExample = SnapshotExample | "scalar_checked" | "scalar_control_checked" | "scalar_logical_checked" | "scalar_calls_checked";
 
 function expectGoldenSnapshot(exampleName: SnapshotExample): void {
-  const sourceText = normalizeNewlines(readFileSync(`examples/${exampleName}.ik`, "utf8"));
-  const checked = checkedSource(`${exampleName}.ik`, sourceText);
+  const sourceText = normalizeNewlines(readFileSync(`examples/${exampleName}.ck`, "utf8"));
+  const checked = checkedSource(`${exampleName}.ck`, sourceText);
   const header = emitCHeader(checked);
   const source = emitDefaultCSource(checked, { headerFileName: `${exampleName}.h` });
 
@@ -30,16 +32,16 @@ function expectGoldenSnapshot(exampleName: SnapshotExample): void {
 }
 
 function expectCheckedHeaderSnapshot(exampleName: CheckedSnapshotExample): void {
-  const sourceText = normalizeNewlines(readFileSync(`examples/${exampleName}.ik`, "utf8"));
-  const checked = checkedSource(`${exampleName}.ik`, sourceText);
+  const sourceText = normalizeNewlines(readFileSync(`examples/${exampleName}.ck`, "utf8"));
+  const checked = checkedSource(`${exampleName}.ck`, sourceText);
   const header = emitCHeader(checked, { overflowMode: "checked" });
 
   expect(header).toBe(normalizeNewlines(readFileSync(`tests/snapshots/${exampleName}.checked.h.snap`, "utf8")));
 }
 
 function expectCheckedSourceSnapshot(exampleName: CheckedSnapshotExample): void {
-  const sourceText = normalizeNewlines(readFileSync(`examples/${exampleName}.ik`, "utf8"));
-  const checked = checkedSource(`${exampleName}.ik`, sourceText);
+  const sourceText = normalizeNewlines(readFileSync(`examples/${exampleName}.ck`, "utf8"));
+  const checked = checkedSource(`${exampleName}.ck`, sourceText);
   const source = emitDefaultCSource(checked, { headerFileName: `${exampleName}.h`, overflowMode: "checked" });
 
   expect(source).toBe(normalizeNewlines(readFileSync(`tests/snapshots/${exampleName}.checked.c.snap`, "utf8")));
@@ -86,9 +88,9 @@ describe("c emitter", () => {
     expectCheckedSourceSnapshot("scalar_calls_checked");
   });
 
-  it("emits golden C header and source for examples/pricing.ik", () => {
-    const sourceText = readFileSync("examples/pricing.ik", "utf8");
-    const checked = checkedSource("pricing.ik", sourceText);
+  it("emits golden C header and source for examples/pricing.ck", () => {
+    const sourceText = readFileSync("examples/pricing.ck", "utf8");
+    const checked = checkedSource("pricing.ck", sourceText);
 
     expect(emitCHeader(checked)).toMatchInlineSnapshot(`
       "#pragma once
@@ -97,13 +99,13 @@ describe("c emitter", () => {
       #include <stdbool.h>
 
       #if defined(_WIN32) || defined(__CYGWIN__)
-        #ifdef IK_BUILD_DLL
-          #define IK_API __declspec(dllexport)
+        #ifdef CK_BUILD_DLL
+          #define CK_API __declspec(dllexport)
         #else
-          #define IK_API __declspec(dllimport)
+          #define CK_API __declspec(dllimport)
         #endif
       #else
-        #define IK_API __attribute__((visibility("default")))
+        #define CK_API __attribute__((visibility("default")))
       #endif
 
       #ifdef __cplusplus
@@ -117,7 +119,7 @@ describe("c emitter", () => {
         int64_t tax_rate_ppm;
       } Item;
 
-      IK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
+      CK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
 
       #ifdef __cplusplus
       }
@@ -191,7 +193,7 @@ describe("c emitter", () => {
 
   it("only declares exported functions in the header and emits private functions as static", () => {
     const checked = checkedSource(
-      "helper.ik",
+      "helper.ck",
       `
         fn helper(value: i64) -> i64 {
           return value + 1;
@@ -203,14 +205,16 @@ describe("c emitter", () => {
       `
     );
 
-    expect(emitCHeader(checked)).toContain("IK_API int64_t public_entry(int64_t value);");
-    expect(emitCHeader(checked)).not.toContain("helper");
+    const header = emitCHeader(checked);
+    expect(header).toContain("CK_API int64_t public_entry(int64_t value);");
+    expect(header).not.toContain(legacyAbiPrefix);
+    expect(header).not.toContain("helper");
     expect(emitDefaultCSource(checked, { headerFileName: "helper.h" })).toContain("static int64_t helper(int64_t value)");
   });
 
   it("maps f64 ABI types to double in generated headers", () => {
     const checked = checkedSource(
-      "f64-header.ik",
+      "f64-header.ck",
       `
         struct Quote {
           qty: i32;
@@ -232,13 +236,13 @@ describe("c emitter", () => {
       #include <stdbool.h>
 
       #if defined(_WIN32) || defined(__CYGWIN__)
-        #ifdef IK_BUILD_DLL
-          #define IK_API __declspec(dllexport)
+        #ifdef CK_BUILD_DLL
+          #define CK_API __declspec(dllexport)
         #else
-          #define IK_API __declspec(dllimport)
+          #define CK_API __declspec(dllimport)
         #endif
       #else
-        #define IK_API __attribute__((visibility("default")))
+        #define CK_API __attribute__((visibility("default")))
       #endif
 
       #ifdef __cplusplus
@@ -250,7 +254,7 @@ describe("c emitter", () => {
         double price;
       } Quote;
 
-      IK_API double scale(double value, double* out, Quote* quote);
+      CK_API double scale(double value, double* out, Quote* quote);
 
       #ifdef __cplusplus
       }
@@ -261,7 +265,7 @@ describe("c emitter", () => {
 
   it("emits f64 unchecked C source without integer checked helpers", () => {
     const checked = checkedSource(
-      "f64-source.ik",
+      "f64-source.ck",
       `
         struct Quote {
           price: f64;
@@ -328,12 +332,13 @@ describe("c emitter", () => {
       "
     `);
     expect(source).not.toContain("__builtin_add_overflow");
-    expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+    expect(source).not.toContain("CK_ERR_DIV_BY_ZERO");
+    expect(source).not.toContain(legacyAbiPrefix);
   });
 
   it("emits checked C for f64 using ordinary double arithmetic", () => {
     const checked = checkedSource(
-      "f64-checked.ik",
+      "f64-checked.ck",
       `
         export fn div_f64(a: f64, b: f64) -> f64 {
           return a / b;
@@ -347,17 +352,18 @@ describe("c emitter", () => {
 
     const source = emitDefaultCSource(checked, { headerFileName: "f64-checked.h", overflowMode: "checked" });
 
-    expect(source).toContain("IK_Status div_f64(double a, double b, double* ik_return)");
+    expect(source).toContain("CK_Status div_f64(double a, double b, double* ik_return)");
     expect(source).toContain("ik_tmp0 = a / b;");
     expect(source).toContain("ik_tmp0 = -a;");
     expect(source).not.toContain("__builtin");
-    expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
-    expect(source).not.toContain("IK_ERR_OVERFLOW");
+    expect(source).not.toContain("CK_ERR_DIV_BY_ZERO");
+    expect(source).not.toContain("CK_ERR_OVERFLOW");
+    expect(source).not.toContain(legacyAbiPrefix);
   });
 
   it("emits checked C casts without treating casts as checked arithmetic", () => {
     const checked = checkedSource(
-      "cast-checked.ik",
+      "cast-checked.ck",
       `
         export fn checked_cast_mix(a: i32, b: u32) -> f64 {
           let next: i32 = a + 1;
@@ -368,15 +374,16 @@ describe("c emitter", () => {
 
     const source = emitDefaultCSource(checked, { headerFileName: "cast-checked.h", overflowMode: "checked" });
 
-    expect(source).toContain("IK_Status checked_cast_mix(int32_t a, uint32_t b, double* ik_return)");
+    expect(source).toContain("CK_Status checked_cast_mix(int32_t a, uint32_t b, double* ik_return)");
     expect(source).toContain("__builtin_add_overflow");
     expect(source).toMatch(/ik_tmp\d+ = \(double\)next;/);
     expect(source).toMatch(/ik_tmp\d+ = \(double\)b;/);
-    expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+    expect(source).not.toContain("CK_ERR_DIV_BY_ZERO");
+    expect(source).not.toContain(legacyAbiPrefix);
   });
 
   it("does not reach C emission for f64 modulo", () => {
-    const checked = check(new SourceFile("bad-f64-mod.ik", "export fn bad(a: f64, b: f64) -> f64 { return a % b; }"));
+    const checked = check(new SourceFile("bad-f64-mod.ck", "export fn bad(a: f64, b: f64) -> f64 { return a % b; }"));
 
     expect(checked.diagnostics.map((diagnostic) => diagnostic.message)).toContain("Arithmetic operator '%' does not support f64 operands.");
     expect(() => emitCHeader(checked)).toThrow("Cannot emit C for a program with diagnostics.");
@@ -384,14 +391,14 @@ describe("c emitter", () => {
   });
 
   it("requires a clean type checked result", () => {
-    const checked = check(new SourceFile("bad.ik", "export fn bad() -> i32 { return missing; }"));
+    const checked = check(new SourceFile("bad.ck", "export fn bad() -> i32 { return missing; }"));
 
     expect(() => emitCHeader(checked)).toThrow("Cannot emit C for a program with diagnostics.");
     expect(() => emitDefaultCSource(checked, { headerFileName: "bad.h" })).toThrow("Cannot emit C for a program with diagnostics.");
   });
 
   it("accepts explicit unchecked overflow mode without changing output", () => {
-    const checked = checkedSource("scalar.ik", "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    const checked = checkedSource("scalar.ck", "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
 
     expect(emitCHeader(checked, { overflowMode: "unchecked" })).toBe(emitCHeader(checked));
     expect(emitDefaultCSource(checked, { headerFileName: "scalar.h", overflowMode: "unchecked" })).toBe(
@@ -400,9 +407,16 @@ describe("c emitter", () => {
   });
 
   it("emits checked scalar C for supported scalar statements and expressions", () => {
-    const checked = checkedSource("scalar.ik", "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    const checked = checkedSource("scalar.ck", "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
 
-    expect(emitCHeader(checked, { overflowMode: "checked" })).toContain("IK_API IK_Status add(int64_t a, int64_t b, int64_t* ik_return);");
+    const header = emitCHeader(checked, { overflowMode: "checked" });
+    expect(header).toContain("CK_API CK_Status add(int64_t a, int64_t b, int64_t* ik_return);");
+    expect(header).toContain("typedef int32_t CK_Status;");
+    expect(header).toContain("#define CK_OK ((CK_Status)0)");
+    expect(header).toContain("#define CK_ERR_OVERFLOW ((CK_Status)1)");
+    expect(header).toContain("#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)");
+    expect(header).toContain("#define CK_ERR_NULL_POINTER ((CK_Status)3)");
+    expect(header).not.toContain(legacyAbiPrefix);
     expect(emitDefaultCSource(checked, { headerFileName: "scalar.h", overflowMode: "checked" })).toContain("__builtin_add_overflow");
     expect(() =>
       emitCFiles(checked, {
@@ -416,7 +430,7 @@ describe("c emitter", () => {
 
   it("emits checked scalar C for let and unary not", () => {
     const checked = checkedSource(
-      "scalar-extra.ik",
+      "scalar-extra.ck",
       `
         export fn calc(a: i64, b: i64) -> bool {
           let sum: i64 = a + b;
@@ -434,7 +448,7 @@ describe("c emitter", () => {
 
   it("keeps checked induction overflow checks at O0 and removes only proven-safe increments at O3", () => {
     const checked = checkedSource(
-      "safe-induction.ik",
+      "safe-induction.ck",
       `
         export fn fill(out: ptr<i64>, len: i32) -> i32 {
           let i: i32 = 0;
@@ -457,7 +471,7 @@ describe("c emitter", () => {
 
   it("does not remove checked induction overflow checks without the safe loop proof", () => {
     const checked = checkedSource(
-      "unsafe-induction.ik",
+      "unsafe-induction.ck",
       `
         export fn fill(out: ptr<i64>, len: i32) -> i32 {
           let i: i32 = 1;
@@ -584,7 +598,7 @@ describe("c emitter", () => {
         expectedReturn: "return ((items[i].price * items[i].qty) - items[i].discount);"
       }
     ])("emits C preserving $name", ({ name, source, expectedReturn }) => {
-      const checked = checkedSource(`${name}.ik`, source);
+      const checked = checkedSource(`${name}.ck`, source);
       const emitted = emitCSource(checked, { headerFileName: "calc.h" });
 
       expect(emitted).toContain(expectedReturn);

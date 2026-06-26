@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-This example runs the WebAssembly module generated from `examples/pricing.ik`
+This example runs the WebAssembly module generated from `examples/pricing.ck`
 in a browser. It is plain HTML and JavaScript: no framework, no bundler, and no
 extra dependency.
 
@@ -12,7 +12,7 @@ From the repository root:
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out examples/browser-wasm-call/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out examples/browser-wasm-call/pricing.wasm
 ```
 
 The example expects `pricing.wasm` next to `index.html` and `index.js`:

@@ -1,8 +1,8 @@
-# IntKernel Compiler Architecture
+# CalcKernel Compiler Architecture
 
 [简体中文](zh-CN/COMPILER_ARCHITECTURE.md)
 
-IntKernel is a source-to-C, source-to-WASM, and source-to-LLVM-IR compiler
+CalcKernel is a source-to-C, source-to-WASM, and source-to-LLVM-IR compiler
 implemented in TypeScript. All production code generation paths consume
 validated MIR.
 
@@ -11,7 +11,7 @@ validated MIR.
 Current pipeline:
 
 ```text
-.ik source
+.ck source
   -> SourceFile
   -> lexer
   -> tokens
@@ -42,7 +42,7 @@ can invoke clang through `build-llvm`.
 Phase 12 adds an implemented WASM path after MIR:
 
 ```text
-.ik source
+.ck source
   -> lexer
   -> parser
   -> type checker
@@ -68,7 +68,7 @@ parser, type checker, diagnostics formatting, and CLI reporting.
 
 ### Lexer
 
-The lexer converts raw `.ik` text into tokens. Each token records:
+The lexer converts raw `.ck` text into tokens. Each token records:
 
 - kind
 - text
@@ -159,7 +159,7 @@ The MIR C backend emits the `.c` implementation file. It supports both overflow
 modes:
 
 - unchecked mode emits ordinary C expressions and original return types
-- checked mode emits `IK_Status`, checked arithmetic guards, checked function
+- checked mode emits `CK_Status`, checked arithmetic guards, checked function
   call propagation, and `ik_return` handling
 
 Exported functions are declared in the header. Non-exported functions are
@@ -172,13 +172,13 @@ with:
 
 - `#pragma once`
 - standard includes
-- `IK_API` and `IK_BUILD_DLL` handling
+- `CK_API` and `CK_BUILD_DLL` handling
 - C++ `extern "C"` guards
 - struct typedefs
 - exported function declarations
 
 Unchecked headers keep original return types. Checked headers include
-`IK_Status` and add the final `ik_return` pointer to exported function
+`CK_Status` and add the final `ik_return` pointer to exported function
 signatures.
 
 ### Build Command
@@ -203,7 +203,7 @@ Phase 12 v1 is intentionally narrow:
 
 - unchecked arithmetic only
 - exported linear memory
-- deterministic IntKernel struct layout
+- deterministic CalcKernel struct layout
 - scalar expressions, control flow, short-circuiting, function calls, and
   ptr/index/field load/store patterns
 - no WASI imports
@@ -222,7 +222,7 @@ API in v1.
 The LLVM path is:
 
 ```text
-.ik / .ik source
+.ck / .ck source
   -> AST
   -> CheckedProgram / Typed Program
   -> MIR

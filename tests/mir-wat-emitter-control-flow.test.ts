@@ -12,8 +12,8 @@ function normalizeNewlines(text: string): string {
 
 describe("MIR WAT emitter control flow", () => {
   it("emits basic blocks with jump, branch, and return as stable WAT", () => {
-    const sourceText = readFileSync("examples/wasm_control_flow.ik", "utf8");
-    const checked = check(new SourceFile("wasm_control_flow.ik", sourceText));
+    const sourceText = readFileSync("examples/wasm_control_flow.ck", "utf8");
+    const checked = check(new SourceFile("wasm_control_flow.ck", sourceText));
     expect(checked.diagnostics).toEqual([]);
     const mir = lowerToMir(checked.checkedProgram);
     expect(validateMirModule(mir).errors).toEqual([]);

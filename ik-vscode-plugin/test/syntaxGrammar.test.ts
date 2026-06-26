@@ -17,32 +17,32 @@ type Grammar = {
   repository: Record<string, { patterns: GrammarPattern[] }>;
 };
 
-const grammarPath = join(dirname(fileURLToPath(import.meta.url)), "..", "syntaxes", "intkernel.tmLanguage.json");
+const grammarPath = join(dirname(fileURLToPath(import.meta.url)), "..", "syntaxes", "calckernel.tmLanguage.json");
 const grammar = JSON.parse(readFileSync(grammarPath, "utf8")) as Grammar;
 
-describe("IntKernel TextMate grammar identifier scopes", () => {
+describe("CalcKernel TextMate grammar identifier scopes", () => {
   it("scopes local variable declarations after let", () => {
     expect(expectCaptureScope("localVariableDeclarations", "let subtotal: i64 = 0;", "subtotal")).toBe(
-      "variable.other.definition.local.intkernel"
+      "variable.other.definition.local.calckernel"
     );
   });
 
   it("scopes function parameters before their type annotations", () => {
-    expect(expectCaptureScope("parameters", "items: ptr<Item>", "items")).toBe("variable.parameter.intkernel");
+    expect(expectCaptureScope("parameters", "items: ptr<Item>", "items")).toBe("variable.parameter.calckernel");
   });
 
   it("scopes struct field declarations at the start of field lines", () => {
     expect(expectCaptureScope("fieldDeclarations", "  tax_rate_ppm: i64;", "tax_rate_ppm")).toBe(
-      "variable.other.member.definition.intkernel"
+      "variable.other.member.definition.calckernel"
     );
   });
 
   it("scopes member access fields after a dot", () => {
-    expect(expectCaptureScope("memberAccess", ".price", "price")).toBe("variable.other.member.access.intkernel");
+    expect(expectCaptureScope("memberAccess", ".price", "price")).toBe("variable.other.member.access.calckernel");
   });
 
   it("scopes lowercase variable references without overriding keywords or primitive types", () => {
-    expect(expectPatternScope("variableReferences", "after_discount")).toBe("variable.other.readwrite.intkernel");
+    expect(expectPatternScope("variableReferences", "after_discount")).toBe("variable.other.readwrite.calckernel");
     expect(findNamedPatternMatch("variableReferences", "while")).toBeUndefined();
     expect(findNamedPatternMatch("variableReferences", "i64")).toBeUndefined();
   });

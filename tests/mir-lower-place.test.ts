@@ -15,8 +15,8 @@ function lowerAndPrint(fileName: string, sourceText: string): string {
 }
 
 describe("MIR place lowering", () => {
-  it("lowers examples/pricing.ik with ptr index, field loads, and stores", () => {
-    expect(lowerAndPrint("pricing.ik", readFileSync("examples/pricing.ik", "utf8"))).toMatchInlineSnapshot(`
+  it("lowers examples/pricing.ck with ptr index, field loads, and stores", () => {
+    expect(lowerAndPrint("pricing.ck", readFileSync("examples/pricing.ck", "utf8"))).toMatchInlineSnapshot(`
       "struct Item {
         price: i64
         qty: i64
@@ -70,7 +70,7 @@ describe("MIR place lowering", () => {
   it("lowers arithmetic inside index expressions before loading the place", () => {
     expect(
       lowerAndPrint(
-        "index-plus-one.ik",
+        "index-plus-one.ck",
         `
           struct Item {
             price: i64;
@@ -100,7 +100,7 @@ describe("MIR place lowering", () => {
   it("lowers ptr<f64> and f64 struct field places", () => {
     expect(
       lowerAndPrint(
-        "f64-place.ik",
+        "f64-place.ck",
         `
           struct Quote {
             price: f64;

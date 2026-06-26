@@ -45,21 +45,21 @@ import {
   structType,
   typeToString,
   unknownType,
-  type IntKernelType,
+  type CalcKernelType,
   type PrimitiveTypeName
 } from "./types.js";
 
 export interface TypedAst {
   program: Program;
-  expressionTypes: Map<Expression, IntKernelType>;
+  expressionTypes: Map<Expression, CalcKernelType>;
 }
 
-export type TypeMap = Map<Expression, IntKernelType>;
-export type LetTypeMap = Map<LetStatement, IntKernelType>;
+export type TypeMap = Map<Expression, CalcKernelType>;
+export type LetTypeMap = Map<LetStatement, CalcKernelType>;
 
 export interface StructFieldInfo {
   name: string;
-  type: IntKernelType;
+  type: CalcKernelType;
   declaration: StructField;
 }
 
@@ -72,7 +72,7 @@ export interface StructInfo {
 
 export interface FunctionParamInfo {
   name: string;
-  type: IntKernelType;
+  type: CalcKernelType;
   declaration: FunctionParam;
 }
 
@@ -81,7 +81,7 @@ export interface FunctionInfo {
   exported: boolean;
   declaration: FunctionDeclaration;
   params: FunctionParamInfo[];
-  returnType: IntKernelType;
+  returnType: CalcKernelType;
 }
 
 export interface CheckedProgram {
@@ -105,8 +105,8 @@ export interface CheckResult {
 
 interface CompilerBuiltin {
   name: string;
-  params: IntKernelType[];
-  returnType: IntKernelType;
+  params: CalcKernelType[];
+  returnType: CalcKernelType;
 }
 
 const compilerBuiltins = new Map<string, CompilerBuiltin>(
@@ -132,8 +132,8 @@ export function check(source: SourceFile): CheckResult {
 
 class Checker {
   private readonly symbols = new SymbolTable();
-  private readonly expressionTypes = new Map<Expression, IntKernelType>();
-  private readonly localTypes = new Map<LetStatement, IntKernelType>();
+  private readonly expressionTypes = new Map<Expression, CalcKernelType>();
+  private readonly localTypes = new Map<LetStatement, CalcKernelType>();
 
   constructor(
     private readonly source: SourceFile,
@@ -261,7 +261,7 @@ class Checker {
     }
   }
 
-  private checkBlock(block: BlockStatement, parentScope: Scope, returnType: IntKernelType, createScope: boolean): void {
+  private checkBlock(block: BlockStatement, parentScope: Scope, returnType: CalcKernelType, createScope: boolean): void {
     const scope = createScope ? new Scope(parentScope) : parentScope;
 
     for (const statement of block.statements) {
@@ -269,7 +269,7 @@ class Checker {
     }
   }
 
-  private checkStatement(statement: Statement, scope: Scope, returnType: IntKernelType): void {
+  private checkStatement(statement: Statement, scope: Scope, returnType: CalcKernelType): void {
     switch (statement.kind) {
       case "BlockStatement":
         this.checkBlock(statement, scope, returnType, true);
@@ -324,14 +324,14 @@ class Checker {
     }
   }
 
-  private checkReturnStatement(statement: ReturnStatement, scope: Scope, returnType: IntKernelType): void {
+  private checkReturnStatement(statement: ReturnStatement, scope: Scope, returnType: CalcKernelType): void {
     const valueType = this.checkExpression(statement.value, scope, returnType);
     if (!isUnknown(returnType) && !isUnknown(valueType) && !canAssign(returnType, valueType)) {
       this.error(statement.value.span, `Return type mismatch: expected ${typeToString(returnType)} but got ${typeToString(valueType)}.`);
     }
   }
 
-  private checkIfStatement(statement: IfStatement, scope: Scope, returnType: IntKernelType): void {
+  private checkIfStatement(statement: IfStatement, scope: Scope, returnType: CalcKernelType): void {
     const conditionType = materializeIntegerLiteral(this.checkExpression(statement.condition, scope));
     if (!isUnknown(conditionType) && !isBool(conditionType)) {
       this.error(statement.condition.span, `If condition must be bool, got ${typeToString(conditionType)}.`);
@@ -343,7 +343,7 @@ class Checker {
     }
   }
 
-  private checkWhileStatement(statement: WhileStatement, scope: Scope, returnType: IntKernelType): void {
+  private checkWhileStatement(statement: WhileStatement, scope: Scope, returnType: CalcKernelType): void {
     const conditionType = materializeIntegerLiteral(this.checkExpression(statement.condition, scope));
     if (!isUnknown(conditionType) && !isBool(conditionType)) {
       this.error(statement.condition.span, `While condition must be bool, got ${typeToString(conditionType)}.`);
@@ -352,7 +352,7 @@ class Checker {
     this.checkBlock(statement.body, scope, returnType, true);
   }
 
-  private checkExpression(expression: Expression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
+  private checkExpression(expression: Expression, scope: Scope, expectedType?: CalcKernelType): CalcKernelType {
     switch (expression.kind) {
       case "IdentifierExpression":
         return this.checkIdentifierExpression(expression, scope);
@@ -379,7 +379,7 @@ class Checker {
     }
   }
 
-  private checkIdentifierExpression(expression: IdentifierExpression, scope: Scope): IntKernelType {
+  private checkIdentifierExpression(expression: IdentifierExpression, scope: Scope): CalcKernelType {
     const symbol = scope.lookup(expression.name);
     if (!symbol) {
       this.error(expression.span, `Unknown variable '${expression.name}'.`);
@@ -389,16 +389,16 @@ class Checker {
     return this.recordExpressionType(expression, symbol.type);
   }
 
-  private checkIntegerLiteral(expression: IntegerLiteral, expectedType?: IntKernelType): IntKernelType {
+  private checkIntegerLiteral(expression: IntegerLiteral, expectedType?: CalcKernelType): CalcKernelType {
     const type = expectedType && isInteger(expectedType) ? expectedType : integerLiteralType;
     return this.recordExpressionType(expression, type);
   }
 
-  private checkFloatLiteral(expression: FloatLiteral): IntKernelType {
+  private checkFloatLiteral(expression: FloatLiteral): CalcKernelType {
     return this.recordExpressionType(expression, primitiveType("f64"));
   }
 
-  private checkUnaryExpression(expression: UnaryExpression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
+  private checkUnaryExpression(expression: UnaryExpression, scope: Scope, expectedType?: CalcKernelType): CalcKernelType {
     if (expression.operator === "!") {
       const operandType = materializeIntegerLiteral(this.checkExpression(expression.operand, scope));
       if (!isUnknown(operandType) && !isBool(operandType)) {
@@ -418,7 +418,7 @@ class Checker {
     return this.recordExpressionType(expression, materializeIntegerLiteral(operandType, fallback));
   }
 
-  private checkBinaryExpression(expression: BinaryExpression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
+  private checkBinaryExpression(expression: BinaryExpression, scope: Scope, expectedType?: CalcKernelType): CalcKernelType {
     if (isArithmeticOperator(expression.operator)) {
       return this.checkArithmeticExpression(expression, scope, expectedType);
     }
@@ -442,7 +442,7 @@ class Checker {
     return this.recordExpressionType(expression, unknownType);
   }
 
-  private checkArithmeticExpression(expression: BinaryExpression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
+  private checkArithmeticExpression(expression: BinaryExpression, scope: Scope, expectedType?: CalcKernelType): CalcKernelType {
     const leftRaw = this.checkExpression(expression.left, scope);
     const rightRaw = this.checkExpression(expression.right, scope);
     const fallback = integerLiteralFallback(expectedType);
@@ -464,7 +464,7 @@ class Checker {
     return this.recordExpressionType(expression, materializeIntegerLiteral(leftType, fallback));
   }
 
-  private checkComparisonExpression(expression: BinaryExpression, scope: Scope): IntKernelType {
+  private checkComparisonExpression(expression: BinaryExpression, scope: Scope): CalcKernelType {
     const leftRaw = this.checkExpression(expression.left, scope);
     const rightRaw = this.checkExpression(expression.right, scope);
     const leftType = materializeIntegerLiteral(leftRaw, rightRaw.kind === "integerLiteral" ? primitiveType("i32") : integerLiteralFallback(rightRaw));
@@ -484,7 +484,7 @@ class Checker {
     return this.recordExpressionType(expression, primitiveType("bool"));
   }
 
-  private checkCallExpression(expression: CallExpression, scope: Scope): IntKernelType {
+  private checkCallExpression(expression: CallExpression, scope: Scope): CalcKernelType {
     if (expression.callee.kind !== "IdentifierExpression") {
       this.error(expression.callee.span, "Can only call functions by name.");
       for (const arg of expression.args) {
@@ -527,7 +527,7 @@ class Checker {
     return this.recordExpressionType(expression, functionSymbol.returnType);
   }
 
-  private checkCompilerBuiltinCall(expression: CallExpression, scope: Scope, builtin: CompilerBuiltin): IntKernelType {
+  private checkCompilerBuiltinCall(expression: CallExpression, scope: Scope, builtin: CompilerBuiltin): CalcKernelType {
     this.recordExpressionType(expression.callee, builtin.returnType);
 
     if (expression.args.length !== builtin.params.length) {
@@ -548,7 +548,7 @@ class Checker {
     return this.recordExpressionType(expression, builtin.returnType);
   }
 
-  private checkFieldExpression(expression: FieldExpression, scope: Scope): IntKernelType {
+  private checkFieldExpression(expression: FieldExpression, scope: Scope): CalcKernelType {
     const objectType = this.checkExpression(expression.object, scope);
     if (objectType.kind !== "struct") {
       if (!isUnknown(objectType)) {
@@ -567,7 +567,7 @@ class Checker {
     return this.recordExpressionType(expression, fieldType);
   }
 
-  private checkIndexExpression(expression: IndexExpression, scope: Scope): IntKernelType {
+  private checkIndexExpression(expression: IndexExpression, scope: Scope): CalcKernelType {
     const objectType = this.checkExpression(expression.object, scope);
     const indexType = materializeIntegerLiteral(this.checkExpression(expression.index, scope), primitiveType("i32"));
 
@@ -585,12 +585,12 @@ class Checker {
     return this.recordExpressionType(expression, objectType.elementType);
   }
 
-  private checkParenthesizedExpression(expression: ParenthesizedExpression, scope: Scope, expectedType?: IntKernelType): IntKernelType {
+  private checkParenthesizedExpression(expression: ParenthesizedExpression, scope: Scope, expectedType?: CalcKernelType): CalcKernelType {
     const type = this.checkExpression(expression.expression, scope, expectedType);
     return this.recordExpressionType(expression, type);
   }
 
-  private resolveType(typeNode: TypeNode): IntKernelType {
+  private resolveType(typeNode: TypeNode): CalcKernelType {
     switch (typeNode.kind) {
       case "PrimitiveType":
         return primitiveType(typeNode.name as PrimitiveTypeName);
@@ -609,7 +609,7 @@ class Checker {
     }
   }
 
-  private recordExpressionType<T extends Expression>(expression: T, type: IntKernelType): IntKernelType {
+  private recordExpressionType<T extends Expression>(expression: T, type: CalcKernelType): CalcKernelType {
     this.expressionTypes.set(expression, type);
     return type;
   }
@@ -652,11 +652,11 @@ class Checker {
   }
 }
 
-export function getExprType(checkedProgram: CheckedProgram, expression: Expression): IntKernelType | undefined {
+export function getExprType(checkedProgram: CheckedProgram, expression: Expression): CalcKernelType | undefined {
   return checkedProgram.types.get(expression);
 }
 
-export function getLetType(checkedProgram: CheckedProgram, statement: LetStatement): IntKernelType | undefined {
+export function getLetType(checkedProgram: CheckedProgram, statement: LetStatement): CalcKernelType | undefined {
   return checkedProgram.localTypes.get(statement);
 }
 
@@ -728,31 +728,31 @@ function toFunctionInfo(symbol: FunctionSymbol): FunctionInfo {
 
 function checkerDiagnosticCode(message: string): DiagnosticCode {
   if (message.startsWith("Unknown variable")) {
-    return "IK2001";
+    return "CK2001";
   }
   if (message.startsWith("Unknown function")) {
-    return "IK2002";
+    return "CK2002";
   }
   if (message.startsWith("Unknown type")) {
-    return "IK2003";
+    return "CK2003";
   }
   if (message.startsWith("Duplicate")) {
-    return "IK2005";
+    return "CK2005";
   }
   if (message.startsWith("If condition") || message.startsWith("While condition")) {
-    return "IK2006";
+    return "CK2006";
   }
   if (message.startsWith("Invalid assignment target")) {
-    return "IK2007";
+    return "CK2007";
   }
   if (message.startsWith("Missing return")) {
-    return "IK2008";
+    return "CK2008";
   }
 
-  return "IK2004";
+  return "CK2004";
 }
 
-function integerLiteralFallback(type?: IntKernelType): IntKernelType {
+function integerLiteralFallback(type?: CalcKernelType): CalcKernelType {
   return type?.kind === "primitive" && isInteger(type) ? type : primitiveType("i32");
 }
 

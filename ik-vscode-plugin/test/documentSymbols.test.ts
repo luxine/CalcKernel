@@ -78,7 +78,7 @@ vi.mock("vscode", () => {
 });
 
 import { buildDocumentSymbols } from "../src/documentSymbols";
-import { analyzeIntKernelDocument, createMemoryDocument } from "../src/languageService";
+import { analyzeCalcKernelDocument, createMemoryDocument } from "../src/languageService";
 
 const sourceText = `
 struct Item {
@@ -93,7 +93,7 @@ fn total(item: Item) -> i64 {
 
 describe("documentSymbols", () => {
   it("builds outline entries for structs, fields, functions, params, and locals", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const symbols = buildDocumentSymbols(analysis);
     expect(symbols.map((symbol) => symbol.name)).toEqual(["Item", "total"]);
     expect(symbols[0]?.children.map((symbol) => symbol.name)).toEqual(["price"]);
@@ -101,7 +101,7 @@ describe("documentSymbols", () => {
   });
 
   it("uses parent ranges that contain child symbol selections", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText, "memory:///ranges.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText, "memory:///ranges.ck"));
     const symbols = buildDocumentSymbols(analysis);
     const item = symbols[0];
     const price = item?.children[0];
@@ -129,7 +129,7 @@ fn second(item: i64) -> i64 {
   return subtotal;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(twoFunctionSourceText, "memory:///two-functions.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(twoFunctionSourceText, "memory:///two-functions.ck"));
     const symbols = buildDocumentSymbols(analysis);
 
     expect(symbols.map((symbol) => symbol.name)).toEqual(["first", "second"]);

@@ -67,8 +67,8 @@ int main(void) {
 
     fill_items(items, len);
 
-    IK_Status status = calc_items(items, len, out, &ik_return);
-    if (status != IK_OK || ik_return != 0) {
+    CK_Status status = calc_items(items, len, out, &ik_return);
+    if (status != CK_OK || ik_return != 0) {
       fprintf(stderr, "warmup calc_items failed for %" PRId32 " items: status=%" PRId32 ", ik_return=%" PRId32 "\n", len, status, ik_return);
       free(items);
       free(out);
@@ -84,7 +84,7 @@ int main(void) {
     status = calc_items(items, len, out, &ik_return);
     const uint64_t elapsed = now_ns() - start;
 
-    if (status != IK_OK || ik_return != 0) {
+    if (status != CK_OK || ik_return != 0) {
       fprintf(stderr, "calc_items failed for %" PRId32 " items: status=%" PRId32 ", ik_return=%" PRId32 "\n", len, status, ik_return);
       free(items);
       free(out);

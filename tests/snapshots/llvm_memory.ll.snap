@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "llvm_memory.ik"
+; ModuleID = 'calckernel'
+source_filename = "llvm_memory.ck"
 
 %struct.Item = type { i64, i64, i64, i64 }
 

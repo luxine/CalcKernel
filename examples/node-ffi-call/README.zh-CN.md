@@ -2,14 +2,14 @@
 
 [English](README.md)
 
-这个示例通过 Node.js 调用由 `examples/pricing.ik` 生成的动态库。它刻意和根项目隔离，
+这个示例通过 Node.js 调用由 `examples/pricing.ck` 生成的动态库。它刻意和根项目隔离，
 这样主编译器 package 不需要依赖 native FFI module。
 
 示例在本目录内使用轻量 Node.js C FFI package `koffi`。
 
 ## 构建动态库
 
-从仓库根目录构建 IntKernel CLI：
+从仓库根目录构建 CalcKernel CLI：
 
 ```sh
 pnpm build
@@ -20,7 +20,7 @@ pnpm build
 macOS：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 生成：
@@ -32,7 +32,7 @@ build/libpricing.dylib
 Linux：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 生成：
@@ -44,7 +44,7 @@ build/libpricing.so
 Windows：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 ```
 
 生成：
@@ -75,7 +75,7 @@ npm start
 
 ## Checked Mode
 
-Checked mode 使用不同 C ABI。函数返回 `IK_Status`，原始 IntKernel return value
+Checked mode 使用不同 C ABI。函数返回 `CK_Status`，原始 CalcKernel return value
 通过最后一个 output pointer 写出。
 
 从仓库根目录构建 checked dynamic library。
@@ -83,7 +83,7 @@ Checked mode 使用不同 C ABI。函数返回 `IK_Status`，原始 IntKernel re
 macOS：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
 生成：
@@ -95,7 +95,7 @@ build/libpricing_checked.dylib
 Linux：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
 生成：
@@ -107,7 +107,7 @@ build/libpricing_checked.so
 Windows 上，显式传入期望 `.dll` 文件名：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 ```
 
 生成：
@@ -128,7 +128,7 @@ pnpm start:checked
 node checked.mjs
 ```
 
-成功调用和 `price * qty` 返回 `IK_ERR_OVERFLOW` 的 overflow case 之后，脚本打印 `OK`。
+成功调用和 `price * qty` 返回 `CK_ERR_OVERFLOW` 的 overflow case 之后，脚本打印 `OK`。
 
 ## FFI 映射
 
@@ -142,7 +142,7 @@ typedef struct Item {
   int64_t tax_rate_ppm;
 } Item;
 
-IK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
+CK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
 ```
 
 Node.js binding 使用 Koffi 镜像：
@@ -159,18 +159,18 @@ Node.js binding 使用 Koffi 镜像：
 Checked 生成的 header 定义 status values：
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 ```
 
 Checked `calc_items` declaration 是：
 
 ```c
-IK_API IK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
 ```
 
 Koffi signature 镜像该 ABI：
@@ -181,7 +181,7 @@ const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ i
 
 Checked 示例使用：
 
-- `number` 表示 `IK_Status`、`IK_OK` 和其他 32-bit status constants。
+- `number` 表示 `CK_Status`、`CK_OK` 和其他 32-bit status constants。
 - `Int32Array(1)` 表示最后的 `ik_return` pointer。
 - 每个 `Item` 的 `int64_t` 字段都使用 `BigInt`。
 - `BigInt64Array` 表示 `int64_t* out` buffer。

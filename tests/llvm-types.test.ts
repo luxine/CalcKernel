@@ -11,7 +11,7 @@ import {
 import { integerLiteralType, pointerType, primitiveType, structType, unknownType } from "../src/typeck/types.js";
 
 describe("LLVM type mapping", () => {
-  it("maps scalar IntKernel types to LLVM value types", () => {
+  it("maps scalar CalcKernel types to LLVM value types", () => {
     expect(llvmValueType(primitiveType("i32"))).toBe("i32");
     expect(llvmValueType(primitiveType("u32"))).toBe("i32");
     expect(llvmValueType(primitiveType("i64"))).toBe("i64");

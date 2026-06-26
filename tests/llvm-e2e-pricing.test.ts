@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-pricing-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-pricing-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM pricing end-to-end", () => {
   it("compiles generated LLVM IR and runs calc_items through a C harness", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "pricing.ik", "--out", "build/pricing.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "pricing.ck", "--out", "build/pricing.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}

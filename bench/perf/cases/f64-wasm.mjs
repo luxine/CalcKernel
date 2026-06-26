@@ -358,13 +358,13 @@ function label(config) {
     return config.label;
   }
   if (config.copyMode === "float64array") {
-    return `f64-${config.kernel}-ik-wasm-o3-low-copy-${config.mode}`;
+    return `f64-${config.kernel}-ck-wasm-o3-low-copy-${config.mode}`;
   }
   if (config.mode === "setup" || config.mode === "input-marshal" || config.mode === "output-readback") {
-    return `f64-${config.kernel}-ik-wasm-o3-${config.mode}`;
+    return `f64-${config.kernel}-ck-wasm-o3-${config.mode}`;
   }
   if (config.mode === "memory-only") {
     return `f64-${config.kernel}-wasm-memory-only`;
   }
-  return `f64-${config.kernel}-ik-wasm-o3-${config.mode}`;
+  return `f64-${config.kernel}-ck-wasm-o3-${config.mode}`;
 }

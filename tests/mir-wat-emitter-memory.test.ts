@@ -11,7 +11,7 @@ function normalizeNewlines(text: string): string {
 }
 
 function lowerAndEmitWat(sourceText: string): string {
-  const checked = check(new SourceFile("wasm_f64_memory.ik", sourceText));
+  const checked = check(new SourceFile("wasm_f64_memory.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -20,8 +20,8 @@ function lowerAndEmitWat(sourceText: string): string {
 
 describe("MIR WAT emitter memory access", () => {
   it("emits ptr/index/field load and store as stable WAT", () => {
-    const sourceText = readFileSync("examples/wasm_memory.ik", "utf8");
-    const checked = check(new SourceFile("wasm_memory.ik", sourceText));
+    const sourceText = readFileSync("examples/wasm_memory.ck", "utf8");
+    const checked = check(new SourceFile("wasm_memory.ck", sourceText));
     expect(checked.diagnostics).toEqual([]);
     const mir = lowerToMir(checked.checkedProgram);
     expect(validateMirModule(mir).errors).toEqual([]);

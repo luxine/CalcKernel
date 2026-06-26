@@ -106,7 +106,7 @@ vi.mock("vscode", () => {
 
 import * as vscode from "vscode";
 import { buildCompletionItems, registerCompletions } from "../src/completions";
-import { analyzeIntKernelDocument, createMemoryDocument } from "../src/languageService";
+import { analyzeCalcKernelDocument, createMemoryDocument } from "../src/languageService";
 
 const sourceText = `
 struct Item {
@@ -122,7 +122,7 @@ fn total(item: Item) -> i64 {
 
 describe("completions", () => {
   it("includes static keywords and document symbols", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const items = buildCompletionItems(analysis, new vscode.Position(7, 9));
     const labels = items.map((item) => item.label.toString());
     expect(labels).toContain("while");
@@ -132,7 +132,7 @@ describe("completions", () => {
   });
 
   it("suggests struct fields after member access", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const items = buildCompletionItems(analysis, new vscode.Position(6, 30), "item.");
     const labels = items.map((item) => item.label.toString());
     expect(labels).toContain("price");
@@ -158,7 +158,7 @@ fn second(item: Other) -> i64 {
   return item.code;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(repeatedReceiverSourceText, "memory:///repeated-receiver.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(repeatedReceiverSourceText, "memory:///repeated-receiver.ck"));
     const items = buildCompletionItems(analysis, new vscode.Position(13, 14), "item.");
     const labels = items.map((item) => item.label.toString());
 
@@ -179,7 +179,7 @@ fn second(current_param: i64) -> i64 {
   return after_cursor;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(scopedSourceText, "memory:///scoped-completions.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(scopedSourceText, "memory:///scoped-completions.ck"));
     const items = buildCompletionItems(analysis, new vscode.Position(6, 30));
     const labels = items.map((item) => item.label.toString());
 
@@ -199,7 +199,7 @@ fn total(value: i64) -> i64 {
   return value;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(blockScopedSourceText, "memory:///block-scoped-completions.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(blockScopedSourceText, "memory:///block-scoped-completions.ck"));
     const items = buildCompletionItems(analysis, new vscode.Position(4, 9));
     const labels = items.map((item) => item.label.toString());
 
@@ -217,7 +217,7 @@ fn total(item: ptr<Item>) -> i64 {
   return 0;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(pointerSourceText, "memory:///pointer-receiver-completions.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(pointerSourceText, "memory:///pointer-receiver-completions.ck"));
     const items = buildCompletionItems(analysis, new vscode.Position(5, 14), "item.");
     const labels = items.map((item) => item.label.toString());
 
@@ -236,7 +236,7 @@ fn use_configs(configs: ptr<DijkstraConfig>) -> i64 {
   return configs[0].;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(indexedReceiverSourceText, "memory:///indexed-receiver-completions.ik"));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(indexedReceiverSourceText, "memory:///indexed-receiver-completions.ck"));
     const items = buildCompletionItems(analysis, new vscode.Position(7, 20), "  return configs[0].");
     const labels = items.map((item) => item.label.toString());
 
@@ -251,7 +251,7 @@ fn use_configs(configs: ptr<DijkstraConfig>) -> i64 {
     const context = { subscriptions: [] as Array<{ dispose(): void }> };
     registerCompletions(context as vscode.ExtensionContext);
     const document = {
-      ...createMemoryDocument(sourceText, "memory:///registered-completions.ik"),
+      ...createMemoryDocument(sourceText, "memory:///registered-completions.ck"),
       lineAt: (position: vscode.Position) => ({
         text: sourceText.split("\n")[position.line] ?? ""
       })

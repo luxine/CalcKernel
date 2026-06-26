@@ -19,7 +19,7 @@ interface WasmRuntime {
 const itemSize = 32;
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-wasm-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-wasm-"));
 }
 
 function getWasmRuntime(): WasmRuntime | undefined {
@@ -45,19 +45,19 @@ describe("Node.js pricing WASM e2e", () => {
 
   it.skipIf(!wasmAvailable)(
     wasmAvailable
-      ? "runs examples/pricing.ik through generated WASM"
-      : "runs examples/pricing.ik through generated WASM (skipped because Node.js WebAssembly BigInt support is unavailable)",
+      ? "runs examples/pricing.ck through generated WASM"
+      : "runs examples/pricing.ck through generated WASM (skipped because Node.js WebAssembly BigInt support is unavailable)",
     async () => {
       const wasm = getWasmRuntime();
       expect(wasm).toBeDefined();
       const cwd = tempDir();
-      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
       const watFile = join(cwd, "build/pricing.wat");
       const wasmFile = join(cwd, "build/pricing.wasm");
 
       let stdout = "";
       let stderr = "";
-      const emitWatExitCode = runCli(["emit-wat", "pricing.ik", "--out", "build/pricing.wat"], {
+      const emitWatExitCode = runCli(["emit-wat", "pricing.ck", "--out", "build/pricing.wat"], {
         cwd,
         stdout: (text) => {
           stdout += text;
@@ -74,7 +74,7 @@ describe("Node.js pricing WASM e2e", () => {
 
       stdout = "";
       stderr = "";
-      const emitWasmExitCode = runCli(["emit-wasm", "pricing.ik", "--out", "build/pricing.wasm"], {
+      const emitWasmExitCode = runCli(["emit-wasm", "pricing.ck", "--out", "build/pricing.wasm"], {
         cwd,
         stdout: (text) => {
           stdout += text;

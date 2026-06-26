@@ -1,8 +1,8 @@
-# IntKernel MIR
+# CalcKernel MIR
 
 [简体中文](zh-CN/MIR.md)
 
-MIR is IntKernel's middle-level intermediate representation. It sits after type
+MIR is CalcKernel's middle-level intermediate representation. It sits after type
 checking and before backend-specific code generation. Its job is to lower the
 Typed AST into a typed, normalized structure that is easier for C, WASM, LLVM,
 and future checked code generation to consume.
@@ -12,7 +12,7 @@ and future checked code generation to consume.
 The default C codegen pipeline is:
 
 ```text
-.ik source
+.ck source
   -> lexer
   -> parser
   -> AST
@@ -34,7 +34,7 @@ MIR -> MIR pass manager at selected optimization levels -> LLVM
 MIR v1 must preserve the current source language semantics. It is an
 architecture layer, not a language feature.
 
-As of Phase 11.15, `ikc emit-c` and `ikc build` use this MIR pipeline by
+As of Phase 11.15, `ckc emit-c` and `ckc build` use this MIR pipeline by
 default for both unchecked and checked C generation. The legacy AST-to-C backend
 remains available internally for regression comparison and fallback.
 
@@ -158,7 +158,7 @@ field (index items, i), price
 
 ## Types
 
-Every MIR value must have a resolved IntKernel type:
+Every MIR value must have a resolved CalcKernel type:
 
 - `i32`
 - `i64`
@@ -223,7 +223,7 @@ Function calls lower to explicit `Call` instructions with a result value:
 
 Nested calls are lowered inside out while preserving source argument order:
 
-```ik
+```ck
 double_i64(add_i64(a, b))
 ```
 
@@ -267,7 +267,7 @@ MIR v1 distinguishes places from values.
 
 Reading:
 
-```ik
+```ck
 items[i].price
 ```
 
@@ -280,7 +280,7 @@ is represented as a `Load` from a field place:
 
 Writing:
 
-```ik
+```ck
 out[i] = value;
 ```
 
@@ -300,7 +300,7 @@ Pointer, index, and field access is represented through places.
 
 Reading:
 
-```ik
+```ck
 items[i].price
 ```
 
@@ -314,7 +314,7 @@ place:
 
 Writing:
 
-```ik
+```ck
 out[i] = value;
 ```
 
@@ -327,7 +327,7 @@ store index(out, %idx), value
 
 For a compound index:
 
-```ik
+```ck
 items[i + 1].price
 ```
 
@@ -343,13 +343,13 @@ length checks. Those require future language-level metadata such as `slice<T>`.
 
 ## Checked Mode Relationship
 
-MIR v1 expresses ordinary IntKernel arithmetic semantics. It does not directly
+MIR v1 expresses ordinary CalcKernel arithmetic semantics. It does not directly
 encode overflow checks.
 
 The backend decides how to emit arithmetic based on the requested overflow mode:
 
 - `unchecked`: generate ordinary C operations
-- `checked`: generate overflow guards, division checks, `IK_Status`
+- `checked`: generate overflow guards, division checks, `CK_Status`
   propagation, and checked return-pointer handling
 
 This keeps MIR independent from one backend's checked C implementation while
@@ -358,7 +358,7 @@ still making checked lowering easier to implement consistently.
 Short-circuit operators are already represented as MIR control flow, so checked
 C emission does not need a separate logical-operator special case that could
 accidentally evaluate the right-hand side too early. Function calls are explicit
-MIR `Call` instructions, so checked C emission can insert `IK_Status` propagation
+MIR `Call` instructions, so checked C emission can insert `CK_Status` propagation
 at each call site.
 
 Pointer/index/field access in checked mode uses the same MIR places. Arithmetic

@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { analyzeIntKernelDocument, referenceAtPosition, symbolAtPosition, type IntKernelAnalysis } from "./languageService";
+import { analyzeCalcKernelDocument, referenceAtPosition, symbolAtPosition, type CalcKernelAnalysis } from "./languageService";
 
-export function getHoverMarkdownAtPosition(analysis: IntKernelAnalysis, position: vscode.Position): vscode.MarkdownString | undefined {
+export function getHoverMarkdownAtPosition(analysis: CalcKernelAnalysis, position: vscode.Position): vscode.MarkdownString | undefined {
   const symbol = symbolAtPosition(analysis, position);
   if (symbol) {
     return new vscode.MarkdownString(codeBlock(symbol.detail ?? symbol.signatureLabel ?? symbol.name));
@@ -22,10 +22,10 @@ export function getHoverMarkdownAtPosition(analysis: IntKernelAnalysis, position
 export function registerHover(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(
-      { language: "intkernel" },
+      { language: "calckernel" },
       {
         provideHover(document, position) {
-          const analysis = analyzeIntKernelDocument(document);
+          const analysis = analyzeCalcKernelDocument(document);
           const markdown = getHoverMarkdownAtPosition(analysis, position);
           return markdown ? new vscode.Hover(markdown) : undefined;
         }

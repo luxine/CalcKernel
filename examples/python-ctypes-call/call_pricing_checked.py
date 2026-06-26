@@ -5,11 +5,11 @@ import platform
 from pathlib import Path
 
 
-IK_Status = ctypes.c_int32
-IK_OK = 0
-IK_ERR_OVERFLOW = 1
-IK_ERR_DIV_BY_ZERO = 2
-IK_ERR_NULL_POINTER = 3
+CK_Status = ctypes.c_int32
+CK_OK = 0
+CK_ERR_OVERFLOW = 1
+CK_ERR_DIV_BY_ZERO = 2
+CK_ERR_NULL_POINTER = 3
 
 
 class Item(ctypes.Structure):
@@ -45,7 +45,7 @@ def configure_library(path: Path) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_int64),
         ctypes.POINTER(ctypes.c_int32),
     ]
-    lib.calc_items.restype = IK_Status
+    lib.calc_items.restype = CK_Status
     return lib
 
 
@@ -59,8 +59,8 @@ def run_success_case(lib: ctypes.CDLL) -> None:
     ik_return = ctypes.c_int32(-1)
 
     status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
-    if status != IK_OK:
-        raise RuntimeError(f"calc_items returned IK_Status {status}")
+    if status != CK_OK:
+        raise RuntimeError(f"calc_items returned CK_Status {status}")
 
     if ik_return.value != 0:
         raise AssertionError(f"unexpected ik_return: expected 0, got {ik_return.value}")
@@ -81,8 +81,8 @@ def run_overflow_case(lib: ctypes.CDLL) -> None:
     ik_return = ctypes.c_int32(-1)
 
     status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
-    if status != IK_ERR_OVERFLOW:
-        raise AssertionError(f"expected IK_ERR_OVERFLOW, got IK_Status {status}")
+    if status != CK_ERR_OVERFLOW:
+        raise AssertionError(f"expected CK_ERR_OVERFLOW, got CK_Status {status}")
 
     print("overflow check OK")
 
@@ -92,8 +92,8 @@ def main() -> None:
     if not path.exists():
         raise FileNotFoundError(
             f"dynamic library not found: {path}\n"
-            "Build it first with `pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked` "
-            "on macOS/Linux, or `pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked` on Windows."
+            "Build it first with `pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked` "
+            "on macOS/Linux, or `pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked` on Windows."
         )
 
     lib = configure_library(path)

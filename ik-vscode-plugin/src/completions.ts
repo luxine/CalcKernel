@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { getExprType, type Expression } from "intkernel";
+import { getExprType, type Expression } from "calckernel";
 import { toZeroBased, walkProgram } from "./astTraversal";
-import { analyzeIntKernelDocument } from "./languageService";
+import { analyzeCalcKernelDocument } from "./languageService";
 
 const keywords = ["struct", "export", "fn", "let", "return", "if", "else", "while"];
 const primitiveTypes = ["i32", "i64", "u32", "u64", "bool"];
@@ -9,11 +9,11 @@ const primitiveTypes = ["i32", "i64", "u32", "u64", "bool"];
 export function registerCompletions(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
-      { language: "intkernel" },
+      { language: "calckernel" },
       {
         provideCompletionItems: (document, position) => {
           const linePrefix = document.lineAt(position).text.slice(0, position.character);
-          return buildCompletionItems(analyzeIntKernelDocument(document), position, linePrefix);
+          return buildCompletionItems(analyzeCalcKernelDocument(document), position, linePrefix);
         }
       },
       "."
@@ -22,7 +22,7 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
 }
 
 export function buildCompletionItems(
-  analysis?: import("./languageService").IntKernelAnalysis,
+  analysis?: import("./languageService").CalcKernelAnalysis,
   position?: vscode.Position,
   linePrefix = ""
 ): vscode.CompletionItem[] {
@@ -60,7 +60,7 @@ export function buildCompletionItems(
   ];
 }
 
-function isSymbolVisibleAtPosition(symbol: import("./languageService").IntKernelSymbol, position: vscode.Position): boolean {
+function isSymbolVisibleAtPosition(symbol: import("./languageService").CalcKernelSymbol, position: vscode.Position): boolean {
   if (comparePositions(symbol.selectionRange.start, position) > 0) {
     return false;
   }
@@ -68,7 +68,7 @@ function isSymbolVisibleAtPosition(symbol: import("./languageService").IntKernel
 }
 
 function symbolCompletion(
-  symbol: import("./languageService").IntKernelSymbol,
+  symbol: import("./languageService").CalcKernelSymbol,
   kind: vscode.CompletionItemKind
 ): vscode.CompletionItem {
   const item = new vscode.CompletionItem(symbol.name, kind);
@@ -77,27 +77,27 @@ function symbolCompletion(
   return item;
 }
 
-function memberFieldCompletion(symbol: import("./languageService").IntKernelSymbol): vscode.CompletionItem {
+function memberFieldCompletion(symbol: import("./languageService").CalcKernelSymbol): vscode.CompletionItem {
   const item = symbolCompletion(symbol, vscode.CompletionItemKind.Field);
   item.sortText = `!_field_${symbol.name}`;
   return item;
 }
 
 function nearestReceiverReference(
-  analysis: import("./languageService").IntKernelAnalysis,
+  analysis: import("./languageService").CalcKernelAnalysis,
   receiverName: string,
   position: vscode.Position
-): import("./languageService").IntKernelReference | undefined {
+): import("./languageService").CalcKernelReference | undefined {
   return analysis.references
     .filter((reference) => reference.name === receiverName && comparePositions(reference.range.end, position) <= 0)
     .sort((left, right) => comparePositions(right.range.end, left.range.end))[0];
 }
 
 function visibleReceiverSymbol(
-  analysis: import("./languageService").IntKernelAnalysis,
+  analysis: import("./languageService").CalcKernelAnalysis,
   receiverName: string,
   position: vscode.Position
-): import("./languageService").IntKernelSymbol | undefined {
+): import("./languageService").CalcKernelSymbol | undefined {
   return analysis.symbols
     .filter((symbol) => {
       if (symbol.name !== receiverName || (symbol.kind !== "local" && symbol.kind !== "parameter")) {
@@ -109,7 +109,7 @@ function visibleReceiverSymbol(
 }
 
 function memberReceiverStructName(
-  analysis: import("./languageService").IntKernelAnalysis,
+  analysis: import("./languageService").CalcKernelAnalysis,
   position: vscode.Position,
   linePrefix: string
 ): string | undefined {
@@ -126,7 +126,7 @@ function memberReceiverStructName(
   return objectType?.kind === "struct" ? objectType.name : undefined;
 }
 
-function nearestFieldExpressionAtPosition(program: import("intkernel").Program, position: vscode.Position): Extract<Expression, { kind: "FieldExpression" }> | undefined {
+function nearestFieldExpressionAtPosition(program: import("calckernel").Program, position: vscode.Position): Extract<Expression, { kind: "FieldExpression" }> | undefined {
   let nearest: Extract<Expression, { kind: "FieldExpression" }> | undefined;
   walkProgram(program, {
     expression: (expression) => {
@@ -160,12 +160,12 @@ function memberReceiverName(linePrefix: string): string | undefined {
   return match?.[1];
 }
 
-function spanStartPosition(span: import("intkernel").SourceSpan): vscode.Position {
+function spanStartPosition(span: import("calckernel").SourceSpan): vscode.Position {
   const start = toZeroBased(span.start);
   return new vscode.Position(start.line, start.character);
 }
 
-function spanEndPosition(span: import("intkernel").SourceSpan): vscode.Position {
+function spanEndPosition(span: import("calckernel").SourceSpan): vscode.Position {
   const end = toZeroBased(span.end);
   return new vscode.Position(end.line, end.character);
 }
@@ -180,7 +180,7 @@ function comparePositions(left: vscode.Position, right: vscode.Position): number
 function keywordCompletions(): vscode.CompletionItem[] {
   return keywords.map((label) => {
     const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Keyword);
-    item.detail = "IntKernel keyword";
+    item.detail = "CalcKernel keyword";
     item.sortText = `1_${label}`;
     return item;
   });
@@ -190,24 +190,24 @@ function typeCompletions(): vscode.CompletionItem[] {
   return [
     ...primitiveTypes.map((label) => {
       const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.TypeParameter);
-      item.detail = "IntKernel primitive type";
+      item.detail = "CalcKernel primitive type";
       item.sortText = `2_${label}`;
       return item;
     }),
-    snippetItem("ptr<T>", "ptr<${1:Item}>", "IntKernel pointer type", "2_ptr")
+    snippetItem("ptr<T>", "ptr<${1:Item}>", "CalcKernel pointer type", "2_ptr")
   ];
 }
 
 function snippetCompletions(): vscode.CompletionItem[] {
   return [
-    snippetItem("struct declaration", "struct ${1:Name} {\n  ${2:field}: ${3:i64};\n}", "IntKernel struct declaration", "0_struct"),
-    snippetItem("function declaration", "fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {\n  return ${2:param};\n}", "IntKernel internal function", "0_fn"),
-    snippetItem("export function", "export fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {\n  return ${2:param};\n}", "IntKernel exported function", "0_export_fn"),
-    snippetItem("let binding", "let ${1:name}: ${2:i64} = ${3:0};", "IntKernel let binding", "0_let"),
-    snippetItem("if statement", "if ${1:condition} {\n  ${2:return 0;}\n}", "IntKernel if statement", "0_if"),
-    snippetItem("if else statement", "if ${1:condition} {\n  ${2:return 0;}\n} else {\n  ${3:return 1;}\n}", "IntKernel if/else statement", "0_if_else"),
-    snippetItem("while loop", "while ${1:condition} {\n  ${2:i = i + 1;}\n}", "IntKernel while loop", "0_while"),
-    snippetItem("return statement", "return ${1:0};", "IntKernel return statement", "0_return")
+    snippetItem("struct declaration", "struct ${1:Name} {\n  ${2:field}: ${3:i64};\n}", "CalcKernel struct declaration", "0_struct"),
+    snippetItem("function declaration", "fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {\n  return ${2:param};\n}", "CalcKernel internal function", "0_fn"),
+    snippetItem("export function", "export fn ${1:name}(${2:param}: ${3:i64}) -> ${4:i64} {\n  return ${2:param};\n}", "CalcKernel exported function", "0_export_fn"),
+    snippetItem("let binding", "let ${1:name}: ${2:i64} = ${3:0};", "CalcKernel let binding", "0_let"),
+    snippetItem("if statement", "if ${1:condition} {\n  ${2:return 0;}\n}", "CalcKernel if statement", "0_if"),
+    snippetItem("if else statement", "if ${1:condition} {\n  ${2:return 0;}\n} else {\n  ${3:return 1;}\n}", "CalcKernel if/else statement", "0_if_else"),
+    snippetItem("while loop", "while ${1:condition} {\n  ${2:i = i + 1;}\n}", "CalcKernel while loop", "0_while"),
+    snippetItem("return statement", "return ${1:0};", "CalcKernel return statement", "0_return")
   ];
 }
 

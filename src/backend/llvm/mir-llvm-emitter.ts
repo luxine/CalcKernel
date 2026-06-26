@@ -44,7 +44,7 @@ export function emitMirLlvmModule(module: MirModule, options: EmitMirLlvmModuleO
   const layout = createLlvmLayout(module.structs);
   const optLevel = resolveOptimizationLevel(options);
 
-  writer.line("; ModuleID = 'intkernel'");
+  writer.line("; ModuleID = 'calckernel'");
   writer.line(`source_filename = "${escapeLlvmString(stableSourceFileName(options.sourceFileName))}"`);
 
   const targetTriple = emitLlvmTargetTriple(options.targetTriple);
@@ -701,7 +701,7 @@ function isF64Type(type: MirType): boolean {
 }
 
 function stableSourceFileName(sourceFileName?: string): string {
-  return sourceFileName === undefined ? "input.ik" : basename(sourceFileName);
+  return sourceFileName === undefined ? "input.ck" : basename(sourceFileName);
 }
 
 function escapeLlvmString(value: string): string {

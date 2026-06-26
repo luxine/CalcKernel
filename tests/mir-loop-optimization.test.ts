@@ -16,10 +16,10 @@ import { loopInvariantCodeMotionPass } from "../src/opt/passes/loop-invariant-co
 import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
-const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror", "-DIK_BUILD_DLL"];
+const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror", "-DCK_BUILD_DLL"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-loop-opt-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-loop-opt-"));
 }
 
 function hasClang(): boolean {
@@ -27,7 +27,7 @@ function hasClang(): boolean {
 }
 
 function lower(sourceText: string): MirModule {
-  const checked = check(new SourceFile("loop.ik", sourceText));
+  const checked = check(new SourceFile("loop.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -279,7 +279,7 @@ describe("MIR loop optimization e2e", () => {
     () => {
       const cwd = tempDir();
       writeFileSync(
-        join(cwd, "sum.ik"),
+        join(cwd, "sum.ck"),
         `
 export fn sum_to_n(n: i64) -> i64 {
   let i: i64 = 0;
@@ -296,7 +296,7 @@ export fn sum_to_n(n: i64) -> i64 {
       );
       const cFile = join(cwd, "build/sum.c");
       const hFile = join(cwd, "build/sum.h");
-      expect(runCli(["emit-c", "sum.ik", "--out", cFile, "--header", hFile, "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+      expect(runCli(["emit-c", "sum.ck", "--out", cFile, "--header", hFile, "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
 
       const harnessFile = join(cwd, "build/sum_harness.c");
       const executable = join(cwd, "build/sum_harness");
@@ -328,10 +328,10 @@ int main(void) {
     clangAvailable ? "compiles and runs O3 optimized pricing" : "compiles and runs O3 optimized pricing (skipped because clang was not found)",
     () => {
       const cwd = tempDir();
-      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
       const cFile = join(cwd, "build/pricing.c");
       const hFile = join(cwd, "build/pricing.h");
-      expect(runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", hFile, "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+      expect(runCli(["emit-c", "pricing.ck", "--out", cFile, "--header", hFile, "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
 
       const harnessFile = join(cwd, "build/pricing_harness.c");
       const executable = join(cwd, "build/pricing_harness");

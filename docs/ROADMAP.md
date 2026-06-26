@@ -1,4 +1,4 @@
-# IntKernel Roadmap
+# CalcKernel Roadmap
 
 [简体中文](zh-CN/ROADMAP.md)
 
@@ -26,7 +26,7 @@ will ship in this order.
 - Add minimal Python loading example.
 - Add minimal Node.js loading example.
 - Document 64-bit integer handling, especially JS `BigInt`.
-- Keep examples runtime-free on the IntKernel side.
+- Keep examples runtime-free on the CalcKernel side.
 
 ## Benchmarking
 
@@ -39,10 +39,10 @@ will ship in this order.
 Phase 10 checked arithmetic is complete for the current V0 language surface.
 
 - `--overflow unchecked` remains the default.
-- `--overflow checked` emits checked C/header output with `IK_Status`.
+- `--overflow checked` emits checked C/header output with `CK_Status`.
 - Checked mode reports add, subtract, multiply, divide, modulo, and unary minus
   arithmetic failures.
-- Checked mode propagates errors across IntKernel function calls.
+- Checked mode propagates errors across CalcKernel function calls.
 - Checked mode preserves `&&` and `||` short-circuit behavior.
 - Checked mode supports V0 control flow, pointer indexing, and struct field
   access.
@@ -68,7 +68,7 @@ is typed, three-address, and basic-block based, but not SSA.
 - Typed AST lowers to MIR without changing language semantics.
 - MIR-to-C unchecked code generation is implemented.
 - MIR-to-C checked code generation is implemented.
-- `ikc emit-mir` exposes stable MIR text for compiler debugging.
+- `ckc emit-mir` exposes stable MIR text for compiler debugging.
 - The default `emit-c` and `build` pipeline now uses MIR.
 - The old AST C backend remains as a legacy/internal fallback during migration.
 
@@ -87,10 +87,10 @@ by MIR.
 - Module memory is exported as `(memory (export "memory") 1)`.
 - Struct layout is deterministic and independent of host C compilers.
 - MIR-to-WAT code generation has stable snapshots.
-- `ikc emit-wat` emits stable WAT text.
-- `ikc emit-wasm` assembles WAT through the bundled `wabt` npm package.
+- `ckc emit-wat` emits stable WAT text.
+- `ckc emit-wasm` assembles WAT through the bundled `wabt` npm package.
 - Node.js and browser WebAssembly examples use `DataView` and `BigInt`.
-- `pricing.ik` has WASM e2e coverage.
+- `pricing.ck` has WASM e2e coverage.
 - The benchmark harness includes an unchecked WASM benchmark.
 
 Phase 12 v1 remains unchecked-only. `--overflow checked` for WASM must report a
@@ -115,9 +115,9 @@ language surface.
 
 - `docs/LLVM_BACKEND.md` documents the LLVM backend contract.
 - MIR-to-LLVM IR text generation is implemented.
-- `ikc emit-llvm` emits stable `.ll` output.
-- `ikc build-llvm` can build dynamic libraries through clang.
-- `ikc build-llvm --kind object` can emit object files through clang.
+- `ckc emit-llvm` emits stable `.ll` output.
+- `ckc build-llvm` can build dynamic libraries through clang.
+- `ckc build-llvm --kind object` can emit object files through clang.
 - LLVM IR snapshots cover scalar, control flow, function calls,
   ptr/index/field/store, short-circuiting, and `pricing`.
 - LLVM clang e2e tests cover scalar, bool ABI, control flow, function calls,
@@ -147,7 +147,7 @@ Future LLVM work:
 
 Phase 14 optimization and performance work is complete for v0.4.0.
 
-- `ikc` supports `--opt-level 0`, `--opt-level 1`, `--opt-level 2`, and
+- `ckc` supports `--opt-level 0`, `--opt-level 1`, `--opt-level 2`, and
   `--opt-level 3`, plus `-O0` through `-O3` aliases.
 - `-O0` remains the conservative default and keeps output closest to lowered
   MIR.
@@ -158,7 +158,7 @@ Phase 14 optimization and performance work is complete for v0.4.0.
 - The performance suite supports quick/full runs, private baselines, compare
   mode, and explicit regression guards.
 - Optimizations must preserve checked/unchecked semantics and generated ABI, and
-  must not specialize for `examples/pricing.ik`.
+  must not specialize for `examples/pricing.ck`.
 
 Future optimization work:
 
@@ -171,7 +171,7 @@ Future optimization work:
 
 Numeric roadmap lock:
 
-- IK / IntKernel remains f64-only for floating point.
+- CK / CalcKernel remains f64-only for floating point.
 - `f32` is not planned.
 - Phase 20 starts explicit numeric casts with exact `i32_to_f64` and
   `u32_to_f64` builtins only.

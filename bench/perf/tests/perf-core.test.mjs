@@ -139,10 +139,10 @@ describe("perf runner core", () => {
       "pricing-c-unchecked-O0",
       "pricing-c-unchecked-O2",
       "pricing-c-unchecked-O3",
-      "pricing-c-unchecked-ik-O3",
+      "pricing-c-unchecked-ck-O3",
       "pricing-c-checked-O3",
-      "pricing-helpers-c-unchecked-ik-O0",
-      "pricing-helpers-c-unchecked-ik-O2",
+      "pricing-helpers-c-unchecked-ck-O0",
+      "pricing-helpers-c-unchecked-ck-O2",
       "pricing-llvm-unchecked-O0",
       "pricing-llvm-unchecked-O2",
       "pricing-llvm-unchecked-O3",
@@ -159,13 +159,13 @@ describe("perf runner core", () => {
 
     const wasmCompute = commands.find((command) => command.name === "pricing-wasm-unchecked-compute-only");
     assert.equal(wasmCompute.category, "wasm");
-    assert.equal(wasmCompute.optLevel, "IK-O0");
+    assert.equal(wasmCompute.optLevel, "CK-O0");
     assert.equal(wasmCompute.overflowMode, "unchecked");
     assert.match(wasmCompute.command, /--mode compute-only/);
 
     const wasmComputeO3 = commands.find((command) => command.name === "pricing-wasm-unchecked-compute-only-O3");
     assert.equal(wasmComputeO3.category, "wasm");
-    assert.equal(wasmComputeO3.optLevel, "IK-O3");
+    assert.equal(wasmComputeO3.optLevel, "CK-O3");
     assert.equal(wasmComputeO3.overflowMode, "unchecked");
     assert.match(wasmComputeO3.command, /pricing_o3\.wasm/);
 
@@ -177,14 +177,14 @@ describe("perf runner core", () => {
     assert.equal(callOverhead.category, "call-overhead");
     assert.match(callOverhead.command, /--calls 10000/);
 
-    const helperO2 = commands.find((command) => command.name === "pricing-helpers-c-unchecked-ik-O2");
+    const helperO2 = commands.find((command) => command.name === "pricing-helpers-c-unchecked-ck-O2");
     assert.equal(helperO2.category, "native");
-    assert.equal(helperO2.optLevel, "IK-O2/clang-O3");
+    assert.equal(helperO2.optLevel, "CK-O2/clang-O3");
     assert.equal(helperO2.overflowMode, "unchecked");
 
-    const pricingIkO3 = commands.find((command) => command.name === "pricing-c-unchecked-ik-O3");
+    const pricingIkO3 = commands.find((command) => command.name === "pricing-c-unchecked-ck-O3");
     assert.equal(pricingIkO3.category, "native");
-    assert.equal(pricingIkO3.optLevel, "IK-O3/clang-O3");
+    assert.equal(pricingIkO3.optLevel, "CK-O3/clang-O3");
     assert.equal(pricingIkO3.overflowMode, "unchecked");
 
     const llvmO2 = commands.find((command) => command.name === "pricing-llvm-unchecked-O2");
@@ -194,7 +194,7 @@ describe("perf runner core", () => {
 
     const checkedIkO3 = commands.find((command) => command.name === "pricing-c-checked-O3");
     assert.equal(checkedIkO3.category, "native");
-    assert.equal(checkedIkO3.optLevel, "IK-O3/clang-O3");
+    assert.equal(checkedIkO3.optLevel, "CK-O3/clang-O3");
     assert.equal(checkedIkO3.overflowMode, "checked");
   });
 
@@ -211,93 +211,93 @@ describe("perf runner core", () => {
     assert.deepEqual(f64Names, [
       "f64-axpy-js-array-number",
       "f64-axpy-js-float64array",
-      "f64-axpy-ik-c-o3",
-      "f64-axpy-ik-llvm-o3",
-      "f64-axpy-ik-wasm-o3-setup",
-      "f64-axpy-ik-wasm-o3-input-marshal",
-      "f64-axpy-ik-wasm-o3-compute-only",
-      "f64-axpy-ik-wasm-o3-output-readback",
-      "f64-axpy-ik-wasm-o3-total",
+      "f64-axpy-ck-c-o3",
+      "f64-axpy-ck-llvm-o3",
+      "f64-axpy-ck-wasm-o3-setup",
+      "f64-axpy-ck-wasm-o3-input-marshal",
+      "f64-axpy-ck-wasm-o3-compute-only",
+      "f64-axpy-ck-wasm-o3-output-readback",
+      "f64-axpy-ck-wasm-o3-total",
       "f64-axpy-wasm-memory-only",
-      "f64-axpy-ik-wasm-o3-low-copy-setup",
-      "f64-axpy-ik-wasm-o3-low-copy-input-marshal",
-      "f64-axpy-ik-wasm-o3-low-copy-compute-only",
-      "f64-axpy-ik-wasm-o3-low-copy-output-readback",
-      "f64-axpy-ik-wasm-o3-low-copy-total",
+      "f64-axpy-ck-wasm-o3-low-copy-setup",
+      "f64-axpy-ck-wasm-o3-low-copy-input-marshal",
+      "f64-axpy-ck-wasm-o3-low-copy-compute-only",
+      "f64-axpy-ck-wasm-o3-low-copy-output-readback",
+      "f64-axpy-ck-wasm-o3-low-copy-total",
       "f64-dot-js-array-number",
       "f64-dot-js-float64array",
-      "f64-dot-ik-c-o3",
-      "f64-dot-ik-llvm-o3",
-      "f64-dot-ik-wasm-o3-setup",
-      "f64-dot-ik-wasm-o3-input-marshal",
-      "f64-dot-ik-wasm-o3-compute-only",
-      "f64-dot-ik-wasm-o3-output-readback",
-      "f64-dot-ik-wasm-o3-total",
+      "f64-dot-ck-c-o3",
+      "f64-dot-ck-llvm-o3",
+      "f64-dot-ck-wasm-o3-setup",
+      "f64-dot-ck-wasm-o3-input-marshal",
+      "f64-dot-ck-wasm-o3-compute-only",
+      "f64-dot-ck-wasm-o3-output-readback",
+      "f64-dot-ck-wasm-o3-total",
       "f64-dot-wasm-memory-only",
-      "f64-dot-ik-wasm-o3-low-copy-setup",
-      "f64-dot-ik-wasm-o3-low-copy-input-marshal",
-      "f64-dot-ik-wasm-o3-low-copy-compute-only",
-      "f64-dot-ik-wasm-o3-low-copy-output-readback",
-      "f64-dot-ik-wasm-o3-low-copy-total",
+      "f64-dot-ck-wasm-o3-low-copy-setup",
+      "f64-dot-ck-wasm-o3-low-copy-input-marshal",
+      "f64-dot-ck-wasm-o3-low-copy-compute-only",
+      "f64-dot-ck-wasm-o3-low-copy-output-readback",
+      "f64-dot-ck-wasm-o3-low-copy-total",
       "f64-sum-js-array-number",
       "f64-sum-js-float64array",
-      "f64-sum-ik-c-o3",
-      "f64-sum-ik-llvm-o3",
-      "f64-sum-ik-wasm-o3-setup",
-      "f64-sum-ik-wasm-o3-input-marshal",
-      "f64-sum-ik-wasm-o3-compute-only",
-      "f64-sum-ik-wasm-o3-output-readback",
-      "f64-sum-ik-wasm-o3-total",
+      "f64-sum-ck-c-o3",
+      "f64-sum-ck-llvm-o3",
+      "f64-sum-ck-wasm-o3-setup",
+      "f64-sum-ck-wasm-o3-input-marshal",
+      "f64-sum-ck-wasm-o3-compute-only",
+      "f64-sum-ck-wasm-o3-output-readback",
+      "f64-sum-ck-wasm-o3-total",
       "f64-sum-wasm-memory-only",
-      "f64-sum-ik-wasm-o3-low-copy-setup",
-      "f64-sum-ik-wasm-o3-low-copy-input-marshal",
-      "f64-sum-ik-wasm-o3-low-copy-compute-only",
-      "f64-sum-ik-wasm-o3-low-copy-output-readback",
-      "f64-sum-ik-wasm-o3-low-copy-total",
+      "f64-sum-ck-wasm-o3-low-copy-setup",
+      "f64-sum-ck-wasm-o3-low-copy-input-marshal",
+      "f64-sum-ck-wasm-o3-low-copy-compute-only",
+      "f64-sum-ck-wasm-o3-low-copy-output-readback",
+      "f64-sum-ck-wasm-o3-low-copy-total",
       "f64-scale-js-array-number",
       "f64-scale-js-float64array",
-      "f64-scale-ik-c-o3",
-      "f64-scale-ik-llvm-o3",
-      "f64-scale-ik-wasm-o3-setup",
-      "f64-scale-ik-wasm-o3-input-marshal",
-      "f64-scale-ik-wasm-o3-compute-only",
-      "f64-scale-ik-wasm-o3-output-readback",
-      "f64-scale-ik-wasm-o3-total",
+      "f64-scale-ck-c-o3",
+      "f64-scale-ck-llvm-o3",
+      "f64-scale-ck-wasm-o3-setup",
+      "f64-scale-ck-wasm-o3-input-marshal",
+      "f64-scale-ck-wasm-o3-compute-only",
+      "f64-scale-ck-wasm-o3-output-readback",
+      "f64-scale-ck-wasm-o3-total",
       "f64-scale-wasm-memory-only",
-      "f64-scale-ik-wasm-o3-low-copy-setup",
-      "f64-scale-ik-wasm-o3-low-copy-input-marshal",
-      "f64-scale-ik-wasm-o3-low-copy-compute-only",
-      "f64-scale-ik-wasm-o3-low-copy-output-readback",
-      "f64-scale-ik-wasm-o3-low-copy-total"
+      "f64-scale-ck-wasm-o3-low-copy-setup",
+      "f64-scale-ck-wasm-o3-low-copy-input-marshal",
+      "f64-scale-ck-wasm-o3-low-copy-compute-only",
+      "f64-scale-ck-wasm-o3-low-copy-output-readback",
+      "f64-scale-ck-wasm-o3-low-copy-total"
     ]);
 
-    const cCase = commands.find((command) => command.name === "f64-axpy-ik-c-o3");
+    const cCase = commands.find((command) => command.name === "f64-axpy-ck-c-o3");
     assert.equal(cCase.category, "native");
-    assert.equal(cCase.optLevel, "IK-O3/clang-O3");
+    assert.equal(cCase.optLevel, "CK-O3/clang-O3");
     assert.equal(cCase.overflowMode, "unchecked");
     assert.match(cCase.command, /--kernel axpy/);
 
-    const llvmCase = commands.find((command) => command.name === "f64-dot-ik-llvm-o3");
+    const llvmCase = commands.find((command) => command.name === "f64-dot-ck-llvm-o3");
     assert.equal(llvmCase.category, "native");
-    assert.equal(llvmCase.optLevel, "IK-O3\/LLVM-O3");
+    assert.equal(llvmCase.optLevel, "CK-O3\/LLVM-O3");
 
-    const wasmCompute = commands.find((command) => command.name === "f64-sum-ik-wasm-o3-compute-only");
+    const wasmCompute = commands.find((command) => command.name === "f64-sum-ck-wasm-o3-compute-only");
     assert.equal(wasmCompute.category, "wasm");
     assert.equal(wasmCompute.phase, "compute");
-    assert.equal(wasmCompute.optLevel, "IK-O3");
+    assert.equal(wasmCompute.optLevel, "CK-O3");
     assert.match(wasmCompute.command, /--mode compute-only/);
 
-    const wasmSetup = commands.find((command) => command.name === "f64-axpy-ik-wasm-o3-setup");
+    const wasmSetup = commands.find((command) => command.name === "f64-axpy-ck-wasm-o3-setup");
     assert.equal(wasmSetup.category, "wasm");
     assert.equal(wasmSetup.phase, "setup");
     assert.match(wasmSetup.command, /--mode setup/);
 
-    const wasmInputMarshal = commands.find((command) => command.name === "f64-dot-ik-wasm-o3-input-marshal");
+    const wasmInputMarshal = commands.find((command) => command.name === "f64-dot-ck-wasm-o3-input-marshal");
     assert.equal(wasmInputMarshal.category, "memory");
     assert.equal(wasmInputMarshal.phase, "input-marshal");
     assert.match(wasmInputMarshal.command, /--mode input-marshal/);
 
-    const wasmOutputReadback = commands.find((command) => command.name === "f64-scale-ik-wasm-o3-output-readback");
+    const wasmOutputReadback = commands.find((command) => command.name === "f64-scale-ck-wasm-o3-output-readback");
     assert.equal(wasmOutputReadback.category, "memory");
     assert.equal(wasmOutputReadback.phase, "output-readback");
     assert.match(wasmOutputReadback.command, /--mode output-readback/);
@@ -307,13 +307,13 @@ describe("perf runner core", () => {
     assert.equal(wasmMemory.phase, "memory-only");
     assert.match(wasmMemory.command, /--mode memory-only/);
 
-    const wasmLowCopyTotal = commands.find((command) => command.name === "f64-axpy-ik-wasm-o3-low-copy-total");
+    const wasmLowCopyTotal = commands.find((command) => command.name === "f64-axpy-ck-wasm-o3-low-copy-total");
     assert.equal(wasmLowCopyTotal.category, "wasm-low-copy");
     assert.equal(wasmLowCopyTotal.phase, "total");
     assert.match(wasmLowCopyTotal.command, /--mode total/);
     assert.match(wasmLowCopyTotal.command, /--copy-mode float64array/);
 
-    const wasmLowCopyInput = commands.find((command) => command.name === "f64-dot-ik-wasm-o3-low-copy-input-marshal");
+    const wasmLowCopyInput = commands.find((command) => command.name === "f64-dot-ck-wasm-o3-low-copy-input-marshal");
     assert.equal(wasmLowCopyInput.category, "memory-low-copy");
     assert.equal(wasmLowCopyInput.phase, "input-marshal");
     assert.match(wasmLowCopyInput.command, /--copy-mode float64array/);
@@ -331,16 +331,16 @@ describe("perf runner core", () => {
         "pricing-c-unchecked-O0",
         "pricing-c-unchecked-O2",
         "pricing-c-unchecked-O3",
-        "pricing-c-unchecked-ik-O3",
+        "pricing-c-unchecked-ck-O3",
         "pricing-c-checked-O3",
-        "pricing-helpers-c-unchecked-ik-O0",
-        "pricing-helpers-c-unchecked-ik-O2",
+        "pricing-helpers-c-unchecked-ck-O0",
+        "pricing-helpers-c-unchecked-ck-O2",
         "pricing-llvm-unchecked-O0",
         "pricing-llvm-unchecked-O2",
         "pricing-llvm-unchecked-O3"
       ]
     );
-    assert.deepEqual(jobs.map((job) => job.name).slice(10), ["f64-ik-c-o3", "f64-ik-llvm-o3"]);
+    assert.deepEqual(jobs.map((job) => job.name).slice(10), ["f64-ck-c-o3", "f64-ck-llvm-o3"]);
   });
 
   it("compares f64 correctness with absolute and relative tolerance", () => {
@@ -445,7 +445,7 @@ describe("perf runner core", () => {
         "pricing-c-unchecked-O0",
         "pricing-c-unchecked-O2",
         "pricing-c-unchecked-O3",
-        "pricing-c-unchecked-ik-O3",
+        "pricing-c-unchecked-ck-O3",
         "pricing-wasm-unchecked-compute-only",
         "pricing-wasm-unchecked-compute-only-O3"
       ]
@@ -467,19 +467,19 @@ describe("perf runner core", () => {
       [
         "f64-axpy-js-array-number",
         "f64-axpy-js-float64array",
-        "f64-axpy-ik-c-o3",
-        "f64-axpy-ik-llvm-o3",
-        "f64-axpy-ik-wasm-o3-setup",
-        "f64-axpy-ik-wasm-o3-input-marshal",
-        "f64-axpy-ik-wasm-o3-compute-only",
-        "f64-axpy-ik-wasm-o3-output-readback",
-        "f64-axpy-ik-wasm-o3-total",
+        "f64-axpy-ck-c-o3",
+        "f64-axpy-ck-llvm-o3",
+        "f64-axpy-ck-wasm-o3-setup",
+        "f64-axpy-ck-wasm-o3-input-marshal",
+        "f64-axpy-ck-wasm-o3-compute-only",
+        "f64-axpy-ck-wasm-o3-output-readback",
+        "f64-axpy-ck-wasm-o3-total",
         "f64-axpy-wasm-memory-only",
-        "f64-axpy-ik-wasm-o3-low-copy-setup",
-        "f64-axpy-ik-wasm-o3-low-copy-input-marshal",
-        "f64-axpy-ik-wasm-o3-low-copy-compute-only",
-        "f64-axpy-ik-wasm-o3-low-copy-output-readback",
-        "f64-axpy-ik-wasm-o3-low-copy-total"
+        "f64-axpy-ck-wasm-o3-low-copy-setup",
+        "f64-axpy-ck-wasm-o3-low-copy-input-marshal",
+        "f64-axpy-ck-wasm-o3-low-copy-compute-only",
+        "f64-axpy-ck-wasm-o3-low-copy-output-readback",
+        "f64-axpy-ck-wasm-o3-low-copy-total"
       ]
     );
   });

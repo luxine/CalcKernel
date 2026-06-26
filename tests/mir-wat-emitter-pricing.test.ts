@@ -13,9 +13,9 @@ function normalizeNewlines(text: string): string {
 }
 
 describe("MIR WAT emitter pricing", () => {
-  it("emits examples/pricing.ik as stable WAT", () => {
-    const sourceText = readFileSync("examples/pricing.ik", "utf8");
-    const checked = check(new SourceFile("pricing.ik", sourceText));
+  it("emits examples/pricing.ck as stable WAT", () => {
+    const sourceText = readFileSync("examples/pricing.ck", "utf8");
+    const checked = check(new SourceFile("pricing.ck", sourceText));
     expect(checked.diagnostics).toEqual([]);
     const mir = lowerToMir(checked.checkedProgram);
     expect(validateMirModule(mir).errors).toEqual([]);

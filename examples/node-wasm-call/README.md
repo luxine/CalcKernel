@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-This example calls the WebAssembly module generated from `examples/pricing.ik`
+This example calls the WebAssembly module generated from `examples/pricing.ck`
 with the built-in Node.js WebAssembly API. It does not need a native
 `.so`, `.dylib`, or `.dll`, and it does not install any example-local
 dependency.
@@ -18,13 +18,13 @@ pnpm build
 From this example directory, generate `../../build/pricing.wasm`:
 
 ```sh
-ikc emit-wasm ../../examples/pricing.ik --out ../../build/pricing.wasm
+ckc emit-wasm ../../examples/pricing.ck --out ../../build/pricing.wasm
 ```
 
 In a source checkout, you can run the same CLI through pnpm from this directory:
 
 ```sh
-pnpm --dir ../.. ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+pnpm --dir ../.. ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 ```
 
 ## Run
@@ -63,9 +63,9 @@ all `DataView` reads and writes in this example pass `true` for the
 
 ## Item Layout
 
-`pricing.ik` defines:
+`pricing.ck` defines:
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;

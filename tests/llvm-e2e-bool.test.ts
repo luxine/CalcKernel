@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-bool-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-bool-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM bool ABI end-to-end", () => {
   it("compiles generated LLVM IR and calls bool params/returns from a C harness", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_bool.ik"), readFileSync("examples/llvm_bool.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_bool.ck"), readFileSync("examples/llvm_bool.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_bool.ik", "--out", "build/llvm_bool.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_bool.ck", "--out", "build/llvm_bool.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}

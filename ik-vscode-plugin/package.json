@@ -1,32 +1,32 @@
 {
-  "name": "ik-vscode-plugin",
-  "displayName": "IntKernel",
-  "description": "VSCode language support for IntKernel .ik files.",
+  "name": "calckernel-vscode-plugin",
+  "displayName": "CalcKernel",
+  "description": "VSCode language support for CalcKernel .ck files.",
   "version": "0.1.0",
   "publisher": "luxine",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:intkernel"],
+  "activationEvents": ["onLanguage:calckernel"],
   "main": "./dist/extension.cjs",
   "contributes": {
     "languages": [
       {
-        "id": "intkernel",
-        "aliases": ["IntKernel", "ik"],
-        "extensions": [".ik"],
+        "id": "calckernel",
+        "aliases": ["CalcKernel", "ck"],
+        "extensions": [".ck"],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "intkernel",
-        "scopeName": "source.intkernel",
-        "path": "./syntaxes/intkernel.tmLanguage.json"
+        "language": "calckernel",
+        "scopeName": "source.calckernel",
+        "path": "./syntaxes/calckernel.tmLanguage.json"
       }
     ],
     "snippets": [
-      { "language": "intkernel", "path": "./snippets/intkernel.json" }
+      { "language": "calckernel", "path": "./snippets/calckernel.json" }
     ]
   },
   "scripts": {
@@ -42,7 +42,7 @@
     "@types/vscode": "1.90.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.25.0",
-    "intkernel": "file:..",
+    "calckernel": "file:..",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   }

@@ -4,24 +4,24 @@ import { TokenKind } from "../src/lexer/token.js";
 import { SourceFile } from "../src/source/source-file.js";
 
 function kindsOf(sourceText: string): TokenKind[] {
-  const result = lex(new SourceFile("test.ik", sourceText));
+  const result = lex(new SourceFile("test.ck", sourceText));
   expect(result.diagnostics).toEqual([]);
   return result.tokens.map((token) => token.kind);
 }
 
 function tokensOf(sourceText: string) {
-  const result = lex(new SourceFile("test.ik", sourceText));
+  const result = lex(new SourceFile("test.ck", sourceText));
   expect(result.diagnostics).toEqual([]);
   return result.tokens;
 }
 
 function diagnosticMessagesOf(sourceText: string): string[] {
-  return lex(new SourceFile("test.ik", sourceText)).diagnostics.map((diagnostic) => diagnostic.message);
+  return lex(new SourceFile("test.ck", sourceText)).diagnostics.map((diagnostic) => diagnostic.message);
 }
 
 describe("lexer", () => {
   it("emits tokens with kind, text, line, column, start, and end", () => {
-    const result = lex(new SourceFile("test.ik", "let x: i32 = 42;"));
+    const result = lex(new SourceFile("test.ck", "let x: i32 = 42;"));
 
     expect(result.diagnostics).toEqual([]);
     expect(result.tokens[0]).toEqual({
@@ -160,7 +160,7 @@ describe("lexer", () => {
   });
 
   it("tracks line and column for tokens", () => {
-    const result = lex(new SourceFile("test.ik", "let x: i32 = 1;\n  return x;"));
+    const result = lex(new SourceFile("test.ck", "let x: i32 = 1;\n  return x;"));
 
     expect(result.diagnostics).toEqual([]);
     expect(result.tokens.find((token) => token.text === "return")).toMatchObject({
@@ -188,14 +188,14 @@ describe("lexer", () => {
   });
 
   it("reports unknown characters with line and column", () => {
-    const result = lex(new SourceFile("bad.ik", "let x: i32 = @;"));
+    const result = lex(new SourceFile("bad.ck", "let x: i32 = @;"));
 
     expect(result.diagnostics).toEqual([
       expect.objectContaining({
-        code: "IK0001",
+        code: "CK0001",
         severity: "error",
         message: "Unexpected character '@'.",
-        fileName: "bad.ik",
+        fileName: "bad.ck",
         line: 1,
         column: 14
       })

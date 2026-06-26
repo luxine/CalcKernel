@@ -1,18 +1,18 @@
-# IntKernel Language Specification
+# CalcKernel Language Specification
 
 [简体中文](zh-CN/LANGUAGE_SPEC.md)
 
-This document describes the IK / IntKernel V0 language.
+This document describes the CK / CalcKernel V0 language.
 
-IK / IntKernel is a high-performance DSL for pure computation kernels. It is
-not a general purpose programming language. V0 is designed to compile `.ik`
+CK / CalcKernel is a high-performance DSL for pure computation kernels. It is
+not a general purpose programming language. V0 is designed to compile `.ck`
 source into C, WASM, and LLVM backend outputs for host languages and native
 toolchains. Integer kernels remain the primary target; Phase 16 adds strict
 `f64` for numerical kernels.
 
 ## Source Files
 
-IntKernel source files use the `.ik` extension.
+CalcKernel source files use the `.ck` extension.
 
 ## Supported Types
 
@@ -31,7 +31,7 @@ V0 supports these types:
 no dynamic allocation.
 
 `f64` is strict floating point. It is intended for numerical kernels. It is the
-only floating point type in IK / IntKernel; `f32` is not planned. It is not
+only floating point type in CK / CalcKernel; `f32` is not planned. It is not
 recommended for money, tax, POS totals, or pricing-rule calculations; use `i64`
 fixed-point arithmetic for those domains so checked integer mode can report
 overflow and division errors explicitly.
@@ -45,7 +45,7 @@ unsupported.
 
 ### Structs
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;
@@ -57,7 +57,7 @@ inside a struct are type errors.
 
 ### Functions
 
-```ik
+```ck
 export fn add_i64(a: i64, b: i64) -> i64 {
   return a + b;
 }
@@ -78,7 +78,7 @@ in the generated C header. Non-exported `fn` declarations are emitted as
 
 Examples:
 
-```ik
+```ck
 let i: i32 = 0;
 i = i + 1;
 
@@ -140,10 +140,10 @@ Negative numbers are parsed as unary `-` applied to a literal. For example,
 
 ### Explicit int-to-f64 Casts
 
-IK / IntKernel supports two exact compiler builtins for crossing from 32-bit
+CK / CalcKernel supports two exact compiler builtins for crossing from 32-bit
 integers into strict `f64` code:
 
-```ik
+```ck
 export fn avg_i32(sum: i32, count: i32) -> f64 {
   return i32_to_f64(sum) / i32_to_f64(count);
 }
@@ -178,7 +178,7 @@ integer error.
 
 ### f64 Edge Semantics
 
-IK / IntKernel f64 semantics are strict and intentionally narrow:
+CK / CalcKernel f64 semantics are strict and intentionally narrow:
 
 - `NaN` and infinity do not have literal syntax; they can only be produced by
   arithmetic such as `0.0 / 0.0` or `1.0 / 0.0`.
@@ -188,7 +188,7 @@ IK / IntKernel f64 semantics are strict and intentionally narrow:
   tests classify NaN with `isNaN` and do not compare NaN payloads.
 - Infinity is classified by sign.
 - Finite cross-backend e2e checks use absolute and relative tolerance.
-- IK / IntKernel does not guarantee bit-identical floating point results across
+- CK / CalcKernel does not guarantee bit-identical floating point results across
   C, LLVM, WASM, and JavaScript hosts.
 
 ## Operator Precedence
@@ -242,7 +242,7 @@ available. Otherwise they default to `i32`.
 
 Examples rejected by the type checker:
 
-```ik
+```ck
 let x: f64 = 1;
 let y: i64 = 1.0;
 let z: f64 = 1.0 + 2;
@@ -288,17 +288,17 @@ overflow or division-by-zero checks.
 
 The compiler also supports optional checked arithmetic code generation with
 `--overflow checked`. Checked mode changes the generated C ABI to return
-`IK_Status`, writes the original IntKernel return value through a final
+`CK_Status`, writes the original CalcKernel return value through a final
 `ik_return` pointer, and checks integer add, subtract, multiply, divide, modulo,
 and unary minus operations. It also reports division by zero and signed
 division/modulo overflow such as `INT64_MIN / -1`.
 
-Checked arithmetic is a code generation mode, not new `.ik` syntax. It does not
+Checked arithmetic is a code generation mode, not new `.ck` syntax. It does not
 add bounds checks, pointer validity checks, heap allocation, runtime support, or
 exceptions.
 
 `f64` arithmetic is not checked for overflow. In checked C mode, f64 operations
 use ordinary strict C `double` behavior: f64 division by zero does not return
-`IK_ERR_DIV_BY_ZERO`, and f64 overflow does not return `IK_ERR_OVERFLOW`. See
+`CK_ERR_DIV_BY_ZERO`, and f64 overflow does not return `CK_ERR_OVERFLOW`. See
 [Checked Arithmetic](CHECKED_ARITHMETIC.md) for the full ABI and safety
 boundary.

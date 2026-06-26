@@ -2,16 +2,16 @@ import type { SourceFile, SourcePosition, SourceSpan } from "./source-file.js";
 
 export type DiagnosticSeverity = "error";
 export type DiagnosticCode =
-  | "IK0001"
-  | "IK1001"
-  | "IK2001"
-  | "IK2002"
-  | "IK2003"
-  | "IK2004"
-  | "IK2005"
-  | "IK2006"
-  | "IK2007"
-  | "IK2008";
+  | "CK0001"
+  | "CK1001"
+  | "CK2001"
+  | "CK2002"
+  | "CK2003"
+  | "CK2004"
+  | "CK2005"
+  | "CK2006"
+  | "CK2007"
+  | "CK2008";
 
 export interface Diagnostic {
   code: DiagnosticCode;

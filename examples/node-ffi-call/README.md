@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-This example calls the dynamic library generated from `examples/pricing.ik`
+This example calls the dynamic library generated from `examples/pricing.ck`
 through Node.js. It is intentionally isolated from the root project so the main
 compiler package does not depend on a native FFI module.
 
@@ -11,7 +11,7 @@ directory.
 
 ## Build the Dynamic Library
 
-From the repository root, build the IntKernel CLI:
+From the repository root, build the CalcKernel CLI:
 
 ```sh
 pnpm build
@@ -22,7 +22,7 @@ Then compile the pricing kernel.
 On macOS:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 This creates:
@@ -34,7 +34,7 @@ build/libpricing.dylib
 On Linux:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 This creates:
@@ -46,7 +46,7 @@ build/libpricing.so
 On Windows:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 ```
 
 This creates:
@@ -78,15 +78,15 @@ matches the expected values.
 
 ## Checked Mode
 
-Checked mode has a different C ABI. The function returns `IK_Status`, and the
-original IntKernel return value is written through a final output pointer.
+Checked mode has a different C ABI. The function returns `CK_Status`, and the
+original CalcKernel return value is written through a final output pointer.
 
 Build the checked dynamic library from the repository root.
 
 On macOS:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
 This creates:
@@ -98,7 +98,7 @@ build/libpricing_checked.dylib
 On Linux:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
 This creates:
@@ -110,7 +110,7 @@ build/libpricing_checked.so
 On Windows, pass the desired `.dll` file name explicitly:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 ```
 
 This creates:
@@ -132,7 +132,7 @@ node checked.mjs
 ```
 
 The script prints `OK` after a successful call and an overflow case where
-`price * qty` returns `IK_ERR_OVERFLOW`.
+`price * qty` returns `CK_ERR_OVERFLOW`.
 
 ## FFI Mapping
 
@@ -146,7 +146,7 @@ typedef struct Item {
   int64_t tax_rate_ppm;
 } Item;
 
-IK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
+CK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
 ```
 
 The Node.js binding mirrors this with Koffi:
@@ -164,18 +164,18 @@ The Node.js binding mirrors this with Koffi:
 The checked generated header defines status values:
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 ```
 
 The checked `calc_items` declaration is:
 
 ```c
-IK_API IK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
 ```
 
 The Koffi signature mirrors that ABI:
@@ -186,7 +186,7 @@ const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ i
 
 The checked example uses:
 
-- `number` for `IK_Status`, `IK_OK`, and other 32-bit status constants.
+- `number` for `CK_Status`, `CK_OK`, and other 32-bit status constants.
 - `Int32Array(1)` for the final `ik_return` pointer.
 - `BigInt` values for every `int64_t` field in `Item`.
 - `BigInt64Array` for the `int64_t* out` buffer.

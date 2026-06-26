@@ -1,9 +1,9 @@
-# IntKernel
+# CalcKernel
 
 [简体中文](README.zh-CN.md)
 
-IK / IntKernel is a high-performance DSL for pure computation kernels. It is
-not a general purpose programming language. V0 compiles `.ik` source into
+CK / CalcKernel is a high-performance DSL for pure computation kernels. It is
+not a general purpose programming language. V0 compiles source files into
 readable C, WAT/WASM, or LLVM IR outputs for host languages and toolchains such
 as Node.js, Python, Java, Rust, Go, C#, clang, and WebAssembly.
 
@@ -28,19 +28,20 @@ pnpm build
 In a source checkout, run the built CLI through the local pnpm script:
 
 ```sh
-pnpm ikc --help
-pnpm ikc check examples/pricing.ik
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
-pnpm ikc build examples/pricing.ik --out build/libpricing
-pnpm ikc build examples/pricing.ik --out build/libpricing --overflow unchecked
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc --help
+pnpm ckc check examples/pricing.ck
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h
+pnpm ckc build examples/pricing.ck --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing --overflow unchecked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
-When installed as a package, the `bin` entrypoint is `ikc`.
+When installed as a package, the `bin` entrypoint is `ckc`. Current examples,
+fixtures, docs, and package smoke sources use the `.ck` extension.
 
-## Example `.ik`
+## Example `.ck`
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;
@@ -67,7 +68,7 @@ export fn calc_items(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32 {
 
 Phase 16 adds first-pass strict `f64` support for numerical kernels:
 
-```ik
+```ck
 export fn axpy(a: f64, x: ptr<f64>, y: ptr<f64>, len: i32) -> f64 {
   let i: i32 = 0;
   let checksum: f64 = 0.0;
@@ -105,7 +106,7 @@ Strict mode means:
 
 `NaN`, positive/negative infinity, and `-0.0` follow the ordinary strict
 floating point behavior of the selected backend. They can be produced by
-arithmetic, but IK / IntKernel does not provide dedicated literal syntax and
+arithmetic, but CK / CalcKernel does not provide dedicated literal syntax and
 does not promise stable NaN payloads. Tests and benchmarks compare finite f64
 results with tolerance and classify NaN, infinity, and signed zero separately.
 
@@ -117,7 +118,7 @@ division errors explicitly.
 Explicit casts do not create implicit conversion paths. These functions are
 compiler builtins, not runtime calls:
 
-```ik
+```ck
 export fn avg_i32(sum: i32, count: i32) -> f64 {
   return i32_to_f64(sum) / i32_to_f64(count);
 }
@@ -137,23 +138,23 @@ error.
 Unchecked output is the default:
 
 ```sh
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h
 ```
 
 The explicit unchecked form is equivalent:
 
 ```sh
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h --overflow unchecked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h --overflow unchecked
 ```
 
 Checked output uses the checked arithmetic ABI:
 
 ```sh
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
 ```
 
 The generated header includes `stdint.h`, `stdbool.h`, struct typedefs, and
-exported function declarations. Headers also include `IK_API` for dynamic
+exported function declarations. Headers also include `CK_API` for dynamic
 library exports and an `extern "C"` guard for C++ consumers. The generated
 source includes the header and function implementations. In strict f64 mode,
 the C backend maps `f64` to `double`, `ptr<f64>` to `double*`, and emits ordinary
@@ -164,28 +165,28 @@ C double arithmetic and comparisons.
 Unchecked mode is the default:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 This is equivalent to:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing --overflow unchecked
+pnpm ckc build examples/pricing.ck --out build/libpricing --overflow unchecked
 ```
 
-Checked arithmetic mode changes the generated C ABI to return `IK_Status` and
+Checked arithmetic mode changes the generated C ABI to return `CK_Status` and
 write the original return value through the final `ik_return` pointer:
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
-`IK_Status` is an `int32_t` result code:
+`CK_Status` is an `int32_t` result code:
 
-- `IK_OK`: computation succeeded
-- `IK_ERR_OVERFLOW`: checked arithmetic overflow
-- `IK_ERR_DIV_BY_ZERO`: checked division or modulo by zero
-- `IK_ERR_NULL_POINTER`: generated checked `ik_return` pointer was `NULL`
+- `CK_OK`: computation succeeded
+- `CK_ERR_OVERFLOW`: checked arithmetic overflow
+- `CK_ERR_DIV_BY_ZERO`: checked division or modulo by zero
+- `CK_ERR_NULL_POINTER`: generated checked `ik_return` pointer was `NULL`
 
 Use checked mode for money, tax, discount, and rules kernels where arithmetic
 failure must be reported explicitly. Use unchecked mode for hot paths where
@@ -209,8 +210,8 @@ The output extension is platform-specific:
 Developers can inspect the typed MIR used by the default C backend:
 
 ```sh
-pnpm ikc emit-mir examples/pricing.ik
-pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir
+pnpm ckc emit-mir examples/pricing.ck
+pnpm ckc emit-mir examples/pricing.ck --out build/pricing.mir
 ```
 
 MIR is an internal compiler IR: it is typed, basic-block based, and designed for
@@ -223,16 +224,16 @@ Phase 12 adds a WASM backend that lowers validated MIR to WAT and then compiles
 WAT to WASM with the bundled `wabt` npm package:
 
 ```sh
-pnpm ikc emit-wat examples/scalar.ik --out build/scalar.wat
-pnpm ikc emit-wasm examples/scalar.ik --out build/scalar.wasm
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+pnpm ckc emit-wat examples/scalar.ck --out build/scalar.wat
+pnpm ckc emit-wasm examples/scalar.ck --out build/scalar.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 ```
 
 The Phase 12 v1 ABI targets `wasm32`, exports linear memory, maps `ptr<T>` to
 `i32` memory offsets, uses `BigInt` for JavaScript `i64` / `u64` interop, and
 keeps arithmetic unchecked. The current backend covers scalar operations,
 control flow, internal function calls, short-circuit logic, and core
-ptr/index/field load/store patterns such as `pricing.ik`. Phase 16 adds f64
+ptr/index/field load/store patterns such as `pricing.ck`. Phase 16 adds f64
 WASM codegen: scalar f64 parameters/returns use WASM `f64`, JavaScript interop
 uses `Number`, and `ptr<f64>` memory uses `f64.load` / `f64.store`.
 
@@ -250,14 +251,14 @@ Phase 13 adds a MIR-to-LLVM backend that emits textual LLVM IR (`.ll`) and can
 optionally invoke clang to build a native dynamic library:
 
 ```text
-.ik source -> CheckedProgram -> MIR -> LLVM IR text
+.ck source -> CheckedProgram -> MIR -> LLVM IR text
 ```
 
 ```sh
-pnpm ikc emit-llvm examples/pricing.ik --out build/pricing.ll
-pnpm ikc build-llvm examples/pricing.ik --out build/libpricing
-pnpm ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
-pnpm ikc build-llvm examples/pricing.ik --out build/libpricing --target x86_64-unknown-linux-gnu
+pnpm ckc emit-llvm examples/pricing.ck --out build/pricing.ll
+pnpm ckc build-llvm examples/pricing.ck --out build/libpricing
+pnpm ckc build-llvm examples/pricing.ck --kind object --out build/pricing.o
+pnpm ckc build-llvm examples/pricing.ck --out build/libpricing --target x86_64-unknown-linux-gnu
 ```
 
 The v1 backend is unchecked-only: `emit-llvm --overflow checked` and
@@ -279,7 +280,7 @@ The repository includes a no-dependency Node.js WASM example that calls
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 node examples/node-wasm-call/index.mjs
 ```
 
@@ -294,7 +295,7 @@ WASM memory instead of per-element `DataView` writes in the hot path:
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out examples/node-wasm-f64-array/f64_array.wasm
+pnpm ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out examples/node-wasm-f64-array/f64_array.wasm
 node examples/node-wasm-f64-array/index.mjs
 ```
 
@@ -302,7 +303,7 @@ The pointer ABI does not change: a WASM `ptr<f64>` is still an `i32` byte
 offset, `f64` size is 8, `ptr<f64>[i]` is `base + i * 8`, and the
 `Float64Array` index is `byteOffset / 8`. The byte offset must be 8-byte
 aligned. If host code calls `memory.grow`, recreate the typed-array view before
-using it again. IK / IntKernel does not provide a WASM allocator or runtime;
+using it again. CK / CalcKernel does not provide a WASM allocator or runtime;
 host code owns memory placement and buffer sizing.
 
 ## Browser WASM Example
@@ -313,7 +314,7 @@ over HTTP:
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out examples/browser-wasm-call/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out examples/browser-wasm-call/pricing.wasm
 cd examples/browser-wasm-call
 python3 -m http.server 8000
 ```
@@ -333,7 +334,7 @@ On macOS/Linux:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 python3 examples/python-ctypes-call/call_pricing.py
 ```
 
@@ -341,7 +342,7 @@ On Windows, generate `pricing.dll` and run the same script with Python:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 py examples\python-ctypes-call\call_pricing.py
 ```
 
@@ -349,7 +350,7 @@ Checked ABI example:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 python3 examples/python-ctypes-call/call_pricing_checked.py
 ```
 
@@ -357,12 +358,12 @@ On Windows, generate `pricing_checked.dll` explicitly:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 py examples\python-ctypes-call\call_pricing_checked.py
 ```
 
 See [examples/python-ctypes-call](examples/python-ctypes-call/README.md) for
-the `ctypes` struct, pointer, and checked `IK_Status` mapping.
+the `ctypes` struct, pointer, and checked `CK_Status` mapping.
 
 ## Node.js FFI Example
 
@@ -373,7 +374,7 @@ On macOS/Linux:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 cd examples/node-ffi-call
 pnpm install
 pnpm start
@@ -383,7 +384,7 @@ On Windows, generate `pricing.dll` first:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 cd examples\node-ffi-call
 pnpm install
 pnpm start
@@ -393,7 +394,7 @@ Checked ABI example:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 cd examples/node-ffi-call
 pnpm install
 pnpm start:checked
@@ -403,14 +404,14 @@ On Windows, generate `pricing_checked.dll` explicitly:
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 cd examples\node-ffi-call
 pnpm install
 pnpm start:checked
 ```
 
 See [examples/node-ffi-call](examples/node-ffi-call/README.md) for the Koffi
-struct, pointer, `BigInt`, and checked `IK_Status` mapping.
+struct, pointer, `BigInt`, and checked `CK_Status` mapping.
 
 ## Benchmarks
 
@@ -457,11 +458,11 @@ V0 does not support strings, IO, heap allocation, GC, exceptions, async,
 classes, closures, modules, runtime libraries, or JIT compilation. The WASM
 and LLVM backends currently support unchecked arithmetic only.
 
-Floating point is intentionally narrow: IK / IntKernel is f64-only. `f64` strict
+Floating point is intentionally narrow: CK / CalcKernel is f64-only. `f64` strict
 mode is supported; `f32` is not planned. Only exact explicit `i32_to_f64` and
 `u32_to_f64` casts are implemented. Implicit int/float conversion, `i64/u64` to
 f64 casts, f64-to-int casts, `f64 %`, fast-math, SIMD, and float checked
-overflow are not implemented. IK / IntKernel does not guarantee bit-identical
+overflow are not implemented. CK / CalcKernel does not guarantee bit-identical
 floating point results across all C, LLVM, WASM, and JavaScript targets.
 
 V0 does not perform bounds checks. By default arithmetic is unchecked; optional
@@ -485,6 +486,7 @@ parallel for every project document.
 - [Optimization](docs/OPTIMIZATION.md)
 - [Performance](docs/PERFORMANCE.md)
 - [Naming Conventions](docs/NAMING_CONVENTIONS.md)
+- [Migration Guide](docs/MIGRATION_IK_TO_CK.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
@@ -500,5 +502,6 @@ Chinese:
 - [优化](docs/zh-CN/OPTIMIZATION.md)
 - [性能](docs/zh-CN/PERFORMANCE.md)
 - [命名规范](docs/zh-CN/NAMING_CONVENTIONS.md)
+- [迁移指南](docs/zh-CN/MIGRATION_IK_TO_CK.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

@@ -4,7 +4,7 @@ import {
   check,
   getExprType,
   type CheckResult,
-  type Diagnostic as IntKernelDiagnostic,
+  type Diagnostic as CalcKernelDiagnostic,
   type Expression,
   type FunctionDeclaration,
   type FunctionParam,
@@ -16,15 +16,15 @@ import {
   type StructDeclaration,
   type StructField,
   type TypeNode
-} from "intkernel";
+} from "calckernel";
 import { spanToRangeCoordinates } from "./diagnosticMapping";
 import { formatFunctionSignature, formatSymbolLabel, formatTypeLabel } from "./typeLabels";
 
-export type IntKernelSymbolKind = "struct" | "field" | "function" | "parameter" | "local";
-export type IntKernelReferenceKind = "field" | "function" | "parameter" | "local" | "type";
+export type CalcKernelSymbolKind = "struct" | "field" | "function" | "parameter" | "local";
+export type CalcKernelReferenceKind = "field" | "function" | "parameter" | "local" | "type";
 
-export interface IntKernelSymbol {
-  kind: IntKernelSymbolKind;
+export interface CalcKernelSymbol {
+  kind: CalcKernelSymbolKind;
   name: string;
   typeLabel?: string;
   signatureLabel?: string;
@@ -36,21 +36,21 @@ export interface IntKernelSymbol {
   scopeRange?: vscode.Range;
 }
 
-export interface IntKernelReference {
-  kind: IntKernelReferenceKind;
+export interface CalcKernelReference {
+  kind: CalcKernelReferenceKind;
   name: string;
   range: vscode.Range;
-  target?: IntKernelSymbol;
+  target?: CalcKernelSymbol;
   typeLabel?: string;
 }
 
-export interface IntKernelAnalysis {
+export interface CalcKernelAnalysis {
   document: Pick<vscode.TextDocument, "fileName" | "getText" | "uri" | "version">;
   sourceText: string;
   checkResult?: CheckResult;
   diagnostics: readonly vscode.Diagnostic[];
-  symbols: readonly IntKernelSymbol[];
-  references: readonly IntKernelReference[];
+  symbols: readonly CalcKernelSymbol[];
+  references: readonly CalcKernelReference[];
 }
 
 export interface AnalyzeOptions {
@@ -63,7 +63,7 @@ interface ReferenceContext {
 
 export function createMemoryDocument(
   text: string,
-  uri = "memory:///sample.ik",
+  uri = "memory:///sample.ck",
   version = 1
 ): Pick<vscode.TextDocument, "fileName" | "getText" | "uri" | "version"> {
   return {
@@ -74,12 +74,12 @@ export function createMemoryDocument(
   };
 }
 
-const cache = new Map<string, IntKernelAnalysis>();
+const cache = new Map<string, CalcKernelAnalysis>();
 
-export function analyzeIntKernelDocument(
+export function analyzeCalcKernelDocument(
   document: Pick<vscode.TextDocument, "fileName" | "getText" | "uri" | "version">,
   options: AnalyzeOptions = {}
-): IntKernelAnalysis {
+): CalcKernelAnalysis {
   const cacheKey = `${document.uri.toString()}@${document.version}`;
   const usesInjectedCheck = Boolean(options.checkDocument);
   const cached = usesInjectedCheck ? undefined : cache.get(cacheKey);
@@ -113,7 +113,7 @@ export function analyzeIntKernelDocument(
   }
 }
 
-function storeCachedAnalysis(uri: vscode.Uri, cacheKey: string, analysis: IntKernelAnalysis): void {
+function storeCachedAnalysis(uri: vscode.Uri, cacheKey: string, analysis: CalcKernelAnalysis): void {
   clearAnalysisCache(uri);
   cache.set(cacheKey, analysis);
 }
@@ -131,7 +131,7 @@ export function clearAnalysisCache(uri?: vscode.Uri): void {
   }
 }
 
-function toVscodeDiagnostic(sourceText: string, diagnostic: IntKernelDiagnostic): vscode.Diagnostic {
+function toVscodeDiagnostic(sourceText: string, diagnostic: CalcKernelDiagnostic): vscode.Diagnostic {
   const coordinates = spanToRangeCoordinates(sourceText, diagnostic.span);
   const vscodeDiagnostic = new vscode.Diagnostic(
     new vscode.Range(coordinates.start.line, coordinates.start.character, coordinates.end.line, coordinates.end.character),
@@ -139,26 +139,26 @@ function toVscodeDiagnostic(sourceText: string, diagnostic: IntKernelDiagnostic)
     vscode.DiagnosticSeverity.Error
   );
   vscodeDiagnostic.code = diagnostic.code;
-  vscodeDiagnostic.source = "intkernel";
+  vscodeDiagnostic.source = "calckernel";
   return vscodeDiagnostic;
 }
 
 function unexpectedValidationDiagnostic(error: unknown): vscode.Diagnostic {
   const diagnostic = new vscode.Diagnostic(
     new vscode.Range(0, 0, 0, 1),
-    `IntKernel validation failed: ${error instanceof Error ? error.message : String(error)}`,
+    `CalcKernel validation failed: ${error instanceof Error ? error.message : String(error)}`,
     vscode.DiagnosticSeverity.Error
   );
-  diagnostic.source = "intkernel";
+  diagnostic.source = "calckernel";
   return diagnostic;
 }
 
-function buildIndex(sourceText: string, checkResult: CheckResult): { symbols: IntKernelSymbol[]; references: IntKernelReference[] } {
-  const symbols: IntKernelSymbol[] = [];
-  const references: IntKernelReference[] = [];
-  const symbolsByName = new Map<string, IntKernelSymbol[]>();
+function buildIndex(sourceText: string, checkResult: CheckResult): { symbols: CalcKernelSymbol[]; references: CalcKernelReference[] } {
+  const symbols: CalcKernelSymbol[] = [];
+  const references: CalcKernelReference[] = [];
+  const symbolsByName = new Map<string, CalcKernelSymbol[]>();
 
-  function remember(symbol: IntKernelSymbol): void {
+  function remember(symbol: CalcKernelSymbol): void {
     symbols.push(symbol);
     const bucket = symbolsByName.get(symbol.name) ?? [];
     bucket.push(symbol);
@@ -183,8 +183,8 @@ function buildIndex(sourceText: string, checkResult: CheckResult): { symbols: In
 function collectTypeReferences(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[]
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[]
 ): void {
   for (const declaration of checkResult.ast.declarations) {
     if (declaration.kind === "StructDeclaration") {
@@ -202,8 +202,8 @@ function collectTypeReferences(
 
 function collectStatementTypeReferences(
   sourceText: string,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[],
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[],
   statement: Statement
 ): void {
   switch (statement.kind) {
@@ -229,8 +229,8 @@ function collectStatementTypeReferences(
 
 function collectTypeNodeReferences(
   sourceText: string,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[],
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[],
   typeNode: TypeNode
 ): void {
   if (typeNode.kind === "NamedType") {
@@ -251,8 +251,8 @@ function collectTypeNodeReferences(
 function collectReferences(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[]
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[]
 ): void {
   for (const declaration of checkResult.ast.declarations) {
     if (declaration.kind === "FunctionDeclaration") {
@@ -266,8 +266,8 @@ function collectReferences(
 function collectStatementReferences(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[],
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[],
   statement: Statement
 ): void {
   switch (statement.kind) {
@@ -299,8 +299,8 @@ function collectStatementReferences(
 function collectIfStatementReferences(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[],
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[],
   statement: IfStatement
 ): void {
   collectExpressionReferences(sourceText, checkResult, symbolsByName, references, statement.condition);
@@ -311,8 +311,8 @@ function collectIfStatementReferences(
 function collectExpressionReferences(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[],
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[],
   expression: Expression,
   context: ReferenceContext = {}
 ): void {
@@ -353,15 +353,15 @@ function collectExpressionReferences(
 function collectIndexExpressionReferences(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
-  references: IntKernelReference[],
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
+  references: CalcKernelReference[],
   expression: IndexExpression
 ): void {
   collectExpressionReferences(sourceText, checkResult, symbolsByName, references, expression.object);
   collectExpressionReferences(sourceText, checkResult, symbolsByName, references, expression.index);
 }
 
-function addStructSymbols(sourceText: string, declaration: StructDeclaration, remember: (symbol: IntKernelSymbol) => void): void {
+function addStructSymbols(sourceText: string, declaration: StructDeclaration, remember: (symbol: CalcKernelSymbol) => void): void {
   const structSymbol = symbolFromNode(sourceText, "struct", declaration.name.name, declaration.span, declaration.name.span, {
     detail: formatSymbolLabel("struct", declaration.name.name)
   });
@@ -375,7 +375,7 @@ function addFunctionSymbols(
   sourceText: string,
   checkResult: CheckResult,
   declaration: FunctionDeclaration,
-  remember: (symbol: IntKernelSymbol) => void
+  remember: (symbol: CalcKernelSymbol) => void
 ): void {
   const functionInfo = checkResult.checkedProgram.functionMap.get(declaration.name.name);
   const signatureLabel = functionInfo ? formatFunctionSignature(functionInfo) : undefined;
@@ -392,18 +392,18 @@ function addFunctionSymbols(
 
 function symbolFromNode(
   sourceText: string,
-  kind: IntKernelSymbolKind,
+  kind: CalcKernelSymbolKind,
   name: string,
   rangeSpan: SourceSpan,
   selectionSpan: SourceSpan,
-  extra: Partial<IntKernelSymbol> = {}
-): IntKernelSymbol {
+  extra: Partial<CalcKernelSymbol> = {}
+): CalcKernelSymbol {
   const range = rangeFromCompilerSpan(sourceText, rangeSpan);
   const selectionRange = rangeFromCompilerSpan(sourceText, selectionSpan);
   return { kind, name, range, selectionRange, ...extra };
 }
 
-function fieldSymbolFromNode(sourceText: string, containerName: string, field: StructField): IntKernelSymbol {
+function fieldSymbolFromNode(sourceText: string, containerName: string, field: StructField): CalcKernelSymbol {
   const typeLabel = field.type.kind === "PrimitiveType" ? field.type.name : field.type.kind === "NamedType" ? field.type.name.name : undefined;
   return symbolFromNode(sourceText, "field", field.name.name, field.span, field.name.span, {
     typeLabel,
@@ -418,7 +418,7 @@ function paramSymbolFromNode(
   functionName: string,
   scopeRange: vscode.Range,
   typeLabel?: string
-): IntKernelSymbol {
+): CalcKernelSymbol {
   return symbolFromNode(sourceText, "parameter", param.name.name, param.span, param.name.span, {
     functionName,
     scopeRange,
@@ -433,7 +433,7 @@ function collectLocalSymbols(
   statement: Statement,
   functionName: string,
   scopeRange: vscode.Range,
-  remember: (symbol: IntKernelSymbol) => void
+  remember: (symbol: CalcKernelSymbol) => void
 ): void {
   if (statement.kind === "LetStatement") {
     const type = checkResult.checkedProgram.localTypes.get(statement);
@@ -463,7 +463,7 @@ function localSymbolFromNode(
   functionName: string,
   scopeRange: vscode.Range,
   typeLabel?: string
-): IntKernelSymbol {
+): CalcKernelSymbol {
   return symbolFromNode(sourceText, "local", statement.name.name, statement.span, statement.name.span, {
     functionName,
     scopeRange,
@@ -480,10 +480,10 @@ function rangeFromCompilerSpan(sourceText: string, span: SourceSpan): vscode.Ran
 function referenceFromExpression(
   sourceText: string,
   checkResult: CheckResult,
-  symbolsByName: Map<string, IntKernelSymbol[]>,
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
   expression: Expression,
   context: ReferenceContext = {}
-): IntKernelReference | undefined {
+): CalcKernelReference | undefined {
   if (expression.kind === "IdentifierExpression") {
     const scopedTarget = scopedIdentifierTarget(symbolsByName, expression);
     const functionSymbol = checkResult.checkedProgram.functionMap.get(expression.name);
@@ -526,9 +526,9 @@ function isZeroWidthSpan(span: SourceSpan): boolean {
 }
 
 function scopedIdentifierTarget(
-  symbolsByName: Map<string, IntKernelSymbol[]>,
+  symbolsByName: Map<string, CalcKernelSymbol[]>,
   expression: Extract<Expression, { kind: "IdentifierExpression" }>
-): IntKernelSymbol | undefined {
+): CalcKernelSymbol | undefined {
   const referenceRangeStart = expression.span.start;
   return symbolsByName
     .get(expression.name)
@@ -555,14 +555,14 @@ function comparePositions(left: vscode.Position, right: vscode.Position): number
   return left.character - right.character;
 }
 
-export function symbolAtPosition(analysis: IntKernelAnalysis, position: vscode.Position): IntKernelSymbol | undefined {
+export function symbolAtPosition(analysis: CalcKernelAnalysis, position: vscode.Position): CalcKernelSymbol | undefined {
   return analysis.symbols.find((symbol) => symbol.selectionRange.contains(position));
 }
 
-export function referenceAtPosition(analysis: IntKernelAnalysis, position: vscode.Position): IntKernelReference | undefined {
+export function referenceAtPosition(analysis: CalcKernelAnalysis, position: vscode.Position): CalcKernelReference | undefined {
   return analysis.references.find((reference) => reference.range.contains(position));
 }
 
-export function symbolsInDocument(analysis: IntKernelAnalysis, kind?: IntKernelSymbolKind): readonly IntKernelSymbol[] {
+export function symbolsInDocument(analysis: CalcKernelAnalysis, kind?: CalcKernelSymbolKind): readonly CalcKernelSymbol[] {
   return kind ? analysis.symbols.filter((symbol) => symbol.kind === kind) : analysis.symbols;
 }

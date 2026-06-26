@@ -114,7 +114,7 @@ export function formatSummaryMarkdown(summary, comparison = []) {
   const lines = [];
   const metadata = summary.metadata;
 
-  lines.push("# IntKernel Local Performance Summary");
+  lines.push("# CalcKernel Local Performance Summary");
   lines.push("");
   lines.push(`Generated at: ${metadata.generatedAt}`);
   lines.push("");

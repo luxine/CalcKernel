@@ -1,4 +1,4 @@
-# IntKernel 发布检查清单
+# CalcKernel 发布检查清单
 
 [English](../RELEASE_CHECKLIST.md)
 
@@ -7,12 +7,12 @@
 
 ## Release Scope
 
-- 确认语言和项目名称使用 IK / IntKernel。
-- 确认 CLI 示例使用 `ikc`。
-- 确认源码示例使用 `.ik`。
+- 确认语言和项目名称使用 CK / CalcKernel。
+- 确认 CLI 示例使用 `ckc`。
+- 确认源码示例使用 `.ck`。
 - 确认 `package.json` version 与计划 release 一致。
 - 确认计划使用的 git tag 与 package version 一致。
-- 确认 package metadata 只暴露 `ikc` bin entrypoint。
+- 确认 package metadata 只暴露 `ckc` bin entrypoint。
 - 确认 release notes 只宣传已经实现的能力。
 - 确认 f64 被记录为 Phase 16 strict support，而不是 fast-math 或 SIMD support。
 - 确认 exact explicit `i32_to_f64` / `u32_to_f64` cast 被记录为 Phase 20
@@ -27,18 +27,20 @@
 - 运行 `pnpm typecheck`。
 - 运行 `pnpm build`。
 - 运行 `npm pack --dry-run`。
-- 运行 `pnpm ikc --help`，或等价的已安装 `ikc --help`，并 review 输出。
-- 运行 `pnpm ikc check examples/pricing.ik`。
-- 运行 `pnpm ikc check examples/explicit_casts.ik`。
-- 运行 `pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h`。
-- 运行 `pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir`。
+- 运行 `pnpm ckc --help`，或等价的已安装 `ckc --help`，并 review 输出。
+- 运行 `pnpm ckc check examples/pricing.ck`。
+- 运行 `pnpm ckc check examples/explicit_casts.ck`。
+- 运行 `pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h`。
+- 运行 `pnpm ckc emit-mir examples/pricing.ck --out build/pricing.mir`。
 
 ## Naming Consistency
 
 - 确认 `tests/naming-consistency.test.ts` 已作为 `pnpm test` 的一部分通过。
 - Review README、docs、examples、snapshots 和 CLI help 的标准命名。
-- 确认 package metadata、命令示例和 release docs 使用 IK / IntKernel、`ikc`
-  和 `.ik`。
+- 确认 package metadata、命令示例和 release docs 使用 CK / CalcKernel、`ckc`
+  和 `.ck`。
+- 确认 rename migration guide 记录 breaking rename、no-alias compatibility
+  policy、package rename note 和 `v0.7.0` recommendation。
 - 确认没有引入 compatibility alias 或替代源码后缀。
 
 ## C Backend Regression
@@ -50,10 +52,10 @@
 - 确认 C short-circuit `&&` / `||` 覆盖通过。
 - 确认 C ptr/index、struct field，以及 `items[i].price` 这类 combined access
   覆盖通过。
-- 确认 `examples/pricing.ik` C e2e 通过。
+- 确认 `examples/pricing.ck` C e2e 通过。
 - 确认 unchecked mode 仍是默认值，并保持 unchecked ABI。
 - 确认 checked C mode 的 scalar、control-flow、short-circuit、function-call 和
-  `examples/pricing.ik` e2e 覆盖通过。
+  `examples/pricing.ck` e2e 覆盖通过。
 - 确认 C explicit cast regression 通过 `i32_to_f64` 和 `u32_to_f64`，包括
   checked C mode 下 cast 仍是普通 exact f64 conversion。
 - Review checked generated C/header snapshots。
@@ -69,7 +71,7 @@
 - 确认 WASM short-circuit e2e 通过。
 - 确认 WASM memory / ptr e2e 通过。
 - 确认 WASM layout tests 通过。
-- 确认 `examples/pricing.ik` WASM e2e 通过。
+- 确认 `examples/pricing.ck` WASM e2e 通过。
 - 确认 WASM explicit cast regression 通过，并且 WAT output 包含
   `f64.convert_i32_s` / `f64.convert_i32_u`。
 - 确认 `examples/node-wasm-f64-array/` 的 WASM f64 `Float64Array` example smoke
@@ -93,7 +95,7 @@
 - 确认 LLVM short-circuit e2e 通过。
 - 确认 LLVM ptr/index/field/store e2e 通过。
 - 确认 LLVM bool ABI e2e 通过。
-- 确认 `examples/pricing.ik` LLVM e2e 通过。
+- 确认 `examples/pricing.ck` LLVM e2e 通过。
 - 确认 LLVM explicit cast regression 通过，IR output 包含不带 fast-math flag 的
   `sitofp` / `uitofp`。
 - 确认 `emit-llvm --overflow checked` 和 `build-llvm --overflow checked` 会以文档中的
@@ -104,7 +106,7 @@
 
 - 确认 C/WASM/LLVM backend regression comparison tests 通过。
 - 确认 shared comparison 覆盖 scalar、control flow、function calls、
-  short-circuit、memory 和 `examples/pricing.ik`。
+  short-circuit、memory 和 `examples/pricing.ck`。
 - 确认已实现 backend 的 f64 scalar、ptr、struct-field、arithmetic、comparison、
   unary minus 和 backend parity regression 通过。
 - 确认 explicit `i32_to_f64` / `u32_to_f64` backend regression 在 C、WASM、LLVM
@@ -128,8 +130,8 @@
 - 确认 checked mode 保留 overflow 和 division checks，除文档化的已证明安全 loop
   induction increment 外不移除检查。
 - 确认 short-circuit 语义在优化前后保持一致。
-- 确认 `examples/pricing.ik` 优化前后结果一致。
-- 确认没有为 `examples/pricing.ik` 添加 benchmark-specific special case。
+- 确认 `examples/pricing.ck` 优化前后结果一致。
+- 确认没有为 `examples/pricing.ck` 添加 benchmark-specific special case。
 - 确认 f64 strict-safety tests 通过：
   - 不做 f64 constant folding
   - 不做 f64 reassociation
@@ -155,8 +157,8 @@
 - 确认文档只把 `i32_to_f64` 和 `u32_to_f64` 描述为当前 explicit cast support，
   不承诺其他 cast 方向。
 - 确认 checked arithmetic 文档说明 f64 不参与 integer overflow check，f64
-  division by zero 不返回 `IK_ERR_DIV_BY_ZERO`，f64 overflow 不返回
-  `IK_ERR_OVERFLOW`。
+  division by zero 不返回 `CK_ERR_DIV_BY_ZERO`，f64 overflow 不返回
+  `CK_ERR_OVERFLOW`。
 - 确认 ABI/backend 文档说明 C 使用 `(double)x`，WASM 使用 `f64.convert_i32_s` /
   `f64.convert_i32_u`，LLVM 使用 `sitofp` / `uitofp`，f64 value 的 JavaScript
   interop 使用 `Number`。
@@ -175,7 +177,7 @@
   readback、total、memory-only 和 low-copy phase。
 - 确认 f64 benchmark case 覆盖 axpy、dot product、sum 和 scale。
 - 确认 f64 benchmark 文档覆盖 JavaScript `Array` `Number`、JavaScript
-  `Float64Array`、IK C O3、IK LLVM O3 和 IK WASM O3 对比目标。
+  `Float64Array`、CK C O3、CK LLVM O3 和 CK WASM O3 对比目标。
 - `node bench/perf/run.mjs --full` 是机器时间允许时的可选 tag-time 检查。
 - 不要把 benchmark threshold 加进普通 `pnpm test`。
 - 不要把本机 benchmark 结果当作跨机器绝对 baseline。
@@ -188,7 +190,7 @@
 - Review README 和 README.zh-CN，确认当前能力描述准确。
 - Review language、architecture、MIR、ABI、checked arithmetic、WASM、LLVM、
   optimization、performance 和 roadmap docs。
-- 确认 docs 说明 IK / IntKernel 是纯计算 DSL，不是通用语言。
+- 确认 docs 说明 CK / CalcKernel 是纯计算 DSL，不是通用语言。
 - 确认 docs 说明整数 kernel 仍是主要目标，strict f64 可用于数值 kernel。
 - 确认 docs 推荐金额、税费、POS 总价和 pricing-rule 计算继续使用 `i64`
   fixed-point。
@@ -203,17 +205,17 @@
   - LLVM f64 regression 和 no fast-math
   - WASM f64 regression 和 JS `Number` interop
   - `ptr<f64>` 和 struct f64 layout rules
-- Review `examples/` 下的示例，确认命令使用 `ikc` 和 `.ik`。
-- 确认 `examples/pricing.ik` 仍是 release e2e fixture。
+- Review `examples/` 下的示例，确认命令使用 `ckc`，source file 使用 `.ck`。
+- 确认 `examples/pricing.ck` 仍是 release e2e fixture。
 - 保持文档双语：英文为默认入口，修改文档时同步更新中文译本。
 
 ## Package Contents Review
 
-- 确认 `npm pack --dry-run` 报告 package `intkernel@0.5.0`。
+- 确认 `npm pack --dry-run` 报告 package `calckernel@<version>`。
 - 确认 package 包含 `dist/src`、docs、examples、bench files、README.md、
   README.zh-CN.md 和 package.json。
-- 确认 package 包含 `ikc` bin mapping 指向的 built CLI entrypoint。
-- 确认 package `exports`、`files` 和 scripts 与已发布的 IK / IntKernel surface
+- 确认 package 包含 `ckc` bin mapping 指向的 built CLI entrypoint。
+- 确认 package `exports`、`files` 和 scripts 与已发布的 CK / CalcKernel surface
   一致。
 - 确认没有误包含本地 build artifact、benchmark output、真实本机 baseline、cache、
   editor state 或临时日志。
@@ -223,18 +225,18 @@
 - 在仓库根目录运行 `npm pack`，记录生成的 tarball 名称。
 - 不要提交生成的 `.tgz` tarball。
 - 在仓库外创建临时目录，并运行 `npm init -y`。
-- 使用 `npm install /absolute/path/to/intkernel-<version>.tgz` 安装生成的 tarball。
-- 确认 `node_modules/.bin/ikc --help` 可以运行，并且 help 使用 `ikc` 命令和
-  `.ik` source examples。
-- 在临时目录创建最小 `.ik` 文件，并运行：
-  - `node_modules/.bin/ikc check smoke.ik`
-  - `node_modules/.bin/ikc emit-mir smoke.ik -o build/smoke.mir`
-  - `node_modules/.bin/ikc emit-c smoke.ik -o build/smoke.c`
-  - `node_modules/.bin/ikc emit-wat smoke.ik -o build/smoke.wat`
-  - `node_modules/.bin/ikc emit-wasm smoke.ik -o build/smoke.wasm`
-  - `node_modules/.bin/ikc emit-llvm smoke.ik -o build/smoke.ll`
+- 使用 `npm install /absolute/path/to/calckernel-<version>.tgz` 安装生成的 tarball。
+- 确认 `node_modules/.bin/ckc --help` 可以运行，并且 help 使用 `ckc` 命令。
+- 确认没有 legacy compiler-command bin wrapper。
+- 在临时目录创建最小 `.ck` 文件，并运行：
+  - `node_modules/.bin/ckc check smoke.ck`
+  - `node_modules/.bin/ckc emit-mir smoke.ck -o build/smoke.mir`
+  - `node_modules/.bin/ckc emit-c smoke.ck -o build/smoke.c`
+  - `node_modules/.bin/ckc emit-wat smoke.ck -o build/smoke.wat`
+  - `node_modules/.bin/ckc emit-wasm smoke.ck -o build/smoke.wasm`
+  - `node_modules/.bin/ckc emit-llvm smoke.ck -o build/smoke.ll`
   - 如果环境有 clang，运行
-    `node_modules/.bin/ikc build-llvm smoke.ik --kind object -o build/smoke.o`。
+    `node_modules/.bin/ckc build-llvm smoke.ck --kind object -o build/smoke.o`。
 - 确认 emitted C source 和默认生成的 C header 都存在且非空。
 - smoke source 应覆盖 f64 params/returns、f64 arithmetic、unary minus、f64
   comparison、`ptr<f64>` 和包含 `f64` 的 struct field。

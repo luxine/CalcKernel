@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-calls-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-calls-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM function-call end-to-end", () => {
   it("compiles generated LLVM IR and runs nested calls through the exported function", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_calls.ik"), readFileSync("examples/llvm_calls.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_calls.ck"), readFileSync("examples/llvm_calls.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_calls.ik", "--out", "build/llvm_calls.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_calls.ck", "--out", "build/llvm_calls.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}

@@ -1,8 +1,8 @@
-# IntKernel C ABI
+# CalcKernel C ABI
 
 [简体中文](zh-CN/ABI.md)
 
-IntKernel V0 targets a plain C ABI. Generated `.h` and `.c` files are intended
+CalcKernel V0 targets a plain C ABI. Generated `.h` and `.c` files are intended
 to be compiled by a C compiler and consumed from C, C++, Python, Node.js, Rust,
 Go, C#, and other host languages through their normal FFI mechanisms.
 
@@ -26,7 +26,7 @@ JavaScript WASM interop uses `Number` for f64 parameters and returns, not
 
 The WASM deterministic layout uses f64 size 8 and alignment 8. The C ABI uses
 the target C compiler's `double` layout; on the release targets covered by
-tests this is expected to be size 8 and alignment 8. IK / IntKernel does not
+tests this is expected to be size 8 and alignment 8. CK / CalcKernel does not
 promise bit-identical floating point results across all C, LLVM, WASM, and
 JavaScript targets.
 
@@ -48,7 +48,7 @@ Semantic lock for f64:
 
 ## Type Mapping
 
-| IntKernel type | C ABI type |
+| CalcKernel type | C ABI type |
 | --- | --- |
 | `i32` | `int32_t` |
 | `i64` | `int64_t` |
@@ -63,7 +63,7 @@ Semantic lock for f64:
 
 Phase 20 supports only exact explicit `i32`/`u32` to `f64` compiler builtins:
 
-| IK builtin | C lowering | WASM lowering | LLVM lowering |
+| CK builtin | C lowering | WASM lowering | LLVM lowering |
 | --- | --- | --- | --- |
 | `i32_to_f64(x)` | `(double)x` | `f64.convert_i32_s` | `sitofp i32 ... to double` |
 | `u32_to_f64(x)` | `(double)x` | `f64.convert_i32_u` | `uitofp i32 ... to double` |
@@ -75,7 +75,7 @@ does not produce checked integer errors.
 
 Example:
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;
@@ -104,21 +104,21 @@ headers. Checked-mode headers also include `stddef.h` for `NULL`:
 /* checked mode also emits: #include <stddef.h> */
 ```
 
-Exported functions use the `IK_API` macro:
+Exported functions use the `CK_API` macro:
 
 ```c
 #if defined(_WIN32) || defined(__CYGWIN__)
-  #ifdef IK_BUILD_DLL
-    #define IK_API __declspec(dllexport)
+  #ifdef CK_BUILD_DLL
+    #define CK_API __declspec(dllexport)
   #else
-    #define IK_API __declspec(dllimport)
+    #define CK_API __declspec(dllimport)
   #endif
 #else
-  #define IK_API __attribute__((visibility("default")))
+  #define CK_API __attribute__((visibility("default")))
 #endif
 ```
 
-When compiling generated C into a dynamic library, define `IK_BUILD_DLL`. This
+When compiling generated C into a dynamic library, define `CK_BUILD_DLL`. This
 marks exported functions as library definitions on Windows and keeps one build
 contract across platforms.
 
@@ -129,7 +129,7 @@ Generated headers are also safe to include from C++ translation units:
 extern "C" {
 #endif
 
-/* typedef structs and IK_API function declarations */
+/* typedef structs and CK_API function declarations */
 
 #ifdef __cplusplus
 }
@@ -140,26 +140,26 @@ The `extern "C"` block prevents C++ name mangling for exported functions.
 
 An `export fn` such as:
 
-```ik
+```ck
 export fn calc(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32
 ```
 
 emits:
 
 ```c
-IK_API int32_t calc(Item* items, int32_t len, int64_t* out);
+CK_API int32_t calc(Item* items, int32_t len, int64_t* out);
 ```
 
 An `f64` scalar maps to C `double`, and `ptr<f64>` maps to `double*`:
 
-```ik
+```ck
 export fn scale(value: f64, out: ptr<f64>) -> f64
 ```
 
 emits a header signature shaped as:
 
 ```c
-IK_API double scale(double value, double* out);
+CK_API double scale(double value, double* out);
 ```
 
 Non-exported `fn` declarations are not emitted into the header. They are emitted
@@ -169,7 +169,7 @@ ABI.
 ## Dynamic Libraries
 
 The CLI `build` command emits `.c` and `.h` files, then invokes clang with
-strict flags and `-DIK_BUILD_DLL`.
+strict flags and `-DCK_BUILD_DLL`.
 
 Platform output names:
 
@@ -182,7 +182,7 @@ Platform output names:
 macOS:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   -shared -fPIC pricing.c \
   -o libpricing.dylib
 ```
@@ -190,7 +190,7 @@ clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
 Linux:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   -shared -fPIC pricing.c \
   -o libpricing.so
 ```
@@ -198,14 +198,14 @@ clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
 Windows:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   -shared pricing.c \
   -o pricing.dll
 ```
 
 ## Struct Layout
 
-IntKernel preserves struct field order exactly as written in the `.ik` source.
+CalcKernel preserves struct field order exactly as written in the `.ck` source.
 V0 uses the target C compiler's natural struct alignment rules. It does not emit
 packed structs, `#pragma pack`, or custom alignment attributes.
 
@@ -216,7 +216,7 @@ release targets covered by tests, this is expected to be size 8 and alignment 8.
 The C ABI intentionally follows the C compiler's layout rather than promising a
 platform-independent binary layout.
 
-For `examples/pricing.ik`, the generated `Item` layout is:
+For `examples/pricing.ck`, the generated `Item` layout is:
 
 | Field | C type | Offset |
 | --- | --- | --- |
@@ -238,7 +238,7 @@ The caller is responsible for all memory crossing the ABI:
 - pass a valid `len`
 - ensure output buffers are large enough for the function's writes
 
-An IntKernel-generated function only reads and writes the memory it is given.
+An CalcKernel-generated function only reads and writes the memory it is given.
 It does not allocate replacement buffers and does not retain pointers after the
 call returns.
 
@@ -255,7 +255,7 @@ V0 is deliberately close to C:
 - invalid lengths are undefined behavior
 - undersized output buffers are undefined behavior
 - in unchecked mode, division by zero follows generated C behavior
-- in checked mode, arithmetic overflow and division by zero return `IK_Status`
+- in checked mode, arithmetic overflow and division by zero return `CK_Status`
   errors, but memory safety is still the caller's responsibility
 - `f64` maps to C `double` and the C backend supports scalar f64 arithmetic,
   comparisons, `ptr<f64>`, and struct fields; checked mode does not add floating
@@ -274,62 +274,62 @@ as C.
 Phase 10 introduces an optional checked arithmetic mode:
 
 ```sh
-ikc emit-c input.ik --out build/input.c --header build/input.h --overflow checked
-ikc build input.ik --out build/libinput --overflow checked
+ckc emit-c input.ck --out build/input.c --header build/input.h --overflow checked
+ckc build input.ck --out build/libinput --overflow checked
 ```
 
 Checked mode changes the generated C ABI. Exported functions return
-`IK_Status`, and the source-level return value is written through a final
+`CK_Status`, and the source-level return value is written through a final
 generated output pointer named `ik_return`:
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 ```
 
 For a source function:
 
-```ik
+```ck
 export fn add_i64(a: i64, b: i64) -> i64
 ```
 
 unchecked mode emits:
 
 ```c
-IK_API int64_t add_i64(int64_t a, int64_t b);
+CK_API int64_t add_i64(int64_t a, int64_t b);
 ```
 
 checked mode emits:
 
 ```c
-IK_API IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
 ```
 
 The signature rule is:
 
-- C return type becomes `IK_Status`
+- C return type becomes `CK_Status`
 - original parameters are preserved in order
 - a final `T* ik_return` parameter is appended, where `T` is the mapped C type
-  of the original IntKernel return type
+  of the original CalcKernel return type
 - if `ik_return == NULL`, generated checked code returns
-  `IK_ERR_NULL_POINTER`
+  `CK_ERR_NULL_POINTER`
 - on success, generated checked code writes the original return value into
-  `*ik_return` and returns `IK_OK`
+  `*ik_return` and returns `CK_OK`
 
 Example:
 
-```ik
+```ck
 export fn calc_items(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32
 ```
 
 checked mode emits:
 
 ```c
-IK_API IK_Status calc_items(
+CK_API CK_Status calc_items(
   Item* items,
   int32_t len,
   int64_t* out,
@@ -337,11 +337,11 @@ IK_API IK_Status calc_items(
 );
 ```
 
-Non-exported IntKernel functions also use checked lowering in checked mode, but
+Non-exported CalcKernel functions also use checked lowering in checked mode, but
 they remain private to the generated `.c` file:
 
 ```c
-static IK_Status helper(int64_t a, int64_t* ik_return);
+static CK_Status helper(int64_t a, int64_t* ik_return);
 ```
 
 Callers never call non-exported helpers directly.
@@ -350,7 +350,7 @@ Checked mode reports integer arithmetic overflow, integer division by zero,
 signed integer division or modulo overflow such as `INT64_MIN / -1`, and integer
 unary minus overflow such as `-INT64_MIN`. `f64` arithmetic uses ordinary C
 `double` behavior in checked mode: f64 division by zero and f64 overflow do not
-return `IK_ERR_DIV_BY_ZERO` or `IK_ERR_OVERFLOW`. Checked mode does not add
+return `CK_ERR_DIV_BY_ZERO` or `CK_ERR_OVERFLOW`. Checked mode does not add
 pointer bounds checks or automatic checks for user-provided `ptr<T>` parameters.
 
 Because checked mode changes signatures, unchecked and checked dynamic
@@ -381,7 +381,7 @@ Mirror generated structs with `ctypes.Structure`. Map:
 - `u64` / `uint64_t` to `ctypes.c_uint64`
 - `ptr<T>` to `ctypes.POINTER(T)` or a caller-owned ctypes array
 
-For checked functions, set `restype = ctypes.c_int32` for `IK_Status`, append a
+For checked functions, set `restype = ctypes.c_int32` for `CK_Status`, append a
 pointer to the original return value to `argtypes`, pass it with
 `ctypes.byref(...)`, and inspect the returned status before reading the value.
 
@@ -395,7 +395,7 @@ uses `BigInt` for `int64_t` fields and `BigInt64Array` for the `ptr<i64>` output
 buffer.
 
 For checked functions, bind the C return as an `int32` status and pass an extra
-pointer argument for the original IntKernel return value. Check `IK_OK` before
+pointer argument for the original CalcKernel return value. Check `CK_OK` before
 reading output buffers or the generated return pointer.
 
 See `examples/node-ffi-call`.

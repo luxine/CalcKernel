@@ -26,7 +26,7 @@ import {
 import {
   materializeIntegerLiteral,
   primitiveType,
-  type IntKernelType,
+  type CalcKernelType,
   type PrimitiveTypeName
 } from "../typeck/types.js";
 import { MirBuilder } from "./mir-builder.js";
@@ -594,7 +594,7 @@ function requireValue(context: FunctionLowerContext, expression: IdentifierExpre
   return value;
 }
 
-function requireExpressionType(checkedProgram: CheckedProgram, expression: Expression): IntKernelType {
+function requireExpressionType(checkedProgram: CheckedProgram, expression: Expression): CalcKernelType {
   const type = getExprType(checkedProgram, expression);
   if (!type) {
     throw new Error(`MIR lowering invariant violation: missing expression type for '${expression.kind}'.`);
@@ -602,7 +602,7 @@ function requireExpressionType(checkedProgram: CheckedProgram, expression: Expre
   return materializeIntegerLiteral(type, primitiveType("i32"));
 }
 
-function requireLetType(checkedProgram: CheckedProgram, statement: LetStatement): IntKernelType {
+function requireLetType(checkedProgram: CheckedProgram, statement: LetStatement): CalcKernelType {
   const type = getLetType(checkedProgram, statement);
   if (!type) {
     throw new Error(`MIR lowering invariant violation: missing local type for '${statement.name.name}'.`);
@@ -610,7 +610,7 @@ function requireLetType(checkedProgram: CheckedProgram, statement: LetStatement)
   return materializeIntegerLiteral(type, primitiveType("i32"));
 }
 
-function toMirType(type: IntKernelType): MirType {
+function toMirType(type: CalcKernelType): MirType {
   const materialized = materializeIntegerLiteral(type, primitiveType("i32"));
   switch (materialized.kind) {
     case "primitive":

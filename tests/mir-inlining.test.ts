@@ -20,7 +20,7 @@ function param(name: string, type: MirType): MirValue {
 }
 
 function lower(sourceText: string): MirModule {
-  const checked = check(new SourceFile("inline.ik", sourceText));
+  const checked = check(new SourceFile("inline.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);

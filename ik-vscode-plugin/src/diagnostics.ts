@@ -1,14 +1,14 @@
 import * as vscode from "vscode";
-import { analyzeIntKernelDocument, clearAnalysisCache } from "./languageService";
+import { analyzeCalcKernelDocument, clearAnalysisCache } from "./languageService";
 
 const debounceMs = 250;
 
 export function registerDiagnostics(context: vscode.ExtensionContext): void {
-  const collection = vscode.languages.createDiagnosticCollection("intkernel");
+  const collection = vscode.languages.createDiagnosticCollection("calckernel");
   const pending = new Map<string, NodeJS.Timeout>();
 
   function validateNow(document: vscode.TextDocument): void {
-    if (!isIntKernelDocument(document)) {
+    if (!isCalcKernelDocument(document)) {
       return;
     }
 
@@ -17,7 +17,7 @@ export function registerDiagnostics(context: vscode.ExtensionContext): void {
   }
 
   function validateSoon(document: vscode.TextDocument): void {
-    if (!isIntKernelDocument(document)) {
+    if (!isCalcKernelDocument(document)) {
       return;
     }
 
@@ -58,12 +58,12 @@ export function registerDiagnostics(context: vscode.ExtensionContext): void {
 }
 
 function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection): void {
-  const analysis = analyzeIntKernelDocument(document);
+  const analysis = analyzeCalcKernelDocument(document);
   collection.set(document.uri, [...analysis.diagnostics]);
 }
 
-function isIntKernelDocument(document: vscode.TextDocument): boolean {
-  return document.languageId === "intkernel" || document.fileName.endsWith(".ik");
+function isCalcKernelDocument(document: vscode.TextDocument): boolean {
+  return document.languageId === "calckernel" || document.fileName.endsWith(".ck");
 }
 
 function clearPending(document: vscode.TextDocument, pending: Map<string, NodeJS.Timeout>): void {

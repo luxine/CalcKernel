@@ -56,7 +56,7 @@ export async function instantiateWasm(wasmPath = defaultWasmPath()) {
   if (!existsSync(wasmPath)) {
     throw new Error(
       `WASM file not found: ${wasmPath}\n` +
-        "Generate it with `ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out build/f64_array.wasm -O3`."
+        "Generate it with `ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out build/f64_array.wasm -O3`."
     );
   }
 

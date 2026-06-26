@@ -37,7 +37,7 @@ function runSinglePass(module: MirModule, pass: typeof localCsePass | typeof add
 }
 
 function lower(sourceText: string): MirModule {
-  const checked = check(new SourceFile("cse.ik", sourceText));
+  const checked = check(new SourceFile("cse.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -378,7 +378,7 @@ describe("MIR CSE passes", () => {
             return items[i].price + items[i].qty;
           }
         `;
-    const checked = check(new SourceFile("cse.ik", sourceText));
+    const checked = check(new SourceFile("cse.ck", sourceText));
     expect(checked.diagnostics).toEqual([]);
     const mir = optimizeForC(sourceText, 2);
     const c = emitMirCSource(mir, { headerFileName: "cse.h" });

@@ -4,7 +4,7 @@
 
 ## Goal
 
-IntKernel V0 defaults to unchecked arithmetic. Phase 10 adds an optional checked
+CalcKernel V0 defaults to unchecked arithmetic. Phase 10 adds an optional checked
 arithmetic code generation mode for kernels that need safer integer behavior.
 
 Checked mode is intended for money, tax, discount, pricing-rule, and other
@@ -23,18 +23,18 @@ checked LLVM lowering are future work.
 Unchecked mode remains the default:
 
 ```sh
-ikc emit-c input.ik --out build/input.c --header build/input.h
-ikc build input.ik --out build/libinput
+ckc emit-c input.ck --out build/input.c --header build/input.h
+ckc build input.ck --out build/libinput
 ```
 
 The explicit forms are:
 
 ```sh
-ikc emit-c input.ik --out build/input.c --header build/input.h --overflow unchecked
-ikc emit-c input.ik --out build/input.c --header build/input.h --overflow checked
+ckc emit-c input.ck --out build/input.c --header build/input.h --overflow unchecked
+ckc emit-c input.ck --out build/input.c --header build/input.h --overflow checked
 
-ikc build input.ik --out build/libinput --overflow unchecked
-ikc build input.ik --out build/libinput --overflow checked
+ckc build input.ck --out build/libinput --overflow unchecked
+ckc build input.ck --out build/libinput --overflow checked
 ```
 
 Default:
@@ -63,10 +63,10 @@ unless an ABI change is intentional.
 | Topic | `--overflow unchecked` | `--overflow checked` |
 | --- | --- | --- |
 | Default | Yes | No |
-| C ABI | Original return type | `IK_Status` return plus final return pointer |
-| Integer overflow | Not checked | Returns `IK_ERR_OVERFLOW` |
-| Division by zero | Not checked | Returns `IK_ERR_DIV_BY_ZERO` |
-| `f64` overflow and division by zero | C `double` behavior | C `double` behavior, still returns `IK_OK` unless another checked error occurs |
+| C ABI | Original return type | `CK_Status` return plus final return pointer |
+| Integer overflow | Not checked | Returns `CK_ERR_OVERFLOW` |
+| Division by zero | Not checked | Returns `CK_ERR_DIV_BY_ZERO` |
+| `f64` overflow and division by zero | C `double` behavior | C `double` behavior, still returns `CK_OK` unless another checked error occurs |
 | User pointers | Not checked | Not checked, except generated `ik_return` |
 | Bounds checks | No | No |
 | Runtime dependency | None | None |
@@ -76,7 +76,7 @@ unless an ABI change is intentional.
 
 Checked mode changes exported function ABI:
 
-- exported functions return `IK_Status`
+- exported functions return `CK_Status`
 - the original return value is written through a final output pointer
 - generated C returns early on overflow, division by zero, or a null checked
   return pointer
@@ -87,9 +87,9 @@ Checked mode changes exported function ABI:
 
 Checked mode is a code generation mode, not a new language feature.
 
-All IntKernel functions use the checked ABI in checked mode. Exported functions
-appear in the generated header with `IK_API`; non-exported functions are emitted
-as `static IK_Status` helpers inside the generated `.c` file.
+All CalcKernel functions use the checked ABI in checked mode. Exported functions
+appear in the generated header with `CK_API`; non-exported functions are emitted
+as `static CK_Status` helpers inside the generated `.c` file.
 
 As of Phase 11, checked C generation is based on the MIR pipeline:
 
@@ -98,7 +98,7 @@ Typed Program -> MIR lowering -> MIR validator -> MIR C backend
 ```
 
 MIR represents ordinary typed arithmetic, calls, places, and control flow. The
-checked MIR C backend inserts overflow guards, division checks, `IK_Status`
+checked MIR C backend inserts overflow guards, division checks, `CK_Status`
 propagation, and return-pointer handling while preserving the checked ABI.
 
 ## Status Values
@@ -106,25 +106,25 @@ propagation, and return-pointer handling while preserving the checked ABI.
 Checked headers define:
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 ```
 
-- `IK_OK`: computation succeeded.
-- `IK_ERR_OVERFLOW`: checked arithmetic detected overflow.
-- `IK_ERR_DIV_BY_ZERO`: division or modulo divisor was zero.
-- `IK_ERR_NULL_POINTER`: the generated checked return pointer `ik_return` was
+- `CK_OK`: computation succeeded.
+- `CK_ERR_OVERFLOW`: checked arithmetic detected overflow.
+- `CK_ERR_DIV_BY_ZERO`: division or modulo divisor was zero.
+- `CK_ERR_NULL_POINTER`: the generated checked return pointer `ik_return` was
   `NULL`.
 
 ## Checked ABI Example
 
-IntKernel source:
+CalcKernel source:
 
-```ik
+```ck
 export fn add_i64(a: i64, b: i64) -> i64 {
   return a + b;
 }
@@ -133,31 +133,31 @@ export fn add_i64(a: i64, b: i64) -> i64 {
 Checked header:
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 
-IK_API IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
 ```
 
 Checked implementation:
 
 ```c
-IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
   if (ik_return == NULL) {
-    return IK_ERR_NULL_POINTER;
+    return CK_ERR_NULL_POINTER;
   }
 
   int64_t ik_tmp0;
   if (__builtin_add_overflow(a, b, &ik_tmp0)) {
-    return IK_ERR_OVERFLOW;
+    return CK_ERR_OVERFLOW;
   }
 
   *ik_return = ik_tmp0;
-  return IK_OK;
+  return CK_OK;
 }
 ```
 
@@ -167,42 +167,42 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 
 - Perform checked addition.
 - Signed and unsigned integer types are checked.
-- Overflow returns `IK_ERR_OVERFLOW`.
+- Overflow returns `CK_ERR_OVERFLOW`.
 
 ### `-`
 
 - Perform checked subtraction.
 - Signed and unsigned integer types are checked.
-- Overflow returns `IK_ERR_OVERFLOW`.
+- Overflow returns `CK_ERR_OVERFLOW`.
 
 ### `*`
 
 - Perform checked multiplication.
 - Signed and unsigned integer types are checked.
-- Overflow returns `IK_ERR_OVERFLOW`.
+- Overflow returns `CK_ERR_OVERFLOW`.
 
 ### `/`
 
-- For integer operands, if divisor is zero, return `IK_ERR_DIV_BY_ZERO`.
+- For integer operands, if divisor is zero, return `CK_ERR_DIV_BY_ZERO`.
 - For signed integers, `INT32_MIN / -1` and `INT64_MIN / -1` return
-  `IK_ERR_OVERFLOW`.
+  `CK_ERR_OVERFLOW`.
 - Unsigned division only needs the zero-divisor check.
 - For `f64`, perform normal C `double` division. `1.0 / 0.0` does not return
-  `IK_ERR_DIV_BY_ZERO`.
+  `CK_ERR_DIV_BY_ZERO`.
 - Otherwise perform normal division.
 
 ### `%`
 
-- If divisor is zero, return `IK_ERR_DIV_BY_ZERO`.
+- If divisor is zero, return `CK_ERR_DIV_BY_ZERO`.
 - For signed integers, `INT32_MIN % -1` and `INT64_MIN % -1` return
-  `IK_ERR_OVERFLOW`.
+  `CK_ERR_OVERFLOW`.
 - Unsigned modulo only needs the zero-divisor check.
 - Otherwise perform normal modulo.
 
 ### Unary `-`
 
 - For signed integers, `-INT32_MIN` and `-INT64_MIN` return
-  `IK_ERR_OVERFLOW`.
+  `CK_ERR_OVERFLOW`.
 - For unsigned integers, unary minus is lowered as checked subtraction from
   zero, so any non-zero value overflows.
 - For `f64`, perform normal C `double` negation.
@@ -212,13 +212,13 @@ IK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 
 Checked C mode is still an integer checked arithmetic mode. Functions containing
 `f64` use the checked ABI when `--overflow checked` is selected, so they return
-`IK_Status` and write the source-level return value through `ik_return`. The f64
+`CK_Status` and write the source-level return value through `ik_return`. The f64
 operations themselves use ordinary strict C `double` behavior:
 
 - `f64 +`, `-`, `*`, and `/` do not call integer overflow builtins.
-- f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`.
-- f64 overflow does not return `IK_ERR_OVERFLOW`.
-- `i32_to_f64` and `u32_to_f64` casts do not return `IK_ERR_OVERFLOW`; they are
+- f64 division by zero does not return `CK_ERR_DIV_BY_ZERO`.
+- f64 overflow does not return `CK_ERR_OVERFLOW`.
+- `i32_to_f64` and `u32_to_f64` casts do not return `CK_ERR_OVERFLOW`; they are
   exact explicit conversions into ordinary strict f64 values.
 - f64 NaN, infinity, and `-0.0` are ordinary floating point results, not checked
   arithmetic status values.
@@ -235,7 +235,7 @@ fixed-point arithmetic when exact checked failure reporting is required.
 
 Example:
 
-```ik
+```ck
 a != 0 && b / a > 0
 ```
 
@@ -248,44 +248,44 @@ evaluated before the branch that decides whether it is needed.
 
 ## Function Calls
 
-In checked mode, calling another IntKernel function uses the checked ABI:
+In checked mode, calling another CalcKernel function uses the checked ABI:
 
 - pass the original arguments
 - pass the address of a temporary variable for the callee return value
-- inspect the returned `IK_Status`
-- if the status is not `IK_OK`, return it from the current function
+- inspect the returned `CK_Status`
+- if the status is not `CK_OK`, return it from the current function
 - otherwise use the temporary value as the call expression result
 
 Conceptually:
 
 ```c
 int64_t ik_tmp0;
-IK_Status ik_status0 = add_i64(a, b, &ik_tmp0);
-if (ik_status0 != IK_OK) {
+CK_Status ik_status0 = add_i64(a, b, &ik_tmp0);
+if (ik_status0 != CK_OK) {
   return ik_status0;
 }
 ```
 
 Function arguments are checked expressions too. For example:
 
-```ik
+```ck
 return add(a + 1, b * 2);
 ```
 
 lowers by first checking `a + 1` and `b * 2`, then passing their temporary
-values to `add`. If the callee returns any status other than `IK_OK`, the caller
+values to `add`. If the callee returns any status other than `CK_OK`, the caller
 returns that same status immediately.
 
 In MIR, a call expression is an explicit `Call` instruction with a result
 temporary. Checked C emission lowers that instruction to a checked ABI call,
 passes `&temporary` as the final return pointer, checks the returned
-`IK_Status`, and propagates any non-`IK_OK` status.
+`CK_Status`, and propagates any non-`CK_OK` status.
 
 ## Pointer, Index, and Field Access
 
 Checked mode supports V0 pointer, index, and struct field access in generated C:
 
-```ik
+```ck
 items[i].price
 items[i].qty
 out[i] = value;
@@ -295,11 +295,11 @@ The generated code evaluates index expressions through the checked expression
 lowering path. If the index expression contains arithmetic, that arithmetic is
 checked before the pointer access is emitted:
 
-```ik
+```ck
 items[i + 1].price
 ```
 
-In this example, `i + 1` can return `IK_ERR_OVERFLOW`.
+In this example, `i + 1` can return `CK_ERR_OVERFLOW`.
 
 Phase 10 still does not add bounds checking.
 
@@ -349,7 +349,7 @@ builtins:
 - `__builtin_sub_overflow`
 - `__builtin_mul_overflow`
 
-The current project build path uses clang. If IntKernel later supports native
+The current project build path uses clang. If CalcKernel later supports native
 MSVC compilation without clang-compatible builtins, the backend should add a
 portable fallback or MSVC-specific lowering for checked add, subtract, and
 multiply.
@@ -365,7 +365,7 @@ from:
 - overflow builtin calls or equivalent compiler-lowered checks
 - division-by-zero branches
 - signed division/modulo overflow branches
-- `IK_Status` checks after IntKernel function calls
+- `CK_Status` checks after CalcKernel function calls
 - extra temporaries and the final `ik_return` write
 
 Use checked mode when correctness and explicit arithmetic failure reporting are

@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "llvm_short_circuit.ik"
+; ModuleID = 'calckernel'
+source_filename = "llvm_short_circuit.ck"
 
 define i1 @and_short_circuit(i64 %a, i64 %b) {
 entry:

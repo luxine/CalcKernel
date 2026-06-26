@@ -6,7 +6,7 @@
       "  ${2:field}: ${3:i64};",
       "}"
     ],
-    "description": "Define an IntKernel struct"
+    "description": "Define an CalcKernel struct"
   },
   "Function": {
     "prefix": "fn",
@@ -15,7 +15,7 @@
       "  return ${2:param};",
       "}"
     ],
-    "description": "Define an internal IntKernel function"
+    "description": "Define an internal CalcKernel function"
   },
   "Export Function": {
     "prefix": "export fn",
@@ -24,7 +24,7 @@
       "  return ${2:param};",
       "}"
     ],
-    "description": "Define an exported IntKernel function"
+    "description": "Define an exported CalcKernel function"
   },
   "Let Binding": {
     "prefix": "let",

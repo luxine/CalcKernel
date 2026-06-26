@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "pricing.ik"
+; ModuleID = 'calckernel'
+source_filename = "pricing.ck"
 
 %struct.Item = type { i64, i64, i64, i64 }
 

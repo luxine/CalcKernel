@@ -1,9 +1,9 @@
-# IntKernel
+# CalcKernel
 
 [English](README.md)
 
-IK / IntKernel 是一门面向高性能纯计算 kernel 的 DSL。它不是通用编程语言。
-V0 会把 `.ik` 源码编译成可读的 C、WAT/WASM 或 LLVM IR 输出，供 Node.js、
+CK / CalcKernel 是一门面向高性能纯计算 kernel 的 DSL。它不是通用编程语言。
+V0 会把源码文件编译成可读的 C、WAT/WASM 或 LLVM IR 输出，供 Node.js、
 Python、Java、Rust、Go、C#、clang 和 WebAssembly 等宿主语言与工具链使用。
 
 项目边界刻意保持很窄：纯计算 kernel、调用方拥有内存、无 IO、无字符串、无
@@ -26,19 +26,20 @@ pnpm build
 在源码 checkout 中，通过本地 pnpm script 运行已构建的 CLI：
 
 ```sh
-pnpm ikc --help
-pnpm ikc check examples/pricing.ik
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
-pnpm ikc build examples/pricing.ik --out build/libpricing
-pnpm ikc build examples/pricing.ik --out build/libpricing --overflow unchecked
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc --help
+pnpm ckc check examples/pricing.ck
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h
+pnpm ckc build examples/pricing.ck --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing --overflow unchecked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
-作为 package 安装后，`bin` 入口是 `ikc`。
+作为 package 安装后，`bin` 入口是 `ckc`。当前 examples、fixtures、docs 和
+package smoke source 均使用 `.ck` 后缀。
 
-## `.ik` 示例
+## `.ck` 示例
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;
@@ -65,7 +66,7 @@ export fn calc_items(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32 {
 
 Phase 16 增加第一版 strict `f64`，用于数值 kernel：
 
-```ik
+```ck
 export fn axpy(a: f64, x: ptr<f64>, y: ptr<f64>, len: i32) -> f64 {
   let i: i32 = 0;
   let checksum: f64 = 0.0;
@@ -102,7 +103,7 @@ Strict mode 含义：
 - 不承诺跨 backend 浮点结果 bit-identical
 
 `NaN`、正负 infinity 和 `-0.0` 遵循所选 backend 的普通 strict floating point
-行为。它们可以由 arithmetic 产生，但 IK / IntKernel 不提供专用 literal 语法，也不
+行为。它们可以由 arithmetic 产生，但 CK / CalcKernel 不提供专用 literal 语法，也不
 承诺稳定的 NaN payload。测试和 benchmark 对有限 f64 结果使用 tolerance，对 NaN、
 infinity 和 signed zero 分别做分类判断。
 
@@ -113,7 +114,7 @@ mode 可以明确报告 overflow 和 division error。
 Explicit cast 不会打开 implicit conversion。下面两个函数是 compiler builtin，不是
 runtime call：
 
-```ik
+```ck
 export fn avg_i32(sum: i32, count: i32) -> f64 {
   return i32_to_f64(sum) / i32_to_f64(count);
 }
@@ -132,23 +133,23 @@ infinity 或 NaN；这不是 checked integer error。
 默认生成 unchecked 输出：
 
 ```sh
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h
 ```
 
 显式 unchecked 写法等价：
 
 ```sh
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h --overflow unchecked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h --overflow unchecked
 ```
 
 Checked 输出使用 checked arithmetic ABI：
 
 ```sh
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
 ```
 
 生成的 header 包含 `stdint.h`、`stdbool.h`、struct typedef 和导出函数声明。
-Header 也包含用于动态库导出的 `IK_API`，以及给 C++ 消费者使用的
+Header 也包含用于动态库导出的 `CK_API`，以及给 C++ 消费者使用的
 `extern "C"` guard。生成的 source 包含对应 header 和函数实现。Strict f64 mode 下，
 C backend 将 `f64` 映射为 `double`，将 `ptr<f64>` 映射为 `double*`，并生成普通 C
 double arithmetic 和 comparison。
@@ -158,28 +159,28 @@ double arithmetic 和 comparison。
 Unchecked mode 是默认模式：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 它等价于：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing --overflow unchecked
+pnpm ckc build examples/pricing.ck --out build/libpricing --overflow unchecked
 ```
 
-Checked arithmetic mode 会改变生成的 C ABI：函数返回 `IK_Status`，原始返回值
+Checked arithmetic mode 会改变生成的 C ABI：函数返回 `CK_Status`，原始返回值
 通过最后一个 `ik_return` 指针写出：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
-`IK_Status` 是 `int32_t` 状态码：
+`CK_Status` 是 `int32_t` 状态码：
 
-- `IK_OK`：计算成功
-- `IK_ERR_OVERFLOW`：checked arithmetic overflow
-- `IK_ERR_DIV_BY_ZERO`：checked 除法或取模除零
-- `IK_ERR_NULL_POINTER`：生成的 checked `ik_return` 指针为 `NULL`
+- `CK_OK`：计算成功
+- `CK_ERR_OVERFLOW`：checked arithmetic overflow
+- `CK_ERR_DIV_BY_ZERO`：checked 除法或取模除零
+- `CK_ERR_NULL_POINTER`：生成的 checked `ik_return` 指针为 `NULL`
 
 金额、税费、优惠和规则 kernel 需要显式报告算术失败时，使用 checked mode。
 已经验证输入且最大吞吐更重要的热路径，可以使用 unchecked mode。
@@ -201,8 +202,8 @@ pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow che
 开发者可以查看默认 C backend 使用的 typed MIR：
 
 ```sh
-pnpm ikc emit-mir examples/pricing.ik
-pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir
+pnpm ckc emit-mir examples/pricing.ck
+pnpm ckc emit-mir examples/pricing.ck --out build/pricing.mir
 ```
 
 MIR 是编译器内部 IR：它带类型、基于 basic block，面向 backend 实现和调试。
@@ -214,15 +215,15 @@ Phase 12 增加 WASM backend，将已验证 MIR 降低为 WAT，再用捆绑的 
 package 编译成 WASM：
 
 ```sh
-pnpm ikc emit-wat examples/scalar.ik --out build/scalar.wat
-pnpm ikc emit-wasm examples/scalar.ik --out build/scalar.wasm
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+pnpm ckc emit-wat examples/scalar.ck --out build/scalar.wat
+pnpm ckc emit-wasm examples/scalar.ck --out build/scalar.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 ```
 
 Phase 12 v1 ABI 目标是 `wasm32`，导出 linear memory，将 `ptr<T>` 映射为
 `i32` memory offset，在 JavaScript 中用 `BigInt` 处理 `i64` / `u64` interop，
 并保持 arithmetic unchecked。当前 backend 已覆盖 scalar operations、
-control flow、内部函数调用、短路逻辑，以及 `pricing.ik` 这类核心
+control flow、内部函数调用、短路逻辑，以及 `pricing.ck` 这类核心
 ptr/index/field load/store 模式。Phase 16 增加 f64 WASM codegen：scalar f64
 parameter/return 使用 WASM `f64`，JavaScript interop 使用 `Number`，`ptr<f64>`
 memory 使用 `f64.load` / `f64.store`。
@@ -240,14 +241,14 @@ Phase 13 增加 MIR-to-LLVM backend，可以生成 textual LLVM IR（`.ll`），
 通过 clang 构建 native dynamic library：
 
 ```text
-.ik source -> CheckedProgram -> MIR -> LLVM IR text
+.ck source -> CheckedProgram -> MIR -> LLVM IR text
 ```
 
 ```sh
-pnpm ikc emit-llvm examples/pricing.ik --out build/pricing.ll
-pnpm ikc build-llvm examples/pricing.ik --out build/libpricing
-pnpm ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
-pnpm ikc build-llvm examples/pricing.ik --out build/libpricing --target x86_64-unknown-linux-gnu
+pnpm ckc emit-llvm examples/pricing.ck --out build/pricing.ll
+pnpm ckc build-llvm examples/pricing.ck --out build/libpricing
+pnpm ckc build-llvm examples/pricing.ck --kind object --out build/pricing.o
+pnpm ckc build-llvm examples/pricing.ck --out build/libpricing --target x86_64-unknown-linux-gnu
 ```
 
 v1 backend 只支持 unchecked：`emit-llvm --overflow checked` 和
@@ -267,7 +268,7 @@ Phase 16 增加 f64 LLVM codegen，使用 `double`、`fadd`、`fsub`、`fmul`、
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 node examples/node-wasm-call/index.mjs
 ```
 
@@ -282,14 +283,14 @@ node examples/node-wasm-call/index.mjs
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out examples/node-wasm-f64-array/f64_array.wasm
+pnpm ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out examples/node-wasm-f64-array/f64_array.wasm
 node examples/node-wasm-f64-array/index.mjs
 ```
 
 Pointer ABI 不变：WASM `ptr<f64>` 仍是 `i32` byte offset，`f64` size 是 8，
 `ptr<f64>[i]` 是 `base + i * 8`，`Float64Array` index 是 `byteOffset / 8`。
 byte offset 必须 8-byte aligned。如果 host 调用 `memory.grow`，继续使用前要重新
-创建 typed-array view。IK / IntKernel 不提供 WASM allocator 或 runtime；memory
+创建 typed-array view。CK / CalcKernel 不提供 WASM allocator 或 runtime；memory
 placement 和 buffer sizing 由 host 负责。
 
 ## Browser WASM 示例
@@ -299,7 +300,7 @@ placement 和 buffer sizing 由 host 负责。
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out examples/browser-wasm-call/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out examples/browser-wasm-call/pricing.wasm
 cd examples/browser-wasm-call
 python3 -m http.server 8000
 ```
@@ -318,7 +319,7 @@ macOS/Linux：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 python3 examples/python-ctypes-call/call_pricing.py
 ```
 
@@ -326,7 +327,7 @@ Windows 上，先生成 `pricing.dll`，再用 Python 运行同一脚本：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 py examples\python-ctypes-call\call_pricing.py
 ```
 
@@ -334,7 +335,7 @@ Checked ABI 示例：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 python3 examples/python-ctypes-call/call_pricing_checked.py
 ```
 
@@ -342,12 +343,12 @@ Windows 上显式生成 `pricing_checked.dll`：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 py examples\python-ctypes-call\call_pricing_checked.py
 ```
 
 详见 [examples/python-ctypes-call](examples/python-ctypes-call/README.zh-CN.md)，了解
-`ctypes` struct、pointer 和 checked `IK_Status` 映射。
+`ctypes` struct、pointer 和 checked `CK_Status` 映射。
 
 ## Node.js FFI 示例
 
@@ -358,7 +359,7 @@ macOS/Linux：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 cd examples/node-ffi-call
 pnpm install
 pnpm start
@@ -368,7 +369,7 @@ Windows 上，先生成 `pricing.dll`：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 cd examples\node-ffi-call
 pnpm install
 pnpm start
@@ -378,7 +379,7 @@ Checked ABI 示例：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 cd examples/node-ffi-call
 pnpm install
 pnpm start:checked
@@ -388,14 +389,14 @@ Windows 上显式生成 `pricing_checked.dll`：
 
 ```sh
 pnpm build
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 cd examples\node-ffi-call
 pnpm install
 pnpm start:checked
 ```
 
 详见 [examples/node-ffi-call](examples/node-ffi-call/README.zh-CN.md)，了解 Koffi
-struct、pointer、`BigInt` 和 checked `IK_Status` 映射。
+struct、pointer、`BigInt` 和 checked `CK_Status` 映射。
 
 ## Benchmarks
 
@@ -437,11 +438,11 @@ V0 当前支持：
 V0 不支持字符串、IO、heap allocation、GC、异常、async、class、闭包、模块、
 runtime library 或 JIT。WASM 和 LLVM backend 当前只支持 unchecked arithmetic。
 
-Floating point 刻意保持很窄：IK / IntKernel 是 f64-only。当前支持 `f64`
+Floating point 刻意保持很窄：CK / CalcKernel 是 f64-only。当前支持 `f64`
 strict mode，不规划 `f32`。当前只实现 exact explicit `i32_to_f64` 和
 `u32_to_f64` cast。implicit int/float conversion、`i64/u64` to f64 cast、
 f64-to-int cast、`f64 %`、fast-math、SIMD 或 float checked overflow 都未实现。
-IK / IntKernel 不保证所有 C、LLVM、WASM 和 JavaScript target 的浮点结果
+CK / CalcKernel 不保证所有 C、LLVM、WASM 和 JavaScript target 的浮点结果
 bit-identical。
 
 V0 不做 bounds check。默认 arithmetic 是 unchecked；可选
@@ -465,6 +466,7 @@ English:
 - [Optimization](docs/OPTIMIZATION.md)
 - [Performance](docs/PERFORMANCE.md)
 - [Naming Conventions](docs/NAMING_CONVENTIONS.md)
+- [Migration Guide](docs/MIGRATION_IK_TO_CK.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
@@ -480,5 +482,6 @@ English:
 - [优化](docs/zh-CN/OPTIMIZATION.md)
 - [性能](docs/zh-CN/PERFORMANCE.md)
 - [命名规范](docs/zh-CN/NAMING_CONVENTIONS.md)
+- [迁移指南](docs/zh-CN/MIGRATION_IK_TO_CK.md)
 - [路线图](docs/zh-CN/ROADMAP.md)
 - [发布检查清单](docs/zh-CN/RELEASE_CHECKLIST.md)

@@ -9,7 +9,7 @@ function span(startLine: number, startColumn: number, endLine: number, endColumn
 }
 
 describe("spanToRangeCoordinates", () => {
-  it("maps a same-line one-based IntKernel span to a zero-based VSCode range", () => {
+  it("maps a same-line one-based CalcKernel span to a zero-based VSCode range", () => {
     expect(spanToRangeCoordinates("let x: i64 = 0;", span(1, 5, 1, 6))).toEqual({
       start: { line: 0, character: 4 },
       end: { line: 0, character: 5 }

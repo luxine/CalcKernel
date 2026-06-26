@@ -82,8 +82,8 @@ int main(int argc, char** argv) {
 
   for (int32_t iteration = 0; iteration < iterations; iteration += 1) {
     int32_t ik_return = -1;
-    const IK_Status status = calc_items(items, len, out, &ik_return);
-    if (status != IK_OK || ik_return != 0) {
+    const CK_Status status = calc_items(items, len, out, &ik_return);
+    if (status != CK_OK || ik_return != 0) {
       fprintf(stderr, "calc_items failed: status=%" PRId32 ", ik_return=%" PRId32 "\n", status, ik_return);
       free(items);
       free(out);

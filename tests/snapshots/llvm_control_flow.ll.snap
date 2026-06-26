@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "llvm_control_flow.ik"
+; ModuleID = 'calckernel'
+source_filename = "llvm_control_flow.ck"
 
 define i32 @max_i32(i32 %a, i32 %b) {
 entry:

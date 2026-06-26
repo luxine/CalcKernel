@@ -53,7 +53,7 @@ export interface BuildSharedLibraryResult {
 }
 
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
-const buildDllFlag = "-DIK_BUILD_DLL";
+const buildDllFlag = "-DCK_BUILD_DLL";
 let tempFileCounter = 0;
 
 export function emitCFiles(checked: CheckResult, options: EmitCFilesOptions): void {

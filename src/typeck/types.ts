@@ -1,36 +1,36 @@
 export type PrimitiveTypeName = "i32" | "i64" | "u32" | "u64" | "f64" | "bool";
 
-export type IntKernelType =
+export type CalcKernelType =
   | { kind: "primitive"; name: PrimitiveTypeName }
-  | { kind: "pointer"; elementType: IntKernelType }
+  | { kind: "pointer"; elementType: CalcKernelType }
   | { kind: "struct"; name: string }
   | { kind: "integerLiteral" }
   | { kind: "unknown" };
 
-export const unknownType: IntKernelType = { kind: "unknown" };
-export const integerLiteralType: IntKernelType = { kind: "integerLiteral" };
+export const unknownType: CalcKernelType = { kind: "unknown" };
+export const integerLiteralType: CalcKernelType = { kind: "integerLiteral" };
 
 const integerPrimitiveNames: readonly PrimitiveTypeName[] = ["i32", "i64", "u32", "u64"];
 const indexIntegerPrimitiveNames: readonly PrimitiveTypeName[] = ["i32", "u32"];
 const floatPrimitiveNames: readonly PrimitiveTypeName[] = ["f64"];
 
-export function primitiveType(name: PrimitiveTypeName): IntKernelType {
+export function primitiveType(name: PrimitiveTypeName): CalcKernelType {
   return { kind: "primitive", name };
 }
 
-export function pointerType(elementType: IntKernelType): IntKernelType {
+export function pointerType(elementType: CalcKernelType): CalcKernelType {
   return { kind: "pointer", elementType };
 }
 
-export function structType(name: string): IntKernelType {
+export function structType(name: string): CalcKernelType {
   return { kind: "struct", name };
 }
 
-export function isUnknown(type: IntKernelType): boolean {
+export function isUnknown(type: CalcKernelType): boolean {
   return type.kind === "unknown";
 }
 
-export function isBool(type: IntKernelType): boolean {
+export function isBool(type: CalcKernelType): boolean {
   return type.kind === "primitive" && type.name === "bool";
 }
 
@@ -42,27 +42,27 @@ export function isFloatPrimitiveName(name: PrimitiveTypeName): boolean {
   return floatPrimitiveNames.includes(name);
 }
 
-export function isIntegerPrimitive(type: IntKernelType): boolean {
+export function isIntegerPrimitive(type: CalcKernelType): boolean {
   return type.kind === "primitive" && isIntegerPrimitiveName(type.name);
 }
 
-export function isFloatType(type: IntKernelType): boolean {
+export function isFloatType(type: CalcKernelType): boolean {
   return type.kind === "primitive" && isFloatPrimitiveName(type.name);
 }
 
-export function isInteger(type: IntKernelType): boolean {
+export function isInteger(type: CalcKernelType): boolean {
   return type.kind === "integerLiteral" || isIntegerPrimitive(type);
 }
 
-export function isNumericType(type: IntKernelType): boolean {
+export function isNumericType(type: CalcKernelType): boolean {
   return isInteger(type) || isFloatType(type);
 }
 
-export function isIndexInteger(type: IntKernelType): boolean {
+export function isIndexInteger(type: CalcKernelType): boolean {
   return type.kind === "integerLiteral" || (type.kind === "primitive" && indexIntegerPrimitiveNames.includes(type.name));
 }
 
-export function sameType(left: IntKernelType, right: IntKernelType): boolean {
+export function sameType(left: CalcKernelType, right: CalcKernelType): boolean {
   if (left.kind === "unknown" || right.kind === "unknown") {
     return true;
   }
@@ -91,15 +91,15 @@ export function sameType(left: IntKernelType, right: IntKernelType): boolean {
   }
 }
 
-export function canAssign(target: IntKernelType, value: IntKernelType): boolean {
+export function canAssign(target: CalcKernelType, value: CalcKernelType): boolean {
   return sameType(target, value);
 }
 
-export function materializeIntegerLiteral(type: IntKernelType, fallback: IntKernelType = primitiveType("i32")): IntKernelType {
+export function materializeIntegerLiteral(type: CalcKernelType, fallback: CalcKernelType = primitiveType("i32")): CalcKernelType {
   return type.kind === "integerLiteral" ? fallback : type;
 }
 
-export function typeToString(type: IntKernelType): string {
+export function typeToString(type: CalcKernelType): string {
   switch (type.kind) {
     case "primitive":
       return type.name;

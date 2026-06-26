@@ -3,10 +3,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import koffi from "koffi";
 
-const IK_OK = 0;
-const IK_ERR_OVERFLOW = 1;
-const IK_ERR_DIV_BY_ZERO = 2;
-const IK_ERR_NULL_POINTER = 3;
+const CK_OK = 0;
+const CK_ERR_OVERFLOW = 1;
+const CK_ERR_DIV_BY_ZERO = 2;
+const CK_ERR_NULL_POINTER = 3;
 
 const exampleDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(exampleDir, "..", "..");
@@ -28,8 +28,8 @@ const dylib = libraryPath();
 if (!existsSync(dylib)) {
   throw new Error(
     `dynamic library not found: ${dylib}\n` +
-      "Build it first with `pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked` " +
-      "on macOS/Linux, or `pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked` on Windows."
+      "Build it first with `pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked` " +
+      "on macOS/Linux, or `pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked` on Windows."
   );
 }
 
@@ -55,8 +55,8 @@ function runSuccessCase() {
   ikReturn[0] = -1;
 
   const status = calcItems(items, items.length, out, ikReturn);
-  if (status !== IK_OK) {
-    throw new Error(`calc_items returned IK_Status ${status}`);
+  if (status !== CK_OK) {
+    throw new Error(`calc_items returned CK_Status ${status}`);
   }
   if (ikReturn[0] !== 0) {
     throw new Error(`unexpected ik_return: expected 0, got ${ikReturn[0]}`);
@@ -76,8 +76,8 @@ function runOverflowCase() {
   ikReturn[0] = -1;
 
   const status = calcItems(items, items.length, out, ikReturn);
-  if (status !== IK_ERR_OVERFLOW) {
-    throw new Error(`expected IK_ERR_OVERFLOW, got IK_Status ${status}`);
+  if (status !== CK_ERR_OVERFLOW) {
+    throw new Error(`expected CK_ERR_OVERFLOW, got CK_Status ${status}`);
   }
 }
 

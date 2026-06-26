@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { analyzeIntKernelDocument, type IntKernelAnalysis, type IntKernelReference, type IntKernelSymbol } from "./languageService";
+import { analyzeCalcKernelDocument, type CalcKernelAnalysis, type CalcKernelReference, type CalcKernelSymbol } from "./languageService";
 
 export const semanticTokenLegend = new vscode.SemanticTokensLegend(
   ["type", "function", "parameter", "variable", "property"],
@@ -15,7 +15,7 @@ export interface SemanticTokenData {
 
 const declarationModifier = 1 << semanticTokenLegend.tokenModifiers.indexOf("declaration");
 
-export function buildSemanticTokenData(analysis: IntKernelAnalysis): SemanticTokenData[] {
+export function buildSemanticTokenData(analysis: CalcKernelAnalysis): SemanticTokenData[] {
   const tokens: SemanticTokenData[] = [
     ...analysis.symbols.map(symbolToToken),
     ...analysis.references.map(referenceToToken)
@@ -26,10 +26,10 @@ export function buildSemanticTokenData(analysis: IntKernelAnalysis): SemanticTok
 export function registerSemanticTokens(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerDocumentSemanticTokensProvider(
-      { language: "intkernel" },
+      { language: "calckernel" },
       {
         provideDocumentSemanticTokens(document) {
-          const analysis = analyzeIntKernelDocument(document);
+          const analysis = analyzeCalcKernelDocument(document);
           const builder = new vscode.SemanticTokensBuilder(semanticTokenLegend);
           for (const token of buildSemanticTokenData(analysis)) {
             builder.push(
@@ -48,7 +48,7 @@ export function registerSemanticTokens(context: vscode.ExtensionContext): void {
   );
 }
 
-function symbolToToken(symbol: IntKernelSymbol): SemanticTokenData {
+function symbolToToken(symbol: CalcKernelSymbol): SemanticTokenData {
   return {
     text: symbol.name,
     range: symbol.selectionRange,
@@ -57,7 +57,7 @@ function symbolToToken(symbol: IntKernelSymbol): SemanticTokenData {
   };
 }
 
-function referenceToToken(reference: IntKernelReference): SemanticTokenData {
+function referenceToToken(reference: CalcKernelReference): SemanticTokenData {
   return {
     text: reference.name,
     range: reference.range,

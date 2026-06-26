@@ -1,6 +1,6 @@
 #include "scalar_control_checked.h"
 
-IK_Status sum_to_n(int64_t n, int64_t* ik_return) {
+CK_Status sum_to_n(int64_t n, int64_t* ik_return) {
   int64_t i;
   int64_t sum;
   int64_t ik_tmp0;
@@ -11,7 +11,7 @@ IK_Status sum_to_n(int64_t n, int64_t* ik_return) {
   int64_t ik_tmp5;
 
   if (ik_return == NULL) {
-    return IK_ERR_NULL_POINTER;
+    return CK_ERR_NULL_POINTER;
   }
 
   ik_tmp0 = 0;
@@ -30,26 +30,26 @@ bb1:
 
 bb2:
   if (__builtin_add_overflow(sum, i, &ik_tmp3)) {
-    return IK_ERR_OVERFLOW;
+    return CK_ERR_OVERFLOW;
   }
   sum = ik_tmp3;
   ik_tmp4 = 1;
   if (__builtin_add_overflow(i, ik_tmp4, &ik_tmp5)) {
-    return IK_ERR_OVERFLOW;
+    return CK_ERR_OVERFLOW;
   }
   i = ik_tmp5;
   goto bb1;
 
 bb3:
   *ik_return = sum;
-  return IK_OK;
+  return CK_OK;
 }
 
-IK_Status choose(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status choose(int64_t a, int64_t b, int64_t* ik_return) {
   bool ik_tmp0;
 
   if (ik_return == NULL) {
-    return IK_ERR_NULL_POINTER;
+    return CK_ERR_NULL_POINTER;
   }
 
   ik_tmp0 = a > b;
@@ -61,14 +61,14 @@ IK_Status choose(int64_t a, int64_t b, int64_t* ik_return) {
 
 bb1:
   *ik_return = a;
-  return IK_OK;
+  return CK_OK;
 
 bb2:
   *ik_return = b;
-  return IK_OK;
+  return CK_OK;
 }
 
-IK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return) {
   int64_t ik_tmp0;
   int64_t ik_tmp1;
   bool ik_tmp2;
@@ -76,11 +76,11 @@ IK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return) {
   int64_t ik_tmp4;
 
   if (ik_return == NULL) {
-    return IK_ERR_NULL_POINTER;
+    return CK_ERR_NULL_POINTER;
   }
 
   if (__builtin_add_overflow(a, b, &ik_tmp0)) {
-    return IK_ERR_OVERFLOW;
+    return CK_ERR_OVERFLOW;
   }
   ik_tmp1 = 0;
   ik_tmp2 = ik_tmp0 > ik_tmp1;
@@ -93,10 +93,10 @@ IK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return) {
 bb1:
   ik_tmp3 = 1;
   *ik_return = ik_tmp3;
-  return IK_OK;
+  return CK_OK;
 
 bb2:
   ik_tmp4 = 0;
   *ik_return = ik_tmp4;
-  return IK_OK;
+  return CK_OK;
 }

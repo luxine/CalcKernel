@@ -20,7 +20,7 @@ import type {
   WhileStatement
 } from "../../parser/ast.js";
 import type { CheckResult } from "../../typeck/checker.js";
-import { primitiveType, type IntKernelType } from "../../typeck/types.js";
+import { primitiveType, type CalcKernelType } from "../../typeck/types.js";
 import { assertCanEmitC, emitCheckedFunctionSignature, emitCType, emitFunctionSignature } from "./c-header-emitter.js";
 import { emitCPrimitiveType, escapeCIncludePath } from "./c-common.js";
 import { resolveOverflowMode, type CCodegenOptions } from "./c-options.js";
@@ -65,7 +65,7 @@ function emitFunction(functionDeclaration: FunctionDeclaration): string {
 interface CheckedExpressionResult {
   lines: string[];
   value: string;
-  type: IntKernelType;
+  type: CalcKernelType;
 }
 
 interface CheckedAccessResult {
@@ -97,7 +97,7 @@ function emitCheckedFunction(checked: CheckResult, functionDeclaration: Function
   const context: CheckedEmitContext = { checked, tempCounter: 0, statusCounter: 0 };
   const lines = [`${prefix}${emitCheckedFunctionSignature(functionDeclaration)} {`];
 
-  lines.push("  if (ik_return == NULL) {", "    return IK_ERR_NULL_POINTER;", "  }");
+  lines.push("  if (ik_return == NULL) {", "    return CK_ERR_NULL_POINTER;", "  }");
 
   const bodyLines = emitCheckedStatements(context, functionDeclaration.body.statements, 1, true);
   if (bodyLines.length > 0) {
@@ -179,7 +179,7 @@ function emitCheckedReturnStatement(context: CheckedEmitContext, statement: Retu
     lines.push("");
   }
 
-  lines.push(`${pad}*ik_return = ${value.value};`, `${pad}return IK_OK;`);
+  lines.push(`${pad}*ik_return = ${value.value};`, `${pad}return CK_OK;`);
   return lines;
 }
 
@@ -353,7 +353,7 @@ function lowerCheckedUnaryExpression(context: CheckedEmitContext, expression: Un
         ...operand.lines,
         `${cType} ${temp};`,
         `if (__builtin_sub_overflow((${cType})0, ${operand.value}, &${temp})) {`,
-        "  return IK_ERR_OVERFLOW;",
+        "  return CK_ERR_OVERFLOW;",
         "}"
       ],
       value: temp,
@@ -365,7 +365,7 @@ function lowerCheckedUnaryExpression(context: CheckedEmitContext, expression: Un
     lines: [
       ...operand.lines,
       `if (${operand.value} == ${signedMinConstant(type)}) {`,
-      "  return IK_ERR_OVERFLOW;",
+      "  return CK_ERR_OVERFLOW;",
       "}",
       `${cType} ${temp} = -${operand.value};`
     ],
@@ -391,8 +391,8 @@ function lowerCheckedCallExpression(context: CheckedEmitContext, expression: Cal
     lines: [
       ...args.flatMap((arg) => arg.lines),
       `${cType} ${temp};`,
-      `IK_Status ${status} = ${emitIdentifierExpression(expression.callee)}(${callArgs});`,
-      `if (${status} != IK_OK) {`,
+      `CK_Status ${status} = ${emitIdentifierExpression(expression.callee)}(${callArgs});`,
+      `if (${status} != CK_OK) {`,
       `  return ${status};`,
       "}"
     ],
@@ -470,7 +470,7 @@ function lowerCheckedArithmeticExpression(
   expression: BinaryExpression,
   left: CheckedExpressionResult,
   right: CheckedExpressionResult,
-  type: IntKernelType
+  type: CalcKernelType
 ): CheckedExpressionResult {
   const cType = emitCheckedCType(type);
   const temp = nextCheckedTemp(context);
@@ -522,22 +522,22 @@ function emitCheckedOverflowBuiltin(builtin: string, left: string, right: string
   return [
     `${cType} ${temp};`,
     `if (${builtin}(${left}, ${right}, &${temp})) {`,
-    "  return IK_ERR_OVERFLOW;",
+    "  return CK_ERR_OVERFLOW;",
     "}"
   ];
 }
 
-function emitCheckedDivisionOrModulo(operator: "/" | "%", left: string, right: string, temp: string, type: IntKernelType, cType: string): string[] {
+function emitCheckedDivisionOrModulo(operator: "/" | "%", left: string, right: string, temp: string, type: CalcKernelType, cType: string): string[] {
   const lines = [
     `if (${right} == 0) {`,
-    "  return IK_ERR_DIV_BY_ZERO;",
+    "  return CK_ERR_DIV_BY_ZERO;",
     "}"
   ];
 
   if (isSignedIntegerType(type)) {
     lines.push(
       `if (${left} == ${signedMinConstant(type)} && ${right} == -1) {`,
-      "  return IK_ERR_OVERFLOW;",
+      "  return CK_ERR_OVERFLOW;",
       "}"
     );
   }
@@ -691,7 +691,7 @@ function emitParenthesizedExpression(expression: ParenthesizedExpression): strin
   return `(${emitExpression(expression.expression)})`;
 }
 
-function checkedExpressionType(context: CheckedEmitContext, expression: Expression): IntKernelType {
+function checkedExpressionType(context: CheckedEmitContext, expression: Expression): CalcKernelType {
   const type = context.checked.typedAst.expressionTypes.get(expression);
   if (!type || type.kind === "unknown") {
     throw new Error(`Cannot emit checked C for expression with unresolved type '${expression.kind}'.`);
@@ -700,7 +700,7 @@ function checkedExpressionType(context: CheckedEmitContext, expression: Expressi
   return type.kind === "integerLiteral" ? primitiveType("i32") : type;
 }
 
-function emitCheckedCType(type: IntKernelType): string {
+function emitCheckedCType(type: CalcKernelType): string {
   if (type.kind === "integerLiteral") {
     return "int32_t";
   }
@@ -712,7 +712,7 @@ function emitCheckedCType(type: IntKernelType): string {
   return emitCPrimitiveType(type.name);
 }
 
-function signedMinConstant(type: IntKernelType): string {
+function signedMinConstant(type: CalcKernelType): string {
   if (type.kind === "primitive" && type.name === "i64") {
     return "INT64_MIN";
   }
@@ -724,15 +724,15 @@ function signedMinConstant(type: IntKernelType): string {
   throw new Error("Checked unary minus and signed division overflow checks require a signed integer type.");
 }
 
-function isSignedIntegerType(type: IntKernelType): boolean {
+function isSignedIntegerType(type: CalcKernelType): boolean {
   return type.kind === "integerLiteral" || (type.kind === "primitive" && (type.name === "i32" || type.name === "i64"));
 }
 
-function isUnsignedIntegerType(type: IntKernelType): boolean {
+function isUnsignedIntegerType(type: CalcKernelType): boolean {
   return type.kind === "primitive" && (type.name === "u32" || type.name === "u64");
 }
 
-function isF64Type(type: IntKernelType): boolean {
+function isF64Type(type: CalcKernelType): boolean {
   return type.kind === "primitive" && type.name === "f64";
 }
 

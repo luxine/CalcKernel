@@ -2,12 +2,12 @@
 
 [English](README.md)
 
-这个示例展示如何在 Node.js 中调用 IK / IntKernel 生成的 WASM `f64`
+这个示例展示如何在 Node.js 中调用 CK / CalcKernel 生成的 WASM `f64`
 kernel，并用指向 exported WASM memory 的 `Float64Array` view 读写
 `ptr<f64>` buffer。对于已经是 numeric 且 8-byte aligned 的批量 `f64`
 数据，这是推荐的 host 侧路径。
 
-这个示例不会引入 IK runtime 或 allocator。byte offset、memory grow 和
+这个示例不会引入 CK runtime 或 allocator。byte offset、memory grow 和
 typed-array view 重建都由 host 负责。
 
 ## 生成 WASM
@@ -21,13 +21,13 @@ pnpm build
 生成 `build/f64_array.wasm`：
 
 ```sh
-ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out build/f64_array.wasm -O3
+ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out build/f64_array.wasm -O3
 ```
 
 源码 checkout 中也可以通过 pnpm 运行：
 
 ```sh
-pnpm ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out build/f64_array.wasm -O3
+pnpm ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out build/f64_array.wasm -O3
 ```
 
 ## 运行
@@ -64,7 +64,7 @@ hot path 使用 `Float64Array#set` 和 `Float64Array#subarray`，不在循环中
 
 ## Memory Ownership
 
-IK / IntKernel 当前没有 WASM allocator、runtime 或 bounds checks。host 必须负责
+CK / CalcKernel 当前没有 WASM allocator、runtime 或 bounds checks。host 必须负责
 memory placement，并确保 input/output 区域有效。
 
 如果调用了 `memory.grow`，旧的 `Float64Array` view 可能失效。任何 grow 之后都要

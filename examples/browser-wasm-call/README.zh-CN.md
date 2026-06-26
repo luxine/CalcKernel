@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-这个示例在浏览器中运行从 `examples/pricing.ik` 生成的 WebAssembly module。
+这个示例在浏览器中运行从 `examples/pricing.ck` 生成的 WebAssembly module。
 它是纯 HTML 和 JavaScript：不使用框架、不使用 bundler，也没有额外依赖。
 
 ## 生成 WASM
@@ -11,7 +11,7 @@
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out examples/browser-wasm-call/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out examples/browser-wasm-call/pricing.wasm
 ```
 
 示例期望 `pricing.wasm` 与 `index.html` 和 `index.js` 位于同一目录：

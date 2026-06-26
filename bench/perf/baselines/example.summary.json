@@ -21,7 +21,7 @@
     {
       "name": "pricing-wasm-unchecked-compute-only-O3",
       "category": "wasm",
-      "optLevel": "IK-O3",
+      "optLevel": "CK-O3",
       "overflowMode": "unchecked",
       "medianSeconds": 0.12,
       "p95Seconds": 0.13,

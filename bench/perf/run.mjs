@@ -117,9 +117,9 @@ function requiredVersion(command, args) {
 
 function generateArtifacts() {
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-c",
-    "examples/pricing.ik",
+    "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing.c")),
     "--header",
@@ -128,9 +128,9 @@ function generateArtifacts() {
     "unchecked"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-c",
-    "examples/pricing.ik",
+    "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing.checked.c")),
     "--header",
@@ -140,9 +140,9 @@ function generateArtifacts() {
     "-O3"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-c",
-    "examples/pricing.ik",
+    "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing_ik_o3.c")),
     "--header",
@@ -152,9 +152,9 @@ function generateArtifacts() {
     "-O3"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-c",
-    "bench/perf/fixtures/pricing_helpers.ik",
+    "bench/perf/fixtures/pricing_helpers.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing_helpers_ik_o0.c")),
     "--header",
@@ -164,9 +164,9 @@ function generateArtifacts() {
     "-O0"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-c",
-    "bench/perf/fixtures/pricing_helpers.ik",
+    "bench/perf/fixtures/pricing_helpers.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing_helpers_ik_o2.c")),
     "--header",
@@ -176,9 +176,9 @@ function generateArtifacts() {
     "-O2"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-c",
-    "bench/perf/fixtures/f64_kernels.ik",
+    "bench/perf/fixtures/f64_kernels.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "f64_kernels.c")),
     "--header",
@@ -188,18 +188,18 @@ function generateArtifacts() {
     "-O3"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-wasm",
-    "examples/pricing.ik",
+    "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing.wasm")),
     "--overflow",
     "unchecked"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-wasm",
-    "examples/pricing.ik",
+    "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing_o3.wasm")),
     "--overflow",
@@ -207,18 +207,18 @@ function generateArtifacts() {
     "-O3"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-wasm",
-    "examples/wasm_scalar.ik",
+    "examples/wasm_scalar.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "call_overhead.wasm")),
     "--overflow",
     "unchecked"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-wasm",
-    "bench/perf/fixtures/f64_kernels.ik",
+    "bench/perf/fixtures/f64_kernels.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "f64_kernels_o3.wasm")),
     "--overflow",
@@ -226,18 +226,18 @@ function generateArtifacts() {
     "-O3"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-llvm",
-    "examples/pricing.ik",
+    "examples/pricing.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "pricing.ll")),
     "--overflow",
     "unchecked"
   ]);
   run("pnpm", [
-    "ikc",
+    "ckc",
     "emit-llvm",
-    "bench/perf/fixtures/f64_kernels.ik",
+    "bench/perf/fixtures/f64_kernels.ck",
     "--out",
     relativeFromRoot(join(generatedDir, "f64_kernels.ll")),
     "--overflow",
@@ -248,7 +248,7 @@ function generateArtifacts() {
 
 function compileNativeCommands() {
   for (const job of nativeCompileJobs(perfPaths())) {
-    const common = ["-std=c11", `-${job.optLevel}`, "-Wall", "-Wextra", "-Werror", "-DIK_BUILD_DLL"];
+    const common = ["-std=c11", `-${job.optLevel}`, "-Wall", "-Wextra", "-Werror", "-DCK_BUILD_DLL"];
     run("clang", [...common, job.source, job.harness, "-I", relativeFromRoot(generatedDir), "-o", job.output]);
   }
 }

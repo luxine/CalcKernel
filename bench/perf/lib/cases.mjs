@@ -13,32 +13,32 @@ export function benchmarkCommands(config, paths) {
     nativeCase("pricing-c-unchecked-O0", "O0", "unchecked", `${executable("pricing-c-unchecked-O0")} ${itemArgs}`),
     nativeCase("pricing-c-unchecked-O2", "O2", "unchecked", `${executable("pricing-c-unchecked-O2")} ${itemArgs}`),
     nativeCase("pricing-c-unchecked-O3", "O3", "unchecked", `${executable("pricing-c-unchecked-O3")} ${itemArgs}`),
-    nativeCase("pricing-c-unchecked-ik-O3", "IK-O3/clang-O3", "unchecked", `${executable("pricing-c-unchecked-ik-O3")} ${itemArgs}`),
-    nativeCase("pricing-c-checked-O3", "IK-O3/clang-O3", "checked", `${executable("pricing-c-checked-O3")} ${itemArgs}`),
-    nativeCase("pricing-helpers-c-unchecked-ik-O0", "IK-O0/clang-O3", "unchecked", `${executable("pricing-helpers-c-unchecked-ik-O0")} ${itemArgs}`),
-    nativeCase("pricing-helpers-c-unchecked-ik-O2", "IK-O2/clang-O3", "unchecked", `${executable("pricing-helpers-c-unchecked-ik-O2")} ${itemArgs}`),
+    nativeCase("pricing-c-unchecked-ck-O3", "CK-O3/clang-O3", "unchecked", `${executable("pricing-c-unchecked-ck-O3")} ${itemArgs}`),
+    nativeCase("pricing-c-checked-O3", "CK-O3/clang-O3", "checked", `${executable("pricing-c-checked-O3")} ${itemArgs}`),
+    nativeCase("pricing-helpers-c-unchecked-ck-O0", "CK-O0/clang-O3", "unchecked", `${executable("pricing-helpers-c-unchecked-ck-O0")} ${itemArgs}`),
+    nativeCase("pricing-helpers-c-unchecked-ck-O2", "CK-O2/clang-O3", "unchecked", `${executable("pricing-helpers-c-unchecked-ck-O2")} ${itemArgs}`),
     nativeCase("pricing-llvm-unchecked-O0", "O0", "unchecked", `${executable("pricing-llvm-unchecked-O0")} ${itemArgs}`),
     nativeCase("pricing-llvm-unchecked-O2", "O2", "unchecked", `${executable("pricing-llvm-unchecked-O2")} ${itemArgs}`),
     nativeCase("pricing-llvm-unchecked-O3", "O3", "unchecked", `${executable("pricing-llvm-unchecked-O3")} ${itemArgs}`),
-    wasmCase("pricing-wasm-unchecked-total", "wasm", "IK-O0", `node bench/perf/cases/pricing-wasm.mjs --mode total --wasm ${pricingWasm} ${itemArgs}`, "total"),
+    wasmCase("pricing-wasm-unchecked-total", "wasm", "CK-O0", `node bench/perf/cases/pricing-wasm.mjs --mode total --wasm ${pricingWasm} ${itemArgs}`, "total"),
     wasmCase(
       "pricing-wasm-unchecked-total-O3",
       "wasm",
-      "IK-O3",
+      "CK-O3",
       `node bench/perf/cases/pricing-wasm.mjs --mode total --wasm ${pricingWasmO3} ${itemArgs}`,
       "total"
     ),
     wasmCase(
       "pricing-wasm-unchecked-compute-only",
       "wasm",
-      "IK-O0",
+      "CK-O0",
       `node bench/perf/cases/pricing-wasm.mjs --mode compute-only --wasm ${pricingWasm} ${itemArgs}`,
       "compute"
     ),
     wasmCase(
       "pricing-wasm-unchecked-compute-only-O3",
       "wasm",
-      "IK-O3",
+      "CK-O3",
       `node bench/perf/cases/pricing-wasm.mjs --mode compute-only --wasm ${pricingWasmO3} ${itemArgs}`,
       "compute"
     ),
@@ -90,11 +90,11 @@ export function nativeCompileJobs(paths) {
       output: executable("pricing-c-unchecked-O3")
     },
     {
-      name: "pricing-c-unchecked-ik-O3",
+      name: "pricing-c-unchecked-ck-O3",
       optLevel: "O3",
       source: `${generated}/pricing_ik_o3.c`,
       harness: "bench/perf/cases/pricing-c-unchecked.c",
-      output: executable("pricing-c-unchecked-ik-O3")
+      output: executable("pricing-c-unchecked-ck-O3")
     },
     {
       name: "pricing-c-checked-O3",
@@ -104,18 +104,18 @@ export function nativeCompileJobs(paths) {
       output: executable("pricing-c-checked-O3")
     },
     {
-      name: "pricing-helpers-c-unchecked-ik-O0",
+      name: "pricing-helpers-c-unchecked-ck-O0",
       optLevel: "O3",
       source: `${generated}/pricing_helpers_ik_o0.c`,
       harness: "bench/perf/cases/pricing-helpers-c-unchecked.c",
-      output: executable("pricing-helpers-c-unchecked-ik-O0")
+      output: executable("pricing-helpers-c-unchecked-ck-O0")
     },
     {
-      name: "pricing-helpers-c-unchecked-ik-O2",
+      name: "pricing-helpers-c-unchecked-ck-O2",
       optLevel: "O3",
       source: `${generated}/pricing_helpers_ik_o2.c`,
       harness: "bench/perf/cases/pricing-helpers-c-unchecked.c",
-      output: executable("pricing-helpers-c-unchecked-ik-O2")
+      output: executable("pricing-helpers-c-unchecked-ck-O2")
     },
     {
       name: "pricing-llvm-unchecked-O0",
@@ -139,18 +139,18 @@ export function nativeCompileJobs(paths) {
       output: executable("pricing-llvm-unchecked-O3")
     },
     {
-      name: "f64-ik-c-o3",
+      name: "f64-ck-c-o3",
       optLevel: "O3",
       source: `${generated}/f64_kernels.c`,
       harness: "bench/perf/cases/f64-native.c",
-      output: executable("f64-ik-c-o3")
+      output: executable("f64-ck-c-o3")
     },
     {
-      name: "f64-ik-llvm-o3",
+      name: "f64-ck-llvm-o3",
       optLevel: "O3",
       source: `${generated}/f64_kernels.ll`,
       harness: "bench/perf/cases/f64-native.c",
-      output: executable("f64-ik-llvm-o3")
+      output: executable("f64-ck-llvm-o3")
     }
   ];
 }
@@ -168,50 +168,50 @@ function f64BenchmarkCommands(kernels, itemArgs, executable, wasmO3) {
       `node bench/perf/cases/f64-js-float64array.mjs --kernel ${kernel} ${itemArgs}`
     ),
     nativeCase(
-      `f64-${kernel}-ik-c-o3`,
-      "IK-O3/clang-O3",
+      `f64-${kernel}-ck-c-o3`,
+      "CK-O3/clang-O3",
       "unchecked",
-      `${executable("f64-ik-c-o3")} --kernel ${kernel} --label f64-${kernel}-ik-c-o3 ${itemArgs}`
+      `${executable("f64-ck-c-o3")} --kernel ${kernel} --label f64-${kernel}-ck-c-o3 ${itemArgs}`
     ),
     nativeCase(
-      `f64-${kernel}-ik-llvm-o3`,
-      "IK-O3/LLVM-O3",
+      `f64-${kernel}-ck-llvm-o3`,
+      "CK-O3/LLVM-O3",
       "unchecked",
-      `${executable("f64-ik-llvm-o3")} --kernel ${kernel} --label f64-${kernel}-ik-llvm-o3 ${itemArgs}`
+      `${executable("f64-ck-llvm-o3")} --kernel ${kernel} --label f64-${kernel}-ck-llvm-o3 ${itemArgs}`
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-setup`,
+      `f64-${kernel}-ck-wasm-o3-setup`,
       "wasm",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode setup --label f64-${kernel}-ik-wasm-o3-setup --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode setup --label f64-${kernel}-ck-wasm-o3-setup --wasm ${wasmO3} ${itemArgs}`,
       "setup"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-input-marshal`,
+      `f64-${kernel}-ck-wasm-o3-input-marshal`,
       "memory",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode input-marshal --label f64-${kernel}-ik-wasm-o3-input-marshal --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode input-marshal --label f64-${kernel}-ck-wasm-o3-input-marshal --wasm ${wasmO3} ${itemArgs}`,
       "input-marshal"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-compute-only`,
+      `f64-${kernel}-ck-wasm-o3-compute-only`,
       "wasm",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode compute-only --label f64-${kernel}-ik-wasm-o3-compute-only --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode compute-only --label f64-${kernel}-ck-wasm-o3-compute-only --wasm ${wasmO3} ${itemArgs}`,
       "compute"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-output-readback`,
+      `f64-${kernel}-ck-wasm-o3-output-readback`,
       "memory",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode output-readback --label f64-${kernel}-ik-wasm-o3-output-readback --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode output-readback --label f64-${kernel}-ck-wasm-o3-output-readback --wasm ${wasmO3} ${itemArgs}`,
       "output-readback"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-total`,
+      `f64-${kernel}-ck-wasm-o3-total`,
       "wasm",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode total --label f64-${kernel}-ik-wasm-o3-total --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --mode total --label f64-${kernel}-ck-wasm-o3-total --wasm ${wasmO3} ${itemArgs}`,
       "total"
     ),
     wasmCase(
@@ -222,38 +222,38 @@ function f64BenchmarkCommands(kernels, itemArgs, executable, wasmO3) {
       "memory-only"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-low-copy-setup`,
+      `f64-${kernel}-ck-wasm-o3-low-copy-setup`,
       "wasm-low-copy",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode setup --label f64-${kernel}-ik-wasm-o3-low-copy-setup --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode setup --label f64-${kernel}-ck-wasm-o3-low-copy-setup --wasm ${wasmO3} ${itemArgs}`,
       "setup"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-low-copy-input-marshal`,
+      `f64-${kernel}-ck-wasm-o3-low-copy-input-marshal`,
       "memory-low-copy",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode input-marshal --label f64-${kernel}-ik-wasm-o3-low-copy-input-marshal --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode input-marshal --label f64-${kernel}-ck-wasm-o3-low-copy-input-marshal --wasm ${wasmO3} ${itemArgs}`,
       "input-marshal"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-low-copy-compute-only`,
+      `f64-${kernel}-ck-wasm-o3-low-copy-compute-only`,
       "wasm-low-copy",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode compute-only --label f64-${kernel}-ik-wasm-o3-low-copy-compute-only --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode compute-only --label f64-${kernel}-ck-wasm-o3-low-copy-compute-only --wasm ${wasmO3} ${itemArgs}`,
       "compute"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-low-copy-output-readback`,
+      `f64-${kernel}-ck-wasm-o3-low-copy-output-readback`,
       "memory-low-copy",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode output-readback --label f64-${kernel}-ik-wasm-o3-low-copy-output-readback --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode output-readback --label f64-${kernel}-ck-wasm-o3-low-copy-output-readback --wasm ${wasmO3} ${itemArgs}`,
       "output-readback"
     ),
     wasmCase(
-      `f64-${kernel}-ik-wasm-o3-low-copy-total`,
+      `f64-${kernel}-ck-wasm-o3-low-copy-total`,
       "wasm-low-copy",
-      "IK-O3",
-      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode total --label f64-${kernel}-ik-wasm-o3-low-copy-total --wasm ${wasmO3} ${itemArgs}`,
+      "CK-O3",
+      `node bench/perf/cases/f64-wasm.mjs --kernel ${kernel} --copy-mode float64array --mode total --label f64-${kernel}-ck-wasm-o3-low-copy-total --wasm ${wasmO3} ${itemArgs}`,
       "total"
     )
   ]);

@@ -58,20 +58,20 @@ function emitCheckedFunction(func: MirFunction, optLevel: OptimizationLevel): st
   const params = func.params.map((param) => `${emitCType(param.type)} ${param.name}`);
   params.push(`${emitCType(func.returnType)}* ik_return`);
 
-  const lines = [`${prefix}IK_Status ${func.name}(${params.join(", ")}) {`];
+  const lines = [`${prefix}CK_Status ${func.name}(${params.join(", ")}) {`];
   const declarations = emitDeclarations(func);
   const referencedLabels = collectReferencedLabels(func);
   const safeUncheckedBinaryTargets = optLevel >= 3 ? collectSafeCheckedInductionBinaryTargets(func) : new Set<string>();
 
   if (functionHasCall(func)) {
-    declarations.push("IK_Status ik_status;");
+    declarations.push("CK_Status ik_status;");
   }
 
   if (declarations.length > 0) {
     lines.push(...declarations.map((line) => `  ${line}`), "");
   }
 
-  lines.push("  if (ik_return == NULL) {", "    return IK_ERR_NULL_POINTER;", "  }");
+  lines.push("  if (ik_return == NULL) {", "    return CK_ERR_NULL_POINTER;", "  }");
 
   func.blocks.forEach((block, index) => {
     if (index > 0 || declarations.length > 0) {
@@ -191,7 +191,7 @@ function emitCheckedInstruction(instruction: MirInstruction, safeUncheckedBinary
       const args = [...instruction.args.map(emitValue), `&${emitValue(instruction.target)}`].join(", ");
       return [
         `ik_status = ${instruction.functionName}(${args});`,
-        "if (ik_status != IK_OK) {",
+        "if (ik_status != CK_OK) {",
         "  return ik_status;",
         "}"
       ];
@@ -226,14 +226,14 @@ function emitCheckedUnaryInstruction(instruction: Extract<MirInstruction, { kind
   if (isUnsignedIntegerType(instruction.target.type)) {
     return [
       `if (__builtin_sub_overflow((${emitCType(instruction.target.type)})0, ${operand}, &${target})) {`,
-      "  return IK_ERR_OVERFLOW;",
+      "  return CK_ERR_OVERFLOW;",
       "}"
     ];
   }
 
   return [
     `if (${operand} == ${signedMinConstant(instruction.target.type)}) {`,
-    "  return IK_ERR_OVERFLOW;",
+    "  return CK_ERR_OVERFLOW;",
     "}",
     `${target} = -${operand};`
   ];
@@ -267,7 +267,7 @@ function emitCheckedBinaryInstruction(instruction: Extract<MirInstruction, { kin
 function emitCheckedOverflowBuiltin(builtin: string, left: string, right: string, target: string): string[] {
   return [
     `if (${builtin}(${left}, ${right}, &${target})) {`,
-    "  return IK_ERR_OVERFLOW;",
+    "  return CK_ERR_OVERFLOW;",
     "}"
   ];
 }
@@ -275,14 +275,14 @@ function emitCheckedOverflowBuiltin(builtin: string, left: string, right: string
 function emitCheckedDivisionOrModulo(operator: "/" | "%", left: string, right: string, target: string, type: MirType): string[] {
   const lines = [
     `if (${right} == 0) {`,
-    "  return IK_ERR_DIV_BY_ZERO;",
+    "  return CK_ERR_DIV_BY_ZERO;",
     "}"
   ];
 
   if (isSignedIntegerType(type)) {
     lines.push(
       `if (${left} == ${signedMinConstant(type)} && ${right} == -1) {`,
-      "  return IK_ERR_OVERFLOW;",
+      "  return CK_ERR_OVERFLOW;",
       "}"
     );
   }
@@ -454,7 +454,7 @@ function emitTerminator(terminator: MirTerminator): string[] {
 function emitCheckedTerminator(terminator: MirTerminator): string[] {
   switch (terminator.kind) {
     case "return":
-      return [`*ik_return = ${emitValue(terminator.value)};`, "return IK_OK;"];
+      return [`*ik_return = ${emitValue(terminator.value)};`, "return CK_OK;"];
     case "jump":
       return [`goto ${terminator.label};`];
     case "branch":

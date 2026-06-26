@@ -100,7 +100,7 @@ vi.mock("vscode", () => {
 });
 
 import * as vscode from "vscode";
-import { analyzeIntKernelDocument, createMemoryDocument } from "../src/languageService";
+import { analyzeCalcKernelDocument, createMemoryDocument } from "../src/languageService";
 import { buildSemanticTokenData, registerSemanticTokens, semanticTokenLegend, type SemanticTokenData } from "../src/semanticTokens";
 
 const sourceText = `
@@ -119,7 +119,7 @@ fn total(item: Item) -> i64 {
 
 describe("semanticTokens", () => {
   it("classifies declarations and references", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const tokens = buildSemanticTokenData(analysis);
     const typeIndex = semanticTokenLegend.tokenTypes.indexOf("type");
     const functionIndex = semanticTokenLegend.tokenTypes.indexOf("function");
@@ -161,7 +161,7 @@ fn configured(configs: ptr<Item>) -> i64 {
   return configs[0].;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(incompleteMemberSourceText, "memory:///incomplete-member-tokens.ik", 1));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(incompleteMemberSourceText, "memory:///incomplete-member-tokens.ck", 1));
     const tokens = buildSemanticTokenData(analysis);
 
     expect(tokens.every((token) => token.text.length > 0)).toBe(true);

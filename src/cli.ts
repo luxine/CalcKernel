@@ -383,6 +383,7 @@ function llvmIntermediateFilePath(outputPath: string, kind: LlvmBuildKind): stri
 }
 
 function checkFile(file: string, cwd: string): { result: CheckResult; source: SourceFile } {
+  validateSourceFileExtension(file);
   const path = resolve(cwd, file);
   const sourceText = readFileSync(path, "utf8");
   const source = new SourceFile(file, sourceText);
@@ -390,6 +391,17 @@ function checkFile(file: string, cwd: string): { result: CheckResult; source: So
     result: check(source),
     source
   };
+}
+
+function validateSourceFileExtension(file: string): void {
+  const legacyExtension = `.${"i"}k`;
+  if (file.endsWith(legacyExtension)) {
+    throw new Error(`CalcKernel source files use .ck. Legacy ${legacyExtension} files are no longer accepted.`);
+  }
+
+  if (!file.endsWith(".ck")) {
+    throw new Error("CalcKernel source files use .ck.");
+  }
 }
 
 function parseFlags(args: string[]): FlagParseResult {
@@ -602,14 +614,14 @@ function cliContext(options: RunCliOptions): Required<RunCliOptions> {
 function usage(): string {
   return [
     "Usage:",
-    "  ikc check <file>",
-    "  ikc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
-    "  ikc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]",
-    "  ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
-    "  ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
-    "  ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--opt-level <0|1|2|3>]",
-    "  ikc build <file> --out <output-path> [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
-    "  ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ckc check <file>",
+    "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
+    "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]",
+    "  ckc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--opt-level <0|1|2|3>]",
+    "  ckc build <file> --out <output-path> [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]",
+    "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]",
     "",
     "Options:",
     "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.",

@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-memory-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-memory-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM memory end-to-end", () => {
   it("compiles generated LLVM IR and runs ptr/index/field load/store functions", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_memory.ik"), readFileSync("examples/llvm_memory.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_memory.ck"), readFileSync("examples/llvm_memory.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_memory.ik", "--out", "build/llvm_memory.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_memory.ck", "--out", "build/llvm_memory.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}
@@ -88,7 +88,7 @@ int main(void) {
   it("compiles generated LLVM IR and runs ptr<f64> and struct f64 load/store functions", () => {
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "llvm_f64_memory.ik"),
+      join(cwd, "llvm_f64_memory.ck"),
       `
         struct Quote {
           price: f64;
@@ -106,7 +106,7 @@ int main(void) {
       `
     );
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_f64_memory.ik", "--out", "build/llvm_f64_memory.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_f64_memory.ck", "--out", "build/llvm_f64_memory.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}

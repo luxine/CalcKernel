@@ -19,10 +19,10 @@ function firstDiagnostic(source: SourceFile, stage: "lex" | "parse" | "check") {
 
 describe("diagnostics formatter", () => {
   it("formats unknown variable diagnostics with a code and source span", () => {
-    const source = new SourceFile("test.ik", "export fn bad() -> i32 {\n  return missing;\n}\n");
+    const source = new SourceFile("test.ck", "export fn bad() -> i32 {\n  return missing;\n}\n");
 
     expect(formatDiagnostic(source, firstDiagnostic(source, "check"))).toMatchInlineSnapshot(`
-      "test.ik:2:10: error IK2001: Unknown variable 'missing'.
+      "test.ck:2:10: error CK2001: Unknown variable 'missing'.
         return missing;
                ^^^^^^^
       "
@@ -30,10 +30,10 @@ describe("diagnostics formatter", () => {
   });
 
   it("formats type mismatch diagnostics with a code and source span", () => {
-    const source = new SourceFile("test.ik", "export fn bad() -> i32 {\n  return true;\n}\n");
+    const source = new SourceFile("test.ck", "export fn bad() -> i32 {\n  return true;\n}\n");
 
     expect(formatDiagnostic(source, firstDiagnostic(source, "check"))).toMatchInlineSnapshot(`
-      "test.ik:2:10: error IK2004: Return type mismatch: expected i32 but got bool.
+      "test.ck:2:10: error CK2004: Return type mismatch: expected i32 but got bool.
         return true;
                ^^^^
       "
@@ -41,10 +41,10 @@ describe("diagnostics formatter", () => {
   });
 
   it("formats parser diagnostics with a code and source span", () => {
-    const source = new SourceFile("test.ik", "export fn bad() -> i32 {\n  let x: i32 = 1\n  return x;\n}\n");
+    const source = new SourceFile("test.ck", "export fn bad() -> i32 {\n  let x: i32 = 1\n  return x;\n}\n");
 
     expect(formatDiagnostic(source, firstDiagnostic(source, "parse"))).toMatchInlineSnapshot(`
-      "test.ik:3:3: error IK1001: Expected ';' after let statement.
+      "test.ck:3:3: error CK1001: Expected ';' after let statement.
         return x;
         ^^^^^^
       "
@@ -52,10 +52,10 @@ describe("diagnostics formatter", () => {
   });
 
   it("formats lexer diagnostics with a code and source span", () => {
-    const source = new SourceFile("test.ik", "export fn bad() -> i32 {\n  return @;\n}\n");
+    const source = new SourceFile("test.ck", "export fn bad() -> i32 {\n  return @;\n}\n");
 
     expect(formatDiagnostic(source, firstDiagnostic(source, "lex"))).toMatchInlineSnapshot(`
-      "test.ik:2:10: error IK0001: Unexpected character '@'.
+      "test.ck:2:10: error CK0001: Unexpected character '@'.
         return @;
                ^
       "

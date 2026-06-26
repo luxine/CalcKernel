@@ -6,7 +6,7 @@ import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
 function lowerAndPrint(sourceText: string): string {
-  const checked = check(new SourceFile("test.ik", sourceText));
+  const checked = check(new SourceFile("test.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);

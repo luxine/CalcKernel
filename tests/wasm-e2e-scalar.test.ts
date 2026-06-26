@@ -15,7 +15,7 @@ interface WasmRuntime {
 }
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-wasm-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-wasm-"));
 }
 
 function getWasmRuntime(): WasmRuntime | undefined {
@@ -56,12 +56,12 @@ describe("Node.js scalar WASM e2e", () => {
       : "loads generated scalar WASM and calls exported functions (skipped because Node.js i64 BigInt WebAssembly interop is unavailable)",
     async () => {
       const cwd = tempDir();
-      writeFileSync(join(cwd, "wasm_scalar.ik"), readFileSync("examples/wasm_scalar.ik", "utf8"));
+      writeFileSync(join(cwd, "wasm_scalar.ck"), readFileSync("examples/wasm_scalar.ck", "utf8"));
       const wasmFile = join(cwd, "build/wasm_scalar.wasm");
       let stdout = "";
       let stderr = "";
 
-      const exitCode = runCli(["emit-wasm", "wasm_scalar.ik", "--out", "build/wasm_scalar.wasm"], {
+      const exitCode = runCli(["emit-wasm", "wasm_scalar.ck", "--out", "build/wasm_scalar.wasm"], {
         cwd,
         stdout: (text) => {
           stdout += text;
@@ -100,7 +100,7 @@ describe("Node.js scalar WASM e2e", () => {
 
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "wasm_f64.ik"),
+      join(cwd, "wasm_f64.ck"),
       `
         export fn calc_f64(a: f64, b: f64) -> f64 {
           let one: f64 = 1.0;
@@ -123,7 +123,7 @@ describe("Node.js scalar WASM e2e", () => {
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "wasm_f64.ik", "--out", "build/wasm_f64.wasm"], {
+    const exitCode = runCli(["emit-wasm", "wasm_f64.ck", "--out", "build/wasm_f64.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -163,7 +163,7 @@ describe("Node.js scalar WASM e2e", () => {
 
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "wasm_casts.ik"),
+      join(cwd, "wasm_casts.ck"),
       `
         export fn cast_i32_to_f64(value: i32) -> f64 {
           return i32_to_f64(value);
@@ -186,7 +186,7 @@ describe("Node.js scalar WASM e2e", () => {
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "wasm_casts.ik", "--out", "build/wasm_casts.wasm"], {
+    const exitCode = runCli(["emit-wasm", "wasm_casts.ck", "--out", "build/wasm_casts.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;

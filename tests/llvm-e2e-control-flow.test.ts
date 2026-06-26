@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-control-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-control-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM control-flow end-to-end", () => {
   it("compiles generated LLVM IR and runs if/else and while functions", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_control_flow.ik"), readFileSync("examples/llvm_control_flow.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_control_flow.ck"), readFileSync("examples/llvm_control_flow.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_control_flow.ik", "--out", "build/llvm_control_flow.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_control_flow.ck", "--out", "build/llvm_control_flow.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}

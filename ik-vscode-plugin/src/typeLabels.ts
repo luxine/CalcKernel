@@ -1,8 +1,8 @@
-import type { FunctionInfo, IntKernelType } from "intkernel";
+import type { FunctionInfo, CalcKernelType } from "calckernel";
 
 export type LabelSymbolKind = "struct" | "field" | "function" | "parameter" | "local" | "type";
 
-export function formatTypeLabel(type: IntKernelType): string {
+export function formatTypeLabel(type: CalcKernelType): string {
   switch (type.kind) {
     case "primitive":
       return type.name;

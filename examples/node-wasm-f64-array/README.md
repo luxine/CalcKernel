@@ -2,12 +2,12 @@
 
 [简体中文](README.zh-CN.md)
 
-This example calls an IK / IntKernel WASM `f64` kernel from Node.js with a
+This example calls an CK / CalcKernel WASM `f64` kernel from Node.js with a
 `Float64Array` view over exported WASM memory. It is the recommended host pattern
 for batched `ptr<f64>` buffers when the data source is already numeric and
 8-byte aligned.
 
-The example does not add an IK runtime or allocator. The host chooses byte
+The example does not add an CK runtime or allocator. The host chooses byte
 offsets, grows memory when needed, and rebuilds typed-array views after growth.
 
 ## Generate WASM
@@ -21,13 +21,13 @@ pnpm build
 Generate `build/f64_array.wasm`:
 
 ```sh
-ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out build/f64_array.wasm -O3
+ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out build/f64_array.wasm -O3
 ```
 
 In a source checkout, you can run the same CLI through pnpm:
 
 ```sh
-pnpm ikc emit-wasm examples/node-wasm-f64-array/f64_array.ik --out build/f64_array.wasm -O3
+pnpm ckc emit-wasm examples/node-wasm-f64-array/f64_array.ck --out build/f64_array.wasm -O3
 ```
 
 ## Run
@@ -64,7 +64,7 @@ packing. `Float64Array` is the bulk path for homogeneous `f64` buffers.
 
 ## Memory Ownership
 
-IK / IntKernel currently provides no WASM allocator, runtime, or bounds checks.
+CK / CalcKernel currently provides no WASM allocator, runtime, or bounds checks.
 The host owns memory placement and must ensure input/output regions are valid.
 
 If `memory.grow` runs, previous `Float64Array` views may be detached. Recreate

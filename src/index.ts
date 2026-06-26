@@ -23,7 +23,7 @@ export type {
 } from "./typeck/checker.js";
 export { Scope, SymbolTable } from "./typeck/symbols.js";
 export type { FunctionSymbol, StructSymbol, VariableSymbol } from "./typeck/symbols.js";
-export type { IntKernelType, PrimitiveTypeName } from "./typeck/types.js";
+export type { CalcKernelType, PrimitiveTypeName } from "./typeck/types.js";
 export { emitCHeader } from "./backend/c/c-header-emitter.js";
 export { buildSharedLibrary, emitDefaultCSource as emitCSource, emitCFiles, sharedLibraryOutputPath } from "./backend/c/c-build.js";
 export type {

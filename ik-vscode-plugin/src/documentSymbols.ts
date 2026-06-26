@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { analyzeIntKernelDocument, type IntKernelAnalysis, type IntKernelSymbol } from "./languageService";
+import { analyzeCalcKernelDocument, type CalcKernelAnalysis, type CalcKernelSymbol } from "./languageService";
 
-export function buildDocumentSymbols(analysis: IntKernelAnalysis): vscode.DocumentSymbol[] {
+export function buildDocumentSymbols(analysis: CalcKernelAnalysis): vscode.DocumentSymbol[] {
   const topLevel: vscode.DocumentSymbol[] = [];
 
   for (const symbol of analysis.symbols) {
@@ -28,16 +28,16 @@ export function buildDocumentSymbols(analysis: IntKernelAnalysis): vscode.Docume
 export function registerDocumentSymbols(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerDocumentSymbolProvider(
-      { language: "intkernel" },
+      { language: "calckernel" },
       {
         provideDocumentSymbols(document) {
-          return buildDocumentSymbols(analyzeIntKernelDocument(document));
+          return buildDocumentSymbols(analyzeCalcKernelDocument(document));
         }
       }
     )
   );
 }
 
-function toDocumentSymbol(symbol: IntKernelSymbol, kind: vscode.SymbolKind): vscode.DocumentSymbol {
+function toDocumentSymbol(symbol: CalcKernelSymbol, kind: vscode.SymbolKind): vscode.DocumentSymbol {
   return new vscode.DocumentSymbol(symbol.name, symbol.detail ?? symbol.signatureLabel ?? "", kind, symbol.range, symbol.selectionRange);
 }

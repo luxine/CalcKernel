@@ -1,4 +1,4 @@
-# IntKernel 路线图
+# CalcKernel 路线图
 
 [English](../ROADMAP.md)
 
@@ -25,7 +25,7 @@
 - 增加最小 Python loading 示例。
 - 增加最小 Node.js loading 示例。
 - 记录 64-bit integer 处理方式，尤其是 JS `BigInt`。
-- 在 IntKernel 侧保持 examples runtime-free。
+- 在 CalcKernel 侧保持 examples runtime-free。
 
 ## Benchmarking
 
@@ -38,10 +38,10 @@
 Phase 10 checked arithmetic 已覆盖当前 V0 语言面。
 
 - `--overflow unchecked` 仍是默认。
-- `--overflow checked` 生成带 `IK_Status` 的 checked C/header output。
+- `--overflow checked` 生成带 `CK_Status` 的 checked C/header output。
 - Checked mode 报告 add、subtract、multiply、divide、modulo 和 unary minus
   arithmetic failure。
-- Checked mode 在 IntKernel function call 间传播错误。
+- Checked mode 在 CalcKernel function call 间传播错误。
 - Checked mode 保持 `&&` 和 `||` short-circuit behavior。
 - Checked mode 支持 V0 control flow、pointer indexing 和 struct field access。
 - Checked mode 不添加 bounds check 或用户 pointer validation。
@@ -64,7 +64,7 @@ basic-block based，但不是 SSA。
 - Typed AST 降低到 MIR，且不改变语言语义。
 - MIR-to-C unchecked code generation 已实现。
 - MIR-to-C checked code generation 已实现。
-- `ikc emit-mir` 暴露稳定 MIR text，用于 compiler debugging。
+- `ckc emit-mir` 暴露稳定 MIR text，用于 compiler debugging。
 - 默认 `emit-c` 和 `build` pipeline 现在使用 MIR。
 - 旧 AST C backend 在迁移期间保留为 legacy/internal fallback。
 
@@ -82,10 +82,10 @@ Phase 12 WASM backend 已覆盖当前 MIR 支持的 V0 语言面。
 - module memory 以 `(memory (export "memory") 1)` 导出。
 - Struct layout 是确定性的，且不依赖宿主 C 编译器。
 - MIR-to-WAT code generation 有稳定 snapshot。
-- `ikc emit-wat` 生成稳定 WAT text。
-- `ikc emit-wasm` 通过捆绑的 `wabt` npm package assembly WAT。
+- `ckc emit-wat` 生成稳定 WAT text。
+- `ckc emit-wasm` 通过捆绑的 `wabt` npm package assembly WAT。
 - Node.js 和 browser WebAssembly 示例使用 `DataView` 和 `BigInt`。
-- `pricing.ik` 有 WASM e2e 覆盖。
+- `pricing.ck` 有 WASM e2e 覆盖。
 - Benchmark harness 包含 unchecked WASM benchmark。
 
 Phase 12 v1 仍只支持 unchecked。WASM 的 `--overflow checked` 必须报告清晰的
@@ -108,9 +108,9 @@ Phase 13 LLVM backend 已覆盖当前 MIR 支持的 unchecked V0 语言面。
 
 - `docs/LLVM_BACKEND.md` 记录 LLVM backend contract。
 - MIR-to-LLVM IR text generation 已实现。
-- `ikc emit-llvm` 生成稳定 `.ll` output。
-- `ikc build-llvm` 可以通过 clang 构建 dynamic library。
-- `ikc build-llvm --kind object` 可以通过 clang 生成 object file。
+- `ckc emit-llvm` 生成稳定 `.ll` output。
+- `ckc build-llvm` 可以通过 clang 构建 dynamic library。
+- `ckc build-llvm --kind object` 可以通过 clang 生成 object file。
 - LLVM IR snapshots 覆盖 scalar、control flow、function call、
   ptr/index/field/store、short-circuit 和 `pricing`。
 - LLVM clang e2e tests 覆盖 scalar、bool ABI、control flow、function call、
@@ -138,7 +138,7 @@ strings、IO 或 modules。
 
 Phase 14 optimization 和 performance 工作已经覆盖 v0.4.0。
 
-- `ikc` 支持 `--opt-level 0`、`--opt-level 1`、`--opt-level 2`、`--opt-level 3`，
+- `ckc` 支持 `--opt-level 0`、`--opt-level 1`、`--opt-level 2`、`--opt-level 3`，
   以及 `-O0` 到 `-O3` alias。
 - `-O0` 仍是保守默认值，并让输出最接近 lowered MIR。
 - `-O1`、`-O2` 和 `-O3` 启用文档化的保守 MIR pass 分层。
@@ -148,7 +148,7 @@ Phase 14 optimization 和 performance 工作已经覆盖 v0.4.0。
 - Performance suite 支持 quick/full run、private baseline、compare mode 和显式
   regression guard。
 - Optimization 必须保持 checked/unchecked semantics 和 generated ABI，且不能对
-  `examples/pricing.ik` 做特判。
+  `examples/pricing.ck` 做特判。
 
 未来 optimization 工作：
 
@@ -161,7 +161,7 @@ Phase 14 optimization 和 performance 工作已经覆盖 v0.4.0。
 
 Numeric roadmap lock：
 
-- IK / IntKernel 的 floating point 保持 f64-only。
+- CK / CalcKernel 的 floating point 保持 f64-only。
 - 不规划 `f32`。
 - Phase 20 从 exact `i32_to_f64` 和 `u32_to_f64` builtin 开始支持 explicit
   numeric cast。

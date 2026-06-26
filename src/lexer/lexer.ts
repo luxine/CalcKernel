@@ -253,12 +253,12 @@ class Lexer {
   }
 
   private reportUnexpected(start: SourcePosition, char: string): void {
-    this.diagnostics.push(errorAt(this.source, { start, end: this.position() }, "IK0001", `Unexpected character '${char}'.`));
+    this.diagnostics.push(errorAt(this.source, { start, end: this.position() }, "CK0001", `Unexpected character '${char}'.`));
   }
 
   private reportMalformedFloat(start: SourcePosition): void {
     const text = this.source.text.slice(start.offset, this.offset);
-    this.diagnostics.push(errorAt(this.source, { start, end: this.position() }, "IK0001", `Malformed float literal '${text}'.`));
+    this.diagnostics.push(errorAt(this.source, { start, end: this.position() }, "CK0001", `Malformed float literal '${text}'.`));
   }
 
   private match(expected: string): boolean {

@@ -1,22 +1,22 @@
 import type { FunctionDeclaration, StructDeclaration } from "../parser/ast.js";
-import type { IntKernelType } from "./types.js";
+import type { CalcKernelType } from "./types.js";
 
 export interface StructSymbol {
   name: string;
   declaration: StructDeclaration;
-  fields: Map<string, IntKernelType>;
+  fields: Map<string, CalcKernelType>;
 }
 
 export interface FunctionSymbol {
   name: string;
   declaration: FunctionDeclaration;
-  params: IntKernelType[];
-  returnType: IntKernelType;
+  params: CalcKernelType[];
+  returnType: CalcKernelType;
 }
 
 export interface VariableSymbol {
   name: string;
-  type: IntKernelType;
+  type: CalcKernelType;
 }
 
 export class SymbolTable {

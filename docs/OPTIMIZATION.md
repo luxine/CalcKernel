@@ -2,7 +2,7 @@
 
 [简体中文](zh-CN/OPTIMIZATION.md)
 
-IntKernel exposes a compiler optimization level so MIR passes can be enabled
+CalcKernel exposes a compiler optimization level so MIR passes can be enabled
 consistently across C, WASM, LLVM, and MIR debug output.
 
 Phase 14.4 adds option plumbing. Phase 14.5 adds the MIR pass manager framework.
@@ -24,19 +24,19 @@ Phase 20.6 adds optimizer guard coverage for explicit `i32_to_f64` and
 All code generation commands accept `--opt-level`:
 
 ```sh
-ikc emit-mir examples/pricing.ik --opt-level 0
-ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h --opt-level 3
-ikc build examples/pricing.ik --out build/libpricing --opt-level 3
-ikc emit-wat examples/pricing.ik --out build/pricing.wat --opt-level 3
-ikc emit-wasm examples/pricing.ik --out build/pricing.wasm --opt-level 3
-ikc emit-llvm examples/pricing.ik --out build/pricing.ll --opt-level 3
-ikc build-llvm examples/pricing.ik --out build/libpricing --opt-level 3
+ckc emit-mir examples/pricing.ck --opt-level 0
+ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h --opt-level 3
+ckc build examples/pricing.ck --out build/libpricing --opt-level 3
+ckc emit-wat examples/pricing.ck --out build/pricing.wat --opt-level 3
+ckc emit-wasm examples/pricing.ck --out build/pricing.wasm --opt-level 3
+ckc emit-llvm examples/pricing.ck --out build/pricing.ll --opt-level 3
+ckc build-llvm examples/pricing.ck --out build/libpricing --opt-level 3
 ```
 
 The `-O` aliases are equivalent:
 
 ```sh
-ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h -O3
+ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h -O3
 ```
 
 The default is `-O0`.
@@ -94,7 +94,7 @@ semantics.
 
 Correctness is the release gate for every level. No optimization may weaken
 checked integer arithmetic, change unchecked ABI shape, evaluate short-circuit
-RHS blocks early, or specialize generated code for `examples/pricing.ik` just to
+RHS blocks early, or specialize generated code for `examples/pricing.ck` just to
 improve benchmark results.
 
 ## Pass Manager
@@ -258,7 +258,7 @@ Safety boundaries:
 - does not do alias analysis
 - clears address state at `store` and `call`
 - invalidates address entries that depend on a reassigned local
-- does not specialize for `Item` or `pricing.ik`
+- does not specialize for `Item` or `pricing.ck`
 
 ### WASM Hot Path Lowering
 
@@ -274,7 +274,7 @@ exit -> return
 
 For that shape, WAT is emitted as structured `block` + `loop` instead of the
 generic dispatcher with `br_table` and an `$ik_bb` local. This reduces branch
-dispatch traffic in kernels such as `examples/pricing.ik`.
+dispatch traffic in kernels such as `examples/pricing.ck`.
 
 The `-O3` WASM pipeline also enables address CSE, so repeated
 `ptr<Struct>[i].field` loads reuse the indexed base address:
@@ -322,13 +322,13 @@ entry:
 }
 ```
 
-More complex functions, including `examples/pricing.ik`, continue to use
+More complex functions, including `examples/pricing.ck`, continue to use
 stack lowering. Clang `-O2`/`-O3` can then promote many stack slots and optimize
 the resulting native code. The backend still does not emit unsafe `nsw`/`nuw`
 flags, does not add bounds checks, and does not support checked LLVM arithmetic.
 For f64, the LLVM backend emits strict operations without fast-math flags.
 
-`build-llvm` now passes the selected IK optimization level through to clang as
+`build-llvm` now passes the selected CK optimization level through to clang as
 `-O0`, `-O1`, `-O2`, or `-O3`.
 
 ### Checked C Induction Optimization
@@ -386,9 +386,9 @@ Safety boundaries:
 The CLI exposes MIR optimization debug flags:
 
 ```sh
-ikc emit-mir examples/pricing.ik -O3 --print-pass-pipeline
-ikc emit-mir examples/pricing.ik -O3 --print-mir-before-opt
-ikc emit-mir examples/pricing.ik -O3 --print-mir-after-opt
+ckc emit-mir examples/pricing.ck -O3 --print-pass-pipeline
+ckc emit-mir examples/pricing.ck -O3 --print-mir-before-opt
+ckc emit-mir examples/pricing.ck -O3 --print-mir-after-opt
 ```
 
 Debug output is written to stderr so stdout can remain a stable artifact stream
@@ -403,7 +403,7 @@ pipeline and passes the selected native optimization level through to C and
 LLVM build commands.
 
 The pass set is still intentionally conservative. In checked mode,
-`examples/pricing.ik` keeps all business overflow and division checks; only the
+`examples/pricing.ck` keeps all business overflow and division checks; only the
 loop counter increment can be emitted as unchecked arithmetic after the proof
 succeeds. WASM and LLVM remain unchecked-only backends and reject
 `--overflow checked`.

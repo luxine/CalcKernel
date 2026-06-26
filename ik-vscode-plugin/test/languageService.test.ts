@@ -55,7 +55,7 @@ vi.mock("vscode", () => {
   };
 });
 
-import { analyzeIntKernelDocument, createMemoryDocument } from "../src/languageService";
+import { analyzeCalcKernelDocument, createMemoryDocument } from "../src/languageService";
 
 const sourceText = `
 struct Item {
@@ -72,7 +72,7 @@ fn line_total(item: Item, tax_rate: i64) -> i64 {
 describe("languageService", () => {
   it("extracts document-local symbols and references", () => {
     const document = createMemoryDocument(sourceText);
-    const analysis = analyzeIntKernelDocument(document);
+    const analysis = analyzeCalcKernelDocument(document);
 
     expect(analysis.diagnostics).toHaveLength(0);
     expect(analysis.symbols.map((symbol) => `${symbol.kind}:${symbol.name}`)).toEqual([
@@ -89,19 +89,19 @@ describe("languageService", () => {
   });
 
   it("reuses cached analysis for the same URI and version", () => {
-    const document = createMemoryDocument(sourceText, "memory:///sample.ik", 7);
-    const first = analyzeIntKernelDocument(document);
-    const second = analyzeIntKernelDocument(document);
+    const document = createMemoryDocument(sourceText, "memory:///sample.ck", 7);
+    const first = analyzeCalcKernelDocument(document);
+    const second = analyzeCalcKernelDocument(document);
     expect(second).toBe(first);
   });
 
   it("evicts older cached versions for the same URI", () => {
-    const uri = "memory:///versioned.ik";
+    const uri = "memory:///versioned.ck";
     const versionOne = createMemoryDocument(sourceText, uri, 1);
     const versionTwo = createMemoryDocument(sourceText, uri, 2);
-    const firstVersionOne = analyzeIntKernelDocument(versionOne);
-    const firstVersionTwo = analyzeIntKernelDocument(versionTwo);
-    const secondVersionOne = analyzeIntKernelDocument(versionOne);
+    const firstVersionOne = analyzeCalcKernelDocument(versionOne);
+    const firstVersionTwo = analyzeCalcKernelDocument(versionTwo);
+    const secondVersionOne = analyzeCalcKernelDocument(versionOne);
 
     expect(firstVersionTwo).not.toBe(firstVersionOne);
     expect(secondVersionOne).not.toBe(firstVersionOne);
@@ -121,8 +121,8 @@ fn second(value: i64) -> i64 {
   return total + value;
 }
 `.trimStart();
-    const document = createMemoryDocument(scopedSourceText, "memory:///scope.ik", 1);
-    const analysis = analyzeIntKernelDocument(document);
+    const document = createMemoryDocument(scopedSourceText, "memory:///scope.ck", 1);
+    const analysis = analyzeCalcKernelDocument(document);
 
     expect(analysis.diagnostics).toHaveLength(0);
     const secondValueSymbol = analysis.symbols.find(
@@ -143,16 +143,16 @@ fn second(value: i64) -> i64 {
   });
 
   it("does not let injected check failures poison normal cached analysis", () => {
-    const document = createMemoryDocument(sourceText, "memory:///injected-cache.ik", 1);
-    const injected = analyzeIntKernelDocument(document, {
+    const document = createMemoryDocument(sourceText, "memory:///injected-cache.ck", 1);
+    const injected = analyzeCalcKernelDocument(document, {
       checkDocument: () => {
         throw new Error("forced failure");
       }
     });
-    const normal = analyzeIntKernelDocument(document);
+    const normal = analyzeCalcKernelDocument(document);
 
     expect(injected.diagnostics).toHaveLength(1);
-    expect(injected.diagnostics[0]?.message).toContain("IntKernel validation failed: forced failure");
+    expect(injected.diagnostics[0]?.message).toContain("CalcKernel validation failed: forced failure");
     expect(normal.diagnostics).toHaveLength(0);
     expect(normal.symbols.map((symbol) => `${symbol.kind}:${symbol.name}`)).toContain("function:line_total");
     expect(normal).not.toBe(injected);
@@ -169,8 +169,8 @@ fn use_value(value: i64) -> i64 {
   return other + value;
 }
 `.trimStart();
-    const document = createMemoryDocument(shadowedFunctionSourceText, "memory:///function-shadow.ik", 1);
-    const analysis = analyzeIntKernelDocument(document);
+    const document = createMemoryDocument(shadowedFunctionSourceText, "memory:///function-shadow.ck", 1);
+    const analysis = analyzeCalcKernelDocument(document);
 
     expect(analysis.diagnostics).toHaveLength(0);
     const valueFunctionSymbol = analysis.symbols.find((symbol) => symbol.kind === "function" && symbol.name === "value");
@@ -201,8 +201,8 @@ fn use_value(value: i64) -> i64 {
   return value();
 }
 `.trimStart();
-    const document = createMemoryDocument(callSourceText, "memory:///call-shadow.ik", 1);
-    const analysis = analyzeIntKernelDocument(document);
+    const document = createMemoryDocument(callSourceText, "memory:///call-shadow.ck", 1);
+    const analysis = analyzeCalcKernelDocument(document);
 
     expect(analysis.diagnostics).toHaveLength(0);
     const valueFunctionSymbol = analysis.symbols.find((symbol) => symbol.kind === "function" && symbol.name === "value");
@@ -225,8 +225,8 @@ fn clone_item(item: Item) -> Item {
   return copy;
 }
 `.trimStart();
-    const document = createMemoryDocument(typedSourceText, "memory:///types.ik", 1);
-    const analysis = analyzeIntKernelDocument(document);
+    const document = createMemoryDocument(typedSourceText, "memory:///types.ck", 1);
+    const analysis = analyzeCalcKernelDocument(document);
 
     expect(analysis.diagnostics).toHaveLength(0);
     const itemStructSymbol = analysis.symbols.find((symbol) => symbol.kind === "struct" && symbol.name === "Item");
@@ -251,7 +251,7 @@ fn configured(configs: ptr<Item>) -> i64 {
   return configs[0].;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(incompleteMemberSourceText, "memory:///incomplete-member.ik", 1));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(incompleteMemberSourceText, "memory:///incomplete-member.ck", 1));
 
     expect(analysis.references.some((reference) => reference.name === "")).toBe(false);
     expect(
@@ -264,15 +264,15 @@ fn configured(configs: ptr<Item>) -> i64 {
   });
 
   it("falls back to a single diagnostic when check throws", () => {
-    const document = createMemoryDocument(sourceText, "memory:///sample.ik", 1);
-    const analysis = analyzeIntKernelDocument(document, {
+    const document = createMemoryDocument(sourceText, "memory:///sample.ck", 1);
+    const analysis = analyzeCalcKernelDocument(document, {
       checkDocument: () => {
         throw new Error("forced failure");
       }
     });
 
     expect(analysis.diagnostics).toHaveLength(1);
-    expect(analysis.diagnostics[0]?.message).toContain("IntKernel validation failed: forced failure");
+    expect(analysis.diagnostics[0]?.message).toContain("CalcKernel validation failed: forced failure");
     expect(analysis.symbols).toHaveLength(0);
     expect(analysis.references).toHaveLength(0);
   });
@@ -284,9 +284,9 @@ fn broken() -> i64 {
   return value;
 }
 `.trimStart();
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(invalid, "memory:///broken.ik", 1));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(invalid, "memory:///broken.ck", 1));
     expect(analysis.diagnostics.length).toBeGreaterThan(0);
-    expect(analysis.diagnostics[0]?.source).toBe("intkernel");
+    expect(analysis.diagnostics[0]?.source).toBe("calckernel");
     expect(analysis.diagnostics.some((diagnostic) => diagnostic.message.includes("Cannot initialize"))).toBe(true);
   });
 });

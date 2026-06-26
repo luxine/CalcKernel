@@ -72,7 +72,7 @@ vi.mock("vscode", () => {
 
 import * as vscode from "vscode";
 import { getHoverMarkdownAtPosition } from "../src/hover";
-import { analyzeIntKernelDocument, createMemoryDocument } from "../src/languageService";
+import { analyzeCalcKernelDocument, createMemoryDocument } from "../src/languageService";
 
 const sourceText = `
 struct Item {
@@ -87,19 +87,19 @@ fn total(item: Item) -> i64 {
 
 describe("hover", () => {
   it("shows local variable type information", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const markdown = getHoverMarkdownAtPosition(analysis, new vscode.Position(6, 9));
     expect(markdown?.value).toContain("local subtotal: i64");
   });
 
   it("shows function signature information", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const markdown = getHoverMarkdownAtPosition(analysis, new vscode.Position(4, 3));
     expect(markdown?.value).toContain("fn total(item: Item) -> i64");
   });
 
   it("shows field type information", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const markdown = getHoverMarkdownAtPosition(analysis, new vscode.Position(5, 28));
     expect(markdown?.value).toContain("field Item.price: i64");
   });

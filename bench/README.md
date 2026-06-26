@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-This directory contains small benchmark harnesses for `examples/pricing.ik`
+This directory contains small benchmark harnesses for `examples/pricing.ck`
 and strict `f64` compute kernels. They compare pure JavaScript baselines,
 generated native C, checked generated C where applicable, LLVM, and generated
 WASM. They are intended as rough local references, not as a stable CI
@@ -93,10 +93,10 @@ The decomposed suite covers:
 - `pricing-c-unchecked-O0`
 - `pricing-c-unchecked-O2`
 - `pricing-c-unchecked-O3`
-- `pricing-c-unchecked-ik-O3`
+- `pricing-c-unchecked-ck-O3`
 - `pricing-c-checked-O3`
-- `pricing-helpers-c-unchecked-ik-O0`
-- `pricing-helpers-c-unchecked-ik-O2`
+- `pricing-helpers-c-unchecked-ck-O0`
+- `pricing-helpers-c-unchecked-ck-O2`
 - `pricing-llvm-unchecked-O0`
 - `pricing-llvm-unchecked-O2`
 - `pricing-llvm-unchecked-O3`
@@ -121,10 +121,10 @@ Each kernel has default comparison cases for:
 
 - JavaScript `Array` with `Number` arithmetic
 - JavaScript `Float64Array` with `Number` arithmetic
-- IK C O3
-- IK LLVM O3
-- IK WASM O3 split phases
-- IK WASM O3 low-copy split phases
+- CK C O3
+- CK LLVM O3
+- CK WASM O3 split phases
+- CK WASM O3 low-copy split phases
 
 The f64 WASM cases include `setup`, `input-marshal`, `compute-only`,
 `output-readback`, `total`, and `memory-only` variants so host-side memory
@@ -134,7 +134,7 @@ JavaScript `Number`; it does not use `BigInt`. Memory setup uses little-endian
 `DataView.setFloat64`/`getFloat64` for the original compatibility path.
 
 Phase 18.3 adds low-copy WASM f64 cases named
-`f64-*-ik-wasm-o3-low-copy-*`. They use a `Float64Array` view over exported
+`f64-*-ck-wasm-o3-low-copy-*`. They use a `Float64Array` view over exported
 WASM memory, `Float64Array#set` for bulk input marshal, scalar return consume for
 `dot`/`sum`, and output checksum readback for in-place array kernels. The old
 DataView path is intentionally retained as a comparison point for byte-level
@@ -177,14 +177,14 @@ and slower percentage. `--fail-on-regression` only affects explicit performance
 runs; ordinary `pnpm test` does not run hyperfine and does not fail because of
 machine performance variance.
 
-The `pricing-helpers-*` cases use `bench/perf/fixtures/pricing_helpers.ik`,
+The `pricing-helpers-*` cases use `bench/perf/fixtures/pricing_helpers.ck`,
 which expresses the same pricing math through small non-exported helper
 functions. It is a benchmark-only fixture for measuring MIR small-function
-inlining; it does not change `examples/pricing.ik`.
+inlining; it does not change `examples/pricing.ck`.
 
-The `f64-*` cases use `bench/perf/fixtures/f64_kernels.ik`. Correctness checks
+The `f64-*` cases use `bench/perf/fixtures/f64_kernels.ck`. Correctness checks
 use absolute and relative tolerance; they do not require cross-backend
-bit-identical floating point results. IK f64 remains strict mode: `f64` is the
+bit-identical floating point results. CK f64 remains strict mode: `f64` is the
 only floating point type, `f32` is not planned, and no fast-math, SIMD, implicit
 int/float conversion, broad casts, or f64 checked overflow is assumed by these
 benchmarks. The only current numeric casts are exact explicit `i32_to_f64` and
@@ -200,7 +200,7 @@ F64 benchmark runs are documentation and release smoke tools:
 - `--full` is optional before tags when machine time allows
 - f64 thresholds must not be added to ordinary `pnpm test`
 - machine-local f64 baselines under `build/perf` must not be committed
-- JS `Array` `Number`, JS `Float64Array`, IK C, IK LLVM, IK WASM, optional
+- JS `Array` `Number`, JS `Float64Array`, CK C, CK LLVM, CK WASM, optional
   Python, and optional NumPy are different runtime models
 - WASM DataView total results may be dominated by host memory marshaling rather
   than compute
@@ -221,8 +221,8 @@ From the repository root:
 
 ```sh
 pnpm build
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h --overflow unchecked
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h --overflow unchecked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
 ```
 
 ## Generate WASM
@@ -231,7 +231,7 @@ From the repository root:
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm --overflow unchecked
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm --overflow unchecked
 ```
 
 The Phase 12 WASM backend is unchecked-only. `--overflow checked` is rejected
@@ -245,7 +245,7 @@ node bench/pricing_baseline.js
 ```
 
 The JavaScript baseline uses `BigInt64Array` and `BigInt` arithmetic to stay
-close to the `i64` semantics used by `pricing.ik`.
+close to the `i64` semantics used by `pricing.ck`.
 
 The local performance suite also includes three JavaScript pricing cases:
 
@@ -275,7 +275,7 @@ and C harnesses:
 
 The generated WASM module starts with one 64 KiB memory page. The benchmark
 calls `memory.grow` on the host side when larger inputs need more space. This is
-only benchmark setup code; IntKernel V0 still does not provide a runtime,
+only benchmark setup code; CalcKernel V0 still does not provide a runtime,
 allocator, or memory-grow helper.
 
 ## Compile and Run the Unchecked C Benchmark
@@ -283,7 +283,7 @@ allocator, or memory-grow helper.
 On macOS or Linux:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   build/pricing.c bench/pricing_c_harness.c \
   -I build \
   -o build/pricing_c_bench
@@ -294,7 +294,7 @@ clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
 On Windows with clang:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL ^
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL ^
   build\pricing.c bench\pricing_c_harness.c ^
   -I build ^
   -o build\pricing_c_bench.exe
@@ -307,7 +307,7 @@ build\pricing_c_bench.exe
 On macOS or Linux:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   build/pricing.checked.c bench/pricing_checked_benchmark.c \
   -I build \
   -o build/pricing_checked_bench
@@ -318,7 +318,7 @@ clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
 On Windows with clang:
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL ^
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL ^
   build\pricing.checked.c bench\pricing_checked_benchmark.c ^
   -I build ^
   -o build\pricing_checked_bench.exe
@@ -335,11 +335,11 @@ int32_t calc_items(Item* items, int32_t len, int64_t* out);
 ```
 
 Checked mode emits additional branches and temporary values for overflow,
-division-by-zero, and status propagation. Its ABI returns `IK_Status` and writes
-the original IntKernel return value through a final output pointer:
+division-by-zero, and status propagation. Its ABI returns `CK_Status` and writes
+the original CalcKernel return value through a final output pointer:
 
 ```c
-IK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
 ```
 
 The checked benchmark measures the same batch shape as the unchecked benchmark,
@@ -348,7 +348,7 @@ but it includes the cost of:
 - `__builtin_add_overflow`, `__builtin_sub_overflow`, and
   `__builtin_mul_overflow`
 - division and signed division overflow checks
-- extra branches for `IK_Status` returns
+- extra branches for `CK_Status` returns
 - the final `ik_return` write
 
 Checked mode is a better fit for money, tax, discount, and rules workloads where

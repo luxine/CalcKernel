@@ -11,14 +11,14 @@ function normalizeNewlines(text: string): string {
 }
 
 function emitFixtureLlvm(): string {
-  const sourceText = readFileSync("examples/llvm_control_flow.ik", "utf8");
-  const checked = check(new SourceFile("llvm_control_flow.ik", sourceText));
+  const sourceText = readFileSync("examples/llvm_control_flow.ck", "utf8");
+  const checked = check(new SourceFile("llvm_control_flow.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
 
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
 
-  return emitMirLlvmModule(mir, { sourceFileName: "llvm_control_flow.ik" });
+  return emitMirLlvmModule(mir, { sourceFileName: "llvm_control_flow.ck" });
 }
 
 describe("LLVM control-flow emitter", () => {

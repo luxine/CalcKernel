@@ -67,7 +67,7 @@ function checksum(view, offset, len) {
 
 const bytes = await readFile(wasmPath).catch((error) => {
   if (error && error.code === "ENOENT") {
-    throw new Error(`Missing ${wasmPath}. Generate it with: pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm`);
+    throw new Error(`Missing ${wasmPath}. Generate it with: pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm`);
   }
 
   throw error;

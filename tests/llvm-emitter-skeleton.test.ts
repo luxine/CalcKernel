@@ -53,7 +53,7 @@ const skeletonModule: MirModule = {
 describe("LLVM module skeleton emitter", () => {
   it("emits stable module headers, struct declarations, and function skeletons", () => {
     const llvm = emitMirLlvmModule(skeletonModule, {
-      sourceFileName: "/tmp/work/input.ik",
+      sourceFileName: "/tmp/work/input.ck",
       targetTriple: "x86_64-unknown-linux-gnu"
     });
 
@@ -61,10 +61,10 @@ describe("LLVM module skeleton emitter", () => {
   });
 
   it("omits target triple when none is provided", () => {
-    const llvm = emitMirLlvmModule({ structs: [], functions: [] }, { sourceFileName: "custom/path/pricing.ik" });
+    const llvm = emitMirLlvmModule({ structs: [], functions: [] }, { sourceFileName: "custom/path/pricing.ck" });
 
-    expect(llvm).toBe(`; ModuleID = 'intkernel'
-source_filename = "pricing.ik"
+    expect(llvm).toBe(`; ModuleID = 'calckernel'
+source_filename = "pricing.ck"
 `);
     expect(llvm).not.toContain("target triple");
   });

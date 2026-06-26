@@ -1,9 +1,9 @@
 import type { MirType } from "../../mir/mir.js";
-import type { IntKernelType } from "../../typeck/types.js";
+import type { CalcKernelType } from "../../typeck/types.js";
 import { llvmStructName } from "./llvm-names.js";
 
 export type LlvmType = string;
-export type LlvmSourceType = IntKernelType | MirType;
+export type LlvmSourceType = CalcKernelType | MirType;
 
 export function llvmValueType(type: LlvmSourceType): LlvmType {
   switch (type.kind) {

@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-llvm-short-circuit-e2e-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-llvm-short-circuit-e2e-"));
 }
 
 function hasClang(): boolean {
@@ -18,9 +18,9 @@ function hasClang(): boolean {
 describe("LLVM short-circuit end-to-end", () => {
   it("does not evaluate RHS on short-circuit paths", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_short_circuit.ik"), readFileSync("examples/llvm_short_circuit.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_short_circuit.ck"), readFileSync("examples/llvm_short_circuit.ck", "utf8"));
 
-    const emitExitCode = runCli(["emit-llvm", "llvm_short_circuit.ik", "--out", "build/llvm_short_circuit.ll"], {
+    const emitExitCode = runCli(["emit-llvm", "llvm_short_circuit.ck", "--out", "build/llvm_short_circuit.ll"], {
       cwd,
       stdout: () => {},
       stderr: () => {}

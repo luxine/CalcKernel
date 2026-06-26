@@ -36,7 +36,7 @@ function normalizeNewlines(text: string): string {
 }
 
 function lower(sourceText: string): MirModule {
-  const checked = check(new SourceFile("test.ik", sourceText));
+  const checked = check(new SourceFile("test.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -541,7 +541,7 @@ describe("MIR optimization passes", () => {
   });
 
   it("matches optimized MIR snapshot for pricing", () => {
-    const checked = check(new SourceFile("pricing.ik", readFileSync("examples/pricing.ik", "utf8")));
+    const checked = check(new SourceFile("pricing.ck", readFileSync("examples/pricing.ck", "utf8")));
     expect(checked.diagnostics).toEqual([]);
     const mir = lowerToMir(checked.checkedProgram);
     const optimized = optimize(mir, 1);

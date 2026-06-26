@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-这个示例使用 Node.js 内置 WebAssembly API 调用从 `examples/pricing.ik`
+这个示例使用 Node.js 内置 WebAssembly API 调用从 `examples/pricing.ck`
 生成的 WebAssembly module。它不需要 native `.so`、`.dylib` 或 `.dll`，
 也不需要安装示例目录内的额外依赖。
 
@@ -17,13 +17,13 @@ pnpm build
 然后从当前示例目录生成 `../../build/pricing.wasm`：
 
 ```sh
-ikc emit-wasm ../../examples/pricing.ik --out ../../build/pricing.wasm
+ckc emit-wasm ../../examples/pricing.ck --out ../../build/pricing.wasm
 ```
 
 如果是在源码 checkout 中运行，也可以从当前目录通过 pnpm 调用同一个 CLI：
 
 ```sh
-pnpm --dir ../.. ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+pnpm --dir ../.. ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 ```
 
 ## 运行
@@ -60,9 +60,9 @@ JavaScript `number` 传递。
 
 ## Item Layout
 
-`pricing.ik` 定义：
+`pricing.ck` 定义：
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;

@@ -11,8 +11,8 @@ import type {
   Statement,
   UnaryExpression,
   WhileStatement
-} from "intkernel";
-import type { SourcePosition, SourceSpan } from "intkernel";
+} from "calckernel";
+import type { SourcePosition, SourceSpan } from "calckernel";
 
 export interface ZeroBasedPosition {
   line: number;

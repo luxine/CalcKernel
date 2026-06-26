@@ -10,20 +10,20 @@ Node.js, clang, hyperfine, OS scheduling, power state, and current system load.
 ## Benchmark Suite
 
 The hyperfine-based suite lives under `bench/perf` and targets
-`examples/pricing.ik`, a helper-function fixture, and first-pass strict `f64`
+`examples/pricing.ck`, a helper-function fixture, and first-pass strict `f64`
 compute kernels. It currently covers:
 
 - native C unchecked: `pricing-c-unchecked-O0`, `pricing-c-unchecked-O2`,
-  `pricing-c-unchecked-O3`, and `pricing-c-unchecked-ik-O3`
+  `pricing-c-unchecked-O3`, and `pricing-c-unchecked-ck-O3`
 - native C checked: `pricing-c-checked-O3`
 - LLVM unchecked: `pricing-llvm-unchecked-O0`, `pricing-llvm-unchecked-O2`,
   and `pricing-llvm-unchecked-O3`
-- WASM unchecked total and compute-only cases, both at `IK-O0` and `IK-O3`
+- WASM unchecked total and compute-only cases, both at `CK-O0` and `CK-O3`
 - WASM memory-only and JS-to-WASM call-overhead decomposition
 - JavaScript baselines: `Number`, typed-array `Number`, and `BigInt`
 - f64 kernels: axpy, dot product, sum, and scale
 - f64 comparison targets: JavaScript `Array` `Number`, JavaScript
-  `Float64Array`, IK C O3, IK LLVM O3, and IK WASM O3
+  `Float64Array`, CK C O3, CK LLVM O3, and CK WASM O3
 - f64 WASM setup, input marshal, compute-only, output readback, total, and
   memory-only decomposition
 - f64 WASM low-copy variants using `Float64Array` views over exported memory
@@ -105,7 +105,7 @@ Latest Phase 14 local full run on this machine, 2026-06-24:
 | `pricing-c-unchecked-O0` | 620.272 | 10.75x |
 | `pricing-c-unchecked-O2` | 56.983 | 0.99x |
 | `pricing-c-unchecked-O3` | 57.696 | 1.00x |
-| `pricing-c-unchecked-ik-O3` | 58.855 | 1.02x |
+| `pricing-c-unchecked-ck-O3` | 58.855 | 1.02x |
 | `pricing-c-checked-O3` | 80.702 | 1.40x |
 | `pricing-llvm-unchecked-O0` | 617.271 | 10.70x |
 | `pricing-llvm-unchecked-O2` | 57.952 | 1.00x |
@@ -128,7 +128,7 @@ comes from overflow checks, division checks, and status-return control flow. The
 checked backend keeps business arithmetic checks such as `price * qty`; only a
 proven-safe loop induction increment is optimized away at `-O3`.
 
-LLVM `-O2` and `-O3` are effectively tied with native C for `pricing.ik`.
+LLVM `-O2` and `-O3` are effectively tied with native C for `pricing.ck`.
 General LLVM functions still use alloca/load/store lowering, but clang promotes
 the hot path well. Simple scalar straight-line functions can use a small
 SSA-like lowering path at `-O2` and `-O3`.
@@ -151,10 +151,10 @@ do not share one runtime model. Use those comparisons to understand workload
 shape, boundary cost, and safety tradeoffs; do not treat them as language
 semantic tests or as absolute cross-runtime rankings.
 
-For f64 kernels, JavaScript `Array` `Number`, JavaScript `Float64Array`, IK C,
-IK LLVM, IK WASM, optional Python list `float`, and optional NumPy are different
+For f64 kernels, JavaScript `Array` `Number`, JavaScript `Float64Array`, CK C,
+CK LLVM, CK WASM, optional Python list `float`, and optional NumPy are different
 runtime models. NumPy is a native-library baseline and is not a default runner
-dependency. The f64 suite uses strict IK floating point only: `f64` is the only
+dependency. The f64 suite uses strict CK floating point only: `f64` is the only
 floating point type, `f32` is not planned, and no fast-math, SIMD, implicit
 int/float conversion, broad casts, or f64 checked overflow is assumed. The only
 current numeric casts are exact explicit `i32_to_f64` and `u32_to_f64` builtins.
@@ -167,7 +167,7 @@ measured.
 
 Always benchmark and ship batched calls:
 
-```ik
+```ck
 export fn calc_items(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32
 ```
 
@@ -206,7 +206,7 @@ operations instead of per-element `DataView` calls in the hot path. `DataView`
 remains the byte-level ABI tool for mixed-width struct checks.
 
 Phase 18.3 adds low-copy f64 WASM benchmark cases named
-`f64-*-ik-wasm-o3-low-copy-*`. These cases keep the same WASM pointer ABI but
+`f64-*-ck-wasm-o3-low-copy-*`. These cases keep the same WASM pointer ABI but
 measure the recommended host path separately: `Float64Array#set` for input
 marshal, WASM compute, scalar return consume for `dot`/`sum`, and output checksum
 readback for in-place array kernels. The original DataView cases remain in the
@@ -216,7 +216,7 @@ Use the low-copy path for production-style homogeneous f64 buffers. Use
 DataView when byte offsets, mixed-width structs, and ABI precision matter more
 than hot-path throughput.
 
-`Float64Array` views must be recreated after `memory.grow`; IK does not provide
+`Float64Array` views must be recreated after `memory.grow`; CK does not provide
 a WASM allocator or runtime, so host code still owns memory placement and buffer
 sizing.
 

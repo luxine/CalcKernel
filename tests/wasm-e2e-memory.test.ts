@@ -20,7 +20,7 @@ const itemSize = 32;
 const priceOffset = 0;
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-wasm-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-wasm-"));
 }
 
 function getWasmRuntime(): WasmRuntime | undefined {
@@ -49,12 +49,12 @@ describe("Node.js memory WASM e2e", () => {
       const wasm = getWasmRuntime();
       expect(wasm).toBeDefined();
       const cwd = tempDir();
-      writeFileSync(join(cwd, "wasm_memory.ik"), readFileSync("examples/wasm_memory.ik", "utf8"));
+      writeFileSync(join(cwd, "wasm_memory.ck"), readFileSync("examples/wasm_memory.ck", "utf8"));
       const wasmFile = join(cwd, "build/wasm_memory.wasm");
       let stdout = "";
       let stderr = "";
 
-      const exitCode = runCli(["emit-wasm", "wasm_memory.ik", "--out", "build/wasm_memory.wasm"], {
+      const exitCode = runCli(["emit-wasm", "wasm_memory.ck", "--out", "build/wasm_memory.wasm"], {
         cwd,
         stdout: (text) => {
           stdout += text;
@@ -99,7 +99,7 @@ describe("Node.js memory WASM e2e", () => {
 
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "wasm_f64_memory.ik"),
+      join(cwd, "wasm_f64_memory.ck"),
       `
         struct Quote {
           price: f64;
@@ -120,7 +120,7 @@ describe("Node.js memory WASM e2e", () => {
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "wasm_f64_memory.ik", "--out", "build/wasm_f64_memory.wasm"], {
+    const exitCode = runCli(["emit-wasm", "wasm_f64_memory.ck", "--out", "build/wasm_f64_memory.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -171,7 +171,7 @@ describe("Node.js memory WASM e2e", () => {
 
     const cwd = tempDir();
     writeFileSync(
-      join(cwd, "wasm_cast_memory.ik"),
+      join(cwd, "wasm_cast_memory.ck"),
       `
         export fn write_casts(out: ptr<f64>, a: i32, b: u32) -> f64 {
           out[0] = i32_to_f64(a);
@@ -185,7 +185,7 @@ describe("Node.js memory WASM e2e", () => {
     let stdout = "";
     let stderr = "";
 
-    const emitWatExitCode = runCli(["emit-wat", "wasm_cast_memory.ik", "--out", "build/wasm_cast_memory.wat"], {
+    const emitWatExitCode = runCli(["emit-wat", "wasm_cast_memory.ck", "--out", "build/wasm_cast_memory.wat"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -205,7 +205,7 @@ describe("Node.js memory WASM e2e", () => {
 
     stdout = "";
     stderr = "";
-    const emitWasmExitCode = runCli(["emit-wasm", "wasm_cast_memory.ik", "--out", "build/wasm_cast_memory.wasm"], {
+    const emitWasmExitCode = runCli(["emit-wasm", "wasm_cast_memory.ck", "--out", "build/wasm_cast_memory.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -251,12 +251,12 @@ describe("Node.js memory WASM e2e", () => {
     expect(() => example.byteOffsetToF64Index(130)).toThrow(/8-byte aligned/);
 
     const cwd = tempDir();
-    writeFileSync(join(cwd, "f64_array.ik"), readFileSync("examples/node-wasm-f64-array/f64_array.ik", "utf8"));
+    writeFileSync(join(cwd, "f64_array.ck"), readFileSync("examples/node-wasm-f64-array/f64_array.ck", "utf8"));
     const wasmFile = join(cwd, "build/f64_array.wasm");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "f64_array.ik", "--out", "build/f64_array.wasm", "-O3"], {
+    const exitCode = runCli(["emit-wasm", "f64_array.ck", "--out", "build/f64_array.wasm", "-O3"], {
       cwd,
       stdout: (text) => {
         stdout += text;

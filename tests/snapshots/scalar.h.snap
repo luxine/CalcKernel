@@ -4,22 +4,22 @@
 #include <stdbool.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
-  #ifdef IK_BUILD_DLL
-    #define IK_API __declspec(dllexport)
+  #ifdef CK_BUILD_DLL
+    #define CK_API __declspec(dllexport)
   #else
-    #define IK_API __declspec(dllimport)
+    #define CK_API __declspec(dllimport)
   #endif
 #else
-  #define IK_API __attribute__((visibility("default")))
+  #define CK_API __attribute__((visibility("default")))
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-IK_API int64_t add_i64(int64_t a, int64_t b);
+CK_API int64_t add_i64(int64_t a, int64_t b);
 
-IK_API int32_t max_i32(int32_t a, int32_t b);
+CK_API int32_t max_i32(int32_t a, int32_t b);
 
 #ifdef __cplusplus
 }

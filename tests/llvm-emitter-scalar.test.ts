@@ -19,14 +19,14 @@ function hasClang(): boolean {
 }
 
 function emitFixtureLlvm(): string {
-  const sourceText = readFileSync("examples/llvm_scalar.ik", "utf8");
-  const checked = check(new SourceFile("llvm_scalar.ik", sourceText));
+  const sourceText = readFileSync("examples/llvm_scalar.ck", "utf8");
+  const checked = check(new SourceFile("llvm_scalar.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
 
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
 
-  return emitMirLlvmModule(mir, { sourceFileName: "llvm_scalar.ik" });
+  return emitMirLlvmModule(mir, { sourceFileName: "llvm_scalar.ck" });
 }
 
 function emitSourceLlvm(sourceText: string, sourceFileName: string, optLevel?: OptimizationLevel): string {
@@ -50,7 +50,7 @@ describe("LLVM scalar straight-line emitter", () => {
       return;
     }
 
-    const cwd = mkdtempSync(join(tmpdir(), "intkernel-llvm-"));
+    const cwd = mkdtempSync(join(tmpdir(), "calckernel-llvm-"));
     const buildDir = join(cwd, "build");
     mkdirSync(buildDir, { recursive: true });
 
@@ -69,13 +69,13 @@ describe("LLVM scalar straight-line emitter", () => {
         return a + b;
       }
     `;
-    const checked = check(new SourceFile("llvm_scalar_o2.ik", sourceText));
+    const checked = check(new SourceFile("llvm_scalar_o2.ck", sourceText));
     expect(checked.diagnostics).toEqual([]);
 
     const mir = lowerToMir(checked.checkedProgram);
     expect(validateMirModule(mir).errors).toEqual([]);
 
-    const llvm = emitMirLlvmModule(mir, { sourceFileName: "llvm_scalar_o2.ik", optLevel: 2 });
+    const llvm = emitMirLlvmModule(mir, { sourceFileName: "llvm_scalar_o2.ck", optLevel: 2 });
 
     expect(llvm).toContain("%v0 = add i64 %a, %b");
     expect(llvm).toContain("ret i64 %v0");
@@ -123,7 +123,7 @@ describe("LLVM scalar straight-line emitter", () => {
           return a >= b;
         }
       `,
-      "llvm_f64_scalar.ik"
+      "llvm_f64_scalar.ck"
     );
 
     expect(llvm).toContain("define double @calc_f64(double %a, double %b)");
@@ -154,7 +154,7 @@ describe("LLVM scalar straight-line emitter", () => {
           return a + b;
         }
       `,
-      "llvm_f64_scalar_o2.ik",
+      "llvm_f64_scalar_o2.ck",
       2
     );
 
@@ -185,7 +185,7 @@ describe("LLVM scalar straight-line emitter", () => {
           return 1.0 / 0.0;
         }
       `,
-      "llvm_f64_strict_o3.ik",
+      "llvm_f64_strict_o3.ck",
       3
     );
 
@@ -210,7 +210,7 @@ describe("LLVM scalar straight-line emitter", () => {
           return i32_to_f64(a) + u32_to_f64(b);
         }
       `,
-      "llvm_casts.ik"
+      "llvm_casts.ck"
     );
 
     expect(llvm).toContain("sitofp i32");

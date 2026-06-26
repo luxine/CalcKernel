@@ -4,7 +4,7 @@ import { parse } from "../src/parser/parser.js";
 import { SourceFile } from "../src/source/source-file.js";
 
 function parseSource(text: string) {
-  return parse(new SourceFile("test.ik", text));
+  return parse(new SourceFile("test.ck", text));
 }
 
 function parseReturnExpression(text: string): Expression {
@@ -494,10 +494,10 @@ describe("parser", () => {
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "IK1001",
+          code: "CK1001",
           severity: "error",
           message: "Expected ';' after let statement.",
-          fileName: "test.ik",
+          fileName: "test.ck",
           line: 4,
           column: 9
         })

@@ -1,4 +1,4 @@
-import type { IntKernelType } from "../../typeck/types.js";
+import type { CalcKernelType } from "../../typeck/types.js";
 
 export type WasmValueType = "i32" | "i64" | "f64";
 
@@ -6,11 +6,11 @@ export interface WasmAbiType {
   valueType: WasmValueType;
 }
 
-export function toWasmAbiType(type: IntKernelType): WasmAbiType {
+export function toWasmAbiType(type: CalcKernelType): WasmAbiType {
   return { valueType: toWasmValueType(type) };
 }
 
-export function toWasmValueType(type: IntKernelType): WasmValueType {
+export function toWasmValueType(type: CalcKernelType): WasmValueType {
   switch (type.kind) {
     case "primitive":
       switch (type.name) {

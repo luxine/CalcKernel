@@ -1,4 +1,4 @@
-# IK / IntKernel LLVM Backend
+# CK / CalcKernel LLVM Backend
 
 [简体中文](zh-CN/LLVM_BACKEND.md)
 
@@ -7,10 +7,10 @@ external tool dependencies, limitations, and future work.
 
 ## Goal
 
-IK / IntKernel adds an LLVM backend after MIR:
+CK / CalcKernel adds an LLVM backend after MIR:
 
 ```text
-.ik source
+.ck source
   -> lexer
   -> parser
   -> AST
@@ -111,13 +111,13 @@ debug.
 Phase 14.14 adds a small SSA-like fast path for simple scalar straight-line
 functions at `-O2` and `-O3`. The fast path is limited to one basic block with
 no locals, no calls, no control flow, and no memory operations. More complex
-functions, including `examples/pricing.ik`, continue to use stack lowering and
+functions, including `examples/pricing.ck`, continue to use stack lowering and
 rely on clang `-O2`/`-O3` for promotion and native optimization. A future phase
 can broaden direct SSA lowering or add a MIR-to-SSA transform.
 
 ## Type Mapping
 
-| IK / IntKernel type | LLVM IR type |
+| CK / CalcKernel type | LLVM IR type |
 | --- | --- |
 | `i32` | `i32` |
 | `u32` | `i32` |
@@ -158,7 +158,7 @@ int choose_bool(bool a, int x, int y) { return a ? x : y; }
 ```
 
 produces LLVM IR using `i1` for bool parameters and returns, with clang adding
-ABI attributes such as `zeroext` on some signatures. IntKernel's LLVM v1 emits
+ABI attributes such as `zeroext` on some signatures. CalcKernel's LLVM v1 emits
 plain `i1`; the Phase 13.7 clang e2e verifies that a C harness using `bool` can
 call exported LLVM functions for bool return, bool parameter, bool local, and
 `if` on a bool parameter on the current target.
@@ -290,7 +290,7 @@ LLVM IR, but stable module order is better for snapshots.
 
 For:
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;
@@ -340,7 +340,7 @@ integer fields.
 `emit-llvm` may support an optional target triple:
 
 ```sh
-ikc emit-llvm examples/pricing.ik --out build/pricing.ll --target x86_64-apple-darwin
+ckc emit-llvm examples/pricing.ck --out build/pricing.ll --target x86_64-apple-darwin
 ```
 
 Common triples:
@@ -364,8 +364,8 @@ argument handling is a later hardening step.
 `emit-llvm` writes textual LLVM IR and does not require clang:
 
 ```sh
-ikc emit-llvm examples/pricing.ik --out build/pricing.ll
-ikc emit-llvm examples/pricing.ik --out build/pricing.ll --target x86_64-apple-darwin
+ckc emit-llvm examples/pricing.ck --out build/pricing.ll
+ckc emit-llvm examples/pricing.ck --out build/pricing.ll --target x86_64-apple-darwin
 ```
 
 If `--out` is omitted, `emit-llvm` writes the `.ll` text to stdout.
@@ -373,16 +373,16 @@ If `--out` is omitted, `emit-llvm` writes the `.ll` text to stdout.
 `build-llvm` emits LLVM IR, writes a temporary `.ll`, and invokes clang:
 
 ```sh
-ikc build-llvm examples/pricing.ik --out build/libpricing
-ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o
+ckc build-llvm examples/pricing.ck --out build/libpricing
+ckc build-llvm examples/pricing.ck --kind object --out build/pricing.o
 ```
 
-If the current package still exposes `ikc`, the same backend may be introduced
+If the current package still exposes `ckc`, the same backend may be introduced
 there first:
 
 ```sh
-ikc emit-llvm examples/pricing.ik --out build/pricing.ll
-ikc build-llvm examples/pricing.ik --out build/libpricing
+ckc emit-llvm examples/pricing.ck --out build/pricing.ll
+ckc build-llvm examples/pricing.ck --out build/libpricing
 ```
 
 `emit-llvm` is pure text generation and does not require clang or LLVM tools.
@@ -394,27 +394,27 @@ ikc build-llvm examples/pricing.ik --out build/libpricing
 
 Dynamic library output is the default:
 
-The selected IK optimization level is passed to clang as `-O0`, `-O1`, `-O2`,
+The selected CK optimization level is passed to clang as `-O0`, `-O1`, `-O2`,
 or `-O3`. The examples below show `--opt-level 3`.
 
 macOS:
 
 ```sh
-ikc build-llvm examples/pricing.ik --out build/libpricing --opt-level 3
+ckc build-llvm examples/pricing.ck --out build/libpricing --opt-level 3
 clang -O3 -shared -fPIC build/libpricing.ll -o build/libpricing.dylib
 ```
 
 Linux:
 
 ```sh
-ikc build-llvm examples/pricing.ik --out build/libpricing --opt-level 3
+ckc build-llvm examples/pricing.ck --out build/libpricing --opt-level 3
 clang -O3 -shared -fPIC build/libpricing.ll -o build/libpricing.so
 ```
 
 Windows:
 
 ```sh
-ikc build-llvm examples/pricing.ik --out build/pricing --opt-level 3
+ckc build-llvm examples/pricing.ck --out build/pricing --opt-level 3
 clang -O3 -shared build/pricing.ll -o build/pricing.dll
 ```
 
@@ -426,7 +426,7 @@ filename is respected.
 Object output is available for user-managed linking:
 
 ```sh
-ikc build-llvm examples/pricing.ik --kind object --out build/pricing.o --opt-level 3
+ckc build-llvm examples/pricing.ck --kind object --out build/pricing.o --opt-level 3
 clang -O3 -c build/pricing.ll -o build/pricing.o
 ```
 
@@ -434,7 +434,7 @@ On macOS and Linux, object output conventionally uses `.o`. On Windows,
 `build-llvm --kind object --out build/pricing` uses `.obj`; if the user passes
 an explicit `.o` filename, clang is allowed to produce that file. Static library
 output is not implemented in Phase 13.15; callers can use their own linker,
-`ar`, or `llvm-ar` outside IntKernel if needed.
+`ar`, or `llvm-ar` outside CalcKernel if needed.
 
 If clang is not available, `build-llvm` prints a friendly error and recommends
 using `emit-llvm` to generate LLVM IR without clang. `emit-llvm` must remain
@@ -447,8 +447,8 @@ Phase 13 v1 does not support checked LLVM code generation.
 The LLVM backend rejects checked mode for both LLVM entry points:
 
 ```sh
-ikc emit-llvm input.ik --overflow checked
-ikc build-llvm input.ik --overflow checked
+ckc emit-llvm input.ck --overflow checked
+ckc build-llvm input.ck --overflow checked
 ```
 
 the compiler must report:
@@ -515,11 +515,11 @@ Generated LLVM IR must be stable:
 - f64 codegen is strict by default and does not emit fast-math flags.
 - f64 `%`, f32, implicit int/float conversion, `i64_to_f64`, `u64_to_f64`,
   f64-to-int casts, float checked overflow, SIMD, and JIT remain unsupported.
-- no LLVM-specific optimizer pass pipeline is run by IntKernel; backend input
+- no LLVM-specific optimizer pass pipeline is run by CalcKernel; backend input
   still flows through the shared MIR pass manager.
-- `build-llvm` depends on external clang; IntKernel does not bundle clang,
+- `build-llvm` depends on external clang; CalcKernel does not bundle clang,
   `llc`, LLVM libraries, or a custom linker.
-- No static library output is built by IntKernel yet.
+- No static library output is built by CalcKernel yet.
 - No debug info, DWARF, LTO, or bitcode writer.
 - No runtime, allocator, JIT, strings, IO, modules, bounds checks, or
   `slice<T>`.

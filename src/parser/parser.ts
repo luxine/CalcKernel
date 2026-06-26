@@ -519,7 +519,7 @@ class Parser {
   }
 
   private error(token: Token, message: string): void {
-    this.diagnostics.push(errorAt(this.source, this.spanFromToken(token), "IK1001", message));
+    this.diagnostics.push(errorAt(this.source, this.spanFromToken(token), "CK1001", message));
   }
 
   private synchronizeStatement(): void {

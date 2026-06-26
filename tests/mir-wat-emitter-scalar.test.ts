@@ -11,7 +11,7 @@ function normalizeNewlines(text: string): string {
 }
 
 function lowerAndEmitWat(sourceText: string): string {
-  const checked = check(new SourceFile("scalar_wat.ik", sourceText));
+  const checked = check(new SourceFile("scalar_wat.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);

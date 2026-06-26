@@ -1,4 +1,4 @@
-import { SourceFile, check, getFunctionInfo, getStructInfo } from "intkernel";
+import { SourceFile, check, getFunctionInfo, getStructInfo } from "calckernel";
 import { describe, expect, it } from "vitest";
 import { formatFunctionSignature, formatSymbolLabel, formatTypeLabel } from "../src/typeLabels";
 
@@ -13,7 +13,7 @@ fn add_tax(price: i64, tax: i64) -> i64 {
 `.trimStart();
 
 describe("typeLabels", () => {
-  const checked = check(new SourceFile("sample.ik", sourceText)).checkedProgram;
+  const checked = check(new SourceFile("sample.ck", sourceText)).checkedProgram;
 
   it("formats primitive, pointer, and struct types", () => {
     expect(formatTypeLabel({ kind: "primitive", name: "i64" })).toBe("i64");

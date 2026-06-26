@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "llvm_casts.ik"
+; ModuleID = 'calckernel'
+source_filename = "llvm_casts.ck"
 
 define double @cast_i32(i32 %value) {
 entry:

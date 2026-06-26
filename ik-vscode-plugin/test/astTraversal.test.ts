@@ -1,4 +1,4 @@
-import { SourceFile, parse } from "intkernel";
+import { SourceFile, parse } from "calckernel";
 import { describe, expect, it } from "vitest";
 import { containsPosition, walkProgram } from "../src/astTraversal";
 
@@ -15,7 +15,7 @@ fn add_tax(price: i64, tax: i64) -> i64 {
 
 describe("astTraversal", () => {
   it("visits declarations, statements, and expressions in source order", () => {
-    const parsed = parse(new SourceFile("sample.ik", sourceText));
+    const parsed = parse(new SourceFile("sample.ck", sourceText));
     const visits: string[] = [];
 
     walkProgram(parsed.ast, {
@@ -37,7 +37,7 @@ describe("astTraversal", () => {
   });
 
   it("checks zero-based positions against one-based compiler spans", () => {
-    const parsed = parse(new SourceFile("sample.ik", sourceText));
+    const parsed = parse(new SourceFile("sample.ck", sourceText));
     const functionDeclaration = parsed.ast.declarations[1]!;
     const endPosition = {
       line: functionDeclaration.span.end.line - 1,

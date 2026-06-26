@@ -13,7 +13,7 @@ interface WasmRuntime {
 }
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-wasm-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-wasm-"));
 }
 
 function getWasmRuntime(): WasmRuntime | undefined {
@@ -31,12 +31,12 @@ describe("Node.js short-circuit WASM e2e", () => {
       const wasm = getWasmRuntime();
       expect(wasm).toBeDefined();
       const cwd = tempDir();
-      writeFileSync(join(cwd, "wasm_short_circuit.ik"), readFileSync("examples/wasm_short_circuit.ik", "utf8"));
+      writeFileSync(join(cwd, "wasm_short_circuit.ck"), readFileSync("examples/wasm_short_circuit.ck", "utf8"));
       const wasmFile = join(cwd, "build/wasm_short_circuit.wasm");
       let stdout = "";
       let stderr = "";
 
-      const exitCode = runCli(["emit-wasm", "wasm_short_circuit.ik", "--out", "build/wasm_short_circuit.wasm"], {
+      const exitCode = runCli(["emit-wasm", "wasm_short_circuit.ck", "--out", "build/wasm_short_circuit.wasm"], {
         cwd,
         stdout: (text) => {
           stdout += text;

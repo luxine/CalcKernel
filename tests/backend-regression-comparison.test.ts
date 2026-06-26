@@ -32,7 +32,7 @@ interface RegressionFixture {
 }
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-backend-regression-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-backend-regression-"));
 }
 
 function hasClang(): boolean {
@@ -410,7 +410,7 @@ int main(void) {
 const fixtures: RegressionFixture[] = [
   {
     name: "scalar",
-    sourceFile: "examples/llvm_scalar.ik",
+    sourceFile: "examples/llvm_scalar.ck",
     expected: "scalar:add_i64=3;mul_i32=12;less_i64=1;div_u64=5",
     cHarness: (headerName) => cHarness(headerName, scalarBody),
     llvmHarness: llvmHarness(
@@ -430,7 +430,7 @@ uint64_t div_u64(uint64_t a, uint64_t b);`,
   },
   {
     name: "control",
-    sourceFile: "examples/llvm_control_flow.ik",
+    sourceFile: "examples/llvm_control_flow.ck",
     expected: "control:max_a=10;max_b=3;sum=10",
     cHarness: (headerName) => cHarness(headerName, controlFlowBody),
     llvmHarness: llvmHarness(
@@ -446,7 +446,7 @@ int64_t sum_to_n(int64_t n);`,
   },
   {
     name: "calls",
-    sourceFile: "examples/llvm_calls.ik",
+    sourceFile: "examples/llvm_calls.ck",
     expected: "calls:calc=6",
     cHarness: (headerName) => cHarness(headerName, callsBody),
     llvmHarness: llvmHarness("int64_t calc(int64_t a, int64_t b);", callsBody),
@@ -457,7 +457,7 @@ int64_t sum_to_n(int64_t n);`,
   },
   {
     name: "short",
-    sourceFile: "examples/llvm_short_circuit.ik",
+    sourceFile: "examples/llvm_short_circuit.ck",
     expected: "short:and0=0;and2=1;or0=1;or2=1",
     cHarness: (headerName) => cHarness(headerName, shortCircuitBody),
     llvmHarness: llvmHarness(
@@ -473,7 +473,7 @@ bool or_short_circuit(int64_t a, int64_t b);`,
   },
   {
     name: "memory",
-    sourceFile: "examples/llvm_memory.ik",
+    sourceFile: "examples/llvm_memory.ck",
     expected: "memory:first=1234;second=222;status=0;out=123",
     cHarness: (headerName) => cHarness(headerName, memoryBody),
     llvmHarness: llvmHarness(
@@ -500,7 +500,7 @@ int32_t write_i64(int64_t* out, int64_t value);`,
   },
   {
     name: "f64_matrix",
-    sourceFile: "tests/fixtures/f64_edges.ik",
+    sourceFile: "tests/fixtures/f64_edges.ck",
     expected: f64MatrixExpected,
     cHarness: (headerName) => cHarness(headerName, f64MatrixBody),
     llvmHarness: llvmHarness(
@@ -633,7 +633,7 @@ double nested_struct_write(NestedQuote* nested, int32_t index, double value);`,
   },
   {
     name: "pricing",
-    sourceFile: "examples/pricing.ik",
+    sourceFile: "examples/pricing.ck",
     expected: "pricing:status=0;out0=20567;out1=11000",
     cHarness: (headerName) => cHarness(headerName, pricingBody),
     llvmHarness: llvmHarness(

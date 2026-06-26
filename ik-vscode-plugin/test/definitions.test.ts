@@ -68,7 +68,7 @@ vi.mock("vscode", () => {
 
 import * as vscode from "vscode";
 import { getDefinitionAtPosition } from "../src/definitions";
-import { analyzeIntKernelDocument, createMemoryDocument } from "../src/languageService";
+import { analyzeCalcKernelDocument, createMemoryDocument } from "../src/languageService";
 
 const sourceText = `
 struct Item {
@@ -83,7 +83,7 @@ fn total(item: Item) -> i64 {
 
 describe("definitions", () => {
   it("resolves local variable references", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const location = getDefinitionAtPosition(analysis, new vscode.Position(6, 9));
     expect(location?.range.start.line).toBe(5);
     expect(location?.range.start.character).toBe(6);
@@ -91,7 +91,7 @@ describe("definitions", () => {
   });
 
   it("resolves field references", () => {
-    const analysis = analyzeIntKernelDocument(createMemoryDocument(sourceText));
+    const analysis = analyzeCalcKernelDocument(createMemoryDocument(sourceText));
     const location = getDefinitionAtPosition(analysis, new vscode.Position(5, 28));
     expect(location?.range.start.line).toBe(1);
     expect(location?.range.start.character).toBe(2);

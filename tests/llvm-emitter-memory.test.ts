@@ -11,14 +11,14 @@ function normalizeNewlines(text: string): string {
 }
 
 function emitFixtureLlvm(): string {
-  const sourceText = readFileSync("examples/llvm_memory.ik", "utf8");
-  const checked = check(new SourceFile("llvm_memory.ik", sourceText));
+  const sourceText = readFileSync("examples/llvm_memory.ck", "utf8");
+  const checked = check(new SourceFile("llvm_memory.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
 
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
 
-  return emitMirLlvmModule(mir, { sourceFileName: "llvm_memory.ik" });
+  return emitMirLlvmModule(mir, { sourceFileName: "llvm_memory.ck" });
 }
 
 function emitSourceLlvm(sourceText: string, sourceFileName: string): string {
@@ -58,7 +58,7 @@ describe("LLVM memory emitter", () => {
           return quotes[i].price + quotes[i].tax;
         }
       `,
-      "llvm_f64_memory.ik"
+      "llvm_f64_memory.ck"
     );
 
     expect(llvm).toContain("%struct.Quote = type { double, double }");

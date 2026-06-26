@@ -1,8 +1,8 @@
-# IntKernel MIR
+# CalcKernel MIR
 
 [English](../MIR.md)
 
-MIR 是 IntKernel 的 middle-level intermediate representation。它位于 type
+MIR 是 CalcKernel 的 middle-level intermediate representation。它位于 type
 checking 之后、backend-specific code generation 之前。它的职责是把 Typed AST
 降低成 typed、规范化的结构，让 C、WASM、LLVM 和未来 checked code generation
 更容易消费。
@@ -12,7 +12,7 @@ checking 之后、backend-specific code generation 之前。它的职责是把 T
 默认 C codegen pipeline 是：
 
 ```text
-.ik source
+.ck source
   -> lexer
   -> parser
   -> AST
@@ -33,7 +33,7 @@ MIR -> selected optimization level 下的 MIR pass manager -> LLVM
 
 MIR v1 必须保持当前源码语言语义。它是架构层，不是语言功能。
 
-从 Phase 11.15 开始，`ikc emit-c` 和 `ikc build` 默认使用这条 MIR pipeline，
+从 Phase 11.15 开始，`ckc emit-c` 和 `ckc build` 默认使用这条 MIR pipeline，
 同时覆盖 unchecked 和 checked C generation。Legacy AST-to-C backend 仍作为内部
 回归对比和 fallback 保留。
 
@@ -152,7 +152,7 @@ field (index items, i), price
 
 ## Types
 
-每个 MIR value 必须有已解析的 IntKernel 类型：
+每个 MIR value 必须有已解析的 CalcKernel 类型：
 
 - `i32`
 - `i64`
@@ -217,7 +217,7 @@ Function call 降低成带 result value 的显式 `Call` instruction：
 
 Nested call 按源码参数顺序从内到外降低：
 
-```ik
+```ck
 double_i64(add_i64(a, b))
 ```
 
@@ -261,7 +261,7 @@ MIR v1 区分 place 和 value。
 
 读取：
 
-```ik
+```ck
 items[i].price
 ```
 
@@ -274,7 +274,7 @@ items[i].price
 
 写入：
 
-```ik
+```ck
 out[i] = value;
 ```
 
@@ -294,7 +294,7 @@ Pointer、index 和 field access 通过 place 表示。
 
 读取：
 
-```ik
+```ck
 items[i].price
 ```
 
@@ -307,7 +307,7 @@ items[i].price
 
 写入：
 
-```ik
+```ck
 out[i] = value;
 ```
 
@@ -320,7 +320,7 @@ store index(out, %idx), value
 
 复合 index：
 
-```ik
+```ck
 items[i + 1].price
 ```
 
@@ -336,12 +336,12 @@ MIR v1 仍然不添加 bounds check、pointer validity check 或 buffer length c
 
 ## Checked Mode 关系
 
-MIR v1 表达普通 IntKernel arithmetic 语义。它不直接编码 overflow check。
+MIR v1 表达普通 CalcKernel arithmetic 语义。它不直接编码 overflow check。
 
 Backend 根据请求的 overflow mode 决定如何生成 arithmetic：
 
 - `unchecked`：生成普通 C operation
-- `checked`：生成 overflow guard、division check、`IK_Status` propagation 和
+- `checked`：生成 overflow guard、division check、`CK_Status` propagation 和
   checked return-pointer handling
 
 这让 MIR 不绑定某个 backend 的 checked C 实现，同时仍让 checked lowering 更一致。
@@ -349,7 +349,7 @@ Backend 根据请求的 overflow mode 决定如何生成 arithmetic：
 Short-circuit operator 已经表示为 MIR control flow，因此 checked C emission 不需要
 单独特殊处理 logical operator，也不会误提前 evaluate right-hand side。Function call
 是显式 MIR `Call` instruction，因此 checked C emission 可以在每个 call site 插入
-`IK_Status` propagation。
+`CK_Status` propagation。
 
 Checked mode 中的 pointer/index/field access 复用相同 MIR place。Index expression
 中的 arithmetic 会被检查，因为它在最终 place 使用前已经表示为普通 MIR arithmetic。

@@ -23,25 +23,25 @@ export function emitCHeader(checked: CheckResult, options: EmitCHeaderOptions = 
   lines.push(
     "",
     "#if defined(_WIN32) || defined(__CYGWIN__)",
-    "  #ifdef IK_BUILD_DLL",
-    "    #define IK_API __declspec(dllexport)",
+    "  #ifdef CK_BUILD_DLL",
+    "    #define CK_API __declspec(dllexport)",
     "  #else",
-    "    #define IK_API __declspec(dllimport)",
+    "    #define CK_API __declspec(dllimport)",
     "  #endif",
     "#else",
-    "  #define IK_API __attribute__((visibility(\"default\")))",
+    "  #define CK_API __attribute__((visibility(\"default\")))",
     "#endif",
   );
 
   if (overflowMode === "checked") {
     lines.push(
       "",
-      "typedef int32_t IK_Status;",
+      "typedef int32_t CK_Status;",
       "",
-      "#define IK_OK ((IK_Status)0)",
-      "#define IK_ERR_OVERFLOW ((IK_Status)1)",
-      "#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)",
-      "#define IK_ERR_NULL_POINTER ((IK_Status)3)"
+      "#define CK_OK ((CK_Status)0)",
+      "#define CK_ERR_OVERFLOW ((CK_Status)1)",
+      "#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)",
+      "#define CK_ERR_NULL_POINTER ((CK_Status)3)"
     );
   }
 
@@ -62,7 +62,7 @@ export function emitCHeader(checked: CheckResult, options: EmitCHeaderOptions = 
 
   for (const functionDeclaration of exportedFunctions) {
     const signature = overflowMode === "checked" ? emitCheckedFunctionSignature(functionDeclaration) : emitFunctionSignature(functionDeclaration);
-    lines.push("", `IK_API ${signature};`);
+    lines.push("", `CK_API ${signature};`);
   }
 
   lines.push("", "#ifdef __cplusplus", "}", "#endif");
@@ -85,7 +85,7 @@ export function emitFunctionSignature(functionDeclaration: FunctionDeclaration):
 export function emitCheckedFunctionSignature(functionDeclaration: FunctionDeclaration): string {
   const params = functionDeclaration.params.map((param) => `${emitCType(param.type)} ${param.name.name}`);
   params.push(`${emitCType(functionDeclaration.returnType)}* ik_return`);
-  return `IK_Status ${functionDeclaration.name.name}(${params.join(", ")})`;
+  return `CK_Status ${functionDeclaration.name.name}(${params.join(", ")})`;
 }
 
 export function emitCType(type: TypeNode): string {

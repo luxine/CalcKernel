@@ -1,9 +1,9 @@
 import type { StructInfo } from "../../typeck/checker.js";
-import type { IntKernelType } from "../../typeck/types.js";
+import type { CalcKernelType } from "../../typeck/types.js";
 
 export interface WasmStructFieldLayout {
   name: string;
-  type: IntKernelType;
+  type: CalcKernelType;
   offset: number;
   size: number;
   align: number;
@@ -20,7 +20,7 @@ export interface WasmLayoutContext {
   structs?: ReadonlyMap<string, WasmStructLayout>;
 }
 
-export function sizeOfWasmType(type: IntKernelType, context: WasmLayoutContext = {}): number {
+export function sizeOfWasmType(type: CalcKernelType, context: WasmLayoutContext = {}): number {
   switch (type.kind) {
     case "primitive":
       switch (type.name) {
@@ -44,7 +44,7 @@ export function sizeOfWasmType(type: IntKernelType, context: WasmLayoutContext =
   }
 }
 
-export function alignOfWasmType(type: IntKernelType, context: WasmLayoutContext = {}): number {
+export function alignOfWasmType(type: CalcKernelType, context: WasmLayoutContext = {}): number {
   switch (type.kind) {
     case "primitive":
       switch (type.name) {

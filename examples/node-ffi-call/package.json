@@ -1,5 +1,5 @@
 {
-  "name": "intkernel-node-ffi-call",
+  "name": "calckernel-node-ffi-call",
   "private": true,
   "type": "module",
   "scripts": {

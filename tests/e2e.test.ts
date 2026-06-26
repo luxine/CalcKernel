@@ -14,10 +14,10 @@ import { check } from "../src/typeck/checker.js";
 
 const strictClangFlags = ["-std=c11", "-O3", "-Wall", "-Wextra", "-Werror"];
 const strictClangCppFlags = ["-std=c++17", "-O3", "-Wall", "-Wextra", "-Werror"];
-const buildDllFlag = "-DIK_BUILD_DLL";
+const buildDllFlag = "-DCK_BUILD_DLL";
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-cli-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-cli-"));
 }
 
 function hasClang(): boolean {
@@ -29,10 +29,10 @@ function hasClangCpp(): boolean {
 }
 
 function emitPricingExample(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+  writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
   const cFile = join(cwd, "build/pricing.c");
   const headerFile = join(cwd, "build/pricing.h");
-  const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile], {
+  const exitCode = runCli(["emit-c", "pricing.ck", "--out", cFile, "--header", headerFile], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -43,10 +43,10 @@ function emitPricingExample(cwd: string): { cFile: string; headerFile: string } 
 }
 
 function emitPricingO2Example(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+  writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
   const cFile = join(cwd, "build/pricing_o2.c");
   const headerFile = join(cwd, "build/pricing_o2.h");
-  const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile, "-O2"], {
+  const exitCode = runCli(["emit-c", "pricing.ck", "--out", cFile, "--header", headerFile, "-O2"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -57,10 +57,10 @@ function emitPricingO2Example(cwd: string): { cFile: string; headerFile: string 
 }
 
 function emitPricingCheckedExample(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+  writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
   const cFile = join(cwd, "build/pricing_checked.c");
   const headerFile = join(cwd, "build/pricing_checked.h");
-  const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
+  const exitCode = runCli(["emit-c", "pricing.ck", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -71,10 +71,10 @@ function emitPricingCheckedExample(cwd: string): { cFile: string; headerFile: st
 }
 
 function emitPricingCheckedO3Example(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+  writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
   const cFile = join(cwd, "build/pricing_checked_o3.c");
   const headerFile = join(cwd, "build/pricing_checked_o3.h");
-  const exitCode = runCli(["emit-c", "pricing.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked", "-O3"], {
+  const exitCode = runCli(["emit-c", "pricing.ck", "--out", cFile, "--header", headerFile, "--overflow", "checked", "-O3"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -85,10 +85,10 @@ function emitPricingCheckedO3Example(cwd: string): { cFile: string; headerFile: 
 }
 
 function emitScalarCheckedExample(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "scalar_checked.ik"), readFileSync("examples/scalar_checked.ik", "utf8"));
+  writeFileSync(join(cwd, "scalar_checked.ck"), readFileSync("examples/scalar_checked.ck", "utf8"));
   const cFile = join(cwd, "build/scalar_checked.c");
   const headerFile = join(cwd, "build/scalar_checked.h");
-  const exitCode = runCli(["emit-c", "scalar_checked.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
+  const exitCode = runCli(["emit-c", "scalar_checked.ck", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -99,10 +99,10 @@ function emitScalarCheckedExample(cwd: string): { cFile: string; headerFile: str
 }
 
 function emitScalarControlCheckedExample(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "scalar_control_checked.ik"), readFileSync("examples/scalar_control_checked.ik", "utf8"));
+  writeFileSync(join(cwd, "scalar_control_checked.ck"), readFileSync("examples/scalar_control_checked.ck", "utf8"));
   const cFile = join(cwd, "build/scalar_control_checked.c");
   const headerFile = join(cwd, "build/scalar_control_checked.h");
-  const exitCode = runCli(["emit-c", "scalar_control_checked.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
+  const exitCode = runCli(["emit-c", "scalar_control_checked.ck", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -113,10 +113,10 @@ function emitScalarControlCheckedExample(cwd: string): { cFile: string; headerFi
 }
 
 function emitScalarLogicalCheckedExample(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "scalar_logical_checked.ik"), readFileSync("examples/scalar_logical_checked.ik", "utf8"));
+  writeFileSync(join(cwd, "scalar_logical_checked.ck"), readFileSync("examples/scalar_logical_checked.ck", "utf8"));
   const cFile = join(cwd, "build/scalar_logical_checked.c");
   const headerFile = join(cwd, "build/scalar_logical_checked.h");
-  const exitCode = runCli(["emit-c", "scalar_logical_checked.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
+  const exitCode = runCli(["emit-c", "scalar_logical_checked.ck", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -127,10 +127,10 @@ function emitScalarLogicalCheckedExample(cwd: string): { cFile: string; headerFi
 }
 
 function emitScalarCallsCheckedExample(cwd: string): { cFile: string; headerFile: string } {
-  writeFileSync(join(cwd, "scalar_calls_checked.ik"), readFileSync("examples/scalar_calls_checked.ik", "utf8"));
+  writeFileSync(join(cwd, "scalar_calls_checked.ck"), readFileSync("examples/scalar_calls_checked.ck", "utf8"));
   const cFile = join(cwd, "build/scalar_calls_checked.c");
   const headerFile = join(cwd, "build/scalar_calls_checked.h");
-  const exitCode = runCli(["emit-c", "scalar_calls_checked.ik", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
+  const exitCode = runCli(["emit-c", "scalar_calls_checked.ck", "--out", cFile, "--header", headerFile, "--overflow", "checked"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -141,8 +141,8 @@ function emitScalarCallsCheckedExample(cwd: string): { cFile: string; headerFile
 }
 
 function emitPricingCheckedHeader(cwd: string): string {
-  const sourceText = readFileSync("examples/pricing.ik", "utf8");
-  const checked = check(new SourceFile("pricing.ik", sourceText));
+  const sourceText = readFileSync("examples/pricing.ck", "utf8");
+  const checked = check(new SourceFile("pricing.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const headerFile = join(cwd, "pricing_checked.h");
   writeFileSync(headerFile, emitCHeader(checked, { overflowMode: "checked" }));
@@ -172,7 +172,7 @@ function emitMirScalarUncheckedExample(cwd: string): { cFile: string; headerFile
       return !a;
     }
   `;
-  const checked = check(new SourceFile("scalar_mir.ik", sourceText));
+  const checked = check(new SourceFile("scalar_mir.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -214,7 +214,7 @@ function emitMirControlFlowUncheckedExample(cwd: string): { cFile: string; heade
       return sum;
     }
   `;
-  const checked = check(new SourceFile("control_mir.ik", sourceText));
+  const checked = check(new SourceFile("control_mir.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -237,7 +237,7 @@ function emitMirShortCircuitUncheckedExample(cwd: string): { cFile: string; head
       return a == 0 || b / a > 1;
     }
   `;
-  const checked = check(new SourceFile("short_circuit_mir.ik", sourceText));
+  const checked = check(new SourceFile("short_circuit_mir.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -252,7 +252,7 @@ function emitMirShortCircuitUncheckedExample(cwd: string): { cFile: string; head
 
 function emitOptimizedShortCircuitUncheckedExample(cwd: string): { cFile: string; headerFile: string } {
   writeFileSync(
-    join(cwd, "short_circuit_optimized.ik"),
+    join(cwd, "short_circuit_optimized.ck"),
     `
 export fn and_short_circuit(a: i64, b: i64) -> bool {
   return a != 0 && b / a > 1;
@@ -265,7 +265,7 @@ export fn or_short_circuit(a: i64, b: i64) -> bool {
   );
   const cFile = join(cwd, "build/short_circuit_optimized.c");
   const headerFile = join(cwd, "build/short_circuit_optimized.h");
-  const exitCode = runCli(["emit-c", "short_circuit_optimized.ik", "--out", cFile, "--header", headerFile, "-O2"], {
+  const exitCode = runCli(["emit-c", "short_circuit_optimized.ck", "--out", cFile, "--header", headerFile, "-O2"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -289,7 +289,7 @@ function emitMirCallsUncheckedExample(cwd: string): { cFile: string; headerFile:
       return double_i64(add_i64(a, b));
     }
   `;
-  const checked = check(new SourceFile("calls_mir.ik", sourceText));
+  const checked = check(new SourceFile("calls_mir.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -304,7 +304,7 @@ function emitMirCallsUncheckedExample(cwd: string): { cFile: string; headerFile:
 
 function emitOptimizedCallsUncheckedExample(cwd: string): { cFile: string; headerFile: string } {
   writeFileSync(
-    join(cwd, "calls_optimized.ik"),
+    join(cwd, "calls_optimized.ck"),
     `
 fn add_i64(a: i64, b: i64) -> i64 {
   return a + b;
@@ -321,7 +321,7 @@ export fn calc(a: i64, b: i64) -> i64 {
   );
   const cFile = join(cwd, "build/calls_optimized.c");
   const headerFile = join(cwd, "build/calls_optimized.h");
-  const exitCode = runCli(["emit-c", "calls_optimized.ik", "--out", cFile, "--header", headerFile, "-O2"], {
+  const exitCode = runCli(["emit-c", "calls_optimized.ck", "--out", cFile, "--header", headerFile, "-O2"], {
     cwd,
     stdout: () => {},
     stderr: () => {}
@@ -332,8 +332,8 @@ export fn calc(a: i64, b: i64) -> i64 {
 }
 
 function emitMirPricingUncheckedExample(cwd: string): { cFile: string; headerFile: string } {
-  const sourceText = readFileSync("examples/pricing.ik", "utf8");
-  const checked = check(new SourceFile("pricing_mir.ik", sourceText));
+  const sourceText = readFileSync("examples/pricing.ck", "utf8");
+  const checked = check(new SourceFile("pricing_mir.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -348,7 +348,7 @@ function emitMirPricingUncheckedExample(cwd: string): { cFile: string; headerFil
 
 function emitF64CExample(cwd: string, overflowMode: PipelineOverflowMode = "unchecked"): { cFile: string; headerFile: string } {
   writeFileSync(
-    join(cwd, "f64_c.ik"),
+    join(cwd, "f64_c.ck"),
     `
 struct Quote {
   price: f64;
@@ -406,7 +406,7 @@ export fn tiny_underflow_f64() -> f64 {
 
   const cFile = join(cwd, `build/f64_c_${overflowMode}.c`);
   const headerFile = join(cwd, `build/f64_c_${overflowMode}.h`);
-  const args = ["emit-c", "f64_c.ik", "--out", cFile, "--header", headerFile];
+  const args = ["emit-c", "f64_c.ck", "--out", cFile, "--header", headerFile];
   if (overflowMode === "checked") {
     args.push("--overflow", "checked");
   }
@@ -422,7 +422,7 @@ export fn tiny_underflow_f64() -> f64 {
 
 function emitCastCExample(cwd: string, overflowMode: PipelineOverflowMode = "unchecked"): { cFile: string; headerFile: string } {
   writeFileSync(
-    join(cwd, "cast_c.ik"),
+    join(cwd, "cast_c.ck"),
     `
 export fn cast_i32_to_f64(value: i32) -> f64 {
   return i32_to_f64(value);
@@ -449,7 +449,7 @@ export fn checked_cast_mix(a: i32, b: u32) -> f64 {
 
   const cFile = join(cwd, `build/cast_c_${overflowMode}.c`);
   const headerFile = join(cwd, `build/cast_c_${overflowMode}.h`);
-  const args = ["emit-c", "cast_c.ik", "--out", cFile, "--header", headerFile];
+  const args = ["emit-c", "cast_c.ck", "--out", cFile, "--header", headerFile];
   if (overflowMode === "checked") {
     args.push("--overflow", "checked");
   }
@@ -464,8 +464,8 @@ export fn checked_cast_mix(a: i32, b: u32) -> f64 {
 }
 
 function emitMirCheckedExample(cwd: string, exampleName: string): { cFile: string; headerFile: string } {
-  const sourceText = readFileSync(`examples/${exampleName}.ik`, "utf8");
-  const checked = check(new SourceFile(`${exampleName}.ik`, sourceText));
+  const sourceText = readFileSync(`examples/${exampleName}.ck`, "utf8");
+  const checked = check(new SourceFile(`${exampleName}.ck`, sourceText));
   expect(checked.diagnostics).toEqual([]);
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
@@ -499,7 +499,7 @@ function emitAstAndMirPipelines(
   sourceText: string,
   overflowMode: PipelineOverflowMode
 ): { ast: EmittedPipeline; mir: EmittedPipeline } {
-  const checked = check(new SourceFile(`${fixtureName}.ik`, sourceText));
+  const checked = check(new SourceFile(`${fixtureName}.ck`, sourceText));
   expect(checked.diagnostics).toEqual([]);
 
   const headerText = emitCHeader(checked, { overflowMode });
@@ -542,7 +542,7 @@ function compileAndRunPipeline(cwd: string, name: string, pipeline: EmittedPipel
   return run.stdout;
 }
 
-describe("ikc CLI", () => {
+describe("ckc CLI", () => {
   const llvmBuildClangAvailable = hasClang();
 
   it("prints help", () => {
@@ -560,14 +560,14 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(stdout).toContain("ikc check <file>");
-    expect(stdout).toContain("ikc emit-c <file> --out <c-file> [--header <h-file>]");
-    expect(stdout).toContain("ikc emit-mir <file> [--out <mir-file>]");
-    expect(stdout).toContain("ikc emit-wat <file> [--out <wat-file>] [--overflow unchecked]");
-    expect(stdout).toContain("ikc emit-wasm <file> --out <wasm-file> [--overflow unchecked]");
-    expect(stdout).toContain("ikc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked]");
-    expect(stdout).toContain("ikc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]");
-    expect(stdout).toContain("ikc build <file> --out <output-path>");
+    expect(stdout).toContain("ckc check <file>");
+    expect(stdout).toContain("ckc emit-c <file> --out <c-file> [--header <h-file>]");
+    expect(stdout).toContain("ckc emit-mir <file> [--out <mir-file>]");
+    expect(stdout).toContain("ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked]");
+    expect(stdout).toContain("ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked]");
+    expect(stdout).toContain("ckc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked]");
+    expect(stdout).toContain("ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked]");
+    expect(stdout).toContain("ckc build <file> --out <output-path>");
     expect(stdout).toContain("--overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.");
     expect(stdout).toContain("-o <file>                         Alias for --out <file>.");
     expect(stdout).toContain("--opt-level <0|1|2|3>            MIR optimization level. Default: 0.");
@@ -579,11 +579,11 @@ describe("ikc CLI", () => {
 
   it("checks valid files with a concise success message", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["check", "scalar.ik"], {
+    const exitCode = runCli(["check", "scalar.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -594,38 +594,18 @@ describe("ikc CLI", () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(stdout).toBe("OK: scalar.ik\n");
+    expect(stdout).toBe("OK: scalar.ck\n");
     expect(stderr).toBe("");
   });
 
-  it("checks the explicit cast example", () => {
+  it("rejects legacy source extension inputs", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "explicit_casts.ik"), readFileSync("examples/explicit_casts.ik", "utf8"));
+    const legacyFile = `legacy.${"i"}k`;
+    writeFileSync(join(cwd, legacyFile), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+
     let stdout = "";
     let stderr = "";
-
-    const exitCode = runCli(["check", "explicit_casts.ik"], {
-      cwd,
-      stdout: (text) => {
-        stdout += text;
-      },
-      stderr: (text) => {
-        stderr += text;
-      }
-    });
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe("OK: explicit_casts.ik\n");
-    expect(stderr).toBe("");
-  });
-
-  it("checks files and prints diagnostics with code, line, column, and source snippet", () => {
-    const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
-    let stdout = "";
-    let stderr = "";
-
-    const exitCode = runCli(["check", "bad.ik"], {
+    const exitCode = runCli(["check", legacyFile], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -637,19 +617,61 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toBe(`CalcKernel source files use .ck. Legacy .${"i"}k files are no longer accepted.\n`);
+  });
+
+  it("checks the explicit cast example", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "explicit_casts.ck"), readFileSync("examples/explicit_casts.ck", "utf8"));
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["check", "explicit_casts.ck"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe("OK: explicit_casts.ck\n");
+    expect(stderr).toBe("");
+  });
+
+  it("checks files and prints diagnostics with code, line, column, and source snippet", () => {
+    const cwd = tempDir();
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = runCli(["check", "bad.ck"], {
+      cwd,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(stderr).toContain("  return missing;");
     expect(stderr).toContain("         ^^^^^^^");
   });
 
   it("emits C and header files", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stderr = "";
 
     let stdout = "";
 
-    const exitCode = runCli(["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h"], {
+    const exitCode = runCli(["emit-c", "scalar.ck", "--out", "build/scalar.c", "--header", "build/scalar.h"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -668,11 +690,11 @@ describe("ikc CLI", () => {
 
   it("treats omitted overflow mode as unchecked and accepts explicit unchecked", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let defaultStdout = "";
     let uncheckedStdout = "";
 
-    const defaultExitCode = runCli(["emit-c", "scalar.ik", "--out", "build/default/scalar.c", "--header", "build/default/scalar.h"], {
+    const defaultExitCode = runCli(["emit-c", "scalar.ck", "--out", "build/default/scalar.c", "--header", "build/default/scalar.h"], {
       cwd,
       stdout: (text) => {
         defaultStdout += text;
@@ -680,7 +702,7 @@ describe("ikc CLI", () => {
       stderr: () => {}
     });
     const uncheckedExitCode = runCli(
-      ["emit-c", "scalar.ik", "--out", "build/unchecked/scalar.c", "--header", "build/unchecked/scalar.h", "--overflow", "unchecked"],
+      ["emit-c", "scalar.ck", "--out", "build/unchecked/scalar.c", "--header", "build/unchecked/scalar.h", "--overflow", "unchecked"],
       {
         cwd,
         stdout: (text) => {
@@ -700,10 +722,10 @@ describe("ikc CLI", () => {
 
   it("emits checked scalar C for supported scalar code", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
 
-    const exitCode = runCli(["emit-c", "scalar.ik", "--out", "build/checked.c", "--header", "build/checked.h", "--overflow", "checked"], {
+    const exitCode = runCli(["emit-c", "scalar.ck", "--out", "build/checked.c", "--header", "build/checked.h", "--overflow", "checked"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -713,16 +735,16 @@ describe("ikc CLI", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("OK: emitted C with overflow=checked");
     expect(stdout).toContain(`Wrote ${join(cwd, "build/checked.c")}`);
-    expect(readFileSync(join(cwd, "build/checked.h"), "utf8")).toContain("IK_API IK_Status add(int64_t a, int64_t b, int64_t* ik_return);");
+    expect(readFileSync(join(cwd, "build/checked.h"), "utf8")).toContain("CK_API CK_Status add(int64_t a, int64_t b, int64_t* ik_return);");
     expect(readFileSync(join(cwd, "build/checked.c"), "utf8")).toContain("__builtin_add_overflow");
   });
 
   it("rejects invalid overflow modes", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stderr = "";
 
-    const exitCode = runCli(["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "--overflow", "safe"], {
+    const exitCode = runCli(["emit-c", "scalar.ck", "--out", "build/scalar.c", "--header", "build/scalar.h", "--overflow", "safe"], {
       cwd,
       stdout: () => {},
       stderr: (text) => {
@@ -738,10 +760,10 @@ describe("ikc CLI", () => {
 
   it("accepts explicit opt-level values without changing emitted C", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
 
     expect(
-      runCli(["emit-c", "scalar.ik", "--out", "build/default/scalar.c", "--header", "build/default/scalar.h"], {
+      runCli(["emit-c", "scalar.ck", "--out", "build/default/scalar.c", "--header", "build/default/scalar.h"], {
         cwd,
         stdout: () => {},
         stderr: () => {}
@@ -750,7 +772,7 @@ describe("ikc CLI", () => {
 
     for (const level of ["0", "1", "2", "3"]) {
       const exitCode = runCli(
-        ["emit-c", "scalar.ik", "--out", `build/O${level}/scalar.c`, "--header", `build/O${level}/scalar.h`, "--opt-level", level],
+        ["emit-c", "scalar.ck", "--out", `build/O${level}/scalar.c`, "--header", `build/O${level}/scalar.h`, "--opt-level", level],
         {
           cwd,
           stdout: () => {},
@@ -768,26 +790,26 @@ describe("ikc CLI", () => {
 
   it("accepts -O aliases across codegen commands", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "scalar.ck"), readFileSync("examples/scalar.ck", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     const runner: CommandRunner = () => ({ status: 0, stdout: "", stderr: "" });
 
-    expect(runCli(["emit-mir", "scalar.ik", "-O0"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
-    expect(runCli(["emit-wat", "scalar.ik", "--out", "build/scalar.wat", "-O1"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
-    expect(runCli(["emit-wasm", "scalar.ik", "--out", "build/scalar.wasm", "-O2"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
-    expect(runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/scalar.ll", "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
-    expect(runCli(["build", "scalar.ik", "--out", "build/libscalar", "-O2"], { cwd, runCommand: runner, stdout: () => {}, stderr: () => {} })).toBe(0);
-    expect(runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "-O1"], { cwd, runCommand: runner, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-mir", "scalar.ck", "-O0"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-wat", "scalar.ck", "--out", "build/scalar.wat", "-O1"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-wasm", "scalar.ck", "--out", "build/scalar.wasm", "-O2"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["emit-llvm", "llvm_scalar.ck", "--out", "build/scalar.ll", "-O3"], { cwd, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["build", "scalar.ck", "--out", "build/libscalar", "-O2"], { cwd, runCommand: runner, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing", "-O1"], { cwd, runCommand: runner, stdout: () => {}, stderr: () => {} })).toBe(0);
   });
 
   it("prints MIR optimization debug output to stderr", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-mir", "scalar.ik", "-O3", "--print-pass-pipeline", "--print-mir-before-opt", "--print-mir-after-opt"], {
+    const exitCode = runCli(["emit-mir", "scalar.ck", "-O3", "--print-pass-pipeline", "--print-mir-before-opt", "--print-mir-after-opt"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -809,12 +831,12 @@ describe("ikc CLI", () => {
 
   it("prints the pass pipeline for C emission to stderr", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
     const exitCode = runCli(
-      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "-O3", "--print-pass-pipeline"],
+      ["emit-c", "scalar.ck", "--out", "build/scalar.c", "--header", "build/scalar.h", "-O3", "--print-pass-pipeline"],
       {
         cwd,
         stdout: (text) => {
@@ -835,12 +857,12 @@ describe("ikc CLI", () => {
 
   it("rejects invalid opt-level values", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
 
     for (const args of [
-      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "--opt-level", "4"],
-      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "--opt-level", "fast"],
-      ["emit-c", "scalar.ik", "--out", "build/scalar.c", "--header", "build/scalar.h", "-O9"]
+      ["emit-c", "scalar.ck", "--out", "build/scalar.c", "--header", "build/scalar.h", "--opt-level", "4"],
+      ["emit-c", "scalar.ck", "--out", "build/scalar.c", "--header", "build/scalar.h", "--opt-level", "fast"],
+      ["emit-c", "scalar.ck", "--out", "build/scalar.c", "--header", "build/scalar.h", "-O9"]
     ]) {
       let stderr = "";
       const exitCode = runCli(args, {
@@ -858,11 +880,11 @@ describe("ikc CLI", () => {
 
   it("does not write emit-c outputs for invalid files", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-c", "bad.ik", "--out", "build/bad.c", "--header", "build/bad.h"], {
+    const exitCode = runCli(["emit-c", "bad.ck", "--out", "build/bad.c", "--header", "build/bad.h"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -874,18 +896,18 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.c"))).toBe(false);
     expect(existsSync(join(cwd, "build/bad.h"))).toBe(false);
   });
 
   it("prints MIR to stdout when emit-mir has no --out", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-mir", "scalar.ik"], {
+    const exitCode = runCli(["emit-mir", "scalar.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -904,11 +926,11 @@ describe("ikc CLI", () => {
 
   it("prints explicit int to f64 casts in emit-mir output", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "casts.ik"), "export fn cast_i32(a: i32) -> f64 {\n  return i32_to_f64(a);\n}\n");
+    writeFileSync(join(cwd, "casts.ck"), "export fn cast_i32(a: i32) -> f64 {\n  return i32_to_f64(a);\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-mir", "casts.ik"], {
+    const exitCode = runCli(["emit-mir", "casts.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -926,10 +948,10 @@ describe("ikc CLI", () => {
 
   it("emits MIR for pricing with stable struct and store output", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     let stdout = "";
 
-    const exitCode = runCli(["emit-mir", "pricing.ik"], {
+    const exitCode = runCli(["emit-mir", "pricing.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -947,12 +969,12 @@ describe("ikc CLI", () => {
 
   it("writes MIR to --out when requested", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
     const mirFile = join(cwd, "build/scalar.mir");
 
-    const exitCode = runCli(["emit-mir", "scalar.ik", "--out", "build/scalar.mir"], {
+    const exitCode = runCli(["emit-mir", "scalar.ck", "--out", "build/scalar.mir"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -970,11 +992,11 @@ describe("ikc CLI", () => {
 
   it("does not output MIR for invalid source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-mir", "bad.ik", "--out", "build/bad.mir"], {
+    const exitCode = runCli(["emit-mir", "bad.ck", "--out", "build/bad.mir"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -986,18 +1008,18 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.mir"))).toBe(false);
   });
 
   it("emits LLVM IR to --out for valid scalar source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
     const llvmFile = join(cwd, "build/llvm_scalar.ll");
 
-    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/llvm_scalar.ll"], {
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ck", "--out", "build/llvm_scalar.ll"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1017,11 +1039,11 @@ describe("ikc CLI", () => {
 
   it("prints LLVM IR to stdout when emit-llvm has no --out", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik"], {
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1033,20 +1055,20 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(stdout).toContain("; ModuleID = 'intkernel'");
-    expect(stdout).toContain('source_filename = "llvm_scalar.ik"');
+    expect(stdout).toContain("; ModuleID = 'calckernel'");
+    expect(stdout).toContain('source_filename = "llvm_scalar.ck"');
     expect(stdout).toContain("define i64 @add_i64(i64 %a, i64 %b)");
     expect(stdout).not.toContain(cwd);
   });
 
   it("emits LLVM target triple when requested", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
     const exitCode = runCli(
-      ["emit-llvm", "llvm_scalar.ik", "--out", "build/target.ll", "--target", "x86_64-unknown-linux-gnu"],
+      ["emit-llvm", "llvm_scalar.ck", "--out", "build/target.ll", "--target", "x86_64-unknown-linux-gnu"],
       {
         cwd,
         stdout: (text) => {
@@ -1066,11 +1088,11 @@ describe("ikc CLI", () => {
 
   it("does not output LLVM IR for invalid source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-llvm", "bad.ik", "--out", "build/bad.ll"], {
+    const exitCode = runCli(["emit-llvm", "bad.ck", "--out", "build/bad.ll"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1082,17 +1104,17 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.ll"))).toBe(false);
   });
 
   it("rejects checked overflow mode for emit-llvm", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--out", "build/llvm_scalar.ll", "--overflow", "checked"], {
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ck", "--out", "build/llvm_scalar.ll", "--overflow", "checked"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1115,11 +1137,11 @@ describe("ikc CLI", () => {
 
   it("rejects invalid overflow modes for emit-llvm", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "llvm_scalar.ik"), readFileSync("examples/llvm_scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "llvm_scalar.ck"), readFileSync("examples/llvm_scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-llvm", "llvm_scalar.ik", "--overflow", "fast"], {
+    const exitCode = runCli(["emit-llvm", "llvm_scalar.ck", "--overflow", "fast"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1136,7 +1158,7 @@ describe("ikc CLI", () => {
 
   it("build-llvm emits LLVM IR and invokes clang with Linux shared library flags", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner: CommandRunner = (command, args) => {
       calls.push({ command, args });
@@ -1145,7 +1167,7 @@ describe("ikc CLI", () => {
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1172,14 +1194,14 @@ describe("ikc CLI", () => {
 
   it("build-llvm passes explicit opt-level through to clang", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner: CommandRunner = (command, args) => {
       calls.push({ command, args });
       return { status: 0, stdout: "", stderr: "" };
     };
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "-O2"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing", "-O2"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1201,14 +1223,14 @@ describe("ikc CLI", () => {
       ["linux", "build/custom.dylib", "build/custom.dylib", ["-shared", "-fPIC"]]
     ] as const) {
       const cwd = tempDir();
-      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
       const calls: Array<{ command: string; args: string[] }> = [];
       const runner: CommandRunner = (command, args) => {
         calls.push({ command, args });
         return { status: 0, stdout: "", stderr: "" };
       };
 
-      const exitCode = runCli(["build-llvm", "pricing.ik", "--out", requestedOut], {
+      const exitCode = runCli(["build-llvm", "pricing.ck", "--out", requestedOut], {
         cwd,
         platform,
         runCommand: runner,
@@ -1226,10 +1248,10 @@ describe("ikc CLI", () => {
 
   it("build-llvm includes target triple in generated LLVM IR when requested", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     const runner: CommandRunner = () => ({ status: 0, stdout: "", stderr: "" });
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "--target", "x86_64-unknown-linux-gnu"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing", "--target", "x86_64-unknown-linux-gnu"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1243,7 +1265,7 @@ describe("ikc CLI", () => {
 
   it("build-llvm can emit an object file with clang -c", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner: CommandRunner = (command, args) => {
       calls.push({ command, args });
@@ -1252,7 +1274,7 @@ describe("ikc CLI", () => {
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--kind", "object", "--out", "build/pricing.o"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--kind", "object", "--out", "build/pricing.o"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1279,11 +1301,11 @@ describe("ikc CLI", () => {
 
   it("build-llvm rejects invalid output kind", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--kind", "static", "--out", "build/libpricing.a"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--kind", "static", "--out", "build/libpricing.a"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1300,7 +1322,7 @@ describe("ikc CLI", () => {
 
   it("prints a friendly build-llvm error when clang is not found", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     let stdout = "";
     let stderr = "";
     const runner: CommandRunner = () => ({
@@ -1310,7 +1332,7 @@ describe("ikc CLI", () => {
       error: Object.assign(new Error("spawn clang ENOENT"), { code: "ENOENT" })
     });
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1330,11 +1352,11 @@ describe("ikc CLI", () => {
 
   it("does not build LLVM for invalid source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["build-llvm", "bad.ik", "--out", "build/libbad"], {
+    const exitCode = runCli(["build-llvm", "bad.ck", "--out", "build/libbad"], {
       cwd,
       platform: "linux",
       runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
@@ -1348,17 +1370,17 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/libbad.ll"))).toBe(false);
   });
 
   it("rejects checked overflow mode for build-llvm", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+    writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing", "--overflow", "checked"], {
+    const exitCode = runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing", "--overflow", "checked"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1389,11 +1411,11 @@ describe("ikc CLI", () => {
       : "build-llvm builds a native dynamic library (skipped because clang was not found)",
     () => {
       const cwd = tempDir();
-      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
       let stdout = "";
       let stderr = "";
 
-      const exitCode = runCli(["build-llvm", "pricing.ik", "--out", "build/libpricing"], {
+      const exitCode = runCli(["build-llvm", "pricing.ck", "--out", "build/libpricing"], {
         cwd,
         platform: process.platform,
         stdout: (text) => {
@@ -1415,11 +1437,11 @@ describe("ikc CLI", () => {
     llvmBuildClangAvailable ? "build-llvm emits a real object file with clang" : "build-llvm emits an object file (skipped because clang was not found)",
     () => {
       const cwd = tempDir();
-      writeFileSync(join(cwd, "pricing.ik"), readFileSync("examples/pricing.ik", "utf8"));
+      writeFileSync(join(cwd, "pricing.ck"), readFileSync("examples/pricing.ck", "utf8"));
       let stdout = "";
       let stderr = "";
 
-      const exitCode = runCli(["build-llvm", "pricing.ik", "--kind", "object", "--out", "build/pricing.o"], {
+      const exitCode = runCli(["build-llvm", "pricing.ck", "--kind", "object", "--out", "build/pricing.o"], {
         cwd,
         platform: process.platform,
         stdout: (text) => {
@@ -1440,12 +1462,12 @@ describe("ikc CLI", () => {
 
   it("emits WAT to --out for valid scalar source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
     const watFile = join(cwd, "build/scalar.wat");
 
-    const exitCode = runCli(["emit-wat", "scalar.ik", "--out", "build/scalar.wat"], {
+    const exitCode = runCli(["emit-wat", "scalar.ck", "--out", "build/scalar.wat"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1465,11 +1487,11 @@ describe("ikc CLI", () => {
 
   it("prints WAT to stdout when emit-wat has no --out", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wat", "scalar.ik"], {
+    const exitCode = runCli(["emit-wat", "scalar.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1490,11 +1512,11 @@ describe("ikc CLI", () => {
 
   it("does not output WAT for invalid source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wat", "bad.ik", "--out", "build/bad.wat"], {
+    const exitCode = runCli(["emit-wat", "bad.ck", "--out", "build/bad.wat"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1506,17 +1528,17 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.wat"))).toBe(false);
   });
 
   it("rejects checked overflow mode for emit-wat", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wat", "scalar.ik", "--out", "build/scalar.wat", "--overflow", "checked"], {
+    const exitCode = runCli(["emit-wat", "scalar.ck", "--out", "build/scalar.wat", "--overflow", "checked"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1539,11 +1561,11 @@ describe("ikc CLI", () => {
 
   it("rejects invalid overflow modes for emit-wat", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wat", "scalar.ik", "--overflow", "fast"], {
+    const exitCode = runCli(["emit-wat", "scalar.ck", "--overflow", "fast"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1560,12 +1582,12 @@ describe("ikc CLI", () => {
 
   it("emits WASM binary to --out for valid scalar source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "scalar.ck"), readFileSync("examples/scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
     const wasmFile = join(cwd, "build/scalar.wasm");
 
-    const exitCode = runCli(["emit-wasm", "scalar.ik", "--out", "build/scalar.wasm"], {
+    const exitCode = runCli(["emit-wasm", "scalar.ck", "--out", "build/scalar.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1585,11 +1607,11 @@ describe("ikc CLI", () => {
 
   it("requires --out for emit-wasm", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "scalar.ck"), readFileSync("examples/scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "scalar.ik"], {
+    const exitCode = runCli(["emit-wasm", "scalar.ck"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1606,12 +1628,12 @@ describe("ikc CLI", () => {
 
   it("creates output directories for emit-wasm", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), readFileSync("examples/scalar.ik", "utf8"));
+    writeFileSync(join(cwd, "scalar.ck"), readFileSync("examples/scalar.ck", "utf8"));
     let stdout = "";
     let stderr = "";
     const wasmFile = join(cwd, "nested/build/scalar.wasm");
 
-    const exitCode = runCli(["emit-wasm", "scalar.ik", "--out", "nested/build/scalar.wasm"], {
+    const exitCode = runCli(["emit-wasm", "scalar.ck", "--out", "nested/build/scalar.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1630,11 +1652,11 @@ describe("ikc CLI", () => {
 
   it("does not output WASM for invalid source", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "bad.ik"), "export fn bad() -> i32 {\n  return missing;\n}\n");
+    writeFileSync(join(cwd, "bad.ck"), "export fn bad() -> i32 {\n  return missing;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "bad.ik", "--out", "build/bad.wasm"], {
+    const exitCode = runCli(["emit-wasm", "bad.ck", "--out", "build/bad.wasm"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1646,17 +1668,17 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("bad.ik:2:10: error IK2001: Unknown variable 'missing'.");
+    expect(stderr).toContain("bad.ck:2:10: error CK2001: Unknown variable 'missing'.");
     expect(existsSync(join(cwd, "build/bad.wasm"))).toBe(false);
   });
 
   it("rejects checked overflow mode for emit-wasm", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
 
-    const exitCode = runCli(["emit-wasm", "scalar.ik", "--out", "build/scalar.wasm", "--overflow", "checked"], {
+    const exitCode = runCli(["emit-wasm", "scalar.ck", "--out", "build/scalar.wasm", "--overflow", "checked"], {
       cwd,
       stdout: (text) => {
         stdout += text;
@@ -1679,7 +1701,7 @@ describe("ikc CLI", () => {
 
   it("build emits C first and invokes clang with strict Linux shared library flags", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner: CommandRunner = (command, args) => {
       calls.push({ command, args });
@@ -1687,7 +1709,7 @@ describe("ikc CLI", () => {
     };
     let stdout = "";
 
-    const exitCode = runCli(["build", "scalar.ik", "--out", "build/libscalar"], {
+    const exitCode = runCli(["build", "scalar.ck", "--out", "build/libscalar"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1712,7 +1734,7 @@ describe("ikc CLI", () => {
 
   it("passes checked overflow mode through build", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner: CommandRunner = (command, args) => {
       calls.push({ command, args });
@@ -1720,7 +1742,7 @@ describe("ikc CLI", () => {
     };
     let stdout = "";
 
-    const exitCode = runCli(["build", "scalar.ik", "--out", "build/libscalar", "--overflow", "checked"], {
+    const exitCode = runCli(["build", "scalar.ck", "--out", "build/libscalar", "--overflow", "checked"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1732,8 +1754,8 @@ describe("ikc CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout).toBe(`OK: built library with overflow=checked\n${join(cwd, "build/libscalar.so")}\n`);
-    expect(readFileSync(join(cwd, "build/libscalar.c"), "utf8")).toContain("IK_Status add");
-    expect(readFileSync(join(cwd, "build/libscalar.h"), "utf8")).toContain("IK_Status add");
+    expect(readFileSync(join(cwd, "build/libscalar.c"), "utf8")).toContain("CK_Status add");
+    expect(readFileSync(join(cwd, "build/libscalar.h"), "utf8")).toContain("CK_Status add");
     expect(calls).toEqual([
       { command: "clang", args: ["--version"] },
       {
@@ -1749,14 +1771,14 @@ describe("ikc CLI", () => {
       ["win32", ".dll", ["-shared"]]
     ] as const) {
       const cwd = tempDir();
-      writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+      writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
       const calls: Array<{ command: string; args: string[] }> = [];
       const runner: CommandRunner = (command, args) => {
         calls.push({ command, args });
         return { status: 0, stdout: "", stderr: "" };
       };
 
-      const exitCode = runCli(["build", "scalar.ik", "--out", "build/libscalar"], {
+      const exitCode = runCli(["build", "scalar.ck", "--out", "build/libscalar"], {
         cwd,
         platform,
         runCommand: runner,
@@ -1774,7 +1796,7 @@ describe("ikc CLI", () => {
 
   it("prints a friendly error when clang is not found", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stderr = "";
     const runner: CommandRunner = () => ({
       status: null,
@@ -1783,7 +1805,7 @@ describe("ikc CLI", () => {
       error: Object.assign(new Error("spawn clang ENOENT"), { code: "ENOENT" })
     });
 
-    const exitCode = runCli(["build", "scalar.ik", "--out", "build/libscalar"], {
+    const exitCode = runCli(["build", "scalar.ck", "--out", "build/libscalar"], {
       cwd,
       platform: "darwin",
       runCommand: runner,
@@ -1799,7 +1821,7 @@ describe("ikc CLI", () => {
 
   it("prints a friendly error for checked build when clang is not found", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stdout = "";
     let stderr = "";
     const runner: CommandRunner = () => ({
@@ -1809,7 +1831,7 @@ describe("ikc CLI", () => {
       error: Object.assign(new Error("spawn clang ENOENT"), { code: "ENOENT" })
     });
 
-    const exitCode = runCli(["build", "scalar.ik", "--out", "build/libscalar", "--overflow", "checked"], {
+    const exitCode = runCli(["build", "scalar.ck", "--out", "build/libscalar", "--overflow", "checked"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1824,13 +1846,13 @@ describe("ikc CLI", () => {
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
     expect(stderr).toContain("clang was not found. Install clang and make sure it is available on PATH.");
-    expect(readFileSync(join(cwd, "build/libscalar.c"), "utf8")).toContain("IK_Status add");
-    expect(readFileSync(join(cwd, "build/libscalar.h"), "utf8")).toContain("IK_Status add");
+    expect(readFileSync(join(cwd, "build/libscalar.c"), "utf8")).toContain("CK_Status add");
+    expect(readFileSync(join(cwd, "build/libscalar.h"), "utf8")).toContain("CK_Status add");
   });
 
   it("prints clang stderr when build compilation fails", () => {
     const cwd = tempDir();
-    writeFileSync(join(cwd, "scalar.ik"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
+    writeFileSync(join(cwd, "scalar.ck"), "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
     let stderr = "";
     let callCount = 0;
     const runner: CommandRunner = () => {
@@ -1840,7 +1862,7 @@ describe("ikc CLI", () => {
         : { status: 1, stdout: "", stderr: "clang strict failure\n" };
     };
 
-    const exitCode = runCli(["build", "scalar.ik", "--out", "build/libscalar"], {
+    const exitCode = runCli(["build", "scalar.ck", "--out", "build/libscalar"], {
       cwd,
       platform: "linux",
       runCommand: runner,
@@ -1856,7 +1878,7 @@ describe("ikc CLI", () => {
 });
 
 describe("pricing example end-to-end", () => {
-  it("generates pricing.c and pricing.h from examples/pricing.ik", () => {
+  it("generates pricing.c and pricing.h from examples/pricing.ck", () => {
     const cwd = tempDir();
     const { cFile, headerFile } = emitPricingExample(cwd);
 
@@ -1992,8 +2014,8 @@ int main(void) {
   int64_t out[2] = {0, 0};
   int32_t ik_return = -1;
 
-  IK_Status status = calc_items(items, 2, out, &ik_return);
-  if (status != IK_OK) {
+  CK_Status status = calc_items(items, 2, out, &ik_return);
+  if (status != CK_OK) {
     return 10;
   }
   if (ik_return != 0) {
@@ -2013,7 +2035,7 @@ int main(void) {
   ik_return = -1;
 
   status = calc_items(overflow_items, 1, overflow_out, &ik_return);
-  if (status != IK_ERR_OVERFLOW) {
+  if (status != CK_ERR_OVERFLOW) {
     return 30;
   }
 
@@ -2064,8 +2086,8 @@ int main(void) {
   int64_t out[2] = {0, 0};
   int32_t ik_return = -1;
 
-  IK_Status status = calc_items(items, 2, out, &ik_return);
-  if (status != IK_OK) {
+  CK_Status status = calc_items(items, 2, out, &ik_return);
+  if (status != CK_OK) {
     return 10;
   }
   if (ik_return != 0) {
@@ -2085,7 +2107,7 @@ int main(void) {
   ik_return = -1;
 
   status = calc_items(overflow_items, 1, overflow_out, &ik_return);
-  if (status != IK_ERR_OVERFLOW) {
+  if (status != CK_ERR_OVERFLOW) {
     return 30;
   }
 
@@ -2148,8 +2170,8 @@ _Static_assert(offsetof(Item, tax_rate_ppm) == 24, "unexpected tax_rate_ppm offs
 #include "pricing_checked.h"
 
 int main(void) {
-  IK_Status status = IK_OK;
-  return status == IK_OK ? 0 : 1;
+  CK_Status status = CK_OK;
+  return status == CK_OK ? 0 : 1;
 }
 `.trimStart()
       );
@@ -2231,8 +2253,8 @@ int main() {
 #include "pricing_checked.h"
 
 int main() {
-  IK_Status status = IK_OK;
-  return status == IK_OK ? 0 : 1;
+  CK_Status status = CK_OK;
+  return status == CK_OK ? 0 : 1;
 }
 `.trimStart()
       );
@@ -2450,7 +2472,7 @@ int main(void) {
       const harnessFile = join(cwd, "build/calls_mir_harness.c");
       const executable = join(cwd, "build/calls_mir_harness");
 
-      expect(header).toContain("IK_API int64_t calc(int64_t a, int64_t b);");
+      expect(header).toContain("CK_API int64_t calc(int64_t a, int64_t b);");
       expect(header).not.toContain("add_i64");
       expect(header).not.toContain("double_i64");
 
@@ -2492,7 +2514,7 @@ int main(void) {
       const harnessFile = join(cwd, "build/calls_optimized_harness.c");
       const executable = join(cwd, "build/calls_optimized_harness");
 
-      expect(header).toContain("IK_API int64_t calc(int64_t a, int64_t b);");
+      expect(header).toContain("CK_API int64_t calc(int64_t a, int64_t b);");
       expect(header).not.toContain("add_i64");
       expect(header).not.toContain("double_i64");
       expect(source).not.toContain("static int64_t add_i64");
@@ -2590,8 +2612,8 @@ describe("C f64 end-to-end", () => {
       const harnessFile = join(cwd, "build/f64_c_harness.c");
       const executable = join(cwd, "build/f64_c_harness");
 
-      expect(header).toContain("IK_API double scalar_f64(double value);");
-      expect(header).toContain("IK_API double write_scale(double* values, int32_t index, double factor);");
+      expect(header).toContain("CK_API double scalar_f64(double value);");
+      expect(header).toContain("CK_API double write_scale(double* values, int32_t index, double factor);");
       expect(header).toContain("double price;");
       expect(source).toContain("double ik_tmp");
 
@@ -2668,8 +2690,8 @@ int main(void) {
       const executable = join(cwd, "build/f64_c_checked_harness");
 
       expect(source).not.toContain("__builtin");
-      expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
-      expect(source).not.toContain("IK_ERR_OVERFLOW");
+      expect(source).not.toContain("CK_ERR_DIV_BY_ZERO");
+      expect(source).not.toContain("CK_ERR_OVERFLOW");
 
       writeFileSync(
         harnessFile,
@@ -2694,28 +2716,28 @@ static int is_negative_zero(double value) {
 int main(void) {
   double value = 0.0;
 
-  if (arithmetic_f64(3.5, 1.5, &value) != IK_OK || !close_double(value, 3.0)) {
+  if (arithmetic_f64(3.5, 1.5, &value) != CK_OK || !close_double(value, 3.0)) {
     return 10;
   }
-  if (div_f64(1.0, 0.0, &value) != IK_OK || !isinf(value) || signbit(value)) {
+  if (div_f64(1.0, 0.0, &value) != CK_OK || !isinf(value) || signbit(value)) {
     return 11;
   }
-  if (div_f64(-1.0, 0.0, &value) != IK_OK || !isinf(value) || !signbit(value)) {
+  if (div_f64(-1.0, 0.0, &value) != CK_OK || !isinf(value) || !signbit(value)) {
     return 12;
   }
-  if (div_f64(0.0, 0.0, &value) != IK_OK || !isnan(value)) {
+  if (div_f64(0.0, 0.0, &value) != CK_OK || !isnan(value)) {
     return 13;
   }
-  if (huge_mul_f64(1.0e308, 1.0e308, &value) != IK_OK || !isinf(value) || signbit(value)) {
+  if (huge_mul_f64(1.0e308, 1.0e308, &value) != CK_OK || !isinf(value) || signbit(value)) {
     return 14;
   }
-  if (neg_zero_f64(&value) != IK_OK || !is_negative_zero(value)) {
+  if (neg_zero_f64(&value) != CK_OK || !is_negative_zero(value)) {
     return 15;
   }
-  if (tiny_underflow_f64(&value) != IK_OK || value != 0.0) {
+  if (tiny_underflow_f64(&value) != CK_OK || value != 0.0) {
     return 16;
   }
-  if (arithmetic_f64(3.5, 1.5, 0) != IK_ERR_NULL_POINTER) {
+  if (arithmetic_f64(3.5, 1.5, 0) != CK_ERR_NULL_POINTER) {
     return 17;
   }
   return 0;
@@ -2814,7 +2836,7 @@ int main(void) {
       expect(source).toContain("__builtin_add_overflow");
       expect(source).toContain("(double)next");
       expect(source).toContain("(double)b");
-      expect(source).not.toContain("IK_ERR_DIV_BY_ZERO");
+      expect(source).not.toContain("CK_ERR_DIV_BY_ZERO");
 
       writeFileSync(
         harnessFile,
@@ -2836,22 +2858,22 @@ int main(void) {
   double value = 0.0;
   bool flag = false;
 
-  if (cast_i32_to_f64(-7, &value) != IK_OK || !close_double(value, -7.0)) {
+  if (cast_i32_to_f64(-7, &value) != CK_OK || !close_double(value, -7.0)) {
     return 10;
   }
-  if (cast_u32_to_f64((uint32_t)9, &value) != IK_OK || !close_double(value, 9.0)) {
+  if (cast_u32_to_f64((uint32_t)9, &value) != CK_OK || !close_double(value, 9.0)) {
     return 11;
   }
-  if (cast_expr(4, (uint32_t)6, &value) != IK_OK || !close_double(value, 11.0)) {
+  if (cast_expr(4, (uint32_t)6, &value) != CK_OK || !close_double(value, 11.0)) {
     return 12;
   }
-  if (cast_le(2, (uint32_t)3, 5.0, &flag) != IK_OK || !flag) {
+  if (cast_le(2, (uint32_t)3, 5.0, &flag) != CK_OK || !flag) {
     return 13;
   }
-  if (cast_le(2, (uint32_t)3, 4.0, &flag) != IK_OK || flag) {
+  if (cast_le(2, (uint32_t)3, 4.0, &flag) != CK_OK || flag) {
     return 14;
   }
-  if (checked_cast_mix(4, (uint32_t)5, &value) != IK_OK || !close_double(value, 10.0)) {
+  if (checked_cast_mix(4, (uint32_t)5, &value) != CK_OK || !close_double(value, 10.0)) {
     return 15;
   }
   return 0;
@@ -2897,28 +2919,28 @@ int main(void) {
   int64_t value = 0;
   bool flag = false;
 
-  if (add_i64(1, 2, &value) != IK_OK || value != 3) {
+  if (add_i64(1, 2, &value) != CK_OK || value != 3) {
     return 10;
   }
-  if (add_i64(INT64_MAX, 1, &value) != IK_ERR_OVERFLOW) {
+  if (add_i64(INT64_MAX, 1, &value) != CK_ERR_OVERFLOW) {
     return 11;
   }
-  if (mul_i64(INT64_MAX, 2, &value) != IK_ERR_OVERFLOW) {
+  if (mul_i64(INT64_MAX, 2, &value) != CK_ERR_OVERFLOW) {
     return 12;
   }
-  if (div_i64(10, 0, &value) != IK_ERR_DIV_BY_ZERO) {
+  if (div_i64(10, 0, &value) != CK_ERR_DIV_BY_ZERO) {
     return 13;
   }
-  if (div_i64(INT64_MIN, -1, &value) != IK_ERR_OVERFLOW) {
+  if (div_i64(INT64_MIN, -1, &value) != CK_ERR_OVERFLOW) {
     return 14;
   }
-  if (neg_i64(INT64_MIN, &value) != IK_ERR_OVERFLOW) {
+  if (neg_i64(INT64_MIN, &value) != CK_ERR_OVERFLOW) {
     return 15;
   }
-  if (less_i64(1, 2, &flag) != IK_OK || !flag) {
+  if (less_i64(1, 2, &flag) != CK_OK || !flag) {
     return 16;
   }
-  if (add_i64(1, 2, NULL) != IK_ERR_NULL_POINTER) {
+  if (add_i64(1, 2, NULL) != CK_ERR_NULL_POINTER) {
     return 17;
   }
   return 0;
@@ -2957,13 +2979,13 @@ int main(void) {
 int main(void) {
   int64_t value = 0;
 
-  if (sum_to_n(5, &value) != IK_OK || value != 10) {
+  if (sum_to_n(5, &value) != CK_OK || value != 10) {
     return 10;
   }
-  if (choose(10, 3, &value) != IK_OK || value != 10) {
+  if (choose(10, 3, &value) != CK_OK || value != 10) {
     return 11;
   }
-  if (condition_overflow(INT64_MAX, 1, &value) != IK_ERR_OVERFLOW) {
+  if (condition_overflow(INT64_MAX, 1, &value) != CK_ERR_OVERFLOW) {
     return 12;
   }
   return 0;
@@ -3002,22 +3024,22 @@ int main(void) {
 int main(void) {
   bool flag = true;
 
-  if (and_short_circuit(0, 10, &flag) != IK_OK || flag != false) {
+  if (and_short_circuit(0, 10, &flag) != CK_OK || flag != false) {
     return 10;
   }
-  if (and_short_circuit(2, 10, &flag) != IK_OK || flag != true) {
+  if (and_short_circuit(2, 10, &flag) != CK_OK || flag != true) {
     return 11;
   }
-  if (or_short_circuit(0, 10, &flag) != IK_OK || flag != true) {
+  if (or_short_circuit(0, 10, &flag) != CK_OK || flag != true) {
     return 12;
   }
-  if (or_short_circuit(2, 10, &flag) != IK_OK || flag != true) {
+  if (or_short_circuit(2, 10, &flag) != CK_OK || flag != true) {
     return 13;
   }
-  if (and_rhs_error(false, 10, 0, &flag) != IK_OK || flag != false) {
+  if (and_rhs_error(false, 10, 0, &flag) != CK_OK || flag != false) {
     return 14;
   }
-  if (and_rhs_error(true, 10, 0, &flag) != IK_ERR_DIV_BY_ZERO) {
+  if (and_rhs_error(true, 10, 0, &flag) != CK_ERR_DIV_BY_ZERO) {
     return 15;
   }
   return 0;
@@ -3046,7 +3068,7 @@ int main(void) {
       const harnessFile = join(cwd, "build/scalar_calls_checked_mir_harness.c");
       const executable = join(cwd, "build/scalar_calls_checked_mir_harness");
 
-      expect(header).toContain("IK_API IK_Status calc(int64_t a, int64_t b, int64_t* ik_return);");
+      expect(header).toContain("CK_API CK_Status calc(int64_t a, int64_t b, int64_t* ik_return);");
       expect(header).not.toContain("add_i64");
       expect(header).not.toContain("double_i64");
 
@@ -3061,13 +3083,13 @@ int main(void) {
 int main(void) {
   int64_t value = 0;
 
-  if (calc(1, 2, &value) != IK_OK || value != 6) {
+  if (calc(1, 2, &value) != CK_OK || value != 6) {
     return 10;
   }
-  if (calc_overflow(INT64_MAX, 1, &value) != IK_ERR_OVERFLOW) {
+  if (calc_overflow(INT64_MAX, 1, &value) != CK_ERR_OVERFLOW) {
     return 11;
   }
-  if (calc_overflow(INT64_MAX / 2 + 1, 0, &value) != IK_ERR_OVERFLOW) {
+  if (calc_overflow(INT64_MAX / 2 + 1, 0, &value) != CK_ERR_OVERFLOW) {
     return 12;
   }
   return 0;
@@ -3111,8 +3133,8 @@ int main(void) {
   int64_t out[2] = {0, 0};
   int32_t ik_return = -1;
 
-  IK_Status status = calc_items(items, 2, out, &ik_return);
-  if (status != IK_OK) {
+  CK_Status status = calc_items(items, 2, out, &ik_return);
+  if (status != CK_OK) {
     return 10;
   }
   if (ik_return != 0) {
@@ -3132,7 +3154,7 @@ int main(void) {
   ik_return = -1;
 
   status = calc_items(overflow_items, 1, overflow_out, &ik_return);
-  if (status != IK_ERR_OVERFLOW) {
+  if (status != CK_ERR_OVERFLOW) {
     return 30;
   }
   return 0;
@@ -3154,7 +3176,7 @@ int main(void) {
 const pipelineRegressionCases: PipelineRegressionCase[] = [
   {
     name: "scalar unchecked",
-    sourceText: readFileSync("examples/scalar.ik", "utf8"),
+    sourceText: readFileSync("examples/scalar.ck", "utf8"),
     overflowMode: "unchecked",
     harnessSource: `
 #include "kernel.h"
@@ -3170,7 +3192,7 @@ int main(void) {
   },
   {
     name: "pricing unchecked",
-    sourceText: readFileSync("examples/pricing.ik", "utf8"),
+    sourceText: readFileSync("examples/pricing.ck", "utf8"),
     overflowMode: "unchecked",
     harnessSource: `
 #include "kernel.h"
@@ -3193,7 +3215,7 @@ int main(void) {
   },
   {
     name: "control flow unchecked",
-    sourceText: readFileSync("examples/scalar_control_checked.ik", "utf8"),
+    sourceText: readFileSync("examples/scalar_control_checked.ck", "utf8"),
     overflowMode: "unchecked",
     harnessSource: `
 #include "kernel.h"
@@ -3214,7 +3236,7 @@ int main(void) {
   },
   {
     name: "function calls unchecked",
-    sourceText: readFileSync("examples/scalar_calls_checked.ik", "utf8"),
+    sourceText: readFileSync("examples/scalar_calls_checked.ck", "utf8"),
     overflowMode: "unchecked",
     harnessSource: `
 #include "kernel.h"
@@ -3230,7 +3252,7 @@ int main(void) {
   },
   {
     name: "short-circuit unchecked",
-    sourceText: readFileSync("examples/scalar_logical_checked.ik", "utf8"),
+    sourceText: readFileSync("examples/scalar_logical_checked.ck", "utf8"),
     overflowMode: "unchecked",
     harnessSource: `
 #include "kernel.h"
@@ -3254,7 +3276,7 @@ int main(void) {
   },
   {
     name: "scalar checked",
-    sourceText: readFileSync("examples/scalar_checked.ik", "utf8"),
+    sourceText: readFileSync("examples/scalar_checked.ck", "utf8"),
     overflowMode: "checked",
     harnessSource: `
 #include "kernel.h"
@@ -3268,12 +3290,12 @@ int main(void) {
   int64_t value = 0;
   bool flag = false;
 
-  IK_Status add_status = add_i64(1, 2, &value);
+  CK_Status add_status = add_i64(1, 2, &value);
   int64_t add_value = value;
-  IK_Status overflow_status = add_i64(INT64_MAX, 1, &value);
-  IK_Status div_zero_status = div_i64(10, 0, &value);
-  IK_Status neg_status = neg_i64(INT64_MIN, &value);
-  IK_Status less_status = less_i64(1, 2, &flag);
+  CK_Status overflow_status = add_i64(INT64_MAX, 1, &value);
+  CK_Status div_zero_status = div_i64(10, 0, &value);
+  CK_Status neg_status = neg_i64(INT64_MIN, &value);
+  CK_Status less_status = less_i64(1, 2, &flag);
 
   printf(
     "checked-scalar:%d:%lld:%d:%d:%d:%d:%d\\n",
@@ -3291,7 +3313,7 @@ int main(void) {
   },
   {
     name: "pricing checked",
-    sourceText: readFileSync("examples/pricing.ik", "utf8"),
+    sourceText: readFileSync("examples/pricing.ck", "utf8"),
     overflowMode: "checked",
     harnessSource: `
 #include "kernel.h"
@@ -3307,14 +3329,14 @@ int main(void) {
   };
   int64_t out[2] = {0, 0};
   int32_t ik_return = -1;
-  IK_Status status = calc_items(items, 2, out, &ik_return);
+  CK_Status status = calc_items(items, 2, out, &ik_return);
 
   Item overflow_items[1] = {
     { .price = INT64_MAX, .qty = 2, .discount = 0, .tax_rate_ppm = 0 }
   };
   int64_t overflow_out[1] = {0};
   int32_t overflow_return = -1;
-  IK_Status overflow_status = calc_items(overflow_items, 1, overflow_out, &overflow_return);
+  CK_Status overflow_status = calc_items(overflow_items, 1, overflow_out, &overflow_return);
 
   printf(
     "checked-pricing:%d:%d:%lld:%lld:%d\\n",
@@ -3378,28 +3400,28 @@ int main(void) {
   int64_t value = 0;
   bool flag = false;
 
-  if (add_i64(1, 2, &value) != IK_OK || value != 3) {
+  if (add_i64(1, 2, &value) != CK_OK || value != 3) {
     return 10;
   }
-  if (add_i64(INT64_MAX, 1, &value) != IK_ERR_OVERFLOW) {
+  if (add_i64(INT64_MAX, 1, &value) != CK_ERR_OVERFLOW) {
     return 11;
   }
-  if (mul_i64(INT64_MAX, 2, &value) != IK_ERR_OVERFLOW) {
+  if (mul_i64(INT64_MAX, 2, &value) != CK_ERR_OVERFLOW) {
     return 12;
   }
-  if (div_i64(10, 0, &value) != IK_ERR_DIV_BY_ZERO) {
+  if (div_i64(10, 0, &value) != CK_ERR_DIV_BY_ZERO) {
     return 13;
   }
-  if (div_i64(INT64_MIN, -1, &value) != IK_ERR_OVERFLOW) {
+  if (div_i64(INT64_MIN, -1, &value) != CK_ERR_OVERFLOW) {
     return 14;
   }
-  if (neg_i64(INT64_MIN, &value) != IK_ERR_OVERFLOW) {
+  if (neg_i64(INT64_MIN, &value) != CK_ERR_OVERFLOW) {
     return 15;
   }
-  if (less_i64(1, 2, &flag) != IK_OK || !flag) {
+  if (less_i64(1, 2, &flag) != CK_OK || !flag) {
     return 16;
   }
-  if (add_i64(1, 2, NULL) != IK_ERR_NULL_POINTER) {
+  if (add_i64(1, 2, NULL) != CK_ERR_NULL_POINTER) {
     return 17;
   }
 
@@ -3439,13 +3461,13 @@ int main(void) {
 int main(void) {
   int64_t value = 0;
 
-  if (sum_to_n(5, &value) != IK_OK || value != 10) {
+  if (sum_to_n(5, &value) != CK_OK || value != 10) {
     return 10;
   }
-  if (choose(10, 3, &value) != IK_OK || value != 10) {
+  if (choose(10, 3, &value) != CK_OK || value != 10) {
     return 11;
   }
-  if (condition_overflow(INT64_MAX, 1, &value) != IK_ERR_OVERFLOW) {
+  if (condition_overflow(INT64_MAX, 1, &value) != CK_ERR_OVERFLOW) {
     return 12;
   }
 
@@ -3485,22 +3507,22 @@ int main(void) {
 int main(void) {
   bool value = false;
 
-  if (and_short_circuit(0, 10, &value) != IK_OK || value != false) {
+  if (and_short_circuit(0, 10, &value) != CK_OK || value != false) {
     return 10;
   }
-  if (and_short_circuit(2, 10, &value) != IK_OK || value != true) {
+  if (and_short_circuit(2, 10, &value) != CK_OK || value != true) {
     return 11;
   }
-  if (or_short_circuit(0, 10, &value) != IK_OK || value != true) {
+  if (or_short_circuit(0, 10, &value) != CK_OK || value != true) {
     return 12;
   }
-  if (or_short_circuit(2, 10, &value) != IK_OK || value != true) {
+  if (or_short_circuit(2, 10, &value) != CK_OK || value != true) {
     return 13;
   }
-  if (and_rhs_error(false, 10, 0, &value) != IK_OK || value != false) {
+  if (and_rhs_error(false, 10, 0, &value) != CK_OK || value != false) {
     return 14;
   }
-  if (and_rhs_error(true, 10, 0, &value) != IK_ERR_DIV_BY_ZERO) {
+  if (and_rhs_error(true, 10, 0, &value) != CK_ERR_DIV_BY_ZERO) {
     return 15;
   }
 
@@ -3531,12 +3553,12 @@ int main(void) {
       const headerText = readFileSync(headerFile, "utf8");
       const sourceText = readFileSync(cFile, "utf8");
 
-      expect(headerText).toContain("IK_API IK_Status calc(int64_t a, int64_t b, int64_t* ik_return);");
-      expect(headerText).toContain("IK_API IK_Status calc_overflow(int64_t a, int64_t b, int64_t* ik_return);");
+      expect(headerText).toContain("CK_API CK_Status calc(int64_t a, int64_t b, int64_t* ik_return);");
+      expect(headerText).toContain("CK_API CK_Status calc_overflow(int64_t a, int64_t b, int64_t* ik_return);");
       expect(headerText).not.toContain("add_i64");
       expect(headerText).not.toContain("double_i64");
-      expect(sourceText).toContain("static IK_Status add_i64");
-      expect(sourceText).toContain("static IK_Status double_i64");
+      expect(sourceText).toContain("static CK_Status add_i64");
+      expect(sourceText).toContain("static CK_Status double_i64");
 
       writeFileSync(
         harnessFile,
@@ -3549,13 +3571,13 @@ int main(void) {
 int main(void) {
   int64_t value = 0;
 
-  if (calc(1, 2, &value) != IK_OK || value != 6) {
+  if (calc(1, 2, &value) != CK_OK || value != 6) {
     return 10;
   }
-  if (calc_overflow(INT64_MAX, 1, &value) != IK_ERR_OVERFLOW) {
+  if (calc_overflow(INT64_MAX, 1, &value) != CK_ERR_OVERFLOW) {
     return 11;
   }
-  if (calc_overflow(INT64_MAX / 2 + 1, 0, &value) != IK_ERR_OVERFLOW) {
+  if (calc_overflow(INT64_MAX / 2 + 1, 0, &value) != CK_ERR_OVERFLOW) {
     return 12;
   }
 

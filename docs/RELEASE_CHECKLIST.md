@@ -1,4 +1,4 @@
-# IntKernel Release Checklist
+# CalcKernel Release Checklist
 
 [简体中文](zh-CN/RELEASE_CHECKLIST.md)
 
@@ -8,12 +8,12 @@ semantics or as cross-machine performance truth.
 
 ## Release Scope
 
-- Confirm the language and project are documented as IK / IntKernel.
-- Confirm CLI examples use `ikc`.
-- Confirm source examples use `.ik`.
+- Confirm the language and project are documented as CK / CalcKernel.
+- Confirm CLI examples use `ckc`.
+- Confirm source examples use `.ck`.
 - Confirm `package.json` version matches the intended release.
 - Confirm the intended git tag matches the package version.
-- Confirm the package metadata exposes only the `ikc` bin entrypoint.
+- Confirm the package metadata exposes only the `ckc` bin entrypoint.
 - Confirm release notes only advertise implemented behavior.
 - Confirm f64 is documented as strict Phase 16 support, not as fast-math or
   SIMD support.
@@ -29,19 +29,21 @@ semantics or as cross-machine performance truth.
 - Run `pnpm typecheck`.
 - Run `pnpm build`.
 - Run `npm pack --dry-run`.
-- Run `pnpm ikc --help`, or the equivalent installed `ikc --help`, and review
+- Run `pnpm ckc --help`, or the equivalent installed `ckc --help`, and review
   the output.
-- Run `pnpm ikc check examples/pricing.ik`.
-- Run `pnpm ikc check examples/explicit_casts.ik`.
-- Run `pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h`.
-- Run `pnpm ikc emit-mir examples/pricing.ik --out build/pricing.mir`.
+- Run `pnpm ckc check examples/pricing.ck`.
+- Run `pnpm ckc check examples/explicit_casts.ck`.
+- Run `pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h`.
+- Run `pnpm ckc emit-mir examples/pricing.ck --out build/pricing.mir`.
 
 ## Naming Consistency
 
 - Confirm `tests/naming-consistency.test.ts` passes as part of `pnpm test`.
 - Review README, docs, examples, snapshots, and CLI help for canonical naming.
-- Confirm package metadata, command examples, and release docs use IK /
-  IntKernel, `ikc`, and `.ik`.
+- Confirm package metadata, command examples, and release docs use CK /
+  CalcKernel, `ckc`, and `.ck`.
+- Confirm the rename migration guide documents the breaking rename, no-alias
+  compatibility policy, package rename note, and `v0.7.0` recommendation.
 - Confirm no compatibility alias or alternate source suffix is introduced.
 
 ## C Backend Regression
@@ -53,10 +55,10 @@ semantics or as cross-machine performance truth.
 - Confirm C short-circuit `&&` / `||` coverage passes.
 - Confirm C ptr/index, struct field, and combined access such as
   `items[i].price` coverage passes.
-- Confirm `examples/pricing.ik` C e2e passes.
+- Confirm `examples/pricing.ck` C e2e passes.
 - Confirm unchecked mode remains the default and keeps the unchecked ABI.
 - Confirm checked C mode passes scalar, control-flow, short-circuit,
-  function-call, and `examples/pricing.ik` e2e coverage.
+  function-call, and `examples/pricing.ck` e2e coverage.
 - Confirm C explicit cast regression passes for `i32_to_f64` and `u32_to_f64`,
   including checked C mode where casts remain ordinary exact f64 conversions.
 - Review checked generated C/header snapshots.
@@ -72,7 +74,7 @@ semantics or as cross-machine performance truth.
 - Confirm WASM short-circuit e2e passes.
 - Confirm WASM memory / ptr e2e passes.
 - Confirm WASM layout tests pass.
-- Confirm `examples/pricing.ik` WASM e2e passes.
+- Confirm `examples/pricing.ck` WASM e2e passes.
 - Confirm WASM explicit cast regression passes and WAT output contains
   `f64.convert_i32_s` / `f64.convert_i32_u`.
 - Confirm the WASM f64 `Float64Array` example smoke passes for
@@ -96,7 +98,7 @@ semantics or as cross-machine performance truth.
 - Confirm LLVM short-circuit e2e passes.
 - Confirm LLVM ptr/index/field/store e2e passes.
 - Confirm LLVM bool ABI e2e passes.
-- Confirm `examples/pricing.ik` LLVM e2e passes.
+- Confirm `examples/pricing.ck` LLVM e2e passes.
 - Confirm LLVM explicit cast regression passes and IR output contains `sitofp`
   / `uitofp` without fast-math flags.
 - Confirm `emit-llvm --overflow checked` and `build-llvm --overflow checked`
@@ -107,7 +109,7 @@ semantics or as cross-machine performance truth.
 
 - Confirm C/WASM/LLVM backend regression comparison tests pass.
 - Confirm the shared comparison includes scalar, control flow, function calls,
-  short-circuit, memory, and `examples/pricing.ik`.
+  short-circuit, memory, and `examples/pricing.ck`.
 - Confirm f64 scalar, ptr, struct-field, arithmetic, comparison, unary minus,
   and backend parity regressions pass where implemented.
 - Confirm explicit `i32_to_f64` / `u32_to_f64` backend regressions pass for C,
@@ -131,9 +133,9 @@ semantics or as cross-machine performance truth.
 - Confirm checked mode keeps overflow and division checks except for
   documented proven-safe loop induction increments.
 - Confirm short-circuit semantics are preserved before and after optimization.
-- Confirm `examples/pricing.ik` produces matching results before and after
+- Confirm `examples/pricing.ck` produces matching results before and after
   optimization.
-- Confirm there is no benchmark-specific special case for `examples/pricing.ik`.
+- Confirm there is no benchmark-specific special case for `examples/pricing.ck`.
 - Confirm f64 strict-safety tests pass:
   - no f64 constant folding
   - no f64 reassociation
@@ -159,8 +161,8 @@ semantics or as cross-machine performance truth.
 - Confirm docs describe only `i32_to_f64` and `u32_to_f64` as current explicit
   cast support and do not promise other cast directions.
 - Confirm checked arithmetic docs say f64 does not participate in integer
-  overflow checks, f64 division by zero does not return `IK_ERR_DIV_BY_ZERO`,
-  and f64 overflow does not return `IK_ERR_OVERFLOW`.
+  overflow checks, f64 division by zero does not return `CK_ERR_DIV_BY_ZERO`,
+  and f64 overflow does not return `CK_ERR_OVERFLOW`.
 - Confirm ABI/backend docs say C uses `(double)x`, WASM uses
   `f64.convert_i32_s` / `f64.convert_i32_u`, LLVM uses `sitofp` / `uitofp`, and
   JavaScript interop uses `Number` for f64 values.
@@ -182,7 +184,7 @@ semantics or as cross-machine performance truth.
 - Confirm f64 benchmark cases are discovered for axpy, dot product, sum, and
   scale.
 - Confirm f64 benchmark docs cover JavaScript `Array` `Number`, JavaScript
-  `Float64Array`, IK C O3, IK LLVM O3, and IK WASM O3 comparison targets.
+  `Float64Array`, CK C O3, CK LLVM O3, and CK WASM O3 comparison targets.
 - Treat `node bench/perf/run.mjs --full` as an optional tag-time check when
   machine time allows.
 - Do not add benchmark thresholds to ordinary `pnpm test`.
@@ -198,7 +200,7 @@ semantics or as cross-machine performance truth.
 - Review README and README.zh-CN for current capability accuracy.
 - Review language, architecture, MIR, ABI, checked arithmetic, WASM, LLVM,
   optimization, performance, and roadmap docs.
-- Confirm docs say IK / IntKernel is a pure computation DSL, not a general
+- Confirm docs say CK / CalcKernel is a pure computation DSL, not a general
   purpose language.
 - Confirm docs say integer kernels remain the primary target and strict f64 is
   available for numerical kernels.
@@ -215,20 +217,20 @@ semantics or as cross-machine performance truth.
   - LLVM f64 regression and no fast-math
   - WASM f64 regression and JS `Number` interop
   - `ptr<f64>` and struct f64 layout rules
-- Review examples under `examples/` for `ikc` and `.ik` commands.
-- Confirm `examples/pricing.ik` remains the release e2e fixture.
+- Review examples under `examples/` for `ckc` commands and `.ck` source files.
+- Confirm `examples/pricing.ck` remains the release e2e fixture.
 - Keep documentation bilingual: English remains the default entrypoint, and
   changed docs should update the matching Chinese translation.
 
 ## Package Contents Review
 
-- Confirm `npm pack --dry-run` reports package `intkernel@0.5.0`.
+- Confirm `npm pack --dry-run` reports package `calckernel@<version>`.
 - Confirm the package includes `dist/src`, docs, examples, bench files,
   README.md, README.zh-CN.md, and package.json.
 - Confirm the package includes the built CLI entrypoint referenced by the
-  `ikc` bin mapping.
-- Confirm package `exports`, `files`, and scripts match the published IK /
-  IntKernel surface.
+  `ckc` bin mapping.
+- Confirm package `exports`, `files`, and scripts match the published CK /
+  CalcKernel surface.
 - Confirm no local build artifacts, benchmark output, real local baselines,
   caches, editor state, or temporary logs are included.
 
@@ -237,17 +239,17 @@ semantics or as cross-machine performance truth.
 - Run `npm pack` from the repository root and note the generated tarball name.
 - Do not commit the generated `.tgz` tarball.
 - Create a temporary directory outside the repository and run `npm init -y`.
-- Install the generated tarball with `npm install /absolute/path/to/intkernel-<version>.tgz`.
-- Confirm `node_modules/.bin/ikc --help` runs and documents `ikc` commands with
-  `.ik` source examples.
-- In the temporary directory, create a minimal `.ik` file and run:
-  - `node_modules/.bin/ikc check smoke.ik`
-  - `node_modules/.bin/ikc emit-mir smoke.ik -o build/smoke.mir`
-  - `node_modules/.bin/ikc emit-c smoke.ik -o build/smoke.c`
-  - `node_modules/.bin/ikc emit-wat smoke.ik -o build/smoke.wat`
-  - `node_modules/.bin/ikc emit-wasm smoke.ik -o build/smoke.wasm`
-  - `node_modules/.bin/ikc emit-llvm smoke.ik -o build/smoke.ll`
-  - `node_modules/.bin/ikc build-llvm smoke.ik --kind object -o build/smoke.o`
+- Install the generated tarball with `npm install /absolute/path/to/calckernel-<version>.tgz`.
+- Confirm `node_modules/.bin/ckc --help` runs and documents `ckc` commands.
+- Confirm no legacy compiler-command bin wrapper is present.
+- In the temporary directory, create a minimal `.ck` file and run:
+  - `node_modules/.bin/ckc check smoke.ck`
+  - `node_modules/.bin/ckc emit-mir smoke.ck -o build/smoke.mir`
+  - `node_modules/.bin/ckc emit-c smoke.ck -o build/smoke.c`
+  - `node_modules/.bin/ckc emit-wat smoke.ck -o build/smoke.wat`
+  - `node_modules/.bin/ckc emit-wasm smoke.ck -o build/smoke.wasm`
+  - `node_modules/.bin/ckc emit-llvm smoke.ck -o build/smoke.ll`
+  - `node_modules/.bin/ckc build-llvm smoke.ck --kind object -o build/smoke.o`
     when clang is available.
 - Confirm the emitted C source and the default generated C header both exist
   and are non-empty.

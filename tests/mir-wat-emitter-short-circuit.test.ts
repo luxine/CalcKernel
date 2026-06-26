@@ -12,8 +12,8 @@ function normalizeNewlines(text: string): string {
 
 describe("MIR WAT emitter short-circuit regression", () => {
   it("emits short-circuit logical operators as control-flow WAT", () => {
-    const sourceText = readFileSync("examples/wasm_short_circuit.ik", "utf8");
-    const checked = check(new SourceFile("wasm_short_circuit.ik", sourceText));
+    const sourceText = readFileSync("examples/wasm_short_circuit.ck", "utf8");
+    const checked = check(new SourceFile("wasm_short_circuit.ck", sourceText));
     expect(checked.diagnostics).toEqual([]);
     const mir = lowerToMir(checked.checkedProgram);
     expect(validateMirModule(mir).errors).toEqual([]);

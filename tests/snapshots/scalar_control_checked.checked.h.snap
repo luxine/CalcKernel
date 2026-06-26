@@ -5,31 +5,31 @@
 #include <stddef.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
-  #ifdef IK_BUILD_DLL
-    #define IK_API __declspec(dllexport)
+  #ifdef CK_BUILD_DLL
+    #define CK_API __declspec(dllexport)
   #else
-    #define IK_API __declspec(dllimport)
+    #define CK_API __declspec(dllimport)
   #endif
 #else
-  #define IK_API __attribute__((visibility("default")))
+  #define CK_API __attribute__((visibility("default")))
 #endif
 
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-IK_API IK_Status sum_to_n(int64_t n, int64_t* ik_return);
+CK_API CK_Status sum_to_n(int64_t n, int64_t* ik_return);
 
-IK_API IK_Status choose(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status choose(int64_t a, int64_t b, int64_t* ik_return);
 
-IK_API IK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return);
 
 #ifdef __cplusplus
 }

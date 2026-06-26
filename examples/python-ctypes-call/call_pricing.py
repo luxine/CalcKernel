@@ -35,8 +35,8 @@ def main() -> None:
     if not path.exists():
         raise FileNotFoundError(
             f"dynamic library not found: {path}\n"
-            "Build it first with `pnpm ikc build examples/pricing.ik --out build/libpricing` "
-            "on macOS/Linux, or `pnpm ikc build examples/pricing.ik --out build/pricing.dll` on Windows."
+            "Build it first with `pnpm ckc build examples/pricing.ck --out build/libpricing` "
+            "on macOS/Linux, or `pnpm ckc build examples/pricing.ck --out build/pricing.dll` on Windows."
         )
 
     lib = ctypes.CDLL(str(path))

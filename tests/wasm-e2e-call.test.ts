@@ -13,7 +13,7 @@ interface WasmRuntime {
 }
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "intkernel-wasm-"));
+  return mkdtempSync(join(tmpdir(), "calckernel-wasm-"));
 }
 
 function getWasmRuntime(): WasmRuntime | undefined {
@@ -31,12 +31,12 @@ describe("Node.js function-call WASM e2e", () => {
       const wasm = getWasmRuntime();
       expect(wasm).toBeDefined();
       const cwd = tempDir();
-      writeFileSync(join(cwd, "wasm_calls.ik"), readFileSync("examples/wasm_calls.ik", "utf8"));
+      writeFileSync(join(cwd, "wasm_calls.ck"), readFileSync("examples/wasm_calls.ck", "utf8"));
       const wasmFile = join(cwd, "build/wasm_calls.wasm");
       let stdout = "";
       let stderr = "";
 
-      const exitCode = runCli(["emit-wasm", "wasm_calls.ik", "--out", "build/wasm_calls.wasm"], {
+      const exitCode = runCli(["emit-wasm", "wasm_calls.ck", "--out", "build/wasm_calls.wasm"], {
         cwd,
         stdout: (text) => {
           stdout += text;

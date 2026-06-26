@@ -11,14 +11,14 @@ function normalizeNewlines(text: string): string {
 }
 
 function emitFixtureLlvm(): string {
-  const sourceText = readFileSync("examples/pricing.ik", "utf8");
-  const checked = check(new SourceFile("pricing.ik", sourceText));
+  const sourceText = readFileSync("examples/pricing.ck", "utf8");
+  const checked = check(new SourceFile("pricing.ck", sourceText));
   expect(checked.diagnostics).toEqual([]);
 
   const mir = lowerToMir(checked.checkedProgram);
   expect(validateMirModule(mir).errors).toEqual([]);
 
-  return emitMirLlvmModule(mir, { sourceFileName: "pricing.ik" });
+  return emitMirLlvmModule(mir, { sourceFileName: "pricing.ck" });
 }
 
 describe("LLVM pricing emitter", () => {

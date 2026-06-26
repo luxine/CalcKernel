@@ -23,8 +23,8 @@ const dylib = libraryPath();
 if (!existsSync(dylib)) {
   throw new Error(
     `dynamic library not found: ${dylib}\n` +
-      "Build it first with `pnpm ikc build examples/pricing.ik --out build/libpricing` " +
-      "on macOS/Linux, or `pnpm ikc build examples/pricing.ik --out build/pricing.dll` on Windows."
+      "Build it first with `pnpm ckc build examples/pricing.ck --out build/libpricing` " +
+      "on macOS/Linux, or `pnpm ckc build examples/pricing.ck --out build/pricing.dll` on Windows."
   );
 }
 

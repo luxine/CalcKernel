@@ -2,7 +2,7 @@
 
 [English](../OPTIMIZATION.md)
 
-IntKernel 暴露统一的 compiler optimization level，供 MIR pass 在 C、WASM、
+CalcKernel 暴露统一的 compiler optimization level，供 MIR pass 在 C、WASM、
 LLVM 和 MIR 调试输出之间一致接入。
 
 Phase 14.4 接入选项 plumbing。Phase 14.5 新增 MIR pass manager 框架。
@@ -22,19 +22,19 @@ local CSE，同时保留 strict-float guard。Phase 20.6 增加 explicit
 所有 code generation 命令都接受 `--opt-level`：
 
 ```sh
-ikc emit-mir examples/pricing.ik --opt-level 0
-ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h --opt-level 3
-ikc build examples/pricing.ik --out build/libpricing --opt-level 3
-ikc emit-wat examples/pricing.ik --out build/pricing.wat --opt-level 3
-ikc emit-wasm examples/pricing.ik --out build/pricing.wasm --opt-level 3
-ikc emit-llvm examples/pricing.ik --out build/pricing.ll --opt-level 3
-ikc build-llvm examples/pricing.ik --out build/libpricing --opt-level 3
+ckc emit-mir examples/pricing.ck --opt-level 0
+ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h --opt-level 3
+ckc build examples/pricing.ck --out build/libpricing --opt-level 3
+ckc emit-wat examples/pricing.ck --out build/pricing.wat --opt-level 3
+ckc emit-wasm examples/pricing.ck --out build/pricing.wasm --opt-level 3
+ckc emit-llvm examples/pricing.ck --out build/pricing.ll --opt-level 3
+ckc build-llvm examples/pricing.ck --out build/libpricing --opt-level 3
 ```
 
 `-O` alias 等价：
 
 ```sh
-ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h -O3
+ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h -O3
 ```
 
 默认值是 `-O0`。
@@ -90,7 +90,7 @@ unsafe target-specific flag。`-O3` 仍然必须保留所选择的 overflow mode
 
 Correctness 是每个 optimization level 的 release gate。任何优化都不能削弱 checked
 integer arithmetic、改变 unchecked ABI shape、提前计算 short-circuit RHS block，
-也不能为了提升 benchmark 结果而对 `examples/pricing.ik` 做特判。
+也不能为了提升 benchmark 结果而对 `examples/pricing.ck` 做特判。
 
 ## Pass Manager
 
@@ -249,7 +249,7 @@ ik_tmp_addr1 = &out[i];
 - 不做 alias analysis
 - 遇到 `store` 和 `call` 清空 address 状态
 - 依赖的 local 被重新赋值时失效相关 address entry
-- 不针对 `Item` 或 `pricing.ik` 做特判
+- 不针对 `Item` 或 `pricing.ck` 做特判
 
 ### WASM Hot Path Lowering
 
@@ -264,7 +264,7 @@ exit -> return
 ```
 
 对这种形态，WAT 会生成为 structured `block` + `loop`，而不是带 `br_table` 和
-`$ik_bb` local 的通用 dispatcher。这会减少 `examples/pricing.ik` 这类 kernel 的
+`$ik_bb` local 的通用 dispatcher。这会减少 `examples/pricing.ck` 这类 kernel 的
 branch dispatch traffic。
 
 `-O3` WASM pipeline 也启用 address CSE，所以重复的 `ptr<Struct>[i].field` load
@@ -312,13 +312,13 @@ entry:
 }
 ```
 
-更复杂的函数，包括 `examples/pricing.ik`，仍然使用 stack lowering。随后 clang
+更复杂的函数，包括 `examples/pricing.ck`，仍然使用 stack lowering。随后 clang
 `-O2`/`-O3` 可以提升许多 stack slot，并优化最终 native code。backend 仍然不会
 生成 unsafe `nsw`/`nuw` flag，不添加 bounds check，也不支持 checked LLVM
 arithmetic。
 对 f64，LLVM backend 生成 strict operation，不添加 fast-math flags。
 
-`build-llvm` 现在会把选定的 IK optimization level 作为 `-O0`、`-O1`、`-O2` 或
+`build-llvm` 现在会把选定的 CK optimization level 作为 `-O0`、`-O1`、`-O2` 或
 `-O3` 传给 clang。
 
 ### Checked C Induction Optimization
@@ -374,9 +374,9 @@ CFG simplification pass 只改写 basic-block 结构，不移动普通 instructi
 CLI 暴露 MIR optimization debug flags：
 
 ```sh
-ikc emit-mir examples/pricing.ik -O3 --print-pass-pipeline
-ikc emit-mir examples/pricing.ik -O3 --print-mir-before-opt
-ikc emit-mir examples/pricing.ik -O3 --print-mir-after-opt
+ckc emit-mir examples/pricing.ck -O3 --print-pass-pipeline
+ckc emit-mir examples/pricing.ck -O3 --print-mir-before-opt
+ckc emit-mir examples/pricing.ck -O3 --print-mir-after-opt
 ```
 
 debug 输出写到 stderr，这样 `emit-mir`、`emit-wat`、`emit-llvm` 等命令的
@@ -389,7 +389,7 @@ lowered MIR。`-O1` 启用低成本局部清理。`-O2` 启用标准优化管线
 实现中最激进的管线，并把所选 native optimization level 传给 C 和 LLVM build
 command。
 
-当前 pass 仍然故意保持保守。`examples/pricing.ik` 在 checked mode 下仍然保留所有
+当前 pass 仍然故意保持保守。`examples/pricing.ck` 在 checked mode 下仍然保留所有
 业务 overflow 和 division check；只有 loop counter increment 会在证明成功后生成为
 unchecked arithmetic。WASM 和 LLVM 仍然是 unchecked-only backend，并会拒绝
 `--overflow checked`。

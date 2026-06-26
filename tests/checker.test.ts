@@ -11,7 +11,7 @@ import type { BinaryExpression, LetStatement } from "../src/parser/ast.js";
 import { SourceFile } from "../src/source/source-file.js";
 
 function checkSource(text: string) {
-  return check(new SourceFile("test.ik", text));
+  return check(new SourceFile("test.ck", text));
 }
 
 function messagesOf(text: string): string[] {
@@ -411,10 +411,10 @@ describe("checker", () => {
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "IK2001",
+          code: "CK2001",
           severity: "error",
           message: "Unknown variable 'missing'.",
-          fileName: "test.ik",
+          fileName: "test.ck",
           line: 3,
           column: 16
         })

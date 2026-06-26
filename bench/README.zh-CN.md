@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-本目录包含针对 `examples/pricing.ik` 和 strict `f64` compute kernel 的小型
+本目录包含针对 `examples/pricing.ck` 和 strict `f64` compute kernel 的小型
 benchmark harness，用于对比纯 JavaScript baseline、生成的 native C、可适用时
 的 checked C、LLVM，以及生成的 WASM。它们只是粗略的本地参考，不是稳定的 CI
 性能套件。结果依赖当前机器、Node.js、clang、hyperfine 和系统负载。
@@ -86,10 +86,10 @@ node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case prici
 - `pricing-c-unchecked-O0`
 - `pricing-c-unchecked-O2`
 - `pricing-c-unchecked-O3`
-- `pricing-c-unchecked-ik-O3`
+- `pricing-c-unchecked-ck-O3`
 - `pricing-c-checked-O3`
-- `pricing-helpers-c-unchecked-ik-O0`
-- `pricing-helpers-c-unchecked-ik-O2`
+- `pricing-helpers-c-unchecked-ck-O0`
+- `pricing-helpers-c-unchecked-ck-O2`
 - `pricing-llvm-unchecked-O0`
 - `pricing-llvm-unchecked-O2`
 - `pricing-llvm-unchecked-O3`
@@ -114,10 +114,10 @@ node bench/perf/run.mjs --full --compare --case pricing-c-unchecked --case prici
 
 - JavaScript `Array` + `Number` arithmetic
 - JavaScript `Float64Array` + `Number` arithmetic
-- IK C O3
-- IK LLVM O3
-- IK WASM O3 split phases
-- IK WASM O3 low-copy split phases
+- CK C O3
+- CK LLVM O3
+- CK WASM O3 split phases
+- CK WASM O3 low-copy split phases
 
 f64 WASM case 包含 `setup`、`input-marshal`、`compute-only`、
 `output-readback`、`total` 和 `memory-only` 变体，用于把 host-side memory
@@ -126,7 +126,7 @@ marshal time 和 compute time 拆开观察。`total` 测 input marshal + WASM co
 不使用 `BigInt`。memory setup 使用 little-endian `DataView.setFloat64`/
 `getFloat64`，这是保留的原始兼容路径。
 
-Phase 18.3 增加 `f64-*-ik-wasm-o3-low-copy-*` case。它们在 exported WASM
+Phase 18.3 增加 `f64-*-ck-wasm-o3-low-copy-*` case。它们在 exported WASM
 memory 上创建 `Float64Array` view，用 `Float64Array#set` 做批量 input marshal；
 `dot`/`sum` 只消费 scalar return，in-place array kernel 则只读回 output checksum。
 原 DataView path 保留，用于对比逐元素 byte-level marshal 成本。
@@ -166,13 +166,13 @@ comparison 表会输出当前 median、baseline median、runtime ratio 和变慢
 `--fail-on-regression` 只影响显式的性能运行；普通 `pnpm test` 不运行 hyperfine，
 也不会因为机器性能波动失败。
 
-`pricing-helpers-*` case 使用 `bench/perf/fixtures/pricing_helpers.ik`，
+`pricing-helpers-*` case 使用 `bench/perf/fixtures/pricing_helpers.ck`，
 它把相同 pricing 计算拆成小型 non-exported helper function。这个 fixture
-只用于测 MIR small-function inlining，不会改变 `examples/pricing.ik`。
+只用于测 MIR small-function inlining，不会改变 `examples/pricing.ck`。
 
-`f64-*` case 使用 `bench/perf/fixtures/f64_kernels.ik`。正确性检查使用 absolute
+`f64-*` case 使用 `bench/perf/fixtures/f64_kernels.ck`。正确性检查使用 absolute
 tolerance 和 relative tolerance；不要求跨 backend 浮点结果 bit-identical。
-IK f64 仍是 strict mode：`f64` 是唯一 floating point type，不规划 `f32`；这些
+CK f64 仍是 strict mode：`f64` 是唯一 floating point type，不规划 `f32`；这些
 benchmark 不假设 fast-math、SIMD、隐式 int/float conversion、broad cast 或 f64
 checked overflow。当前唯一 numeric cast 是 exact explicit `i32_to_f64` 和
 `u32_to_f64` builtin。
@@ -186,7 +186,7 @@ f64 benchmark run 是文档和 release smoke 工具：
 - `--full` 是 tag 前可选手动检查
 - 不把 f64 阈值加入普通 `pnpm test`
 - 不提交 `build/perf` 下的本机 f64 baseline
-- JS `Array` `Number`、JS `Float64Array`、IK C、IK LLVM、IK WASM、可选 Python
+- JS `Array` `Number`、JS `Float64Array`、CK C、CK LLVM、CK WASM、可选 Python
   和可选 NumPy 是不同 runtime model
 - WASM DataView total 结果可能主要受 host memory marshal 影响，而不是 compute
   本身
@@ -207,8 +207,8 @@ f64 benchmark run 是文档和 release smoke 工具：
 
 ```sh
 pnpm build
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.c --header build/pricing.h --overflow unchecked
-pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.c --header build/pricing.h --overflow unchecked
+pnpm ckc emit-c examples/pricing.ck --out build/pricing.checked.c --header build/pricing.checked.h --overflow checked
 ```
 
 ## 生成 WASM
@@ -217,7 +217,7 @@ pnpm ikc emit-c examples/pricing.ik --out build/pricing.checked.c --header build
 
 ```sh
 pnpm build
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm --overflow unchecked
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm --overflow unchecked
 ```
 
 Phase 12 WASM backend 只支持 unchecked。`emit-wat` 和 `emit-wasm` 会拒绝
@@ -230,7 +230,7 @@ node bench/pricing_baseline.js
 ```
 
 JavaScript baseline 使用 `BigInt64Array` 和 `BigInt` arithmetic，尽量贴近
-`pricing.ik` 使用的 `i64` 语义。
+`pricing.ck` 使用的 `i64` 语义。
 
 本机 performance suite 还包含三个 JavaScript pricing case：
 
@@ -259,14 +259,14 @@ buffer。它使用和 JS/C harness 相同的数据规模：
 
 生成的 WASM module 初始只有一个 64 KiB memory page。较大输入需要更多空间时，
 benchmark 会在 host 侧调用 `memory.grow`。这只是 benchmark setup code；
-IntKernel V0 仍不提供 runtime、allocator 或 memory-grow helper。
+CalcKernel V0 仍不提供 runtime、allocator 或 memory-grow helper。
 
 ## 编译并运行 Unchecked C Benchmark
 
 macOS 或 Linux：
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   build/pricing.c bench/pricing_c_harness.c \
   -I build \
   -o build/pricing_c_bench
@@ -277,7 +277,7 @@ clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
 Windows with clang：
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL ^
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL ^
   build\pricing.c bench\pricing_c_harness.c ^
   -I build ^
   -o build\pricing_c_bench.exe
@@ -290,7 +290,7 @@ build\pricing_c_bench.exe
 macOS 或 Linux：
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL \
   build/pricing.checked.c bench/pricing_checked_benchmark.c \
   -I build \
   -o build/pricing_checked_bench
@@ -301,7 +301,7 @@ clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL \
 Windows with clang：
 
 ```sh
-clang -std=c11 -O3 -Wall -Wextra -Werror -DIK_BUILD_DLL ^
+clang -std=c11 -O3 -Wall -Wextra -Werror -DCK_BUILD_DLL ^
   build\pricing.checked.c bench\pricing_checked_benchmark.c ^
   -I build ^
   -o build\pricing_checked_bench.exe
@@ -318,18 +318,18 @@ int32_t calc_items(Item* items, int32_t len, int64_t* out);
 ```
 
 Checked mode 为 overflow、division-by-zero 和 status propagation 生成额外分支和
-临时值。它的 ABI 返回 `IK_Status`，并通过最后一个 output pointer 写出原始
-IntKernel return value：
+临时值。它的 ABI 返回 `CK_Status`，并通过最后一个 output pointer 写出原始
+CalcKernel return value：
 
 ```c
-IK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
 ```
 
 Checked benchmark 测量和 unchecked benchmark 相同的 batch shape，但包含以下成本：
 
 - `__builtin_add_overflow`、`__builtin_sub_overflow` 和 `__builtin_mul_overflow`
 - division 和 signed division overflow checks
-- `IK_Status` return 的额外分支
+- `CK_Status` return 的额外分支
 - 最终 `ik_return` 写入
 
 Checked mode 更适合金额、税费、优惠和规则 workload，这些场景中整数安全比最大吞吐

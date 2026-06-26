@@ -1,8 +1,8 @@
-# IK / IntKernel WASM ABI
+# CK / CalcKernel WASM ABI
 
 [简体中文](zh-CN/WASM_ABI.md)
 
-This document defines the Phase 12 WebAssembly ABI for IntKernel. The current
+This document defines the Phase 12 WebAssembly ABI for CalcKernel. The current
 Phase 12 implementation can emit WAT and WASM for unchecked scalar operations,
 control flow, internal function calls, logical short-circuiting, and core
 `ptr<T>` memory load/store patterns.
@@ -12,7 +12,7 @@ control flow, internal function calls, logical short-circuiting, and core
 Phase 12 adds a WASM backend after MIR:
 
 ```text
-.ik source
+.ck source
   -> lexer
   -> parser
   -> type checker
@@ -28,10 +28,10 @@ Phase 12 adds a WASM backend after MIR:
 Current CLI commands:
 
 ```sh
-ikc emit-wat examples/scalar.ik --out build/scalar.wat
-ikc emit-wat examples/scalar.ik
-ikc emit-wasm examples/scalar.ik --out build/scalar.wasm
-ikc emit-wasm examples/pricing.ik --out build/pricing.wasm
+ckc emit-wat examples/scalar.ck --out build/scalar.wat
+ckc emit-wat examples/scalar.ck
+ckc emit-wasm examples/scalar.ck --out build/scalar.wasm
+ckc emit-wasm examples/pricing.ck --out build/pricing.wasm
 ```
 
 `emit-wat` can write to a file or stdout. `emit-wasm` writes binary output and
@@ -41,7 +41,7 @@ The Phase 12 v1 backend targets `wasm32`, consumes validated MIR, and keeps the
 same no-runtime and caller-owned-memory model as the C backend.
 
 `emit-wasm` compiles generated WAT with the `wabt` npm package bundled as an
-IntKernel runtime dependency. No external `wat2wasm` executable is required for
+CalcKernel runtime dependency. No external `wat2wasm` executable is required for
 the packaged CLI.
 
 ## WASM v1 Scope
@@ -94,7 +94,7 @@ JavaScript interop uses `Number`, not `BigInt`.
 
 ## Type Mapping
 
-| IntKernel type | WASM value type |
+| CalcKernel type | WASM value type |
 | --- | --- |
 | `i32` | `i32` |
 | `u32` | `i32` |
@@ -108,7 +108,7 @@ WASM does not have distinct `u32` or `u64` value types. Signedness is selected
 by instruction choice for division, remainder, and comparisons.
 
 `bool` uses `i32`: `0` is false, and any nonzero value is true. Codegen should
-produce canonical `0` or `1` results for IntKernel boolean expressions.
+produce canonical `0` or `1` results for CalcKernel boolean expressions.
 
 JavaScript's WebAssembly API represents `i64` and `u64` parameters and return
 values as `BigInt`. It represents `f64` parameters and return values as
@@ -127,12 +127,12 @@ F64 semantics are intentionally strict and ordinary for WebAssembly:
 
 ## Function ABI
 
-Exported IntKernel functions are exported from the WASM module with their
+Exported CalcKernel functions are exported from the WASM module with their
 source names.
 
-Example IntKernel:
+Example CalcKernel:
 
-```ik
+```ck
 export fn add_i64(a: i64, b: i64) -> i64 {
   return a + b;
 }
@@ -151,7 +151,7 @@ Target WAT shape:
 
 Boolean returns use `i32`:
 
-```ik
+```ck
 export fn is_positive(a: i64) -> bool {
   return a > 0;
 }
@@ -163,7 +163,7 @@ Target WASM result:
 (result i32)
 ```
 
-Non-exported IntKernel functions are emitted as internal WASM functions without
+Non-exported CalcKernel functions are emitted as internal WASM functions without
 an export entry.
 
 ## Pointer ABI
@@ -172,9 +172,9 @@ an export entry.
 `ptr<f64>` is still an `i32` byte offset; indexing advances by 8 bytes per
 element.
 
-Example IntKernel:
+Example CalcKernel:
 
-```ik
+```ck
 export fn calc_items(items: ptr<Item>, len: i32, out: ptr<i64>) -> i32 {
   ...
 }
@@ -216,7 +216,7 @@ phase may add a simple allocator, but Phase 12 does not.
 
 ## Struct Layout
 
-WASM uses a deterministic IntKernel-defined layout, independent of the host C
+WASM uses a deterministic CalcKernel-defined layout, independent of the host C
 compiler. This does not change the C ABI layout: generated C headers and C
 harnesses continue to use the target C compiler's normal struct layout rules.
 
@@ -242,7 +242,7 @@ Struct layout rules:
 
 Example:
 
-```ik
+```ck
 struct Item {
   price: i64;
   qty: i64;
@@ -353,8 +353,8 @@ silently generating unchecked output.
 If a user runs:
 
 ```sh
-ikc emit-wat input.ik --overflow checked
-ikc emit-wasm input.ik --overflow checked
+ckc emit-wat input.ck --overflow checked
+ckc emit-wasm input.ck --overflow checked
 ```
 
 the compiler must report:
@@ -450,7 +450,7 @@ The same pointer rules still apply:
 - `byteOffset` must be 8-byte aligned.
 
 If host code calls `memory.grow`, old `Float64Array` views may be detached.
-Create the view after growth, and recreate it after any later growth. IK does
+Create the view after growth, and recreate it after any later growth. CK does
 not provide an allocator or runtime; host code still owns memory placement and
 buffer sizing. This is a low-copy host pattern, not a promise that every input
 source is zero-copy: if data starts outside WASM memory, the host still pays to
@@ -475,7 +475,7 @@ Browsers usually cannot fetch `.wasm` from `file://`. Serve the example through
 a local HTTP server, for example:
 
 ```sh
-pnpm ikc emit-wasm examples/pricing.ik --out examples/browser-wasm-call/pricing.wasm
+pnpm ckc emit-wasm examples/pricing.ck --out examples/browser-wasm-call/pricing.wasm
 cd examples/browser-wasm-call
 python3 -m http.server 8000
 ```
@@ -485,18 +485,18 @@ Then open `http://localhost:8000/index.html`.
 ## Benchmark Notes
 
 The WASM benchmark in `bench/wasm_pricing_benchmark.mjs` compares the same
-batched `pricing.ik` workload shape as the JavaScript and C benchmark harnesses.
+batched `pricing.ck` workload shape as the JavaScript and C benchmark harnesses.
 Generate the module first:
 
 ```sh
-pnpm ikc emit-wasm examples/pricing.ik --out build/pricing.wasm --overflow unchecked
+pnpm ckc emit-wasm examples/pricing.ck --out build/pricing.wasm --overflow unchecked
 node bench/wasm_pricing_benchmark.mjs
 ```
 
 The benchmark writes large `Item` arrays into exported memory, calls
 `calc_items(itemsOffset, len, outOffset)`, and reads the output buffer back with
 `DataView`. For large inputs it may call `memory.grow` on the host side. That is
-benchmark setup code only; IntKernel V0 does not provide an allocator or a
+benchmark setup code only; CalcKernel V0 does not provide an allocator or a
 runtime memory-growth helper.
 
 Benchmark results are rough local references. They do not prove checked

@@ -1,7 +1,7 @@
 {
-  "name": "intkernel",
-  "version": "0.5.0",
-  "description": "A small IK / IntKernel integer-computation DSL compiler with C, WASM, and LLVM backends.",
+  "name": "calckernel",
+  "version": "0.7.0",
+  "description": "A small CK / CalcKernel integer-computation DSL compiler with C, WASM, and LLVM backends.",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "ikc": "./dist/src/cli.js"
+    "ckc": "./dist/src/cli.js"
   },
   "files": [
     "dist/src",
@@ -24,13 +24,14 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "ikc": "node dist/src/cli.js",
+    "ckc": "node dist/src/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [
-    "intkernel",
+    "calckernel",
+    "ck",
     "compiler",
     "dsl",
     "c",

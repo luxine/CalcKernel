@@ -1,5 +1,5 @@
-; ModuleID = 'intkernel'
-source_filename = "llvm_scalar.ik"
+; ModuleID = 'calckernel'
+source_filename = "llvm_scalar.ck"
 
 define i64 @add_i64(i64 %a, i64 %b) {
 entry:

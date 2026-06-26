@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-这个示例只使用 Python 标准库 `ctypes`，调用由 `examples/pricing.ik` 生成的动态库。
+这个示例只使用 Python 标准库 `ctypes`，调用由 `examples/pricing.ck` 生成的动态库。
 
 ## 构建动态库
 
@@ -17,7 +17,7 @@ pnpm build
 macOS：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 生成：
@@ -29,7 +29,7 @@ build/libpricing.dylib
 Linux：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing
+pnpm ckc build examples/pricing.ck --out build/libpricing
 ```
 
 生成：
@@ -41,7 +41,7 @@ build/libpricing.so
 Windows：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/pricing.dll
+pnpm ckc build examples/pricing.ck --out build/pricing.dll
 ```
 
 生成：
@@ -68,7 +68,7 @@ py examples\python-ctypes-call\call_pricing.py
 
 ## Checked Mode
 
-Checked mode 使用不同 C ABI。函数返回 `IK_Status`，原始 IntKernel return value
+Checked mode 使用不同 C ABI。函数返回 `CK_Status`，原始 CalcKernel return value
 通过最后一个 pointer 参数写出。
 
 从仓库根目录构建 checked dynamic library。
@@ -76,7 +76,7 @@ Checked mode 使用不同 C ABI。函数返回 `IK_Status`，原始 IntKernel re
 macOS：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
 生成：
@@ -88,7 +88,7 @@ build/libpricing_checked.dylib
 Linux：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/libpricing_checked --overflow checked
+pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
 ```
 
 生成：
@@ -100,7 +100,7 @@ build/libpricing_checked.so
 Windows 上，显式传入期望 `.dll` 文件名：
 
 ```sh
-pnpm ikc build examples/pricing.ik --out build/pricing_checked.dll --overflow checked
+pnpm ckc build examples/pricing.ck --out build/pricing_checked.dll --overflow checked
 ```
 
 生成：
@@ -136,7 +136,7 @@ typedef struct Item {
   int64_t tax_rate_ppm;
 } Item;
 
-IK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
+CK_API int32_t calc_items(Item* items, int32_t len, int64_t* out);
 ```
 
 Python binding 精确镜像这个定义：
@@ -159,28 +159,28 @@ V0 不分配内存、不释放内存、不做 bounds check，也不检查 intege
 Checked 生成的 C header 定义 status values：
 
 ```c
-typedef int32_t IK_Status;
+typedef int32_t CK_Status;
 
-#define IK_OK ((IK_Status)0)
-#define IK_ERR_OVERFLOW ((IK_Status)1)
-#define IK_ERR_DIV_BY_ZERO ((IK_Status)2)
-#define IK_ERR_NULL_POINTER ((IK_Status)3)
+#define CK_OK ((CK_Status)0)
+#define CK_ERR_OVERFLOW ((CK_Status)1)
+#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
+#define CK_ERR_NULL_POINTER ((CK_Status)3)
 ```
 
 Checked `calc_items` declaration 是：
 
 ```c
-IK_API IK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
 ```
 
 Python binding 映射为：
 
 ```python
-IK_Status = ctypes.c_int32
-IK_OK = 0
-IK_ERR_OVERFLOW = 1
-IK_ERR_DIV_BY_ZERO = 2
-IK_ERR_NULL_POINTER = 3
+CK_Status = ctypes.c_int32
+CK_OK = 0
+CK_ERR_OVERFLOW = 1
+CK_ERR_DIV_BY_ZERO = 2
+CK_ERR_NULL_POINTER = 3
 
 lib.calc_items.argtypes = [
     ctypes.POINTER(Item),
