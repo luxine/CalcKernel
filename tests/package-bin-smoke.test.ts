@@ -29,7 +29,7 @@ function expectPackageContentsClean(paths: string[]): void {
   expect(paths).toContain("dist/src/wasm/ck-wasm-arena.js");
   expect(paths).toContain("README.md");
   expect(paths).toContain("docs/wasm-interop.md");
-  expect(paths).toContain("docs/releases/v0.7.0.md");
+  expect(paths).toContain("docs/releases/v0.8.0.md");
   expect(paths).toContain("examples/wasm/f64-sum/run.mjs");
   expect(paths).toContain("examples/wasm/f64-axpy/run.mjs");
   expect(paths).toContain("examples/wasm/pricing-soa/run.mjs");

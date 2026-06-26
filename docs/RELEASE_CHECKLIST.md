@@ -15,7 +15,7 @@ semantics or as cross-machine performance truth.
 - Confirm the intended git tag matches the package version.
 - Confirm the package metadata exposes only the `ckc` bin entrypoint.
 - Confirm release notes only advertise implemented behavior.
-- Review `docs/releases/v0.7.0.md` or the matching release note for the
+- Review the matching `docs/releases/v*.md` release note for the
   intended version.
 - Confirm release notes describe `CKWasmArena` as a JS/WASM interop helper, not
   as a CK runtime.
@@ -50,7 +50,8 @@ semantics or as cross-machine performance truth.
 - Confirm package metadata, command examples, and release docs use CK /
   CalcKernel, `ckc`, and `.ck`.
 - Confirm the rename migration guide documents the breaking rename, no-alias
-  compatibility policy, package rename note, and `v0.7.0` recommendation.
+  compatibility policy, package rename note, and historical rename-release
+  recommendation.
 - Confirm no compatibility alias or alternate source suffix is introduced.
 
 ## C Backend Regression

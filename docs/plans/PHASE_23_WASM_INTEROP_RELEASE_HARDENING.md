@@ -21,7 +21,7 @@ change pricing, f64, C backend, or LLVM backend semantics.
 | Area | Release-facing result |
 | --- | --- |
 | Public API | `CKWasmArena` and `createCKWasmArena` are package-root exports in `calckernel`. |
-| API stability | Documented as experimental during the v0.7.x release-hardening window. |
+| API stability | Documented as experimental during the v0.8.x release-hardening window. |
 | Heap base | `createCKWasmArena` resolves explicit `heapBase`, `__ck_heap_base`, then `__heap_base`; it does not silently guess. |
 | WASM metadata | CK / CalcKernel WASM exports additive `__ck_heap_base` metadata without changing existing ABI behavior. |
 | Package smoke | Fresh install covers `ckc`, JS import, TypeScript import, and WASM interop. |
@@ -70,7 +70,7 @@ automatic commit, automatic tag, or npm publish.
 - WASM interop consumer smoke
 - package content check for no local benchmark outputs, local baselines,
   tarballs, temporary directories, `node_modules`, coverage, or cache files
-- manual review of `docs/releases/v0.7.0.md`
+- manual review of `docs/releases/v0.8.0.md`
 
 ## Remaining Release Risk
 

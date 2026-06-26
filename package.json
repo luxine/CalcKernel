@@ -1,6 +1,6 @@
 {
   "name": "calckernel",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "A small CK / CalcKernel integer-computation DSL compiler with C, WASM, and LLVM backends.",
   "type": "module",
   "main": "./dist/src/index.js",

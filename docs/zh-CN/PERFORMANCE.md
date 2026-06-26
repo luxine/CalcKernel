@@ -5,7 +5,7 @@
 本文总结 Phase 22 本机 performance suite、当前本机结果，以及如何运行性能回归检查。这些数字
 只代表本机测量结果；不要跨机器比较绝对耗时。结果依赖硬件、Node.js、clang、
 hyperfine、OS scheduling、电源状态和当前系统负载。
-Release-facing 口径见 [v0.7.0 release notes](../releases/v0.7.0.md)。
+Release-facing 口径见 [v0.8.0 release notes](../releases/v0.8.0.md)。
 
 ## Benchmark Suite
 

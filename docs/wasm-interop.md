@@ -5,7 +5,7 @@ interop. It is not a CK / CalcKernel runtime, not a language runtime, and not a
 GC, IO, strings, or allocator feature in generated CK code.
 
 For release-facing WASM interop wording, see
-[v0.7.0 release notes](releases/v0.7.0.md).
+[v0.8.0 release notes](releases/v0.8.0.md).
 
 It helps JavaScript code manage:
 
@@ -28,9 +28,9 @@ When using the repository source directly in tests, import from
 ## API Stability
 
 `CKWasmArena` is a public package-root export in the `calckernel` npm package.
-For the v0.7.x release-hardening window it is considered experimental: the
+For the v0.8.x release-hardening window it is considered experimental: the
 current method names and behavior are intended to remain compatible across
-v0.7.x, but minor changes may still happen before v1.0 if external consumer
+v0.8.x, but minor changes may still happen before v1.0 if external consumer
 testing finds a sharper API boundary.
 
 Supported use cases:

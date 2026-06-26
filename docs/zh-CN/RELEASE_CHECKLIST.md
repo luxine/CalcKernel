@@ -14,7 +14,7 @@
 - 确认计划使用的 git tag 与 package version 一致。
 - 确认 package metadata 只暴露 `ckc` bin entrypoint。
 - 确认 release notes 只宣传已经实现的能力。
-- Review `docs/releases/v0.7.0.md` 或计划版本对应的 release note。
+- Review 计划版本对应的 `docs/releases/v*.md` release note。
 - 确认 release notes 把 `CKWasmArena` 描述为 JS/WASM interop helper，而不是
   CK runtime。
 - 确认 release notes 把 WASM 性能口径限制在已测 workload 内，且不把 `DataView`
@@ -46,7 +46,7 @@
 - 确认 package metadata、命令示例和 release docs 使用 CK / CalcKernel、`ckc`
   和 `.ck`。
 - 确认 rename migration guide 记录 breaking rename、no-alias compatibility
-  policy、package rename note 和 `v0.7.0` recommendation。
+  policy、package rename note 和 historical rename-release recommendation。
 - 确认没有引入 compatibility alias 或替代源码后缀。
 
 ## C Backend Regression

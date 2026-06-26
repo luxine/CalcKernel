@@ -18,7 +18,7 @@ validation, conservative MIR optimization levels, C/WASM/LLVM backends, strict
 backend regression coverage, and a manual performance suite.
 
 Release-facing notes for the current line live in
-[docs/releases/v0.7.0.md](docs/releases/v0.7.0.md). They summarize the
+[docs/releases/v0.8.0.md](docs/releases/v0.8.0.md). They summarize the
 conservative WASM interop claims, package smoke expectations, and known limits.
 
 ## Quick Start
@@ -367,11 +367,11 @@ host-side aligned offsets, typed-array views, bulk copy, and `memory.grow` view
 refresh. CK / CalcKernel WASM now exports additive `__ck_heap_base` metadata so
 `createCKWasmArena(instance)` does not guess memory layout. `CKWasmArena` is
 exported from the package root with TypeScript declarations as an experimental
-v0.7.x release-hardening API. See
+v0.8.x release-hardening API. See
 [WASM interop](docs/wasm-interop.md) and
 [Performance](docs/PERFORMANCE.md) for the Phase 22 benchmark layering and
 current local result tables. The release-facing summary is
-[v0.7.0 release notes](docs/releases/v0.7.0.md).
+[v0.8.0 release notes](docs/releases/v0.8.0.md).
 
 Official runnable WASM interop examples:
 

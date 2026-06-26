@@ -6,7 +6,7 @@ This document summarizes the Phase 22 local performance suite, current local
 results, and how to run regression checks. Numbers are local measurements only:
 do not compare absolute timings across machines. Results depend on hardware,
 Node.js, clang, hyperfine, OS scheduling, power state, and current system load.
-For release-facing wording, see [v0.7.0 release notes](releases/v0.7.0.md).
+For release-facing wording, see [v0.8.0 release notes](releases/v0.8.0.md).
 
 ## Benchmark Suite
 
