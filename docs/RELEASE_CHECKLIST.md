@@ -15,6 +15,12 @@ semantics or as cross-machine performance truth.
 - Confirm the intended git tag matches the package version.
 - Confirm the package metadata exposes only the `ckc` bin entrypoint.
 - Confirm release notes only advertise implemented behavior.
+- Review `docs/releases/v0.7.0.md` or the matching release note for the
+  intended version.
+- Confirm release notes describe `CKWasmArena` as a JS/WASM interop helper, not
+  as a CK runtime.
+- Confirm release notes keep WASM performance claims scoped to measured
+  workloads and do not recommend `DataView` as a high-throughput path.
 - Confirm f64 is documented as strict Phase 16 support, not as fast-math or
   SIMD support.
 - Confirm exact explicit `i32_to_f64` / `u32_to_f64` casts are documented as
@@ -29,6 +35,7 @@ semantics or as cross-machine performance truth.
 - Run `pnpm typecheck`.
 - Run `pnpm build`.
 - Run `npm pack --dry-run`.
+- Run real package fresh-install smoke with `npm pack` as described below.
 - Run `pnpm ckc --help`, or the equivalent installed `ckc --help`, and review
   the output.
 - Run `pnpm ckc check examples/pricing.ck`.
@@ -171,6 +178,30 @@ semantics or as cross-machine performance truth.
 - Confirm optimizer docs require future passes to prove strict-float safety
   before changing f64 expressions.
 
+## WASM Interop Release Claims
+
+- Confirm `docs/wasm-interop.md`, `docs/PERFORMANCE.md`, README, and release
+  notes say `CKWasmArena` is a JS/WASM interop helper, not a CK runtime.
+- Confirm docs recommend TypedArray views over WASM memory for homogeneous
+  buffers.
+- Confirm docs recommend resident memory for repeated WASM calls when caller
+  ownership allows it.
+- Confirm docs recommend SoA layout for mixed-width batch data when JavaScript
+  can shape input that way.
+- Confirm docs recommend output views as the fast path and describe `copyOutF64`
+  as an explicit JS-owned copy path.
+- Confirm docs identify `f64-sum` and pricing SoA as recommended examples.
+- Confirm docs describe `f64-axpy` view-output results as close to, and on the
+  current local run slightly faster than, the JavaScript `Float64Array`
+  baseline without turning that into a cross-machine guarantee.
+- Confirm DataView paths are described as fallback/debug or byte-exact ABI
+  comparisons, not high-throughput paths.
+- Confirm benchmark docs say results depend on hardware, Node.js/V8, OS
+  scheduling, power state, system load, hyperfine, and workload size.
+- Confirm benchmark thresholds are not added to ordinary `pnpm test`.
+- Confirm money, tax, POS totals, and pricing-rule docs continue to recommend
+  `i64` fixed-point rather than `f64` for financial exact amounts.
+
 ## Benchmark Smoke
 
 - Review `docs/PERFORMANCE.md`, `bench/README.md`, and
@@ -194,6 +225,11 @@ semantics or as cross-machine performance truth.
   remains a format example rather than a real threshold file.
 - Do not commit machine-local benchmark outputs, real local baselines, caches,
   or temporary files.
+- Confirm `git status --short` does not show tracked or staged
+  `build/perf/latest.*`.
+- Confirm `git status --short` does not show tracked or staged
+  `build/perf/baseline.local.json` or any other developer-machine benchmark
+  baseline.
 
 ## Docs And Examples Review
 
@@ -219,20 +255,64 @@ semantics or as cross-machine performance truth.
   - `ptr<f64>` and struct f64 layout rules
 - Review examples under `examples/` for `ckc` commands and `.ck` source files.
 - Confirm `examples/pricing.ck` remains the release e2e fixture.
+- Run the official WASM interop examples after `pnpm build`:
+  - `node examples/wasm/f64-sum/run.mjs`
+  - `node examples/wasm/f64-axpy/run.mjs`
+  - `node examples/wasm/pricing-soa/run.mjs`
+- Confirm those examples use `CKWasmArena`/`createCKWasmArena`, avoid DataView
+  hot paths, keep output as a WASM memory view where applicable, and use `i64`
+  fixed-point for pricing.
 - Keep documentation bilingual: English remains the default entrypoint, and
   changed docs should update the matching Chinese translation.
 
 ## Package Contents Review
 
+- Confirm `package.json` has `name: "calckernel"`.
+- Confirm `package.json` version matches the intended release plan.
+- Confirm `package.json` `bin` contains only `ckc`.
+- Confirm `package.json` does not expose legacy bin aliases or legacy package
+  entrypoints.
+- Confirm `package.json` is ESM-first (`type: "module"`) and that `exports`
+  matches that module format.
+- Confirm `package.json` `main`, `types`, and `exports["."].types` point to
+  built files under `dist/src`.
+- Confirm `package.json` `files` intentionally includes docs and examples,
+  including `docs/wasm-interop.md` and `examples/wasm/**`.
+- Confirm `package.json` `files` does not publish internal benchmark history
+  docs under `bench/docs/**` or `bench/plans/**`; keep those files in the
+  repository if useful, but do not ship them in the npm package unless they are
+  deliberately updated as current user-facing docs.
+- Confirm `dist/src/cli.js` exists, has a Node shebang, and is executable after
+  `pnpm build`.
+- Confirm `dist/src/index.js` and `dist/src/index.d.ts` exist.
+- Confirm `dist/src/wasm/ck-wasm-arena.js` and
+  `dist/src/wasm/ck-wasm-arena.d.ts` exist.
+- Confirm `dist/src/index.d.ts` exports `CKWasmArena`,
+  `createCKWasmArena`, `CKWasmArenaCopy`, `CKWasmArenaOptions`,
+  `CKWasmInstanceLike`, and `CKWasmMemory`.
 - Confirm `npm pack --dry-run` reports package `calckernel@<version>`.
 - Confirm the package includes `dist/src`, docs, examples, bench files,
   README.md, README.zh-CN.md, and package.json.
+- Inspect `npm pack --dry-run --json` and confirm the file list does not include
+  `bench/docs/**`, `bench/plans/**`, `build/perf/**`, machine-local benchmark
+  baselines, generated tarballs, or temporary directories.
+- Scan the packed package surface for the legacy rename token set documented in
+  the migration guide. Only migration guides, Phase 21 rename/history reports,
+  explicit legacy compatibility notes, and naming tests may contain those
+  strings.
+- Confirm the package includes README and the root license file if one exists
+  in the repository root.
 - Confirm the package includes the built CLI entrypoint referenced by the
   `ckc` bin mapping.
+- Confirm the package includes public JS API output and declaration files,
+  including the WASM interop helper.
 - Confirm package `exports`, `files`, and scripts match the published CK /
   CalcKernel surface.
 - Confirm no local build artifacts, benchmark output, real local baselines,
   caches, editor state, or temporary logs are included.
+- Confirm package contents do not include `build/perf/latest.*`,
+  `build/perf/baseline.local.json`, generated tarballs, temporary directories,
+  `node_modules`, coverage output, or cache directories.
 
 ## Package Fresh Install Smoke
 
@@ -241,7 +321,8 @@ semantics or as cross-machine performance truth.
 - Create a temporary directory outside the repository and run `npm init -y`.
 - Install the generated tarball with `npm install /absolute/path/to/calckernel-<version>.tgz`.
 - Confirm `node_modules/.bin/ckc --help` runs and documents `ckc` commands.
-- Confirm no legacy compiler-command bin wrapper is present.
+- Confirm no legacy CLI bin wrapper is present; `ckc` is the only compiler
+  command in the package.
 - In the temporary directory, create a minimal `.ck` file and run:
   - `node_modules/.bin/ckc check smoke.ck`
   - `node_modules/.bin/ckc emit-mir smoke.ck -o build/smoke.mir`
@@ -253,6 +334,17 @@ semantics or as cross-machine performance truth.
     when clang is available.
 - Confirm the emitted C source and the default generated C header both exist
   and are non-empty.
+- Confirm package JS import smoke passes in the supported module format:
+  `import { CKWasmArena, createCKWasmArena } from "calckernel"`. The package is
+  ESM-first and does not currently provide a CommonJS `require` export.
+- Confirm TypeScript consumer smoke passes against the published declaration
+  files, including `CKWasmArena`, `createCKWasmArena`, `CKWasmArenaCopy`, and
+  `CKWasmInstanceLike`.
+- Confirm WASM interop smoke passes from the fresh install: use installed `ckc`
+  to emit `smoke.wasm`, instantiate it in Node.js, create an arena with
+  `createCKWasmArena(instance)`, copy input with `copyInF64`, call a generated
+  WASM export, read output with `viewF64`, and verify `copyOutF64` returns a
+  JS-owned copy.
 - The smoke source should include f64 params/returns, f64 arithmetic, unary
   minus, f64 comparison, `ptr<f64>`, and a struct field containing `f64`.
 - Remove the temporary directory and generated tarball after the smoke, or
@@ -262,10 +354,14 @@ semantics or as cross-machine performance truth.
 
 - Confirm all required commands and manual reviews above are complete.
 - Confirm working tree changes are intentional and understood.
+- Create the release commit manually after review; do not let release tooling
+  auto-commit these changes.
 - Confirm release notes summarize only implemented capability.
 - Confirm known limitations are listed: f64-only floating point, f32 not planned,
   no implicit int/float conversion, only exact explicit `i32_to_f64` /
   `u32_to_f64` casts, no `i64/u64` to f64 casts, no f64-to-int casts, no `f64 %`,
   no fast-math, no SIMD, no JIT, no IO, no strings, no GC, no runtime, no float
   checked overflow, and no checked WASM/LLVM arithmetic.
-- Create the release tag only after the checklist is complete.
+- Create the release tag manually only after the checklist is complete.
+- Do not npm publish automatically; publish only as a separate explicit human
+  release action.

@@ -14,6 +14,11 @@
 - 确认计划使用的 git tag 与 package version 一致。
 - 确认 package metadata 只暴露 `ckc` bin entrypoint。
 - 确认 release notes 只宣传已经实现的能力。
+- Review `docs/releases/v0.7.0.md` 或计划版本对应的 release note。
+- 确认 release notes 把 `CKWasmArena` 描述为 JS/WASM interop helper，而不是
+  CK runtime。
+- 确认 release notes 把 WASM 性能口径限制在已测 workload 内，且不把 `DataView`
+  推荐为高吞吐路径。
 - 确认 f64 被记录为 Phase 16 strict support，而不是 fast-math 或 SIMD support。
 - 确认 exact explicit `i32_to_f64` / `u32_to_f64` cast 被记录为 Phase 20
   support，而不是通用 cast system。
@@ -27,6 +32,7 @@
 - 运行 `pnpm typecheck`。
 - 运行 `pnpm build`。
 - 运行 `npm pack --dry-run`。
+- 按下面的流程运行真实 package fresh-install smoke，其中包括 `npm pack`。
 - 运行 `pnpm ckc --help`，或等价的已安装 `ckc --help`，并 review 输出。
 - 运行 `pnpm ckc check examples/pricing.ck`。
 - 运行 `pnpm ckc check examples/explicit_casts.ck`。
@@ -166,6 +172,27 @@
 - 确认 optimizer 文档要求未来 pass 在改变 f64 expression 前必须证明
   strict-float safety。
 
+## WASM Interop Release Claims
+
+- 确认 `docs/wasm-interop.md`、`docs/PERFORMANCE.md`、README 和 release notes
+  都说明 `CKWasmArena` 是 JS/WASM interop helper，不是 CK runtime。
+- 确认 docs 推荐 homogeneous buffer 使用 WASM memory 上的 TypedArray view。
+- 确认 docs 推荐在 caller ownership 允许时使用 resident memory 做重复 WASM 调用。
+- 确认 docs 推荐 JavaScript 能调整 input shape 时，对 mixed-width 批量数据使用 SoA
+  layout。
+- 确认 docs 推荐 output view 作为 fast path，并把 `copyOutF64` 描述为显式
+  JS-owned copy path。
+- 确认 docs 把 `f64-sum` 和 pricing SoA 描述为推荐 examples。
+- 确认 docs 把 `f64-axpy` view-output 结果描述为接近、且在当前本机 run 中略快于
+  JavaScript `Float64Array` baseline，但不能写成跨机器保证。
+- 确认 DataView path 被描述为 fallback/debug 或 byte-exact ABI comparison，而不是
+  高吞吐路径。
+- 确认 benchmark docs 说明结果依赖 hardware、Node.js/V8、OS scheduling、power
+  state、system load、hyperfine 和 workload size。
+- 确认 benchmark threshold 没有加入普通 `pnpm test`。
+- 确认金额、税费、POS 总价和 pricing-rule docs 继续推荐 `i64` fixed-point，而不是
+  用 `f64` 表示财务精确金额。
+
 ## Benchmark Smoke
 
 - Review `docs/PERFORMANCE.md`、`bench/README.md` 和 `bench/README.zh-CN.md`。
@@ -184,6 +211,10 @@
 - 如果保存 baseline，遵循现有策略：本机 baseline 放在被忽略的 `build/perf` 输出中，
   `bench/perf/baselines/example.summary.json` 只是格式示例，不是真实阈值文件。
 - 不要提交机器本地 benchmark output、真实本机 baseline、cache 或临时文件。
+- 确认 `git status --short` 没有显示 tracked 或 staged 的
+  `build/perf/latest.*`。
+- 确认 `git status --short` 没有显示 tracked 或 staged 的
+  `build/perf/baseline.local.json` 或其他开发机器 benchmark baseline。
 
 ## Docs And Examples Review
 
@@ -207,18 +238,57 @@
   - `ptr<f64>` 和 struct f64 layout rules
 - Review `examples/` 下的示例，确认命令使用 `ckc`，source file 使用 `.ck`。
 - 确认 `examples/pricing.ck` 仍是 release e2e fixture。
+- `pnpm build` 后运行官方 WASM interop examples：
+  - `node examples/wasm/f64-sum/run.mjs`
+  - `node examples/wasm/f64-axpy/run.mjs`
+  - `node examples/wasm/pricing-soa/run.mjs`
+- 确认这些 examples 使用 `CKWasmArena`/`createCKWasmArena`，避免 DataView hot
+  path，在适用场景下让 output 保持为 WASM memory view，并且 pricing 使用 `i64`
+  fixed-point。
 - 保持文档双语：英文为默认入口，修改文档时同步更新中文译本。
 
 ## Package Contents Review
 
+- 确认 `package.json` 使用 `name: "calckernel"`。
+- 确认 `package.json` version 与计划 release 一致。
+- 确认 `package.json` `bin` 只包含 `ckc`。
+- 确认 `package.json` 不暴露 legacy bin alias 或 legacy package entrypoint。
+- 确认 `package.json` 是 ESM-first（`type: "module"`），且 `exports` 与该
+  module format 一致。
+- 确认 `package.json` 的 `main`、`types` 和 `exports["."].types` 都指向
+  `dist/src` 下的 built files。
+- 确认 `package.json` `files` 有意包含 docs 和 examples，包括
+  `docs/wasm-interop.md` 和 `examples/wasm/**`。
+- 确认 `package.json` `files` 不发布 `bench/docs/**` 或 `bench/plans/**`
+  下的内部 benchmark 历史文档；这些文件可以保留在源码仓库中，但除非被明确更新为当前
+  面向用户的文档，否则不要放进 npm package。
+- `pnpm build` 后确认 `dist/src/cli.js` 存在、包含 Node shebang，且可执行。
+- 确认 `dist/src/index.js` 和 `dist/src/index.d.ts` 存在。
+- 确认 `dist/src/wasm/ck-wasm-arena.js` 和
+  `dist/src/wasm/ck-wasm-arena.d.ts` 存在。
+- 确认 `dist/src/index.d.ts` 导出 `CKWasmArena`、`createCKWasmArena`、
+  `CKWasmArenaCopy`、`CKWasmArenaOptions`、`CKWasmInstanceLike` 和
+  `CKWasmMemory`。
 - 确认 `npm pack --dry-run` 报告 package `calckernel@<version>`。
 - 确认 package 包含 `dist/src`、docs、examples、bench files、README.md、
   README.zh-CN.md 和 package.json。
+- 检查 `npm pack --dry-run --json` 的 file list，确认不包含 `bench/docs/**`、
+  `bench/plans/**`、`build/perf/**`、本机 benchmark baseline、生成的 tarball 或
+  临时目录。
+- 扫描 packed package surface 中 migration guide 记录的 legacy rename token set。
+  只有 migration guide、Phase 21 rename/history report、明确 legacy compatibility
+  notes 和 naming tests 可以包含这些字符串。
+- 如果仓库根目录存在 license file，确认 package 包含该 license file。
 - 确认 package 包含 `ckc` bin mapping 指向的 built CLI entrypoint。
+- 确认 package 包含 public JS API output 和 declaration files，包括 WASM interop
+  helper。
 - 确认 package `exports`、`files` 和 scripts 与已发布的 CK / CalcKernel surface
   一致。
 - 确认没有误包含本地 build artifact、benchmark output、真实本机 baseline、cache、
   editor state 或临时日志。
+- 确认 package contents 不包含 `build/perf/latest.*`、
+  `build/perf/baseline.local.json`、生成的 tarball、临时目录、`node_modules`、
+  coverage output 或 cache directories。
 
 ## Package Fresh Install Smoke
 
@@ -227,7 +297,7 @@
 - 在仓库外创建临时目录，并运行 `npm init -y`。
 - 使用 `npm install /absolute/path/to/calckernel-<version>.tgz` 安装生成的 tarball。
 - 确认 `node_modules/.bin/ckc --help` 可以运行，并且 help 使用 `ckc` 命令。
-- 确认没有 legacy compiler-command bin wrapper。
+- 确认没有 legacy CLI bin wrapper；`ckc` 是 package 中唯一 compiler command。
 - 在临时目录创建最小 `.ck` 文件，并运行：
   - `node_modules/.bin/ckc check smoke.ck`
   - `node_modules/.bin/ckc emit-mir smoke.ck -o build/smoke.mir`
@@ -238,6 +308,16 @@
   - 如果环境有 clang，运行
     `node_modules/.bin/ckc build-llvm smoke.ck --kind object -o build/smoke.o`。
 - 确认 emitted C source 和默认生成的 C header 都存在且非空。
+- 确认 package JS import smoke 通过，且使用当前支持的 module format：
+  `import { CKWasmArena, createCKWasmArena } from "calckernel"`。当前 package
+  是 ESM-first，不提供 CommonJS `require` export。
+- 确认 TypeScript consumer smoke 能使用发布包中的 declaration files，通过
+  `CKWasmArena`、`createCKWasmArena`、`CKWasmArenaCopy` 和
+  `CKWasmInstanceLike` 类型检查。
+- 确认 fresh install 后 WASM interop smoke 通过：使用安装后的 `ckc` 生成
+  `smoke.wasm`，在 Node.js 中 instantiate，通过 `createCKWasmArena(instance)`
+  创建 arena，用 `copyInF64` 写入 input，调用生成的 WASM export，用 `viewF64`
+  读取 output，并确认 `copyOutF64` 返回 JS-owned copy。
 - smoke source 应覆盖 f64 params/returns、f64 arithmetic、unary minus、f64
   comparison、`ptr<f64>` 和包含 `f64` 的 struct field。
 - smoke 完成后删除临时目录和生成的 tarball；如果有本地 artifact 留下，必须明确报告。
@@ -246,10 +326,12 @@
 
 - 确认上面的必跑命令和人工 review 都已完成。
 - 确认 working tree changes 都是有意且已理解的。
+- 人工 review 后再创建 release commit；不要让 release tooling 自动 commit 这些改动。
 - 确认 release notes 只总结已实现能力。
 - 确认 known limitations 已列出：floating point 是 f64-only、不规划 f32、没有
   implicit int/float conversion、只有 exact explicit `i32_to_f64` / `u32_to_f64`
   cast、没有 `i64/u64` to f64 cast、没有 f64-to-int cast、没有 `f64 %`、没有
   fast-math、没有 SIMD、没有 JIT、没有 IO、没有 strings、没有 GC、没有 runtime、
   没有 float checked overflow，也没有 checked WASM/LLVM arithmetic。
-- 只有 checklist 完成后才创建 release tag。
+- 只有 checklist 完成后才人工创建 release tag。
+- 不要自动 npm publish；publish 必须是单独明确的人工 release action。

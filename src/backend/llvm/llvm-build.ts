@@ -9,7 +9,7 @@ import { printMirPassPipeline } from "../../opt/pipeline.js";
 import { resolveOptimizationLevel } from "../../optimization/options.js";
 import type { OptimizationOptions } from "../../optimization/options.js";
 import type { CheckResult } from "../../typeck/checker.js";
-import type { BuildPlatform, CommandRunner } from "../c/c-build.js";
+import type { BuildPlatform, CommandResult, CommandRunner } from "../c/c-build.js";
 import { emitMirLlvmModule } from "./mir-llvm-emitter.js";
 
 export interface BuildLlvmSharedLibraryOptions {
@@ -175,6 +175,6 @@ function clangArgs(llFile: string, outputPath: string, platform: BuildPlatform, 
   return [optimizationFlag, "-shared", "-fPIC", llFile, "-o", outputPath];
 }
 
-function isMissingCommand(result: { error?: NodeJS.ErrnoException }): boolean {
+function isMissingCommand(result: Pick<CommandResult, "error">): boolean {
   return result.error?.code === "ENOENT";
 }

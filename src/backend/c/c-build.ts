@@ -12,13 +12,34 @@ import type { CheckResult } from "../../typeck/checker.js";
 import { assertCanEmitC, emitCHeader } from "./c-header-emitter.js";
 import { resolveOverflowMode, type CCodegenOptions } from "./c-options.js";
 
-export type BuildPlatform = "linux" | "darwin" | "win32" | NodeJS.Platform;
+export type CKHostPlatform =
+  | "aix"
+  | "android"
+  | "cygwin"
+  | "darwin"
+  | "freebsd"
+  | "haiku"
+  | "linux"
+  | "netbsd"
+  | "openbsd"
+  | "sunos"
+  | "win32"
+  | (string & {});
+
+export type BuildPlatform = CKHostPlatform;
+
+export interface CKSystemError extends Error {
+  code?: string;
+  errno?: number;
+  syscall?: string;
+  path?: string;
+}
 
 export interface CommandResult {
   status: number | null;
   stdout: string;
   stderr: string;
-  error?: NodeJS.ErrnoException;
+  error?: CKSystemError;
 }
 
 export type CommandRunner = (command: string, args: string[]) => CommandResult;

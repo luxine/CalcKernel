@@ -26,20 +26,30 @@ export interface WatMemory {
   pages: number;
 }
 
+export interface WatHeapBase {
+  exportName: string;
+  value: number;
+}
+
 export interface WatModule {
   memory?: WatMemory | null;
+  heapBase?: WatHeapBase | null;
   functions?: WatFunction[];
 }
 
 export function emitWatModule(module: WatModule = {}): string {
   const printer = new WatPrinter();
   const memory = module.memory === undefined ? { exportName: "memory", pages: 1 } : module.memory;
+  const heapBase = module.heapBase === undefined ? { exportName: "__ck_heap_base", value: 0 } : module.heapBase;
   const functions = module.functions ?? [];
 
   printer.open("(module");
 
   if (memory) {
     printer.line(`(memory (export "${escapeWatString(memory.exportName)}") ${memory.pages})`);
+    if (heapBase) {
+      printer.line(`(global (export "${escapeWatString(heapBase.exportName)}") i32 (i32.const ${heapBase.value}))`);
+    }
   }
 
   for (const func of functions) {

@@ -29,10 +29,12 @@ export { buildSharedLibrary, emitDefaultCSource as emitCSource, emitCFiles, shar
 export type {
   BuildSharedLibraryOptions,
   BuildSharedLibraryResult,
+  CKHostPlatform,
+  CKSystemError,
   CommandResult,
   CommandRunner,
   EmitCFilesOptions,
   EmitDefaultCSourceOptions as EmitCSourceOptions
 } from "./backend/c/c-build.js";
-export { CKWasmArena } from "./wasm/ck-wasm-arena.js";
-export type { CKWasmArenaCopy, CKWasmArenaOptions, CKWasmGlobal, CKWasmMemory } from "./wasm/ck-wasm-arena.js";
+export { CKWasmArena, createCKWasmArena } from "./wasm/ck-wasm-arena.js";
+export type { CKWasmArenaCopy, CKWasmArenaOptions, CKWasmGlobal, CKWasmInstanceLike, CKWasmMemory } from "./wasm/ck-wasm-arena.js";

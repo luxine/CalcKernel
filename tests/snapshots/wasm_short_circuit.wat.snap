@@ -1,5 +1,6 @@
 (module
   (memory (export "memory") 1)
+  (global (export "__ck_heap_base") i32 (i32.const 0))
 
   (func $and_short_circuit (export "and_short_circuit")
     (param $a i64)

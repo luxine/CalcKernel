@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { emitCFiles, buildSharedLibrary, type BuildPlatform, type CommandResult, type CommandRunner } from "./backend/c/c-build.js";
+import { emitCFiles, buildSharedLibrary, type BuildPlatform, type CKSystemError, type CommandResult, type CommandRunner } from "./backend/c/c-build.js";
 import { defaultOverflowMode, type OverflowMode } from "./backend/c/c-options.js";
 import { buildLlvmSharedLibrary, type LlvmBuildKind } from "./backend/llvm/llvm-build.js";
 import { emitMirLlvmModule } from "./backend/llvm/mir-llvm-emitter.js";
@@ -597,7 +597,7 @@ function defaultCommandRunner(command: string, args: string[]): CommandResult {
     status: result.status,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
-    error: result.error as NodeJS.ErrnoException | undefined
+    error: result.error as CKSystemError | undefined
   };
 }
 

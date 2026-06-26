@@ -17,6 +17,10 @@ validation, conservative MIR optimization levels, C/WASM/LLVM backends, strict
 `f64` support, checked integer arithmetic for C output, host-language examples,
 backend regression coverage, and a manual performance suite.
 
+Release-facing notes for the current line live in
+[docs/releases/v0.7.0.md](docs/releases/v0.7.0.md). They summarize the
+conservative WASM interop claims, package smoke expectations, and known limits.
+
 ## Quick Start
 
 ```sh
@@ -38,6 +42,25 @@ pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow che
 
 When installed as a package, the `bin` entrypoint is `ckc`. Current examples,
 fixtures, docs, and package smoke sources use the `.ck` extension.
+
+## Package Install And JS API
+
+Install the npm package as `calckernel`:
+
+```sh
+npm install calckernel
+npx ckc --help
+```
+
+The package is ESM-first. Import public JavaScript and TypeScript APIs from the
+package root:
+
+```ts
+import { CKWasmArena, createCKWasmArena } from "calckernel";
+```
+
+The package does not expose a CommonJS `require("calckernel")` entry or any
+legacy compiler-command alias. `ckc` is the only published CLI bin.
 
 ## Example `.ck`
 
@@ -310,8 +333,8 @@ host code owns memory placement and buffer sizing.
 
 ## WASM Interop Performance
 
-Do not read CK / CalcKernel WASM results as "WASM is always faster than
-JavaScript." The accurate Phase 22 claim is narrower:
+Do not read CK / CalcKernel WASM results as a blanket JavaScript comparison.
+The accurate Phase 22 claim is narrower:
 
 - CK WASM compute-only paths are competitive on the current pricing and f64
   workloads.
@@ -329,10 +352,10 @@ JavaScript." The accurate Phase 22 claim is narrower:
 Minimal typed-array interop using the package helper:
 
 ```ts
-import { CKWasmArena } from "calckernel";
+import { createCKWasmArena } from "calckernel";
 
 const { instance } = await WebAssembly.instantiate(bytes);
-const arena = CKWasmArena.fromExports(instance.exports, { heapBase: 0 });
+const arena = createCKWasmArena(instance);
 
 const input = new Float64Array([1.0, 2.0, 3.0, 4.0]);
 const { ptr, view } = arena.copyInF64(input);
@@ -341,9 +364,30 @@ const sum = instance.exports.sum_f64(ptr, input.length);
 
 The helper is not a CK runtime or allocator in generated code. It manages
 host-side aligned offsets, typed-array views, bulk copy, and `memory.grow` view
-refresh. See [WASM interop](docs/wasm-interop.md) and
+refresh. CK / CalcKernel WASM now exports additive `__ck_heap_base` metadata so
+`createCKWasmArena(instance)` does not guess memory layout. `CKWasmArena` is
+exported from the package root with TypeScript declarations as an experimental
+v0.7.x release-hardening API. See
+[WASM interop](docs/wasm-interop.md) and
 [Performance](docs/PERFORMANCE.md) for the Phase 22 benchmark layering and
-current local result tables.
+current local result tables. The release-facing summary is
+[v0.7.0 release notes](docs/releases/v0.7.0.md).
+
+Official runnable WASM interop examples:
+
+```sh
+pnpm build
+node examples/wasm/f64-sum/run.mjs
+node examples/wasm/f64-axpy/run.mjs
+node examples/wasm/pricing-soa/run.mjs
+```
+
+- [f64-sum](examples/wasm/f64-sum/README.md): `Float64Array` input with a
+  scalar `f64` return, so there is no output readback.
+- [f64-axpy](examples/wasm/f64-axpy/README.md): `Float64Array` input and
+  output as a WASM memory view by default; `copyOutF64` is explicit.
+- [pricing-soa](examples/wasm/pricing-soa/README.md): integer fixed-point
+  pricing with SoA `BigInt64Array` views and resident output memory.
 
 ## Browser WASM Example
 
@@ -486,7 +530,7 @@ WASM benchmark results are intentionally layered:
 Current Phase 22 local runs show `f64-sum` optimized low-copy and pricing SoA
 resident paths beating their JS typed-array baselines on this machine, while
 DataView total paths are much slower. That is a workload- and machine-specific
-result, not a general "WASM beats JS" claim. See
+result, not a general cross-runtime performance claim. See
 [Performance](docs/PERFORMANCE.md), [WASM interop](docs/wasm-interop.md), and
 [Optimization](docs/OPTIMIZATION.md) for the current result tables, regression
 baseline workflow, benchmark coverage, and backend bottlenecks.

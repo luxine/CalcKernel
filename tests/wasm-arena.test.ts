@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
-import { CKWasmArena, type CKWasmMemory } from "../src/wasm/ck-wasm-arena.js";
+import { CKWasmArena as PublicCKWasmArena, createCKWasmArena as publicCreateCKWasmArena } from "../src/index.js";
+import { CKWasmArena, createCKWasmArena, type CKWasmMemory } from "../src/wasm/ck-wasm-arena.js";
 
 interface WasmInstanceLike {
   exports: Record<string, unknown>;
@@ -27,6 +28,68 @@ function closeDouble(actual: number, expected: number): boolean {
 }
 
 describe("CKWasmArena", () => {
+  it("is available from the public package root export", () => {
+    expect(PublicCKWasmArena).toBe(CKWasmArena);
+    expect(typeof createCKWasmArena).toBe("function");
+    expect(publicCreateCKWasmArena).toBe(createCKWasmArena);
+  });
+
+  it("constructs from WebAssembly.Memory and reports invalid memory with a repair hint", () => {
+    const wasm = getWasmRuntime();
+    expect(wasm).toBeDefined();
+    const memory = new wasm!.Memory({ initial: 1 });
+    const arena = new CKWasmArena(memory, { heapBase: 0 });
+
+    expect(arena.memory).toBe(memory);
+    expect(() => new CKWasmArena({ buffer: new ArrayBuffer(8), grow: () => 0 } as unknown as CKWasmMemory)).toThrow(
+      /CKWasmArena\.constructor.*WebAssembly\.Memory.*Pass instance\.exports\.memory/s
+    );
+  });
+
+  it("reports invalid heapBase, allocation size, alignment, ptr, and length with API names", () => {
+    const wasm = getWasmRuntime();
+    expect(wasm).toBeDefined();
+    const memory = new wasm!.Memory({ initial: 1 });
+
+    expect(() => new CKWasmArena(memory, { heapBase: -1 })).toThrow(
+      /CKWasmArena\.constructor.*heapBase.*non-negative safe integer/s
+    );
+
+    const arena = new CKWasmArena(memory, { heapBase: 0 });
+    expect(() => arena.allocBytes(1, 0)).toThrow(/CKWasmArena\.allocBytes.*align.*positive safe integer/s);
+    expect(() => arena.allocBytes(-1, 1)).toThrow(/CKWasmArena\.allocBytes.*bytes.*non-negative safe integer/s);
+    expect(() => arena.allocF64(-1)).toThrow(/CKWasmArena\.allocF64.*length.*non-negative safe integer/s);
+    expect(() => arena.allocF64(Number.MAX_SAFE_INTEGER)).toThrow(/CKWasmArena\.allocF64.*byte length.*safe integer/s);
+    expect(() => arena.viewF64(1, 1)).toThrow(/CKWasmArena\.viewF64.*ptr.*8-byte aligned/s);
+    expect(() => arena.viewF64(0, -1)).toThrow(/CKWasmArena\.viewF64.*length.*non-negative safe integer/s);
+  });
+
+  it("reports memory.grow failure and view bounds errors with API names", () => {
+    const wasm = getWasmRuntime();
+    expect(wasm).toBeDefined();
+    const memory = new wasm!.Memory({ initial: 1, maximum: 1 });
+    const arena = new CKWasmArena(memory, { heapBase: 0 });
+
+    expect(() => arena.ensureBytes(70_000)).toThrow(/CKWasmArena\.ensureBytes.*memory\.grow failed.*Pre-grow/s);
+    expect(() => arena.viewF64(65_536, 1)).toThrow(/CKWasmArena\.viewF64.*memory\.grow failed.*Pre-grow/s);
+  });
+
+  it("guards copyIn input types at runtime", () => {
+    const wasm = getWasmRuntime();
+    expect(wasm).toBeDefined();
+    const arena = new CKWasmArena(new wasm!.Memory({ initial: 1 }), { heapBase: 0 });
+
+    expect(() => arena.copyInF64(new Int32Array([1]) as unknown as Float64Array)).toThrow(
+      /CKWasmArena\.copyInF64.*Float64Array.*Pass a Float64Array/s
+    );
+    expect(() => arena.copyInI32(new Float64Array([1]) as unknown as Int32Array)).toThrow(
+      /CKWasmArena\.copyInI32.*Int32Array.*Pass an Int32Array/s
+    );
+    expect(() => arena.copyInU32(new Int32Array([1]) as unknown as Uint32Array)).toThrow(
+      /CKWasmArena\.copyInU32.*Uint32Array.*Pass a Uint32Array/s
+    );
+  });
+
   it("allocates typed buffers at the required alignment", () => {
     const wasm = getWasmRuntime();
     expect(wasm).toBeDefined();
@@ -138,8 +201,10 @@ describe("CKWasmArena", () => {
     const { instance } = await wasm.instantiate(bytes);
     const memory = instance.exports.memory as CKWasmMemory;
     const readF64 = instance.exports.read_f64 as (values: number, i: number) => number;
-    const arena = new CKWasmArena(memory, { heapBase: 128 });
+    expect(CKWasmArena.heapBaseFromExports(instance.exports)).toBe(0);
+    const arena = createCKWasmArena(instance);
     const ptr = arena.allocF64(3);
+    expect(ptr).toBe(0);
     arena.viewF64(ptr, 3).set([1.5, 2.25, 3.75]);
 
     expect(closeDouble(readF64(ptr, 0), 1.5)).toBe(true);
@@ -158,6 +223,43 @@ describe("CKWasmArena", () => {
     });
 
     expect(arena.allocBytes(1, 1)).toBe(64);
+  });
+
+  it("creates arenas from instances or exports with explicit heapBase precedence", () => {
+    const wasm = getWasmRuntime();
+    expect(wasm).toBeDefined();
+    const memory = new wasm!.Memory({ initial: 1 });
+
+    const fromInstance = createCKWasmArena({
+      exports: {
+        memory,
+        __heap_base: { value: 16 },
+        __ck_heap_base: { value: 64 }
+      }
+    });
+    expect(fromInstance.allocBytes(1, 1)).toBe(64);
+
+    const fromExports = createCKWasmArena(
+      {
+        memory,
+        __ck_heap_base: { value: 64 }
+      },
+      { heapBase: 32 }
+    );
+    expect(fromExports.allocBytes(1, 1)).toBe(32);
+  });
+
+  it("reports missing memory and missing heapBase in createCKWasmArena", () => {
+    const wasm = getWasmRuntime();
+    expect(wasm).toBeDefined();
+    const memory = new wasm!.Memory({ initial: 1 });
+
+    expect(() => createCKWasmArena({})).toThrow(
+      /createCKWasmArena.*exports\.memory.*Pass a WebAssembly\.Instance/s
+    );
+    expect(() => createCKWasmArena({ memory })).toThrow(
+      /createCKWasmArena.*heapBase.*Pass \{ heapBase \}.*__ck_heap_base/s
+    );
   });
 
   it("requires an explicit heapBase before allocation when exports do not provide one", () => {

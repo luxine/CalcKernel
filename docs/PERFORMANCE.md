@@ -6,6 +6,7 @@ This document summarizes the Phase 22 local performance suite, current local
 results, and how to run regression checks. Numbers are local measurements only:
 do not compare absolute timings across machines. Results depend on hardware,
 Node.js, clang, hyperfine, OS scheduling, power state, and current system load.
+For release-facing wording, see [v0.7.0 release notes](releases/v0.7.0.md).
 
 ## Benchmark Suite
 
@@ -178,8 +179,8 @@ than native C and LLVM. Typed-array `Number` is faster than `BigInt`, but it
 does not provide exact `i64` semantics for all values.
 
 The suite is not a NumPy-level or vectorized-library performance guarantee, and
-it does not promise that WASM is always faster than JavaScript typed arrays.
-WASM total time can be dominated by host memory marshaling.
+it does not turn WASM into a blanket replacement for JavaScript typed-array hot
+loops. WASM total time can be dominated by host memory marshaling.
 
 C, LLVM-built native binaries, WASM, JavaScript, and any optional Python harness
 do not share one runtime model. Use those comparisons to understand workload
@@ -284,6 +285,25 @@ Prefer SoA plus resident memory for pricing workloads when JavaScript can keep
 data in homogeneous typed arrays. Do not use the `DataView` pricing total as the
 recommended performance path; it exists to keep mixed-width struct ABI cost
 visible.
+
+Official runnable examples for the recommended interop shapes live under
+`examples/wasm`:
+
+- [`examples/wasm/f64-sum`](../examples/wasm/f64-sum/README.md): read-only
+  `Float64Array` input with a scalar `f64` return and no output readback.
+- [`examples/wasm/f64-axpy`](../examples/wasm/f64-axpy/README.md): output view
+  fast path, with `copyOutF64` shown only as an explicit JS-owned copy.
+- [`examples/wasm/pricing-soa`](../examples/wasm/pricing-soa/README.md): SoA
+  integer fixed-point pricing using `BigInt64Array` views over WASM memory.
+
+Run them after building the package:
+
+```sh
+pnpm build
+node examples/wasm/f64-sum/run.mjs
+node examples/wasm/f64-axpy/run.mjs
+node examples/wasm/pricing-soa/run.mjs
+```
 
 `Float64Array` views must be recreated after `memory.grow`; CK does not provide
 a WASM allocator or runtime, so host code still owns memory placement and buffer

@@ -15,6 +15,10 @@ MIR optimization levels、C/WASM/LLVM backends、strict `f64` support、C 输出
 checked integer arithmetic、宿主语言示例、backend regression 覆盖和手动
 performance suite。
 
+当前版本线的 release-facing notes 见
+[docs/releases/v0.7.0.md](docs/releases/v0.7.0.md)，其中总结了保守的 WASM
+interop 性能口径、package smoke 要求和已知限制。
+
 ## 快速开始
 
 ```sh
@@ -36,6 +40,25 @@ pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow che
 
 作为 package 安装后，`bin` 入口是 `ckc`。当前 examples、fixtures、docs 和
 package smoke source 均使用 `.ck` 后缀。
+
+## Package 安装和 JS API
+
+npm package 名称是 `calckernel`：
+
+```sh
+npm install calckernel
+npx ckc --help
+```
+
+当前 package 是 ESM-first。公共 JavaScript 和 TypeScript API 从 package root
+导入：
+
+```ts
+import { CKWasmArena, createCKWasmArena } from "calckernel";
+```
+
+Package 不暴露 CommonJS `require("calckernel")` 入口，也不暴露旧 compiler command
+alias。`ckc` 是唯一发布的 CLI bin。
 
 ## `.ck` 示例
 
@@ -296,8 +319,8 @@ placement 和 buffer sizing 由 host 负责。
 
 ## WASM Interop 性能口径
 
-不要把 CK / CalcKernel WASM 结果解读成“WASM 总是比 JavaScript 快”。Phase 22 的准确
-口径更窄：
+不要把 CK / CalcKernel WASM 结果泛化成对 JavaScript 的整体性能结论。Phase 22 的
+准确口径更窄：
 
 - CK WASM compute-only path 在当前 pricing 和 f64 workload 上已有竞争力。
 - 批量 resident-memory workload 可以减少大部分 JS/WASM 边界成本。
@@ -313,10 +336,10 @@ placement 和 buffer sizing 由 host 负责。
 使用 package helper 的最小 typed-array interop 示例：
 
 ```ts
-import { CKWasmArena } from "calckernel";
+import { createCKWasmArena } from "calckernel";
 
 const { instance } = await WebAssembly.instantiate(bytes);
-const arena = CKWasmArena.fromExports(instance.exports, { heapBase: 0 });
+const arena = createCKWasmArena(instance);
 
 const input = new Float64Array([1.0, 2.0, 3.0, 4.0]);
 const { ptr, view } = arena.copyInF64(input);
@@ -324,9 +347,29 @@ const sum = instance.exports.sum_f64(ptr, input.length);
 ```
 
 这个 helper 不是生成代码中的 CK runtime 或 allocator。它只管理 host 侧 aligned
-offset、typed-array view、bulk copy 和 `memory.grow` 后的 view refresh。Phase 22
-benchmark 分层和当前本机结果表见 [WASM interop](docs/wasm-interop.md) 和
-[性能](docs/zh-CN/PERFORMANCE.md)。
+offset、typed-array view、bulk copy 和 `memory.grow` 后的 view refresh。
+CK / CalcKernel WASM 现在导出 additive `__ck_heap_base` metadata，因此
+`createCKWasmArena(instance)` 不需要猜测 memory layout。`CKWasmArena` 从 package
+root 导出，并带 TypeScript declaration；在 v0.7.x release-hardening 窗口内仍标记为
+experimental API。Phase 22 benchmark 分层和当前本机结果表见
+[WASM interop](docs/wasm-interop.md)、[性能](docs/zh-CN/PERFORMANCE.md) 和
+[v0.7.0 release notes](docs/releases/v0.7.0.md)。
+
+官方可运行 WASM interop examples：
+
+```sh
+pnpm build
+node examples/wasm/f64-sum/run.mjs
+node examples/wasm/f64-axpy/run.mjs
+node examples/wasm/pricing-soa/run.mjs
+```
+
+- [f64-sum](examples/wasm/f64-sum/README.md)：`Float64Array` input 加 scalar
+  `f64` return，不需要 output readback。
+- [f64-axpy](examples/wasm/f64-axpy/README.md)：`Float64Array` input，默认让
+  output 保持为 WASM memory view；`copyOutF64` 是显式 copy path。
+- [pricing-soa](examples/wasm/pricing-soa/README.md)：integer fixed-point pricing，
+  使用 SoA `BigInt64Array` view 和 resident output memory。
 
 ## Browser WASM 示例
 
@@ -514,6 +557,7 @@ English:
 - [Migration Guide](docs/MIGRATION_IK_TO_CK.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
+- [v0.7.0 Release Notes](docs/releases/v0.7.0.md)
 
 中文：
 

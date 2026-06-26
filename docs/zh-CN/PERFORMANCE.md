@@ -5,6 +5,7 @@
 本文总结 Phase 22 本机 performance suite、当前本机结果，以及如何运行性能回归检查。这些数字
 只代表本机测量结果；不要跨机器比较绝对耗时。结果依赖硬件、Node.js、clang、
 hyperfine、OS scheduling、电源状态和当前系统负载。
+Release-facing 口径见 [v0.7.0 release notes](../releases/v0.7.0.md)。
 
 ## Benchmark Suite
 
@@ -164,8 +165,9 @@ fallback/debug ABI 对照。
 JavaScript `BigInt` 适合作为精确 `i64` baseline，但慢于 native C 和 LLVM。
 Typed-array `Number` 比 `BigInt` 快，但不能对所有值提供精确 `i64` 语义。
 
-这套 benchmark 不是 NumPy 级或 vectorized-library 性能保证，也不承诺 WASM 一定快于
-JavaScript typed arrays。WASM total time 可能主要受 host memory marshaling 影响。
+这套 benchmark 不是 NumPy 级或 vectorized-library 性能保证，也不能把 WASM 泛化为
+JavaScript typed-array hot loop 的替代品。WASM total time 可能主要受 host memory
+marshaling 影响。
 
 C、LLVM 构建出的 native binary、WASM、JavaScript，以及任何可选 Python harness
 并不共享同一种 runtime model。它们的对比只用于理解 workload shape、boundary cost
@@ -262,6 +264,24 @@ Phase 22 也新增基于 CKWasmArena 的 pricing SoA case：
 当 JavaScript 能把数据保持为 homogeneous typed arrays 时，pricing workload 优先使用
 SoA + resident memory。不要把 `DataView` pricing total 当成推荐性能路径；它用于保留
 mixed-width struct ABI 成本的可见性。
+
+推荐 interop 形态的官方可运行 examples 位于 `examples/wasm`：
+
+- [`examples/wasm/f64-sum`](../../examples/wasm/f64-sum/README.md)：read-only
+  `Float64Array` input，scalar `f64` return，不做 output readback。
+- [`examples/wasm/f64-axpy`](../../examples/wasm/f64-axpy/README.md)：output view
+  fast path，`copyOutF64` 只作为显式 JS-owned copy 演示。
+- [`examples/wasm/pricing-soa`](../../examples/wasm/pricing-soa/README.md)：SoA
+  integer fixed-point pricing，使用 WASM memory 上的 `BigInt64Array` view。
+
+构建后运行：
+
+```sh
+pnpm build
+node examples/wasm/f64-sum/run.mjs
+node examples/wasm/f64-axpy/run.mjs
+node examples/wasm/pricing-soa/run.mjs
+```
 
 `memory.grow` 后必须重新创建 `Float64Array` view；CK 不提供 WASM allocator 或
 runtime，memory placement 和 buffer sizing 仍由 host 负责。

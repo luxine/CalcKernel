@@ -1,5 +1,6 @@
 (module
   (memory (export "memory") 1)
+  (global (export "__ck_heap_base") i32 (i32.const 0))
 
   (func $cast_i32 (export "cast_i32")
     (param $value i32)

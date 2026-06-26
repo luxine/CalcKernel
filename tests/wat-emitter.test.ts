@@ -6,6 +6,7 @@ describe("WAT emitter", () => {
   it("emits an empty module with exported memory", () => {
     expect(emitWatModule()).toBe(`(module
   (memory (export "memory") 1)
+  (global (export "__ck_heap_base") i32 (i32.const 0))
 )
 `);
   });
@@ -27,6 +28,7 @@ describe("WAT emitter", () => {
       })
     ).toBe(`(module
   (memory (export "memory") 1)
+  (global (export "__ck_heap_base") i32 (i32.const 0))
 
   (func $add_i64 (export "add_i64")
     (param $a i64)
@@ -55,6 +57,7 @@ describe("WAT emitter", () => {
       })
     ).toBe(`(module
   (memory (export "memory") 1)
+  (global (export "__ck_heap_base") i32 (i32.const 0))
 
   (func $with_locals
     (param $a i64)
@@ -83,6 +86,7 @@ describe("WAT emitter", () => {
       })
     ).toBe(`(module
   (memory (export "memory") 1)
+  (global (export "__ck_heap_base") i32 (i32.const 0))
 
   (func $items_x5b_i_x5d__x2e_price (export "quote\\22slash\\5c")
     (param $arg_x2d_0 i32)
