@@ -7,6 +7,7 @@ import { SourceFile } from "../src/source/source-file.js";
 import { check } from "../src/typeck/checker.js";
 
 const legacyAbiPrefix = "I" + "K_";
+const legacyCheckedReturnParameter = "i" + "k" + "_return";
 
 function checkedSource(fileName: string, text: string) {
   const result = check(new SourceFile(fileName, text));
@@ -352,7 +353,8 @@ describe("c emitter", () => {
 
     const source = emitDefaultCSource(checked, { headerFileName: "f64-checked.h", overflowMode: "checked" });
 
-    expect(source).toContain("CK_Status div_f64(double a, double b, double* ik_return)");
+    expect(source).toContain("CK_Status div_f64(double a, double b, double* ck_return)");
+    expect(source).not.toContain(legacyCheckedReturnParameter);
     expect(source).toContain("ik_tmp0 = a / b;");
     expect(source).toContain("ik_tmp0 = -a;");
     expect(source).not.toContain("__builtin");
@@ -374,7 +376,8 @@ describe("c emitter", () => {
 
     const source = emitDefaultCSource(checked, { headerFileName: "cast-checked.h", overflowMode: "checked" });
 
-    expect(source).toContain("CK_Status checked_cast_mix(int32_t a, uint32_t b, double* ik_return)");
+    expect(source).toContain("CK_Status checked_cast_mix(int32_t a, uint32_t b, double* ck_return)");
+    expect(source).not.toContain(legacyCheckedReturnParameter);
     expect(source).toContain("__builtin_add_overflow");
     expect(source).toMatch(/ik_tmp\d+ = \(double\)next;/);
     expect(source).toMatch(/ik_tmp\d+ = \(double\)b;/);
@@ -410,7 +413,8 @@ describe("c emitter", () => {
     const checked = checkedSource("scalar.ck", "export fn add(a: i64, b: i64) -> i64 {\n  return a + b;\n}\n");
 
     const header = emitCHeader(checked, { overflowMode: "checked" });
-    expect(header).toContain("CK_API CK_Status add(int64_t a, int64_t b, int64_t* ik_return);");
+    expect(header).toContain("CK_API CK_Status add(int64_t a, int64_t b, int64_t* ck_return);");
+    expect(header).not.toContain(legacyCheckedReturnParameter);
     expect(header).toContain("typedef int32_t CK_Status;");
     expect(header).toContain("#define CK_OK ((CK_Status)0)");
     expect(header).toContain("#define CK_ERR_OVERFLOW ((CK_Status)1)");

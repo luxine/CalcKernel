@@ -84,7 +84,7 @@ Checked C full run median 约为 unchecked C O3 的 1.40 倍。
 - 对常量 divisor `1000000` 的 division-by-zero branch
 - signed min / `-1` overflow branch
 - 每个 checked operation 的 early return branch
-- checked ABI 的 return pointer null check 和最终 `ik_return` 写入
+- checked ABI 的 return pointer null check 和最终 `ck_return` 写入
 
 部分检查是语义必须的。部分在当前代码中可证明冗余，例如 literal `1000000` 的 zero
 检查，但只能通过通用且有 correctness test 的 pass 删除。

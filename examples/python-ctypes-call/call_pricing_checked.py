@@ -56,14 +56,14 @@ def run_success_case(lib: ctypes.CDLL) -> None:
         Item(price=1200, qty=5, discount=500, tax_rate_ppm=100000),
     )
     out = (ctypes.c_int64 * len(items))(0, 0, 0)
-    ik_return = ctypes.c_int32(-1)
+    ck_return = ctypes.c_int32(-1)
 
-    status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
+    status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ck_return))
     if status != CK_OK:
         raise RuntimeError(f"calc_items returned CK_Status {status}")
 
-    if ik_return.value != 0:
-        raise AssertionError(f"unexpected ik_return: expected 0, got {ik_return.value}")
+    if ck_return.value != 0:
+        raise AssertionError(f"unexpected ck_return: expected 0, got {ck_return.value}")
 
     expected = [20567, 11000, 6050]
     actual = list(out)
@@ -78,9 +78,9 @@ def run_overflow_case(lib: ctypes.CDLL) -> None:
         Item(price=ctypes.c_int64(9223372036854775807).value, qty=2, discount=0, tax_rate_ppm=0),
     )
     out = (ctypes.c_int64 * len(items))(0)
-    ik_return = ctypes.c_int32(-1)
+    ck_return = ctypes.c_int32(-1)
 
-    status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
+    status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ck_return))
     if status != CK_ERR_OVERFLOW:
         raise AssertionError(f"expected CK_ERR_OVERFLOW, got CK_Status {status}")
 

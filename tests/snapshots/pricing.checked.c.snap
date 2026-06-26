@@ -1,6 +1,6 @@
 #include "pricing.h"
 
-CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return) {
+CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ck_return) {
   int32_t i;
   int64_t subtotal;
   int64_t after_discount;
@@ -21,7 +21,7 @@ CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return)
   int32_t ik_tmp13;
   int32_t ik_tmp14;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -75,6 +75,6 @@ bb2:
 
 bb3:
   ik_tmp14 = 0;
-  *ik_return = ik_tmp14;
+  *ck_return = ik_tmp14;
   return CK_OK;
 }

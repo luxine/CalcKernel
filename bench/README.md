@@ -339,7 +339,7 @@ division-by-zero, and status propagation. Its ABI returns `CK_Status` and writes
 the original CalcKernel return value through a final output pointer:
 
 ```c
-CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ck_return);
 ```
 
 The checked benchmark measures the same batch shape as the unchecked benchmark,
@@ -349,7 +349,7 @@ but it includes the cost of:
   `__builtin_mul_overflow`
 - division and signed division overflow checks
 - extra branches for `CK_Status` returns
-- the final `ik_return` write
+- the final `ck_return` write
 
 Checked mode is a better fit for money, tax, discount, and rules workloads where
 integer safety is more important than maximum throughput. Unchecked mode is a

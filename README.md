@@ -175,7 +175,7 @@ pnpm ckc build examples/pricing.ck --out build/libpricing --overflow unchecked
 ```
 
 Checked arithmetic mode changes the generated C ABI to return `CK_Status` and
-write the original return value through the final `ik_return` pointer:
+write the original return value through the final `ck_return` pointer:
 
 ```sh
 pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
@@ -186,7 +186,7 @@ pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow che
 - `CK_OK`: computation succeeded
 - `CK_ERR_OVERFLOW`: checked arithmetic overflow
 - `CK_ERR_DIV_BY_ZERO`: checked division or modulo by zero
-- `CK_ERR_NULL_POINTER`: generated checked `ik_return` pointer was `NULL`
+- `CK_ERR_NULL_POINTER`: generated checked `ck_return` pointer was `NULL`
 
 Use checked mode for money, tax, discount, and rules kernels where arithmetic
 failure must be reported explicitly. Use unchecked mode for hot paths where

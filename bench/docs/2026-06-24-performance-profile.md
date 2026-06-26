@@ -90,7 +90,7 @@ The generated checked loop performs the useful pricing arithmetic plus:
 - a division-by-zero branch for the constant divisor `1000000`
 - a signed min divided by `-1` overflow branch
 - early-return branches for every checked operation
-- the checked ABI return pointer check and final `ik_return` write
+- the checked ABI return pointer check and final `ck_return` write
 
 Some checks are semantically required. Some are provably redundant in this
 specific lowered code, such as divisor zero checks for literal `1000000`, but

@@ -735,7 +735,7 @@ describe("ckc CLI", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("OK: emitted C with overflow=checked");
     expect(stdout).toContain(`Wrote ${join(cwd, "build/checked.c")}`);
-    expect(readFileSync(join(cwd, "build/checked.h"), "utf8")).toContain("CK_API CK_Status add(int64_t a, int64_t b, int64_t* ik_return);");
+    expect(readFileSync(join(cwd, "build/checked.h"), "utf8")).toContain("CK_API CK_Status add(int64_t a, int64_t b, int64_t* ck_return);");
     expect(readFileSync(join(cwd, "build/checked.c"), "utf8")).toContain("__builtin_add_overflow");
   });
 
@@ -2012,13 +2012,13 @@ int main(void) {
     { .price = 2500, .qty = 4, .discount = 0, .tax_rate_ppm = 100000 }
   };
   int64_t out[2] = {0, 0};
-  int32_t ik_return = -1;
+  int32_t ck_return = -1;
 
-  CK_Status status = calc_items(items, 2, out, &ik_return);
+  CK_Status status = calc_items(items, 2, out, &ck_return);
   if (status != CK_OK) {
     return 10;
   }
-  if (ik_return != 0) {
+  if (ck_return != 0) {
     return 11;
   }
   if (out[0] != 20567) {
@@ -2032,9 +2032,9 @@ int main(void) {
     { .price = INT64_MAX, .qty = 2, .discount = 0, .tax_rate_ppm = 0 }
   };
   int64_t overflow_out[1] = {0};
-  ik_return = -1;
+  ck_return = -1;
 
-  status = calc_items(overflow_items, 1, overflow_out, &ik_return);
+  status = calc_items(overflow_items, 1, overflow_out, &ck_return);
   if (status != CK_ERR_OVERFLOW) {
     return 30;
   }
@@ -2084,13 +2084,13 @@ int main(void) {
     { .price = 2500, .qty = 4, .discount = 0, .tax_rate_ppm = 100000 }
   };
   int64_t out[2] = {0, 0};
-  int32_t ik_return = -1;
+  int32_t ck_return = -1;
 
-  CK_Status status = calc_items(items, 2, out, &ik_return);
+  CK_Status status = calc_items(items, 2, out, &ck_return);
   if (status != CK_OK) {
     return 10;
   }
-  if (ik_return != 0) {
+  if (ck_return != 0) {
     return 11;
   }
   if (out[0] != 20567) {
@@ -2104,9 +2104,9 @@ int main(void) {
     { .price = INT64_MAX, .qty = 2, .discount = 0, .tax_rate_ppm = 0 }
   };
   int64_t overflow_out[1] = {0};
-  ik_return = -1;
+  ck_return = -1;
 
-  status = calc_items(overflow_items, 1, overflow_out, &ik_return);
+  status = calc_items(overflow_items, 1, overflow_out, &ck_return);
   if (status != CK_ERR_OVERFLOW) {
     return 30;
   }
@@ -3068,7 +3068,7 @@ int main(void) {
       const harnessFile = join(cwd, "build/scalar_calls_checked_mir_harness.c");
       const executable = join(cwd, "build/scalar_calls_checked_mir_harness");
 
-      expect(header).toContain("CK_API CK_Status calc(int64_t a, int64_t b, int64_t* ik_return);");
+      expect(header).toContain("CK_API CK_Status calc(int64_t a, int64_t b, int64_t* ck_return);");
       expect(header).not.toContain("add_i64");
       expect(header).not.toContain("double_i64");
 
@@ -3131,13 +3131,13 @@ int main(void) {
     { .price = 2500, .qty = 4, .discount = 0, .tax_rate_ppm = 100000 }
   };
   int64_t out[2] = {0, 0};
-  int32_t ik_return = -1;
+  int32_t ck_return = -1;
 
-  CK_Status status = calc_items(items, 2, out, &ik_return);
+  CK_Status status = calc_items(items, 2, out, &ck_return);
   if (status != CK_OK) {
     return 10;
   }
-  if (ik_return != 0) {
+  if (ck_return != 0) {
     return 11;
   }
   if (out[0] != 20567) {
@@ -3151,9 +3151,9 @@ int main(void) {
     { .price = INT64_MAX, .qty = 2, .discount = 0, .tax_rate_ppm = 0 }
   };
   int64_t overflow_out[1] = {0};
-  ik_return = -1;
+  ck_return = -1;
 
-  status = calc_items(overflow_items, 1, overflow_out, &ik_return);
+  status = calc_items(overflow_items, 1, overflow_out, &ck_return);
   if (status != CK_ERR_OVERFLOW) {
     return 30;
   }
@@ -3328,8 +3328,8 @@ int main(void) {
     { .price = 2500, .qty = 4, .discount = 0, .tax_rate_ppm = 100000 }
   };
   int64_t out[2] = {0, 0};
-  int32_t ik_return = -1;
-  CK_Status status = calc_items(items, 2, out, &ik_return);
+  int32_t ck_return = -1;
+  CK_Status status = calc_items(items, 2, out, &ck_return);
 
   Item overflow_items[1] = {
     { .price = INT64_MAX, .qty = 2, .discount = 0, .tax_rate_ppm = 0 }
@@ -3341,7 +3341,7 @@ int main(void) {
   printf(
     "checked-pricing:%d:%d:%lld:%lld:%d\\n",
     (int)status,
-    ik_return,
+    ck_return,
     (long long)out[0],
     (long long)out[1],
     (int)overflow_status
@@ -3553,8 +3553,8 @@ int main(void) {
       const headerText = readFileSync(headerFile, "utf8");
       const sourceText = readFileSync(cFile, "utf8");
 
-      expect(headerText).toContain("CK_API CK_Status calc(int64_t a, int64_t b, int64_t* ik_return);");
-      expect(headerText).toContain("CK_API CK_Status calc_overflow(int64_t a, int64_t b, int64_t* ik_return);");
+      expect(headerText).toContain("CK_API CK_Status calc(int64_t a, int64_t b, int64_t* ck_return);");
+      expect(headerText).toContain("CK_API CK_Status calc_overflow(int64_t a, int64_t b, int64_t* ck_return);");
       expect(headerText).not.toContain("add_i64");
       expect(headerText).not.toContain("double_i64");
       expect(sourceText).toContain("static CK_Status add_i64");

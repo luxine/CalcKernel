@@ -65,7 +65,7 @@ Unchecked mode 保持原始 C ABI。默认 backend 变化时，生成的 C sourc
 | Integer overflow | 不检查 | 返回 `CK_ERR_OVERFLOW` |
 | Division by zero | 不检查 | 返回 `CK_ERR_DIV_BY_ZERO` |
 | `f64` overflow 和 division by zero | C `double` 行为 | C `double` 行为，除非发生其他 checked error，否则仍返回 `CK_OK` |
-| User pointers | 不检查 | 不检查，除了生成的 `ik_return` |
+| User pointers | 不检查 | 不检查，除了生成的 `ck_return` |
 | Bounds checks | 无 | 无 |
 | Runtime dependency | 无 | 无 |
 | 性能 | 最快 | 额外检查和分支 |
@@ -113,7 +113,7 @@ typedef int32_t CK_Status;
 - `CK_OK`：计算成功。
 - `CK_ERR_OVERFLOW`：checked arithmetic 检测到 overflow。
 - `CK_ERR_DIV_BY_ZERO`：division 或 modulo divisor 为零。
-- `CK_ERR_NULL_POINTER`：生成的 checked return pointer `ik_return` 为 `NULL`。
+- `CK_ERR_NULL_POINTER`：生成的 checked return pointer `ck_return` 为 `NULL`。
 
 ## Checked ABI 示例
 
@@ -135,14 +135,14 @@ typedef int32_t CK_Status;
 #define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
 #define CK_ERR_NULL_POINTER ((CK_Status)3)
 
-CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return);
 ```
 
 Checked implementation：
 
 ```c
-CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
-  if (ik_return == NULL) {
+CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -151,7 +151,7 @@ CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
     return CK_ERR_OVERFLOW;
   }
 
-  *ik_return = ik_tmp0;
+  *ck_return = ik_tmp0;
   return CK_OK;
 }
 ```
@@ -205,7 +205,7 @@ CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 ### `f64`
 
 Checked C mode 仍然是 integer checked arithmetic mode。选择 `--overflow checked`
-时，包含 `f64` 的函数也使用 checked ABI，因此返回 `CK_Status`，并通过 `ik_return`
+时，包含 `f64` 的函数也使用 checked ABI，因此返回 `CK_Status`，并通过 `ck_return`
 写出 source-level return value。f64 operation 本身使用普通 strict C `double` 行为：
 
 - `f64 +`、`-`、`*`、`/` 不调用 integer overflow builtin。
@@ -316,7 +316,7 @@ metadata。
 
 ## Null Pointers
 
-Phase 10 只检查生成的 checked ABI return pointer `ik_return` 是否为 `NULL`。
+Phase 10 只检查生成的 checked ABI return pointer `ck_return` 是否为 `NULL`。
 
 它不会自动检查每个用户 `ptr<T>` 参数。
 
@@ -351,7 +351,7 @@ Checked mode 预计比 unchecked mode 慢。Overhead 来自：
 - division-by-zero branch
 - signed division/modulo overflow branch
 - CalcKernel function call 后的 `CK_Status` check
-- 额外 temporary 和最终 `ik_return` 写入
+- 额外 temporary 和最终 `ck_return` 写入
 
 当 correctness 和显式 arithmetic failure reporting 比最大吞吐更重要时使用 checked
 mode，例如金额、税费、优惠和规则引擎。当调用方或前置验证已经证明不会 overflow

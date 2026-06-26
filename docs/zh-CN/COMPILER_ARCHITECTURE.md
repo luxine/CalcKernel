@@ -146,7 +146,7 @@ MIR C backend 生成 `.c` 实现文件。它支持两种 overflow mode：
 
 - unchecked mode 生成普通 C expression 和原始 return type
 - checked mode 生成 `CK_Status`、checked arithmetic guard、checked function
-  call propagation 和 `ik_return` 处理
+  call propagation 和 `ck_return` 处理
 
 导出函数声明在 header 中。非导出函数在 C source 中生成为 `static`。
 
@@ -162,7 +162,7 @@ Header emitter 由默认 MIR pipeline 共享。它生成 `.h` 文件，包含：
 - exported function declarations
 
 Unchecked header 保持原始 return type。Checked header 包含 `CK_Status`，并在导出
-函数签名末尾追加 `ik_return` 指针。
+函数签名末尾追加 `ck_return` 指针。
 
 ### Build Command
 

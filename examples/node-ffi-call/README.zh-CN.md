@@ -170,19 +170,19 @@ typedef int32_t CK_Status;
 Checked `calc_items` declaration 是：
 
 ```c
-CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ck_return);
 ```
 
 Koffi signature 镜像该 ABI：
 
 ```js
-const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ int64_t *out, _Out_ int32_t *ik_return)");
+const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ int64_t *out, _Out_ int32_t *ck_return)");
 ```
 
 Checked 示例使用：
 
 - `number` 表示 `CK_Status`、`CK_OK` 和其他 32-bit status constants。
-- `Int32Array(1)` 表示最后的 `ik_return` pointer。
+- `Int32Array(1)` 表示最后的 `ck_return` pointer。
 - 每个 `Item` 的 `int64_t` 字段都使用 `BigInt`。
 - `BigInt64Array` 表示 `int64_t* out` buffer。
 
@@ -192,6 +192,6 @@ Checked 示例使用：
 ## V0 安全说明
 
 V0 不分配内存、不释放内存，也不做 bounds check。Checked mode 会检查 integer
-overflow、division by zero 和生成的 `ik_return` pointer，但仍不验证用户 data
+overflow、division by zero 和生成的 `ck_return` pointer，但仍不验证用户 data
 pointer 或 buffer length。调用方必须传入有效 buffer，以及匹配已分配 array 的
 length。如果 length 错误，native code 的风险和等价 C pointer indexing 一样。

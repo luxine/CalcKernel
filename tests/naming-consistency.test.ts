@@ -41,6 +41,8 @@ const forbiddenPatterns = [
   { label: "legacy C ABI ok macro", pattern: /\bIK_OK\b/g },
   { label: "legacy C ABI error macro", pattern: /\bIK_ERR_(?:OVERFLOW|DIV_BY_ZERO|NULL_POINTER)\b/g },
   { label: "legacy C ABI prefix", pattern: /\bIK_/g },
+  { label: "legacy checked return parameter", pattern: /\bik_return\b/g },
+  { label: "legacy checked return variable", pattern: /\bikReturn\b/g },
   { label: "legacy language name", pattern: /\btk\b/g },
   { label: "legacy compiler command", pattern: /\btkc\b/g },
   { label: "legacy source extension", pattern: /\.tk\b/g },

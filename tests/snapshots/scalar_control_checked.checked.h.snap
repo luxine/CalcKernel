@@ -25,11 +25,11 @@ typedef int32_t CK_Status;
 extern "C" {
 #endif
 
-CK_API CK_Status sum_to_n(int64_t n, int64_t* ik_return);
+CK_API CK_Status sum_to_n(int64_t n, int64_t* ck_return);
 
-CK_API CK_Status choose(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status choose(int64_t a, int64_t b, int64_t* ck_return);
 
-CK_API CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ck_return);
 
 #ifdef __cplusplus
 }

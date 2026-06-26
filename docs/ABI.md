@@ -280,7 +280,7 @@ ckc build input.ck --out build/libinput --overflow checked
 
 Checked mode changes the generated C ABI. Exported functions return
 `CK_Status`, and the source-level return value is written through a final
-generated output pointer named `ik_return`:
+generated output pointer named `ck_return`:
 
 ```c
 typedef int32_t CK_Status;
@@ -306,19 +306,19 @@ CK_API int64_t add_i64(int64_t a, int64_t b);
 checked mode emits:
 
 ```c
-CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return);
 ```
 
 The signature rule is:
 
 - C return type becomes `CK_Status`
 - original parameters are preserved in order
-- a final `T* ik_return` parameter is appended, where `T` is the mapped C type
+- a final `T* ck_return` parameter is appended, where `T` is the mapped C type
   of the original CalcKernel return type
-- if `ik_return == NULL`, generated checked code returns
+- if `ck_return == NULL`, generated checked code returns
   `CK_ERR_NULL_POINTER`
 - on success, generated checked code writes the original return value into
-  `*ik_return` and returns `CK_OK`
+  `*ck_return` and returns `CK_OK`
 
 Example:
 
@@ -333,7 +333,7 @@ CK_API CK_Status calc_items(
   Item* items,
   int32_t len,
   int64_t* out,
-  int32_t* ik_return
+  int32_t* ck_return
 );
 ```
 
@@ -341,7 +341,7 @@ Non-exported CalcKernel functions also use checked lowering in checked mode, but
 they remain private to the generated `.c` file:
 
 ```c
-static CK_Status helper(int64_t a, int64_t* ik_return);
+static CK_Status helper(int64_t a, int64_t* ck_return);
 ```
 
 Callers never call non-exported helpers directly.

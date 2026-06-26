@@ -175,19 +175,19 @@ typedef int32_t CK_Status;
 The checked `calc_items` declaration is:
 
 ```c
-CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ck_return);
 ```
 
 The Koffi signature mirrors that ABI:
 
 ```js
-const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ int64_t *out, _Out_ int32_t *ik_return)");
+const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ int64_t *out, _Out_ int32_t *ck_return)");
 ```
 
 The checked example uses:
 
 - `number` for `CK_Status`, `CK_OK`, and other 32-bit status constants.
-- `Int32Array(1)` for the final `ik_return` pointer.
+- `Int32Array(1)` for the final `ck_return` pointer.
 - `BigInt` values for every `int64_t` field in `Item`.
 - `BigInt64Array` for the `int64_t* out` buffer.
 
@@ -198,7 +198,7 @@ values. Keep using `BigInt` or Koffi-supported 64-bit representations for
 ## V0 Safety Notes
 
 V0 does not allocate memory, free memory, or perform bounds checks. Checked mode
-checks integer overflow, division by zero, and the generated `ik_return`
+checks integer overflow, division by zero, and the generated `ck_return`
 pointer, but it still does not validate user data pointers or buffer lengths.
 The caller must pass valid buffers and a length that matches the allocated
 arrays. If the length is wrong, the native code has the same risks as equivalent

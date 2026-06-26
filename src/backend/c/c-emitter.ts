@@ -97,7 +97,7 @@ function emitCheckedFunction(checked: CheckResult, functionDeclaration: Function
   const context: CheckedEmitContext = { checked, tempCounter: 0, statusCounter: 0 };
   const lines = [`${prefix}${emitCheckedFunctionSignature(functionDeclaration)} {`];
 
-  lines.push("  if (ik_return == NULL) {", "    return CK_ERR_NULL_POINTER;", "  }");
+  lines.push("  if (ck_return == NULL) {", "    return CK_ERR_NULL_POINTER;", "  }");
 
   const bodyLines = emitCheckedStatements(context, functionDeclaration.body.statements, 1, true);
   if (bodyLines.length > 0) {
@@ -179,7 +179,7 @@ function emitCheckedReturnStatement(context: CheckedEmitContext, statement: Retu
     lines.push("");
   }
 
-  lines.push(`${pad}*ik_return = ${value.value};`, `${pad}return CK_OK;`);
+  lines.push(`${pad}*ck_return = ${value.value};`, `${pad}return CK_OK;`);
   return lines;
 }
 

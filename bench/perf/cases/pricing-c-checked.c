@@ -81,10 +81,10 @@ int main(int argc, char** argv) {
   fill_items(items, len);
 
   for (int32_t iteration = 0; iteration < iterations; iteration += 1) {
-    int32_t ik_return = -1;
-    const CK_Status status = calc_items(items, len, out, &ik_return);
-    if (status != CK_OK || ik_return != 0) {
-      fprintf(stderr, "calc_items failed: status=%" PRId32 ", ik_return=%" PRId32 "\n", status, ik_return);
+    int32_t ck_return = -1;
+    const CK_Status status = calc_items(items, len, out, &ck_return);
+    if (status != CK_OK || ck_return != 0) {
+      fprintf(stderr, "calc_items failed: status=%" PRId32 ", ck_return=%" PRId32 "\n", status, ck_return);
       free(items);
       free(out);
       return 1;

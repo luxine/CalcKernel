@@ -25,11 +25,11 @@ typedef int32_t CK_Status;
 extern "C" {
 #endif
 
-CK_API CK_Status and_short_circuit(int64_t a, int64_t b, bool* ik_return);
+CK_API CK_Status and_short_circuit(int64_t a, int64_t b, bool* ck_return);
 
-CK_API CK_Status or_short_circuit(int64_t a, int64_t b, bool* ik_return);
+CK_API CK_Status or_short_circuit(int64_t a, int64_t b, bool* ck_return);
 
-CK_API CK_Status and_rhs_error(bool run_rhs, int64_t numerator, int64_t divisor, bool* ik_return);
+CK_API CK_Status and_rhs_error(bool run_rhs, int64_t numerator, int64_t divisor, bool* ck_return);
 
 #ifdef __cplusplus
 }

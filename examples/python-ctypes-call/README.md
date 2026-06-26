@@ -173,7 +173,7 @@ typedef int32_t CK_Status;
 The checked `calc_items` declaration is:
 
 ```c
-CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ck_return);
 ```
 
 The Python binding maps this as:
@@ -194,14 +194,14 @@ lib.calc_items.argtypes = [
 lib.calc_items.restype = ctypes.c_int32
 ```
 
-The caller still allocates `items`, `out`, and `ik_return`:
+The caller still allocates `items`, `out`, and `ck_return`:
 
 ```python
 out = (ctypes.c_int64 * len(items))(0, 0, 0)
-ik_return = ctypes.c_int32()
-status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
+ck_return = ctypes.c_int32()
+status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ck_return))
 ```
 
 Checked mode checks integer overflow, division by zero, and the generated
-`ik_return` pointer. It still does not perform bounds checks, validate user
+`ck_return` pointer. It still does not perform bounds checks, validate user
 data pointers, or verify that output buffers are large enough.

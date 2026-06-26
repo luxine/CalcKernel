@@ -25,15 +25,15 @@ typedef int32_t CK_Status;
 extern "C" {
 #endif
 
-CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return);
 
-CK_API CK_Status mul_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status mul_i64(int64_t a, int64_t b, int64_t* ck_return);
 
-CK_API CK_Status div_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status div_i64(int64_t a, int64_t b, int64_t* ck_return);
 
-CK_API CK_Status neg_i64(int64_t a, int64_t* ik_return);
+CK_API CK_Status neg_i64(int64_t a, int64_t* ck_return);
 
-CK_API CK_Status less_i64(int64_t a, int64_t b, bool* ik_return);
+CK_API CK_Status less_i64(int64_t a, int64_t b, bool* ck_return);
 
 #ifdef __cplusplus
 }

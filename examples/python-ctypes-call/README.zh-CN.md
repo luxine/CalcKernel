@@ -170,7 +170,7 @@ typedef int32_t CK_Status;
 Checked `calc_items` declaration 是：
 
 ```c
-CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ik_return);
+CK_API CK_Status calc_items(Item* items, int32_t len, int64_t* out, int32_t* ck_return);
 ```
 
 Python binding 映射为：
@@ -191,13 +191,13 @@ lib.calc_items.argtypes = [
 lib.calc_items.restype = ctypes.c_int32
 ```
 
-调用方仍然分配 `items`、`out` 和 `ik_return`：
+调用方仍然分配 `items`、`out` 和 `ck_return`：
 
 ```python
 out = (ctypes.c_int64 * len(items))(0, 0, 0)
-ik_return = ctypes.c_int32()
-status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ik_return))
+ck_return = ctypes.c_int32()
+status = lib.calc_items(items, ctypes.c_int32(len(items)), out, ctypes.byref(ck_return))
 ```
 
-Checked mode 会检查 integer overflow、division by zero 和生成的 `ik_return` pointer。
+Checked mode 会检查 integer overflow、division by zero 和生成的 `ck_return` pointer。
 它仍然不做 bounds check，不验证用户 data pointer，也不确认 output buffer 是否足够大。

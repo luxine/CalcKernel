@@ -1,6 +1,6 @@
 #include "scalar_logical_checked.h"
 
-CK_Status and_short_circuit(int64_t a, int64_t b, bool* ik_return) {
+CK_Status and_short_circuit(int64_t a, int64_t b, bool* ck_return) {
   bool ik_sc0;
   int64_t ik_tmp0;
   bool ik_tmp1;
@@ -8,7 +8,7 @@ CK_Status and_short_circuit(int64_t a, int64_t b, bool* ik_return) {
   int64_t ik_tmp3;
   bool ik_tmp4;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -38,11 +38,11 @@ bb2:
   goto bb3;
 
 bb3:
-  *ik_return = ik_sc0;
+  *ck_return = ik_sc0;
   return CK_OK;
 }
 
-CK_Status or_short_circuit(int64_t a, int64_t b, bool* ik_return) {
+CK_Status or_short_circuit(int64_t a, int64_t b, bool* ck_return) {
   bool ik_sc0;
   int64_t ik_tmp0;
   bool ik_tmp1;
@@ -50,7 +50,7 @@ CK_Status or_short_circuit(int64_t a, int64_t b, bool* ik_return) {
   int64_t ik_tmp3;
   bool ik_tmp4;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -80,17 +80,17 @@ bb2:
   goto bb3;
 
 bb3:
-  *ik_return = ik_sc0;
+  *ck_return = ik_sc0;
   return CK_OK;
 }
 
-CK_Status and_rhs_error(bool run_rhs, int64_t numerator, int64_t divisor, bool* ik_return) {
+CK_Status and_rhs_error(bool run_rhs, int64_t numerator, int64_t divisor, bool* ck_return) {
   bool ik_sc0;
   int64_t ik_tmp0;
   int64_t ik_tmp1;
   bool ik_tmp2;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -118,6 +118,6 @@ bb2:
   goto bb3;
 
 bb3:
-  *ik_return = ik_sc0;
+  *ck_return = ik_sc0;
   return CK_OK;
 }

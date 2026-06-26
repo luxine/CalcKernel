@@ -84,7 +84,7 @@ export function emitFunctionSignature(functionDeclaration: FunctionDeclaration):
 
 export function emitCheckedFunctionSignature(functionDeclaration: FunctionDeclaration): string {
   const params = functionDeclaration.params.map((param) => `${emitCType(param.type)} ${param.name.name}`);
-  params.push(`${emitCType(functionDeclaration.returnType)}* ik_return`);
+  params.push(`${emitCType(functionDeclaration.returnType)}* ck_return`);
   return `CK_Status ${functionDeclaration.name.name}(${params.join(", ")})`;
 }
 

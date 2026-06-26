@@ -1,24 +1,24 @@
 #include "scalar_calls_checked.h"
 
-static CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
+static CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return) {
   int64_t ik_tmp0;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
   if (__builtin_add_overflow(a, b, &ik_tmp0)) {
     return CK_ERR_OVERFLOW;
   }
-  *ik_return = ik_tmp0;
+  *ck_return = ik_tmp0;
   return CK_OK;
 }
 
-static CK_Status double_i64(int64_t a, int64_t* ik_return) {
+static CK_Status double_i64(int64_t a, int64_t* ck_return) {
   int64_t ik_tmp0;
   int64_t ik_tmp1;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -26,16 +26,16 @@ static CK_Status double_i64(int64_t a, int64_t* ik_return) {
   if (__builtin_mul_overflow(a, ik_tmp0, &ik_tmp1)) {
     return CK_ERR_OVERFLOW;
   }
-  *ik_return = ik_tmp1;
+  *ck_return = ik_tmp1;
   return CK_OK;
 }
 
-CK_Status calc(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status calc(int64_t a, int64_t b, int64_t* ck_return) {
   int64_t ik_tmp0;
   int64_t ik_tmp1;
   CK_Status ik_status;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -47,17 +47,17 @@ CK_Status calc(int64_t a, int64_t b, int64_t* ik_return) {
   if (ik_status != CK_OK) {
     return ik_status;
   }
-  *ik_return = ik_tmp1;
+  *ck_return = ik_tmp1;
   return CK_OK;
 }
 
-CK_Status calc_overflow(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status calc_overflow(int64_t a, int64_t b, int64_t* ck_return) {
   int64_t ik_tmp0;
   int64_t ik_tmp1;
   int64_t ik_tmp2;
   CK_Status ik_status;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -69,6 +69,6 @@ CK_Status calc_overflow(int64_t a, int64_t b, int64_t* ik_return) {
   if (__builtin_mul_overflow(ik_tmp0, ik_tmp1, &ik_tmp2)) {
     return CK_ERR_OVERFLOW;
   }
-  *ik_return = ik_tmp2;
+  *ck_return = ik_tmp2;
   return CK_OK;
 }

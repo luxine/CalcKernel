@@ -169,7 +169,7 @@ pnpm ckc build examples/pricing.ck --out build/libpricing --overflow unchecked
 ```
 
 Checked arithmetic mode 会改变生成的 C ABI：函数返回 `CK_Status`，原始返回值
-通过最后一个 `ik_return` 指针写出：
+通过最后一个 `ck_return` 指针写出：
 
 ```sh
 pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow checked
@@ -180,7 +180,7 @@ pnpm ckc build examples/pricing.ck --out build/libpricing_checked --overflow che
 - `CK_OK`：计算成功
 - `CK_ERR_OVERFLOW`：checked arithmetic overflow
 - `CK_ERR_DIV_BY_ZERO`：checked 除法或取模除零
-- `CK_ERR_NULL_POINTER`：生成的 checked `ik_return` 指针为 `NULL`
+- `CK_ERR_NULL_POINTER`：生成的 checked `ck_return` 指针为 `NULL`
 
 金额、税费、优惠和规则 kernel 需要显式报告算术失败时，使用 checked mode。
 已经验证输入且最大吞吐更重要的热路径，可以使用 unchecked mode。

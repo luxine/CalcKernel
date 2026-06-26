@@ -289,7 +289,7 @@ overflow or division-by-zero checks.
 The compiler also supports optional checked arithmetic code generation with
 `--overflow checked`. Checked mode changes the generated C ABI to return
 `CK_Status`, writes the original CalcKernel return value through a final
-`ik_return` pointer, and checks integer add, subtract, multiply, divide, modulo,
+`ck_return` pointer, and checks integer add, subtract, multiply, divide, modulo,
 and unary minus operations. It also reports division by zero and signed
 division/modulo overflow such as `INT64_MIN / -1`.
 

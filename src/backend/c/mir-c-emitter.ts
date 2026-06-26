@@ -56,7 +56,7 @@ function emitFunction(func: MirFunction): string {
 function emitCheckedFunction(func: MirFunction, optLevel: OptimizationLevel): string {
   const prefix = func.exported ? "" : "static ";
   const params = func.params.map((param) => `${emitCType(param.type)} ${param.name}`);
-  params.push(`${emitCType(func.returnType)}* ik_return`);
+  params.push(`${emitCType(func.returnType)}* ck_return`);
 
   const lines = [`${prefix}CK_Status ${func.name}(${params.join(", ")}) {`];
   const declarations = emitDeclarations(func);
@@ -71,7 +71,7 @@ function emitCheckedFunction(func: MirFunction, optLevel: OptimizationLevel): st
     lines.push(...declarations.map((line) => `  ${line}`), "");
   }
 
-  lines.push("  if (ik_return == NULL) {", "    return CK_ERR_NULL_POINTER;", "  }");
+  lines.push("  if (ck_return == NULL) {", "    return CK_ERR_NULL_POINTER;", "  }");
 
   func.blocks.forEach((block, index) => {
     if (index > 0 || declarations.length > 0) {
@@ -454,7 +454,7 @@ function emitTerminator(terminator: MirTerminator): string[] {
 function emitCheckedTerminator(terminator: MirTerminator): string[] {
   switch (terminator.kind) {
     case "return":
-      return [`*ik_return = ${emitValue(terminator.value)};`, "return CK_OK;"];
+      return [`*ck_return = ${emitValue(terminator.value)};`, "return CK_OK;"];
     case "jump":
       return [`goto ${terminator.label};`];
     case "branch":

@@ -42,7 +42,7 @@ const Item = koffi.struct("Item", {
   tax_rate_ppm: "int64_t"
 });
 
-const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ int64_t *out, _Out_ int32_t *ik_return)");
+const calcItems = lib.func("int32_t calc_items(Item *items, int32_t len, _Out_ int64_t *out, _Out_ int32_t *ck_return)");
 
 function runSuccessCase() {
   const items = [
@@ -51,15 +51,15 @@ function runSuccessCase() {
     { price: 1200n, qty: 5n, discount: 500n, tax_rate_ppm: 100000n }
   ];
   const out = new BigInt64Array(items.length);
-  const ikReturn = new Int32Array(1);
-  ikReturn[0] = -1;
+  const ckReturn = new Int32Array(1);
+  ckReturn[0] = -1;
 
-  const status = calcItems(items, items.length, out, ikReturn);
+  const status = calcItems(items, items.length, out, ckReturn);
   if (status !== CK_OK) {
     throw new Error(`calc_items returned CK_Status ${status}`);
   }
-  if (ikReturn[0] !== 0) {
-    throw new Error(`unexpected ik_return: expected 0, got ${ikReturn[0]}`);
+  if (ckReturn[0] !== 0) {
+    throw new Error(`unexpected ck_return: expected 0, got ${ckReturn[0]}`);
   }
 
   const expected = [20567n, 11000n, 6050n];
@@ -72,10 +72,10 @@ function runSuccessCase() {
 function runOverflowCase() {
   const items = [{ price: 9223372036854775807n, qty: 2n, discount: 0n, tax_rate_ppm: 0n }];
   const out = new BigInt64Array(items.length);
-  const ikReturn = new Int32Array(1);
-  ikReturn[0] = -1;
+  const ckReturn = new Int32Array(1);
+  ckReturn[0] = -1;
 
-  const status = calcItems(items, items.length, out, ikReturn);
+  const status = calcItems(items, items.length, out, ckReturn);
   if (status !== CK_ERR_OVERFLOW) {
     throw new Error(`expected CK_ERR_OVERFLOW, got CK_Status ${status}`);
   }

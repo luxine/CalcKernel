@@ -1,6 +1,6 @@
 #include "scalar_control_checked.h"
 
-CK_Status sum_to_n(int64_t n, int64_t* ik_return) {
+CK_Status sum_to_n(int64_t n, int64_t* ck_return) {
   int64_t i;
   int64_t sum;
   int64_t ik_tmp0;
@@ -10,7 +10,7 @@ CK_Status sum_to_n(int64_t n, int64_t* ik_return) {
   int64_t ik_tmp4;
   int64_t ik_tmp5;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -41,14 +41,14 @@ bb2:
   goto bb1;
 
 bb3:
-  *ik_return = sum;
+  *ck_return = sum;
   return CK_OK;
 }
 
-CK_Status choose(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status choose(int64_t a, int64_t b, int64_t* ck_return) {
   bool ik_tmp0;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -60,22 +60,22 @@ CK_Status choose(int64_t a, int64_t b, int64_t* ik_return) {
   }
 
 bb1:
-  *ik_return = a;
+  *ck_return = a;
   return CK_OK;
 
 bb2:
-  *ik_return = b;
+  *ck_return = b;
   return CK_OK;
 }
 
-CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return) {
+CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ck_return) {
   int64_t ik_tmp0;
   int64_t ik_tmp1;
   bool ik_tmp2;
   int64_t ik_tmp3;
   int64_t ik_tmp4;
 
-  if (ik_return == NULL) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -92,11 +92,11 @@ CK_Status condition_overflow(int64_t a, int64_t b, int64_t* ik_return) {
 
 bb1:
   ik_tmp3 = 1;
-  *ik_return = ik_tmp3;
+  *ck_return = ik_tmp3;
   return CK_OK;
 
 bb2:
   ik_tmp4 = 0;
-  *ik_return = ik_tmp4;
+  *ck_return = ik_tmp4;
   return CK_OK;
 }

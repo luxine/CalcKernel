@@ -25,9 +25,9 @@ typedef int32_t CK_Status;
 extern "C" {
 #endif
 
-CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return);
 
-CK_API CK_Status max_i32(int32_t a, int32_t b, int32_t* ik_return);
+CK_API CK_Status max_i32(int32_t a, int32_t b, int32_t* ck_return);
 
 #ifdef __cplusplus
 }

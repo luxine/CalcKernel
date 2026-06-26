@@ -67,7 +67,7 @@ unless an ABI change is intentional.
 | Integer overflow | Not checked | Returns `CK_ERR_OVERFLOW` |
 | Division by zero | Not checked | Returns `CK_ERR_DIV_BY_ZERO` |
 | `f64` overflow and division by zero | C `double` behavior | C `double` behavior, still returns `CK_OK` unless another checked error occurs |
-| User pointers | Not checked | Not checked, except generated `ik_return` |
+| User pointers | Not checked | Not checked, except generated `ck_return` |
 | Bounds checks | No | No |
 | Runtime dependency | None | None |
 | Performance | Fastest | Extra checks and branches |
@@ -117,7 +117,7 @@ typedef int32_t CK_Status;
 - `CK_OK`: computation succeeded.
 - `CK_ERR_OVERFLOW`: checked arithmetic detected overflow.
 - `CK_ERR_DIV_BY_ZERO`: division or modulo divisor was zero.
-- `CK_ERR_NULL_POINTER`: the generated checked return pointer `ik_return` was
+- `CK_ERR_NULL_POINTER`: the generated checked return pointer `ck_return` was
   `NULL`.
 
 ## Checked ABI Example
@@ -140,14 +140,14 @@ typedef int32_t CK_Status;
 #define CK_ERR_DIV_BY_ZERO ((CK_Status)2)
 #define CK_ERR_NULL_POINTER ((CK_Status)3)
 
-CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return);
+CK_API CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return);
 ```
 
 Checked implementation:
 
 ```c
-CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
-  if (ik_return == NULL) {
+CK_Status add_i64(int64_t a, int64_t b, int64_t* ck_return) {
+  if (ck_return == NULL) {
     return CK_ERR_NULL_POINTER;
   }
 
@@ -156,7 +156,7 @@ CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
     return CK_ERR_OVERFLOW;
   }
 
-  *ik_return = ik_tmp0;
+  *ck_return = ik_tmp0;
   return CK_OK;
 }
 ```
@@ -212,7 +212,7 @@ CK_Status add_i64(int64_t a, int64_t b, int64_t* ik_return) {
 
 Checked C mode is still an integer checked arithmetic mode. Functions containing
 `f64` use the checked ABI when `--overflow checked` is selected, so they return
-`CK_Status` and write the source-level return value through `ik_return`. The f64
+`CK_Status` and write the source-level return value through `ck_return`. The f64
 operations themselves use ordinary strict C `double` behavior:
 
 - `f64 +`, `-`, `*`, and `/` do not call integer overflow builtins.
@@ -327,7 +327,7 @@ explicit pointer-plus-length metadata.
 
 ## Null Pointers
 
-Phase 10 only checks the generated checked ABI return pointer, `ik_return`, for
+Phase 10 only checks the generated checked ABI return pointer, `ck_return`, for
 `NULL`.
 
 It does not automatically check every user `ptr<T>` parameter.
@@ -366,7 +366,7 @@ from:
 - division-by-zero branches
 - signed division/modulo overflow branches
 - `CK_Status` checks after CalcKernel function calls
-- extra temporaries and the final `ik_return` write
+- extra temporaries and the final `ck_return` write
 
 Use checked mode when correctness and explicit arithmetic failure reporting are
 more important than maximum throughput, for example money, tax, discount, and

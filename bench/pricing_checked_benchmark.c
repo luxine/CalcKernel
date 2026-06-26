@@ -56,7 +56,7 @@ int main(void) {
     const int32_t len = sizes[size_index];
     Item* items = (Item*)malloc(sizeof(Item) * (size_t)len);
     int64_t* out = (int64_t*)calloc((size_t)len, sizeof(int64_t));
-    int32_t ik_return = -1;
+    int32_t ck_return = -1;
 
     if (items == NULL || out == NULL) {
       free(items);
@@ -67,9 +67,9 @@ int main(void) {
 
     fill_items(items, len);
 
-    CK_Status status = calc_items(items, len, out, &ik_return);
-    if (status != CK_OK || ik_return != 0) {
-      fprintf(stderr, "warmup calc_items failed for %" PRId32 " items: status=%" PRId32 ", ik_return=%" PRId32 "\n", len, status, ik_return);
+    CK_Status status = calc_items(items, len, out, &ck_return);
+    if (status != CK_OK || ck_return != 0) {
+      fprintf(stderr, "warmup calc_items failed for %" PRId32 " items: status=%" PRId32 ", ck_return=%" PRId32 "\n", len, status, ck_return);
       free(items);
       free(out);
       return 1;
@@ -78,14 +78,14 @@ int main(void) {
     for (int32_t i = 0; i < len; i += 1) {
       out[i] = 0;
     }
-    ik_return = -1;
+    ck_return = -1;
 
     const uint64_t start = now_ns();
-    status = calc_items(items, len, out, &ik_return);
+    status = calc_items(items, len, out, &ck_return);
     const uint64_t elapsed = now_ns() - start;
 
-    if (status != CK_OK || ik_return != 0) {
-      fprintf(stderr, "calc_items failed for %" PRId32 " items: status=%" PRId32 ", ik_return=%" PRId32 "\n", len, status, ik_return);
+    if (status != CK_OK || ck_return != 0) {
+      fprintf(stderr, "calc_items failed for %" PRId32 " items: status=%" PRId32 ", ck_return=%" PRId32 "\n", len, status, ck_return);
       free(items);
       free(out);
       return 1;

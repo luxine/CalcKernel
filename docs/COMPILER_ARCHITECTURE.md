@@ -160,7 +160,7 @@ modes:
 
 - unchecked mode emits ordinary C expressions and original return types
 - checked mode emits `CK_Status`, checked arithmetic guards, checked function
-  call propagation, and `ik_return` handling
+  call propagation, and `ck_return` handling
 
 Exported functions are declared in the header. Non-exported functions are
 emitted as `static` in the C source.
@@ -178,7 +178,7 @@ with:
 - exported function declarations
 
 Unchecked headers keep original return types. Checked headers include
-`CK_Status` and add the final `ik_return` pointer to exported function
+`CK_Status` and add the final `ck_return` pointer to exported function
 signatures.
 
 ### Build Command
