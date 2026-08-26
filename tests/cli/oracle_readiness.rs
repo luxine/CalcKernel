@@ -1,14 +1,17 @@
 use std::{fs, path::Path, process::Command};
 
-use super::support::{command::node_available, oracle::typescript_root, temp::temp_dir};
+use super::support::{command::node_available, oracle::configured_typescript_root, temp::temp_dir};
 
 #[test]
-fn typescript_oracle_verifier_should_confirm_default_cli_oracle_is_available() {
+fn typescript_oracle_verifier_should_confirm_configured_cli_oracle_is_available() {
     if !node_available() {
         return;
     }
+    let Some(ts_root) = configured_typescript_root() else {
+        return;
+    };
 
-    let summary = verify_typescript_oracle(&typescript_root()).expect("verify TypeScript oracle");
+    let summary = verify_typescript_oracle(&ts_root).expect("verify TypeScript oracle");
 
     assert_eq!(summary.cli_status, "ok");
     assert!(

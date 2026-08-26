@@ -5,11 +5,14 @@ use std::{
 };
 
 use super::support::fixtures;
-use super::support::oracle::{repo_root, typescript_root};
+use super::support::oracle::{configured_typescript_root, repo_root};
 
 #[test]
 fn typescript_oracle_fixtures_should_be_covered_by_rust_backend_tests() {
-    let report = audit_typescript_oracle_fixture_coverage()
+    let Some(ts_root) = configured_typescript_root() else {
+        return;
+    };
+    let report = audit_typescript_oracle_fixture_coverage(&ts_root)
         .expect("run TypeScript oracle fixture coverage audit");
 
     assert!(
@@ -32,8 +35,9 @@ struct FixtureCoverageReport {
     failures: Vec<String>,
 }
 
-fn audit_typescript_oracle_fixture_coverage() -> Result<FixtureCoverageReport, String> {
-    let ts_root = typescript_root();
+fn audit_typescript_oracle_fixture_coverage(
+    ts_root: &Path,
+) -> Result<FixtureCoverageReport, String> {
     let fixture_roots = ["examples", "bench/perf/fixtures", "tests/fixtures"];
     let backend_coverage = [
         ("MIR", "tests/ir/mir.rs"),
@@ -54,7 +58,7 @@ fn audit_typescript_oracle_fixture_coverage() -> Result<FixtureCoverageReport, S
     for fixture_root in fixture_roots {
         let root = ts_root.join(fixture_root);
         if root.exists() {
-            fixtures.extend(list_ck_files(&ts_root, &root)?);
+            fixtures.extend(list_ck_files(ts_root, &root)?);
         } else {
             failures.push(format!(
                 "TypeScript fixture directory is missing: {}",
