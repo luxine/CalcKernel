@@ -124,7 +124,7 @@ fn v0_9_docs_should_define_canonical_slice_and_mode_contracts() {
 
 #[test]
 fn diagnostic_reference_should_cover_every_display_code() {
-    let source = read("src/diagnostics.rs");
+    let source = read("src/frontend/diagnostics.rs");
     let reference = read("docs/reference/diagnostics.md");
     let mut codes = BTreeSet::new();
     for line in source.lines() {
