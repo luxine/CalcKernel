@@ -11,7 +11,7 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "ckc"
-path = "src/main.rs"
+path = "src/bin/ckc.rs"
 
 [[bench]]
 name = "ckc_perf"
