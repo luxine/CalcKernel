@@ -1,0 +1,49 @@
+use std::{fs, path::PathBuf};
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn daily_ci_should_gate_pull_requests_and_main_pushes() {
+    let workflow_path = repo_root().join(".github/workflows/ci.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", workflow_path.display()));
+
+    for required in [
+        "name: CI",
+        "pull_request:\n    branches: [main]",
+        "push:\n    branches: [main]",
+        "contents: read",
+        "cancel-in-progress: true",
+        "name: quality",
+        "runs-on: ubuntu-24.04",
+        "components: rustfmt, clippy",
+        "cargo fmt --check",
+        "cargo clippy --all-targets --all-features --locked -- -D warnings",
+        "cargo test --locked",
+        "cargo build --release --locked",
+        "./target/release/ckc --help",
+        "./target/release/ckc check examples/scalar.ck",
+        "./target/release/ckc emit-mir examples/scalar.ck -O3",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "daily CI workflow must contain {required:?}"
+        );
+    }
+
+    for forbidden in [
+        "actions/upload-artifact",
+        "actions/download-artifact",
+        "gh release upload",
+        "publish-release:",
+        "build-artifacts:",
+        "tags:",
+    ] {
+        assert!(
+            !workflow.contains(forbidden),
+            "daily CI workflow must not contain {forbidden:?}"
+        );
+    }
+}
