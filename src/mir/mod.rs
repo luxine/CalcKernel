@@ -286,6 +286,13 @@ struct FunctionLowerContext<'program> {
     blocks: Vec<MutableMirBlock>,
     current_block: Option<usize>,
     synthetic_local_counter: usize,
+    loop_targets: Vec<LoopTargets>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopTargets {
+    continue_label: String,
+    break_label: String,
 }
 
 #[must_use]
@@ -365,6 +372,7 @@ fn lower_function(
         blocks: Vec::new(),
         current_block: None,
         synthetic_local_counter: 0,
+        loop_targets: Vec::new(),
     };
 
     start_block(&mut context, None);
@@ -413,6 +421,30 @@ fn lower_statement(
         Statement::Return(statement) => {
             let value = lower_expression(context, &statement.value)?;
             set_terminator(context, MirTerminator::Return { value })
+        }
+        Statement::Break(_) => {
+            let label = context
+                .loop_targets
+                .last()
+                .map(|targets| targets.break_label.clone())
+                .ok_or_else(|| {
+                    MirLowerError::new(
+                        "MIR lowering invariant violation: 'break' has no enclosing loop.",
+                    )
+                })?;
+            set_terminator(context, MirTerminator::Jump { label })
+        }
+        Statement::Continue(_) => {
+            let label = context
+                .loop_targets
+                .last()
+                .map(|targets| targets.continue_label.clone())
+                .ok_or_else(|| {
+                    MirLowerError::new(
+                        "MIR lowering invariant violation: 'continue' has no enclosing loop.",
+                    )
+                })?;
+            set_terminator(context, MirTerminator::Jump { label })
         }
         Statement::If(statement) => {
             let condition = lower_expression(context, &statement.condition)?;
@@ -500,7 +532,13 @@ fn lower_statement(
             )?;
 
             start_block(context, Some(body_label));
-            lower_statements(context, &statement.body.statements)?;
+            context.loop_targets.push(LoopTargets {
+                continue_label: cond_label.clone(),
+                break_label: exit_label.clone(),
+            });
+            let body_result = lower_statements(context, &statement.body.statements);
+            context.loop_targets.pop();
+            body_result?;
             if context.current_block.is_some() {
                 set_terminator(context, MirTerminator::Jump { label: cond_label })?;
             }

@@ -102,6 +102,13 @@ The type checker builds symbol tables for structs, functions, parameters, and
 locals. It validates names, types, assignments, function calls, control-flow
 conditions, return types, pointer indexing, and struct field access.
 
+Statement checking also produces a structured flow summary: whether a block
+falls through and whether it may `return`, `break`, or `continue`. A loop-depth
+counter rejects loop control outside `while`, and block composition reports
+unreachable statements without type-checking dead source. An enclosing loop
+consumes its own `break` and `continue` outcomes; `while` remains conservative
+and is always considered able to fall through.
+
 ### CheckedProgram / Typed Program
 
 After a successful type check, the compiler exposes a `CheckedProgram` typed
@@ -127,6 +134,8 @@ preserving source semantics.
 MIR lowering is responsible for:
 
 - turning `if` / `else` and `while` into labeled basic blocks
+- lowering `break` and `continue` to `MirTerminator::Jump` using an innermost-loop
+  target stack
 - lowering `&&` and `||` into control flow so short-circuit behavior is kept
 - lowering function calls into explicit `call` instructions
 - lowering pointer indexing and struct field access into typed places
@@ -154,6 +163,12 @@ passes must preserve checked/unchecked semantics, ABI, and observable language
 behavior. The optimizer does not add bounds checks, a runtime, or new language
 features. See [MIR](MIR.md) and [Optimization](OPTIMIZATION.md) for the MIR v1
 design and pass pipeline.
+
+Once lowered, loop-control edges are ordinary MIR jumps. The optimizer and C,
+LLVM, and WASM backends must preserve them at every optimization level. The
+WASM structured-control recognizer may use its normal structured form; when a
+CFG does not match, the existing dispatcher fallback remains the semantic
+backstop.
 
 The MIR C backend emits the `.c` implementation file. It supports both overflow
 modes:

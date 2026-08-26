@@ -1,7 +1,7 @@
 use calckernel::{
     EmitWasmOptions, MirPassContext, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
-    build_mir_optimization_pipeline, check, emit_wasm_module, emit_wat_module_with_options,
-    lower_to_mir, run_mir_pass_pipeline,
+    build_mir_optimization_pipeline, check, emit_wasm_module, emit_wasm_module_with_options,
+    emit_wat_module_with_options, lower_to_mir, run_mir_pass_pipeline,
 };
 use std::{
     fs,
@@ -27,6 +27,26 @@ fn emit_wat(source_text: &str, opt_level: u8) -> String {
     );
     assert_eq!(optimized.validation_errors, []);
     emit_wat_module_with_options(&optimized.module, EmitWasmOptions { opt_level })
+}
+
+fn emit_wasm(source_text: &str, opt_level: u8) -> Vec<u8> {
+    let checked = check(&SourceFile::new("test.ck", source_text));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
+    let pipeline = build_mir_optimization_pipeline(opt_level);
+    let optimized = run_mir_pass_pipeline(
+        mir,
+        &pipeline,
+        &MirPassContext {
+            opt_level,
+            overflow_mode: MirPassOverflowMode::Unchecked,
+            target_backend: MirPassTargetBackend::Wasm,
+            debug: Default::default(),
+        },
+    );
+    assert_eq!(optimized.validation_errors, []);
+    emit_wasm_module_with_options(&optimized.module, EmitWasmOptions { opt_level })
+        .expect("WAT should compile to WASM")
 }
 
 #[test]
@@ -550,6 +570,112 @@ fn typescript_root() -> PathBuf {
     std::env::var_os("CALCKERNEL_TS_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
+}
+
+#[test]
+fn wasm_backend_should_run_break_continue_dispatcher_fallback_at_all_opt_levels() {
+    if !node_available() {
+        return;
+    }
+    let source = r#"
+      export fn early_exit(n: u32) -> u32 {
+        let i: u32 = 0;
+        while i < n {
+          if i == 3 {
+            break;
+          }
+          i = i + 1;
+        }
+        return i;
+      }
+
+      export fn skip_three(n: u32) -> u32 {
+        let i: u32 = 0;
+        let sum: u32 = 0;
+        while i < n {
+          i = i + 1;
+          if i == 3 {
+            continue;
+          }
+          sum = sum + i;
+        }
+        return sum;
+      }
+
+      export fn nested(n: u32) -> u32 {
+        let outer: u32 = 0;
+        let hits: u32 = 0;
+        while outer < n {
+          let inner: u32 = 0;
+          while inner < n {
+            inner = inner + 1;
+            if inner == 2 {
+              continue;
+            }
+            hits = hits + 1;
+            if inner == 3 {
+              break;
+            }
+          }
+          outer = outer + 1;
+        }
+        return hits;
+      }
+
+      export fn return_from_loop(n: u32) -> u32 {
+        let i: u32 = 0;
+        while i < n {
+          if i == 2 {
+            return 99;
+          }
+          i = i + 1;
+          if i == 1 {
+            continue;
+          }
+        }
+        return i;
+      }
+    "#;
+    let wat = emit_wat(source, 3);
+    assert!(wat.contains("loop $ik_dispatch"), "{wat}");
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_break_continue_wasm_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let runner = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const { early_exit, skip_three, nested, return_from_loop } = instance.exports;
+    if (early_exit(10) !== 3 || skip_three(5) !== 12 || nested(4) !== 8 ||
+        return_from_loop(5) !== 99) {
+      process.exit(1);
+    }
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+"#;
+
+    for opt_level in 0..=3 {
+        let wasm_path = dir.join(format!("control_o{opt_level}.wasm"));
+        fs::write(&wasm_path, emit_wasm(source, opt_level)).expect("write WASM");
+        let run = Command::new("node")
+            .arg("-e")
+            .arg(runner)
+            .arg(&wasm_path)
+            .output()
+            .expect("run WASM harness");
+        assert!(
+            run.status.success(),
+            "O{opt_level} runtime stderr:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
 }
 
 fn node_available() -> bool {

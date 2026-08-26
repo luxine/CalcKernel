@@ -171,6 +171,70 @@ bb3:
 }
 
 #[test]
+fn mir_should_lower_break_to_innermost_loop_exit() {
+    let text = lower_and_print(
+        r#"
+      export fn stop_at_three(n: u32) -> u32 {
+        let i: u32 = 0;
+        while i < n {
+          if i == 3 {
+            break;
+          }
+          i = i + 1;
+        }
+        return i;
+      }
+    "#,
+    );
+
+    assert!(text.contains("bb4:\n  jump bb3\n"), "{text}");
+}
+
+#[test]
+fn mir_should_lower_continue_to_innermost_loop_condition() {
+    let text = lower_and_print(
+        r#"
+      export fn skip_three(n: u32) -> u32 {
+        let i: u32 = 0;
+        let total: u32 = 0;
+        while i < n {
+          i = i + 1;
+          if i == 3 {
+            continue;
+          }
+          total = total + i;
+        }
+        return total;
+      }
+    "#,
+    );
+
+    assert!(text.contains("bb4:\n  jump bb1\n"), "{text}");
+}
+
+#[test]
+fn mir_should_lower_nested_loop_control_to_distinct_targets() {
+    let text = lower_and_print(
+        r#"
+      export fn nested(n: u32) -> u32 {
+        let outer: u32 = 0;
+        let inner: u32 = 0;
+        while outer < n {
+          while inner < n {
+            break;
+          }
+          continue;
+        }
+        return outer;
+      }
+    "#,
+    );
+
+    assert!(text.contains("bb5:\n  jump bb6\n"), "{text}");
+    assert!(text.contains("bb6:\n  jump bb1\n"), "{text}");
+}
+
+#[test]
 fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_levels() {
     let Some(ts_cli) = typescript_cli() else {
         return;

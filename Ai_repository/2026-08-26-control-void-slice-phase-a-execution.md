@@ -1,6 +1,6 @@
 # Phase A Execution Plan — `break` and `continue`
 
-Status: ready
+Status: completed and accepted on 2026-08-26
 
 Prerequisite: planning commit only
 

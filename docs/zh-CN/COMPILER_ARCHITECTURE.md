@@ -95,6 +95,12 @@ Type checker 为 struct、function、parameter 和 local 构建 symbol table。�
 名称、类型、assignment、function call、control-flow condition、return type、
 pointer indexing 和 struct field access。
 
+Statement checking 还会产生结构化 flow summary：block 是否 fall through，以及
+是否可能 `return`、`break` 或 `continue`。Loop-depth counter 拒绝在 `while` 外的
+loop control；block composition 会报告不可达语句，并且不再 type-check dead
+source。外层 loop 消费属于自己的 `break` 和 `continue` outcome；`while` 保持
+保守，总是被视为可能 fall through。
+
 ### CheckedProgram / Typed Program
 
 类型检查成功后，编译器暴露 `CheckedProgram` 这个 typed contract。它保存：
@@ -117,6 +123,8 @@ three-address、basic-block based 表示。它规范化 control flow 和 lvalue/
 MIR lowering 负责：
 
 - 将 `if` / `else` 和 `while` 转换成带 label 的 basic blocks
+- 使用最内层 loop target stack，把 `break` 和 `continue` 降低成
+  `MirTerminator::Jump`
 - 将 `&&` 和 `||` 降低成 control flow，保持 short-circuit 行为
 - 将 function call 降低成显式 `call` instruction
 - 将 pointer indexing 和 struct field access 降低成 typed places
@@ -141,6 +149,11 @@ MIR v1 不是 SSA。Phase 14 增加了保守的 MIR optimization levels，但这
 必须保持 checked/unchecked semantics、ABI 和可观察语言行为。Optimizer 不添加
 bounds check、runtime 或新语言特性。MIR v1 设计和 pass pipeline 见 [MIR](MIR.md)
 与 [Optimization](OPTIMIZATION.md)。
+
+降低后，loop-control edge 就是普通 MIR jump。Optimizer 与 C、LLVM、WASM
+backend 必须在所有 optimization level 保持这些 edge。WASM structured-control
+recognizer 可以生成常规 structured form；CFG 不匹配时，既有 dispatcher fallback
+仍是语义兜底。
 
 MIR C backend 生成 `.c` 实现文件。它支持两种 overflow mode：
 

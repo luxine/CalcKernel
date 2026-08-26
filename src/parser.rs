@@ -94,6 +94,8 @@ pub enum Statement {
     Let(LetStatement),
     Assignment(AssignmentStatement),
     Return(ReturnStatement),
+    Break(BreakStatement),
+    Continue(ContinueStatement),
     If(IfStatement),
     While(WhileStatement),
     Error { span: SourceSpan },
@@ -107,6 +109,8 @@ impl Statement {
             Self::Let(statement) => statement.span,
             Self::Assignment(statement) => statement.span,
             Self::Return(statement) => statement.span,
+            Self::Break(statement) => statement.span,
+            Self::Continue(statement) => statement.span,
             Self::If(statement) => statement.span,
             Self::While(statement) => statement.span,
             Self::Error { span } => *span,
@@ -138,6 +142,16 @@ pub struct AssignmentStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnStatement {
     pub value: Expression,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BreakStatement {
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContinueStatement {
     pub span: SourceSpan,
 }
 
@@ -429,6 +443,12 @@ impl<'source> Parser<'source> {
         if self.check(TokenKind::Return) {
             return Statement::Return(self.parse_return_statement());
         }
+        if self.check(TokenKind::Break) {
+            return Statement::Break(self.parse_break_statement());
+        }
+        if self.check(TokenKind::Continue) {
+            return Statement::Continue(self.parse_continue_statement());
+        }
         if self.check(TokenKind::If) {
             return Statement::If(self.parse_if_statement());
         }
@@ -491,6 +511,22 @@ impl<'source> Parser<'source> {
         ReturnStatement {
             value,
             span: self.span_between_tokens(&return_token, &semicolon),
+        }
+    }
+
+    fn parse_break_statement(&mut self) -> BreakStatement {
+        let token = self.consume(TokenKind::Break, "Expected 'break'.");
+        let semicolon = self.consume(TokenKind::Semicolon, "Expected ';' after 'break'.");
+        BreakStatement {
+            span: self.span_between_tokens(&token, &semicolon),
+        }
+    }
+
+    fn parse_continue_statement(&mut self) -> ContinueStatement {
+        let token = self.consume(TokenKind::Continue, "Expected 'continue'.");
+        let semicolon = self.consume(TokenKind::Semicolon, "Expected ';' after 'continue'.");
+        ContinueStatement {
+            span: self.span_between_tokens(&token, &semicolon),
         }
     }
 

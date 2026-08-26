@@ -134,6 +134,71 @@ struct Checker<'source> {
     symbols: SymbolTable,
     expression_types: TypeMap,
     local_types: LetTypeMap,
+    loop_depth: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlowSummary {
+    falls_through: bool,
+    returns: bool,
+    breaks: bool,
+    continues: bool,
+}
+
+impl FlowSummary {
+    const fn falls_through() -> Self {
+        Self {
+            falls_through: true,
+            returns: false,
+            breaks: false,
+            continues: false,
+        }
+    }
+
+    const fn returns() -> Self {
+        Self {
+            falls_through: false,
+            returns: true,
+            breaks: false,
+            continues: false,
+        }
+    }
+
+    const fn breaks() -> Self {
+        Self {
+            falls_through: false,
+            returns: false,
+            breaks: true,
+            continues: false,
+        }
+    }
+
+    const fn continues() -> Self {
+        Self {
+            falls_through: false,
+            returns: false,
+            breaks: false,
+            continues: true,
+        }
+    }
+
+    const fn then(self, next: Self) -> Self {
+        Self {
+            falls_through: next.falls_through,
+            returns: self.returns || next.returns,
+            breaks: self.breaks || next.breaks,
+            continues: self.continues || next.continues,
+        }
+    }
+
+    const fn union(self, other: Self) -> Self {
+        Self {
+            falls_through: self.falls_through || other.falls_through,
+            returns: self.returns || other.returns,
+            breaks: self.breaks || other.breaks,
+            continues: self.continues || other.continues,
+        }
+    }
 }
 
 impl<'source> Checker<'source> {
@@ -145,6 +210,7 @@ impl<'source> Checker<'source> {
             symbols: SymbolTable::default(),
             expression_types: HashMap::new(),
             local_types: HashMap::new(),
+            loop_depth: 0,
         }
     }
 
@@ -317,13 +383,14 @@ impl<'source> Checker<'source> {
             }
         }
 
-        self.check_block(
+        self.loop_depth = 0;
+        let flow = self.check_block(
             &declaration.body,
             &mut scope,
             &function_symbol.return_type,
             false,
         );
-        if !block_definitely_returns(&declaration.body) {
+        if flow.falls_through {
             self.error(
                 declaration.body.span,
                 format!("Missing return in function '{}'.", declaration.name.name),
@@ -337,16 +404,26 @@ impl<'source> Checker<'source> {
         scope: &mut Scope,
         return_type: &CalcKernelType,
         create_scope: bool,
-    ) {
+    ) -> FlowSummary {
         if create_scope {
             scope.push();
         }
+        let mut flow = FlowSummary::falls_through();
         for statement in &block.statements {
-            self.check_statement(statement, scope, return_type);
+            if !flow.falls_through {
+                self.error_with_code(
+                    statement.span(),
+                    DiagnosticCode::Ck2010,
+                    "Unreachable statement.",
+                );
+                continue;
+            }
+            flow = flow.then(self.check_statement(statement, scope, return_type));
         }
         if create_scope {
             scope.pop();
         }
+        flow
     }
 
     fn check_statement(
@@ -354,19 +431,50 @@ impl<'source> Checker<'source> {
         statement: &Statement,
         scope: &mut Scope,
         return_type: &CalcKernelType,
-    ) {
+    ) -> FlowSummary {
         match statement {
             Statement::Block(block) => self.check_block(block, scope, return_type, true),
-            Statement::Let(statement) => self.check_let_statement(statement, scope),
-            Statement::Assignment(statement) => self.check_assignment_statement(statement, scope),
+            Statement::Let(statement) => {
+                self.check_let_statement(statement, scope);
+                FlowSummary::falls_through()
+            }
+            Statement::Assignment(statement) => {
+                self.check_assignment_statement(statement, scope);
+                FlowSummary::falls_through()
+            }
             Statement::Return(statement) => {
-                self.check_return_statement(statement, scope, return_type)
+                self.check_return_statement(statement, scope, return_type);
+                FlowSummary::returns()
+            }
+            Statement::Break(statement) => {
+                if self.loop_depth == 0 {
+                    self.error_with_code(
+                        statement.span,
+                        DiagnosticCode::Ck2009,
+                        "'break' can only be used inside a while loop.",
+                    );
+                    FlowSummary::falls_through()
+                } else {
+                    FlowSummary::breaks()
+                }
+            }
+            Statement::Continue(statement) => {
+                if self.loop_depth == 0 {
+                    self.error_with_code(
+                        statement.span,
+                        DiagnosticCode::Ck2009,
+                        "'continue' can only be used inside a while loop.",
+                    );
+                    FlowSummary::falls_through()
+                } else {
+                    FlowSummary::continues()
+                }
             }
             Statement::If(statement) => self.check_if_statement(statement, scope, return_type),
             Statement::While(statement) => {
                 self.check_while_statement(statement, scope, return_type)
             }
-            Statement::Error { .. } => {}
+            Statement::Error { .. } => FlowSummary::falls_through(),
         }
     }
 
@@ -451,7 +559,7 @@ impl<'source> Checker<'source> {
         statement: &IfStatement,
         scope: &mut Scope,
         return_type: &CalcKernelType,
-    ) {
+    ) -> FlowSummary {
         let condition_type = materialize_integer_literal(
             self.check_expression(&statement.condition, scope, None),
             primitive_i32(),
@@ -465,10 +573,14 @@ impl<'source> Checker<'source> {
                 ),
             );
         }
-        self.check_block(&statement.then_block, scope, return_type, true);
-        if let Some(else_block) = &statement.else_block {
-            self.check_block(else_block, scope, return_type, true);
-        }
+        let then_flow = self.check_block(&statement.then_block, scope, return_type, true);
+        let else_flow = statement
+            .else_block
+            .as_ref()
+            .map_or_else(FlowSummary::falls_through, |else_block| {
+                self.check_block(else_block, scope, return_type, true)
+            });
+        then_flow.union(else_flow)
     }
 
     fn check_while_statement(
@@ -476,7 +588,7 @@ impl<'source> Checker<'source> {
         statement: &WhileStatement,
         scope: &mut Scope,
         return_type: &CalcKernelType,
-    ) {
+    ) -> FlowSummary {
         let condition_type = materialize_integer_literal(
             self.check_expression(&statement.condition, scope, None),
             primitive_i32(),
@@ -490,7 +602,15 @@ impl<'source> Checker<'source> {
                 ),
             );
         }
-        self.check_block(&statement.body, scope, return_type, true);
+        self.loop_depth += 1;
+        let body_flow = self.check_block(&statement.body, scope, return_type, true);
+        self.loop_depth -= 1;
+        FlowSummary {
+            falls_through: true,
+            returns: body_flow.returns,
+            breaks: false,
+            continues: false,
+        }
     }
 
     fn check_expression(
@@ -935,8 +1055,17 @@ impl<'source> Checker<'source> {
 
     fn error(&mut self, span: SourceSpan, message: impl Into<String>) {
         let message = message.into();
+        self.error_with_code(span, checker_diagnostic_code(&message), message);
+    }
+
+    fn error_with_code(
+        &mut self,
+        span: SourceSpan,
+        code: DiagnosticCode,
+        message: impl Into<String>,
+    ) {
         self.diagnostics.push(Diagnostic::error(
-            checker_diagnostic_code(&message),
+            code,
             message,
             self.source.file_name.clone(),
             span,
@@ -1288,27 +1417,6 @@ fn is_assignable_expression(expression: &Expression) -> bool {
         expression,
         Expression::Identifier { .. } | Expression::Field { .. } | Expression::Index { .. }
     )
-}
-
-fn block_definitely_returns(block: &BlockStatement) -> bool {
-    block
-        .statements
-        .last()
-        .is_some_and(statement_definitely_returns)
-}
-
-fn statement_definitely_returns(statement: &Statement) -> bool {
-    match statement {
-        Statement::Return(_) => true,
-        Statement::Block(block) => block_definitely_returns(block),
-        Statement::If(statement) => statement.else_block.as_ref().is_some_and(|else_block| {
-            block_definitely_returns(&statement.then_block) && block_definitely_returns(else_block)
-        }),
-        Statement::Let(_)
-        | Statement::Assignment(_)
-        | Statement::While(_)
-        | Statement::Error { .. } => false,
-    }
 }
 
 fn checker_diagnostic_code(message: &str) -> DiagnosticCode {

@@ -324,3 +324,34 @@ fn lex_should_report_unknown_characters_with_line_and_column() {
         }
     );
 }
+
+#[test]
+fn lex_should_tokenize_break_and_continue_as_reserved_keywords() {
+    let source = SourceFile::new("test.ck", "break;\n  continue;");
+    let result = lex(&source);
+    let tokens = result
+        .tokens
+        .iter()
+        .map(|token| {
+            (
+                format!("{:?}", token.kind),
+                token.text.as_str(),
+                token.line,
+                token.column,
+                token.start,
+                token.end,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        tokens,
+        vec![
+            ("Break".to_string(), "break", 1, 1, 0, 5),
+            ("Semicolon".to_string(), ";", 1, 6, 5, 6),
+            ("Continue".to_string(), "continue", 2, 3, 9, 17),
+            ("Semicolon".to_string(), ";", 2, 11, 17, 18),
+            ("Eof".to_string(), "", 2, 12, 18, 18),
+        ]
+    );
+}

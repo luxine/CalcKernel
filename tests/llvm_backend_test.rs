@@ -11,15 +11,19 @@ use calckernel::{
 };
 
 fn emit_llvm(source_text: &str) -> String {
+    emit_llvm_with_opt_level(source_text, 1)
+}
+
+fn emit_llvm_with_opt_level(source_text: &str, opt_level: u8) -> String {
     let checked = check(&SourceFile::new("test.ck", source_text));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-    let pipeline = build_mir_optimization_pipeline(1);
+    let pipeline = build_mir_optimization_pipeline(opt_level);
     let optimized = run_mir_pass_pipeline(
         mir,
         &pipeline,
         &MirPassContext {
-            opt_level: 1,
+            opt_level,
             overflow_mode: MirPassOverflowMode::Unchecked,
             target_backend: MirPassTargetBackend::Llvm,
             debug: Default::default(),
@@ -858,6 +862,121 @@ fn typescript_root() -> PathBuf {
     std::env::var_os("CALCKERNEL_TS_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
+}
+
+#[test]
+fn llvm_backend_should_run_nested_break_continue_at_all_opt_levels() {
+    if !clang_available() {
+        return;
+    }
+    let source = r#"
+      export fn early_exit(n: u32) -> u32 {
+        let i: u32 = 0;
+        while i < n {
+          if i == 3 {
+            break;
+          }
+          i = i + 1;
+        }
+        return i;
+      }
+
+      export fn skip_three(n: u32) -> u32 {
+        let i: u32 = 0;
+        let sum: u32 = 0;
+        while i < n {
+          i = i + 1;
+          if i == 3 {
+            continue;
+          }
+          sum = sum + i;
+        }
+        return sum;
+      }
+
+      export fn nested(n: u32) -> u32 {
+        let outer: u32 = 0;
+        let hits: u32 = 0;
+        while outer < n {
+          let inner: u32 = 0;
+          while inner < n {
+            inner = inner + 1;
+            if inner == 2 {
+              continue;
+            }
+            hits = hits + 1;
+            if inner == 3 {
+              break;
+            }
+          }
+          outer = outer + 1;
+        }
+        return hits;
+      }
+
+      export fn return_from_loop(n: u32) -> u32 {
+        let i: u32 = 0;
+        while i < n {
+          if i == 2 {
+            return 99;
+          }
+          i = i + 1;
+          if i == 1 {
+            continue;
+          }
+        }
+        return i;
+      }
+    "#;
+    let harness = r#"
+#include <stdint.h>
+
+uint32_t early_exit(uint32_t n);
+uint32_t skip_three(uint32_t n);
+uint32_t nested(uint32_t n);
+uint32_t return_from_loop(uint32_t n);
+
+int main(void) {
+  if (early_exit(10) != 3) return 1;
+  if (skip_three(5) != 12) return 2;
+  if (nested(4) != 8) return 3;
+  if (return_from_loop(5) != 99) return 4;
+  return 0;
+}
+"#;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_break_continue_llvm_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+
+    for opt_level in 0..=3 {
+        let ir_path = dir.join(format!("control_o{opt_level}.ll"));
+        let harness_path = dir.join("harness.c");
+        let bin_path = dir.join(format!("harness_o{opt_level}"));
+        fs::write(&ir_path, emit_llvm_with_opt_level(source, opt_level)).expect("write LLVM IR");
+        fs::write(&harness_path, harness).expect("write harness");
+        let compile = Command::new("clang")
+            .arg(&ir_path)
+            .arg(&harness_path)
+            .arg("-Wno-override-module")
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .expect("run clang");
+        assert!(
+            compile.status.success(),
+            "O{opt_level} clang stderr:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let run = Command::new(&bin_path).output().expect("run LLVM harness");
+        assert!(
+            run.status.success(),
+            "O{opt_level} runtime stderr:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
 }
 
 fn clang_available() -> bool {

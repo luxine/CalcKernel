@@ -262,3 +262,30 @@ fn optimizer_should_hoist_loop_invariant_integer_work_at_o3() {
     assert!(product_index < header_index);
     assert!(add_const_index < header_index);
 }
+
+#[test]
+fn optimizer_should_preserve_break_continue_cfg_at_all_opt_levels() {
+    let source = r#"
+      export fn control(n: u32) -> u32 {
+        let i: u32 = 0;
+        let sum: u32 = 0;
+        while i < n {
+          i = i + 1;
+          if i == 2 {
+            continue;
+          }
+          sum = sum + i;
+          if sum > 10 {
+            break;
+          }
+        }
+        return sum;
+      }
+    "#;
+
+    for opt_level in 0..=3 {
+        let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
+        assert!(text.contains("export fn control"), "O{opt_level}:\n{text}");
+        assert!(text.contains("return"), "O{opt_level}:\n{text}");
+    }
+}

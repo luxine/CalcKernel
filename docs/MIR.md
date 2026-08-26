@@ -211,6 +211,17 @@ bb_exit:
   return 0
 ```
 
+Inside a loop, source `continue` becomes a `MirTerminator::Jump` to that loop's
+condition block, while source `break` becomes a `MirTerminator::Jump` to its
+exit block. Lowering keeps a stack of `(continue, break)` targets, so nested
+loops always select the innermost pair. These source statements do not survive
+as special MIR instructions.
+
+Validation and optimization treat the resulting edges as ordinary CFG jumps.
+C and LLVM emit their ordinary branch form. WASM may reconstruct structured
+control; an irreducible or otherwise unrecognized shape uses the dispatcher
+fallback without changing the jump semantics.
+
 The builder should preserve source-level evaluation order.
 
 ## Function Call Lowering

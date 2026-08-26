@@ -249,3 +249,131 @@ fn check_should_expose_expression_and_let_types_for_mir_lowering() {
         ))
     );
 }
+
+#[test]
+fn check_should_reject_break_and_continue_outside_while_with_ck2009() {
+    let result = check_source(
+        r#"
+      export fn bad_break() -> i32 {
+        break;
+        return 0;
+      }
+
+      export fn bad_continue() -> i32 {
+        continue;
+        return 0;
+      }
+    "#,
+    );
+    let diagnostics = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.to_string() == "CK2009")
+        .map(|diagnostic| {
+            (
+                diagnostic.message.as_str(),
+                diagnostic.line,
+                diagnostic.column,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            ("'break' can only be used inside a while loop.", 3, 9),
+            ("'continue' can only be used inside a while loop.", 8, 9),
+        ]
+    );
+}
+
+#[test]
+fn check_should_report_unreachable_after_non_fallthrough_with_ck2010() {
+    let result = check_source(
+        r#"
+      export fn after_return() -> i32 {
+        return 0;
+        return 1;
+      }
+
+      export fn after_break() -> i32 {
+        while true {
+          break;
+          continue;
+        }
+        return 0;
+      }
+
+      export fn after_continue() -> i32 {
+        while true {
+          continue;
+          break;
+        }
+        return 0;
+      }
+    "#,
+    );
+    let unreachable = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.to_string() == "CK2010")
+        .map(|diagnostic| (diagnostic.line, diagnostic.column))
+        .collect::<Vec<_>>();
+
+    assert_eq!(unreachable, vec![(4, 9), (10, 11), (18, 11)]);
+}
+
+#[test]
+fn check_should_combine_if_branch_flow_inside_while() {
+    let result = check_source(
+        r#"
+      export fn branch_flow(flag: bool) -> i32 {
+        while true {
+          if flag {
+            break;
+          } else {
+            continue;
+          }
+          let unreachable: i32 = 1;
+        }
+
+        while true {
+          if flag {
+            break;
+          }
+          let reachable: i32 = 1;
+          break;
+        }
+        return 0;
+      }
+    "#,
+    );
+    let unreachable = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.to_string() == "CK2010")
+        .map(|diagnostic| (diagnostic.line, diagnostic.column))
+        .collect::<Vec<_>>();
+
+    assert_eq!(unreachable, vec![(9, 11)]);
+}
+
+#[test]
+fn check_should_conservatively_require_a_return_after_while_true() {
+    let result = check_source(
+        r#"
+      export fn loop_only() -> i32 {
+        while true {
+          continue;
+        }
+      }
+    "#,
+    );
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message == "Missing return in function 'loop_only'." })
+    );
+}

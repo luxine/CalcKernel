@@ -74,6 +74,8 @@ in the generated C header. Non-exported `fn` declarations are emitted as
 - `return`
 - `if` / `else`
 - `while`
+- `break;`
+- `continue;`
 - block statements
 
 Examples:
@@ -92,6 +94,15 @@ while i < len {
   i = i + 1;
 }
 ```
+
+`break;` exits the innermost enclosing `while`. `continue;` skips the rest of
+the current iteration and re-evaluates the innermost enclosing `while`
+condition. Using either statement outside a `while` is rejected with `CK2009`.
+
+A statement after a `return`, valid `break;`, or valid `continue;` in the same
+block is unreachable and is rejected with `CK2010`. The checker does not infer
+that `while true` definitely returns: code following every loop is treated as
+reachable because a future iteration may exit.
 
 V0 functions must definitely return along the final statement path. A function
 ending without a return is a type error.

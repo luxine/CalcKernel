@@ -70,6 +70,8 @@ export fn add_i64(a: i64, b: i64) -> i64 {
 - `return`
 - `if` / `else`
 - `while`
+- `break;`
+- `continue;`
 - block statement
 
 示例：
@@ -88,6 +90,13 @@ while i < len {
   i = i + 1;
 }
 ```
+
+`break;` 退出最内层 `while`。`continue;` 跳过本次迭代的剩余语句，并重新计算
+最内层 `while` 的条件。在 `while` 外使用任一语句会报 `CK2009`。
+
+同一 block 中位于 `return`、合法 `break;` 或合法 `continue;` 之后的语句不可达，
+会报 `CK2010`。Checker 不推断 `while true` 一定返回：所有 loop 之后的代码仍按
+可达处理，因为后续迭代可能退出。
 
 V0 函数必须在最终语句路径上明确返回。函数结尾没有 return 是类型错误。
 

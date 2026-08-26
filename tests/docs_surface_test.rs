@@ -189,6 +189,49 @@ fn docs_should_not_reference_unshipped_benchmark_or_example_scripts() {
     );
 }
 
+#[test]
+fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
+    for path in ["docs/LANGUAGE_SPEC.md", "docs/zh-CN/LANGUAGE_SPEC.md"] {
+        let text = read(path);
+        for required in ["`break;`", "`continue;`", "`CK2009`", "`CK2010`"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in [
+        "docs/COMPILER_ARCHITECTURE.md",
+        "docs/zh-CN/COMPILER_ARCHITECTURE.md",
+        "docs/MIR.md",
+        "docs/zh-CN/MIR.md",
+    ] {
+        let text = read(path);
+        for required in [
+            "`break`",
+            "`continue`",
+            "`MirTerminator::Jump`",
+            "dispatcher",
+        ] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in ["docs/ROADMAP.md", "docs/zh-CN/ROADMAP.md"] {
+        let text = read(path);
+        assert!(
+            text.contains("`break` / `continue`"),
+            "{path} must mark Phase A"
+        );
+    }
+
+    for path in ["README.md", "README.zh-CN.md"] {
+        assert!(
+            read(path).contains("examples/control_flow.ck"),
+            "{path} must link the control-flow example"
+        );
+    }
+    assert!(repo_root().join("examples/control_flow.ck").is_file());
+}
+
 fn markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))

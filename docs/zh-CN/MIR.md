@@ -205,6 +205,15 @@ bb_exit:
   return 0
 ```
 
+Loop 内的源码 `continue` 会变成指向该 loop condition block 的
+`MirTerminator::Jump`；源码 `break` 会变成指向 exit block 的
+`MirTerminator::Jump`。Lowering 维护 `(continue, break)` target stack，因此嵌套
+loop 总是选择最内层 target。两种源码语句不会作为特殊 MIR instruction 保留下来。
+
+Validation 和 optimization 把这些 edge 当作普通 CFG jump。C 与 LLVM 生成常规
+branch form。WASM 可以重建 structured control；不可规约或未识别的形状使用
+dispatcher fallback，并保持相同 jump 语义。
+
 Builder 应保持源码级求值顺序。
 
 ## Function Call Lowering

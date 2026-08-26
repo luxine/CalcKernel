@@ -275,3 +275,64 @@ fn parse_should_add_line_and_column_diagnostics_for_parser_errors() {
             && diagnostic.column == 9
     }));
 }
+
+#[test]
+fn parse_should_parse_break_and_continue_statements_with_spans() {
+    let result = parse_source(
+        r#"
+      export fn control() -> i32 {
+        while true {
+          break;
+          continue;
+        }
+        return 0;
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let Declaration::Function(function) = &result.ast.declarations[0] else {
+        panic!("expected function declaration");
+    };
+    let Statement::While(while_statement) = &function.body.statements[0] else {
+        panic!("expected while statement");
+    };
+    let break_statement = &while_statement.body.statements[0];
+    let continue_statement = &while_statement.body.statements[1];
+
+    assert_eq!(
+        format!("{break_statement:?}").split('(').next(),
+        Some("Break")
+    );
+    assert_eq!(break_statement.span().start.line, 4);
+    assert_eq!(break_statement.span().start.column, 11);
+    assert_eq!(break_statement.span().end.column, 17);
+    assert_eq!(
+        format!("{continue_statement:?}").split('(').next(),
+        Some("Continue")
+    );
+    assert_eq!(continue_statement.span().start.line, 5);
+    assert_eq!(continue_statement.span().start.column, 11);
+    assert_eq!(continue_statement.span().end.column, 20);
+}
+
+#[test]
+fn parse_should_require_semicolons_after_loop_control() {
+    let result = parse_source(
+        r#"
+      export fn control() -> i32 {
+        while true {
+          break
+        }
+        return 0;
+      }
+    "#,
+    );
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == calckernel::DiagnosticCode::Ck1001
+            && diagnostic.message == "Expected ';' after 'break'."
+            && diagnostic.line == 5
+            && diagnostic.column == 9
+    }));
+}

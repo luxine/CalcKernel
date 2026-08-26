@@ -179,6 +179,13 @@ Numeric roadmap lock:
   expression syntax remain future design work.
 - Fast-math and SIMD are not part of the current numeric roadmap.
 
+## Structured Loop Control
+
+- `break` / `continue` are implemented for the innermost `while` loop.
+- The checker diagnoses invalid loop control and unreachable statements.
+- MIR and every backend preserve the resulting control-flow edges across all
+  optimization levels.
+
 ## Future `slice<T>` / Bounds Checks
 
 - Raw `ptr<T>` remains unchecked.

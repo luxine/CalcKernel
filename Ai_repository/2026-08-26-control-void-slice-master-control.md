@@ -190,3 +190,8 @@ Record completed checkpoints here without deleting failed-command evidence.
 | --- | --- | --- | --- |
 | 2026-08-26 | independent worktree baseline | `0799a4f`; locked build and full tests | pass |
 | 2026-08-26 | adversarial design review | review document | pass; no blockers |
+| 2026-08-26 | planning documents | `1f2a06f` | pass; committed after self-review |
+| 2026-08-26 | Phase A red/green implementation | lexer through all backends and bilingual docs | pass |
+| 2026-08-26 | malformed aggregate focused command | Cargo rejected multiple per-target filters | invocation corrected; each runtime test then passed |
+| 2026-08-26 | initial Phase A formatting gate | rustfmt layout diff only | formatted and reran successfully |
+| 2026-08-26 | Phase A acceptance | all required commands and 117-test full suite | pass; ready for phase commit |
