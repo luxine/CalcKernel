@@ -1,10 +1,24 @@
 use calckernel::{
-    MirPassContext, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
+    MirPassBoundsMode, MirPassContext, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
     build_mir_optimization_pipeline, check, lower_to_mir, print_mir_module,
     print_mir_pass_pipeline, run_mir_pass_pipeline,
 };
 
 fn optimize(source_text: &str, opt_level: u8, overflow_mode: MirPassOverflowMode) -> String {
+    optimize_with_bounds(
+        source_text,
+        opt_level,
+        overflow_mode,
+        MirPassBoundsMode::Unchecked,
+    )
+}
+
+fn optimize_with_bounds(
+    source_text: &str,
+    opt_level: u8,
+    overflow_mode: MirPassOverflowMode,
+    bounds_mode: MirPassBoundsMode,
+) -> String {
     let checked = check(&SourceFile::new("test.ck", source_text));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
@@ -15,6 +29,7 @@ fn optimize(source_text: &str, opt_level: u8, overflow_mode: MirPassOverflowMode
         &MirPassContext {
             opt_level,
             overflow_mode,
+            bounds_mode,
             target_backend: MirPassTargetBackend::C,
             debug: Default::default(),
         },
@@ -349,5 +364,131 @@ fn optimizer_should_conservatively_keep_void_helpers_without_panicking() {
         let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
         assert!(text.contains("fn helper"), "O{opt_level}:\n{text}");
         assert!(text.contains("call helper(out)"), "O{opt_level}:\n{text}");
+    }
+}
+
+#[test]
+fn optimizer_should_track_slice_instruction_and_place_uses() {
+    let source = r#"
+      fn cut(items: slice<i32>, start: u32, end: u32) -> slice<i32> {
+        let middle: slice<i32> = items[start..end];
+        let first: i32 = middle[0];
+        return middle;
+      }
+    "#;
+
+    for opt_level in 0..=3 {
+        let text = optimize_with_bounds(
+            source,
+            opt_level,
+            MirPassOverflowMode::Unchecked,
+            MirPassBoundsMode::Unchecked,
+        );
+        assert!(
+            text.contains("subslice items, start, end"),
+            "O{opt_level}:\n{text}"
+        );
+        assert!(
+            text.contains("slice_index(middle,"),
+            "O{opt_level}:\n{text}"
+        );
+        assert!(text.contains("return middle"), "O{opt_level}:\n{text}");
+    }
+}
+
+#[test]
+fn optimizer_should_keep_checked_subslice_even_when_result_is_dead() {
+    let source = r#"
+      export fn observe(items: slice<i32>, len: u32) -> void {
+        let unused: slice<i32> = items[0..len];
+      }
+    "#;
+
+    for opt_level in 1..=3 {
+        let text = optimize_with_bounds(
+            source,
+            opt_level,
+            MirPassOverflowMode::Unchecked,
+            MirPassBoundsMode::Checked,
+        );
+        assert!(text.contains("subslice items,"), "O{opt_level}:\n{text}");
+    }
+}
+
+#[test]
+fn optimizer_should_keep_checked_slice_index_address_observable() {
+    let source = r#"
+      struct Item { left: i32; right: i32; }
+      export fn read(items: slice<Item>, index: u32) -> i32 {
+        return items[index].left + items[index].right;
+      }
+    "#;
+
+    for opt_level in 1..=3 {
+        let text = optimize_with_bounds(
+            source,
+            opt_level,
+            MirPassOverflowMode::Unchecked,
+            MirPassBoundsMode::Checked,
+        );
+        assert_eq!(
+            text.matches("slice_index(items, index)").count(),
+            2,
+            "O{opt_level}:\n{text}"
+        );
+        assert!(
+            !text.contains("address slice_index"),
+            "O{opt_level}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn optimizer_should_not_cse_or_hoist_checked_slice_guards_at_o1_through_o3() {
+    let source = r#"
+      export fn loop_cut(items: slice<i32>, len: u32) -> u32 {
+        let i: u32 = 0;
+        while i < len {
+          let middle: slice<i32> = items[i..len];
+          let value: i32 = middle[0];
+          i = i + 1;
+        }
+        return i;
+      }
+    "#;
+
+    for opt_level in 1..=3 {
+        let text = optimize_with_bounds(
+            source,
+            opt_level,
+            MirPassOverflowMode::Unchecked,
+            MirPassBoundsMode::Checked,
+        );
+        let loop_header = text.find("bb1:").expect("loop header");
+        let subslice = text.find("subslice items, i, len").expect("subslice");
+        assert!(subslice > loop_header, "O{opt_level}:\n{text}");
+        assert_eq!(text.matches("subslice items, i, len").count(), 1);
+    }
+}
+
+#[test]
+fn optimizer_should_preserve_slice_internal_calls_and_returns() {
+    let source = r#"
+      fn identity(items: slice<i32>) -> slice<i32> { return items; }
+      fn forward(items: slice<i32>) -> slice<i32> { return identity(items); }
+    "#;
+
+    for opt_level in 0..=3 {
+        let text = optimize_with_bounds(
+            source,
+            opt_level,
+            MirPassOverflowMode::Unchecked,
+            MirPassBoundsMode::Checked,
+        );
+        assert!(
+            text.contains("call identity(items)"),
+            "O{opt_level}:\n{text}"
+        );
+        assert!(text.contains("-> slice<i32>"), "O{opt_level}:\n{text}");
     }
 }

@@ -181,9 +181,12 @@ Numeric roadmap lock：
 - MIR 在 optimization 中保持 targetless call 和 valueless return。
 - C/status C、WASM 与 LLVM 暴露各自原生的无值 ABI form。
 
-## Future `slice<T>` / Bounds Checks
+## First-class `slice<T>` / Bounds Checks
 
-- Raw `ptr<T>` 保持 unchecked。
-- Bounds check 应等待携带长度的类型，例如未来 `slice<T>` 或显式 pointer-plus-length
-  metadata。
-- 引入 bounds-safe lowering 前，先记录 ownership、nullability 和 aliasing 规则。
+- 已实现非 owning descriptor、raw construction、read-only projection、index、
+  sub-slice、field、call 与 internal return。
+- Raw `ptr<T>` 与 `.data` escape 按设计保持 unchecked。
+- C 支持 `--bounds checked` 和 status 4；WASM 与 LLVM 在具备等价 recoverable
+  error ABI 前会明确拒绝。
+- Ownership、invalid descriptor responsibility、aliasing 与 lifetime 仍是 caller-side
+  contract。

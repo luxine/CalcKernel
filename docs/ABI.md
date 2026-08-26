@@ -439,3 +439,17 @@ that call overhead is acceptable. For Python, Node.js, C#, and other FFI users,
 per-call overhead can dominate the kernel's compute time. Prefer passing arrays
 and output buffers so the generated C code performs the loop inside one native
 call.
+
+## Slice ABI
+
+`slice<T>` is stored as a typed pointer plus `uint32_t`. Generated C uses one
+deterministic named descriptor struct per element type, but every exported and
+internal slice parameter is physically flattened to `(T* data, uint32_t len)`.
+The function body reconstructs the logical descriptor. Unchecked internal slice
+returns use descriptor-by-value; a status ABI uses a final descriptor output
+pointer. Exported slice returns are not legal CK.
+
+Whenever integer overflow or `--bounds checked` is enabled, C uses the
+module-wide `CK_Status` ABI: `CK_OK=0`, overflow=1, division-by-zero=2,
+null-result-pointer=3, and `CK_ERR_OUT_OF_BOUNDS=4`. C accepts checked bounds;
+WASM/LLVM reject them. These representations are non-owning and may alias.

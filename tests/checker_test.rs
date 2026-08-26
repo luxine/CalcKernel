@@ -516,3 +516,248 @@ fn check_should_preserve_unreachable_analysis_after_empty_return() {
             && diagnostic.line == 4
     }));
 }
+
+#[test]
+fn check_should_accept_slice_storage_calls_returns_and_struct_index_fields() {
+    let result = check_source(
+        r#"
+      struct Item { value: i64; }
+      struct Holder { items: slice<Item>; pointers: slice<ptr<i32>>; }
+
+      fn identity(items: slice<Item>) -> slice<Item> {
+        let copy: slice<Item> = items;
+        return copy;
+      }
+
+      export fn use_slices(
+        data: ptr<Item>,
+        len: u32,
+        holders: ptr<Holder>,
+        out: ptr<i64>
+      ) -> void {
+        let items: slice<Item> = slice(data, len);
+        let copy: slice<Item> = identity(items);
+        let raw: ptr<Item> = copy.data;
+        let count: u32 = copy.len;
+        let middle: slice<Item> = copy[0..count];
+        holders[0].items = middle;
+        out[0] = middle[0].value;
+        out[1] = raw[0].value;
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let holder = result
+        .checked_program
+        .struct_map
+        .get("Holder")
+        .expect("Holder type");
+    assert!(matches!(
+        holder.field_map["items"].type_node,
+        CalcKernelType::Slice(_)
+    ));
+    assert!(matches!(
+        result.checked_program.function_map["identity"].return_type,
+        CalcKernelType::Slice(_)
+    ));
+}
+
+#[test]
+fn check_should_reject_invalid_slice_elements_and_exported_returns_with_ck2012() {
+    let result = check_source(
+        r#"
+      struct Bad {
+        voids: slice<void>;
+        nested: slice<slice<i32>>;
+      }
+      export fn bad_return(data: ptr<i32>, len: u32) -> slice<i32> {
+        return slice(data, len);
+      }
+    "#,
+    );
+
+    let errors = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2012)
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        errors.iter().any(|message| message.contains("void")),
+        "{errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|message| message.contains("direct slice")),
+        "{errors:?}"
+    );
+    assert!(
+        errors.iter().any(|message| message.contains("exported")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn check_should_enforce_slice_constructor_pointer_and_u32_length_rules() {
+    let result = check_source(
+        r#"
+      fn bad_data(value: i32, len: u32) -> void {
+        let items: slice<i32> = slice(value, len);
+      }
+      fn wrong_element(data: ptr<i64>, len: u32) -> void {
+        let items: slice<i32> = slice(data, len);
+      }
+      fn bad_len(data: ptr<i32>, len: i32) -> void {
+        let items: slice<i32> = slice(data, len);
+      }
+      fn literal_edges(data: ptr<i32>) -> void {
+        let negative: slice<i32> = slice(data, -1);
+        let huge: slice<i32> = slice(data, 4294967296);
+      }
+    "#,
+    );
+
+    let errors = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2012)
+        .collect::<Vec<_>>();
+    assert!(errors.len() >= 5, "{errors:#?}");
+}
+
+#[test]
+fn check_should_require_exact_slice_types_for_assignment_call_and_return() {
+    let result = check_source(
+        r#"
+      fn take(values: slice<i64>) -> void {}
+      fn bad_return(values: slice<i32>) -> slice<i64> { return values; }
+      fn bad(data32: ptr<i32>, data64: ptr<i64>, len: u32) -> void {
+        let left: slice<i32> = slice(data32, len);
+        let right: slice<i64> = slice(data64, len);
+        left = right;
+        take(left);
+      }
+    "#,
+    );
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2012)
+            .count()
+            >= 3,
+        "{:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn check_should_make_slice_projections_read_only_but_whole_descriptors_assignable() {
+    let result = check_source(
+        r#"
+      fn bad(data: ptr<i32>, len: u32) -> void {
+        let left: slice<i32> = slice(data, len);
+        let right: slice<i32> = left;
+        left = right;
+        left.data = data;
+        left.len = len;
+      }
+    "#,
+    );
+
+    let errors = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2012)
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors.iter().all(|message| message.contains("read-only")));
+}
+
+#[test]
+fn check_should_enforce_u32_slice_indices_and_range_endpoints() {
+    let result = check_source(
+        r#"
+      fn bad(
+        data: ptr<i32>,
+        len: u32,
+        signed: i32,
+        wide: u64
+      ) -> void {
+        let items: slice<i32> = slice(data, len);
+        let a: i32 = items[signed];
+        let b: i32 = items[wide];
+        let c: i32 = items[-1];
+        let d: i32 = items[4294967296];
+        let e: slice<i32> = items[signed..len];
+        let f: slice<i32> = items[0..wide];
+      }
+    "#,
+    );
+
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2012)
+            .count(),
+        6,
+        "{:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn check_should_keep_pointer_index_rules_and_data_escape_unchecked() {
+    let result = check_source(
+        r#"
+      export fn raw(data: ptr<i32>, len: u32, signed: i32) -> i32 {
+        let items: slice<i32> = slice(data, len);
+        let escaped: ptr<i32> = items.data;
+        let a: i32 = data[signed];
+        return escaped[signed] + a;
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+}
+
+#[test]
+fn check_should_record_slice_operand_types_in_source_order_shape() {
+    let result = check_source(
+        r#"
+      fn cut(data: ptr<i32>, len: u32, start: u32, end: u32) -> slice<i32> {
+        let items: slice<i32> = slice(data, len);
+        return items[start..end];
+      }
+    "#,
+    );
+    assert_eq!(result.diagnostics, []);
+    let function = &result.checked_program.function_map["cut"];
+    let Statement::Return(statement) = &function.declaration.body.statements[1] else {
+        panic!("expected return");
+    };
+    let Some(Expression::Subslice {
+        slice, start, end, ..
+    }) = &statement.value
+    else {
+        panic!("expected sub-slice");
+    };
+    assert!(matches!(
+        get_expr_type(&result.checked_program, slice),
+        Some(CalcKernelType::Slice(_))
+    ));
+    assert_eq!(
+        get_expr_type(&result.checked_program, start),
+        Some(&CalcKernelType::Primitive(PrimitiveTypeName::U32))
+    );
+    assert_eq!(
+        get_expr_type(&result.checked_program, end),
+        Some(&CalcKernelType::Primitive(PrimitiveTypeName::U32))
+    );
+}

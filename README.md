@@ -119,3 +119,15 @@ checksum. Tagged builds may attach those archives to a `GitHub Release`.
 No npm. No JavaScript compatibility layer. No TypeScript declaration parity.
 The TypeScript checkout remains read-only source material and behavior oracle;
 the shipped product is `native ckc`.
+
+## Non-owning slices
+
+CK now supports non-owning `slice<T>` descriptors. Construct one from a raw
+pointer with `slice(data, len)`, read `.data` / `.len`, index it, or create a
+half-open sub-slice with `items[start..end]`. The caller still owns the memory
+and is responsible for the raw pointer and declared length; descriptors alias
+that memory and do not extend its lifetime. See [examples/slices.ck](examples/slices.ck).
+
+`--bounds unchecked` is the default on every backend. C emission and `ckc build`
+also accept `--bounds checked` and return `CK_ERR_OUT_OF_BOUNDS` (status 4).
+WASM and LLVM accept only unchecked bounds and reject checked bounds explicitly.

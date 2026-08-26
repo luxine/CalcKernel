@@ -22,6 +22,12 @@ pub enum MirPassOverflowMode {
     Checked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirPassBoundsMode {
+    Unchecked,
+    Checked,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MirPassDebugFlags {
     pub print_pass_pipeline: bool,
@@ -33,6 +39,7 @@ pub struct MirPassDebugFlags {
 pub struct MirPassContext {
     pub opt_level: OptimizationLevel,
     pub overflow_mode: MirPassOverflowMode,
+    pub bounds_mode: MirPassBoundsMode,
     pub target_backend: MirPassTargetBackend,
     pub debug: MirPassDebugFlags,
 }
@@ -293,6 +300,11 @@ fn collect_inline_candidates(
         if function.exported
             || cyclic_functions.contains(&function.name)
             || function.blocks.len() != 1
+            || contains_slice_type(&function.return_type)
+            || function
+                .params
+                .iter()
+                .any(|param| contains_slice_type(&param.type_node))
         {
             continue;
         }
@@ -486,6 +498,10 @@ fn clone_inline_instruction(
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
         | MirInstruction::Store { .. }
+        | MirInstruction::MakeSlice { .. }
+        | MirInstruction::SliceData { .. }
+        | MirInstruction::SliceLen { .. }
+        | MirInstruction::Subslice { .. }
         | MirInstruction::Call { .. } => unreachable!("candidate instruction must be inlineable"),
     }
 }
@@ -699,7 +715,10 @@ fn run_loop_invariant_code_motion(
     module: &mut MirModule,
     context: &MirPassContext,
 ) -> MirPassResult {
-    if context.opt_level < 3 || context.overflow_mode == MirPassOverflowMode::Checked {
+    if context.opt_level < 3
+        || context.overflow_mode == MirPassOverflowMode::Checked
+        || context.bounds_mode == MirPassBoundsMode::Checked
+    {
         return MirPassResult {
             changed: false,
             diagnostics: Vec::new(),
@@ -808,6 +827,10 @@ fn is_hoistable_instruction(
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
         | MirInstruction::Store { .. }
+        | MirInstruction::MakeSlice { .. }
+        | MirInstruction::SliceData { .. }
+        | MirInstruction::SliceLen { .. }
+        | MirInstruction::Subslice { .. }
         | MirInstruction::Call { .. } => false,
     }
 }
@@ -877,7 +900,7 @@ fn collect_assigned_place_local(place: &MirPlace, locals: &mut HashSet<String>) 
         MirPlace::Field { base, .. } | MirPlace::Index { base, .. } => {
             collect_assigned_place_local(base, locals);
         }
-        MirPlace::Param { .. } | MirPlace::Deref { .. } => {}
+        MirPlace::Param { .. } | MirPlace::Deref { .. } | MirPlace::SliceIndex { .. } => {}
     }
 }
 
@@ -1114,7 +1137,13 @@ struct CseEntry {
     dependencies: HashSet<String>,
 }
 
-fn run_local_cse(module: &mut MirModule, _context: &MirPassContext) -> MirPassResult {
+fn run_local_cse(module: &mut MirModule, context: &MirPassContext) -> MirPassResult {
+    if context.bounds_mode == MirPassBoundsMode::Checked {
+        return MirPassResult {
+            changed: false,
+            diagnostics: Vec::new(),
+        };
+    }
     let mut changed = false;
 
     for function in &mut module.functions {
@@ -1236,6 +1265,10 @@ fn cse_key(instruction: &MirInstruction) -> Option<String> {
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
         | MirInstruction::Store { .. }
+        | MirInstruction::MakeSlice { .. }
+        | MirInstruction::SliceData { .. }
+        | MirInstruction::SliceLen { .. }
+        | MirInstruction::Subslice { .. }
         | MirInstruction::Call { .. } => None,
     }
 }
@@ -1315,6 +1348,20 @@ fn collect_instruction_dependencies(instruction: &MirInstruction) -> HashSet<Str
             collect_value_dependency(operand, &mut dependencies)
         }
         MirInstruction::Cast { value, .. } => collect_value_dependency(value, &mut dependencies),
+        MirInstruction::MakeSlice { data, len, .. } => {
+            collect_value_dependency(data, &mut dependencies);
+            collect_value_dependency(len, &mut dependencies);
+        }
+        MirInstruction::SliceData { slice, .. } | MirInstruction::SliceLen { slice, .. } => {
+            collect_value_dependency(slice, &mut dependencies);
+        }
+        MirInstruction::Subslice {
+            slice, start, end, ..
+        } => {
+            collect_value_dependency(slice, &mut dependencies);
+            collect_value_dependency(start, &mut dependencies);
+            collect_value_dependency(end, &mut dependencies);
+        }
         MirInstruction::ConstInt { .. }
         | MirInstruction::ConstFloat { .. }
         | MirInstruction::ConstBool { .. }
@@ -1365,6 +1412,7 @@ fn type_key(type_node: &MirType) -> String {
     match type_node {
         MirType::Primitive(name) => primitive_type_key(*name).to_string(),
         MirType::Pointer(element_type) => format!("ptr<{}>", type_key(element_type)),
+        MirType::Slice(element_type) => format!("slice<{}>", type_key(element_type)),
         MirType::Struct(name) => format!("struct:{name}"),
         MirType::Void => "void".to_string(),
     }
@@ -1423,10 +1471,12 @@ struct AddressEntry {
 }
 
 fn run_address_cse(module: &mut MirModule, context: &MirPassContext) -> MirPassResult {
-    if !matches!(
-        context.target_backend,
-        MirPassTargetBackend::C | MirPassTargetBackend::Wasm
-    ) {
+    if context.bounds_mode == MirPassBoundsMode::Checked
+        || !matches!(
+            context.target_backend,
+            MirPassTargetBackend::C | MirPassTargetBackend::Wasm
+        )
+    {
         return MirPassResult {
             changed: false,
             diagnostics: Vec::new(),
@@ -1581,6 +1631,7 @@ fn rewrite_address_place(
                 unreachable!()
             }
         }
+        MirPlace::SliceIndex { .. } => place,
         MirPlace::Deref { .. } | MirPlace::Param { .. } | MirPlace::Local { .. } => place,
     }
 }
@@ -1688,6 +1739,10 @@ fn collect_place_dependency(place: &MirPlace, dependencies: &mut HashSet<String>
             collect_place_dependency(base, dependencies);
             collect_value_dependency(index, dependencies);
         }
+        MirPlace::SliceIndex { slice, index, .. } => {
+            collect_value_dependency(slice, dependencies);
+            collect_value_dependency(index, dependencies);
+        }
         MirPlace::Field { base, .. } => collect_place_dependency(base, dependencies),
     }
 }
@@ -1706,6 +1761,16 @@ fn place_key(place: &MirPlace) -> String {
         } => format!(
             "index:{}:{}:{}",
             place_key(base),
+            value_key(index),
+            type_key(type_node)
+        ),
+        MirPlace::SliceIndex {
+            slice,
+            index,
+            type_node,
+        } => format!(
+            "slice_index:{}:{}:{}",
+            value_key(slice),
             value_key(index),
             type_key(type_node)
         ),
@@ -1820,6 +1885,10 @@ fn fold_instruction(
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
         | MirInstruction::Store { .. }
+        | MirInstruction::MakeSlice { .. }
+        | MirInstruction::SliceData { .. }
+        | MirInstruction::SliceLen { .. }
+        | MirInstruction::Subslice { .. }
         | MirInstruction::Call { .. } => None,
     }
 }
@@ -1860,6 +1929,10 @@ fn remember_instruction_constant(
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
         | MirInstruction::Store { .. }
+        | MirInstruction::MakeSlice { .. }
+        | MirInstruction::SliceData { .. }
+        | MirInstruction::SliceLen { .. }
+        | MirInstruction::Subslice { .. }
         | MirInstruction::Call { .. } => {}
     }
 }
@@ -2026,6 +2099,22 @@ fn rewrite_instruction_copies(
             changed |= rewrite_value_copy(operand, copies);
             changed
         }
+        MirInstruction::MakeSlice { data, len, .. } => {
+            changed |= rewrite_value_copy(data, copies);
+            changed |= rewrite_value_copy(len, copies);
+            changed
+        }
+        MirInstruction::SliceData { slice, .. } | MirInstruction::SliceLen { slice, .. } => {
+            rewrite_value_copy(slice, copies)
+        }
+        MirInstruction::Subslice {
+            slice, start, end, ..
+        } => {
+            changed |= rewrite_value_copy(slice, copies);
+            changed |= rewrite_value_copy(start, copies);
+            changed |= rewrite_value_copy(end, copies);
+            changed
+        }
         MirInstruction::Address { place, .. } | MirInstruction::Load { place, .. } => {
             rewrite_place_copies(place, copies)
         }
@@ -2064,6 +2153,9 @@ fn rewrite_place_copies(place: &mut MirPlace, copies: &HashMap<String, MirValue>
         MirPlace::Index { base, index, .. } => {
             rewrite_place_copies(base, copies) | rewrite_value_copy(index, copies)
         }
+        MirPlace::SliceIndex { slice, index, .. } => {
+            rewrite_value_copy(slice, copies) | rewrite_value_copy(index, copies)
+        }
     }
 }
 
@@ -2091,10 +2183,10 @@ fn resolve_copy(value: &MirValue, copies: &HashMap<String, MirValue>) -> MirValu
     current
 }
 
-fn run_dead_code_elimination(module: &mut MirModule, _context: &MirPassContext) -> MirPassResult {
+fn run_dead_code_elimination(module: &mut MirModule, context: &MirPassContext) -> MirPassResult {
     let mut changed = false;
     for function in &mut module.functions {
-        changed |= eliminate_dead_code_in_function(function);
+        changed |= eliminate_dead_code_in_function(function, context);
     }
     MirPassResult {
         changed,
@@ -2102,7 +2194,7 @@ fn run_dead_code_elimination(module: &mut MirModule, _context: &MirPassContext) 
     }
 }
 
-fn eliminate_dead_code_in_function(function: &mut MirFunction) -> bool {
+fn eliminate_dead_code_in_function(function: &mut MirFunction, context: &MirPassContext) -> bool {
     let mut changed = false;
     let mut removed = true;
     while removed {
@@ -2110,9 +2202,9 @@ fn eliminate_dead_code_in_function(function: &mut MirFunction) -> bool {
         let used_temps = collect_used_temps(function);
         for block in &mut function.blocks {
             let before = block.instructions.len();
-            block
-                .instructions
-                .retain(|instruction| !is_removable_unused_instruction(instruction, &used_temps));
+            block.instructions.retain(|instruction| {
+                !is_removable_unused_instruction(instruction, &used_temps, context)
+            });
             if block.instructions.len() != before {
                 removed = true;
                 changed = true;
@@ -2125,8 +2217,9 @@ fn eliminate_dead_code_in_function(function: &mut MirFunction) -> bool {
 fn is_removable_unused_instruction(
     instruction: &MirInstruction,
     used_temps: &HashSet<String>,
+    context: &MirPassContext,
 ) -> bool {
-    if !is_pure_removable_instruction(instruction) {
+    if !is_pure_removable_instruction(instruction, context) {
         return false;
     }
     instruction_target(instruction)
@@ -2134,7 +2227,23 @@ fn is_removable_unused_instruction(
         .is_some_and(|name| !used_temps.contains(name))
 }
 
-fn is_pure_removable_instruction(instruction: &MirInstruction) -> bool {
+fn is_pure_removable_instruction(instruction: &MirInstruction, context: &MirPassContext) -> bool {
+    if context.overflow_mode == MirPassOverflowMode::Checked
+        && matches!(
+            instruction,
+            MirInstruction::Binary { .. } | MirInstruction::Unary { .. }
+        )
+    {
+        return false;
+    }
+    if context.bounds_mode == MirPassBoundsMode::Checked
+        && matches!(
+            instruction,
+            MirInstruction::Address { place, .. } if place_contains_slice_index(place)
+        )
+    {
+        return false;
+    }
     matches!(
         instruction,
         MirInstruction::ConstInt { .. }
@@ -2147,6 +2256,16 @@ fn is_pure_removable_instruction(instruction: &MirInstruction) -> bool {
             | MirInstruction::Cast { .. }
             | MirInstruction::Address { .. }
     )
+}
+
+fn place_contains_slice_index(place: &MirPlace) -> bool {
+    match place {
+        MirPlace::SliceIndex { .. } => true,
+        MirPlace::Field { base, .. } | MirPlace::Index { base, .. } => {
+            place_contains_slice_index(base)
+        }
+        MirPlace::Param { .. } | MirPlace::Local { .. } | MirPlace::Deref { .. } => false,
+    }
 }
 
 fn collect_used_temps(function: &MirFunction) -> HashSet<String> {
@@ -2174,6 +2293,20 @@ fn collect_instruction_uses(instruction: &MirInstruction, used: &mut HashSet<Str
             collect_value_use(right, used);
         }
         MirInstruction::Unary { operand, .. } => collect_value_use(operand, used),
+        MirInstruction::MakeSlice { data, len, .. } => {
+            collect_value_use(data, used);
+            collect_value_use(len, used);
+        }
+        MirInstruction::SliceData { slice, .. } | MirInstruction::SliceLen { slice, .. } => {
+            collect_value_use(slice, used);
+        }
+        MirInstruction::Subslice {
+            slice, start, end, ..
+        } => {
+            collect_value_use(slice, used);
+            collect_value_use(start, used);
+            collect_value_use(end, used);
+        }
         MirInstruction::Address { place, .. } | MirInstruction::Load { place, .. } => {
             collect_place_uses(place, used);
         }
@@ -2208,6 +2341,10 @@ fn collect_place_uses(place: &MirPlace, used: &mut HashSet<String>) {
         MirPlace::Field { base, .. } => collect_place_uses(base, used),
         MirPlace::Index { base, index, .. } => {
             collect_place_uses(base, used);
+            collect_value_use(index, used);
+        }
+        MirPlace::SliceIndex { slice, index, .. } => {
+            collect_value_use(slice, used);
             collect_value_use(index, used);
         }
     }
@@ -2413,7 +2550,11 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
         | MirInstruction::Compare { target, .. }
         | MirInstruction::Cast { target, .. }
         | MirInstruction::Address { target, .. }
-        | MirInstruction::Load { target, .. } => Some(target),
+        | MirInstruction::Load { target, .. }
+        | MirInstruction::MakeSlice { target, .. }
+        | MirInstruction::SliceData { target, .. }
+        | MirInstruction::SliceLen { target, .. }
+        | MirInstruction::Subslice { target, .. } => Some(target),
         MirInstruction::Call { target, .. } => target.as_ref(),
         MirInstruction::Store { .. } => None,
     }
@@ -2436,6 +2577,7 @@ fn place_type(place: &MirPlace) -> &MirType {
         | MirPlace::Local { type_node, .. }
         | MirPlace::Deref { type_node, .. }
         | MirPlace::Index { type_node, .. }
+        | MirPlace::SliceIndex { type_node, .. }
         | MirPlace::Field { type_node, .. } => type_node,
     }
 }
@@ -2467,6 +2609,14 @@ fn is_f64_type(type_node: &MirType) -> bool {
     matches!(type_node, MirType::Primitive(MirPrimitiveTypeName::F64))
 }
 
+fn contains_slice_type(type_node: &MirType) -> bool {
+    match type_node {
+        MirType::Slice(_) => true,
+        MirType::Pointer(element_type) => contains_slice_type(element_type),
+        MirType::Primitive(_) | MirType::Struct(_) | MirType::Void => false,
+    }
+}
+
 fn is_signed_integer_type(type_node: &MirType) -> bool {
     matches!(
         type_node,
@@ -2481,6 +2631,7 @@ fn integer_min(type_node: &MirType) -> Option<i128> {
         MirType::Primitive(MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64) => Some(0),
         MirType::Primitive(MirPrimitiveTypeName::F64 | MirPrimitiveTypeName::Bool)
         | MirType::Pointer(_)
+        | MirType::Slice(_)
         | MirType::Struct(_)
         | MirType::Void => None,
     }
@@ -2494,6 +2645,7 @@ fn integer_max(type_node: &MirType) -> Option<i128> {
         MirType::Primitive(MirPrimitiveTypeName::U64) => Some((1_i128 << 64) - 1),
         MirType::Primitive(MirPrimitiveTypeName::F64 | MirPrimitiveTypeName::Bool)
         | MirType::Pointer(_)
+        | MirType::Slice(_)
         | MirType::Struct(_)
         | MirType::Void => None,
     }

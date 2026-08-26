@@ -326,3 +326,26 @@ use ordinary strict C `double` behavior: f64 division by zero does not return
 `CK_ERR_DIV_BY_ZERO`, and f64 overflow does not return `CK_ERR_OVERFLOW`. See
 [Checked Arithmetic](CHECKED_ARITHMETIC.md) for the full ABI and safety
 boundary.
+
+## Non-owning slices
+
+`slice<T>` is a non-owning descriptor containing a typed data pointer and a
+`u32` length. Valid element types are primitives, pointers, and ordinary
+structs; `void` and direct nested slices are rejected with `CK2012`. Exported
+slice returns are also rejected, while internal functions may return slices.
+
+`slice(data, len)` constructs a descriptor from `ptr<T>` plus `u32`. The caller
+is responsible for memory validity, allocation extent, alignment, lifetime, and
+the truth of the declared length. Copying or forwarding a descriptor aliases
+the same caller-owned memory; it neither allocates nor extends lifetime.
+
+`items[index]` requires a `u32` index. `items[start..end]` creates a half-open
+sub-slice and requires `u32` endpoints satisfying
+`start <= end <= items.len`. `.data` and `.len` are read-only projections;
+whole descriptors remain assignable. Indexing after `.data` is an intentional
+raw escape and therefore follows raw-pointer rules rather than slice bounds.
+
+`--bounds unchecked` emits no guards. C-only `--bounds checked` guards slice
+index and sub-slice operations and returns status 4 on failure. Construction,
+raw pointer indexing, and the `.data` raw escape are never guarded. WASM and
+LLVM reject `--bounds checked` explicitly.

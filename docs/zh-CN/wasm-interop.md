@@ -38,3 +38,15 @@ cargo test --test wasm_backend_test --locked
 
 测试套件检查 WAT text、WASM bytes、ABI layout、f64 behavior、fixture coverage，
 以及生成 artifact 的 runtime behavior。
+
+## Slice interop
+
+Exported `slice<T>` parameter 对 host 表现为两个 argument：linear-memory address
+与 `u32` element count。Descriptor 非 owning、可以 alias，也不会保持 memory
+alive；host 必须保证整个 call 期间 allocation 有效。Stored descriptor 占 8 bytes，
+字段 offset 为 0/4。Internal multi-value return 属于 compiler detail，exported
+slice return 会被拒绝。
+
+WASM 当前只支持 `--bounds unchecked`，并明确拒绝 `--bounds checked`。需要
+recoverable checked slice error 的 host 应使用 generated C；host 也可以在调用 WASM
+前自行 validation。通过 `.data` index 在所有 backend 都是 raw escape。

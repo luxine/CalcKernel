@@ -112,3 +112,15 @@ MIR 文本、生成的 C/WASM/LLVM 输出，以及生成 artifact 的运行时�
 No npm。没有 JavaScript compatibility layer。没有 TypeScript declaration parity。
 TypeScript checkout 只作为只读 source material 和行为 oracle；实际发布的产品是
 `native ckc`。
+
+## 非 owning slice
+
+CK 现已支持非 owning 的 `slice<T>` descriptor。可用 `slice(data, len)` 从 raw
+pointer 构造，读取 `.data` / `.len`，执行 index，或用 `items[start..end]` 构造
+半开 sub-slice。内存仍由 caller 拥有；raw pointer 与声明长度的有效性也由 caller
+负责。Descriptor 会 alias 同一内存，不会延长其 lifetime。示例见
+[examples/slices.ck](examples/slices.ck)。
+
+所有 backend 默认 `--bounds unchecked`。C emission 与 `ckc build` 还接受
+`--bounds checked`，越界返回 `CK_ERR_OUT_OF_BOUNDS`（status 4）。WASM 与 LLVM
+只接受 unchecked bounds，并会明确拒绝 checked bounds。

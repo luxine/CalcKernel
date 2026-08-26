@@ -310,3 +310,23 @@ check、pointer validity check、heap allocation、runtime support 或异常。
 普通 strict C `double` 行为：f64 division by zero 不返回 `CK_ERR_DIV_BY_ZERO`，
 f64 overflow 不返回 `CK_ERR_OVERFLOW`。完整 ABI 和安全边界见
 [Checked Arithmetic](CHECKED_ARITHMETIC.md)。
+
+## 非 owning slice
+
+`slice<T>` 是由 typed data pointer 与 `u32` length 组成的非 owning descriptor。
+Element type 可以是 primitive、pointer 或普通 struct；`void` 与直接嵌套 slice
+会以 `CK2012` 拒绝。Exported slice return 同样被拒绝，internal function 可以返回
+slice。
+
+`slice(data, len)` 用 `ptr<T>` 与 `u32` 构造 descriptor。内存有效性、allocation
+范围、alignment、lifetime 以及声明长度的真实性都由 caller 负责。复制或转发
+descriptor 会 alias 同一块 caller-owned memory；不会分配内存，也不会延长 lifetime。
+
+`items[index]` 的 index 必须是 `u32`。`items[start..end]` 创建半开 sub-slice，
+两个 endpoint 都必须是 `u32`，并满足 `start <= end <= items.len`。`.data` 与
+`.len` 是 read-only projection；完整 descriptor 仍可赋值。通过 `.data` 再 index
+是显式 raw escape，遵循 raw-pointer 规则，不使用 slice bounds。
+
+`--bounds unchecked` 不生成 guard。仅 C 支持的 `--bounds checked` 会检查 slice
+index 与 sub-slice，失败返回 status 4。构造、raw pointer index 与 `.data` raw
+escape 永远不检查。WASM 和 LLVM 会明确拒绝 `--bounds checked`。

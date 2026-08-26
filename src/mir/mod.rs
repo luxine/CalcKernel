@@ -20,6 +20,7 @@ pub enum MirPrimitiveTypeName {
 pub enum MirType {
     Primitive(MirPrimitiveTypeName),
     Pointer(Box<MirType>),
+    Slice(Box<MirType>),
     Struct(String),
     Void,
 }
@@ -97,6 +98,11 @@ pub enum MirPlace {
     },
     Index {
         base: Box<MirPlace>,
+        index: MirValue,
+        type_node: MirType,
+    },
+    SliceIndex {
+        slice: MirValue,
         index: MirValue,
         type_node: MirType,
     },
@@ -189,6 +195,25 @@ pub enum MirInstruction {
     Store {
         place: MirPlace,
         value: MirValue,
+    },
+    MakeSlice {
+        target: MirValue,
+        data: MirValue,
+        len: MirValue,
+    },
+    SliceData {
+        target: MirValue,
+        slice: MirValue,
+    },
+    SliceLen {
+        target: MirValue,
+        slice: MirValue,
+    },
+    Subslice {
+        target: MirValue,
+        slice: MirValue,
+        start: MirValue,
+        end: MirValue,
     },
     Call {
         target: Option<MirValue>,
@@ -304,6 +329,11 @@ pub fn mir_primitive(name: MirPrimitiveTypeName) -> MirType {
 #[must_use]
 pub fn mir_pointer(element_type: MirType) -> MirType {
     MirType::Pointer(Box::new(element_type))
+}
+
+#[must_use]
+pub fn mir_slice(element_type: MirType) -> MirType {
+    MirType::Slice(Box::new(element_type))
 }
 
 #[must_use]
@@ -690,6 +720,69 @@ fn lower_expression(
         Expression::Call { callee, args, .. } => {
             lower_call_expression(context, expression, callee, args)
         }
+        Expression::SliceConstructor { data, len, .. } => {
+            let data = lower_expression(context, data)?;
+            let len = lower_expression(context, len)?;
+            let target = context.builder.temp(to_mir_type(&require_expression_type(
+                context.checked_program,
+                expression,
+            )?)?);
+            emit_instruction(
+                context,
+                MirInstruction::MakeSlice {
+                    target: target.clone(),
+                    data,
+                    len,
+                },
+            )?;
+            Ok(target)
+        }
+        Expression::Subslice {
+            slice, start, end, ..
+        } => {
+            let slice = lower_expression(context, slice)?;
+            let start = lower_expression(context, start)?;
+            let end = lower_expression(context, end)?;
+            let target = context.builder.temp(to_mir_type(&require_expression_type(
+                context.checked_program,
+                expression,
+            )?)?);
+            emit_instruction(
+                context,
+                MirInstruction::Subslice {
+                    target: target.clone(),
+                    slice,
+                    start,
+                    end,
+                },
+            )?;
+            Ok(target)
+        }
+        Expression::Field { object, field, .. }
+            if matches!(
+                require_expression_type(context.checked_program, object)?,
+                CalcKernelType::Slice(_)
+            ) =>
+        {
+            let slice = lower_expression(context, object)?;
+            let target = context.builder.temp(to_mir_type(&require_expression_type(
+                context.checked_program,
+                expression,
+            )?)?);
+            let instruction = if field.name == "data" {
+                MirInstruction::SliceData {
+                    target: target.clone(),
+                    slice,
+                }
+            } else {
+                MirInstruction::SliceLen {
+                    target: target.clone(),
+                    slice,
+                }
+            };
+            emit_instruction(context, instruction)?;
+            Ok(target)
+        }
         Expression::Field { .. } | Expression::Index { .. } => {
             lower_load_expression(context, expression)
         }
@@ -965,7 +1058,20 @@ fn lower_place(
             }
         }
         Expression::Index { object, index, .. } => {
-            let base = lower_place(context, object)?;
+            let object_type = require_expression_type(context.checked_program, object)?;
+            if matches!(object_type, CalcKernelType::Slice(_)) {
+                let slice = lower_expression(context, object)?;
+                let index = lower_expression(context, index)?;
+                return Ok(MirPlace::SliceIndex {
+                    slice,
+                    index,
+                    type_node: to_mir_type(&require_expression_type(
+                        context.checked_program,
+                        expression,
+                    )?)?,
+                });
+            }
+            let base = lower_pointer_base_place(context, object)?;
             let index = lower_expression(context, index)?;
             Ok(MirPlace::Index {
                 base: Box::new(base),
@@ -990,6 +1096,41 @@ fn lower_place(
         Expression::Parenthesized { expression, .. } => lower_place(context, expression),
         _ => Err(unsupported("expression place")),
     }
+}
+
+fn lower_pointer_base_place(
+    context: &mut FunctionLowerContext<'_>,
+    expression: &Expression,
+) -> Result<MirPlace, MirLowerError> {
+    let ordinary_place = match expression {
+        Expression::Identifier { .. } | Expression::Index { .. } => true,
+        Expression::Field { object, .. } => !matches!(
+            require_expression_type(context.checked_program, object)?,
+            CalcKernelType::Slice(_)
+        ),
+        Expression::Parenthesized { expression, .. } => {
+            return lower_pointer_base_place(context, expression);
+        }
+        _ => false,
+    };
+    if ordinary_place {
+        return lower_place(context, expression);
+    }
+
+    let pointer = lower_expression(context, expression)?;
+    let local =
+        create_synthetic_local_with_prefix(context, "ik_place", value_type(&pointer).clone());
+    emit_instruction(
+        context,
+        MirInstruction::Move {
+            target: local.clone(),
+            value: pointer,
+        },
+    )?;
+    let MirValue::Local { name, type_node } = local else {
+        unreachable!("synthetic place base is always a local")
+    };
+    Ok(MirPlace::Local { name, type_node })
 }
 
 fn start_block(context: &mut FunctionLowerContext<'_>, label: Option<String>) -> usize {
@@ -1026,8 +1167,16 @@ fn set_block_terminator(
 }
 
 fn create_synthetic_local(context: &mut FunctionLowerContext<'_>, type_node: MirType) -> MirValue {
+    create_synthetic_local_with_prefix(context, "ik_sc", type_node)
+}
+
+fn create_synthetic_local_with_prefix(
+    context: &mut FunctionLowerContext<'_>,
+    prefix: &str,
+    type_node: MirType,
+) -> MirValue {
     loop {
-        let name = format!("ik_sc{}", context.synthetic_local_counter);
+        let name = format!("{prefix}{}", context.synthetic_local_counter);
         context.synthetic_local_counter += 1;
         if context.values.contains_key(&name) {
             continue;
@@ -1167,6 +1316,7 @@ fn to_mir_type(type_node: &CalcKernelType) -> Result<MirType, MirLowerError> {
             Ok(mir_primitive(MirPrimitiveTypeName::Bool))
         }
         CalcKernelType::Pointer(element_type) => Ok(mir_pointer(to_mir_type(&element_type)?)),
+        CalcKernelType::Slice(element_type) => Ok(mir_slice(to_mir_type(&element_type)?)),
         CalcKernelType::Struct(name) => Ok(mir_struct(name)),
         CalcKernelType::Void => Ok(MirType::Void),
         CalcKernelType::IntegerLiteral => Ok(mir_primitive(MirPrimitiveTypeName::I32)),
@@ -1371,6 +1521,38 @@ fn print_mir_instruction(instruction: &MirInstruction) -> String {
                 print_mir_value(value)
             )
         }
+        MirInstruction::MakeSlice { target, data, len } => format!(
+            "{}: {} = make_slice {}, {}",
+            print_mir_value(target),
+            print_mir_type(value_type(target)),
+            print_mir_value(data),
+            print_mir_value(len)
+        ),
+        MirInstruction::SliceData { target, slice } => format!(
+            "{}: {} = slice_data {}",
+            print_mir_value(target),
+            print_mir_type(value_type(target)),
+            print_mir_value(slice)
+        ),
+        MirInstruction::SliceLen { target, slice } => format!(
+            "{}: {} = slice_len {}",
+            print_mir_value(target),
+            print_mir_type(value_type(target)),
+            print_mir_value(slice)
+        ),
+        MirInstruction::Subslice {
+            target,
+            slice,
+            start,
+            end,
+        } => format!(
+            "{}: {} = subslice {}, {}, {}",
+            print_mir_value(target),
+            print_mir_type(value_type(target)),
+            print_mir_value(slice),
+            print_mir_value(start),
+            print_mir_value(end)
+        ),
         MirInstruction::Call {
             target,
             function_name,
@@ -1441,6 +1623,11 @@ fn print_mir_place(place: &MirPlace) -> String {
                 print_mir_value(index)
             )
         }
+        MirPlace::SliceIndex { slice, index, .. } => format!(
+            "slice_index({}, {})",
+            print_mir_value(slice),
+            print_mir_value(index)
+        ),
         MirPlace::Field {
             base, field_name, ..
         } => {
@@ -1454,6 +1641,7 @@ pub fn print_mir_type(type_node: &MirType) -> String {
     match type_node {
         MirType::Primitive(name) => print_primitive_type(*name).to_string(),
         MirType::Pointer(element_type) => format!("ptr<{}>", print_mir_type(element_type)),
+        MirType::Slice(element_type) => format!("slice<{}>", print_mir_type(element_type)),
         MirType::Struct(name) => name.clone(),
         MirType::Void => "void".to_string(),
     }
@@ -1533,6 +1721,16 @@ pub fn validate_mir_module(module: &MirModule) -> MirValidationResult {
                     block_label: None,
                 });
             }
+            if let Some(reason) = invalid_slice_type_reason(&field.type_node) {
+                ctx.errors.push(MirValidationError {
+                    message: format!(
+                        "Invalid slice field '{}' in struct '{}': {reason}.",
+                        field.name, struct_info.name
+                    ),
+                    function_name: None,
+                    block_label: None,
+                });
+            }
         }
     }
 
@@ -1595,6 +1793,26 @@ fn validate_function(module_ctx: &mut ModuleValidationContext<'_>, function: &Mi
             None,
         );
     }
+    if let Some(reason) = invalid_slice_type_reason(&function.return_type) {
+        add_validation_error(
+            &mut ctx,
+            format!(
+                "Function '{}' has invalid slice return type: {reason}.",
+                function.name
+            ),
+            None,
+        );
+    }
+    if function.exported && matches!(function.return_type, MirType::Slice(_)) {
+        add_validation_error(
+            &mut ctx,
+            format!(
+                "Function '{}' has an exported slice return, which is not allowed.",
+                function.name
+            ),
+            None,
+        );
+    }
 
     collect_params(&mut ctx);
     collect_locals(&mut ctx);
@@ -1627,6 +1845,16 @@ fn collect_params(ctx: &mut FunctionValidationContext<'_, '_>) {
                 None,
             );
         }
+        if let Some(reason) = invalid_slice_type_reason(&param.type_node) {
+            add_validation_error(
+                ctx,
+                format!(
+                    "Parameter '{}' in function '{}' has invalid slice type: {reason}.",
+                    param.name, ctx.function.name
+                ),
+                None,
+            );
+        }
         if ctx.params.contains_key(&param.name) {
             add_validation_error(
                 ctx,
@@ -1650,6 +1878,16 @@ fn collect_locals(ctx: &mut FunctionValidationContext<'_, '_>) {
                 ctx,
                 format!(
                     "Void local '{}' is not allowed in function '{}'.",
+                    local.name, ctx.function.name
+                ),
+                None,
+            );
+        }
+        if let Some(reason) = invalid_slice_type_reason(&local.type_node) {
+            add_validation_error(
+                ctx,
+                format!(
+                    "Local '{}' in function '{}' has invalid slice type: {reason}.",
                     local.name, ctx.function.name
                 ),
                 None,
@@ -1702,6 +1940,16 @@ fn collect_temps(ctx: &mut FunctionValidationContext<'_, '_>) {
                     ctx,
                     format!(
                         "Void temp '%{}' is not allowed in function '{}'.",
+                        name, ctx.function.name
+                    ),
+                    Some(&block.label),
+                );
+            }
+            if let Some(reason) = invalid_slice_type_reason(type_node) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "Temp '%{}' in function '{}' has invalid slice type: {reason}.",
                         name, ctx.function.name
                     ),
                     Some(&block.label),
@@ -2018,6 +2266,149 @@ fn validate_instruction(
                     ),
                     Some(&block.label),
                 );
+            }
+        }
+        MirInstruction::MakeSlice { target, data, len } => {
+            validate_target(ctx, block, target);
+            validate_value(ctx, block, data);
+            validate_value(ctx, block, len);
+            let MirType::Slice(element_type) = value_type(target) else {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "MakeSlice target in function '{}' must be a slice, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(target))
+                    ),
+                    Some(&block.label),
+                );
+                return;
+            };
+            let expected_pointer = MirType::Pointer(element_type.clone());
+            if !same_mir_type(value_type(data), &expected_pointer) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "MakeSlice data in function '{}' must be {}, got {}.",
+                        ctx.function.name,
+                        print_mir_type(&expected_pointer),
+                        print_mir_type(value_type(data))
+                    ),
+                    Some(&block.label),
+                );
+            }
+            if !is_u32_type(value_type(len)) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "MakeSlice length in function '{}' must be u32, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(len))
+                    ),
+                    Some(&block.label),
+                );
+            }
+        }
+        MirInstruction::SliceData { target, slice } => {
+            validate_target(ctx, block, target);
+            validate_value(ctx, block, slice);
+            let MirType::Slice(element_type) = value_type(slice) else {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "SliceData input in function '{}' must be a slice, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(slice))
+                    ),
+                    Some(&block.label),
+                );
+                return;
+            };
+            let expected = MirType::Pointer(element_type.clone());
+            if !same_mir_type(value_type(target), &expected) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "SliceData result in function '{}' must be {}, got {}.",
+                        ctx.function.name,
+                        print_mir_type(&expected),
+                        print_mir_type(value_type(target))
+                    ),
+                    Some(&block.label),
+                );
+            }
+        }
+        MirInstruction::SliceLen { target, slice } => {
+            validate_target(ctx, block, target);
+            validate_value(ctx, block, slice);
+            if !matches!(value_type(slice), MirType::Slice(_)) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "SliceLen input in function '{}' must be a slice, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(slice))
+                    ),
+                    Some(&block.label),
+                );
+            }
+            if !is_u32_type(value_type(target)) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "SliceLen result in function '{}' must be u32, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(target))
+                    ),
+                    Some(&block.label),
+                );
+            }
+        }
+        MirInstruction::Subslice {
+            target,
+            slice,
+            start,
+            end,
+        } => {
+            validate_target(ctx, block, target);
+            validate_value(ctx, block, slice);
+            validate_value(ctx, block, start);
+            validate_value(ctx, block, end);
+            if !matches!(value_type(slice), MirType::Slice(_)) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "Subslice input in function '{}' must be a slice, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(slice))
+                    ),
+                    Some(&block.label),
+                );
+            }
+            if !same_mir_type(value_type(target), value_type(slice)) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "Subslice result in function '{}' must match {}, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(slice)),
+                        print_mir_type(value_type(target))
+                    ),
+                    Some(&block.label),
+                );
+            }
+            for (role, value) in [("start", start), ("end", end)] {
+                if !is_u32_type(value_type(value)) {
+                    add_validation_error(
+                        ctx,
+                        format!(
+                            "Subslice {role} in function '{}' must be u32, got {}.",
+                            ctx.function.name,
+                            print_mir_type(value_type(value))
+                        ),
+                        Some(&block.label),
+                    );
+                }
             }
         }
         MirInstruction::Call {
@@ -2385,6 +2776,50 @@ fn validate_place(ctx: &mut FunctionValidationContext<'_, '_>, block: &MirBlock,
                 ),
             }
         }
+        MirPlace::SliceIndex {
+            slice,
+            index,
+            type_node,
+        } => {
+            validate_value(ctx, block, slice);
+            validate_value(ctx, block, index);
+            if !is_u32_type(value_type(index)) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "SliceIndex in function '{}' requires u32 index, got {}.",
+                        ctx.function.name,
+                        print_mir_type(value_type(index))
+                    ),
+                    Some(&block.label),
+                );
+            }
+            match value_type(slice) {
+                MirType::Slice(element_type) => {
+                    if !same_mir_type(element_type, type_node) {
+                        add_validation_error(
+                            ctx,
+                            format!(
+                                "SliceIndex place type mismatch in function '{}': expected {}, got {}.",
+                                ctx.function.name,
+                                print_mir_type(element_type),
+                                print_mir_type(type_node)
+                            ),
+                            Some(&block.label),
+                        );
+                    }
+                }
+                other => add_validation_error(
+                    ctx,
+                    format!(
+                        "SliceIndex base in function '{}' must be a slice, got {}.",
+                        ctx.function.name,
+                        print_mir_type(other)
+                    ),
+                    Some(&block.label),
+                ),
+            }
+        }
         MirPlace::Field {
             base,
             field_name,
@@ -2542,7 +2977,11 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
         | MirInstruction::Compare { target, .. }
         | MirInstruction::Cast { target, .. }
         | MirInstruction::Address { target, .. }
-        | MirInstruction::Load { target, .. } => Some(target),
+        | MirInstruction::Load { target, .. }
+        | MirInstruction::MakeSlice { target, .. }
+        | MirInstruction::SliceData { target, .. }
+        | MirInstruction::SliceLen { target, .. }
+        | MirInstruction::Subslice { target, .. } => Some(target),
         MirInstruction::Call { target, .. } => target.as_ref(),
         MirInstruction::Store { .. } => None,
     }
@@ -2551,7 +2990,9 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
 fn contains_void_type(type_node: &MirType) -> bool {
     match type_node {
         MirType::Void => true,
-        MirType::Pointer(element_type) => contains_void_type(element_type),
+        MirType::Pointer(element_type) | MirType::Slice(element_type) => {
+            contains_void_type(element_type)
+        }
         MirType::Primitive(_) | MirType::Struct(_) => false,
     }
 }
@@ -2573,6 +3014,7 @@ fn place_type(place: &MirPlace) -> &MirType {
         | MirPlace::Local { type_node, .. }
         | MirPlace::Deref { type_node, .. }
         | MirPlace::Index { type_node, .. }
+        | MirPlace::SliceIndex { type_node, .. }
         | MirPlace::Field { type_node, .. } => type_node,
     }
 }
@@ -2610,6 +3052,23 @@ fn is_index_type(type_node: &MirType) -> bool {
         type_node,
         MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32)
     )
+}
+
+fn is_u32_type(type_node: &MirType) -> bool {
+    matches!(type_node, MirType::Primitive(MirPrimitiveTypeName::U32))
+}
+
+fn invalid_slice_type_reason(type_node: &MirType) -> Option<&'static str> {
+    match type_node {
+        MirType::Slice(element_type) => match element_type.as_ref() {
+            MirType::Void => Some("void slice element"),
+            MirType::Slice(_) => Some("direct slice element"),
+            MirType::Pointer(nested) => invalid_slice_type_reason(nested),
+            MirType::Primitive(_) | MirType::Struct(_) => None,
+        },
+        MirType::Pointer(element_type) => invalid_slice_type_reason(element_type),
+        MirType::Primitive(_) | MirType::Struct(_) | MirType::Void => None,
+    }
 }
 
 fn binary_symbol(op: MirBinaryOp) -> &'static str {

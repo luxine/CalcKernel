@@ -133,3 +133,16 @@ backend:
 ckc emit-c input.ck --overflow checked --out build/input.c --header build/input.h
 ckc build input.ck --overflow checked --out build/input
 ```
+
+## Slice ABI
+
+A logical `slice<T>` parameter expands to two collision-safe `i32` parameters:
+the linear-memory data address followed by its `u32` length. Locals, temporaries,
+calls, and dispatcher returns carry the same pair. Internal slice returns use
+WASM multi-value `(result i32 i32)` in data/length order.
+
+A stored descriptor occupies 8 bytes with alignment 4: address at offset 0 and
+length at offset 4. Slice indexing and sub-slicing use the deterministic element
+size. Memory remains caller-owned and descriptors may alias. WASM supports only
+`--bounds unchecked`; `--bounds checked` is rejected before emission and no
+implicit guard or trap is added.

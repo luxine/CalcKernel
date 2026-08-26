@@ -394,3 +394,15 @@ Checked mode does not provide complete memory safety:
 
 Checked arithmetic improves integer error reporting, but it does not make
 pointer-based kernels memory safe.
+
+## Bounds status and ordering
+
+`--bounds checked` is independent of integer `--overflow`; C accepts all four
+mode combinations. Either checked mode activates the full status ABI, including
+`CK_ERR_OUT_OF_BOUNDS` value 4. A non-void null `ck_return` check remains the
+first body error. Arithmetic overflow or a failing nested call while computing
+an index/range operand is reported before its slice bounds guard.
+
+Only `slice<T>` indexing and sub-slicing are guarded. `slice(data, len)`, raw
+pointer indexing, and indexing after the `.data` raw escape remain caller-risk
+operations. WASM and LLVM reject `--bounds checked` explicitly.

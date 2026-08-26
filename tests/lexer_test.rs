@@ -365,3 +365,75 @@ fn lex_should_tokenize_void_as_a_reserved_keyword() {
     assert_eq!(result.tokens[0].text, "void");
     assert_eq!(result.tokens[1].kind, TokenKind::Identifier);
 }
+
+#[test]
+fn lex_should_tokenize_slice_and_dotdot_with_exact_spans() {
+    let result = lex(&SourceFile::new("test.ck", "slice values[0..len]"));
+    let tokens = result
+        .tokens
+        .iter()
+        .map(|token| (token.kind, token.text.as_str(), token.start, token.end))
+        .collect::<Vec<_>>();
+
+    assert_eq!(result.diagnostics, []);
+    assert_eq!(
+        tokens,
+        vec![
+            (TokenKind::Slice, "slice", 0, 5),
+            (TokenKind::Identifier, "values", 6, 12),
+            (TokenKind::LeftBracket, "[", 12, 13),
+            (TokenKind::Integer, "0", 13, 14),
+            (TokenKind::DotDot, "..", 14, 16),
+            (TokenKind::Identifier, "len", 16, 19),
+            (TokenKind::RightBracket, "]", 19, 20),
+            (TokenKind::Eof, "", 20, 20),
+        ]
+    );
+}
+
+#[test]
+fn lex_should_prefer_dotdot_over_float_fraction_after_integer() {
+    let result = lex(&SourceFile::new("test.ck", "1..2 1.25 3..len"));
+    let actual = result
+        .tokens
+        .iter()
+        .map(|token| (token.kind, token.text.as_str()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(result.diagnostics, []);
+    assert_eq!(
+        actual,
+        vec![
+            (TokenKind::Integer, "1"),
+            (TokenKind::DotDot, ".."),
+            (TokenKind::Integer, "2"),
+            (TokenKind::Float, "1.25"),
+            (TokenKind::Integer, "3"),
+            (TokenKind::DotDot, ".."),
+            (TokenKind::Identifier, "len"),
+            (TokenKind::Eof, ""),
+        ]
+    );
+}
+
+#[test]
+fn lex_should_preserve_supported_and_malformed_float_behavior() {
+    let valid = lex(&SourceFile::new("valid.ck", "1.0 0.5 1e3 1.0e-3"));
+    assert_eq!(valid.diagnostics, []);
+    assert!(
+        valid
+            .tokens
+            .iter()
+            .take(4)
+            .all(|token| token.kind == TokenKind::Float)
+    );
+
+    for (text, message) in [
+        ("1.", "Malformed float literal '1.'."),
+        (".5", "Malformed float literal '.5'."),
+    ] {
+        let result = lex(&SourceFile::new("bad.ck", text));
+        assert_eq!(result.diagnostics.len(), 1, "{text}");
+        assert_eq!(result.diagnostics[0].message, message, "{text}");
+    }
+}

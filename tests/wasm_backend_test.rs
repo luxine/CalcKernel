@@ -1,7 +1,8 @@
 use calckernel::{
-    EmitWasmOptions, MirPassContext, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
-    build_mir_optimization_pipeline, check, emit_wasm_module, emit_wasm_module_with_options,
-    emit_wat_module_with_options, lower_to_mir, run_mir_pass_pipeline,
+    EmitWasmOptions, MirPassBoundsMode, MirPassContext, MirPassOverflowMode, MirPassTargetBackend,
+    SourceFile, build_mir_optimization_pipeline, check, emit_wasm_module,
+    emit_wasm_module_with_options, emit_wat_module_with_options, lower_to_mir,
+    run_mir_pass_pipeline,
 };
 use std::{
     fs,
@@ -21,6 +22,7 @@ fn emit_wat(source_text: &str, opt_level: u8) -> String {
         &MirPassContext {
             opt_level,
             overflow_mode: MirPassOverflowMode::Unchecked,
+            bounds_mode: MirPassBoundsMode::Unchecked,
             target_backend: MirPassTargetBackend::Wasm,
             debug: Default::default(),
         },
@@ -40,6 +42,7 @@ fn emit_wasm(source_text: &str, opt_level: u8) -> Vec<u8> {
         &MirPassContext {
             opt_level,
             overflow_mode: MirPassOverflowMode::Unchecked,
+            bounds_mode: MirPassBoundsMode::Unchecked,
             target_backend: MirPassTargetBackend::Wasm,
             debug: Default::default(),
         },
@@ -734,6 +737,198 @@ WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
     fs::create_dir_all(&dir).expect("create temp dir");
     for opt_level in 0..=3 {
         let wasm = dir.join(format!("void_o{opt_level}.wasm"));
+        fs::write(&wasm, emit_wasm(source, opt_level)).expect("write wasm");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(runner)
+            .arg(&wasm)
+            .output()
+            .expect("run node");
+        assert!(
+            output.status.success(),
+            "O{opt_level} node stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn wasm_backend_should_flatten_slice_params_collision_safely() {
+    let wat = emit_wat(
+        r#"
+      export fn collide(
+        items: slice<i32>,
+        items_data: ptr<i32>,
+        items_len: u32
+      ) -> i32 {
+        return items[0] + items_data[items_len];
+      }
+    "#,
+        0,
+    );
+
+    assert!(wat.contains("(param $items_data_1 i32)"), "{wat}");
+    assert!(wat.contains("(param $items_len_1 i32)"), "{wat}");
+    assert!(wat.contains("(param $items_data i32)"), "{wat}");
+    assert!(wat.contains("(param $items_len i32)"), "{wat}");
+}
+
+#[test]
+fn wasm_backend_should_emit_paired_slice_locals_temps_moves_and_projections() {
+    let wat = emit_wat(
+        r#"
+      export fn view(data: ptr<i32>, len: u32, start: u32, end: u32) -> u32 {
+        let items: slice<i32> = slice(data, len);
+        let copy: slice<i32> = items;
+        let middle: slice<i32> = copy[start..end];
+        return middle.len;
+      }
+    "#,
+        1,
+    );
+
+    for local in [
+        "(local $items_data i32)",
+        "(local $items_len i32)",
+        "(local $copy_data i32)",
+        "(local $copy_len i32)",
+        "(local $middle_data i32)",
+        "(local $middle_len i32)",
+    ] {
+        assert!(wat.contains(local), "missing {local}:\n{wat}");
+    }
+    assert!(wat.contains("local.get $items_data"), "{wat}");
+    assert!(wat.contains("local.set $copy_data"), "{wat}");
+    assert!(wat.contains("local.get $middle_len"), "{wat}");
+}
+
+#[test]
+fn wasm_backend_should_load_store_slice_fields_with_size8_align4() {
+    let wat = emit_wat(
+        r#"
+      struct Bundle {
+        tag: i32;
+        items: slice<i32>;
+        tail: i32;
+      }
+
+      export fn round_trip(bundle: ptr<Bundle>, items: slice<i32>) -> u32 {
+        bundle[0].items = items;
+        let copy: slice<i32> = bundle[0].items;
+        return copy.len;
+      }
+    "#,
+        1,
+    );
+
+    assert!(wat.contains("i32.store offset=0 align=4"), "{wat}");
+    assert!(wat.contains("i32.store offset=4 align=4"), "{wat}");
+    assert!(wat.contains("i32.load offset=0 align=4"), "{wat}");
+    assert!(wat.contains("i32.load offset=4 align=4"), "{wat}");
+    assert!(
+        wat.contains("i32.const 4\n"),
+        "slice field offset missing:\n{wat}"
+    );
+}
+
+#[test]
+fn wasm_backend_should_return_internal_slices_as_two_values() {
+    let source = r#"
+      fn direct(items: slice<i32>) -> slice<i32> {
+        return items[0..1];
+      }
+
+      fn choose(items: slice<i32>, second: bool) -> slice<i32> {
+        if second {
+          return items[1..2];
+        }
+        return direct(items);
+      }
+
+      fn drop_one(items: slice<i32>) -> slice<i32> {
+        let i: u32 = 0;
+        while i < 1 {
+          i = i + 1;
+        }
+        return items[i..items.len];
+      }
+
+      export fn selected(items: slice<i32>, second: bool) -> i32 {
+        let result: slice<i32> = choose(items, second);
+        return result[0];
+      }
+
+      export fn dropped(items: slice<i32>) -> i32 {
+        let result: slice<i32> = drop_one(items);
+        return result[0];
+      }
+    "#;
+    let wat = emit_wat(source, 3);
+
+    assert!(wat.contains("(func $direct"), "{wat}");
+    assert!(wat.matches("(result i32 i32)").count() >= 3, "{wat}");
+    assert!(wat.contains("(local $ik_ret_data i32)"), "{wat}");
+    assert!(wat.contains("(local $ik_ret_len i32)"), "{wat}");
+    let call = wat.find("call $choose").expect("slice-returning call");
+    let after_call = &wat[call..];
+    let set_len = after_call.find("local.set $t").expect("first result pop");
+    let set_data = after_call[set_len + 1..]
+        .find("local.set $t")
+        .expect("second result pop")
+        + set_len
+        + 1;
+    assert!(set_len < set_data, "{after_call}");
+    assert!(
+        wat.contains("loop $ik_loop"),
+        "structured return path missing:\n{wat}"
+    );
+}
+
+#[test]
+fn wasm_backend_should_run_slice_index_subslice_and_struct_elements_at_all_levels() {
+    if !node_available() {
+        return;
+    }
+    let source = r#"
+      struct Pair {
+        left: i32;
+        right: i32;
+      }
+
+      fn choose(items: slice<Pair>, second: bool) -> slice<Pair> {
+        if second {
+          return items[1..2];
+        }
+        return items[0..1];
+      }
+
+      export fn sum_selected(items: slice<Pair>, second: bool) -> i32 {
+        let selected: slice<Pair> = choose(items, second);
+        return selected[0].left + selected[0].right;
+      }
+    "#;
+    let runner = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setInt32(0, 2, true);
+    view.setInt32(4, 3, true);
+    view.setInt32(8, 7, true);
+    view.setInt32(12, 11, true);
+    if (instance.exports.sum_selected(0, 2, 0) !== 5) process.exit(1);
+    if (instance.exports.sum_selected(0, 2, 1) !== 18) process.exit(2);
+  })
+  .catch((error) => { console.error(error); process.exit(3); });
+"#;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_slice_wasm_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    for opt_level in 0..=3 {
+        let wasm = dir.join(format!("slice_o{opt_level}.wasm"));
         fs::write(&wasm, emit_wasm(source, opt_level)).expect("write wasm");
         let output = Command::new("node")
             .arg("-e")

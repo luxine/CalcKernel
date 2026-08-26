@@ -377,3 +377,14 @@ Checked mode 不提供完整 memory safety：
 - checked mode may be slower than unchecked mode
 
 Checked arithmetic 改善整数错误报告，但不会让 pointer-based kernel 变成 memory safe。
+
+## Bounds status 与顺序
+
+`--bounds checked` 与 integer `--overflow` 独立；C 接受四种 mode 组合。任一 checked
+mode 都启用完整 status ABI，包括数值为 4 的 `CK_ERR_OUT_OF_BOUNDS`。Non-void
+function 的 null `ck_return` check 仍是第一个 body error。计算 index/range operand
+时的 arithmetic overflow 或 nested call failure 必须先于 slice bounds guard 返回。
+
+只有 `slice<T>` index 与 sub-slice 会被检查。`slice(data, len)`、raw pointer index
+以及通过 `.data` raw escape 后的 index 仍由 caller 承担风险。WASM 与 LLVM 会明确
+拒绝 `--bounds checked`。

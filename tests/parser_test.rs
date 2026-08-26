@@ -467,3 +467,80 @@ fn parse_should_not_treat_a_lex_error_as_an_empty_return() {
         ]
     );
 }
+
+#[test]
+fn parse_should_parse_slice_type_constructor_and_subslice() {
+    let result = parse_source(
+        r#"
+      fn middle(data: ptr<i64>, len: u32) -> slice<i64> {
+        let items: slice<i64> = slice(data, len);
+        return items[0..len];
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let Declaration::Function(function) = &result.ast.declarations[0] else {
+        panic!("expected function");
+    };
+    assert!(matches!(
+        function.return_type,
+        TypeNode::Slice { ref element_type, .. }
+            if matches!(element_type.as_ref(), TypeNode::Primitive { name, .. } if name == "i64")
+    ));
+    let Statement::Let(local) = &function.body.statements[0] else {
+        panic!("expected local");
+    };
+    assert!(matches!(local.type_node, TypeNode::Slice { .. }));
+    assert!(matches!(
+        local.initializer,
+        Expression::SliceConstructor { .. }
+    ));
+    let Statement::Return(statement) = &function.body.statements[1] else {
+        panic!("expected return");
+    };
+    assert!(matches!(statement.value, Some(Expression::Subslice { .. })));
+}
+
+#[test]
+fn parse_should_distinguish_index_from_explicit_range() {
+    let result = parse_source(
+        r#"
+      fn pick(items: slice<i64>, end: u32) -> i64 {
+        let tail: slice<i64> = items[0 .. end];
+        return items[0];
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let Declaration::Function(function) = &result.ast.declarations[0] else {
+        panic!("expected function");
+    };
+    let Statement::Let(local) = &function.body.statements[0] else {
+        panic!("expected local");
+    };
+    assert!(matches!(local.initializer, Expression::Subslice { .. }));
+    let Statement::Return(statement) = &function.body.statements[1] else {
+        panic!("expected return");
+    };
+    assert!(matches!(statement.value, Some(Expression::Index { .. })));
+}
+
+#[test]
+fn parse_should_reject_omitted_or_extra_range_endpoints() {
+    for text in [
+        "fn bad(items: slice<i64>, end: u32) -> slice<i64> { return items[..end]; }",
+        "fn bad(items: slice<i64>, start: u32) -> slice<i64> { return items[start..]; }",
+        "fn bad(items: slice<i64>) -> slice<i64> { return items[0..1..2]; }",
+    ] {
+        let result = parse_source(text);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == calckernel::DiagnosticCode::Ck1001),
+            "{text}"
+        );
+    }
+}

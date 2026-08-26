@@ -1,68 +1,68 @@
 # Phase C Acceptance — first-class slices and bounds modes
 
-Status: waiting for Phase B
+Status: complete
 
 All unchecked and checked promises below are mandatory. Checked bounds are C-only
 in this release; explicit rejection by WASM/LLVM is part of acceptance.
 
 ## Lexer/parser acceptance
 
-- [ ] `slice` and `..` are reserved/tokenized with exact spans.
-- [ ] `items[0..len]`, `items[0 .. len]`, and ordinary `items[0]` parse distinctly.
-- [ ] Existing valid floats still lex as one token; `1.` and `.5` retain their
+- [x] `slice` and `..` are reserved/tokenized with exact spans.
+- [x] `items[0..len]`, `items[0 .. len]`, and ordinary `items[0]` parse distinctly.
+- [x] Existing valid floats still lex as one token; `1.` and `.5` retain their
       malformed-float diagnostics.
-- [ ] Omitted range endpoints and extra `..` are rejected and recover cleanly.
-- [ ] `slice(data, len)` is dedicated syntax and cannot be shadowed.
+- [x] Omitted range endpoints and extra `..` are rejected and recover cleanly.
+- [x] `slice(data, len)` is dedicated syntax and cannot be shadowed.
 
 ## Type-system acceptance
 
-- [ ] Slice element whitelist is primitive, raw pointer, or ordinary named
+- [x] Slice element whitelist is primitive, raw pointer, or ordinary named
       struct; void and direct slice elements are rejected.
-- [ ] Locals, params, call arguments, ordinary struct fields, assignments, and
+- [x] Locals, params, call arguments, ordinary struct fields, assignments, and
       internal returns work with exact descriptor types.
-- [ ] Exported slice returns are rejected; exported slice params are accepted.
-- [ ] Constructor pointer element and length types are exact.
-- [ ] Index, start, end, and length use `u32` or a non-negative materializable
+- [x] Exported slice returns are rejected; exported slice params are accepted.
+- [x] Constructor pointer element and length types are exact.
+- [x] Index, start, end, and length use `u32` or a non-negative materializable
       integer literal; other integer types and out-of-range literals fail.
-- [ ] `.data` and `.len` are readable with correct types and individually
+- [x] `.data` and `.len` are readable with correct types and individually
       non-assignable; whole descriptors remain assignable.
-- [ ] Pointer indexing and `.data` escape retain raw unchecked semantics.
+- [x] Pointer indexing and `.data` escape retain raw unchecked semantics.
 
 ## MIR/optimizer acceptance
 
-- [ ] MIR exposes semantic slice type, construction, projection, sub-slice, and a
+- [x] MIR exposes semantic slice type, construction, projection, sub-slice, and a
       distinct slice-index place.
-- [ ] Descriptor, then index/start/end operands are each evaluated once in source
+- [x] Descriptor, then index/start/end operands are each evaluated once in source
       order.
-- [ ] Moves, loads/stores, calls, fields, and internal returns preserve exact
+- [x] Moves, loads/stores, calls, fields, and internal returns preserve exact
       descriptor types.
-- [ ] Validator-negative tests cover malformed elements, operands, places,
+- [x] Validator-negative tests cover malformed elements, operands, places,
       calls, returns, and exported returns.
-- [ ] Bounds mode is present in every MIR pass context.
-- [ ] O1–O3 do not delete, duplicate, CSE, or hoist a checked sub-slice or
+- [x] Bounds mode is present in every MIR pass context.
+- [x] O1–O3 do not delete, duplicate, CSE, or hoist a checked sub-slice or
       slice-index observation and preserve overflow/call/bounds precedence.
 
 ## C ABI acceptance
 
-- [ ] Stored descriptors are deterministic generated structs with typed pointer
+- [x] Stored descriptors are deterministic generated structs with typed pointer
       plus `uint32_t`.
-- [ ] Descriptor/ordinary struct declarations compile in dependency-safe order.
-- [ ] Generated identifiers are deterministic and collision-safe.
-- [ ] Every exported and internal slice param is physically flattened.
-- [ ] Unchecked internal slice returns use descriptor-by-value.
-- [ ] Status internal slice returns use descriptor output pointer.
-- [ ] Public header is authoritative and compiles under C11 `-Wall -Wextra
+- [x] Descriptor/ordinary struct declarations compile in dependency-safe order.
+- [x] Generated identifiers are deterministic and collision-safe.
+- [x] Every exported and internal slice param is physically flattened.
+- [x] Unchecked internal slice returns use descriptor-by-value.
+- [x] Status internal slice returns use descriptor output pointer.
+- [x] Public header is authoritative and compiles under C11 `-Wall -Wextra
       -Werror`.
 
 ## Checked C acceptance
 
 The full status set is emitted whenever overflow or bounds is checked:
 
-- [ ] `CK_OK = 0`
-- [ ] `CK_ERR_OVERFLOW = 1`
-- [ ] `CK_ERR_DIV_BY_ZERO = 2`
-- [ ] `CK_ERR_NULL_POINTER = 3`
-- [ ] `CK_ERR_OUT_OF_BOUNDS = 4`
+- [x] `CK_OK = 0`
+- [x] `CK_ERR_OVERFLOW = 1`
+- [x] `CK_ERR_DIV_BY_ZERO = 2`
+- [x] `CK_ERR_NULL_POINTER = 3`
+- [x] `CK_ERR_OUT_OF_BOUNDS = 4`
 
 Runtime cases:
 
@@ -82,34 +82,34 @@ Runtime cases:
 | raw `ptr<T>` index | no slice guard |
 | `.data` then raw index | no slice guard |
 
-- [ ] Every row passes at O0, O1, O2, and O3.
-- [ ] No pointer advancement, address formation, dereference, or range subtraction
+- [x] Every row passes at O0, O1, O2, and O3.
+- [x] No pointer advancement, address formation, dereference, or range subtraction
       occurs before its required guard.
-- [ ] Non-void `ck_return == NULL` remains the first body error; void has no
+- [x] Non-void `ck_return == NULL` remains the first body error; void has no
       generated result pointer.
 
 ## WASM acceptance
 
-- [ ] Slice params expand to two collision-safe i32 params.
-- [ ] Slice locals/temps use paired physical locals through every CFG path.
-- [ ] Stored descriptor layout is size 8, alignment 4, offsets 0/4.
-- [ ] Calls expand logical args; internal return is `(i32, i32)` with correct
+- [x] Slice params expand to two collision-safe i32 params.
+- [x] Slice locals/temps use paired physical locals through every CFG path.
+- [x] Stored descriptor layout is size 8, alignment 4, offsets 0/4.
+- [x] Calls expand logical args; internal return is `(i32, i32)` with correct
       result order in direct, dispatcher, and structured paths.
-- [ ] Slice of ordinary struct advances by deterministic struct size.
-- [ ] Valid construction/index/sub-slice/field/load/store programs run with the
+- [x] Slice of ordinary struct advances by deterministic struct size.
+- [x] Valid construction/index/sub-slice/field/load/store programs run with the
       same results as C and LLVM at O0–O3.
-- [ ] `--bounds checked` is rejected before emission; unchecked emits no guards.
+- [x] `--bounds checked` is rejected before emission; unchecked emits no guards.
 
 ## LLVM acceptance
 
-- [ ] Stored descriptor type is `{ ptr, i32 }`.
-- [ ] Slice params flatten to `ptr, i32` and reconstruct logical aggregates.
-- [ ] Moves, fields, loads/stores, calls, and internal aggregate returns verify
+- [x] Stored descriptor type is `{ ptr, i32 }`.
+- [x] Slice params flatten to `ptr, i32` and reconstruct logical aggregates.
+- [x] Moves, fields, loads/stores, calls, and internal aggregate returns verify
       and compile with clang.
-- [ ] Index/sub-slice uses the correct element type in GEP.
-- [ ] Zero-start preserves original pointer bits.
-- [ ] Valid runtime results match C/WASM at O0–O3.
-- [ ] `--bounds checked` is rejected before emission.
+- [x] Index/sub-slice uses the correct element type in GEP.
+- [x] Zero-start preserves original pointer bits.
+- [x] Valid runtime results match C/WASM at O0–O3.
+- [x] `--bounds checked` is rejected before emission.
 
 ## CLI acceptance
 
@@ -120,22 +120,22 @@ Runtime cases:
 | `emit-llvm`, `build-llvm` | accepted | stable LLVM rejection |
 | `check`, `emit-mir` | source/mode independent | source/mode independent |
 
-- [ ] Default is unchecked.
-- [ ] C accepts all four overflow/bounds combinations.
-- [ ] Invalid values are stable command errors where the flag is consumed.
-- [ ] Unsupported checked overflow precedes unsupported checked bounds for
+- [x] Default is unchecked.
+- [x] C accepts all four overflow/bounds combinations.
+- [x] Invalid values are stable command errors where the flag is consumed.
+- [x] Unsupported checked overflow precedes unsupported checked bounds for
       WASM/LLVM, independent of source flag order.
-- [ ] Success/help output documents the effective matrix.
+- [x] Success/help output documents the effective matrix.
 
 ## Documentation and regression acceptance
 
-- [ ] `examples/slices.ck` demonstrates construction, forwarding, indexing,
+- [x] `examples/slices.ck` demonstrates construction, forwarding, indexing,
       projections, sub-slicing, fields, and internal return.
-- [ ] English/Chinese language, architecture, MIR, ABI, checked arithmetic,
+- [x] English/Chinese language, architecture, MIR, ABI, checked arithmetic,
       optimization, WASM, LLVM, roadmap, and output docs agree.
-- [ ] Caller ownership, invalid raw descriptor responsibility, aliasing, and raw
+- [x] Caller ownership, invalid raw descriptor responsibility, aliasing, and raw
       escape are explicit.
-- [ ] Existing example signatures and TypeScript fixtures remain unchanged.
+- [x] Existing example signatures and TypeScript fixtures remain unchanged.
 
 ## Required commands
 
@@ -159,11 +159,17 @@ git diff --check
 
 | Date | Command / check | Result | Notes |
 | --- | --- | --- | --- |
-| | | | |
+| 2026-08-26 | frontend + MIR locked suites | PASS | 78 tests; includes slice call/return validator negatives |
+| 2026-08-26 | optimizer / C / WASM / LLVM locked suites | PASS | 20 / 22 / 15 / 18 tests; O0–O3 runtime matrices included |
+| 2026-08-26 | CLI / docs locked suites | PASS | 34 / 10 tests; shared example runs equally on C, WASM, LLVM |
+| 2026-08-26 | fmt + strict Clippy | PASS | all targets/features; repaired missing benchmark bounds context |
+| 2026-08-26 | full TS-oracle suite + release build + help | PASS | `CALCKERNEL_TS_ROOT=/Users/lynn/code/CalcKernel`; legacy diffs limited to approved bounds surface |
+| 2026-08-26 | adversarial implementation review | PASS | repaired LLVM `v0` collision; expanded every checked-C edge row to O0–O3 |
+| 2026-08-26 | `git diff --check` | PASS | no whitespace errors |
 
 ## Exit decision
 
-- [ ] Every checkbox and runtime matrix row is satisfied.
-- [ ] Phase C changes and this evidence are ready for the dedicated phase commit.
+- [x] Every checkbox and runtime matrix row is satisfied.
+- [x] Phase C changes and this evidence are ready for the dedicated phase commit.
 
-Accepted by inline execution: pending
+Accepted by inline execution: 2026-08-26

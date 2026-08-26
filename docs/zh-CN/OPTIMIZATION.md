@@ -433,3 +433,12 @@ f64，而不是把 integer arithmetic 的代数恒等式套到 f64 上。尤其�
 - 重要 tag 前，在机器时间允许时运行 fresh local performance pass
 - review MIR、C、WAT、LLVM 和 performance summary diff，确认没有意外的
   benchmark-specific 行为
+
+## Bounds-aware slice 规则
+
+Unchecked mode 下，`slice<T>` descriptor 是普通 exact value。使用 `--bounds
+checked` 时，optimization 必须保持每个 `SliceIndex` 与 `Subslice` observation 的
+顺序和次数：DCE、CSE、LICM、address CSE 与 inlining 不得删除、复制或 hoist
+未来的 C guard，使其跨过 arithmetic/call failure。该保守规则覆盖 O0 到 O3。
+WASM 与 LLVM 拒绝 checked bounds；raw pointer operation 在所有 backend 保持
+unchecked。

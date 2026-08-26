@@ -29,6 +29,7 @@ pub enum TokenKind {
     Bool,
     Void,
     Ptr,
+    Slice,
 
     LeftParen,
     RightParen,
@@ -40,6 +41,7 @@ pub enum TokenKind {
     Colon,
     Semicolon,
     Dot,
+    DotDot,
     Arrow,
 
     Plus,
@@ -205,7 +207,11 @@ impl<'source> Lexer<'source> {
                 self.add_token(TokenKind::Semicolon, start);
             }
             '.' => {
-                if self.peek_next().is_ascii_digit() {
+                if self.peek_next() == '.' {
+                    self.advance();
+                    self.advance();
+                    self.add_token(TokenKind::DotDot, start);
+                } else if self.peek_next().is_ascii_digit() {
                     self.scan_malformed_float_starting_with_dot();
                 } else {
                     self.advance();
@@ -312,7 +318,7 @@ impl<'source> Lexer<'source> {
 
         let mut is_float = false;
 
-        if self.peek() == '.' {
+        if self.peek() == '.' && self.peek_next() != '.' {
             is_float = true;
             self.advance();
             if !self.peek().is_ascii_digit() {
@@ -512,6 +518,7 @@ fn keyword_kind(text: &str) -> Option<TokenKind> {
         "bool" => Some(TokenKind::Bool),
         "void" => Some(TokenKind::Void),
         "ptr" => Some(TokenKind::Ptr),
+        "slice" => Some(TokenKind::Slice),
         _ => None,
     }
 }

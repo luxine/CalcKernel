@@ -37,3 +37,10 @@ Checked C ABI 的状态码数值保持不变：
 
 调用方需要更新命令调用、源码文件后缀、生成 header include、FFI binding，
 以及所有检查 C ABI status macro 的代码。
+
+## 新增 reserved language word
+
+`break`、`continue`、`void` 与 `slice` 现在都是 reserved keyword。已有 identifier
+若使用这四个单词，需要重命名。采用 `slice<T>` 的 FFI caller 必须传递展平的
+pointer/`u32` length parameter；使用 `--bounds checked` 的 checked C consumer
+还必须识别 `CK_ERR_OUT_OF_BOUNDS` status 4。

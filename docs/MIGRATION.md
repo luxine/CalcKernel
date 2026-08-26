@@ -39,3 +39,10 @@ The checked C ABI status values are preserved:
 
 Consumers should update command invocations, source file suffixes, generated
 header includes, FFI bindings, and any code that checks C ABI status macros.
+
+## Newly reserved language words
+
+`break`, `continue`, `void`, and `slice` are now reserved keywords. Rename any
+existing identifiers using those four words. FFI users adopting `slice<T>` must
+pass flattened pointer/`u32` length parameters, and checked C consumers must
+recognize `CK_ERR_OUT_OF_BOUNDS` status 4 when using `--bounds checked`.

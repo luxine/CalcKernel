@@ -193,10 +193,12 @@ Numeric roadmap lock:
 - MIR carries targetless calls and valueless returns through optimization.
 - C/status C, WASM, and LLVM expose their native no-value ABI forms.
 
-## Future `slice<T>` / Bounds Checks
+## First-class `slice<T>` / Bounds Checks
 
-- Raw `ptr<T>` remains unchecked.
-- Bounds checks should wait for a length-carrying type such as future
-  `slice<T>` or explicit pointer-plus-length metadata.
-- Document ownership, nullability, and aliasing rules before introducing
-  bounds-safe lowering.
+- Non-owning descriptors, raw construction, read-only projections, indexing,
+  sub-slicing, fields, calls, and internal returns are implemented.
+- Raw `ptr<T>` and `.data` escapes remain unchecked by design.
+- C supports `--bounds checked` with status 4; WASM and LLVM explicitly reject
+  it until they have an equivalent recoverable error ABI.
+- Ownership, invalid descriptor responsibility, aliasing, and lifetime remain
+  caller-side contracts.

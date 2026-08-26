@@ -30,6 +30,7 @@ pub enum DiagnosticCode {
     Ck2009,
     Ck2010,
     Ck2011,
+    Ck2012,
 }
 
 impl fmt::Display for DiagnosticCode {
@@ -48,6 +49,7 @@ impl fmt::Display for DiagnosticCode {
             Self::Ck2009 => "CK2009",
             Self::Ck2010 => "CK2010",
             Self::Ck2011 => "CK2011",
+            Self::Ck2012 => "CK2012",
         };
         formatter.write_str(code)
     }

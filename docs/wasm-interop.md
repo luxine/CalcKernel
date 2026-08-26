@@ -38,3 +38,16 @@ cargo test --test wasm_backend_test --locked
 
 The test suite checks WAT text, WASM bytes, ABI layout, f64 behavior, fixture
 coverage, and runtime behavior for generated artifacts.
+
+## Slice interop
+
+An exported `slice<T>` parameter is two host arguments: a linear-memory address
+and a `u32` element count. The descriptor is non-owning, may alias, and never
+keeps memory alive; the host must keep the allocation valid for the whole call.
+Stored descriptors occupy 8 bytes at offsets 0/4. Internal multi-value returns
+are compiler details and exported slice returns are rejected.
+
+WASM currently supports only `--bounds unchecked`. `--bounds checked` is
+rejected explicitly. Hosts that need recoverable checked slice errors should
+use generated C; hosts may still perform their own validation before calling
+WASM. Indexing through `.data` is a raw escape in every backend.

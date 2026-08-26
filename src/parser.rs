@@ -70,6 +70,10 @@ pub enum TypeNode {
         element_type: Box<TypeNode>,
         span: SourceSpan,
     },
+    Slice {
+        element_type: Box<TypeNode>,
+        span: SourceSpan,
+    },
     Named {
         name: IdentifierNode,
         span: SourceSpan,
@@ -86,6 +90,7 @@ impl TypeNode {
             Self::Primitive { span, .. }
             | Self::Void { span }
             | Self::Pointer { span, .. }
+            | Self::Slice { span, .. }
             | Self::Named { span, .. }
             | Self::Error { span } => *span,
         }
@@ -216,6 +221,11 @@ pub enum Expression {
         args: Vec<Expression>,
         span: SourceSpan,
     },
+    SliceConstructor {
+        data: Box<Expression>,
+        len: Box<Expression>,
+        span: SourceSpan,
+    },
     Field {
         object: Box<Expression>,
         field: IdentifierNode,
@@ -224,6 +234,12 @@ pub enum Expression {
     Index {
         object: Box<Expression>,
         index: Box<Expression>,
+        span: SourceSpan,
+    },
+    Subslice {
+        slice: Box<Expression>,
+        start: Box<Expression>,
+        end: Box<Expression>,
         span: SourceSpan,
     },
     Parenthesized {
@@ -246,8 +262,10 @@ impl Expression {
             | Self::Unary { span, .. }
             | Self::Binary { span, .. }
             | Self::Call { span, .. }
+            | Self::SliceConstructor { span, .. }
             | Self::Field { span, .. }
             | Self::Index { span, .. }
+            | Self::Subslice { span, .. }
             | Self::Parenthesized { span, .. }
             | Self::Error { span } => *span,
         }
@@ -424,6 +442,16 @@ impl<'source> Parser<'source> {
                 TypeNode::Pointer {
                     element_type: Box::new(element_type),
                     span: self.span_between_tokens(&ptr_token, &greater),
+                }
+            }
+            TokenKind::Slice => {
+                let slice_token = self.advance();
+                self.consume(TokenKind::Less, "Expected '<' after 'slice'.");
+                let element_type = self.parse_type();
+                let greater = self.consume(TokenKind::Greater, "Expected '>' after slice type.");
+                TypeNode::Slice {
+                    element_type: Box::new(element_type),
+                    span: self.span_between_tokens(&slice_token, &greater),
                 }
             }
             _ => {
@@ -684,7 +712,60 @@ impl<'source> Parser<'source> {
             }
 
             if self.match_token(TokenKind::LeftBracket) {
+                if self.check(TokenKind::DotDot) {
+                    let token = self.current().clone();
+                    self.error(&token, "Sub-slice start expression is required.");
+                    let right_bracket = self.recover_to_right_bracket();
+                    expression = Expression::Error {
+                        span: self.span_from_positions(
+                            expression.span().start,
+                            self.end_position_from_token(&right_bracket),
+                        ),
+                    };
+                    continue;
+                }
                 let index = self.parse_expression(1);
+                if self.match_token(TokenKind::DotDot) {
+                    if self.check(TokenKind::RightBracket) {
+                        let token = self.current().clone();
+                        self.error(&token, "Sub-slice end expression is required.");
+                        let right_bracket = self.advance();
+                        expression = Expression::Error {
+                            span: self.span_from_positions(
+                                expression.span().start,
+                                self.end_position_from_token(&right_bracket),
+                            ),
+                        };
+                        continue;
+                    }
+                    let end = self.parse_expression(1);
+                    if self.check(TokenKind::DotDot) {
+                        let token = self.current().clone();
+                        self.error(&token, "Only one '..' is allowed in a sub-slice.");
+                        let right_bracket = self.recover_to_right_bracket();
+                        expression = Expression::Error {
+                            span: self.span_from_positions(
+                                expression.span().start,
+                                self.end_position_from_token(&right_bracket),
+                            ),
+                        };
+                        continue;
+                    }
+                    let right_bracket = self.consume(
+                        TokenKind::RightBracket,
+                        "Expected ']' after sub-slice expression.",
+                    );
+                    expression = Expression::Subslice {
+                        span: self.span_from_positions(
+                            expression.span().start,
+                            self.end_position_from_token(&right_bracket),
+                        ),
+                        slice: Box::new(expression),
+                        start: Box::new(index),
+                        end: Box::new(end),
+                    };
+                    continue;
+                }
                 let right_bracket = self.consume(
                     TokenKind::RightBracket,
                     "Expected ']' after index expression.",
@@ -738,6 +819,28 @@ impl<'source> Parser<'source> {
             };
         }
 
+        if self.match_token(TokenKind::Slice) {
+            self.consume(TokenKind::LeftParen, "Expected '(' after 'slice'.");
+            let data = self.parse_expression(1);
+            self.consume(
+                TokenKind::Comma,
+                "Expected ',' after slice data expression.",
+            );
+            let len = self.parse_expression(1);
+            let right_paren = self.consume(
+                TokenKind::RightParen,
+                "Expected ')' after slice constructor.",
+            );
+            return Expression::SliceConstructor {
+                data: Box::new(data),
+                len: Box::new(len),
+                span: self.span_from_positions(
+                    self.position_from_token(&token),
+                    self.end_position_from_token(&right_paren),
+                ),
+            };
+        }
+
         if self.match_token(TokenKind::LeftParen) {
             let expression = self.parse_expression(1);
             let right_paren = self.consume(TokenKind::RightParen, "Expected ')' after expression.");
@@ -763,6 +866,16 @@ impl<'source> Parser<'source> {
             name: token.text.clone(),
             span: self.span_from_token(&token),
         }
+    }
+
+    fn recover_to_right_bracket(&mut self) -> Token {
+        while !self.check(TokenKind::RightBracket) && !self.check(TokenKind::Eof) {
+            self.advance();
+        }
+        self.consume(
+            TokenKind::RightBracket,
+            "Expected ']' after sub-slice expression.",
+        )
     }
 
     fn match_token(&mut self, kind: TokenKind) -> bool {

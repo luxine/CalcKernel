@@ -7,9 +7,9 @@ use std::{
 };
 
 use calckernel::{
-    EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassContext, MirPassDebugFlags,
-    MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile,
-    build_mir_optimization_pipeline, check, emit_c_header, emit_c_module_with_header,
+    BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode,
+    MirPassContext, MirPassDebugFlags, MirPassOverflowMode, MirPassTargetBackend, OverflowMode,
+    SourceFile, build_mir_optimization_pipeline, check, emit_c_header, emit_c_module_with_header,
     emit_llvm_module, emit_wasm_module_with_options, emit_wat_module_with_options,
     format_diagnostics, lower_to_mir, print_mir_module, print_mir_pass_pipeline,
     run_mir_pass_pipeline,
@@ -92,6 +92,7 @@ fn run_emit_mir(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         opt_level,
         MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
         MirPassTargetBackend::Mir,
         &args.debug,
     )?;
@@ -106,6 +107,7 @@ fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
         .clone()
         .unwrap_or_else(|| default_header_file_for_c_output(out));
     let overflow_mode = parse_overflow_mode(args)?;
+    let bounds_mode = parse_bounds_mode(args)?;
     let opt_level = parse_opt_level(args)?;
     let (source, checked) = check_file(input)?;
     if !checked.diagnostics.is_empty() {
@@ -118,12 +120,14 @@ fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
             OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
             OverflowMode::Checked => MirPassOverflowMode::Checked,
         },
+        mir_bounds_mode(bounds_mode),
         MirPassTargetBackend::C,
         &args.debug,
     )?;
     let header_name = header_include_name(&header)?;
     let options = EmitCOptions {
         overflow_mode,
+        bounds_mode,
         opt_level,
     };
     let text = emit_c_module_with_header(&mir, options, &header_name);
@@ -131,11 +135,12 @@ fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
     write_text_atomic(&header, &header_text)?;
     write_text_atomic(out, &text)?;
     println!(
-        "OK: emitted C with overflow={}",
+        "OK: emitted C with overflow={}, bounds={}",
         match overflow_mode {
             OverflowMode::Unchecked => "unchecked",
             OverflowMode::Checked => "checked",
-        }
+        },
+        bounds_mode_name(bounds_mode),
     );
     println!("Wrote {}", absolutize(out).display());
     println!("Wrote {}", absolutize(&header).display());
@@ -145,10 +150,14 @@ fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
 fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-wat")?;
     let overflow_mode = parse_overflow_mode(args)?;
-    let opt_level = parse_opt_level(args)?;
     if overflow_mode == OverflowMode::Checked {
         return Err(unsupported_checked_wasm_error());
     }
+    let bounds_mode = parse_bounds_mode(args)?;
+    if bounds_mode == BoundsMode::Checked {
+        return Err(unsupported_checked_wasm_bounds_error());
+    }
+    let opt_level = parse_opt_level(args)?;
     let (source, checked) = check_file(input)?;
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
@@ -157,6 +166,7 @@ fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         opt_level,
         MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
         MirPassTargetBackend::Wasm,
         &args.debug,
     )?;
@@ -171,10 +181,14 @@ fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-wasm")?;
     let out = require_out(args, "emit-wasm")?;
     let overflow_mode = parse_overflow_mode(args)?;
-    let opt_level = parse_opt_level(args)?;
     if overflow_mode == OverflowMode::Checked {
         return Err(unsupported_checked_wasm_error());
     }
+    let bounds_mode = parse_bounds_mode(args)?;
+    if bounds_mode == BoundsMode::Checked {
+        return Err(unsupported_checked_wasm_bounds_error());
+    }
+    let opt_level = parse_opt_level(args)?;
     let (source, checked) = check_file(input)?;
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
@@ -183,6 +197,7 @@ fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         opt_level,
         MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
         MirPassTargetBackend::Wasm,
         &args.debug,
     )?;
@@ -195,10 +210,14 @@ fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
 fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-llvm")?;
     let overflow_mode = parse_overflow_mode(args)?;
-    let opt_level = parse_opt_level(args)?;
     if overflow_mode == OverflowMode::Checked {
         return Err(unsupported_checked_llvm_error());
     }
+    let bounds_mode = parse_bounds_mode(args)?;
+    if bounds_mode == BoundsMode::Checked {
+        return Err(unsupported_checked_llvm_bounds_error());
+    }
+    let opt_level = parse_opt_level(args)?;
     let (source, checked) = check_file(input)?;
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
@@ -207,6 +226,7 @@ fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         opt_level,
         MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
         MirPassTargetBackend::Llvm,
         &args.debug,
     )?;
@@ -227,6 +247,7 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
     let overflow_mode = parse_overflow_mode(args)?;
+    let bounds_mode = parse_bounds_mode(args)?;
     let opt_level = parse_opt_level(args)?;
     let (source, checked) = check_file(input)?;
     if !checked.diagnostics.is_empty() {
@@ -240,6 +261,7 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
             OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
             OverflowMode::Checked => MirPassOverflowMode::Checked,
         },
+        mir_bounds_mode(bounds_mode),
         MirPassTargetBackend::C,
         &args.debug,
     )?;
@@ -250,6 +272,7 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let output_path = shared_library_output_path(&requested_output);
     let options = EmitCOptions {
         overflow_mode,
+        bounds_mode,
         opt_level,
     };
     write_text_atomic(
@@ -259,11 +282,12 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
     write_text_atomic(&header_path, &emit_c_header(&mir, options))?;
     run_clang(&clang_shared_args(&PathBuf::from(&c_path), &output_path))?;
     println!(
-        "OK: built library with overflow={}",
+        "OK: built library with overflow={}, bounds={}",
         match overflow_mode {
             OverflowMode::Unchecked => "unchecked",
             OverflowMode::Checked => "checked",
-        }
+        },
+        bounds_mode_name(bounds_mode),
     );
     println!("{}", output_path.display());
     Ok(())
@@ -273,15 +297,19 @@ fn run_build_llvm(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build-llvm")?;
     let out = require_out(args, "build-llvm")?;
     let overflow_mode = parse_overflow_mode(args)?;
+    if overflow_mode == OverflowMode::Checked {
+        return Err(unsupported_checked_llvm_error());
+    }
+    let bounds_mode = parse_bounds_mode(args)?;
+    if bounds_mode == BoundsMode::Checked {
+        return Err(unsupported_checked_llvm_bounds_error());
+    }
     let opt_level = parse_opt_level(args)?;
     let kind = args.kind.as_deref().unwrap_or("dynamic");
     if kind != "dynamic" && kind != "object" {
         return Err(format!(
             "Invalid value for --kind: {kind}. Expected 'dynamic' or 'object'."
         ));
-    }
-    if overflow_mode == OverflowMode::Checked {
-        return Err(unsupported_checked_llvm_error());
     }
 
     let (source, checked) = check_file(input)?;
@@ -292,6 +320,7 @@ fn run_build_llvm(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         opt_level,
         MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
         MirPassTargetBackend::Llvm,
         &args.debug,
     )?;
@@ -428,6 +457,7 @@ fn lower_and_optimize(
     checked_program: &calckernel::CheckedProgram,
     opt_level: u8,
     overflow_mode: MirPassOverflowMode,
+    bounds_mode: MirPassBoundsMode,
     target_backend: MirPassTargetBackend,
     debug: &MirPassDebugFlags,
 ) -> Result<MirModule, String> {
@@ -445,6 +475,7 @@ fn lower_and_optimize(
         &MirPassContext {
             opt_level,
             overflow_mode,
+            bounds_mode,
             target_backend,
             debug: debug.clone(),
         },
@@ -592,6 +623,7 @@ struct ParsedArgs {
     positionals: Vec<String>,
     out: Option<String>,
     overflow: Option<String>,
+    bounds: Option<String>,
     opt_level: Option<String>,
     target: Option<String>,
     kind: Option<String>,
@@ -605,6 +637,7 @@ impl ParsedArgs {
             positionals: Vec::new(),
             out: None,
             overflow: None,
+            bounds: None,
             opt_level: None,
             target: None,
             kind: None,
@@ -626,6 +659,11 @@ impl ParsedArgs {
                     index += 1;
                     parsed.overflow =
                         Some(require_long_flag_value(args, index, "--overflow")?.to_string());
+                }
+                "--bounds" => {
+                    index += 1;
+                    parsed.bounds =
+                        Some(require_long_flag_value(args, index, "--bounds")?.to_string());
                 }
                 "--opt-level" => {
                     index += 1;
@@ -692,6 +730,30 @@ fn parse_overflow_mode(args: &ParsedArgs) -> Result<OverflowMode, String> {
     }
 }
 
+fn parse_bounds_mode(args: &ParsedArgs) -> Result<BoundsMode, String> {
+    match args.bounds.as_deref().unwrap_or("unchecked") {
+        "unchecked" => Ok(BoundsMode::Unchecked),
+        "checked" => Ok(BoundsMode::Checked),
+        other => Err(format!(
+            "Invalid value for --bounds: {other}. Expected 'unchecked' or 'checked'."
+        )),
+    }
+}
+
+fn mir_bounds_mode(bounds_mode: BoundsMode) -> MirPassBoundsMode {
+    match bounds_mode {
+        BoundsMode::Unchecked => MirPassBoundsMode::Unchecked,
+        BoundsMode::Checked => MirPassBoundsMode::Checked,
+    }
+}
+
+fn bounds_mode_name(bounds_mode: BoundsMode) -> &'static str {
+    match bounds_mode {
+        BoundsMode::Unchecked => "unchecked",
+        BoundsMode::Checked => "checked",
+    }
+}
+
 fn unsupported_checked_wasm_error() -> String {
     "error: WASM backend does not support --overflow checked yet.\n\
      help: use --overflow unchecked, or use emit-c/build for checked C output."
@@ -701,6 +763,18 @@ fn unsupported_checked_wasm_error() -> String {
 fn unsupported_checked_llvm_error() -> String {
     "error: LLVM backend does not support --overflow checked yet.\n\
      Use --overflow unchecked, or use the C backend for checked arithmetic."
+        .to_string()
+}
+
+fn unsupported_checked_wasm_bounds_error() -> String {
+    "error: WASM backend does not support --bounds checked yet.\n\
+     help: use --bounds unchecked, or use emit-c/build for checked C bounds."
+        .to_string()
+}
+
+fn unsupported_checked_llvm_bounds_error() -> String {
+    "error: LLVM backend does not support --bounds checked yet.\n\
+     help: use --bounds unchecked, or use emit-c/build for checked C bounds."
         .to_string()
 }
 
@@ -736,16 +810,17 @@ fn usage() -> &'static str {
     concat!(
         "Usage:\n",
         "  ckc check <file>\n",
-        "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc build <file> --out <output-path> [--overflow <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
-        "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc build <file> --out <output-path> [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
+        "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "\n",
         "Options:\n",
         "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.\n",
+        "  --bounds <unchecked|checked>      Slice bounds mode. Default: unchecked; checked is C-only.\n",
         "  -o <file>                         Alias for --out <file>.\n",
         "  --opt-level <0|1|2|3>            MIR optimization level. Default: 0.\n",
         "  -O0, -O1, -O2, -O3              Alias for --opt-level.\n",

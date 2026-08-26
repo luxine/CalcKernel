@@ -426,6 +426,317 @@ fn mir_validator_should_accept_void_control_flow_with_all_blocks_terminated() {
 }
 
 #[test]
+fn mir_should_print_make_slice_projections_index_and_subslice() {
+    let text = lower_and_print(
+        r#"
+      fn cut(data: ptr<i64>, len: u32, start: u32, end: u32) -> slice<i64> {
+        let items: slice<i64> = slice(data, len);
+        let raw: ptr<i64> = items.data;
+        let count: u32 = items.len;
+        let value: i64 = items[start];
+        return items[start..end];
+      }
+    "#,
+    );
+
+    assert!(text.contains("make_slice data, len"), "{text}");
+    assert!(text.contains("slice_data items"), "{text}");
+    assert!(text.contains("slice_len items"), "{text}");
+    assert!(text.contains("load slice_index(items, start)"), "{text}");
+    assert!(text.contains("subslice items, start, end"), "{text}");
+    assert!(text.contains("-> slice<i64>"), "{text}");
+}
+
+#[test]
+fn mir_should_copy_slice_locals_fields_arguments_and_internal_returns() {
+    let text = lower_and_print(
+        r#"
+      struct Holder { values: slice<i32>; }
+      fn identity(values: slice<i32>) -> slice<i32> { return values; }
+      fn copy(src: ptr<Holder>, dst: ptr<Holder>) -> slice<i32> {
+        let local: slice<i32> = src[0].values;
+        dst[0].values = identity(local);
+        return dst[0].values;
+      }
+    "#,
+    );
+
+    assert!(text.contains("values: slice<i32>"), "{text}");
+    assert!(text.contains("local local: slice<i32>"), "{text}");
+    assert!(text.contains("load field(index(src,"), "{text}");
+    assert!(text.contains("call identity(local)"), "{text}");
+    assert!(text.contains("store field(index(dst,"), "{text}");
+    assert!(text.contains("return %"), "{text}");
+}
+
+#[test]
+fn mir_should_evaluate_slice_then_index_or_range_operands_once_in_order() {
+    let text = lower_and_print(
+        r#"
+      fn make(data: ptr<i32>, len: u32) -> slice<i32> { return slice(data, len); }
+      fn next(state: ptr<u32>) -> u32 {
+        let value: u32 = state[0];
+        state[0] = value + 1;
+        return value;
+      }
+      fn ordered(data: ptr<i32>, len: u32, state: ptr<u32>) -> slice<i32> {
+        return make(data, len)[next(state)..next(state)];
+      }
+    "#,
+    );
+
+    let ordered = text.split("fn ordered").nth(1).expect("ordered function");
+    let make = ordered.find("call make(data, len)").expect("slice call");
+    let first = ordered.find("call next(state)").expect("first endpoint");
+    let second = ordered[first + 1..]
+        .find("call next(state)")
+        .map(|offset| first + 1 + offset)
+        .expect("second endpoint");
+    let subslice = ordered.find("subslice").expect("subslice");
+    assert!(
+        make < first && first < second && second < subslice,
+        "{ordered}"
+    );
+    assert_eq!(ordered.matches("call make(data, len)").count(), 1);
+    assert_eq!(ordered.matches("call next(state)").count(), 2);
+}
+
+#[test]
+fn mir_validator_should_reject_each_malformed_slice_operation() {
+    let i32_type = MirType::Primitive(MirPrimitiveTypeName::I32);
+    let i64_type = MirType::Primitive(MirPrimitiveTypeName::I64);
+    let u32_type = MirType::Primitive(MirPrimitiveTypeName::U32);
+    let slice_i32 = MirType::Slice(Box::new(i32_type.clone()));
+    let slice_i64 = MirType::Slice(Box::new(i64_type.clone()));
+    let temp = |name: &str, type_node: MirType| MirValue::Temp {
+        name: name.to_string(),
+        type_node,
+    };
+    let param = |name: &str, type_node: MirType| MirValue::Param {
+        name: name.to_string(),
+        type_node,
+    };
+    let instructions = vec![
+        MirInstruction::MakeSlice {
+            target: temp("made", slice_i32.clone()),
+            data: param("wrong_data", i64_type.clone()),
+            len: param("wrong_len", i32_type.clone()),
+        },
+        MirInstruction::SliceData {
+            target: temp("data", i64_type.clone()),
+            slice: param("wrong_data", i64_type.clone()),
+        },
+        MirInstruction::SliceLen {
+            target: temp("len", i64_type.clone()),
+            slice: param("wrong_data", i64_type.clone()),
+        },
+        MirInstruction::Subslice {
+            target: temp("sub", slice_i64.clone()),
+            slice: param("items", slice_i32.clone()),
+            start: param("wrong_len", i32_type.clone()),
+            end: param("wrong_data", i64_type.clone()),
+        },
+        MirInstruction::Load {
+            target: temp("loaded", i64_type.clone()),
+            place: MirPlace::SliceIndex {
+                slice: param("items", slice_i32.clone()),
+                index: param("wrong_len", i32_type.clone()),
+                type_node: i64_type.clone(),
+            },
+        },
+    ];
+    let module = MirModule {
+        structs: vec![],
+        functions: vec![MirFunction {
+            name: "bad".to_string(),
+            exported: false,
+            params: vec![
+                MirParam {
+                    name: "wrong_data".to_string(),
+                    type_node: i64_type,
+                },
+                MirParam {
+                    name: "wrong_len".to_string(),
+                    type_node: i32_type,
+                },
+                MirParam {
+                    name: "items".to_string(),
+                    type_node: slice_i32,
+                },
+                MirParam {
+                    name: "ok_len".to_string(),
+                    type_node: u32_type,
+                },
+            ],
+            return_type: MirType::Void,
+            locals: vec![],
+            blocks: vec![MirBlock {
+                label: "bb0".to_string(),
+                instructions,
+                terminator: MirTerminator::Return { value: None },
+            }],
+        }],
+    };
+
+    let messages = validate_mir_module(&module)
+        .errors
+        .into_iter()
+        .map(|error| error.message)
+        .collect::<Vec<_>>();
+    for operation in [
+        "MakeSlice",
+        "SliceData",
+        "SliceLen",
+        "Subslice",
+        "SliceIndex",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(operation)),
+            "missing {operation}: {messages:#?}"
+        );
+    }
+}
+
+#[test]
+fn mir_validator_should_reject_void_or_direct_slice_elements_and_exported_returns() {
+    let i32_type = MirType::Primitive(MirPrimitiveTypeName::I32);
+    let slice_i32 = MirType::Slice(Box::new(i32_type));
+    let slice_i64 = MirType::Slice(Box::new(MirType::Primitive(MirPrimitiveTypeName::I64)));
+    let module = MirModule {
+        structs: vec![
+            MirStruct {
+                name: "VoidElement".to_string(),
+                fields: vec![MirStructField {
+                    name: "bad".to_string(),
+                    type_node: MirType::Slice(Box::new(MirType::Void)),
+                }],
+            },
+            MirStruct {
+                name: "Nested".to_string(),
+                fields: vec![MirStructField {
+                    name: "bad".to_string(),
+                    type_node: MirType::Slice(Box::new(slice_i32.clone())),
+                }],
+            },
+        ],
+        functions: vec![
+            MirFunction {
+                name: "exported".to_string(),
+                exported: true,
+                params: vec![],
+                return_type: slice_i32.clone(),
+                locals: vec![],
+                blocks: vec![MirBlock {
+                    label: "bb0".to_string(),
+                    instructions: vec![],
+                    terminator: MirTerminator::Return {
+                        value: Some(MirValue::ConstInt {
+                            text: "0".to_string(),
+                            type_node: slice_i32.clone(),
+                        }),
+                    },
+                }],
+            },
+            MirFunction {
+                name: "identity".to_string(),
+                exported: false,
+                params: vec![MirParam {
+                    name: "items".to_string(),
+                    type_node: slice_i32.clone(),
+                }],
+                return_type: slice_i32.clone(),
+                locals: vec![],
+                blocks: vec![MirBlock {
+                    label: "bb0".to_string(),
+                    instructions: vec![],
+                    terminator: MirTerminator::Return {
+                        value: Some(MirValue::Param {
+                            name: "items".to_string(),
+                            type_node: slice_i32.clone(),
+                        }),
+                    },
+                }],
+            },
+            MirFunction {
+                name: "bad_call".to_string(),
+                exported: false,
+                params: vec![MirParam {
+                    name: "wrong".to_string(),
+                    type_node: slice_i64.clone(),
+                }],
+                return_type: MirType::Void,
+                locals: vec![],
+                blocks: vec![MirBlock {
+                    label: "bb0".to_string(),
+                    instructions: vec![MirInstruction::Call {
+                        target: Some(MirValue::Temp {
+                            name: "result".to_string(),
+                            type_node: slice_i64.clone(),
+                        }),
+                        function_name: "identity".to_string(),
+                        args: vec![MirValue::Param {
+                            name: "wrong".to_string(),
+                            type_node: slice_i64.clone(),
+                        }],
+                    }],
+                    terminator: MirTerminator::Return { value: None },
+                }],
+            },
+            MirFunction {
+                name: "bad_return".to_string(),
+                exported: false,
+                params: vec![MirParam {
+                    name: "wrong".to_string(),
+                    type_node: slice_i64.clone(),
+                }],
+                return_type: slice_i32,
+                locals: vec![],
+                blocks: vec![MirBlock {
+                    label: "bb0".to_string(),
+                    instructions: vec![],
+                    terminator: MirTerminator::Return {
+                        value: Some(MirValue::Param {
+                            name: "wrong".to_string(),
+                            type_node: slice_i64,
+                        }),
+                    },
+                }],
+            },
+        ],
+    };
+
+    let messages = validate_mir_module(&module)
+        .errors
+        .into_iter()
+        .map(|error| error.message)
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("void slice element")),
+        "{messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("direct slice element")),
+        "{messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("exported slice return")),
+        "{messages:#?}"
+    );
+    for mismatch in ["Call argument", "Call result", "Return type mismatch"] {
+        assert!(
+            messages.iter().any(|message| message.contains(mismatch)),
+            "missing {mismatch}: {messages:#?}"
+        );
+    }
+}
+
+#[test]
 fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_levels() {
     let Some(ts_cli) = typescript_cli() else {
         return;

@@ -416,3 +416,16 @@ calc_items(items, len, out);
 对 Python、Node.js、C# 等 FFI 用户来说，每次调用的 overhead 可能压过 kernel 的
 计算时间。优先传入 array 和 output buffer，让生成的 C 代码在一次 native call 内
 执行 loop。
+
+## Slice ABI
+
+`slice<T>` 以 typed pointer 加 `uint32_t` 存储。Generated C 为每种 element type
+生成一个 deterministic named descriptor struct，但 exported 与 internal slice
+parameter 都物理展平为 `(T* data, uint32_t len)`，function body 再重建 logical
+descriptor。Unchecked internal slice return 采用 descriptor-by-value；status ABI
+通过最后一个 descriptor output pointer 返回。CK 不允许 exported slice return。
+
+只要 integer overflow 或 `--bounds checked` 任一启用，C 就使用 module-wide
+`CK_Status` ABI：`CK_OK=0`、overflow=1、division-by-zero=2、null result pointer=3、
+`CK_ERR_OUT_OF_BOUNDS=4`。C 接受 checked bounds；WASM/LLVM 拒绝。Descriptor
+是非 owning 的，并且可以 alias。

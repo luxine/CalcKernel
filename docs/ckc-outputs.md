@@ -98,3 +98,16 @@ The current native CLI does not directly provide:
 
 Some native library flows exist through `ckc build` and `ckc build-llvm`, but
 those commands still depend on the platform toolchain.
+
+## Slice and bounds output matrix
+
+All emitters lower valid `slice<T>` programs. `ckc emit-c` and `ckc build`
+accept all combinations of `--overflow unchecked|checked` and `--bounds
+unchecked|checked`; a checked mode selects the full five-code status ABI. `ckc
+emit-wat`, `emit-wasm`, `emit-llvm`, and `build-llvm` accept `--bounds unchecked`
+and reject checked bounds with stable backend-specific help. `check` and
+`emit-mir` are source-semantic commands and do not consume backend bounds mode.
+
+C headers expose typed descriptors for stored fields but flatten slice
+parameters. WASM artifacts expose paired address/length parameters. LLVM IR
+exposes flattened `ptr, i32` parameters and `{ ptr, i32 }` stored values.

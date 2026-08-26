@@ -7,10 +7,11 @@ use std::{
 };
 
 use calckernel::{
-    EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassContext, MirPassOverflowMode,
-    MirPassTargetBackend, OverflowMode, SourceFile, build_mir_optimization_pipeline, check,
-    emit_c_module, emit_llvm_module, emit_wasm_module_with_options, emit_wat_module_with_options,
-    format_diagnostics, lower_to_mir, print_mir_module, run_mir_pass_pipeline,
+    EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode, MirPassContext,
+    MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile,
+    build_mir_optimization_pipeline, check, emit_c_module, emit_llvm_module,
+    emit_wasm_module_with_options, emit_wat_module_with_options, format_diagnostics, lower_to_mir,
+    print_mir_module, run_mir_pass_pipeline,
 };
 
 const USAGE: &str = "cargo bench --bench ckc_perf -- [--quick] [--case <name>] [--task <name>] [--iterations <n>] [--warmup <n>] [--out-dir <path>]\n\nDefault outputs: build/perf/latest.summary.json and build/perf/latest.summary.md";
@@ -345,6 +346,7 @@ fn run_emit_c_o3(input: &CaseInput) -> Result<usize, String> {
         &module,
         EmitCOptions {
             overflow_mode: OverflowMode::Unchecked,
+            bounds_mode: calckernel::BoundsMode::Unchecked,
             opt_level: 3,
         },
     )
@@ -396,6 +398,7 @@ fn optimized_module(
         &MirPassContext {
             opt_level,
             overflow_mode: MirPassOverflowMode::Unchecked,
+            bounds_mode: MirPassBoundsMode::Unchecked,
             target_backend,
             debug: Default::default(),
         },

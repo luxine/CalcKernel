@@ -21,6 +21,7 @@ pub enum PrimitiveTypeName {
 pub enum CalcKernelType {
     Primitive(PrimitiveTypeName),
     Pointer(Box<CalcKernelType>),
+    Slice(Box<CalcKernelType>),
     Struct(String),
     Void,
     IntegerLiteral,
@@ -145,6 +146,7 @@ enum TypeUseContext {
     StructField,
     Local,
     PointerElement,
+    SliceElement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,6 +343,13 @@ impl<'source> Checker<'source> {
                 .collect();
             let return_type =
                 self.resolve_type(&function_decl.return_type, TypeUseContext::FunctionReturn);
+            if function_decl.exported && matches!(return_type, CalcKernelType::Slice(_)) {
+                self.error_with_code(
+                    function_decl.return_type.span(),
+                    DiagnosticCode::Ck2012,
+                    "An exported function cannot return a slice.",
+                );
+            }
             self.symbols.functions.insert(
                 name.clone(),
                 FunctionSymbol {
@@ -513,8 +522,10 @@ impl<'source> Checker<'source> {
             && !is_unknown(&initializer_type)
             && !can_assign(&declared_type, &initializer_type)
         {
-            self.error(
+            self.type_mismatch_error(
                 statement.initializer.span(),
+                &declared_type,
+                &initializer_type,
                 format!(
                     "Cannot initialize '{}': expected {} but got {}.",
                     statement.name.name,
@@ -531,13 +542,28 @@ impl<'source> Checker<'source> {
         }
 
         let target_type = self.check_expression(&statement.target, scope, None);
+        if let Expression::Field { object, field, .. } = &statement.target
+            && matches!(
+                self.expression_types.get(&object.span()),
+                Some(CalcKernelType::Slice(_))
+            )
+            && matches!(field.name.as_str(), "data" | "len")
+        {
+            self.error_with_code(
+                statement.target.span(),
+                DiagnosticCode::Ck2012,
+                "Slice '.data' and '.len' projections are read-only.",
+            );
+        }
         let value_type = self.check_expression(&statement.value, scope, Some(&target_type));
         if !is_unknown(&target_type)
             && !is_unknown(&value_type)
             && !can_assign(&target_type, &value_type)
         {
-            self.error(
+            self.type_mismatch_error(
                 statement.value.span(),
+                &target_type,
+                &value_type,
                 format!(
                     "Cannot assign {} to {}.",
                     type_to_string(&value_type),
@@ -574,8 +600,10 @@ impl<'source> Checker<'source> {
                     && !is_unknown(&value_type)
                     && !can_assign(return_type, &value_type)
                 {
-                    self.error(
+                    self.type_mismatch_error(
                         value.span(),
+                        return_type,
+                        &value_type,
                         format!(
                             "Return type mismatch: expected {} but got {}.",
                             type_to_string(return_type),
@@ -702,6 +730,9 @@ impl<'source> Checker<'source> {
             Expression::Call { callee, args, span } => {
                 self.check_call_expression(callee, args, *span, scope, true)
             }
+            Expression::SliceConstructor { data, len, .. } => {
+                self.check_slice_constructor(data, len, scope)
+            }
             Expression::Field {
                 object,
                 field,
@@ -710,6 +741,9 @@ impl<'source> Checker<'source> {
             Expression::Index { object, index, .. } => {
                 self.check_index_expression(object, index, scope)
             }
+            Expression::Subslice {
+                slice, start, end, ..
+            } => self.check_subslice_expression(slice, start, end, scope),
             Expression::Parenthesized { expression, .. } => {
                 self.check_expression(expression, scope, expected_type)
             }
@@ -821,6 +855,14 @@ impl<'source> Checker<'source> {
     ) -> CalcKernelType {
         let left_raw = self.check_expression(left, scope, None);
         let right_raw = self.check_expression(right, scope, None);
+        if is_slice(&left_raw) || is_slice(&right_raw) {
+            self.error_with_code(
+                span,
+                DiagnosticCode::Ck2012,
+                format!("Slice values do not support arithmetic operator '{operator}'."),
+            );
+            return CalcKernelType::Unknown;
+        }
         let fallback = integer_literal_fallback(expected_type);
         let left_type = materialize_integer_literal(
             left_raw,
@@ -872,6 +914,14 @@ impl<'source> Checker<'source> {
     ) -> CalcKernelType {
         let left_raw = self.check_expression(left, scope, None);
         let right_raw = self.check_expression(right, scope, None);
+        if is_slice(&left_raw) || is_slice(&right_raw) {
+            self.error_with_code(
+                span,
+                DiagnosticCode::Ck2012,
+                format!("Slice values do not support comparison operator '{operator}'."),
+            );
+            return primitive_bool();
+        }
         let left_type = materialize_integer_literal(
             left_raw,
             if matches!(right_raw, CalcKernelType::IntegerLiteral) {
@@ -959,8 +1009,10 @@ impl<'source> Checker<'source> {
                 && !is_unknown(&arg_type)
                 && !can_assign(expected, &arg_type)
             {
-                self.error(
+                self.type_mismatch_error(
                     arg.span(),
+                    expected,
+                    &arg_type,
                     format!(
                         "Argument {} of function '{}' expects {} but got {}.",
                         index + 1,
@@ -1012,8 +1064,10 @@ impl<'source> Checker<'source> {
                 && !is_unknown(&arg_type)
                 && !can_assign(expected, &arg_type)
             {
-                self.error(
+                self.type_mismatch_error(
                     arg.span(),
+                    expected,
+                    &arg_type,
                     format!(
                         "Argument {} of compiler builtin '{}' expects {} but got {}.",
                         index + 1,
@@ -1035,6 +1089,20 @@ impl<'source> Checker<'source> {
         scope: &mut Scope,
     ) -> CalcKernelType {
         let object_type = self.check_expression(object, scope, None);
+        if let CalcKernelType::Slice(element_type) = object_type {
+            return match field.name.as_str() {
+                "data" => CalcKernelType::Pointer(element_type),
+                "len" => primitive_u32(),
+                _ => {
+                    self.error_with_code(
+                        field.span,
+                        DiagnosticCode::Ck2012,
+                        format!("A slice has no projection named '{}'.", field.name),
+                    );
+                    CalcKernelType::Unknown
+                }
+            };
+        }
         let CalcKernelType::Struct(struct_name) = object_type else {
             if !is_unknown(&object_type) {
                 self.error(
@@ -1072,31 +1140,128 @@ impl<'source> Checker<'source> {
         scope: &mut Scope,
     ) -> CalcKernelType {
         let object_type = self.check_expression(object, scope, None);
-        let index_type =
-            materialize_integer_literal(self.check_expression(index, scope, None), primitive_i32());
-        if !is_unknown(&index_type) && !is_index_integer(&index_type) {
-            self.error(
-                index.span(),
-                format!(
-                    "Index expression requires i32 or u32 index, got {}.",
-                    type_to_string(&index_type)
-                ),
-            );
+        match object_type {
+            CalcKernelType::Slice(element_type) => {
+                self.check_slice_u32_operand("index", index, scope);
+                *element_type
+            }
+            CalcKernelType::Pointer(element_type) => {
+                let index_type = materialize_integer_literal(
+                    self.check_expression(index, scope, None),
+                    primitive_i32(),
+                );
+                if !is_unknown(&index_type) && !is_index_integer(&index_type) {
+                    self.error(
+                        index.span(),
+                        format!(
+                            "Index expression requires i32 or u32 index, got {}.",
+                            type_to_string(&index_type)
+                        ),
+                    );
+                }
+                *element_type
+            }
+            other => {
+                self.check_expression(index, scope, None);
+                if !is_unknown(&other) {
+                    self.error(
+                        object.span(),
+                        format!(
+                            "Index access requires pointer or slice value, got {}.",
+                            type_to_string(&other)
+                        ),
+                    );
+                }
+                CalcKernelType::Unknown
+            }
         }
+    }
 
-        let CalcKernelType::Pointer(element_type) = object_type else {
-            if !is_unknown(&object_type) {
-                self.error(
-                    object.span(),
+    fn check_slice_constructor(
+        &mut self,
+        data: &Expression,
+        len: &Expression,
+        scope: &mut Scope,
+    ) -> CalcKernelType {
+        let data_type = self.check_expression(data, scope, None);
+        let element_type = match data_type {
+            CalcKernelType::Pointer(element_type) => *element_type,
+            CalcKernelType::Unknown => CalcKernelType::Unknown,
+            other => {
+                self.error_with_code(
+                    data.span(),
+                    DiagnosticCode::Ck2012,
                     format!(
-                        "Index access requires pointer value, got {}.",
-                        type_to_string(&object_type)
+                        "Slice construction requires a raw pointer, got {}.",
+                        type_to_string(&other)
+                    ),
+                );
+                CalcKernelType::Unknown
+            }
+        };
+        self.check_slice_u32_operand("length", len, scope);
+        if is_unknown(&element_type) {
+            CalcKernelType::Unknown
+        } else {
+            CalcKernelType::Slice(Box::new(element_type))
+        }
+    }
+
+    fn check_subslice_expression(
+        &mut self,
+        slice: &Expression,
+        start: &Expression,
+        end: &Expression,
+        scope: &mut Scope,
+    ) -> CalcKernelType {
+        let slice_type = self.check_expression(slice, scope, None);
+        self.check_slice_u32_operand("start", start, scope);
+        self.check_slice_u32_operand("end", end, scope);
+        if matches!(slice_type, CalcKernelType::Slice(_)) {
+            slice_type
+        } else {
+            if !is_unknown(&slice_type) {
+                self.error_with_code(
+                    slice.span(),
+                    DiagnosticCode::Ck2012,
+                    format!(
+                        "Sub-slicing requires a slice value, got {}.",
+                        type_to_string(&slice_type)
                     ),
                 );
             }
+            CalcKernelType::Unknown
+        }
+    }
+
+    fn check_slice_u32_operand(
+        &mut self,
+        role: &str,
+        expression: &Expression,
+        scope: &mut Scope,
+    ) -> CalcKernelType {
+        let type_node = self.check_expression(expression, scope, Some(&primitive_u32()));
+        let invalid_literal = invalid_u32_literal(expression);
+        if let Some(text) = invalid_literal {
+            self.error_with_code(
+                expression.span(),
+                DiagnosticCode::Ck2012,
+                format!("Slice {role} literal '{text}' is not materializable as u32."),
+            );
             return CalcKernelType::Unknown;
-        };
-        *element_type
+        }
+        if !is_unknown(&type_node) && type_node != primitive_u32() {
+            self.error_with_code(
+                expression.span(),
+                DiagnosticCode::Ck2012,
+                format!(
+                    "Slice {role} requires u32, got {}.",
+                    type_to_string(&type_node)
+                ),
+            );
+            return CalcKernelType::Unknown;
+        }
+        type_node
     }
 
     fn resolve_type(&mut self, type_node: &TypeNode, context: TypeUseContext) -> CalcKernelType {
@@ -1117,6 +1282,37 @@ impl<'source> Checker<'source> {
             TypeNode::Pointer { element_type, .. } => CalcKernelType::Pointer(Box::new(
                 self.resolve_type(element_type, TypeUseContext::PointerElement),
             )),
+            TypeNode::Slice { element_type, .. } => {
+                if matches!(element_type.as_ref(), TypeNode::Void { .. }) {
+                    self.error_with_code(
+                        element_type.span(),
+                        DiagnosticCode::Ck2012,
+                        "A slice element type cannot be void.",
+                    );
+                    return CalcKernelType::Unknown;
+                }
+                if matches!(element_type.as_ref(), TypeNode::Slice { .. }) {
+                    self.error_with_code(
+                        element_type.span(),
+                        DiagnosticCode::Ck2012,
+                        "A direct slice element type cannot itself be a slice.",
+                    );
+                    return CalcKernelType::Unknown;
+                }
+                let element_type = self.resolve_type(element_type, TypeUseContext::SliceElement);
+                if !is_unknown(&element_type) && !is_valid_slice_element(&element_type) {
+                    self.error_with_code(
+                        type_node.span(),
+                        DiagnosticCode::Ck2012,
+                        "Invalid slice element type.",
+                    );
+                    CalcKernelType::Unknown
+                } else if is_unknown(&element_type) {
+                    CalcKernelType::Unknown
+                } else {
+                    CalcKernelType::Slice(Box::new(element_type))
+                }
+            }
             TypeNode::Named { name, .. } => {
                 if !self.symbols.structs.contains_key(&name.name) {
                     self.error(name.span, format!("Unknown type '{}'.", name.name));
@@ -1131,6 +1327,20 @@ impl<'source> Checker<'source> {
     fn error(&mut self, span: SourceSpan, message: impl Into<String>) {
         let message = message.into();
         self.error_with_code(span, checker_diagnostic_code(&message), message);
+    }
+
+    fn type_mismatch_error(
+        &mut self,
+        span: SourceSpan,
+        expected: &CalcKernelType,
+        actual: &CalcKernelType,
+        message: impl Into<String>,
+    ) {
+        if is_slice(expected) || is_slice(actual) {
+            self.error_with_code(span, DiagnosticCode::Ck2012, message);
+        } else {
+            self.error(span, message);
+        }
     }
 
     fn error_with_code(
@@ -1428,6 +1638,17 @@ fn is_numeric_type(type_node: &CalcKernelType) -> bool {
     is_integer(type_node) || is_float_type(type_node)
 }
 
+fn is_slice(type_node: &CalcKernelType) -> bool {
+    matches!(type_node, CalcKernelType::Slice(_))
+}
+
+fn is_valid_slice_element(type_node: &CalcKernelType) -> bool {
+    matches!(
+        type_node,
+        CalcKernelType::Primitive(_) | CalcKernelType::Pointer(_) | CalcKernelType::Struct(_)
+    )
+}
+
 fn is_index_integer(type_node: &CalcKernelType) -> bool {
     matches!(
         type_node,
@@ -1481,10 +1702,40 @@ fn type_to_string(type_node: &CalcKernelType) -> String {
         CalcKernelType::Primitive(PrimitiveTypeName::F64) => "f64".to_string(),
         CalcKernelType::Primitive(PrimitiveTypeName::Bool) => "bool".to_string(),
         CalcKernelType::Pointer(element_type) => format!("ptr<{}>", type_to_string(element_type)),
+        CalcKernelType::Slice(element_type) => {
+            format!("slice<{}>", type_to_string(element_type))
+        }
         CalcKernelType::Struct(name) => name.clone(),
         CalcKernelType::Void => "void".to_string(),
         CalcKernelType::IntegerLiteral => "i32".to_string(),
         CalcKernelType::Unknown => "unknown".to_string(),
+    }
+}
+
+fn invalid_u32_literal(expression: &Expression) -> Option<String> {
+    match expression {
+        Expression::IntegerLiteral { text, .. } => {
+            text.parse::<u32>().is_err().then(|| text.clone())
+        }
+        Expression::Unary {
+            operator, operand, ..
+        } if operator == "-" => integer_literal_text(operand)
+            .map(|text| format!("-{text}"))
+            .or_else(|| invalid_u32_literal(operand)),
+        Expression::Unary { operand, .. } => invalid_u32_literal(operand),
+        Expression::Binary { left, right, .. } => {
+            invalid_u32_literal(left).or_else(|| invalid_u32_literal(right))
+        }
+        Expression::Parenthesized { expression, .. } => invalid_u32_literal(expression),
+        _ => None,
+    }
+}
+
+fn integer_literal_text(expression: &Expression) -> Option<&str> {
+    match expression {
+        Expression::IntegerLiteral { text, .. } => Some(text),
+        Expression::Parenthesized { expression, .. } => integer_literal_text(expression),
+        _ => None,
     }
 }
 

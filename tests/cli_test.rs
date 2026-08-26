@@ -396,7 +396,11 @@ fn build_should_match_typescript_oracle_for_generated_c_header_and_stdout() {
 
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "overflow={overflow}");
-        assert_eq!(rust.stdout, ts.stdout, "overflow={overflow} stdout");
+        assert_eq!(
+            legacy_cli_text(&rust.stdout),
+            ts.stdout,
+            "overflow={overflow} stdout"
+        );
         assert_eq!(rust.stderr, ts.stderr, "overflow={overflow} stderr");
         assert_eq!(
             fs::read_to_string(format!("{}.c", output_base.display())).expect("read Rust C"),
@@ -404,7 +408,9 @@ fn build_should_match_typescript_oracle_for_generated_c_header_and_stdout() {
             "overflow={overflow} C"
         );
         assert_eq!(
-            fs::read_to_string(format!("{}.h", output_base.display())).expect("read Rust H"),
+            fs::read_to_string(format!("{}.h", output_base.display()))
+                .expect("read Rust H")
+                .replace("#define CK_ERR_OUT_OF_BOUNDS ((CK_Status)4)\n", ""),
             ts_h,
             "overflow={overflow} H"
         );
@@ -989,8 +995,8 @@ fn cli_should_match_typescript_oracle_for_help_check_and_mir_debug() {
         let ts = run_typescript_cli(&ts_cli, &args);
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-        assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
-        assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stderr), ts.stderr, "args: {args:?}");
     }
 }
 
@@ -1060,7 +1066,7 @@ fn cli_should_match_typescript_oracle_for_successful_emit_commands() {
         let ts = run_typescript_cli(&ts_cli, &args);
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-        assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
         assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
     }
 }
@@ -1150,8 +1156,8 @@ fn cli_should_match_typescript_oracle_for_usage_errors() {
         let ts = run_typescript_cli(&ts_cli, &args);
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-        assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
-        assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stderr), ts.stderr, "args: {args:?}");
     }
 }
 
@@ -1195,8 +1201,8 @@ fn cli_should_match_typescript_oracle_for_ignored_unknown_long_flags() {
         let ts = run_typescript_cli(&ts_cli, &args);
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-        assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
-        assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stderr), ts.stderr, "args: {args:?}");
     }
 }
 
@@ -1223,8 +1229,8 @@ fn cli_should_match_typescript_oracle_for_unknown_short_flags_as_positionals() {
     let ts = run_typescript_cli(&ts_cli, &args);
     let rust = run_rust_cli(&args);
     assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-    assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
-    assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
+    assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
+    assert_eq!(legacy_cli_text(&rust.stderr), ts.stderr, "args: {args:?}");
 }
 
 #[test]
@@ -1333,8 +1339,8 @@ fn cli_should_match_typescript_oracle_for_argument_error_precedence() {
         let ts = run_typescript_cli(&ts_cli, &args);
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-        assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
-        assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stderr), ts.stderr, "args: {args:?}");
     }
 }
 
@@ -1373,8 +1379,8 @@ fn cli_should_match_typescript_oracle_for_unknown_command_precedence() {
         let ts = run_typescript_cli(&ts_cli, &args);
         let rust = run_rust_cli(&args);
         assert_eq!(rust.status_code, ts.status_code, "args: {args:?}");
-        assert_eq!(rust.stdout, ts.stdout, "args: {args:?}");
-        assert_eq!(rust.stderr, ts.stderr, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stdout), ts.stdout, "args: {args:?}");
+        assert_eq!(legacy_cli_text(&rust.stderr), ts.stderr, "args: {args:?}");
     }
 }
 
@@ -1584,6 +1590,288 @@ fn cli_should_match_typescript_oracle_for_output_parent_directory_creation_error
     }
 }
 
+#[test]
+fn cli_should_default_bounds_to_unchecked_for_all_emitters() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_bounds_default_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("slice.ck");
+    fs::write(
+        &source,
+        "export fn first(items: slice<i32>) -> i32 { return items[0]; }",
+    )
+    .expect("write source");
+
+    let cases = [
+        vec![
+            os("emit-c"),
+            source.clone().into_os_string(),
+            os("--out"),
+            dir.join("out.c").into_os_string(),
+        ],
+        vec![os("emit-wat"), source.clone().into_os_string()],
+        vec![
+            os("emit-wasm"),
+            source.clone().into_os_string(),
+            os("--out"),
+            dir.join("out.wasm").into_os_string(),
+        ],
+        vec![os("emit-llvm"), source.clone().into_os_string()],
+    ];
+    for args in cases {
+        let output = run_rust_cli(&args);
+        assert_eq!(
+            output.status_code,
+            Some(0),
+            "args={args:?}: {}",
+            output.stderr
+        );
+        assert!(!output.stderr.contains("bounds"), "args={args:?}");
+    }
+
+    let c = run_rust_cli(&[
+        os("emit-c"),
+        source.into_os_string(),
+        os("--out"),
+        dir.join("reported.c").into_os_string(),
+    ]);
+    assert!(c.stdout.contains("bounds=unchecked"), "{}", c.stdout);
+    let help = run_rust_cli(&[os("--help")]);
+    assert!(help.stdout.contains("--bounds <unchecked|checked>"));
+    assert!(help.stdout.contains("Default: unchecked"));
+}
+
+#[test]
+fn cli_should_accept_all_four_c_overflow_bounds_combinations() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_bounds_c_matrix_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("slice.ck");
+    fs::write(
+        &source,
+        "export fn first(items: slice<i32>) -> i32 { return items[0] + 1; }",
+    )
+    .expect("write source");
+
+    for overflow in ["unchecked", "checked"] {
+        for bounds in ["unchecked", "checked"] {
+            let output_path = dir.join(format!("{overflow}_{bounds}.c"));
+            let emit = run_rust_cli(&[
+                os("emit-c"),
+                source.clone().into_os_string(),
+                os("--overflow"),
+                os(overflow),
+                os("--bounds"),
+                os(bounds),
+                os("--out"),
+                output_path.into_os_string(),
+            ]);
+            assert_eq!(
+                emit.status_code,
+                Some(0),
+                "{overflow}/{bounds}: {}",
+                emit.stderr
+            );
+            assert!(emit.stdout.contains(&format!("overflow={overflow}")));
+            assert!(emit.stdout.contains(&format!("bounds={bounds}")));
+
+            let build = run_rust_cli(&[
+                os("build"),
+                source.clone().into_os_string(),
+                os("--overflow"),
+                os(overflow),
+                os("--bounds"),
+                os(bounds),
+                os("--out"),
+                dir.join(format!("lib_{overflow}_{bounds}"))
+                    .into_os_string(),
+            ]);
+            assert_eq!(
+                build.status_code,
+                Some(0),
+                "build {overflow}/{bounds}: {}",
+                build.stderr
+            );
+            assert!(build.stdout.contains(&format!("overflow={overflow}")));
+            assert!(build.stdout.contains(&format!("bounds={bounds}")));
+        }
+    }
+}
+
+#[test]
+fn cli_should_reject_invalid_bounds_values_on_commands_that_use_them() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_bounds_invalid_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("sample.ck");
+    fs::write(&source, "export fn value() -> i32 { return 1; }").expect("write source");
+    let cases = [
+        vec![
+            os("emit-c"),
+            source.clone().into_os_string(),
+            os("--out"),
+            dir.join("out.c").into_os_string(),
+            os("--bounds"),
+            os("invalid"),
+        ],
+        vec![
+            os("build"),
+            source.clone().into_os_string(),
+            os("--out"),
+            dir.join("lib").into_os_string(),
+            os("--bounds"),
+            os("invalid"),
+        ],
+        vec![
+            os("emit-wat"),
+            source.clone().into_os_string(),
+            os("--bounds"),
+            os("invalid"),
+        ],
+        vec![
+            os("emit-wasm"),
+            source.clone().into_os_string(),
+            os("--out"),
+            dir.join("out.wasm").into_os_string(),
+            os("--bounds"),
+            os("invalid"),
+        ],
+        vec![
+            os("emit-llvm"),
+            source.clone().into_os_string(),
+            os("--bounds"),
+            os("invalid"),
+        ],
+        vec![
+            os("build-llvm"),
+            source.into_os_string(),
+            os("--out"),
+            dir.join("llvm").into_os_string(),
+            os("--bounds"),
+            os("invalid"),
+        ],
+    ];
+    for args in cases {
+        let output = run_rust_cli(&args);
+        assert_eq!(output.status_code, Some(1), "args={args:?}");
+        assert_eq!(
+            output.stderr,
+            "Invalid value for --bounds: invalid. Expected 'unchecked' or 'checked'.\n",
+            "args={args:?}"
+        );
+    }
+}
+
+#[test]
+fn cli_should_reject_checked_bounds_for_wasm_and_llvm_with_stable_help() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_bounds_unsupported_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("sample.ck");
+    fs::write(&source, "export fn value() -> i32 { return 1; }").expect("write source");
+
+    for (command, backend, out) in [
+        ("emit-wat", "WASM", None),
+        ("emit-wasm", "WASM", Some(dir.join("out.wasm"))),
+        ("emit-llvm", "LLVM", None),
+        ("build-llvm", "LLVM", Some(dir.join("llvm"))),
+    ] {
+        let mut args = vec![
+            os(command),
+            source.clone().into_os_string(),
+            os("--bounds"),
+            os("checked"),
+        ];
+        if let Some(out) = out {
+            args.push(os("--out"));
+            args.push(out.into_os_string());
+        }
+        let output = run_rust_cli(&args);
+        assert_eq!(output.status_code, Some(1), "{command}");
+        assert!(
+            output.stderr.contains(&format!(
+                "{backend} backend does not support --bounds checked yet."
+            )),
+            "{}",
+            output.stderr
+        );
+        assert!(output.stderr.contains("help:"), "{}", output.stderr);
+        assert!(
+            output.stderr.contains("--bounds unchecked"),
+            "{}",
+            output.stderr
+        );
+    }
+}
+
+#[test]
+fn cli_should_report_checked_overflow_before_checked_bounds_for_wasm_and_llvm() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_bounds_precedence_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("sample.ck");
+    fs::write(&source, "export fn value() -> i32 { return 1; }").expect("write source");
+
+    for (command, backend) in [("emit-wat", "WASM"), ("emit-llvm", "LLVM")] {
+        for flags in [
+            ["--overflow", "checked", "--bounds", "checked"],
+            ["--bounds", "checked", "--overflow", "checked"],
+        ] {
+            let mut args = vec![os(command), source.clone().into_os_string()];
+            args.extend(flags.into_iter().map(os));
+            let output = run_rust_cli(&args);
+            assert_eq!(output.status_code, Some(1), "{command} {flags:?}");
+            assert!(
+                output.stderr.contains(&format!(
+                    "{backend} backend does not support --overflow checked yet."
+                )),
+                "{}",
+                output.stderr
+            );
+            assert!(!output.stderr.contains("--bounds checked yet"));
+        }
+    }
+}
+
+#[test]
+fn cli_should_keep_check_and_emit_mir_source_semantics_mode_independent() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_bounds_semantic_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("sample.ck");
+    fs::write(&source, "export fn value() -> i32 { return 1; }").expect("write source");
+
+    for command in ["check", "emit-mir"] {
+        let output = run_rust_cli(&[
+            os(command),
+            source.clone().into_os_string(),
+            os("--overflow"),
+            os("not-a-mode"),
+            os("--bounds"),
+            os("also-not-a-mode"),
+        ]);
+        assert_eq!(output.status_code, Some(0), "{command}: {}", output.stderr);
+    }
+}
+
 #[derive(Debug)]
 struct CapturedOutput {
     status_code: Option<i32>,
@@ -1593,6 +1881,17 @@ struct CapturedOutput {
 
 fn os(value: &str) -> OsString {
     OsString::from(value)
+}
+
+fn legacy_cli_text(text: &str) -> String {
+    text.replace(", bounds=unchecked", "")
+        .replace(", bounds=checked", "")
+        .replace(" [--bounds <unchecked|checked>]", "")
+        .replace(" [--bounds unchecked]", "")
+        .replace(
+            "  --bounds <unchecked|checked>      Slice bounds mode. Default: unchecked; checked is C-only.\n",
+            "",
+        )
 }
 
 fn normalize_atomic_temp_paths(text: &str) -> String {

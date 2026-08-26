@@ -319,3 +319,17 @@ adds a Typed MIR layer with this long-term direction:
 MIR v1 is intentionally conservative: no SSA, no register allocation, no bounds
 checks, no runtime, and no new language features. Optimization is limited to the
 documented MIR pass manager and must prioritize correctness over performance.
+
+## Slice lowering pipeline
+
+The checker represents `slice<T>` as an exact descriptor type and rejects
+invalid element, operand, call, return, and projection uses before lowering.
+MIR keeps slices logical with `MirType::Slice`; `MakeSlice`, `SliceIndex`,
+`Subslice`, `SliceData`, and `SliceLen` preserve source evaluation order.
+
+Bounds policy is a backend/pass context, not a MIR guard. With `--bounds
+checked`, conservative optimization keeps slice observations ordered and the C
+backend inserts guards immediately before address/range calculation. C lowers
+stored descriptors to generated structs and flattens parameters. WASM lowers
+logical values to paired `i32`s; LLVM uses `{ ptr, i32 }`. WASM and LLVM reject
+checked bounds rather than silently changing semantics.

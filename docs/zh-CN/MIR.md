@@ -442,3 +442,15 @@ AST backend 保留为 legacy/internal path。
 
 每一步都应保留现有 CLI 行为、generated ABI、diagnostics 和测试预期，除非有明确
 review 的 snapshot 更新。
+
+## Slice MIR
+
+`MirType::Slice`（带 element 时写作 `MirType::Slice(T)`）是一个 logical descriptor value。`MakeSlice` 消费 pointer 与
+`u32` length；`SliceData` / `SliceLen` 实现 read-only projection；`SliceIndex`
+是 place；`Subslice` 消费 descriptor、`u32` start 与 `u32` end。先 descriptor、
+再 operand，每个值都按 source order 只求值一次。Move、field、load/store、call
+与 internal return 保持 exact slice type。
+
+MIR 刻意不包含 `--bounds` guard instruction。Bounds-aware pass 不得删除、复制、
+CSE 或 hoist checked `SliceIndex` / `Subslice` observation，使其跨过 operand
+failure。Physical C、WASM 或 LLVM representation 由 backend lowering 负责。

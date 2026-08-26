@@ -1,4 +1,9 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -300,6 +305,241 @@ fn void_docs_should_cover_return_only_type_and_backend_abis() {
         );
     }
     assert!(repo_root().join("examples/void.ck").is_file());
+}
+
+#[test]
+fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
+    for path in ["docs/LANGUAGE_SPEC.md", "docs/zh-CN/LANGUAGE_SPEC.md"] {
+        let text = read(path);
+        for required in [
+            "`slice<T>`",
+            "`slice(data, len)`",
+            "`items[start..end]`",
+            "`u32`",
+            "`start <= end <= items.len`",
+            "read-only",
+            "`.data`",
+            "`CK2012`",
+        ] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in [
+        "docs/COMPILER_ARCHITECTURE.md",
+        "docs/zh-CN/COMPILER_ARCHITECTURE.md",
+        "docs/MIR.md",
+        "docs/zh-CN/MIR.md",
+    ] {
+        let text = read(path);
+        for required in [
+            "`MirType::Slice`",
+            "`MakeSlice`",
+            "`SliceIndex`",
+            "`Subslice`",
+        ] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "docs/ABI.md",
+        "docs/zh-CN/ABI.md",
+        "docs/CHECKED_ARITHMETIC.md",
+        "docs/zh-CN/CHECKED_ARITHMETIC.md",
+        "docs/WASM_ABI.md",
+        "docs/zh-CN/WASM_ABI.md",
+        "docs/LLVM_BACKEND.md",
+        "docs/zh-CN/LLVM_BACKEND.md",
+        "docs/OPTIMIZATION.md",
+        "docs/zh-CN/OPTIMIZATION.md",
+        "docs/ROADMAP.md",
+        "docs/zh-CN/ROADMAP.md",
+        "docs/ckc-outputs.md",
+        "docs/zh-CN/ckc-outputs.md",
+        "docs/wasm-interop.md",
+        "docs/zh-CN/wasm-interop.md",
+    ] {
+        let text = read(path);
+        assert!(text.contains("`slice<T>`"), "{path} must cover slices");
+        assert!(text.contains("--bounds"), "{path} must cover bounds mode");
+    }
+
+    for path in ["docs/MIGRATION.md", "docs/zh-CN/MIGRATION.md"] {
+        let text = read(path);
+        for keyword in ["`break`", "`continue`", "`void`", "`slice`"] {
+            assert!(text.contains(keyword), "{path} must reserve {keyword}");
+        }
+    }
+
+    for path in ["README.md", "README.zh-CN.md"] {
+        assert!(
+            read(path).contains("examples/slices.ck"),
+            "{path} must link the slice example"
+        );
+    }
+}
+
+#[test]
+fn slice_example_should_run_with_equal_valid_results_across_backends() {
+    let example = repo_root().join("examples/slices.ck");
+    let source = fs::read_to_string(&example).expect("read slice example");
+    for required in [
+        "slice(data, len)",
+        "slice<Item>",
+        "[start..end]",
+        ".data",
+        ".len",
+        "selected[0].value",
+    ] {
+        assert!(
+            source.contains(required),
+            "slice example must contain {required:?}"
+        );
+    }
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_slice_example_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let c_path = dir.join("kernel.c");
+    let h_path = dir.join("kernel.h");
+    let ll_path = dir.join("kernel.ll");
+    let wasm_path = dir.join("kernel.wasm");
+
+    let emit_c = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("emit-c")
+        .arg(&example)
+        .arg("--out")
+        .arg(&c_path)
+        .arg("--header")
+        .arg(&h_path)
+        .output()
+        .expect("emit C example");
+    assert!(
+        emit_c.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit_c.stderr)
+    );
+    let c_harness = dir.join("c_harness.c");
+    fs::write(
+        &c_harness,
+        r#"
+#include <stdio.h>
+#include "kernel.h"
+int main(void) {
+  Item items[3] = {{2}, {7}, {11}};
+  printf("%d,%u\n", slice_sum(items, 3, 1, 3), slice_len(items, 3));
+  return 0;
+}
+"#,
+    )
+    .expect("write C harness");
+    let c_binary = dir.join("c_harness");
+    compile_native(&[&c_path, &c_harness], &c_binary);
+    let c_output = run_stdout(&c_binary);
+
+    let emit_llvm = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("emit-llvm")
+        .arg(&example)
+        .arg("--out")
+        .arg(&ll_path)
+        .output()
+        .expect("emit LLVM example");
+    assert!(
+        emit_llvm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit_llvm.stderr)
+    );
+    let llvm_harness = dir.join("llvm_harness.c");
+    fs::write(
+        &llvm_harness,
+        r#"
+#include <stdint.h>
+#include <stdio.h>
+typedef struct Item { int32_t value; } Item;
+int32_t slice_sum(Item* data, uint32_t len, uint32_t start, uint32_t end);
+uint32_t slice_len(Item* data, uint32_t len);
+int main(void) {
+  Item items[3] = {{2}, {7}, {11}};
+  printf("%d,%u\n", slice_sum(items, 3, 1, 3), slice_len(items, 3));
+  return 0;
+}
+"#,
+    )
+    .expect("write LLVM harness");
+    let llvm_binary = dir.join("llvm_harness");
+    compile_native(&[&ll_path, &llvm_harness], &llvm_binary);
+    let llvm_output = run_stdout(&llvm_binary);
+
+    let emit_wasm = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("emit-wasm")
+        .arg(&example)
+        .arg("--out")
+        .arg(&wasm_path)
+        .output()
+        .expect("emit WASM example");
+    assert!(
+        emit_wasm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit_wasm.stderr)
+    );
+    let node = Command::new("node")
+        .arg("-e")
+        .arg(
+            r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({instance}) => {
+  const view = new DataView(instance.exports.memory.buffer);
+  view.setInt32(0, 2, true);
+  view.setInt32(4, 7, true);
+  view.setInt32(8, 11, true);
+  console.log(`${instance.exports.slice_sum(0, 3, 1, 3)},${instance.exports.slice_len(0, 3)}`);
+}).catch((error) => { console.error(error); process.exit(1); });
+"#,
+        )
+        .arg(&wasm_path)
+        .output()
+        .expect("run WASM example");
+    assert!(
+        node.status.success(),
+        "{}",
+        String::from_utf8_lossy(&node.stderr)
+    );
+    let wasm_output = String::from_utf8(node.stdout).expect("WASM output UTF-8");
+
+    assert_eq!(c_output, "18,3\n");
+    assert_eq!(llvm_output, c_output);
+    assert_eq!(wasm_output, c_output);
+}
+
+fn compile_native(inputs: &[&Path], output: &Path) {
+    let compile = Command::new("clang")
+        .args(inputs)
+        .arg("-std=c11")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg("-Wno-override-module")
+        .arg("-o")
+        .arg(output)
+        .output()
+        .expect("run clang");
+    assert!(
+        compile.status.success(),
+        "clang failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+}
+
+fn run_stdout(binary: &Path) -> String {
+    let output = Command::new(binary).output().expect("run native harness");
+    assert!(output.status.success(), "native harness failed");
+    String::from_utf8(output.stdout).expect("native output UTF-8")
 }
 
 fn markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {

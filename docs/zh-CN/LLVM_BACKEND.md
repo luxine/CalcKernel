@@ -521,4 +521,14 @@ arithmetic 时应使用 C backend（`emit-c` 或 `build`）。
 - debug info 和 DWARF
 - bitcode emission
 - 如果未来产品场景需要，再考虑 JIT
-- 语言具备携带长度的 pointer type 后，再支持 `slice<T>` / bounds check
+- 如果 LLVM 未来具备与 C 相同的 status ABI，再支持 checked `slice<T>` bounds
+
+## Slice lowering
+
+Stored `slice<T>` value 使用 `{ ptr, i32 }`。每个 physical slice parameter 展平为
+`ptr, i32`，再以 `insertvalue` 重建；move、field、load/store、call 与 internal
+aggregate return 都保留 descriptor。Index 与 sub-slice GEP 使用实际 element type；
+zero-start sub-slice 通过 select 保留原始 pointer bits。
+
+LLVM 只支持 `--bounds unchecked`。`--bounds checked` 会在 IR emission 前被拒绝，
+不会添加 guard 或 trap。

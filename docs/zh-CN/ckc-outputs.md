@@ -93,3 +93,16 @@ ckc build-llvm examples/llvm_scalar.ck --kind object --out build/scalar.o
 
 部分 native library flow 已通过 `ckc build` 和 `ckc build-llvm` 存在，但这些命令
 仍依赖平台工具链。
+
+## Slice 与 bounds output matrix
+
+所有 emitter 都能 lower 合法 `slice<T>` program。`ckc emit-c` 与 `ckc build`
+接受 `--overflow unchecked|checked` 和 `--bounds unchecked|checked` 的全部组合；
+任一 checked mode 都选择完整五状态 ABI。`ckc emit-wat`、`emit-wasm`、
+`emit-llvm` 与 `build-llvm` 接受 `--bounds unchecked`，并以稳定的 backend-specific
+help 拒绝 checked bounds。`check` 与 `emit-mir` 属于 source-semantic command，
+不消费 backend bounds mode。
+
+C header 为 stored field 暴露 typed descriptor，但展平 slice parameter。WASM
+artifact 暴露 address/length pair。LLVM IR 暴露展平的 `ptr, i32` parameter 与
+`{ ptr, i32 }` stored value。

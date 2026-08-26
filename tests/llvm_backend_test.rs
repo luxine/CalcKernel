@@ -6,8 +6,9 @@ use std::{
 };
 
 use calckernel::{
-    EmitLlvmOptions, MirPassContext, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
-    build_mir_optimization_pipeline, check, emit_llvm_module, lower_to_mir, run_mir_pass_pipeline,
+    EmitLlvmOptions, MirPassBoundsMode, MirPassContext, MirPassOverflowMode, MirPassTargetBackend,
+    SourceFile, build_mir_optimization_pipeline, check, emit_llvm_module, lower_to_mir,
+    run_mir_pass_pipeline,
 };
 
 fn emit_llvm(source_text: &str) -> String {
@@ -25,6 +26,7 @@ fn emit_llvm_with_opt_level(source_text: &str, opt_level: u8) -> String {
         &MirPassContext {
             opt_level,
             overflow_mode: MirPassOverflowMode::Unchecked,
+            bounds_mode: MirPassBoundsMode::Unchecked,
             target_backend: MirPassTargetBackend::Llvm,
             debug: Default::default(),
         },
@@ -1041,6 +1043,183 @@ int main(void) {
             .expect("run harness")
             .success()
     );
+}
+
+#[test]
+fn llvm_backend_should_flatten_slice_params_and_reconstruct_aggregate_values() {
+    let ir = emit_llvm(
+        r#"
+      export fn length(items: slice<i32>) -> u32 {
+        return items.len;
+      }
+    "#,
+    );
+
+    assert!(
+        ir.contains("define i32 @length(ptr %items.data, i32 %items.len)"),
+        "{ir}"
+    );
+    assert!(ir.contains("%items.addr = alloca { ptr, i32 }"), "{ir}");
+    assert!(
+        ir.contains("insertvalue { ptr, i32 } undef, ptr %items.data, 0"),
+        "{ir}"
+    );
+    assert!(ir.contains("insertvalue { ptr, i32 }"), "{ir}");
+    assert!(ir.contains("store { ptr, i32 }"), "{ir}");
+}
+
+#[test]
+fn llvm_backend_should_emit_slice_moves_fields_and_internal_aggregate_returns() {
+    let ir = emit_llvm(
+        r#"
+      struct Holder {
+        items: slice<i32>;
+      }
+
+      fn identity(items: slice<i32>) -> slice<i32> {
+        let copy: slice<i32> = items;
+        return copy;
+      }
+
+      export fn round_trip(holder: ptr<Holder>, items: slice<i32>) -> u32 {
+        holder[0].items = items;
+        let stored: slice<i32> = holder[0].items;
+        let returned: slice<i32> = identity(stored);
+        return returned.len;
+      }
+    "#,
+    );
+
+    assert!(
+        ir.contains("%struct.Holder = type { { ptr, i32 } }"),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("define internal { ptr, i32 } @identity(ptr %items.data, i32 %items.len)"),
+        "{ir}"
+    );
+    assert!(ir.contains("load { ptr, i32 }, ptr"), "{ir}");
+    assert!(ir.contains("store { ptr, i32 }"), "{ir}");
+    assert!(ir.contains("call { ptr, i32 } @identity(ptr"), "{ir}");
+    assert!(ir.contains("ret { ptr, i32 }"), "{ir}");
+}
+
+#[test]
+fn llvm_backend_should_gep_slice_indices_and_subslices() {
+    let ir = emit_llvm(
+        r#"
+      struct Pair {
+        left: i32;
+        right: i32;
+      }
+
+      export fn selected(items: slice<Pair>, start: u32, end: u32) -> i32 {
+        let middle: slice<Pair> = items[start..end];
+        return middle[0].right;
+      }
+    "#,
+    );
+
+    assert!(ir.contains("getelementptr %struct.Pair, ptr"), "{ir}");
+    assert!(ir.contains("icmp eq i32"), "{ir}");
+    assert!(ir.contains("select i1"), "{ir}");
+    assert!(ir.contains("extractvalue { ptr, i32 }"), "{ir}");
+    assert!(!ir.contains("getelementptr { ptr, i32 }"), "{ir}");
+}
+
+#[test]
+fn llvm_backend_should_run_slice_programs_at_all_opt_levels() {
+    if !clang_available() {
+        return;
+    }
+    let source = r#"
+      struct Pair {
+        left: i32;
+        right: i32;
+      }
+
+      struct Holder {
+        items: slice<Pair>;
+      }
+
+      fn choose(items: slice<Pair>, second: bool) -> slice<Pair> {
+        if second {
+          return items[1..2];
+        }
+        return items[0..1];
+      }
+
+      export fn round_trip(v0: i32, holder: ptr<Holder>, items: slice<Pair>, second: bool) -> i32 {
+        holder[0].items = items;
+        let stored: slice<Pair> = holder[0].items;
+        let selected: slice<Pair> = choose(stored, second);
+        return selected[0].left + selected[0].right + v0;
+      }
+
+      export fn empty_data(items: slice<Pair>) -> ptr<Pair> {
+        let empty: slice<Pair> = items[0..0];
+        return empty.data;
+      }
+    "#;
+    let harness = r#"
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef struct Pair { int32_t left; int32_t right; } Pair;
+typedef struct PairSlice { Pair* data; uint32_t len; } PairSlice;
+typedef struct Holder { PairSlice items; } Holder;
+
+int32_t round_trip(int32_t v0, Holder* holder, Pair* items_data, uint32_t items_len, bool second);
+Pair* empty_data(Pair* items_data, uint32_t items_len);
+
+int main(void) {
+  Pair values[2] = {{2, 3}, {7, 11}};
+  Holder holder = {0};
+  if (round_trip(0, &holder, values, 2, false) != 5) return 1;
+  if (round_trip(0, &holder, values, 2, true) != 18) return 2;
+  if (holder.items.data != values || holder.items.len != 2) return 3;
+  if (empty_data(values, 0) != values) return 4;
+  return 0;
+}
+"#;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_slice_llvm_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let harness_path = dir.join("harness.c");
+    fs::write(&harness_path, harness).expect("write harness");
+
+    for opt_level in 0..=3 {
+        let ir_path = dir.join(format!("slice_o{opt_level}.ll"));
+        let binary = dir.join(format!("slice_o{opt_level}"));
+        fs::write(&ir_path, emit_llvm_with_opt_level(source, opt_level)).expect("write LLVM IR");
+        let compile = Command::new("clang")
+            .arg(&ir_path)
+            .arg(&harness_path)
+            .arg("-std=c11")
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg("-Werror")
+            .arg("-Wno-override-module")
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .expect("run clang");
+        assert!(
+            compile.status.success(),
+            "O{opt_level} clang stderr:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let run = Command::new(&binary).output().expect("run LLVM harness");
+        assert!(
+            run.status.success(),
+            "O{opt_level} runtime exit={:?} stderr:\n{}",
+            run.status.code(),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
 }
 
 fn clang_available() -> bool {

@@ -130,3 +130,15 @@ WASM backend 目前只支持 unchecked。如果需要 checked arithmetic，使�
 ckc emit-c input.ck --overflow checked --out build/input.c --header build/input.h
 ckc build input.ck --overflow checked --out build/input
 ```
+
+## Slice ABI
+
+Logical `slice<T>` parameter 会展平为两个 collision-safe `i32` parameter：linear
+memory data address，随后是 `u32` length。Local、temporary、call 与 dispatcher
+return 都携带同一对值。Internal slice return 使用 data/length 顺序的 WASM
+multi-value `(result i32 i32)`。
+
+Stored descriptor 占 8 bytes、alignment 4：address 位于 offset 0，length 位于
+offset 4。Slice index 与 sub-slice 使用 deterministic element size。内存仍由
+caller owned，descriptor 可以 alias。WASM 只支持 `--bounds unchecked`；
+`--bounds checked` 会在 emission 前被拒绝，不会隐式添加 guard 或 trap。

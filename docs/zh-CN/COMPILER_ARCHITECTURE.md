@@ -291,3 +291,16 @@ Phase 11 之前，backend 直接从 checked AST 生成 C。Phase 11 增加 Typed
 MIR v1 刻意保守：无 SSA、无 register allocation、无 bounds check、无 runtime，
 也不增加新语言特性。Optimization 仅限文档化的 MIR pass manager，并且必须优先保证
 correctness，而不是追求性能。
+
+## Slice lowering pipeline
+
+Checker 把 `slice<T>` 表示为 exact descriptor type，并在 lowering 前拒绝非法的
+element、operand、call、return 与 projection。MIR 用 `MirType::Slice` 保留 logical
+slice；`MakeSlice`、`SliceIndex`、`Subslice`、`SliceData` 与 `SliceLen` 保持 source
+evaluation order。
+
+Bounds policy 位于 backend/pass context，不以 guard 写入 MIR。使用 `--bounds
+checked` 时，保守 optimization 会保持 slice observation 的顺序，C backend 在
+address/range calculation 前立即插入 guard。C 用 generated struct 存储 descriptor
+并展平 parameter；WASM 将 logical value 降为一对 `i32`；LLVM 使用 `{ ptr, i32 }`。
+WASM 与 LLVM 会拒绝 checked bounds，不会静默改变 semantics。

@@ -543,5 +543,15 @@ Generated LLVM IR must be stable:
 - debug info and DWARF
 - bitcode emission
 - JIT, if a future product use case justifies it
-- `slice<T>` / bounds-check support after the language has length-carrying
-  pointer types
+- checked `slice<T>` bounds lowering if LLVM gains the same status ABI as C
+
+## Slice lowering
+
+Stored `slice<T>` values use `{ ptr, i32 }`. Every physical slice parameter is
+flattened to `ptr, i32`, then reconstructed with `insertvalue`; moves, fields,
+loads/stores, calls, and internal aggregate returns preserve the descriptor.
+Index and sub-slice GEPs use the actual element type, and a zero-start sub-slice
+selects the original pointer bits.
+
+LLVM supports `--bounds unchecked` only. `--bounds checked` is rejected before
+IR emission; it does not add guards or traps.

@@ -458,3 +458,17 @@ path while MIR code generation is validated by snapshots and e2e tests.
 
 Each step should preserve existing CLI behavior, generated ABI, diagnostics, and
 test expectations unless a deliberate snapshot update is reviewed.
+
+## Slice MIR
+
+`MirType::Slice` (written `MirType::Slice(T)` with its element) is one logical descriptor value. `MakeSlice` consumes a
+pointer and `u32` length; `SliceData` / `SliceLen` implement read-only
+projections; `SliceIndex` is a place; and `Subslice` consumes the descriptor,
+`u32` start, and `u32` end. Descriptor, then operand values are evaluated once
+in source order. Moves, fields, loads/stores, calls, and internal returns keep
+the exact slice type.
+
+MIR deliberately contains no `--bounds` guard instruction. Bounds-aware passes
+must not delete, duplicate, CSE, or hoist a checked `SliceIndex` or `Subslice`
+observation across operand failures. Backend lowering supplies the physical C,
+WASM, or LLVM representation.

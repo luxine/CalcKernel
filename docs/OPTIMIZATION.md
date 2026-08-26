@@ -452,3 +452,12 @@ Before releasing optimization changes:
   allows
 - review MIR, C, WAT, LLVM, and performance summary diffs for accidental
   benchmark-specific behavior
+
+## Bounds-aware slice rules
+
+`slice<T>` descriptors are ordinary exact values in unchecked mode. Under
+`--bounds checked`, optimization must preserve the order and count of each
+`SliceIndex` and `Subslice` observation: DCE, CSE, LICM, address CSE, and
+inlining may not erase, duplicate, or hoist the future C guard across arithmetic
+or call failures. This conservative rule applies at O0 through O3. WASM and LLVM
+reject checked bounds, while raw pointer operations stay unchecked everywhere.
