@@ -107,6 +107,8 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         "expected_tag=\"v${cargo_version}\"",
         "needs: build-artifacts",
         "if: startsWith(github.ref, 'refs/tags/')",
+        "command -v sha256sum",
+        "sha256sum",
         "shasum -a 256",
         "actions/upload-artifact",
         "actions/download-artifact",
