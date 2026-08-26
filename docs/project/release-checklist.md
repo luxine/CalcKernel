@@ -15,9 +15,12 @@ For a version `X.Y.Z`:
 - [ ] Main-branch CI is green at the exact release commit.
 - [ ] The manual six-platform release preview is green with publishing disabled.
 - [ ] The annotated tag `vX.Y.Z` points to that exact commit and has never existed before.
+- [ ] The workflow verifies that the tag equals `v` plus the `Cargo.toml` version before artifact builds.
+- [ ] Release verification is self-contained and does not require the optional TypeScript oracle checkout.
 - [ ] The tag-triggered workflow creates exactly six archives and six SHA256 sidecars.
 - [ ] Every archive checksum verifies and each extracted binary reports usable CLI help.
-- [ ] The GitHub Release is published, non-draft, non-prerelease, and links the changelog.
+- [ ] No Release already exists for the tag; the workflow creates, rather than overwrites, it.
+- [ ] The GitHub Release is published, non-draft, non-prerelease, links the changelog, and has exactly twelve assets.
 
 Do not force-push, move a tag, overwrite an asset, skip a target, or weaken a
 gate. A post-tag defect requires a new patch version.

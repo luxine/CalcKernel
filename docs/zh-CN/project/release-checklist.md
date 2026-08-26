@@ -15,9 +15,12 @@
 - [ ] 精确 release commit 的 main CI 为 green。
 - [ ] publish=false 的六平台 preview 为 green。
 - [ ] Annotated `vX.Y.Z` 指向精确 commit 且从未存在。
+- [ ] Workflow 在 artifact build 前验证 tag 等于 `v` 加 `Cargo.toml` version。
+- [ ] Release verification 自包含，不依赖可选的 TypeScript oracle checkout。
 - [ ] Tag workflow 创建恰好六个 archive 与六个 SHA256 sidecar。
 - [ ] 所有 checksum 验证成功，解压 binary 可打印 CLI help。
-- [ ] GitHub Release 已 publish，非 draft/prerelease，并关联 changelog。
+- [ ] 此 tag 尚无 Release；workflow 创建而不是覆盖 Release。
+- [ ] GitHub Release 已 publish，非 draft/prerelease，关联 changelog 且恰有 12 个 asset。
 
 禁止 force-push、移动 tag、覆盖 asset、跳过 target 或降低 gate。Tag 后缺陷必须使用
 新 patch version。

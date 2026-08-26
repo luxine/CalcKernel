@@ -26,8 +26,19 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Verify release tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cargo_version="$(awk -F ' *= *' '/^version = / { gsub(/\"/, "", $2); print $2; exit }' Cargo.toml)"
+          expected_tag="v${cargo_version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "release tag ${GITHUB_REF_NAME} does not match Cargo version ${cargo_version}" >&2
+            exit 1
+          fi
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --locked
@@ -81,7 +92,7 @@ jobs:
             executable: target/release/ckc.exe
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release --locked
       - run: ${{ matrix.executable }} --help
@@ -102,7 +113,10 @@ jobs:
           else
             tar -czf "dist/${{ matrix.archive }}" -C dist "${{ matrix.binary }}"
           fi
-          shasum -a 256 "dist/${{ matrix.archive }}" > "dist/${{ matrix.archive }}.sha256"
+          (
+            cd dist
+            shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: native-ckc-${{ matrix.target }}
@@ -113,16 +127,38 @@ jobs:
 
   publish-release:
     needs: build-artifacts
-    if: startsWith(github.ref, 'refs/tags/') || inputs.publish == true
+    if: startsWith(github.ref, 'refs/tags/') && (github.event_name == 'push' || inputs.publish == true)
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           pattern: native-ckc-*
           path: release-artifacts
           merge-multiple: true
-      - run: gh release upload "${GITHUB_REF_NAME}" release-artifacts/* --clobber
+      - name: Verify release assets
+        run: |
+          archive_count="$(find release-artifacts -maxdepth 1 -type f ! -name '*.sha256' | wc -l | tr -d ' ')"
+          checksum_count="$(find release-artifacts -maxdepth 1 -type f -name '*.sha256' | wc -l | tr -d ' ')"
+          test "${archive_count}" -eq 6
+          test "${checksum_count}" -eq 6
+          for checksum_file in release-artifacts/*.sha256; do
+            (
+              cd release-artifacts
+              shasum -a 256 -c "${checksum_file##*/}"
+            )
+          done
+      - name: Create immutable GitHub Release
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "GitHub Release ${GITHUB_REF_NAME} already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+          gh release create "${GITHUB_REF_NAME}" release-artifacts/* \
+            --verify-tag \
+            --title "CalcKernel ${GITHUB_REF_NAME}" \
+            --notes-file CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}

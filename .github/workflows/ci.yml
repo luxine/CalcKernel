@@ -51,3 +51,8 @@ jobs:
       - run: ./target/release/ckc --help
       - run: ./target/release/ckc check examples/core/scalar.ck
       - run: ./target/release/ckc emit-mir examples/core/scalar.ck -O3
+      - name: Smoke native backends
+        run: |
+          ./target/release/ckc emit-c examples/applications/pricing.ck --out build/pricing.c --header build/pricing.h
+          ./target/release/ckc emit-wasm examples/wasm/scalar.ck --out build/scalar.wasm
+          ./target/release/ckc emit-llvm examples/llvm/scalar.ck --out build/scalar.ll

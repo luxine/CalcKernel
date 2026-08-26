@@ -34,6 +34,9 @@ fn daily_ci_should_gate_pull_requests_and_main_pushes() {
         "./target/release/ckc --help",
         "./target/release/ckc check examples/core/scalar.ck",
         "./target/release/ckc emit-mir examples/core/scalar.ck -O3",
+        "./target/release/ckc emit-c examples/applications/pricing.ck --out build/pricing.c --header build/pricing.h",
+        "./target/release/ckc emit-wasm examples/wasm/scalar.ck --out build/scalar.wasm",
+        "./target/release/ckc emit-llvm examples/llvm/scalar.ck --out build/scalar.ll",
     ] {
         assert!(
             workflow.contains(required),

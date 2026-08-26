@@ -95,13 +95,26 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
 
     for required in [
         "name: native ckc release",
+        "tags:\n      - \"v*\"",
+        "workflow_dispatch:",
+        "default: false",
         "cargo fmt --check",
         "cargo clippy --all-targets --all-features --locked -- -D warnings",
         "cargo test --locked",
         "cargo build --release --locked",
         "ckc --help",
+        "GITHUB_REF_NAME",
+        "expected_tag=\"v${cargo_version}\"",
+        "needs: build-artifacts",
+        "if: startsWith(github.ref, 'refs/tags/')",
         "shasum -a 256",
         "actions/upload-artifact",
+        "actions/download-artifact",
+        "gh release view",
+        "gh release create \"${GITHUB_REF_NAME}\" release-artifacts/*",
+        "--verify-tag",
+        "--title \"CalcKernel ${GITHUB_REF_NAME}\"",
+        "--notes-file CHANGELOG.md",
     ] {
         assert!(
             workflow.contains(required),
@@ -109,7 +122,37 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         );
     }
 
-    for forbidden in ["npm publish", "NODE_AUTH_TOKEN", "npm pack", "setup-node"] {
+    for archive in [
+        "ckc-darwin-arm64.tar.gz",
+        "ckc-darwin-x64.tar.gz",
+        "ckc-linux-arm64.tar.gz",
+        "ckc-linux-x64.tar.gz",
+        "ckc-win32-arm64.zip",
+        "ckc-win32-x64.zip",
+    ] {
+        assert_eq!(
+            workflow.matches(archive).count(),
+            1,
+            "native release workflow must declare {archive} exactly once"
+        );
+    }
+
+    assert_eq!(
+        workflow.matches("contents: write").count(),
+        1,
+        "write permission must exist only on the publish job"
+    );
+
+    for forbidden in [
+        "npm publish",
+        "NODE_AUTH_TOKEN",
+        "npm pack",
+        "setup-node",
+        "CALCKERNEL_TS_ROOT",
+        "repository: luxine/CalcKernel",
+        "gh release upload",
+        "--clobber",
+    ] {
         assert!(
             !workflow.contains(forbidden),
             "native release workflow must not contain {forbidden:?}"
