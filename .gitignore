@@ -3,3 +3,4 @@
 /build/
 /npm/bin/
 *.tmp
+.understand-anything
