@@ -3,12 +3,11 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
-fn repo_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-}
+use super::support::command::run_stdout;
+use super::support::oracle::repo_root;
+use super::support::temp::unique_id;
 
 #[test]
 fn durable_docs_should_be_recursive_bilingual_mirrors() {
@@ -532,10 +531,7 @@ fn slice_example_should_run_with_equal_valid_results_across_backends() {
         );
     }
 
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos();
+    let unique = unique_id();
     let dir = std::env::temp_dir().join(format!("rust_calckernel_slice_example_{unique}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     let c_path = dir.join("kernel.c");
@@ -666,12 +662,6 @@ fn compile_native(inputs: &[&Path], output: &Path) {
         "clang failed:\n{}",
         String::from_utf8_lossy(&compile.stderr)
     );
-}
-
-fn run_stdout(binary: &Path) -> String {
-    let output = Command::new(binary).output().expect("run native harness");
-    assert!(output.status.success(), "native harness failed");
-    String::from_utf8(output.stdout).expect("native output UTF-8")
 }
 
 fn markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {

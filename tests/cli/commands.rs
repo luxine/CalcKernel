@@ -9,8 +9,12 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+use super::support::fixtures;
+use super::support::oracle::{typescript_cli, typescript_root};
+use super::support::{
+    command::{clang_available, python3_available},
+    compiler::shared_library_path,
+};
 
 #[test]
 fn cli_should_check_and_emit_core_outputs() {
@@ -1917,17 +1921,6 @@ fn normalize_atomic_temp_paths(text: &str) -> String {
     normalized
 }
 
-fn typescript_cli() -> Option<PathBuf> {
-    let cli = typescript_root().join("dist/src/cli.js");
-    cli.exists().then_some(cli)
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
-}
-
 fn run_rust_cli(args: &[OsString]) -> CapturedOutput {
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .args(args)
@@ -2021,20 +2014,6 @@ int main(void) {
     );
 }
 
-fn clang_available() -> bool {
-    Command::new("clang")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
-fn python3_available() -> bool {
-    Command::new("python3")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
 fn run_python_pricing_dynamic_library(
     runner: &std::path::Path,
     mode: &str,
@@ -2068,16 +2047,6 @@ fn capture(output: std::process::Output) -> CapturedOutput {
         status_code: output.status.code(),
         stdout: String::from_utf8(output.stdout).expect("stdout should be utf8"),
         stderr: String::from_utf8(output.stderr).expect("stderr should be utf8"),
-    }
-}
-
-fn shared_library_path(base: &std::path::Path) -> std::path::PathBuf {
-    if cfg!(target_os = "macos") {
-        base.with_extension("dylib")
-    } else if cfg!(target_os = "windows") {
-        base.with_extension("dll")
-    } else {
-        base.with_extension("so")
     }
 }
 

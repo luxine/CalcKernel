@@ -1,9 +1,6 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, path::Path, process::Command};
+
+use super::support::{command::node_available, oracle::typescript_root, temp::temp_dir};
 
 #[test]
 fn typescript_oracle_verifier_should_confirm_default_cli_oracle_is_available() {
@@ -151,25 +148,4 @@ fn count_ck_files(dir: &Path) -> Result<usize, String> {
         }
     }
     Ok(count)
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
-}
-
-fn temp_dir(prefix: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("{prefix}-{unique}"))
-}
-
-fn node_available() -> bool {
-    Command::new("node")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
 }

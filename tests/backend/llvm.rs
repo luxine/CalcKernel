@@ -1,42 +1,34 @@
 use std::{
     fs,
-    path::PathBuf,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use calckernel::{
-    EmitLlvmOptions, MirPassBoundsMode, MirPassContext, MirPassOverflowMode, MirPassTargetBackend,
-    SourceFile, build_mir_optimization_pipeline, check, emit_llvm_module, lower_to_mir,
-    run_mir_pass_pipeline,
+    EmitLlvmOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend, emit_llvm_module,
 };
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+use super::support::fixtures;
+use super::support::oracle::{typescript_cli, typescript_root};
+use super::support::{
+    command::{clang_available, python3_available},
+    compiler::{optimized_module, shared_library_path},
+};
 
 fn emit_llvm(source_text: &str) -> String {
     emit_llvm_with_opt_level(source_text, 1)
 }
 
 fn emit_llvm_with_opt_level(source_text: &str, opt_level: u8) -> String {
-    let checked = check(&SourceFile::new("test.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-    let pipeline = build_mir_optimization_pipeline(opt_level);
-    let optimized = run_mir_pass_pipeline(
-        mir,
-        &pipeline,
-        &MirPassContext {
-            opt_level,
-            overflow_mode: MirPassOverflowMode::Unchecked,
-            bounds_mode: MirPassBoundsMode::Unchecked,
-            target_backend: MirPassTargetBackend::Llvm,
-            debug: Default::default(),
-        },
+    let optimized = optimized_module(
+        source_text,
+        opt_level,
+        MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
+        MirPassTargetBackend::Llvm,
     );
-    assert_eq!(optimized.validation_errors, []);
     emit_llvm_module(
-        &optimized.module,
+        &optimized,
         &EmitLlvmOptions {
             source_file_name: Some("test.ck".to_string()),
             target_triple: None,
@@ -823,17 +815,6 @@ fn build_llvm_dynamic_should_match_typescript_oracle_for_perf_f64_kernels_runtim
     assert_eq!(rust_run, ts_run);
 }
 
-fn typescript_cli() -> Option<PathBuf> {
-    let cli = typescript_root().join("dist/src/cli.js");
-    cli.exists().then_some(cli)
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
-}
-
 #[test]
 fn llvm_backend_should_run_nested_break_continue_at_all_opt_levels() {
     if !clang_available() {
@@ -1190,20 +1171,6 @@ int main(void) {
     }
 }
 
-fn clang_available() -> bool {
-    Command::new("clang")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
-fn python3_available() -> bool {
-    Command::new("python3")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct RuntimeOutput {
     status_code: Option<i32>,
@@ -1242,16 +1209,6 @@ fn run_python_official_llvm_dynamic(
         status_code: output.status.code(),
         stdout: String::from_utf8(output.stdout).expect("runtime stdout should be UTF-8"),
         stderr: String::from_utf8(output.stderr).expect("runtime stderr should be UTF-8"),
-    }
-}
-
-fn shared_library_path(base: &std::path::Path) -> std::path::PathBuf {
-    if cfg!(target_os = "macos") {
-        base.with_extension("dylib")
-    } else if cfg!(target_os = "windows") {
-        base.with_extension("dll")
-    } else {
-        base.with_extension("so")
     }
 }
 

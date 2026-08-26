@@ -1,8 +1,6 @@
-use std::{fs, path::PathBuf};
+use std::fs;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use super::support::oracle::repo_root;
 
 #[test]
 fn daily_ci_should_gate_pull_requests_and_main_pushes() {

@@ -1,8 +1,6 @@
-use std::{fs, path::Path};
+use std::fs;
 
-fn repo_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-}
+use super::support::oracle::repo_root;
 
 #[test]
 fn release_surface_should_not_include_npm_or_javascript_compatibility_layer() {
@@ -45,13 +43,25 @@ fn release_surface_should_not_include_npm_or_javascript_compatibility_layer() {
 fn native_release_docs_should_replace_npm_release_docs() {
     let root = repo_root();
     let docs = [
-        root.join("docs/native-release.md"),
-        root.join("docs/zh-CN/native-release.md"),
+        (
+            root.join("docs/project/release.md"),
+            root.join("docs/project/release-checklist.md"),
+        ),
+        (
+            root.join("docs/zh-CN/project/release.md"),
+            root.join("docs/zh-CN/project/release-checklist.md"),
+        ),
     ];
 
-    for doc in docs {
-        let text = fs::read_to_string(&doc)
-            .unwrap_or_else(|error| panic!("read {}: {error}", doc.display()));
+    for (policy, checklist) in docs {
+        let text = [policy.as_path(), checklist.as_path()]
+            .into_iter()
+            .map(|doc| {
+                fs::read_to_string(doc)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", doc.display()))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         for required in [
             "native ckc",
@@ -62,15 +72,17 @@ fn native_release_docs_should_replace_npm_release_docs() {
         ] {
             assert!(
                 text.contains(required),
-                "{} must document {required:?}",
-                doc.display()
+                "{} and {} must document {required:?}",
+                policy.display(),
+                checklist.display()
             );
         }
 
         assert!(
             !text.to_ascii_lowercase().contains("npm"),
-            "{} must not describe npm package publishing",
-            doc.display()
+            "{} and {} must not describe npm package publishing",
+            policy.display(),
+            checklist.display()
         );
     }
 }

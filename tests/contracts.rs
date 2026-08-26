@@ -1,0 +1,13 @@
+#[path = "support/mod.rs"]
+mod support;
+
+#[path = "contracts/ci.rs"]
+mod ci;
+#[path = "contracts/docs.rs"]
+mod docs;
+#[path = "contracts/git.rs"]
+mod git;
+#[path = "contracts/release.rs"]
+mod release;
+#[path = "contracts/repository.rs"]
+mod repository;

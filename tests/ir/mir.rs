@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
 use calckernel::{
     MirBlock, MirFunction, MirInstruction, MirLocal, MirModule, MirParam, MirPlace,
@@ -6,8 +6,8 @@ use calckernel::{
     check, lower_to_mir, print_mir_module, validate_mir_module,
 };
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+use super::support::fixtures;
+use super::support::oracle::{typescript_cli, typescript_root};
 
 fn lower_and_print(source_text: &str) -> String {
     let checked = check(&SourceFile::new("test.ck", source_text));
@@ -793,15 +793,4 @@ fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_level
             );
         }
     }
-}
-
-fn typescript_cli() -> Option<PathBuf> {
-    let cli = typescript_root().join("dist/src/cli.js");
-    cli.exists().then_some(cli)
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
 }

@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+use super::support::fixtures;
+use super::support::oracle::{repo_root, typescript_root};
 
 #[test]
 fn typescript_oracle_fixtures_should_be_covered_by_rust_backend_tests() {
@@ -36,10 +36,10 @@ fn audit_typescript_oracle_fixture_coverage() -> Result<FixtureCoverageReport, S
     let ts_root = typescript_root();
     let fixture_roots = ["examples", "bench/perf/fixtures", "tests/fixtures"];
     let backend_coverage = [
-        ("MIR", "tests/mir_test.rs"),
-        ("C", "tests/c_backend_test.rs"),
-        ("WASM", "tests/wasm_backend_test.rs"),
-        ("LLVM", "tests/llvm_backend_test.rs"),
+        ("MIR", "tests/ir/mir.rs"),
+        ("C", "tests/backend/c.rs"),
+        ("WASM", "tests/backend/wasm.rs"),
+        ("LLVM", "tests/backend/llvm.rs"),
     ];
     let mut failures = Vec::new();
 
@@ -111,7 +111,7 @@ fn audit_typescript_oracle_fixture_coverage() -> Result<FixtureCoverageReport, S
                 .map(|path| (*path).to_owned()),
         )
         .collect::<BTreeSet<_>>();
-    let discovered_local = list_ck_files(&repo_root(), &repo_root().join("examples"))?
+    let discovered_local = list_ck_files(repo_root(), &repo_root().join("examples"))?
         .into_iter()
         .collect::<BTreeSet<_>>();
     for missing in expected_local.difference(&discovered_local) {
@@ -127,7 +127,11 @@ fn audit_typescript_oracle_fixture_coverage() -> Result<FixtureCoverageReport, S
         let absolute = repo_root().join(path);
         match fs::read_to_string(&absolute) {
             Ok(text) => {
-                for required in ["mod fixtures;", "fixtures::", "tests/fixtures/f64_edges.ck"] {
+                for required in [
+                    "use super::support::fixtures;",
+                    "fixtures::",
+                    "tests/fixtures/f64_edges.ck",
+                ] {
                     if !text.contains(required) {
                         failures.push(format!(
                             "{label} backend oracle coverage must use {required:?}"
@@ -173,14 +177,4 @@ fn normalize_relative(base: &Path, path: &Path) -> String {
         .expect("fixture under TypeScript root")
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
 }

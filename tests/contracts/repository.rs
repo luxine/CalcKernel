@@ -1,8 +1,6 @@
-use std::{fs, path::Path};
+use std::fs;
 
-fn repo_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-}
+use super::support::oracle::repo_root;
 
 fn read(path: &str) -> String {
     fs::read_to_string(repo_root().join(path))

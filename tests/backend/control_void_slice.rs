@@ -1,9 +1,4 @@
-use std::{
-    fs,
-    path::Path,
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, path::Path, process::Command};
 
 use calckernel::{
     BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode,
@@ -11,6 +6,9 @@ use calckernel::{
     build_mir_optimization_pipeline, check, emit_c_module, emit_llvm_module,
     emit_wasm_module_with_options, lower_to_mir, run_mir_pass_pipeline,
 };
+
+use super::support::command::run_stdout;
+use super::support::temp::unique_id;
 
 const COMBINED_SOURCE: &str = r#"
 struct Item {
@@ -317,23 +315,4 @@ fn compile_native(inputs: &[&Path], output: &Path) {
         "clang failed:\n{}",
         String::from_utf8_lossy(&compile.stderr)
     );
-}
-
-fn run_stdout(binary: &Path) -> String {
-    let output = Command::new(binary).output().expect("run harness");
-    assert!(
-        output.status.success(),
-        "harness {:?} failed with {:?}:\n{}",
-        binary,
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("stdout UTF-8")
-}
-
-fn unique_id() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos()
 }

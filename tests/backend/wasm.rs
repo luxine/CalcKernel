@@ -1,57 +1,39 @@
 use calckernel::{
-    EmitWasmOptions, MirPassBoundsMode, MirPassContext, MirPassOverflowMode, MirPassTargetBackend,
-    SourceFile, build_mir_optimization_pipeline, check, emit_wasm_module,
-    emit_wasm_module_with_options, emit_wat_module_with_options, lower_to_mir,
-    run_mir_pass_pipeline,
+    EmitWasmOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
+    check, emit_wasm_module, emit_wasm_module_with_options, emit_wat_module_with_options,
+    lower_to_mir,
 };
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+use super::support::command::node_available;
+use super::support::compiler::optimized_module;
+use super::support::fixtures;
+use super::support::oracle::{typescript_cli, typescript_root};
 use std::{
     fs,
-    path::PathBuf,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 fn emit_wat(source_text: &str, opt_level: u8) -> String {
-    let checked = check(&SourceFile::new("test.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-    let pipeline = build_mir_optimization_pipeline(opt_level);
-    let optimized = run_mir_pass_pipeline(
-        mir,
-        &pipeline,
-        &MirPassContext {
-            opt_level,
-            overflow_mode: MirPassOverflowMode::Unchecked,
-            bounds_mode: MirPassBoundsMode::Unchecked,
-            target_backend: MirPassTargetBackend::Wasm,
-            debug: Default::default(),
-        },
+    let optimized = optimized_module(
+        source_text,
+        opt_level,
+        MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
+        MirPassTargetBackend::Wasm,
     );
-    assert_eq!(optimized.validation_errors, []);
-    emit_wat_module_with_options(&optimized.module, EmitWasmOptions { opt_level })
+    emit_wat_module_with_options(&optimized, EmitWasmOptions { opt_level })
 }
 
 fn emit_wasm(source_text: &str, opt_level: u8) -> Vec<u8> {
-    let checked = check(&SourceFile::new("test.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-    let pipeline = build_mir_optimization_pipeline(opt_level);
-    let optimized = run_mir_pass_pipeline(
-        mir,
-        &pipeline,
-        &MirPassContext {
-            opt_level,
-            overflow_mode: MirPassOverflowMode::Unchecked,
-            bounds_mode: MirPassBoundsMode::Unchecked,
-            target_backend: MirPassTargetBackend::Wasm,
-            debug: Default::default(),
-        },
+    let optimized = optimized_module(
+        source_text,
+        opt_level,
+        MirPassOverflowMode::Unchecked,
+        MirPassBoundsMode::Unchecked,
+        MirPassTargetBackend::Wasm,
     );
-    assert_eq!(optimized.validation_errors, []);
-    emit_wasm_module_with_options(&optimized.module, EmitWasmOptions { opt_level })
+    emit_wasm_module_with_options(&optimized, EmitWasmOptions { opt_level })
         .expect("WAT should compile to WASM")
 }
 
@@ -521,17 +503,6 @@ fn wasm_cli_should_match_typescript_oracle_for_perf_fixture_runtime_behavior() {
     }
 }
 
-fn typescript_cli() -> Option<PathBuf> {
-    let cli = typescript_root().join("dist/src/cli.js");
-    cli.exists().then_some(cli)
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
-}
-
 #[test]
 fn wasm_backend_should_run_break_continue_dispatcher_fallback_at_all_opt_levels() {
     if !node_available() {
@@ -899,13 +870,6 @@ WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
             String::from_utf8_lossy(&output.stderr)
         );
     }
-}
-
-fn node_available() -> bool {
-    Command::new("node")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
 }
 
 fn wasm_runtime_runner() -> &'static str {

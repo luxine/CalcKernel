@@ -1,18 +1,18 @@
 use std::{
     fs,
-    path::PathBuf,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use calckernel::{
-    BoundsMode, EmitCOptions, MirPassBoundsMode, MirPassContext, MirPassOverflowMode,
-    MirPassTargetBackend, OverflowMode, SourceFile, build_mir_optimization_pipeline, check,
-    emit_c_header, emit_c_module, emit_c_module_with_header, lower_to_mir, run_mir_pass_pipeline,
+    BoundsMode, EmitCOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend,
+    OverflowMode, SourceFile, check, emit_c_header, emit_c_module, emit_c_module_with_header,
+    lower_to_mir,
 };
 
-#[path = "support/fixtures.rs"]
-mod fixtures;
+use super::support::compiler::optimized_module;
+use super::support::fixtures;
+use super::support::oracle::{typescript_cli, typescript_root};
 
 fn emit_c(source_text: &str) -> String {
     emit_c_with_overflow(source_text, OverflowMode::Unchecked)
@@ -40,30 +40,21 @@ fn emit_c_with_modes_and_opt_level(
     bounds_mode: BoundsMode,
     opt_level: u8,
 ) -> String {
-    let checked = check(&SourceFile::new("test.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-    let pipeline = build_mir_optimization_pipeline(opt_level);
-    let optimized = run_mir_pass_pipeline(
-        mir,
-        &pipeline,
-        &MirPassContext {
-            opt_level,
-            overflow_mode: match overflow_mode {
-                OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
-                OverflowMode::Checked => MirPassOverflowMode::Checked,
-            },
-            bounds_mode: match bounds_mode {
-                BoundsMode::Unchecked => MirPassBoundsMode::Unchecked,
-                BoundsMode::Checked => MirPassBoundsMode::Checked,
-            },
-            target_backend: MirPassTargetBackend::C,
-            debug: Default::default(),
+    let optimized = optimized_module(
+        source_text,
+        opt_level,
+        match overflow_mode {
+            OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
+            OverflowMode::Checked => MirPassOverflowMode::Checked,
         },
+        match bounds_mode {
+            BoundsMode::Unchecked => MirPassBoundsMode::Unchecked,
+            BoundsMode::Checked => MirPassBoundsMode::Checked,
+        },
+        MirPassTargetBackend::C,
     );
-    assert_eq!(optimized.validation_errors, []);
     emit_c_module(
-        &optimized.module,
+        &optimized,
         EmitCOptions {
             overflow_mode,
             bounds_mode,
@@ -1185,15 +1176,4 @@ fn compile_and_run_c(source: &str, case_name: &str) {
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
-}
-
-fn typescript_cli() -> Option<PathBuf> {
-    let cli = typescript_root().join("dist/src/cli.js");
-    cli.exists().then_some(cli)
-}
-
-fn typescript_root() -> PathBuf {
-    std::env::var_os("CALCKERNEL_TS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/lynn/code/CalcKernel"))
 }
