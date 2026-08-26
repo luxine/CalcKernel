@@ -3,7 +3,7 @@
 Status: waiting for Phase B acceptance
 
 Acceptance contract:
-`Ai_repository/2026-08-26-control-flow-void-slice-phase-c-acceptance.md`
+`Ai_repository/2026-08-26-control-void-slice-phase-c-acceptance.md`
 
 ## Phase outcome
 

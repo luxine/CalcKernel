@@ -104,6 +104,19 @@ block is unreachable and is rejected with `CK2010`. The checker does not infer
 that `while true` definitely returns: code following every loop is treated as
 reachable because a future iteration may exit.
 
+### Void procedures
+
+`void` is a return-only type and is written in a function signature as
+`-> void`. It is not a value and is invalid for parameters, locals, struct
+fields, pointer elements, or call arguments. These invalid type/value positions
+use `CK2011`.
+
+A void function may end naturally or exit early with `return;`. Returning a
+value from it is invalid, as is an empty return from a value-returning function.
+A standalone call statement is legal only when its callee returns void; a
+non-void result cannot be discarded, and a void call cannot be used in an
+initializer, argument, operator, comparison, or return-value position.
+
 V0 functions must definitely return along the final statement path. A function
 ending without a return is a type error.
 

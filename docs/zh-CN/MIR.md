@@ -163,6 +163,11 @@ field (index items, i), price
 - `ptr<T>`
 - `struct`
 
+`MirType::Void` 只允许作为 function return signature，不能用于 parameter、
+local、temporary、constant、operand 或 place。Void call 使用 `target: None`；
+void return 使用 `value: None`。源码自然 fallthrough 也降低成同一 valueless
+return，保证每个 block 都有 terminator；不会创建 synthetic void value 或 temp。
+
 MIR 不应包含 `NamedTypeNode` 这类 parser-only type 或未解析 type node。Type
 checker 必须在 lowering 前解析名称。
 

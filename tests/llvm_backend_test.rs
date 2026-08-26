@@ -979,6 +979,70 @@ int main(void) {
     }
 }
 
+#[test]
+fn llvm_backend_should_emit_call_and_ret_void() {
+    if !clang_available() {
+        return;
+    }
+    let ir = emit_llvm(
+        r#"
+      fn set_first(out: ptr<i32>) -> void { out[0] = 41; }
+      export fn mutate(out: ptr<i32>, stop: bool) -> void {
+        if stop { return; }
+        set_first(out);
+        out[0] = out[0] + 1;
+      }
+    "#,
+    );
+    assert!(ir.contains("define internal void @set_first"), "{ir}");
+    assert!(ir.contains("define void @mutate"), "{ir}");
+    assert!(ir.contains("call void @set_first"), "{ir}");
+    assert!(ir.contains("ret void"), "{ir}");
+
+    let harness = r#"
+#include <stdbool.h>
+#include <stdint.h>
+void mutate(int32_t *out, bool stop);
+int main(void) {
+  int32_t value = 0;
+  mutate(&value, false);
+  if (value != 42) return 1;
+  mutate(&value, true);
+  return value == 42 ? 0 : 2;
+}
+"#;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_void_llvm_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let ir_path = dir.join("void.ll");
+    let harness_path = dir.join("harness.c");
+    let binary = dir.join("void");
+    fs::write(&ir_path, ir).expect("write ir");
+    fs::write(&harness_path, harness).expect("write harness");
+    let compile = Command::new("clang")
+        .arg(&ir_path)
+        .arg(&harness_path)
+        .arg("-Wno-override-module")
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .expect("run clang");
+    assert!(
+        compile.status.success(),
+        "clang stderr:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        Command::new(binary)
+            .status()
+            .expect("run harness")
+            .success()
+    );
+}
+
 fn clang_available() -> bool {
     Command::new("clang")
         .arg("--version")

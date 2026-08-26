@@ -54,6 +54,12 @@ f64 语义锁定：
 | `bool` | `bool` |
 | `ptr<T>` | `T*` |
 | `struct` | `typedef struct` |
+| return-only `void` | C `void` return |
+
+Unchecked C 把源码 void procedure 直接映射成 C `void`，生成普通 call statement
+和 `return;`。Checked mode 中，同一源码 function 返回 `CK_Status`，没有
+`ck_return` parameter（no `ck_return`），显式或自然成功都返回 `CK_OK`；call 仍传播非 `CK_OK`
+status。
 
 ## Explicit Cast Lowering
 

@@ -289,3 +289,65 @@ fn optimizer_should_preserve_break_continue_cfg_at_all_opt_levels() {
         assert!(text.contains("return"), "O{opt_level}:\n{text}");
     }
 }
+
+#[test]
+fn optimizer_should_keep_targetless_calls_as_side_effects_at_all_levels() {
+    let source = r#"
+      fn write_one(out: ptr<i32>) -> void { out[0] = 1; }
+      export fn run(out: ptr<i32>) -> void { write_one(out); }
+    "#;
+
+    for opt_level in 0..=3 {
+        let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
+        assert!(
+            text.contains("call write_one(out)"),
+            "O{opt_level}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn optimizer_should_handle_valueless_returns_in_cfg_passes() {
+    let source = r#"
+      export fn stop(flag: bool) -> void {
+        if flag { return; }
+        while true { break; }
+      }
+    "#;
+
+    for opt_level in 0..=3 {
+        let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
+        assert!(text.contains("-> void"), "O{opt_level}:\n{text}");
+        assert!(text.contains("return"), "O{opt_level}:\n{text}");
+    }
+}
+
+#[test]
+fn optimizer_should_not_require_a_synthetic_void_temp() {
+    let text = optimize(
+        r#"
+      fn no_op() -> void {}
+      export fn run() -> void { no_op(); }
+    "#,
+        3,
+        MirPassOverflowMode::Unchecked,
+    );
+
+    assert!(text.contains("  call no_op()"), "{text}");
+    assert!(!text.contains(": void ="), "{text}");
+    assert!(!text.contains("local ik_void"), "{text}");
+}
+
+#[test]
+fn optimizer_should_conservatively_keep_void_helpers_without_panicking() {
+    let source = r#"
+      fn helper(out: ptr<i32>) -> void { out[0] = 7; }
+      export fn run(out: ptr<i32>) -> void { helper(out); }
+    "#;
+
+    for opt_level in 2..=3 {
+        let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
+        assert!(text.contains("fn helper"), "O{opt_level}:\n{text}");
+        assert!(text.contains("call helper(out)"), "O{opt_level}:\n{text}");
+    }
+}

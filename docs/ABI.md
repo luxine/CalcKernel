@@ -58,6 +58,12 @@ Semantic lock for f64:
 | `bool` | `bool` |
 | `ptr<T>` | `T*` |
 | `struct` | `typedef struct` |
+| return-only `void` | C `void` return |
+
+Unchecked C maps a source void procedure directly to C `void`, emits plain call
+statements, and uses `return;`. In checked mode the same source function returns
+`CK_Status`, has no `ck_return` parameter, and returns `CK_OK` on explicit or
+natural success. Calls still propagate non-`CK_OK` status.
 
 ## Explicit Cast Lowering
 

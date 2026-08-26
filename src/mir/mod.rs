@@ -21,6 +21,7 @@ pub enum MirType {
     Primitive(MirPrimitiveTypeName),
     Pointer(Box<MirType>),
     Struct(String),
+    Void,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,7 +191,7 @@ pub enum MirInstruction {
         value: MirValue,
     },
     Call {
-        target: MirValue,
+        target: Option<MirValue>,
         function_name: String,
         args: Vec<MirValue>,
     },
@@ -199,7 +200,7 @@ pub enum MirInstruction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirTerminator {
     Return {
-        value: MirValue,
+        value: Option<MirValue>,
     },
     Jump {
         label: String,
@@ -353,6 +354,7 @@ fn lower_function(
             })
         })
         .collect::<Result<Vec<_>, MirLowerError>>()?;
+    let return_type = to_mir_type(&function_info.return_type)?;
     let mut values = HashMap::new();
     for param in &params {
         values.insert(
@@ -378,10 +380,14 @@ fn lower_function(
     start_block(&mut context, None);
     lower_statements(&mut context, &function_info.declaration.body.statements)?;
     if context.current_block.is_some() {
-        return Err(MirLowerError::new(format!(
-            "MIR lowering invariant violation: function '{}' has no return terminator.",
-            function_info.name
-        )));
+        if matches!(return_type, MirType::Void) {
+            set_terminator(&mut context, MirTerminator::Return { value: None })?;
+        } else {
+            return Err(MirLowerError::new(format!(
+                "MIR lowering invariant violation: function '{}' has no return terminator.",
+                function_info.name
+            )));
+        }
     }
 
     let locals = context.locals.clone();
@@ -391,7 +397,7 @@ fn lower_function(
         name: function_info.name.clone(),
         exported: function_info.exported,
         params,
-        return_type: to_mir_type(&function_info.return_type)?,
+        return_type,
         locals,
         blocks,
     })
@@ -418,8 +424,13 @@ fn lower_statement(
         Statement::Block(block) => lower_statements(context, &block.statements),
         Statement::Let(statement) => lower_let_statement(context, statement),
         Statement::Assignment(statement) => lower_assignment_statement(context, statement),
+        Statement::Call(statement) => lower_call_statement(context, &statement.call),
         Statement::Return(statement) => {
-            let value = lower_expression(context, &statement.value)?;
+            let value = statement
+                .value
+                .as_ref()
+                .map(|value| lower_expression(context, value))
+                .transpose()?;
             set_terminator(context, MirTerminator::Return { value })
         }
         Statement::Break(_) => {
@@ -898,12 +909,43 @@ fn lower_call_expression(
     emit_instruction(
         context,
         MirInstruction::Call {
-            target: target.clone(),
+            target: Some(target.clone()),
             function_name: name.clone(),
             args,
         },
     )?;
     Ok(target)
+}
+
+fn lower_call_statement(
+    context: &mut FunctionLowerContext<'_>,
+    expression: &Expression,
+) -> Result<(), MirLowerError> {
+    let Expression::Call { callee, args, .. } = expression else {
+        return Err(MirLowerError::new(
+            "MIR lowering invariant violation: call statement has a non-call expression.",
+        ));
+    };
+    let Expression::Identifier { name, .. } = &**callee else {
+        return Err(unsupported("non-identifier call callee"));
+    };
+    if cast_builtin_op(name).is_some() {
+        return Err(MirLowerError::new(format!(
+            "MIR lowering invariant violation: value builtin '{name}' used as a statement."
+        )));
+    }
+    let args = args
+        .iter()
+        .map(|arg| lower_expression(context, arg))
+        .collect::<Result<Vec<_>, MirLowerError>>()?;
+    emit_instruction(
+        context,
+        MirInstruction::Call {
+            target: None,
+            function_name: name.clone(),
+            args,
+        },
+    )
 }
 
 fn lower_place(
@@ -1126,6 +1168,7 @@ fn to_mir_type(type_node: &CalcKernelType) -> Result<MirType, MirLowerError> {
         }
         CalcKernelType::Pointer(element_type) => Ok(mir_pointer(to_mir_type(&element_type)?)),
         CalcKernelType::Struct(name) => Ok(mir_struct(name)),
+        CalcKernelType::Void => Ok(MirType::Void),
         CalcKernelType::IntegerLiteral => Ok(mir_primitive(MirPrimitiveTypeName::I32)),
         CalcKernelType::Unknown => Err(MirLowerError::new(
             "MIR lowering cannot lower unknown type.",
@@ -1332,22 +1375,32 @@ fn print_mir_instruction(instruction: &MirInstruction) -> String {
             target,
             function_name,
             args,
-        } => format!(
-            "{}: {} = call {}({})",
-            print_mir_value(target),
-            print_mir_type(value_type(target)),
-            function_name,
-            args.iter()
-                .map(print_mir_value)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        } => {
+            let call = format!(
+                "call {}({})",
+                function_name,
+                args.iter()
+                    .map(print_mir_value)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            target.as_ref().map_or(call.clone(), |target| {
+                format!(
+                    "{}: {} = {call}",
+                    print_mir_value(target),
+                    print_mir_type(value_type(target))
+                )
+            })
+        }
     }
 }
 
 fn print_mir_terminator(terminator: &MirTerminator) -> String {
     match terminator {
-        MirTerminator::Return { value } => format!("return {}", print_mir_value(value)),
+        MirTerminator::Return { value } => value.as_ref().map_or_else(
+            || "return".to_string(),
+            |value| format!("return {}", print_mir_value(value)),
+        ),
         MirTerminator::Jump { label } => format!("jump {label}"),
         MirTerminator::Branch {
             condition,
@@ -1402,6 +1455,7 @@ pub fn print_mir_type(type_node: &MirType) -> String {
         MirType::Primitive(name) => print_primitive_type(*name).to_string(),
         MirType::Pointer(element_type) => format!("ptr<{}>", print_mir_type(element_type)),
         MirType::Struct(name) => name.clone(),
+        MirType::Void => "void".to_string(),
     }
 }
 
@@ -1468,6 +1522,18 @@ pub fn validate_mir_module(module: &MirModule) -> MirValidationResult {
         } else {
             ctx.structs.insert(struct_info.name.clone(), struct_info);
         }
+        for field in &struct_info.fields {
+            if contains_void_type(&field.type_node) {
+                ctx.errors.push(MirValidationError {
+                    message: format!(
+                        "Void field '{}' is not allowed in struct '{}'.",
+                        field.name, struct_info.name
+                    ),
+                    function_name: None,
+                    block_label: None,
+                });
+            }
+        }
     }
 
     for function in &module.functions {
@@ -1518,6 +1584,18 @@ fn validate_function(module_ctx: &mut ModuleValidationContext<'_>, function: &Mi
         errors: &mut module_ctx.errors,
     };
 
+    if !matches!(function.return_type, MirType::Void) && contains_void_type(&function.return_type) {
+        add_validation_error(
+            &mut ctx,
+            format!(
+                "Function '{}' has invalid void-containing return type {}.",
+                function.name,
+                print_mir_type(&function.return_type)
+            ),
+            None,
+        );
+    }
+
     collect_params(&mut ctx);
     collect_locals(&mut ctx);
     collect_labels(&mut ctx);
@@ -1539,6 +1617,16 @@ fn validate_function(module_ctx: &mut ModuleValidationContext<'_>, function: &Mi
 
 fn collect_params(ctx: &mut FunctionValidationContext<'_, '_>) {
     for param in &ctx.function.params {
+        if contains_void_type(&param.type_node) {
+            add_validation_error(
+                ctx,
+                format!(
+                    "Void parameter '{}' is not allowed in function '{}'.",
+                    param.name, ctx.function.name
+                ),
+                None,
+            );
+        }
         if ctx.params.contains_key(&param.name) {
             add_validation_error(
                 ctx,
@@ -1557,6 +1645,16 @@ fn collect_params(ctx: &mut FunctionValidationContext<'_, '_>) {
 
 fn collect_locals(ctx: &mut FunctionValidationContext<'_, '_>) {
     for local in &ctx.function.locals {
+        if contains_void_type(&local.type_node) {
+            add_validation_error(
+                ctx,
+                format!(
+                    "Void local '{}' is not allowed in function '{}'.",
+                    local.name, ctx.function.name
+                ),
+                None,
+            );
+        }
         if ctx.locals.contains_key(&local.name) {
             add_validation_error(
                 ctx,
@@ -1599,6 +1697,16 @@ fn collect_temps(ctx: &mut FunctionValidationContext<'_, '_>) {
             let MirValue::Temp { name, type_node } = target else {
                 continue;
             };
+            if contains_void_type(type_node) {
+                add_validation_error(
+                    ctx,
+                    format!(
+                        "Void temp '%{}' is not allowed in function '{}'.",
+                        name, ctx.function.name
+                    ),
+                    Some(&block.label),
+                );
+            }
             if ctx.temps.contains_key(name) {
                 add_validation_error(
                     ctx,
@@ -1917,11 +2025,13 @@ fn validate_instruction(
             function_name,
             args,
         } => {
-            validate_target(ctx, block, target);
+            if let Some(target) = target {
+                validate_target(ctx, block, target);
+            }
             for arg in args {
                 validate_value(ctx, block, arg);
             }
-            validate_call(ctx, block, function_name, args, target);
+            validate_call(ctx, block, function_name, args, target.as_ref());
         }
     }
 }
@@ -1971,21 +2081,43 @@ fn validate_terminator(
     terminator: &MirTerminator,
 ) {
     match terminator {
-        MirTerminator::Return { value } => {
-            validate_value(ctx, block, value);
-            if !same_mir_type(value_type(value), &ctx.function.return_type) {
+        MirTerminator::Return { value } => match (&ctx.function.return_type, value) {
+            (MirType::Void, None) => {}
+            (MirType::Void, Some(value)) => {
+                validate_value(ctx, block, value);
                 add_validation_error(
                     ctx,
                     format!(
-                        "Return type mismatch in function '{}': expected {}, got {}.",
-                        ctx.function.name,
-                        print_mir_type(&ctx.function.return_type),
-                        print_mir_type(value_type(value))
+                        "Function '{}' has a value, but a void return cannot have a value.",
+                        ctx.function.name
                     ),
                     Some(&block.label),
                 );
             }
-        }
+            (_, None) => add_validation_error(
+                ctx,
+                format!(
+                    "Function '{}': a non-void return requires a value.",
+                    ctx.function.name
+                ),
+                Some(&block.label),
+            ),
+            (return_type, Some(value)) => {
+                validate_value(ctx, block, value);
+                if !same_mir_type(value_type(value), return_type) {
+                    add_validation_error(
+                        ctx,
+                        format!(
+                            "Return type mismatch in function '{}': expected {}, got {}.",
+                            ctx.function.name,
+                            print_mir_type(return_type),
+                            print_mir_type(value_type(value))
+                        ),
+                        Some(&block.label),
+                    );
+                }
+            }
+        },
         MirTerminator::Jump { label } => {
             if !ctx.labels.contains_key(label) {
                 add_validation_error(
@@ -2072,6 +2204,16 @@ fn validate_target(
 }
 
 fn validate_value(ctx: &mut FunctionValidationContext<'_, '_>, block: &MirBlock, value: &MirValue) {
+    if contains_void_type(value_type(value)) {
+        add_validation_error(
+            ctx,
+            format!(
+                "Void MIR value is not allowed in function '{}'.",
+                ctx.function.name
+            ),
+            Some(&block.label),
+        );
+    }
     match value {
         MirValue::Param { name, type_node } => match ctx.params.get(name) {
             Some(declared) if !same_mir_type(declared, type_node) => add_validation_error(
@@ -2144,6 +2286,16 @@ fn validate_value(ctx: &mut FunctionValidationContext<'_, '_>, block: &MirBlock,
 }
 
 fn validate_place(ctx: &mut FunctionValidationContext<'_, '_>, block: &MirBlock, place: &MirPlace) {
+    if contains_void_type(place_type(place)) {
+        add_validation_error(
+            ctx,
+            format!(
+                "Void MIR place is not allowed in function '{}'.",
+                ctx.function.name
+            ),
+            Some(&block.label),
+        );
+    }
     match place {
         MirPlace::Param { name, type_node } => validate_value(
             ctx,
@@ -2299,7 +2451,7 @@ fn validate_call(
     block: &MirBlock,
     function_name: &str,
     args: &[MirValue],
-    target: &MirValue,
+    target: Option<&MirValue>,
 ) {
     let Some(callee) = ctx.functions.get(function_name) else {
         add_validation_error(
@@ -2325,7 +2477,6 @@ fn validate_call(
             ),
             Some(&block.label),
         );
-        return;
     }
 
     for (index, (arg, param)) in args.iter().zip(&callee.params).enumerate() {
@@ -2345,18 +2496,38 @@ fn validate_call(
         }
     }
 
-    if !same_mir_type(value_type(target), &callee.return_type) {
-        add_validation_error(
+    match (&callee.return_type, target) {
+        (MirType::Void, None) => {}
+        (MirType::Void, Some(_)) => add_validation_error(
             ctx,
             format!(
-                "Call result for '{}' in function '{}' must be {}, got {}.",
-                function_name,
-                ctx.function.name,
-                print_mir_type(&callee.return_type),
-                print_mir_type(value_type(target))
+                "Call to '{}' in function '{}': a void call cannot have a target.",
+                function_name, ctx.function.name
             ),
             Some(&block.label),
-        );
+        ),
+        (_, None) => add_validation_error(
+            ctx,
+            format!(
+                "Call to '{}' in function '{}': a non-void call requires a target.",
+                function_name, ctx.function.name
+            ),
+            Some(&block.label),
+        ),
+        (return_type, Some(target)) if !same_mir_type(value_type(target), return_type) => {
+            add_validation_error(
+                ctx,
+                format!(
+                    "Call result for '{}' in function '{}' must be {}, got {}.",
+                    function_name,
+                    ctx.function.name,
+                    print_mir_type(return_type),
+                    print_mir_type(value_type(target))
+                ),
+                Some(&block.label),
+            );
+        }
+        _ => {}
     }
 }
 
@@ -2371,9 +2542,17 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
         | MirInstruction::Compare { target, .. }
         | MirInstruction::Cast { target, .. }
         | MirInstruction::Address { target, .. }
-        | MirInstruction::Load { target, .. }
-        | MirInstruction::Call { target, .. } => Some(target),
+        | MirInstruction::Load { target, .. } => Some(target),
+        MirInstruction::Call { target, .. } => target.as_ref(),
         MirInstruction::Store { .. } => None,
+    }
+}
+
+fn contains_void_type(type_node: &MirType) -> bool {
+    match type_node {
+        MirType::Void => true,
+        MirType::Pointer(element_type) => contains_void_type(element_type),
+        MirType::Primitive(_) | MirType::Struct(_) => false,
     }
 }
 

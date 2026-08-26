@@ -127,6 +127,11 @@ can broaden direct SSA lowering or add a MIR-to-SSA transform.
 | `bool` internal and exported scalar | `i1` |
 | `ptr<T>` | `ptr` |
 | `struct` | named LLVM struct type |
+| return-only `void` | LLVM `void` return |
+
+Void procedures emit `define void`, targetless internal calls emit `call void`,
+and both explicit and natural exits emit `ret void`. No alloca, zero constant,
+or SSA result is manufactured for a void result.
 
 Phase 13 v1 uses LLVM opaque pointers (`ptr`).
 Phase 16.8 supports `f64` as LLVM `double`, including scalar parameters and

@@ -62,6 +62,7 @@ cargo build --release --locked
 ./target/release/ckc --help
 ./target/release/ckc check examples/scalar.ck
 ./target/release/ckc check examples/control_flow.ck
+./target/release/ckc check examples/void.ck
 ./target/release/ckc emit-mir examples/scalar.ck -O3
 ./target/release/ckc emit-c examples/pricing.ck --out /tmp/pricing.c
 ./target/release/ckc emit-wasm examples/wasm_scalar.ck --out /tmp/scalar.wasm
@@ -78,6 +79,7 @@ cargo run -- check examples/scalar.ck
 
 - `docs/LANGUAGE_SPEC.md`: CK source language.
 - `examples/control_flow.ck`: `break` / `continue` control-flow example.
+- `examples/void.ck`: explicit `void`, early return, and procedure-call example.
 - `docs/COMPILER_ARCHITECTURE.md`: compiler pipeline and module boundaries.
 - `docs/MIR.md`: MIR data model and printed format.
 - `docs/OPTIMIZATION.md`: MIR optimization levels and pass boundaries.

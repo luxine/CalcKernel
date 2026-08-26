@@ -98,6 +98,17 @@ while i < len {
 会报 `CK2010`。Checker 不推断 `while true` 一定返回：所有 loop 之后的代码仍按
 可达处理，因为后续迭代可能退出。
 
+### Void procedure
+
+`void` 是 return-only 类型，在 function signature 中写作 `-> void`。它不是值，
+不能用于 parameter、local、struct field、pointer element 或 call argument；这些
+非法类型/值位置使用 `CK2011`。
+
+Void function 可以自然结束，也可以用 `return;` 提前退出。Void function 返回值、
+value-returning function 使用空 return 都是错误。只有返回 void 的 call 才能作为
+独立 statement；不能丢弃 non-void result，也不能把 void call 用在 initializer、
+argument、operator、comparison 或 return-value 位置。
+
 V0 函数必须在最终语句路径上明确返回。函数结尾没有 return 是类型错误。
 
 ## 支持的表达式

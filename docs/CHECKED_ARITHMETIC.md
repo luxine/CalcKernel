@@ -91,6 +91,11 @@ All CalcKernel functions use the checked ABI in checked mode. Exported functions
 appear in the generated header with `CK_API`; non-exported functions are emitted
 as `static CK_Status` helpers inside the generated `.c` file.
 
+Source void functions also return `CK_Status`, but they have no result value and
+therefore no `ck_return` parameter or null-result check. Explicit `return;` and
+natural fallthrough return `CK_OK`. A targetless void call uses the same status propagation
+as a value call and immediately returns any non-`CK_OK` status.
+
 As of Phase 11, checked C generation is based on the MIR pipeline:
 
 ```text

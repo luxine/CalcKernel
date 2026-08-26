@@ -22,6 +22,7 @@ pub enum CalcKernelType {
     Primitive(PrimitiveTypeName),
     Pointer(Box<CalcKernelType>),
     Struct(String),
+    Void,
     IntegerLiteral,
     Unknown,
 }
@@ -135,6 +136,15 @@ struct Checker<'source> {
     expression_types: TypeMap,
     local_types: LetTypeMap,
     loop_depth: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeUseContext {
+    FunctionReturn,
+    Parameter,
+    StructField,
+    Local,
+    PointerElement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,7 +299,7 @@ impl<'source> Checker<'source> {
                     ));
                     continue;
                 }
-                let field_type = self.resolve_type(&field.type_node);
+                let field_type = self.resolve_type(&field.type_node, TypeUseContext::StructField);
                 resolved_fields.push((field.name.name.clone(), field_type));
             }
 
@@ -327,9 +337,10 @@ impl<'source> Checker<'source> {
             let params = function_decl
                 .params
                 .iter()
-                .map(|param| self.resolve_type(&param.type_node))
+                .map(|param| self.resolve_type(&param.type_node, TypeUseContext::Parameter))
                 .collect();
-            let return_type = self.resolve_type(&function_decl.return_type);
+            let return_type =
+                self.resolve_type(&function_decl.return_type, TypeUseContext::FunctionReturn);
             self.symbols.functions.insert(
                 name.clone(),
                 FunctionSymbol {
@@ -390,7 +401,7 @@ impl<'source> Checker<'source> {
             &function_symbol.return_type,
             false,
         );
-        if flow.falls_through {
+        if flow.falls_through && !matches!(function_symbol.return_type, CalcKernelType::Void) {
             self.error(
                 declaration.body.span,
                 format!("Missing return in function '{}'.", declaration.name.name),
@@ -442,6 +453,10 @@ impl<'source> Checker<'source> {
                 self.check_assignment_statement(statement, scope);
                 FlowSummary::falls_through()
             }
+            Statement::Call(statement) => {
+                self.check_call_statement(&statement.call, scope);
+                FlowSummary::falls_through()
+            }
             Statement::Return(statement) => {
                 self.check_return_statement(statement, scope, return_type);
                 FlowSummary::returns()
@@ -479,7 +494,7 @@ impl<'source> Checker<'source> {
     }
 
     fn check_let_statement(&mut self, statement: &LetStatement, scope: &mut Scope) {
-        let declared_type = self.resolve_type(&statement.type_node);
+        let declared_type = self.resolve_type(&statement.type_node, TypeUseContext::Local);
         self.local_types
             .insert(statement.span, declared_type.clone());
         if !scope.declare(VariableSymbol {
@@ -538,18 +553,56 @@ impl<'source> Checker<'source> {
         scope: &mut Scope,
         return_type: &CalcKernelType,
     ) {
-        let value_type = self.check_expression(&statement.value, scope, Some(return_type));
-        if !is_unknown(return_type)
-            && !is_unknown(&value_type)
-            && !can_assign(return_type, &value_type)
-        {
-            self.error(
-                statement.value.span(),
-                format!(
-                    "Return type mismatch: expected {} but got {}.",
-                    type_to_string(return_type),
-                    type_to_string(&value_type)
-                ),
+        match (return_type, &statement.value) {
+            (CalcKernelType::Void, None) => {}
+            (CalcKernelType::Void, Some(value)) => {
+                self.check_expression(value, scope, None);
+                self.error_with_code(
+                    value.span(),
+                    DiagnosticCode::Ck2011,
+                    "A void function cannot return a value.",
+                );
+            }
+            (_, None) => self.error_with_code(
+                statement.span,
+                DiagnosticCode::Ck2011,
+                "A non-void function must return a value.",
+            ),
+            (_, Some(value)) => {
+                let value_type = self.check_expression(value, scope, Some(return_type));
+                if !is_unknown(return_type)
+                    && !is_unknown(&value_type)
+                    && !can_assign(return_type, &value_type)
+                {
+                    self.error(
+                        value.span(),
+                        format!(
+                            "Return type mismatch: expected {} but got {}.",
+                            type_to_string(return_type),
+                            type_to_string(&value_type)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_call_statement(&mut self, call: &Expression, scope: &mut Scope) {
+        let Expression::Call { callee, args, span } = call else {
+            self.error_with_code(
+                call.span(),
+                DiagnosticCode::Ck2011,
+                "Only a function call may be used as a standalone statement.",
+            );
+            return;
+        };
+        let return_type = self.check_call_expression(callee, args, *span, scope, false);
+        self.expression_types.insert(*span, return_type.clone());
+        if !is_unknown(&return_type) && !matches!(return_type, CalcKernelType::Void) {
+            self.error_with_code(
+                *span,
+                DiagnosticCode::Ck2011,
+                "Only a void call may be used as a standalone statement.",
             );
         }
     }
@@ -647,7 +700,7 @@ impl<'source> Checker<'source> {
                 span,
             } => self.check_binary_expression(operator, left, right, *span, scope, expected_type),
             Expression::Call { callee, args, span } => {
-                self.check_call_expression(callee, args, *span, scope)
+                self.check_call_expression(callee, args, *span, scope, true)
             }
             Expression::Field {
                 object,
@@ -855,6 +908,7 @@ impl<'source> Checker<'source> {
         args: &[Expression],
         span: SourceSpan,
         scope: &mut Scope,
+        value_required: bool,
     ) -> CalcKernelType {
         let Expression::Identifier {
             name,
@@ -918,7 +972,16 @@ impl<'source> Checker<'source> {
             }
         }
 
-        function_symbol.return_type
+        if value_required && matches!(function_symbol.return_type, CalcKernelType::Void) {
+            self.error_with_code(
+                span,
+                DiagnosticCode::Ck2011,
+                "A void call cannot be used where a value is required.",
+            );
+            CalcKernelType::Unknown
+        } else {
+            function_symbol.return_type
+        }
     }
 
     fn check_builtin_call(
@@ -1036,12 +1099,24 @@ impl<'source> Checker<'source> {
         *element_type
     }
 
-    fn resolve_type(&mut self, type_node: &TypeNode) -> CalcKernelType {
+    fn resolve_type(&mut self, type_node: &TypeNode, context: TypeUseContext) -> CalcKernelType {
         match type_node {
             TypeNode::Primitive { name, .. } => primitive_type_from_str(name),
-            TypeNode::Pointer { element_type, .. } => {
-                CalcKernelType::Pointer(Box::new(self.resolve_type(element_type)))
+            TypeNode::Void { .. } if context == TypeUseContext::FunctionReturn => {
+                CalcKernelType::Void
             }
+            TypeNode::Void { span } => {
+                let message = if context == TypeUseContext::PointerElement {
+                    "Void is not allowed as a pointer element type."
+                } else {
+                    "Void is only allowed as a function return type."
+                };
+                self.error_with_code(*span, DiagnosticCode::Ck2011, message);
+                CalcKernelType::Unknown
+            }
+            TypeNode::Pointer { element_type, .. } => CalcKernelType::Pointer(Box::new(
+                self.resolve_type(element_type, TypeUseContext::PointerElement),
+            )),
             TypeNode::Named { name, .. } => {
                 if !self.symbols.structs.contains_key(&name.name) {
                     self.error(name.span, format!("Unknown type '{}'.", name.name));
@@ -1407,6 +1482,7 @@ fn type_to_string(type_node: &CalcKernelType) -> String {
         CalcKernelType::Primitive(PrimitiveTypeName::Bool) => "bool".to_string(),
         CalcKernelType::Pointer(element_type) => format!("ptr<{}>", type_to_string(element_type)),
         CalcKernelType::Struct(name) => name.clone(),
+        CalcKernelType::Void => "void".to_string(),
         CalcKernelType::IntegerLiteral => "i32".to_string(),
         CalcKernelType::Unknown => "unknown".to_string(),
     }

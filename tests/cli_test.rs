@@ -1639,6 +1639,82 @@ fn run_typescript_cli(ts_cli: &PathBuf, args: &[OsString]) -> CapturedOutput {
     capture(output)
 }
 
+#[test]
+fn cli_should_build_void_buffer_mutation_fixture() {
+    if !clang_available() {
+        return;
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_cli_void_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("void.ck");
+    fs::write(
+        &source,
+        "export fn mutate(out: ptr<i32>) -> void { out[0] = 42; }",
+    )
+    .expect("write source");
+    let output_base = dir.join("libvoid");
+    let build = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("build")
+        .arg("--out")
+        .arg(&output_base)
+        .arg(&source)
+        .output()
+        .expect("run ckc build");
+    assert!(
+        build.status.success(),
+        "ckc stderr:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let header = fs::read_to_string(output_base.with_extension("h")).expect("read header");
+    assert!(
+        header.contains("CK_API void mutate(int32_t* out);"),
+        "{header}"
+    );
+
+    let harness = dir.join("harness.c");
+    fs::write(
+        &harness,
+        r#"
+#include "libvoid.h"
+int main(void) {
+  int32_t value = 0;
+  mutate(&value);
+  return value == 42 ? 0 : 1;
+}
+"#,
+    )
+    .expect("write harness");
+    let binary = dir.join("harness");
+    let compile = Command::new("clang")
+        .arg("-std=c11")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg(&harness)
+        .arg(output_base.with_extension("c"))
+        .arg("-I")
+        .arg(&dir)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .expect("compile harness");
+    assert!(
+        compile.status.success(),
+        "clang stderr:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        Command::new(binary)
+            .status()
+            .expect("run harness")
+            .success()
+    );
+}
+
 fn clang_available() -> bool {
     Command::new("clang")
         .arg("--version")

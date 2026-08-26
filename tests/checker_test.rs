@@ -377,3 +377,142 @@ fn check_should_conservatively_require_a_return_after_while_true() {
             .any(|diagnostic| { diagnostic.message == "Missing return in function 'loop_only'." })
     );
 }
+
+#[test]
+fn check_should_accept_void_fallthrough_and_empty_return() {
+    let result = check_source(
+        r#"
+      fn no_op() -> void {}
+
+      export fn maybe_stop(stop: bool) -> void {
+        if stop {
+          return;
+        }
+        no_op();
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+}
+
+#[test]
+fn check_should_reject_void_in_value_type_positions_with_ck2011() {
+    let result = check_source(
+        r#"
+      struct BadField { value: void; }
+
+      fn no_op() -> void {}
+      fn bad_param(value: void) -> void {}
+      fn bad_pointer(value: ptr<void>) -> void {}
+      fn bad_local() -> void {
+        let value: void = no_op();
+      }
+      fn take_i32(value: i32) -> void {}
+      fn bad_argument() -> void {
+        take_i32(no_op());
+      }
+    "#,
+    );
+
+    let void_errors = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.to_string() == "CK2011")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(void_errors.contains(&"Void is only allowed as a function return type."));
+    assert!(void_errors.contains(&"Void is not allowed as a pointer element type."));
+    assert!(void_errors.contains(&"A void call cannot be used where a value is required."));
+    assert!(void_errors.len() >= 5, "{void_errors:?}");
+}
+
+#[test]
+fn check_should_reject_mismatched_void_returns_with_ck2011() {
+    let result = check_source(
+        r#"
+      fn bad_void() -> void { return 1; }
+      fn bad_value() -> i32 { return; }
+    "#,
+    );
+
+    let errors = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.to_string() == "CK2011")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        errors,
+        vec![
+            "A void function cannot return a value.",
+            "A non-void function must return a value.",
+        ]
+    );
+}
+
+#[test]
+fn check_should_accept_only_void_calls_as_statements() {
+    let accepted = check_source(
+        r#"
+      fn no_op() -> void {}
+      export fn run() -> void { no_op(); }
+    "#,
+    );
+    assert_eq!(accepted.diagnostics, []);
+
+    let rejected = check_source(
+        r#"
+      fn value() -> i32 { return 1; }
+      export fn run() -> void { value(); }
+    "#,
+    );
+    assert!(rejected.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.to_string() == "CK2011"
+            && diagnostic.message == "Only a void call may be used as a standalone statement."
+    }));
+}
+
+#[test]
+fn check_should_reject_void_call_in_value_contexts() {
+    let result = check_source(
+        r#"
+      fn no_op() -> void {}
+      fn take(value: i32) -> i32 { return value; }
+      fn initializer() -> i32 { let x: i32 = no_op(); return 0; }
+      fn returned() -> i32 { return no_op(); }
+      fn argument() -> i32 { return take(no_op()); }
+      fn arithmetic() -> i32 { return no_op() + 1; }
+      fn comparison() -> bool { return no_op() == no_op(); }
+    "#,
+    );
+
+    let void_value_errors = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code.to_string() == "CK2011"
+                && diagnostic.message == "A void call cannot be used where a value is required."
+        })
+        .count();
+    assert_eq!(void_value_errors, 6);
+}
+
+#[test]
+fn check_should_preserve_unreachable_analysis_after_empty_return() {
+    let result = check_source(
+        r#"
+      export fn stop() -> void {
+        return;
+        no_op();
+      }
+      fn no_op() -> void {}
+    "#,
+    );
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.to_string() == "CK2010"
+            && diagnostic.message == "Unreachable statement."
+            && diagnostic.line == 4
+    }));
+}

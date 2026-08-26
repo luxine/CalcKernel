@@ -169,6 +169,12 @@ Every MIR value must have a resolved CalcKernel type:
 - `ptr<T>`
 - `struct`
 
+`MirType::Void` is valid only as a function return signature. It is forbidden
+for parameters, locals, temporaries, constants, operands, and places. A void
+call uses `target: None`; a void return uses `value: None`. Natural source
+fallthrough is lowered to the same valueless return so every block remains
+terminated. No synthetic void value or temporary is created.
+
 MIR should not contain parser-only types such as `NamedTypeNode` or unresolved
 type nodes. The type checker must resolve names before lowering.
 

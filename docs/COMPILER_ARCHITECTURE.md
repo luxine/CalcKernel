@@ -109,6 +109,11 @@ unreachable statements without type-checking dead source. An enclosing loop
 consumes its own `break` and `continue` outcomes; `while` remains conservative
 and is always considered able to fall through.
 
+The checker represents `void` explicitly but permits it only as a direct
+function return. Call statements use a statement context; every expression
+context requires a value. Void functions skip missing-return diagnostics while
+retaining ordinary reachability analysis after `return;`.
+
 ### CheckedProgram / Typed Program
 
 After a successful type check, the compiler exposes a `CheckedProgram` typed
@@ -140,6 +145,8 @@ MIR lowering is responsible for:
 - lowering function calls into explicit `call` instructions
 - lowering pointer indexing and struct field access into typed places
 - emitting stable temporary and block names for snapshots
+- preserving void absence as targetless calls and valueless returns, never a
+  synthetic value
 
 ### MIR Validator
 

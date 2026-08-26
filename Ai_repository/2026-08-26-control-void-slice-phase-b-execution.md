@@ -1,9 +1,9 @@
 # Phase B Execution Plan — explicit `void`
 
-Status: waiting for Phase A acceptance
+Status: completed and accepted on 2026-08-26
 
 Acceptance contract:
-`Ai_repository/2026-08-26-control-flow-void-slice-phase-b-acceptance.md`
+`Ai_repository/2026-08-26-control-void-slice-phase-b-acceptance.md`
 
 ## Phase outcome
 

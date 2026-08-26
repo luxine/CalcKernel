@@ -355,3 +355,13 @@ fn lex_should_tokenize_break_and_continue_as_reserved_keywords() {
         ]
     );
 }
+
+#[test]
+fn lex_should_tokenize_void_as_a_reserved_keyword() {
+    let result = lex(&SourceFile::new("test.ck", "void value"));
+
+    assert_eq!(result.diagnostics, []);
+    assert_eq!(result.tokens[0].kind, TokenKind::Void);
+    assert_eq!(result.tokens[0].text, "void");
+    assert_eq!(result.tokens[1].kind, TokenKind::Identifier);
+}

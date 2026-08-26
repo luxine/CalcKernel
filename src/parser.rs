@@ -63,6 +63,9 @@ pub enum TypeNode {
         name: String,
         span: SourceSpan,
     },
+    Void {
+        span: SourceSpan,
+    },
     Pointer {
         element_type: Box<TypeNode>,
         span: SourceSpan,
@@ -81,6 +84,7 @@ impl TypeNode {
     pub fn span(&self) -> SourceSpan {
         match self {
             Self::Primitive { span, .. }
+            | Self::Void { span }
             | Self::Pointer { span, .. }
             | Self::Named { span, .. }
             | Self::Error { span } => *span,
@@ -93,6 +97,7 @@ pub enum Statement {
     Block(BlockStatement),
     Let(LetStatement),
     Assignment(AssignmentStatement),
+    Call(CallStatement),
     Return(ReturnStatement),
     Break(BreakStatement),
     Continue(ContinueStatement),
@@ -108,6 +113,7 @@ impl Statement {
             Self::Block(statement) => statement.span,
             Self::Let(statement) => statement.span,
             Self::Assignment(statement) => statement.span,
+            Self::Call(statement) => statement.span,
             Self::Return(statement) => statement.span,
             Self::Break(statement) => statement.span,
             Self::Continue(statement) => statement.span,
@@ -140,8 +146,14 @@ pub struct AssignmentStatement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallStatement {
+    pub call: Expression,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnStatement {
-    pub value: Expression,
+    pub value: Option<Expression>,
     pub span: SourceSpan,
 }
 
@@ -391,6 +403,12 @@ impl<'source> Parser<'source> {
                     span,
                 }
             }
+            TokenKind::Void => {
+                self.advance();
+                TypeNode::Void {
+                    span: self.span_from_token(&token),
+                }
+            }
             TokenKind::Identifier => {
                 let name = self.parse_identifier("Expected type name.");
                 TypeNode::Named {
@@ -456,7 +474,7 @@ impl<'source> Parser<'source> {
             return Statement::While(self.parse_while_statement());
         }
 
-        self.parse_assignment_statement()
+        self.parse_assignment_or_call_statement()
     }
 
     fn parse_let_statement(&mut self) -> LetStatement {
@@ -476,37 +494,64 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn parse_assignment_statement(&mut self) -> Statement {
+    fn parse_assignment_or_call_statement(&mut self) -> Statement {
         let start = self.current().clone();
         let target = self.parse_expression(1);
 
-        if !self.match_token(TokenKind::Equal) {
-            let token = self.current().clone();
-            self.error(&token, "Expected '=' in assignment statement.");
-            self.synchronize_statement();
-            return Statement::Error {
-                span: self.span_from_token(&start),
-            };
+        if self.match_token(TokenKind::Equal) {
+            let value = self.parse_expression(1);
+            let semicolon = self.consume(
+                TokenKind::Semicolon,
+                "Expected ';' after assignment statement.",
+            );
+            return Statement::Assignment(AssignmentStatement {
+                span: self.span_from_positions(
+                    target.span().start,
+                    self.end_position_from_token(&semicolon),
+                ),
+                target,
+                value,
+            });
         }
 
-        let value = self.parse_expression(1);
-        let semicolon = self.consume(
-            TokenKind::Semicolon,
-            "Expected ';' after assignment statement.",
+        if matches!(target, Expression::Call { .. }) {
+            let semicolon = self.consume(
+                TokenKind::Semicolon,
+                "Expected ';' after function call statement.",
+            );
+            return Statement::Call(CallStatement {
+                span: self.span_from_positions(
+                    target.span().start,
+                    self.end_position_from_token(&semicolon),
+                ),
+                call: target,
+            });
+        }
+
+        let token = self.current().clone();
+        self.error(
+            &token,
+            "Only a function call may be used as a standalone statement.",
         );
-        Statement::Assignment(AssignmentStatement {
-            span: self.span_from_positions(
-                target.span().start,
-                self.end_position_from_token(&semicolon),
-            ),
-            target,
-            value,
-        })
+        self.synchronize_statement();
+        Statement::Error {
+            span: self.span_from_token(&start),
+        }
     }
 
     fn parse_return_statement(&mut self) -> ReturnStatement {
         let return_token = self.consume(TokenKind::Return, "Expected 'return'.");
-        let value = self.parse_expression(1);
+        let lex_error_before_semicolon = self.check(TokenKind::Semicolon)
+            && self.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == DiagnosticCode::Ck0001
+                    && diagnostic.span.start.offset >= return_token.end
+                    && diagnostic.span.start.offset < self.current().start
+            });
+        let value = if self.check(TokenKind::Semicolon) && !lex_error_before_semicolon {
+            None
+        } else {
+            Some(self.parse_expression(1))
+        };
         let semicolon = self.consume(TokenKind::Semicolon, "Expected ';' after return statement.");
         ReturnStatement {
             value,

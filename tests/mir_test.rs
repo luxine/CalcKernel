@@ -1,6 +1,10 @@
 use std::{path::PathBuf, process::Command};
 
-use calckernel::{SourceFile, check, lower_to_mir, print_mir_module, validate_mir_module};
+use calckernel::{
+    MirBlock, MirFunction, MirInstruction, MirLocal, MirModule, MirParam, MirPlace,
+    MirPrimitiveTypeName, MirStruct, MirStructField, MirTerminator, MirType, MirValue, SourceFile,
+    check, lower_to_mir, print_mir_module, validate_mir_module,
+};
 
 fn lower_and_print(source_text: &str) -> String {
     let checked = check(&SourceFile::new("test.ck", source_text));
@@ -232,6 +236,193 @@ fn mir_should_lower_nested_loop_control_to_distinct_targets() {
 
     assert!(text.contains("bb5:\n  jump bb6\n"), "{text}");
     assert!(text.contains("bb6:\n  jump bb1\n"), "{text}");
+}
+
+#[test]
+fn mir_should_print_targetless_void_calls_and_valueless_returns() {
+    let text = lower_and_print(
+        r#"
+      fn touch(out: ptr<i32>) -> void {
+        out[0] = 1;
+        return;
+      }
+
+      export fn run(out: ptr<i32>) -> void {
+        touch(out);
+      }
+    "#,
+    );
+
+    assert!(text.contains("fn touch(out: ptr<i32>) -> void"), "{text}");
+    assert!(text.contains("  call touch(out)\n"), "{text}");
+    assert!(text.matches("  return\n").count() >= 2, "{text}");
+    assert!(!text.contains(": void ="), "{text}");
+}
+
+#[test]
+fn mir_should_insert_return_none_for_void_fallthrough() {
+    let checked = check(&SourceFile::new("test.ck", "fn no_op() -> void {}"));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower void fallthrough");
+    assert!(matches!(
+        module.functions[0].blocks[0].terminator,
+        MirTerminator::Return { value: None }
+    ));
+}
+
+#[test]
+fn mir_validator_should_reject_void_values_and_call_return_mismatches() {
+    let i32_type = MirType::Primitive(MirPrimitiveTypeName::I32);
+    let void_value = MirValue::Temp {
+        name: "void_temp".to_string(),
+        type_node: MirType::Void,
+    };
+    let i32_value = MirValue::Temp {
+        name: "value".to_string(),
+        type_node: i32_type.clone(),
+    };
+    let module = MirModule {
+        structs: vec![MirStruct {
+            name: "Bad".to_string(),
+            fields: vec![MirStructField {
+                name: "field".to_string(),
+                type_node: MirType::Void,
+            }],
+        }],
+        functions: vec![
+            MirFunction {
+                name: "procedure".to_string(),
+                exported: false,
+                params: vec![MirParam {
+                    name: "bad".to_string(),
+                    type_node: MirType::Void,
+                }],
+                return_type: MirType::Void,
+                locals: vec![MirLocal {
+                    name: "also_bad".to_string(),
+                    type_node: MirType::Void,
+                }],
+                blocks: vec![MirBlock {
+                    label: "bb0".to_string(),
+                    instructions: vec![
+                        MirInstruction::Store {
+                            place: MirPlace::Local {
+                                name: "also_bad".to_string(),
+                                type_node: MirType::Void,
+                            },
+                            value: MirValue::ConstInt {
+                                text: "0".to_string(),
+                                type_node: MirType::Void,
+                            },
+                        },
+                        MirInstruction::Call {
+                            target: Some(i32_value.clone()),
+                            function_name: "procedure".to_string(),
+                            args: vec![],
+                        },
+                    ],
+                    terminator: MirTerminator::Return {
+                        value: Some(void_value),
+                    },
+                }],
+            },
+            MirFunction {
+                name: "value".to_string(),
+                exported: false,
+                params: vec![],
+                return_type: i32_type,
+                locals: vec![],
+                blocks: vec![MirBlock {
+                    label: "bb0".to_string(),
+                    instructions: vec![MirInstruction::Call {
+                        target: None,
+                        function_name: "value".to_string(),
+                        args: vec![],
+                    }],
+                    terminator: MirTerminator::Return { value: None },
+                }],
+            },
+        ],
+    };
+
+    let messages = validate_mir_module(&module)
+        .errors
+        .into_iter()
+        .map(|error| error.message)
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Void parameter"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Void local"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Void field"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Void MIR value"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Void MIR place"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("void call cannot have a target"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("non-void call requires a target"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("void return cannot have a value"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("non-void return requires a value"))
+    );
+}
+
+#[test]
+fn mir_validator_should_accept_void_control_flow_with_all_blocks_terminated() {
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        r#"
+      fn no_op() -> void {}
+      export fn control(stop: bool) -> void {
+        while true {
+          if stop {
+            return;
+          }
+          no_op();
+          break;
+        }
+      }
+    "#,
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower void control flow");
+    assert_eq!(validate_mir_module(&module).errors, []);
+    assert!(
+        module
+            .functions
+            .iter()
+            .all(|function| !function.blocks.is_empty())
+    );
 }
 
 #[test]

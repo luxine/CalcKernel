@@ -58,6 +58,7 @@ cargo build --release --locked
 ./target/release/ckc --help
 ./target/release/ckc check examples/scalar.ck
 ./target/release/ckc check examples/control_flow.ck
+./target/release/ckc check examples/void.ck
 ./target/release/ckc emit-mir examples/scalar.ck -O3
 ./target/release/ckc emit-c examples/pricing.ck --out /tmp/pricing.c
 ./target/release/ckc emit-wasm examples/wasm_scalar.ck --out /tmp/scalar.wasm
@@ -74,6 +75,7 @@ cargo run -- check examples/scalar.ck
 
 - `docs/LANGUAGE_SPEC.md`：CK 源语言。
 - `examples/control_flow.ck`：`break` / `continue` 控制流示例。
+- `examples/void.ck`：显式 `void`、提前返回和 procedure call 示例。
 - `docs/COMPILER_ARCHITECTURE.md`：compiler pipeline 和模块边界。
 - `docs/MIR.md`：MIR 数据模型和打印格式。
 - `docs/OPTIMIZATION.md`：MIR 优化等级和 pass 边界。

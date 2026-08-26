@@ -67,6 +67,10 @@ export fn add_i64(a: i64, b: i64) -> i64 {
 生成的函数使用 WASM `i64` 参数和返回值。CK `f64` 使用 WASM `f64`，pointer 使用
 `i32` byte offset。
 
+CK void function 没有 `(result ...)`（no `(result ...)`）。Valueless return 不留下 stack value；
+targetless void call 生成 `call`，后面没有 `local.set`。此规则同时适用于
+single-block function、dispatcher fallback 和 structured-while path。
+
 ## Memory ABI
 
 module 导出一个 linear memory：

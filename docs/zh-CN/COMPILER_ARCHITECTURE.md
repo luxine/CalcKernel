@@ -101,6 +101,10 @@ loop control；block composition 会报告不可达语句，并且不再 type-ch
 source。外层 loop 消费属于自己的 `break` 和 `continue` outcome；`while` 保持
 保守，总是被视为可能 fall through。
 
+Checker 显式表示 `void`，但只允许它作为直接 function return。Call statement 使用
+statement context；所有 expression context 都要求值。Void function 不做
+missing-return 诊断，但 `return;` 后仍执行常规 reachability analysis。
+
 ### CheckedProgram / Typed Program
 
 类型检查成功后，编译器暴露 `CheckedProgram` 这个 typed contract。它保存：
@@ -129,6 +133,8 @@ MIR lowering 负责：
 - 将 function call 降低成显式 `call` instruction
 - 将 pointer indexing 和 struct field access 降低成 typed places
 - 为 snapshot 生成稳定的 temporary 和 block 名称
+- 把 void 的缺值保持为 targetless call 和 valueless return，绝不制造 synthetic
+  value
 
 ### MIR Validator
 

@@ -21,7 +21,7 @@ fn parse_return_expression(text: &str) -> Expression {
         panic!("expected return statement");
     };
 
-    statement.value.clone()
+    statement.value.clone().expect("expected return value")
 }
 
 #[test]
@@ -335,4 +335,135 @@ fn parse_should_require_semicolons_after_loop_control() {
             && diagnostic.line == 5
             && diagnostic.column == 9
     }));
+}
+
+#[test]
+fn parse_should_allow_void_in_type_syntax_for_later_checking() {
+    let result = parse_source(
+        r#"
+      struct Holder { value: void; }
+      export fn procedure(arg: void) -> void {
+        let local: void = procedure(arg);
+        return;
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let Declaration::Struct(holder) = &result.ast.declarations[0] else {
+        panic!("expected struct");
+    };
+    assert!(matches!(holder.fields[0].type_node, TypeNode::Void { .. }));
+    let Declaration::Function(procedure) = &result.ast.declarations[1] else {
+        panic!("expected function");
+    };
+    assert!(matches!(
+        procedure.params[0].type_node,
+        TypeNode::Void { .. }
+    ));
+    assert!(matches!(procedure.return_type, TypeNode::Void { .. }));
+    let Statement::Let(local) = &procedure.body.statements[0] else {
+        panic!("expected local");
+    };
+    assert!(matches!(local.type_node, TypeNode::Void { .. }));
+}
+
+#[test]
+fn parse_should_parse_return_with_and_without_value() {
+    let result = parse_source(
+        r#"
+      export fn stop() -> void { return; }
+      export fn value() -> i32 { return 7; }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let Declaration::Function(stop) = &result.ast.declarations[0] else {
+        panic!("expected function");
+    };
+    let Statement::Return(empty_return) = &stop.body.statements[0] else {
+        panic!("expected return");
+    };
+    assert!(empty_return.value.is_none());
+    let Declaration::Function(value) = &result.ast.declarations[1] else {
+        panic!("expected function");
+    };
+    let Statement::Return(value_return) = &value.body.statements[0] else {
+        panic!("expected return");
+    };
+    assert!(matches!(
+        value_return.value,
+        Some(Expression::IntegerLiteral { ref text, .. }) if text == "7"
+    ));
+}
+
+#[test]
+fn parse_should_distinguish_assignment_from_call_statement() {
+    let result = parse_source(
+        r#"
+      export fn procedure(out: ptr<i32>) -> void {
+        out[0] = 1;
+        clear(out);
+      }
+    "#,
+    );
+
+    assert_eq!(result.diagnostics, []);
+    let Declaration::Function(function) = &result.ast.declarations[0] else {
+        panic!("expected function");
+    };
+    assert!(matches!(
+        function.body.statements[0],
+        Statement::Assignment(_)
+    ));
+    let Statement::Call(statement) = &function.body.statements[1] else {
+        panic!("expected call statement");
+    };
+    assert!(matches!(statement.call, Expression::Call { .. }));
+    assert_eq!(statement.span.start.line, 4);
+}
+
+#[test]
+fn parse_should_recover_from_non_call_expression_statement() {
+    let result = parse_source(
+        r#"
+      export fn bad(value: i32) -> i32 {
+        value;
+        return value;
+      }
+    "#,
+    );
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.message == "Only a function call may be used as a standalone statement."
+            && diagnostic.line == 3
+            && diagnostic.column == 14
+    }));
+    let Declaration::Function(function) = &result.ast.declarations[0] else {
+        panic!("expected function");
+    };
+    assert!(matches!(
+        function.body.statements[0],
+        Statement::Error { .. }
+    ));
+    assert!(matches!(function.body.statements[1], Statement::Return(_)));
+}
+
+#[test]
+fn parse_should_not_treat_a_lex_error_as_an_empty_return() {
+    let result = parse_source("export fn bad() -> i32 { return @; }");
+    let diagnostics = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code.to_string(), diagnostic.message.as_str()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            ("CK0001".to_string(), "Unexpected character '@'."),
+            ("CK1001".to_string(), "Expected expression."),
+            ("CK1001".to_string(), "Expected ';' after return statement."),
+        ]
+    );
 }

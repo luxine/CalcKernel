@@ -356,10 +356,12 @@ fn emit_wat_function(
             wasm_type(&param.type_node)
         ));
     }
-    out.push_str(&format!(
-        "    (result {})\n",
-        wasm_type(&function.return_type)
-    ));
+    if !matches!(function.return_type, MirType::Void) {
+        out.push_str(&format!(
+            "    (result {})\n",
+            wasm_type(&function.return_type)
+        ));
+    }
 
     let mut locals = HashSet::new();
     for local in &function.locals {
@@ -535,10 +537,12 @@ fn emit_dispatched_wasm_function(
     layout: &WasmStructLayout,
 ) {
     out.push_str("    (local $ik_bb i32)\n");
-    out.push_str(&format!(
-        "    (local $ik_ret {})\n",
-        wasm_type(&function.return_type)
-    ));
+    if !matches!(function.return_type, MirType::Void) {
+        out.push_str(&format!(
+            "    (local $ik_ret {})\n",
+            wasm_type(&function.return_type)
+        ));
+    }
     out.push_str("    i32.const 0\n");
     out.push_str("    local.set $ik_bb\n");
     out.push_str("    block $ik_exit\n");
@@ -569,7 +573,9 @@ fn emit_dispatched_wasm_function(
     }
     out.push_str("      end\n");
     out.push_str("    end\n");
-    out.push_str("    local.get $ik_ret\n");
+    if !matches!(function.return_type, MirType::Void) {
+        out.push_str("    local.get $ik_ret\n");
+    }
 }
 
 fn emit_wat_instruction(
@@ -680,10 +686,10 @@ fn emit_wat_instruction(
             for arg in args {
                 emit_wat_value(out, arg, indent);
             }
-            out.push_str(&format!(
-                "{pad}call ${function_name}\n{pad}local.set ${}\n",
-                wat_local_name(target)
-            ));
+            out.push_str(&format!("{pad}call ${function_name}\n"));
+            if let Some(target) = target {
+                out.push_str(&format!("{pad}local.set ${}\n", wat_local_name(target)));
+            }
         }
     }
 }
@@ -697,9 +703,15 @@ fn emit_wat_terminator(
     let pad = " ".repeat(indent);
     match terminator {
         MirTerminator::Return { value } => {
-            emit_wat_value(out, value, indent);
-            if function.is_some() {
-                out.push_str(&format!("{pad}local.set $ik_ret\n{pad}br $ik_exit\n"));
+            if let Some(value) = value {
+                emit_wat_value(out, value, indent);
+                if function.is_some() {
+                    out.push_str(&format!("{pad}local.set $ik_ret\n{pad}br $ik_exit\n"));
+                } else {
+                    out.push_str(&format!("{pad}return\n"));
+                }
+            } else if function.is_some() {
+                out.push_str(&format!("{pad}br $ik_exit\n"));
             } else {
                 out.push_str(&format!("{pad}return\n"));
             }
@@ -886,6 +898,7 @@ fn wasm_type(type_node: &MirType) -> &'static str {
         MirType::Primitive(MirPrimitiveTypeName::I64 | MirPrimitiveTypeName::U64) => "i64",
         MirType::Primitive(MirPrimitiveTypeName::F64) => "f64",
         MirType::Struct(_) => panic!("struct values are not WASM scalar values"),
+        MirType::Void => panic!("void is not a WASM scalar value"),
     }
 }
 
@@ -902,6 +915,7 @@ fn wasm_size_of(
             MirPrimitiveTypeName::I64 | MirPrimitiveTypeName::U64 | MirPrimitiveTypeName::F64,
         ) => 8,
         MirType::Struct(name) => *struct_sizes.get(name).unwrap_or(&0),
+        MirType::Void => panic!("void has no WASM storage size"),
     }
 }
 
@@ -992,11 +1006,15 @@ fn emit_llvm_function(out: &mut String, function: &MirFunction, layout: &LlvmStr
 
     if function.blocks.is_empty() {
         out.push_str("entry:\n");
-        out.push_str(&format!(
-            "  ret {} {}\n",
-            llvm_return_type(&function.return_type),
-            llvm_zero_value(&function.return_type)
-        ));
+        if matches!(function.return_type, MirType::Void) {
+            out.push_str("  ret void\n");
+        } else {
+            out.push_str(&format!(
+                "  ret {} {}\n",
+                llvm_return_type(&function.return_type),
+                llvm_zero_value(&function.return_type)
+            ));
+        }
         out.push_str("}\n");
         return;
     }
@@ -1186,13 +1204,17 @@ fn emit_llvm_instruction(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let result = llvm_next_register(context);
-            out.push_str(&format!(
-                "  {result} = call {} @{}({args})\n",
-                llvm_return_type(value_type(target)),
-                function_name
-            ));
-            emit_llvm_store(out, target, &result);
+            if let Some(target) = target {
+                let result = llvm_next_register(context);
+                out.push_str(&format!(
+                    "  {result} = call {} @{}({args})\n",
+                    llvm_return_type(value_type(target)),
+                    function_name
+                ));
+                emit_llvm_store(out, target, &result);
+            } else {
+                out.push_str(&format!("  call void @{function_name}({args})\n"));
+            }
         }
     }
 }
@@ -1205,12 +1227,16 @@ fn emit_llvm_terminator(
 ) {
     match terminator {
         MirTerminator::Return { value } => {
-            let value_text = llvm_load_value(out, context, value);
-            out.push_str(&format!(
-                "  ret {} {}\n",
-                llvm_return_type(value_type(value)),
-                value_text
-            ));
+            if let Some(value) = value {
+                let value_text = llvm_load_value(out, context, value);
+                out.push_str(&format!(
+                    "  ret {} {}\n",
+                    llvm_return_type(value_type(value)),
+                    value_text
+                ));
+            } else {
+                out.push_str("  ret void\n");
+            }
         }
         MirTerminator::Jump { label } => {
             out.push_str(&format!(
@@ -1405,6 +1431,7 @@ fn llvm_storage_type(type_node: &MirType) -> String {
         MirType::Primitive(MirPrimitiveTypeName::Bool) => "i1".to_string(),
         MirType::Pointer(_) => "ptr".to_string(),
         MirType::Struct(name) => format!("%struct.{name}"),
+        MirType::Void => panic!("void has no LLVM storage type"),
     }
 }
 
@@ -1417,7 +1444,11 @@ fn llvm_param_type(type_node: &MirType) -> String {
 }
 
 fn llvm_return_type(type_node: &MirType) -> String {
-    llvm_storage_type(type_node)
+    if matches!(type_node, MirType::Void) {
+        "void".to_string()
+    } else {
+        llvm_storage_type(type_node)
+    }
 }
 
 fn llvm_zero_value(type_node: &MirType) -> &'static str {
@@ -1426,6 +1457,7 @@ fn llvm_zero_value(type_node: &MirType) -> &'static str {
         MirType::Primitive(MirPrimitiveTypeName::Bool) => "0",
         MirType::Primitive(_) | MirType::Pointer(_) => "0",
         MirType::Struct(_) => "zeroinitializer",
+        MirType::Void => panic!("void has no LLVM zero value"),
     }
 }
 
@@ -1598,11 +1630,13 @@ fn emit_checked_c_function(out: &mut String, function: &MirFunction, opt_level: 
         out.push('\n');
     }
 
-    out.push_str("  if (ck_return == NULL) {\n");
-    out.push_str("    return CK_ERR_NULL_POINTER;\n");
-    out.push_str("  }\n");
-    if !function.blocks.is_empty() {
-        out.push('\n');
+    if !matches!(function.return_type, MirType::Void) {
+        out.push_str("  if (ck_return == NULL) {\n");
+        out.push_str("    return CK_ERR_NULL_POINTER;\n");
+        out.push_str("  }\n");
+        if !function.blocks.is_empty() {
+            out.push('\n');
+        }
     }
 
     for (index, block) in function.blocks.iter().enumerate() {
@@ -1651,7 +1685,9 @@ fn checked_c_signature(function: &MirFunction) -> String {
         .iter()
         .map(|param| format!("{} {}", c_type(&param.type_node), param.name))
         .collect::<Vec<_>>();
-    params.push(format!("{}* ck_return", c_type(&function.return_type)));
+    if !matches!(function.return_type, MirType::Void) {
+        params.push(format!("{}* ck_return", c_type(&function.return_type)));
+    }
     format!("{prefix}CK_Status {}({})", function.name, params.join(", "))
 }
 
@@ -1676,7 +1712,9 @@ fn c_export_signature_checked(function: &MirFunction) -> String {
         .iter()
         .map(|param| format!("{} {}", c_type(&param.type_node), param.name))
         .collect::<Vec<_>>();
-    params.push(format!("{}* ck_return", c_type(&function.return_type)));
+    if !matches!(function.return_type, MirType::Void) {
+        params.push(format!("{}* ck_return", c_type(&function.return_type)));
+    }
     format!("CK_Status {}({})", function.name, params.join(", "))
 }
 
@@ -1755,12 +1793,17 @@ fn emit_c_instruction(instruction: &MirInstruction) -> String {
             target,
             function_name,
             args,
-        } => format!(
-            "{} = {}({});",
-            c_value_lvalue(target),
-            function_name,
-            args.iter().map(c_value).collect::<Vec<_>>().join(", ")
-        ),
+        } => {
+            let call = format!(
+                "{}({})",
+                function_name,
+                args.iter().map(c_value).collect::<Vec<_>>().join(", ")
+            );
+            target.as_ref().map_or_else(
+                || format!("{call};"),
+                |target| format!("{} = {call};", c_value_lvalue(target)),
+            )
+        }
     }
 }
 
@@ -1844,7 +1887,9 @@ fn emit_checked_c_instruction(
             args,
         } => {
             let mut call_args = args.iter().map(c_value).collect::<Vec<_>>();
-            call_args.push(format!("&{}", c_value_lvalue(target)));
+            if let Some(target) = target {
+                call_args.push(format!("&{}", c_value_lvalue(target)));
+            }
             vec![
                 format!("ik_status = {function_name}({});", call_args.join(", ")),
                 "if (ik_status != CK_OK) {".to_string(),
@@ -2179,6 +2224,7 @@ fn c_type_identity(type_node: &MirType) -> String {
         MirType::Primitive(name) => c_primitive_type_identity(*name).to_string(),
         MirType::Pointer(element_type) => format!("ptr<{}>", c_type_identity(element_type)),
         MirType::Struct(name) => format!("struct:{name}"),
+        MirType::Void => "void".to_string(),
     }
 }
 
@@ -2206,7 +2252,10 @@ fn is_stable_limit_value(value: &MirValue) -> bool {
 
 fn emit_c_terminator(terminator: &MirTerminator) -> Vec<String> {
     match terminator {
-        MirTerminator::Return { value } => vec![format!("return {};", c_value(value))],
+        MirTerminator::Return { value } => value.as_ref().map_or_else(
+            || vec!["return;".to_string()],
+            |value| vec![format!("return {};", c_value(value))],
+        ),
         MirTerminator::Jump { label } => vec![format!("goto {label};")],
         MirTerminator::Branch {
             condition,
@@ -2224,12 +2273,15 @@ fn emit_c_terminator(terminator: &MirTerminator) -> Vec<String> {
 
 fn emit_checked_c_terminator(terminator: &MirTerminator) -> Vec<String> {
     match terminator {
-        MirTerminator::Return { value } => {
-            vec![
-                format!("*ck_return = {};", c_value(value)),
-                "return CK_OK;".to_string(),
-            ]
-        }
+        MirTerminator::Return { value } => value.as_ref().map_or_else(
+            || vec!["return CK_OK;".to_string()],
+            |value| {
+                vec![
+                    format!("*ck_return = {};", c_value(value)),
+                    "return CK_OK;".to_string(),
+                ]
+            },
+        ),
         MirTerminator::Jump { label } => vec![format!("goto {label};")],
         MirTerminator::Branch {
             condition,
@@ -2301,8 +2353,8 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
         | MirInstruction::Compare { target, .. }
         | MirInstruction::Cast { target, .. }
         | MirInstruction::Address { target, .. }
-        | MirInstruction::Load { target, .. }
-        | MirInstruction::Call { target, .. } => Some(target),
+        | MirInstruction::Load { target, .. } => Some(target),
+        MirInstruction::Call { target, .. } => target.as_ref(),
         MirInstruction::Store { .. } => None,
     }
 }
@@ -2377,6 +2429,7 @@ fn c_type(type_node: &MirType) -> String {
         MirType::Primitive(MirPrimitiveTypeName::Bool) => "bool".to_string(),
         MirType::Pointer(element_type) => format!("{}*", c_type(element_type)),
         MirType::Struct(name) => name.clone(),
+        MirType::Void => "void".to_string(),
     }
 }
 

@@ -68,6 +68,11 @@ export fn add_i64(a: i64, b: i64) -> i64 {
 The emitted function uses WASM `i64` parameters and result. `f64` CK values use
 WASM `f64`; pointer values use `i32` byte offsets.
 
+A CK void function has no `(result ...)` declaration. Its valueless returns
+leave no stack value, and a targetless void call emits `call` without a following
+`local.set`. This applies to single-block functions, dispatcher fallback, and
+the structured-while path.
+
 ## Memory ABI
 
 The module exports one linear memory:

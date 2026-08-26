@@ -232,6 +232,76 @@ fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
     assert!(repo_root().join("examples/control_flow.ck").is_file());
 }
 
+#[test]
+fn void_docs_should_cover_return_only_type_and_backend_abis() {
+    for path in ["docs/LANGUAGE_SPEC.md", "docs/zh-CN/LANGUAGE_SPEC.md"] {
+        let text = read(path);
+        for required in ["`-> void`", "`return;`", "`CK2011`", "return-only"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in ["docs/MIR.md", "docs/zh-CN/MIR.md"] {
+        let text = read(path);
+        for required in [
+            "`MirType::Void`",
+            "`target: None`",
+            "`value: None`",
+            "synthetic",
+        ] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in ["docs/ABI.md", "docs/zh-CN/ABI.md"] {
+        let text = read(path);
+        for required in ["C `void`", "`CK_Status`", "no `ck_return`"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in [
+        "docs/CHECKED_ARITHMETIC.md",
+        "docs/zh-CN/CHECKED_ARITHMETIC.md",
+    ] {
+        let text = read(path);
+        for required in ["void", "`CK_OK`", "status propagation"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in ["docs/WASM_ABI.md", "docs/zh-CN/WASM_ABI.md"] {
+        let text = read(path);
+        for required in ["void", "no `(result ...)`", "targetless"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in ["docs/LLVM_BACKEND.md", "docs/zh-CN/LLVM_BACKEND.md"] {
+        let text = read(path);
+        for required in ["`void`", "`call void`", "`ret void`"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in [
+        "docs/COMPILER_ARCHITECTURE.md",
+        "docs/zh-CN/COMPILER_ARCHITECTURE.md",
+        "docs/ROADMAP.md",
+        "docs/zh-CN/ROADMAP.md",
+    ] {
+        assert!(read(path).contains("`void`"), "{path} must cover void");
+    }
+
+    for path in ["README.md", "README.zh-CN.md"] {
+        assert!(
+            read(path).contains("examples/void.ck"),
+            "{path} must link the void example"
+        );
+    }
+    assert!(repo_root().join("examples/void.ck").is_file());
+}
+
 fn markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))

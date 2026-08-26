@@ -229,6 +229,139 @@ int main(void) {{
 }
 
 #[test]
+fn c_backend_should_emit_and_run_unchecked_void_functions() {
+    let c = emit_c(
+        r#"
+      fn set_first(out: ptr<i32>) -> void { out[0] = 41; }
+      export fn mutate(out: ptr<i32>, stop: bool) -> void {
+        if stop { return; }
+        set_first(out);
+        out[0] = out[0] + 1;
+      }
+    "#,
+    );
+    assert!(c.contains("static void set_first(int32_t* out)"), "{c}");
+    assert!(c.contains("void mutate(int32_t* out, bool stop)"), "{c}");
+    assert!(c.contains("set_first(out);"), "{c}");
+    assert!(c.contains("return;"), "{c}");
+
+    let harness = format!(
+        r#"
+{c}
+int main(void) {{
+  int32_t value = 0;
+  mutate(&value, false);
+  if (value != 42) return 1;
+  mutate(&value, true);
+  if (value != 42) return 2;
+  return 0;
+}}
+"#
+    );
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_void_c_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("void.c");
+    let binary = dir.join("void");
+    fs::write(&source, harness).expect("write harness");
+    let compile = Command::new("clang")
+        .arg("-std=c11")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .expect("run clang");
+    assert!(
+        compile.status.success(),
+        "clang stderr:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        Command::new(binary)
+            .status()
+            .expect("run harness")
+            .success()
+    );
+}
+
+#[test]
+fn c_backend_should_emit_status_void_without_ck_return() {
+    let c = emit_checked_c(
+        r#"
+      fn no_op() -> void { return; }
+      export fn run() -> void { no_op(); }
+    "#,
+    );
+
+    assert!(c.contains("static CK_Status no_op()"), "{c}");
+    assert!(c.contains("CK_Status run()"), "{c}");
+    assert!(!c.contains("ck_return"), "{c}");
+    assert!(c.contains("return CK_OK;"), "{c}");
+}
+
+#[test]
+fn c_backend_should_propagate_checked_void_call_failures() {
+    let c = emit_checked_c(
+        r#"
+      fn increment(out: ptr<i64>) -> void { out[0] = out[0] + 1; }
+      fn middle(out: ptr<i64>) -> void { increment(out); }
+      export fn run(out: ptr<i64>) -> void { middle(out); }
+    "#,
+    );
+    assert!(c.contains("ik_status = increment(out);"), "{c}");
+    assert!(c.contains("ik_status = middle(out);"), "{c}");
+
+    let harness = format!(
+        r#"
+{c}
+int main(void) {{
+  int64_t value = 1;
+  if (run(&value) != CK_OK || value != 2) return 1;
+  value = INT64_MAX;
+  if (run(&value) != CK_ERR_OVERFLOW) return 2;
+  return 0;
+}}
+"#
+    );
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_void_checked_c_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("void_checked.c");
+    let binary = dir.join("void_checked");
+    fs::write(&source, harness).expect("write harness");
+    let compile = Command::new("clang")
+        .arg("-std=c11")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .expect("run clang");
+    assert!(
+        compile.status.success(),
+        "clang stderr:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(
+        Command::new(binary)
+            .status()
+            .expect("run harness")
+            .success()
+    );
+}
+
+#[test]
 fn checked_c_backend_should_remove_only_proven_safe_induction_overflow_checks_at_o3() {
     let source = r#"
       export fn fill(out: ptr<i64>, len: i32) -> i32 {

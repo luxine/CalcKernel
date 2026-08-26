@@ -186,6 +186,13 @@ Numeric roadmap lock:
 - MIR and every backend preserve the resulting control-flow edges across all
   optimization levels.
 
+## Explicit Void Procedures
+
+- Return-only `void`, `return;`, natural fallthrough, and void call statements
+  are implemented.
+- MIR carries targetless calls and valueless returns through optimization.
+- C/status C, WASM, and LLVM expose their native no-value ABI forms.
+
 ## Future `slice<T>` / Bounds Checks
 
 - Raw `ptr<T>` remains unchecked.

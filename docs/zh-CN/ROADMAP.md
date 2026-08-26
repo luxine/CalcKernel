@@ -175,6 +175,12 @@ Numeric roadmap lock：
 - Checker 会诊断非法 loop control 和不可达语句。
 - MIR 与所有 backend 在全部 optimization level 保持生成的 control-flow edge。
 
+## Explicit Void Procedures
+
+- Return-only `void`、`return;`、自然 fallthrough 和 void call statement 已实现。
+- MIR 在 optimization 中保持 targetless call 和 valueless return。
+- C/status C、WASM 与 LLVM 暴露各自原生的无值 ABI form。
+
 ## Future `slice<T>` / Bounds Checks
 
 - Raw `ptr<T>` 保持 unchecked。

@@ -87,6 +87,11 @@ Checked mode 是 code generation mode，不是新语言功能。
 Checked mode 下，所有 CalcKernel 函数都使用 checked ABI。导出函数在生成 header 中
 以 `CK_API` 出现；非导出函数在生成 `.c` 文件中生成为 `static CK_Status` helper。
 
+源码 void function 同样返回 `CK_Status`，但没有 result value，因此没有
+`ck_return` parameter 或 null-result check。显式 `return;` 与自然 fallthrough
+都返回 `CK_OK`。Targetless void call 使用与 value call 相同的 status propagation，
+遇到非 `CK_OK` status 会立即返回。
+
 从 Phase 11 开始，checked C generation 基于 MIR pipeline：
 
 ```text

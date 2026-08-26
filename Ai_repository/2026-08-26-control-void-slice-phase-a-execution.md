@@ -5,7 +5,7 @@ Status: completed and accepted on 2026-08-26
 Prerequisite: planning commit only
 
 Acceptance contract:
-`Ai_repository/2026-08-26-control-flow-void-slice-phase-a-acceptance.md`
+`Ai_repository/2026-08-26-control-void-slice-phase-a-acceptance.md`
 
 ## Phase outcome
 

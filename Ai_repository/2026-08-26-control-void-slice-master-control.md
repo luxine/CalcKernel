@@ -32,13 +32,13 @@ weakened to accommodate an implementation failure.
 
 | Role | Document |
 | --- | --- |
-| Phase A execution | `Ai_repository/2026-08-26-control-flow-void-slice-phase-a-execution.md` |
-| Phase A acceptance | `Ai_repository/2026-08-26-control-flow-void-slice-phase-a-acceptance.md` |
-| Phase B execution | `Ai_repository/2026-08-26-control-flow-void-slice-phase-b-execution.md` |
-| Phase B acceptance | `Ai_repository/2026-08-26-control-flow-void-slice-phase-b-acceptance.md` |
-| Phase C execution | `Ai_repository/2026-08-26-control-flow-void-slice-phase-c-execution.md` |
-| Phase C acceptance | `Ai_repository/2026-08-26-control-flow-void-slice-phase-c-acceptance.md` |
-| Final acceptance | `Ai_repository/2026-08-26-control-flow-void-slice-final-acceptance.md` |
+| Phase A execution | `Ai_repository/2026-08-26-control-void-slice-phase-a-execution.md` |
+| Phase A acceptance | `Ai_repository/2026-08-26-control-void-slice-phase-a-acceptance.md` |
+| Phase B execution | `Ai_repository/2026-08-26-control-void-slice-phase-b-execution.md` |
+| Phase B acceptance | `Ai_repository/2026-08-26-control-void-slice-phase-b-acceptance.md` |
+| Phase C execution | `Ai_repository/2026-08-26-control-void-slice-phase-c-execution.md` |
+| Phase C acceptance | `Ai_repository/2026-08-26-control-void-slice-phase-c-acceptance.md` |
+| Final acceptance | `Ai_repository/2026-08-26-control-void-slice-final-acceptance.md` |
 
 ## Controlled phase state machine
 
@@ -195,3 +195,9 @@ Record completed checkpoints here without deleting failed-command evidence.
 | 2026-08-26 | malformed aggregate focused command | Cargo rejected multiple per-target filters | invocation corrected; each runtime test then passed |
 | 2026-08-26 | initial Phase A formatting gate | rustfmt layout diff only | formatted and reran successfully |
 | 2026-08-26 | Phase A acceptance | all required commands and 117-test full suite | pass; ready for phase commit |
+| 2026-08-26 | Phase A commit | `d36e1dd` | pass; dedicated phase commit |
+| 2026-08-26 | Phase B red/green implementation | parser through all backends and bilingual docs | pass |
+| 2026-08-26 | initial Phase B CLI regression | `return @;` diagnostic recovery diverged from oracle | repaired with focused parser regression; original diagnostic contract restored |
+| 2026-08-26 | initial Phase B formatting gate | rustfmt layout diff only | formatted and reran successfully |
+| 2026-08-26 | plan reference audit | stale phase/final filename stems | corrected to existing document names |
+| 2026-08-26 | Phase B acceptance | all required commands and 157-test full suite | pass; ready for phase commit |

@@ -678,6 +678,77 @@ WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
     }
 }
 
+#[test]
+fn wasm_backend_should_emit_and_run_void_functions_without_results() {
+    if !node_available() {
+        return;
+    }
+    let source = r#"
+      fn set_one(out: ptr<i32>) -> void { out[0] = 1; }
+
+      export fn call_path(out: ptr<i32>) -> void { set_one(out); }
+
+      export fn conditional(out: ptr<i32>, write: bool) -> void {
+        if !write { return; }
+        out[0] = 7;
+      }
+
+      export fn loop_path(out: ptr<i32>) -> void {
+        let i: u32 = 0;
+        while i < 1 {
+          out[i] = 42;
+          i = i + 1;
+        }
+      }
+    "#;
+    let wat = emit_wat(source, 3);
+    assert!(
+        wat.contains("(func $set_one\n    (param $out i32)"),
+        "{wat}"
+    );
+    assert!(wat.contains("call $set_one"), "{wat}");
+    assert!(!wat.contains("(result"), "{wat}");
+    assert!(wat.contains("loop $ik_loop"), "{wat}");
+
+    let runner = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setInt32(0, 0, true);
+    if (instance.exports.call_path(0) !== undefined || view.getInt32(0, true) !== 1) process.exit(1);
+    instance.exports.conditional(0, 0);
+    if (view.getInt32(0, true) !== 1) process.exit(2);
+    instance.exports.conditional(0, 1);
+    if (view.getInt32(0, true) !== 7) process.exit(3);
+    instance.exports.loop_path(0);
+    if (view.getInt32(0, true) !== 42) process.exit(4);
+  })
+  .catch((error) => { console.error(error); process.exit(5); });
+"#;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_void_wasm_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    for opt_level in 0..=3 {
+        let wasm = dir.join(format!("void_o{opt_level}.wasm"));
+        fs::write(&wasm, emit_wasm(source, opt_level)).expect("write wasm");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(runner)
+            .arg(&wasm)
+            .output()
+            .expect("run node");
+        assert!(
+            output.status.success(),
+            "O{opt_level} node stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 fn node_available() -> bool {
     Command::new("node")
         .arg("--version")

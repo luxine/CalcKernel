@@ -300,6 +300,9 @@ fn collect_inline_candidates(
         let MirTerminator::Return { value } = &block.terminator else {
             continue;
         };
+        let Some(value) = value else {
+            continue;
+        };
         if block.instructions.len() > threshold
             || !block.instructions.iter().all(is_inlineable_instruction)
         {
@@ -362,6 +365,10 @@ fn inline_calls_in_function(
                 instructions.push(instruction);
                 continue;
             }
+            let Some(target) = target else {
+                instructions.push(instruction);
+                continue;
+            };
 
             instructions.extend(instantiate_inline_candidate(
                 candidate,
@@ -1359,6 +1366,7 @@ fn type_key(type_node: &MirType) -> String {
         MirType::Primitive(name) => primitive_type_key(*name).to_string(),
         MirType::Pointer(element_type) => format!("ptr<{}>", type_key(element_type)),
         MirType::Struct(name) => format!("struct:{name}"),
+        MirType::Void => "void".to_string(),
     }
 }
 
@@ -2040,10 +2048,10 @@ fn rewrite_terminator_copies(
     copies: &HashMap<String, MirValue>,
 ) -> bool {
     match terminator {
-        MirTerminator::Return { value }
-        | MirTerminator::Branch {
-            condition: value, ..
-        } => rewrite_value_copy(value, copies),
+        MirTerminator::Return { value } => value
+            .as_mut()
+            .is_some_and(|value| rewrite_value_copy(value, copies)),
+        MirTerminator::Branch { condition, .. } => rewrite_value_copy(condition, copies),
         MirTerminator::Jump { .. } => false,
     }
 }
@@ -2183,7 +2191,11 @@ fn collect_instruction_uses(instruction: &MirInstruction, used: &mut HashSet<Str
 
 fn collect_terminator_uses(terminator: &MirTerminator, used: &mut HashSet<String>) {
     match terminator {
-        MirTerminator::Return { value } => collect_value_use(value, used),
+        MirTerminator::Return { value } => {
+            if let Some(value) = value {
+                collect_value_use(value, used);
+            }
+        }
         MirTerminator::Branch { condition, .. } => collect_value_use(condition, used),
         MirTerminator::Jump { .. } => {}
     }
@@ -2401,8 +2413,8 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
         | MirInstruction::Compare { target, .. }
         | MirInstruction::Cast { target, .. }
         | MirInstruction::Address { target, .. }
-        | MirInstruction::Load { target, .. }
-        | MirInstruction::Call { target, .. } => Some(target),
+        | MirInstruction::Load { target, .. } => Some(target),
+        MirInstruction::Call { target, .. } => target.as_ref(),
         MirInstruction::Store { .. } => None,
     }
 }
@@ -2469,7 +2481,8 @@ fn integer_min(type_node: &MirType) -> Option<i128> {
         MirType::Primitive(MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64) => Some(0),
         MirType::Primitive(MirPrimitiveTypeName::F64 | MirPrimitiveTypeName::Bool)
         | MirType::Pointer(_)
-        | MirType::Struct(_) => None,
+        | MirType::Struct(_)
+        | MirType::Void => None,
     }
 }
 
@@ -2481,7 +2494,8 @@ fn integer_max(type_node: &MirType) -> Option<i128> {
         MirType::Primitive(MirPrimitiveTypeName::U64) => Some((1_i128 << 64) - 1),
         MirType::Primitive(MirPrimitiveTypeName::F64 | MirPrimitiveTypeName::Bool)
         | MirType::Pointer(_)
-        | MirType::Struct(_) => None,
+        | MirType::Struct(_)
+        | MirType::Void => None,
     }
 }
 

@@ -121,6 +121,11 @@ MIR-to-SSA transform。
 | `bool` internal 和 exported scalar | `i1` |
 | `ptr<T>` | `ptr` |
 | `struct` | named LLVM struct type |
+| return-only `void` | LLVM `void` return |
+
+Void procedure 生成 `define void`，targetless internal call 生成 `call void`，
+显式和自然退出都生成 `ret void`。Void result 不会制造 alloca、zero constant 或
+SSA result。
 
 Phase 13 v1 使用 LLVM opaque pointer（`ptr`）。
 Phase 16.8 支持把 `f64` 映射为 LLVM `double`，包括 scalar parameter/return、

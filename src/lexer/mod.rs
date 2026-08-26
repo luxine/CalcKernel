@@ -27,6 +27,7 @@ pub enum TokenKind {
     U64,
     F64,
     Bool,
+    Void,
     Ptr,
 
     LeftParen,
@@ -509,6 +510,7 @@ fn keyword_kind(text: &str) -> Option<TokenKind> {
         "u64" => Some(TokenKind::U64),
         "f64" => Some(TokenKind::F64),
         "bool" => Some(TokenKind::Bool),
+        "void" => Some(TokenKind::Void),
         "ptr" => Some(TokenKind::Ptr),
         _ => None,
     }
