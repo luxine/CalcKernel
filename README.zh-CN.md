@@ -20,7 +20,7 @@ CK 是一个面向纯计算 kernel 的小型 DSL，适合定价、数组处理�
   `clang` 构建 shared library。
 - WASM backend：生成 WAT 或 WASM bytes。
 - LLVM backend：生成 LLVM IR，并可通过 `clang` 构建 dynamic library 或 object。
-- 原生发布流程，见 `docs/native-release.md`。
+- 原生发布流程，见 `docs/project/release.md`。
 
 V0.9 backend mode matrix：
 
@@ -83,15 +83,15 @@ cargo run -- check examples/scalar.ck
 
 ## 文档
 
-- `docs/LANGUAGE_SPEC.md`：CK 源语言。
+- `docs/zh-CN/reference/language.md`：CK 源语言。
 - `examples/control_flow.ck`：`break` / `continue` 控制流示例。
 - `examples/void.ck`：显式 `void`、提前返回和 procedure call 示例。
-- `docs/COMPILER_ARCHITECTURE.md`：compiler pipeline 和模块边界。
-- `docs/MIR.md`：MIR 数据模型和打印格式。
-- `docs/OPTIMIZATION.md`：MIR 优化等级和 pass 边界。
-- `docs/ABI.md`、`docs/WASM_ABI.md`、`docs/LLVM_BACKEND.md`：backend ABI contract。
-- `docs/ckc-outputs.md`：输出文件以及各 backend 的使用场景。
-- `docs/native-release.md`：原生发布流程和 artifact 检查。
+- `docs/zh-CN/compiler/architecture.md`：compiler pipeline 和模块边界。
+- `docs/zh-CN/reference/mir.md`：MIR 数据模型和打印格式。
+- `docs/zh-CN/compiler/optimizer.md`：MIR 优化等级和 pass 边界。
+- `docs/zh-CN/abi/c.md`、`docs/zh-CN/abi/wasm.md`、`docs/zh-CN/abi/llvm.md`：backend ABI contract。
+- `docs/zh-CN/reference/cli.md`：输出文件以及各 backend 的使用场景。
+- `docs/zh-CN/project/release.md`：原生发布流程和 artifact 检查。
 
 正式用户文档都在 `docs/zh-CN/` 下维护简体中文版本。
 

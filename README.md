@@ -23,7 +23,7 @@ This repository provides:
 - WASM backend output as WAT or WASM bytes.
 - LLVM backend output as LLVM IR, dynamic libraries, or object files through
   `clang`.
-- Native release artifacts documented in `docs/native-release.md`.
+- Native release artifacts documented in `docs/project/release.md`.
 
 The V0.9 backend mode matrix is:
 
@@ -87,16 +87,16 @@ cargo run -- check examples/scalar.ck
 
 ## Documentation
 
-- `docs/LANGUAGE_SPEC.md`: CK source language.
+- `docs/reference/language.md`: CK source language.
 - `examples/control_flow.ck`: `break` / `continue` control-flow example.
 - `examples/void.ck`: explicit `void`, early return, and procedure-call example.
-- `docs/COMPILER_ARCHITECTURE.md`: compiler pipeline and module boundaries.
-- `docs/MIR.md`: MIR data model and printed format.
-- `docs/OPTIMIZATION.md`: MIR optimization levels and pass boundaries.
-- `docs/ABI.md`, `docs/WASM_ABI.md`, and `docs/LLVM_BACKEND.md`: backend ABI
+- `docs/compiler/architecture.md`: compiler pipeline and module boundaries.
+- `docs/reference/mir.md`: MIR data model and printed format.
+- `docs/compiler/optimizer.md`: MIR optimization levels and pass boundaries.
+- `docs/abi/c.md`, `docs/abi/wasm.md`, and `docs/abi/llvm.md`: backend ABI
   contracts.
-- `docs/ckc-outputs.md`: output files and when to use each backend.
-- `docs/native-release.md`: native release process and artifact checks.
+- `docs/reference/cli.md`: output files and when to use each backend.
+- `docs/project/release.md`: native release process and artifact checks.
 
 Formal user-facing docs have matching Simplified Chinese versions under
 `docs/zh-CN/`.

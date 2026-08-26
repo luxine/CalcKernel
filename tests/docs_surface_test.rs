@@ -1,6 +1,7 @@
 use std::{
+    collections::BTreeSet,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,12 +11,156 @@ fn repo_root() -> &'static Path {
 }
 
 #[test]
+fn durable_docs_should_be_recursive_bilingual_mirrors() {
+    let docs = repo_root().join("docs");
+    let english = relative_markdown_files(&docs, Some(Path::new("zh-CN")));
+    let chinese = relative_markdown_files(&docs.join("zh-CN"), None);
+    assert_eq!(
+        english, chinese,
+        "English and zh-CN Markdown trees must mirror"
+    );
+}
+
+#[test]
+fn durable_docs_should_have_resolvable_local_links() {
+    let mut failures = Vec::new();
+    for source in markdown_files(&repo_root().join("docs")) {
+        let text = fs::read_to_string(&source)
+            .unwrap_or_else(|error| panic!("read {}: {error}", source.display()));
+        for target in markdown_targets(&text) {
+            if target.starts_with('#')
+                || target.starts_with("http://")
+                || target.starts_with("https://")
+                || target.starts_with("mailto:")
+            {
+                continue;
+            }
+            let path_only = target.split('#').next().unwrap_or_default();
+            if path_only.is_empty() {
+                continue;
+            }
+            let resolved = source.parent().expect("Markdown parent").join(path_only);
+            if !resolved.exists() {
+                failures.push(format!("{} -> {target}", source.display()));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "local Markdown links must resolve:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn durable_docs_should_use_current_contract_wording() {
+    let forbidden = [
+        "Phase 10",
+        "Phase 11",
+        "Phase 12",
+        "Phase 13",
+        "Phase 14",
+        "Phase 16",
+        "Phase 20",
+        "Phase 21",
+        "TypeScript-era",
+        "if the language gains a length-carrying pointer type",
+        "如果语言引入携带长度的 pointer type",
+    ];
+    let mut failures = Vec::new();
+    for path in markdown_files(&repo_root().join("docs")) {
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        for phrase in forbidden {
+            if text.contains(phrase) {
+                failures.push(format!("{} contains {phrase:?}", path.display()));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "durable docs must describe only the current contract:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn v0_9_docs_should_define_canonical_slice_and_mode_contracts() {
+    let language = read("docs/reference/language.md");
+    assert!(language.contains(
+        "Slice bounds checking exists only in generated C when `--bounds checked` is selected."
+    ));
+    assert!(language.contains(
+        "Raw pointer indexing, slice construction, and indexing through `.data` are never validated by CK."
+    ));
+
+    for path in ["docs/abi/wasm.md", "docs/abi/llvm.md"] {
+        let text = read(path);
+        for required in ["`slice<T>`", "`--bounds unchecked`", "reject"] {
+            assert!(text.contains(required), "{path} must contain {required:?}");
+        }
+        assert!(
+            !text.contains("slices are unsupported"),
+            "{path} must not deny slice support"
+        );
+    }
+
+    let modes = read("docs/abi/modes.md");
+    for required in [
+        "CK_OK",
+        "CK_ERR_OVERFLOW",
+        "CK_ERR_DIV_BY_ZERO",
+        "CK_ERR_NULL_POINTER",
+        "CK_ERR_OUT_OF_BOUNDS",
+        "overflow before bounds",
+        "Raw pointer",
+    ] {
+        assert!(
+            modes.contains(required),
+            "modes contract needs {required:?}"
+        );
+    }
+}
+
+#[test]
+fn diagnostic_reference_should_cover_every_display_code() {
+    let source = read("src/diagnostics.rs");
+    let reference = read("docs/reference/diagnostics.md");
+    let mut codes = BTreeSet::new();
+    for line in source.lines() {
+        if let Some(start) = line.find("\"CK") {
+            let rest = &line[start + 1..];
+            if let Some(end) = rest.find('"') {
+                let code = &rest[..end];
+                if code.len() == 6
+                    && code[2..]
+                        .chars()
+                        .all(|character| character.is_ascii_digit())
+                {
+                    codes.insert(code.to_owned());
+                }
+            }
+        }
+    }
+    assert!(
+        !codes.is_empty(),
+        "diagnostic source must expose stable codes"
+    );
+    for code in codes {
+        assert!(
+            reference.contains(&format!("| `{code}` |")),
+            "diagnostic reference must document {code}"
+        );
+    }
+}
+
+#[test]
 fn readmes_should_describe_native_rust_ckc_release_surface() {
     for path in ["README.md", "README.zh-CN.md"] {
         let text = read(path);
         for required in [
             "native ckc",
-            "docs/native-release.md",
+            "docs/project/release.md",
             "cargo test --locked",
             "cargo build --release --locked",
         ] {
@@ -65,7 +210,7 @@ fn formal_docs_should_have_simplified_chinese_counterparts() {
 
 #[test]
 fn native_release_docs_should_own_release_checklist_language() {
-    let checklist = read("docs/RELEASE_CHECKLIST.md");
+    let checklist = read("docs/project/release-checklist.md");
     for required in [
         "cargo fmt --check",
         "cargo clippy --all-targets --all-features --locked -- -D warnings",
@@ -97,13 +242,19 @@ fn native_release_docs_should_own_release_checklist_language() {
 }
 
 #[test]
-fn architecture_review_should_reflect_native_only_boundary() {
+fn architecture_docs_should_describe_current_native_modules() {
     for path in [
-        "docs/architecture-review.md",
-        "docs/zh-CN/architecture-review.md",
+        "docs/compiler/architecture.md",
+        "docs/zh-CN/compiler/architecture.md",
     ] {
         let text = read(path);
-        for required in ["native ckc", "Cargo.toml", "src/main.rs", "No npm"] {
+        for required in [
+            "src/frontend/",
+            "src/ir/",
+            "src/optimizer/",
+            "src/backend/",
+            "src/cli/",
+        ] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
 
@@ -124,20 +275,21 @@ fn architecture_review_should_reflect_native_only_boundary() {
 
 #[test]
 fn wasm_docs_should_describe_artifacts_not_removed_helper_apis() {
+    for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
+        let text = read(path);
+        for required in ["emit-wasm", "WASM", "--bounds"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
     for path in [
-        "docs/ckc-outputs.md",
-        "docs/zh-CN/ckc-outputs.md",
-        "docs/WASM_ABI.md",
-        "docs/zh-CN/WASM_ABI.md",
-        "docs/wasm-interop.md",
-        "docs/zh-CN/wasm-interop.md",
+        "docs/abi/wasm.md",
+        "docs/zh-CN/abi/wasm.md",
+        "docs/guides/wasm-interop.md",
+        "docs/zh-CN/guides/wasm-interop.md",
     ] {
         let text = read(path);
-        for required in [
-            "ckc emit-wasm",
-            "WebAssembly runtime",
-            "caller-owned memory",
-        ] {
+        for required in ["caller-owned", "`slice<T>`", "--bounds"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
 
@@ -196,7 +348,10 @@ fn docs_should_not_reference_unshipped_benchmark_or_example_scripts() {
 
 #[test]
 fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
-    for path in ["docs/LANGUAGE_SPEC.md", "docs/zh-CN/LANGUAGE_SPEC.md"] {
+    for path in [
+        "docs/reference/language.md",
+        "docs/zh-CN/reference/language.md",
+    ] {
         let text = read(path);
         for required in ["`break;`", "`continue;`", "`CK2009`", "`CK2010`"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
@@ -204,28 +359,15 @@ fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
     }
 
     for path in [
-        "docs/COMPILER_ARCHITECTURE.md",
-        "docs/zh-CN/COMPILER_ARCHITECTURE.md",
-        "docs/MIR.md",
-        "docs/zh-CN/MIR.md",
+        "docs/compiler/architecture.md",
+        "docs/zh-CN/compiler/architecture.md",
+        "docs/reference/mir.md",
+        "docs/zh-CN/reference/mir.md",
     ] {
         let text = read(path);
-        for required in [
-            "`break`",
-            "`continue`",
-            "`MirTerminator::Jump`",
-            "dispatcher",
-        ] {
+        for required in ["`break`", "`continue`", "`MirTerminator::Jump`"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
-    }
-
-    for path in ["docs/ROADMAP.md", "docs/zh-CN/ROADMAP.md"] {
-        let text = read(path);
-        assert!(
-            text.contains("`break` / `continue`"),
-            "{path} must mark Phase A"
-        );
     }
 
     for path in ["README.md", "README.zh-CN.md"] {
@@ -239,14 +381,17 @@ fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
 
 #[test]
 fn void_docs_should_cover_return_only_type_and_backend_abis() {
-    for path in ["docs/LANGUAGE_SPEC.md", "docs/zh-CN/LANGUAGE_SPEC.md"] {
+    for path in [
+        "docs/reference/language.md",
+        "docs/zh-CN/reference/language.md",
+    ] {
         let text = read(path);
         for required in ["`-> void`", "`return;`", "`CK2011`", "return-only"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
     }
 
-    for path in ["docs/MIR.md", "docs/zh-CN/MIR.md"] {
+    for path in ["docs/reference/mir.md", "docs/zh-CN/reference/mir.md"] {
         let text = read(path);
         for required in [
             "`MirType::Void`",
@@ -258,31 +403,28 @@ fn void_docs_should_cover_return_only_type_and_backend_abis() {
         }
     }
 
-    for path in ["docs/ABI.md", "docs/zh-CN/ABI.md"] {
+    for path in ["docs/abi/c.md", "docs/zh-CN/abi/c.md"] {
         let text = read(path);
-        for required in ["C `void`", "`CK_Status`", "no `ck_return`"] {
+        for required in ["void", "`CK_Status`", "`ck_return`"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
     }
 
-    for path in [
-        "docs/CHECKED_ARITHMETIC.md",
-        "docs/zh-CN/CHECKED_ARITHMETIC.md",
-    ] {
+    for path in ["docs/abi/modes.md", "docs/zh-CN/abi/modes.md"] {
         let text = read(path);
-        for required in ["void", "`CK_OK`", "status propagation"] {
+        for required in ["void", "`CK_OK`", "`CK_Status`"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
     }
 
-    for path in ["docs/WASM_ABI.md", "docs/zh-CN/WASM_ABI.md"] {
+    for path in ["docs/abi/wasm.md", "docs/zh-CN/abi/wasm.md"] {
         let text = read(path);
-        for required in ["void", "no `(result ...)`", "targetless"] {
+        for required in ["void", "`(result ...)`", "targetless"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
     }
 
-    for path in ["docs/LLVM_BACKEND.md", "docs/zh-CN/LLVM_BACKEND.md"] {
+    for path in ["docs/abi/llvm.md", "docs/zh-CN/abi/llvm.md"] {
         let text = read(path);
         for required in ["`void`", "`call void`", "`ret void`"] {
             assert!(text.contains(required), "{path} must mention {required:?}");
@@ -290,10 +432,8 @@ fn void_docs_should_cover_return_only_type_and_backend_abis() {
     }
 
     for path in [
-        "docs/COMPILER_ARCHITECTURE.md",
-        "docs/zh-CN/COMPILER_ARCHITECTURE.md",
-        "docs/ROADMAP.md",
-        "docs/zh-CN/ROADMAP.md",
+        "docs/compiler/architecture.md",
+        "docs/zh-CN/compiler/architecture.md",
     ] {
         assert!(read(path).contains("`void`"), "{path} must cover void");
     }
@@ -309,7 +449,10 @@ fn void_docs_should_cover_return_only_type_and_backend_abis() {
 
 #[test]
 fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
-    for path in ["docs/LANGUAGE_SPEC.md", "docs/zh-CN/LANGUAGE_SPEC.md"] {
+    for path in [
+        "docs/reference/language.md",
+        "docs/zh-CN/reference/language.md",
+    ] {
         let text = read(path);
         for required in [
             "`slice<T>`",
@@ -326,10 +469,10 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
     }
 
     for path in [
-        "docs/COMPILER_ARCHITECTURE.md",
-        "docs/zh-CN/COMPILER_ARCHITECTURE.md",
-        "docs/MIR.md",
-        "docs/zh-CN/MIR.md",
+        "docs/compiler/architecture.md",
+        "docs/zh-CN/compiler/architecture.md",
+        "docs/reference/mir.md",
+        "docs/zh-CN/reference/mir.md",
     ] {
         let text = read(path);
         for required in [
@@ -345,33 +488,22 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
     for path in [
         "README.md",
         "README.zh-CN.md",
-        "docs/ABI.md",
-        "docs/zh-CN/ABI.md",
-        "docs/CHECKED_ARITHMETIC.md",
-        "docs/zh-CN/CHECKED_ARITHMETIC.md",
-        "docs/WASM_ABI.md",
-        "docs/zh-CN/WASM_ABI.md",
-        "docs/LLVM_BACKEND.md",
-        "docs/zh-CN/LLVM_BACKEND.md",
-        "docs/OPTIMIZATION.md",
-        "docs/zh-CN/OPTIMIZATION.md",
-        "docs/ROADMAP.md",
-        "docs/zh-CN/ROADMAP.md",
-        "docs/ckc-outputs.md",
-        "docs/zh-CN/ckc-outputs.md",
-        "docs/wasm-interop.md",
-        "docs/zh-CN/wasm-interop.md",
+        "docs/abi/c.md",
+        "docs/zh-CN/abi/c.md",
+        "docs/abi/modes.md",
+        "docs/zh-CN/abi/modes.md",
+        "docs/abi/wasm.md",
+        "docs/zh-CN/abi/wasm.md",
+        "docs/abi/llvm.md",
+        "docs/zh-CN/abi/llvm.md",
+        "docs/compiler/optimizer.md",
+        "docs/zh-CN/compiler/optimizer.md",
+        "docs/guides/wasm-interop.md",
+        "docs/zh-CN/guides/wasm-interop.md",
     ] {
         let text = read(path);
         assert!(text.contains("`slice<T>`"), "{path} must cover slices");
         assert!(text.contains("--bounds"), "{path} must cover bounds mode");
-    }
-
-    for path in ["docs/MIGRATION.md", "docs/zh-CN/MIGRATION.md"] {
-        let text = read(path);
-        for keyword in ["`break`", "`continue`", "`void`", "`slice`"] {
-            assert!(text.contains(keyword), "{path} must reserve {keyword}");
-        }
     }
 
     for path in ["README.md", "README.zh-CN.md"] {
@@ -554,6 +686,39 @@ fn markdown_files(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+fn relative_markdown_files(root: &Path, skip: Option<&Path>) -> BTreeSet<PathBuf> {
+    markdown_files(root)
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(root).expect("file below root");
+            if skip.is_some_and(|prefix| relative.starts_with(prefix)) {
+                None
+            } else {
+                Some(relative.to_path_buf())
+            }
+        })
+        .collect()
+}
+
+fn markdown_targets(text: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("](") {
+        remaining = &remaining[start + 2..];
+        let Some(end) = remaining.find(')') else {
+            break;
+        };
+        let target = remaining[..end]
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_matches(['<', '>']);
+        targets.push(target);
+        remaining = &remaining[end + 1..];
+    }
+    targets
 }
 
 fn read(path: &str) -> String {
