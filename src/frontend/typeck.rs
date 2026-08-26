@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{
+use super::{
     AssignmentStatement, BlockStatement, Declaration, Diagnostic, DiagnosticCode, Expression,
     FunctionDeclaration, FunctionParam, IfStatement, LetStatement, ParseResult, Program,
     ReturnStatement, SourceFile, SourceSpan, Statement, StructDeclaration, StructField, TypeNode,

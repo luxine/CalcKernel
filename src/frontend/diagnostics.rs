@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{SourceFile, SourceSpan};
+use super::source::{SourceFile, SourceSpan};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticSeverity {

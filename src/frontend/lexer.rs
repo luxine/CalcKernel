@@ -1,4 +1,4 @@
-use crate::{Diagnostic, DiagnosticCode, SourceFile, SourcePosition, SourceSpan};
+use super::{Diagnostic, DiagnosticCode, SourceFile, SourcePosition, SourceSpan};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
