@@ -1,7 +1,9 @@
 use calckernel::{
-    MirPassBoundsMode, MirPassContext, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
-    build_mir_optimization_pipeline, check, lower_to_mir, print_mir_module,
-    print_mir_pass_pipeline, run_mir_pass_pipeline,
+    MirOptimizationPipeline, MirPass, MirPassBoundsMode, MirPassContext, MirPassDebugFlags,
+    MirPassManagerResult, MirPassOverflowMode, MirPassRecord, MirPassResult, MirPassTargetBackend,
+    OptimizationLevel, SourceFile, build_mir_optimization_pipeline, cfg_simplify_pass, check,
+    constant_folding_pass, copy_propagation_pass, dead_code_elimination_pass, identity_pass,
+    lower_to_mir, print_mir_module, print_mir_pass_pipeline, run_mir_pass_pipeline,
 };
 
 fn optimize(source_text: &str, opt_level: u8, overflow_mode: MirPassOverflowMode) -> String {
@@ -40,6 +42,32 @@ fn optimize_with_bounds(
 
 #[test]
 fn optimizer_should_build_ts_compatible_pipeline_names() {
+    let public_constructors: [fn() -> MirPass; 5] = [
+        identity_pass,
+        constant_folding_pass,
+        copy_propagation_pass,
+        dead_code_elimination_pass,
+        cfg_simplify_pass,
+    ];
+    assert_eq!(
+        public_constructors
+            .into_iter()
+            .map(|constructor| constructor().name)
+            .collect::<Vec<_>>(),
+        [
+            "identity",
+            "constant-folding",
+            "copy-propagation",
+            "dead-code-elimination",
+            "cfg-simplify",
+        ]
+    );
+    let _: OptimizationLevel = 0;
+    let _: Option<MirOptimizationPipeline> = None;
+    let _: Option<MirPassDebugFlags> = None;
+    let _: Option<MirPassResult> = None;
+    let _: Option<MirPassRecord> = None;
+    let _: Option<MirPassManagerResult> = None;
     assert_eq!(
         build_mir_optimization_pipeline(0)
             .passes

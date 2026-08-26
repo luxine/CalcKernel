@@ -3,9 +3,9 @@
 mod backend;
 mod frontend;
 mod ir;
-mod opt;
+mod optimizer;
 
 pub use backend::*;
 pub use frontend::*;
 pub use ir::*;
-pub use opt::*;
+pub use optimizer::*;
