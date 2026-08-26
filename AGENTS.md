@@ -1,32 +1,36 @@
-# Naming Conventions
+# Repository Conventions
 
-Canonical project naming:
+## Canonical naming
 
-- Language name: CK / CalcKernel
-- Source file extension: .ck
-- Compiler CLI command: ckc
+- Language: CK / CalcKernel
+- Source extension: `.ck`
+- Compiler command: `ckc`
+- Do not introduce TK, `tkc`, `.tk`, or other compatibility aliases unless the
+  user explicitly changes the language contract.
+- Examples, tests, snapshots, diagnostics, and CLI documentation must use the
+  canonical names.
 
-Rules:
+## Source and test placement
 
-- Do not introduce tk, tkc, or .tk aliases.
-- Do not rename the language to TK.
-- All examples must use .ck.
-- All CLI usage examples must use ckc.
-- All docs must use CK / CalcKernel consistently.
-- All tests and snapshots must use ckc and .ck.
-- Add runnable examples under the matching `examples/{core,applications,checked,wasm,llvm}/`
-  responsibility directory.
-- If adding new CLI commands, document them under ckc.
-- Do not add compatibility aliases for tkc or .tk unless explicitly requested by the user.
+- Keep compiler responsibilities under `src/frontend/`, `src/ir/`,
+  `src/optimizer/`, `src/backend/`, and `src/cli/`.
+- Keep the binary entry point thin at `src/bin/ckc.rs`.
+- Add runnable examples under the matching
+  `examples/{core,applications,checked,wasm,llvm}/` directory.
+- Put integration tests under the responsibility layout documented in
+  `tests/README.md`; shared helpers belong under `tests/support/`.
 
-# Documentation Placement
+## Durable documentation
 
-Rules:
-
-- The root `docs/` directory is only for real project documentation that should be shipped, read by users, or maintained as part of CK / CalcKernel.
-- New or materially updated formal user-facing documentation must be bilingual:
-  maintain the English document under `docs/` and the Chinese counterpart under
-  `docs/zh-CN/`, and update README links for both languages.
-- Do not put AI analysis reports, phase plans, temporary planning notes, readiness reports, or agent working documents under `docs/`.
-- Put AI-generated planning and analysis artifacts under `Ai_repository/`.
-- If a planning artifact later becomes durable project documentation, rewrite it as user-facing project documentation before moving it into `docs/`.
+- `docs/` contains only current, user-facing or maintainer-facing project
+  documentation. Start at `docs/index.md` or `docs/zh-CN/index.md`.
+- New or materially changed formal documentation must have matching English and
+  Simplified Chinese files at identical relative paths under `docs/` and
+  `docs/zh-CN/`.
+- Keep the V0.9 language, CLI, MIR, ABI, compatibility, and release contracts
+  synchronized with implementation and tests.
+- Do not commit phase plans, dated reviews, readiness reports, migration
+  narratives, AI working notes, or release-history snapshots as formal docs.
+- Local agent planning may use the ignored `Ai_repository/` directory, but its
+  contents must never be committed or shipped. Rewrite any durable conclusion
+  into the current bilingual documentation tree instead of preserving history.

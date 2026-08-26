@@ -53,15 +53,15 @@ MIR lowering -> MIR optimizer
 
 Primary source entry points:
 
-- `src/lexer/mod.rs`: tokenization, source positions, and lexer diagnostics.
-- `src/parser.rs`: AST, statements, expressions, and parser diagnostics.
-- `src/typeck.rs`: symbol tables, scopes, type checking, and metadata lookup
-  helpers.
-- `src/mir/mod.rs`: MIR data structures, lowering, validation, and printing.
-- `src/opt/mod.rs`: O0-O3 pass pipeline and MIR optimization passes.
-- `src/backend/mod.rs`: C, WAT/WASM, and LLVM backends.
-- `src/main.rs`: native `ckc` CLI argument parsing, file IO, `clang` calls,
-  stdout/stderr, and exit codes.
+- `src/frontend/`: source model, AST, lexer, parser, diagnostics, and type
+  checking.
+- `src/ir/`: MIR model, lowering, validation, and printing.
+- `src/optimizer/`: O0-O3 pass pipeline, shared analysis, and optimization
+  passes.
+- `src/backend/`: separate C, WAT/WASM, and LLVM planning and emission modules.
+- `src/cli/`: argument parsing, command routing, output handling, and toolchain
+  integration.
+- `src/bin/ckc.rs`: thin native `ckc` process entry point.
 
 ## Usage
 

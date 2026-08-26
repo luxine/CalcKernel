@@ -50,14 +50,12 @@ MIR lowering -> MIR optimizer
 
 主要入口：
 
-- `src/lexer/mod.rs`：token、source position 和 lexer diagnostics。
-- `src/parser.rs`：AST、statement、expression 和 parser diagnostics。
-- `src/typeck.rs`：symbol table、scope、type checking 和 metadata lookup helper。
-- `src/mir/mod.rs`：MIR 数据结构、lowering、validation 和打印。
-- `src/opt/mod.rs`：O0-O3 pass pipeline 和 MIR optimization passes。
-- `src/backend/mod.rs`：C、WAT/WASM 和 LLVM backend。
-- `src/main.rs`：原生 `ckc` CLI 参数解析、文件 IO、`clang` 调用、stdout/stderr
-  和 exit code。
+- `src/frontend/`：source model、AST、lexer、parser、diagnostics 与 type checking。
+- `src/ir/`：MIR model、lowering、validation 与打印。
+- `src/optimizer/`：O0-O3 pass pipeline、共享 analysis 与 optimization passes。
+- `src/backend/`：独立的 C、WAT/WASM 与 LLVM planning/emission 模块。
+- `src/cli/`：参数解析、command routing、输出处理与 toolchain integration。
+- `src/bin/ckc.rs`：精简的原生 `ckc` 进程入口。
 
 ## 使用
 
