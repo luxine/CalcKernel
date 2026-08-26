@@ -2,10 +2,10 @@
 
 mod backend;
 mod frontend;
-mod mir;
+mod ir;
 mod opt;
 
 pub use backend::*;
 pub use frontend::*;
-pub use mir::*;
+pub use ir::*;
 pub use opt::*;
