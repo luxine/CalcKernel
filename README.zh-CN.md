@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-Rust CalcKernel 发布 `native ckc`：一个由 Rust 构建的 CK / CalcKernel
+Rust CalcKernel 0.9.0 发布 `native ckc`：一个由 Rust 构建的 CK / CalcKernel
 命令行编译器。本仓库不再维护脚本语言包装层或包发布表面；产品边界是原生 `ckc`
 可执行文件，以及它背后的 Rust 编译器实现。
 
@@ -21,6 +21,16 @@ CK 是一个面向纯计算 kernel 的小型 DSL，适合定价、数组处理�
 - WASM backend：生成 WAT 或 WASM bytes。
 - LLVM backend：生成 LLVM IR，并可通过 `clang` 构建 dynamic library 或 object。
 - 原生发布流程，见 `docs/native-release.md`。
+
+V0.9 backend mode matrix：
+
+| Backend | `--overflow unchecked` | `--overflow checked` | `--bounds unchecked` | `--bounds checked` |
+| --- | --- | --- | --- | --- |
+| C | 支持 | 支持 | 支持 | 支持 |
+| WASM | 支持 | 不支持 | 支持 | 不支持 |
+| LLVM | 支持 | 不支持 | 支持 | 不支持 |
+
+0.9.0 发布摘要见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)。
 
 ## 架构
 

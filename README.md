@@ -2,7 +2,7 @@
 
 [Simplified Chinese](README.zh-CN.md)
 
-Rust CalcKernel ships `native ckc`: a Rust-built command-line compiler for the
+Rust CalcKernel 0.9.0 ships `native ckc`: a Rust-built command-line compiler for the
 CK / CalcKernel language. This repository no longer publishes a wrapper layer
 or a scripting-language package surface. The product boundary is the native
 `ckc` executable plus the Rust compiler implementation behind it.
@@ -24,6 +24,16 @@ This repository provides:
 - LLVM backend output as LLVM IR, dynamic libraries, or object files through
   `clang`.
 - Native release artifacts documented in `docs/native-release.md`.
+
+The V0.9 backend mode matrix is:
+
+| Backend | `--overflow unchecked` | `--overflow checked` | `--bounds unchecked` | `--bounds checked` |
+| --- | --- | --- | --- | --- |
+| C | yes | yes | yes | yes |
+| WASM | yes | no | yes | no |
+| LLVM | yes | no | yes | no |
+
+See [CHANGELOG.md](CHANGELOG.md) for the 0.9.0 release summary.
 
 ## Architecture
 
