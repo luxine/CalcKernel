@@ -1,7 +1,11 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
+
+#[path = "support/fixtures.rs"]
+mod fixtures;
 
 #[test]
 fn typescript_oracle_fixtures_should_be_covered_by_rust_backend_tests() {
@@ -60,37 +64,78 @@ fn audit_typescript_oracle_fixture_coverage() -> Result<FixtureCoverageReport, S
     }
     fixtures.sort();
 
-    let mut backend_contents = Vec::new();
-    for (label, path) in backend_coverage {
-        let absolute = repo_root().join(path);
-        match fs::read_to_string(&absolute) {
-            Ok(text) => backend_contents.push((label, text)),
-            Err(error) => failures.push(format!("Rust test file is missing: {path}: {error}")),
+    let mapped = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .chain(fixtures::BENCHMARK_FIXTURES)
+        .copied()
+        .collect::<Vec<_>>();
+    let expected = mapped
+        .iter()
+        .map(|fixture| fixture.oracle.to_owned())
+        .chain(std::iter::once("tests/fixtures/f64_edges.ck".to_owned()))
+        .collect::<BTreeSet<_>>();
+    let discovered = fixtures.iter().cloned().collect::<BTreeSet<_>>();
+    for missing in expected.difference(&discovered) {
+        failures.push(format!("mapped oracle fixture is missing: {missing}"));
+    }
+    for unmapped in discovered.difference(&expected) {
+        failures.push(format!("oracle fixture has no registry entry: {unmapped}"));
+    }
+
+    for fixture in mapped {
+        let local_path = repo_root().join(fixture.local);
+        let oracle_path = ts_root.join(fixture.oracle);
+        match (fs::read(&local_path), fs::read(&oracle_path)) {
+            (Ok(local), Ok(oracle)) if local == oracle => {}
+            (Ok(_), Ok(_)) => failures.push(format!(
+                "fixture content diverges: {} != {}",
+                fixture.local, fixture.oracle
+            )),
+            (Err(error), _) => failures.push(format!(
+                "local fixture is missing: {}: {error}",
+                fixture.local
+            )),
+            (_, Err(error)) => failures.push(format!(
+                "oracle fixture is missing: {}: {error}",
+                fixture.oracle
+            )),
         }
     }
 
-    let all_rust_tests = list_files(&repo_root().join("tests"))?
+    let expected_local = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .map(|fixture| fixture.local.to_owned())
+        .chain(
+            fixtures::LOCAL_ONLY_EXAMPLES
+                .iter()
+                .map(|path| (*path).to_owned()),
+        )
+        .collect::<BTreeSet<_>>();
+    let discovered_local = list_ck_files(&repo_root(), &repo_root().join("examples"))?
         .into_iter()
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("rs"))
-        .map(|path| {
-            fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .join("\n");
+        .collect::<BTreeSet<_>>();
+    for missing in expected_local.difference(&discovered_local) {
+        failures.push(format!("registered local example is missing: {missing}"));
+    }
+    for unregistered in discovered_local.difference(&expected_local) {
+        failures.push(format!(
+            "local example has no registry entry: {unregistered}"
+        ));
+    }
 
-    for fixture in &fixtures {
-        for (label, contents) in &backend_contents {
-            if !contents.contains(fixture) {
-                failures.push(format!(
-                    "{fixture} is missing from {label} backend oracle coverage"
-                ));
+    for (label, path) in backend_coverage {
+        let absolute = repo_root().join(path);
+        match fs::read_to_string(&absolute) {
+            Ok(text) => {
+                for required in ["mod fixtures;", "fixtures::", "tests/fixtures/f64_edges.ck"] {
+                    if !text.contains(required) {
+                        failures.push(format!(
+                            "{label} backend oracle coverage must use {required:?}"
+                        ));
+                    }
+                }
             }
-        }
-
-        if !all_rust_tests.contains(fixture) {
-            failures.push(format!(
-                "{fixture} is not referenced by any Rust oracle test"
-            ));
+            Err(error) => failures.push(format!("Rust test file is missing: {path}: {error}")),
         }
     }
 

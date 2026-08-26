@@ -3,7 +3,7 @@
 [English](../../guides/wasm-interop.md)
 
 ```sh
-ckc emit-wasm examples/wasm_scalar.ck --out build/scalar.wasm
+ckc emit-wasm examples/wasm/scalar.ck --out build/scalar.wasm
 ```
 
 WebAssembly runtime 负责 instantiate，caller 负责 memory 内容。选择不重叠 byte

@@ -66,26 +66,26 @@ MIR lowering -> MIR optimizer
 ```sh
 cargo build --release --locked
 ./target/release/ckc --help
-./target/release/ckc check examples/scalar.ck
-./target/release/ckc check examples/control_flow.ck
-./target/release/ckc check examples/void.ck
-./target/release/ckc emit-mir examples/scalar.ck -O3
-./target/release/ckc emit-c examples/pricing.ck --out /tmp/pricing.c
-./target/release/ckc emit-wasm examples/wasm_scalar.ck --out /tmp/scalar.wasm
-./target/release/ckc emit-llvm examples/llvm_scalar.ck --target ck-test-target
+./target/release/ckc check examples/core/scalar.ck
+./target/release/ckc check examples/core/control_flow.ck
+./target/release/ckc check examples/core/void.ck
+./target/release/ckc emit-mir examples/core/scalar.ck -O3
+./target/release/ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
+./target/release/ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
+./target/release/ckc emit-llvm examples/llvm/scalar.ck --target ck-test-target
 ```
 
 开发时也可以使用 `cargo run --`：
 
 ```sh
-cargo run -- check examples/scalar.ck
+cargo run -- check examples/core/scalar.ck
 ```
 
 ## 文档
 
 - `docs/zh-CN/reference/language.md`：CK 源语言。
-- `examples/control_flow.ck`：`break` / `continue` 控制流示例。
-- `examples/void.ck`：显式 `void`、提前返回和 procedure call 示例。
+- `examples/core/control_flow.ck`：`break` / `continue` 控制流示例。
+- `examples/core/void.ck`：显式 `void`、提前返回和 procedure call 示例。
 - `docs/zh-CN/compiler/architecture.md`：compiler pipeline 和模块边界。
 - `docs/zh-CN/reference/mir.md`：MIR 数据模型和打印格式。
 - `docs/zh-CN/compiler/optimizer.md`：MIR 优化等级和 pass 边界。
@@ -105,7 +105,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --locked
 cargo build --release --locked
 ./target/release/ckc --help
-./target/release/ckc check examples/scalar.ck
+./target/release/ckc check examples/core/scalar.ck
 ```
 
 Rust 测试会在有价值的地方继续使用只读 TypeScript source checkout 作为行为
@@ -129,7 +129,7 @@ CK 现已支持非 owning 的 `slice<T>` descriptor。可用 `slice(data, len)` 
 pointer 构造，读取 `.data` / `.len`，执行 index，或用 `items[start..end]` 构造
 半开 sub-slice。内存仍由 caller 拥有；raw pointer 与声明长度的有效性也由 caller
 负责。Descriptor 会 alias 同一内存，不会延长其 lifetime。示例见
-[examples/slices.ck](examples/slices.ck)。
+[examples/core/slices.ck](examples/core/slices.ck)。
 
 所有 backend 默认 `--bounds unchecked`。C emission 与 `ckc build` 还接受
 `--bounds checked`，越界返回 `CK_ERR_OUT_OF_BOUNDS`（status 4）。WASM 与 LLVM

@@ -70,26 +70,26 @@ Build and run the native CLI:
 ```sh
 cargo build --release --locked
 ./target/release/ckc --help
-./target/release/ckc check examples/scalar.ck
-./target/release/ckc check examples/control_flow.ck
-./target/release/ckc check examples/void.ck
-./target/release/ckc emit-mir examples/scalar.ck -O3
-./target/release/ckc emit-c examples/pricing.ck --out /tmp/pricing.c
-./target/release/ckc emit-wasm examples/wasm_scalar.ck --out /tmp/scalar.wasm
-./target/release/ckc emit-llvm examples/llvm_scalar.ck --target ck-test-target
+./target/release/ckc check examples/core/scalar.ck
+./target/release/ckc check examples/core/control_flow.ck
+./target/release/ckc check examples/core/void.ck
+./target/release/ckc emit-mir examples/core/scalar.ck -O3
+./target/release/ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
+./target/release/ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
+./target/release/ckc emit-llvm examples/llvm/scalar.ck --target ck-test-target
 ```
 
 During development, `cargo run --` can be used in place of the release binary:
 
 ```sh
-cargo run -- check examples/scalar.ck
+cargo run -- check examples/core/scalar.ck
 ```
 
 ## Documentation
 
 - `docs/reference/language.md`: CK source language.
-- `examples/control_flow.ck`: `break` / `continue` control-flow example.
-- `examples/void.ck`: explicit `void`, early return, and procedure-call example.
+- `examples/core/control_flow.ck`: `break` / `continue` control-flow example.
+- `examples/core/void.ck`: explicit `void`, early return, and procedure-call example.
 - `docs/compiler/architecture.md`: compiler pipeline and module boundaries.
 - `docs/reference/mir.md`: MIR data model and printed format.
 - `docs/compiler/optimizer.md`: MIR optimization levels and pass boundaries.
@@ -111,7 +111,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --locked
 cargo build --release --locked
 ./target/release/ckc --help
-./target/release/ckc check examples/scalar.ck
+./target/release/ckc check examples/core/scalar.ck
 ```
 
 The Rust tests preserve compiler behavior against the read-only TypeScript
@@ -136,7 +136,7 @@ CK now supports non-owning `slice<T>` descriptors. Construct one from a raw
 pointer with `slice(data, len)`, read `.data` / `.len`, index it, or create a
 half-open sub-slice with `items[start..end]`. The caller still owns the memory
 and is responsible for the raw pointer and declared length; descriptors alias
-that memory and do not extend its lifetime. See [examples/slices.ck](examples/slices.ck).
+that memory and do not extend its lifetime. See [examples/core/slices.ck](examples/core/slices.ck).
 
 `--bounds unchecked` is the default on every backend. C emission and `ckc build`
 also accept `--bounds checked` and return `CK_ERR_OUT_OF_BOUNDS` (status 4).

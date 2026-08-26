@@ -14,7 +14,8 @@ Rules:
 - All CLI usage examples must use ckc.
 - All docs must use CK / CalcKernel consistently.
 - All tests and snapshots must use ckc and .ck.
-- If adding new examples, use examples/*.ck.
+- Add runnable examples under the matching `examples/{core,applications,checked,wasm,llvm}/`
+  responsibility directory.
 - If adding new CLI commands, document them under ckc.
 - Do not add compatibility aliases for tkc or .tk unless explicitly requested by the user.
 

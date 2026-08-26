@@ -5,7 +5,7 @@
 Generate a module with:
 
 ```sh
-ckc emit-wasm examples/wasm_scalar.ck --out build/scalar.wasm
+ckc emit-wasm examples/wasm/scalar.ck --out build/scalar.wasm
 ```
 
 The WebAssembly runtime owns instantiation; the caller owns memory contents.

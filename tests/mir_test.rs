@@ -6,6 +6,9 @@ use calckernel::{
     check, lower_to_mir, print_mir_module, validate_mir_module,
 };
 
+#[path = "support/fixtures.rs"]
+mod fixtures;
+
 fn lower_and_print(source_text: &str) -> String {
     let checked = check(&SourceFile::new("test.ck", source_text));
     assert_eq!(checked.diagnostics, []);
@@ -741,39 +744,16 @@ fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_level
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
-    let examples = [
-        "examples/scalar.ck",
-        "examples/explicit_casts.ck",
-        "examples/pricing.ck",
-        "examples/dijkstra.ck",
-        "examples/scalar_checked.ck",
-        "examples/scalar_control_checked.ck",
-        "examples/scalar_calls_checked.ck",
-        "examples/scalar_logical_checked.ck",
-        "examples/llvm_scalar.ck",
-        "examples/llvm_calls.ck",
-        "examples/llvm_memory.ck",
-        "examples/llvm_control_flow.ck",
-        "examples/llvm_short_circuit.ck",
-        "examples/llvm_bool.ck",
-        "examples/wasm_scalar.ck",
-        "examples/wasm_calls.ck",
-        "examples/wasm_memory.ck",
-        "examples/wasm_control_flow.ck",
-        "examples/wasm_short_circuit.ck",
-        "examples/node-wasm-f64-array/f64_array.ck",
-        "examples/wasm/f64-axpy/axpy.ck",
-        "examples/wasm/f64-sum/sum.ck",
-        "examples/wasm/pricing-soa/pricing_soa.ck",
-        "bench/perf/fixtures/pricing_helpers.ck",
-        "bench/perf/fixtures/pricing_soa.ck",
-        "bench/perf/fixtures/f64_kernels.ck",
-        "tests/fixtures/f64_edges.ck",
-    ];
+    let examples = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .chain(fixtures::BENCHMARK_FIXTURES)
+        .map(|fixture| fixture.oracle)
+        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .collect::<Vec<_>>();
 
     for opt_level in 0..=3 {
         let opt_flag = format!("-O{opt_level}");
-        for example in examples {
+        for &example in &examples {
             let source = typescript_root().join(example);
 
             let ts_output = Command::new("node")

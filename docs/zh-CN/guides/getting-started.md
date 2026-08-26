@@ -7,8 +7,8 @@
 ```sh
 cargo build --release --locked
 ./target/release/ckc --help
-./target/release/ckc check examples/scalar.ck
-./target/release/ckc emit-mir examples/scalar.ck -O3
+./target/release/ckc check examples/core/scalar.ck
+./target/release/ckc emit-mir examples/core/scalar.ck -O3
 ```
 
 CK 文件包含 struct 与 typed function；exported function 成为 host entry：

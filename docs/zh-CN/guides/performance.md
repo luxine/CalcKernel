@@ -2,9 +2,10 @@
 
 [English](../../guides/performance.md)
 
-使用 `cargo bench --bench ckc_perf` 运行 native benchmark harness。Case 当前位于
-`bench/perf/cases/native-cases.tsv`，仓库布局任务会把它与 fixture/schema 一起
-原子移动到 `benches/` 下，并同时更新本指南。
+使用 `cargo bench --bench ckc_perf` 运行 native benchmark harness。Case 位于
+`benches/cases/native-cases.tsv`，source 位于 `benches/fixtures`，sample baseline
+位于 `benches/baselines`，JSON contract 见[summary schema](../../../benches/summary-schema.md)。
+默认输出为 `build/perf/latest.summary.json` 与 `build/perf/latest.summary.md`。
 
 应分别测量 lexer/parser/checker、MIR lower/optimize、backend emission、toolchain
 build time、artifact size 与 runtime。预热外部工具，记录 compiler/OS/architecture/

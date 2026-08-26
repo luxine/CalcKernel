@@ -4,6 +4,9 @@ use calckernel::{
     emit_wasm_module_with_options, emit_wat_module_with_options, lower_to_mir,
     run_mir_pass_pipeline,
 };
+
+#[path = "support/fixtures.rs"]
+mod fixtures;
 use std::{
     fs,
     path::PathBuf,
@@ -145,35 +148,12 @@ fn wat_backend_should_match_typescript_oracle_for_official_examples() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
-    let examples = [
-        "examples/scalar.ck",
-        "examples/explicit_casts.ck",
-        "examples/pricing.ck",
-        "examples/dijkstra.ck",
-        "examples/scalar_checked.ck",
-        "examples/scalar_control_checked.ck",
-        "examples/scalar_calls_checked.ck",
-        "examples/scalar_logical_checked.ck",
-        "examples/llvm_scalar.ck",
-        "examples/llvm_calls.ck",
-        "examples/llvm_memory.ck",
-        "examples/llvm_control_flow.ck",
-        "examples/llvm_short_circuit.ck",
-        "examples/llvm_bool.ck",
-        "examples/wasm_scalar.ck",
-        "examples/wasm_calls.ck",
-        "examples/wasm_memory.ck",
-        "examples/wasm_control_flow.ck",
-        "examples/wasm_short_circuit.ck",
-        "examples/node-wasm-f64-array/f64_array.ck",
-        "examples/wasm/f64-axpy/axpy.ck",
-        "examples/wasm/f64-sum/sum.ck",
-        "examples/wasm/pricing-soa/pricing_soa.ck",
-        "tests/fixtures/f64_edges.ck",
-        "bench/perf/fixtures/pricing_helpers.ck",
-        "bench/perf/fixtures/pricing_soa.ck",
-        "bench/perf/fixtures/f64_kernels.ck",
-    ];
+    let examples = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .chain(fixtures::BENCHMARK_FIXTURES)
+        .map(|fixture| fixture.oracle)
+        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .collect::<Vec<_>>();
 
     for example in examples {
         let source_path = typescript_root().join(example);
@@ -210,35 +190,12 @@ fn wasm_cli_should_match_typescript_oracle_for_official_example_bytes() {
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("rust_calckernel_wasm_oracle_{unique}"));
     fs::create_dir_all(&dir).expect("create temp dir");
-    let examples = [
-        "examples/scalar.ck",
-        "examples/explicit_casts.ck",
-        "examples/pricing.ck",
-        "examples/dijkstra.ck",
-        "examples/scalar_checked.ck",
-        "examples/scalar_control_checked.ck",
-        "examples/scalar_calls_checked.ck",
-        "examples/scalar_logical_checked.ck",
-        "examples/llvm_scalar.ck",
-        "examples/llvm_calls.ck",
-        "examples/llvm_memory.ck",
-        "examples/llvm_control_flow.ck",
-        "examples/llvm_short_circuit.ck",
-        "examples/llvm_bool.ck",
-        "examples/wasm_scalar.ck",
-        "examples/wasm_calls.ck",
-        "examples/wasm_memory.ck",
-        "examples/wasm_control_flow.ck",
-        "examples/wasm_short_circuit.ck",
-        "examples/node-wasm-f64-array/f64_array.ck",
-        "examples/wasm/f64-axpy/axpy.ck",
-        "examples/wasm/f64-sum/sum.ck",
-        "examples/wasm/pricing-soa/pricing_soa.ck",
-        "tests/fixtures/f64_edges.ck",
-        "bench/perf/fixtures/pricing_helpers.ck",
-        "bench/perf/fixtures/pricing_soa.ck",
-        "bench/perf/fixtures/f64_kernels.ck",
-    ];
+    let examples = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .chain(fixtures::BENCHMARK_FIXTURES)
+        .map(|fixture| fixture.oracle)
+        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .collect::<Vec<_>>();
 
     for (index, example) in examples.iter().enumerate() {
         let source_path = typescript_root().join(example);
@@ -299,17 +256,17 @@ fn wasm_cli_should_match_typescript_oracle_for_official_interop_runtime_behavior
     let runner = dir.join("run_wasm_case.mjs");
     fs::write(&runner, wasm_runtime_runner()).expect("write WASM runtime runner");
     let cases = [
-        ("wasm-scalar", "examples/wasm_scalar.ck"),
-        ("wasm-calls", "examples/wasm_calls.ck"),
-        ("wasm-control-flow", "examples/wasm_control_flow.ck"),
-        ("wasm-memory", "examples/wasm_memory.ck"),
-        ("wasm-short-circuit", "examples/wasm_short_circuit.ck"),
-        ("dijkstra", "examples/dijkstra.ck"),
-        ("pricing-aos", "examples/pricing.ck"),
-        ("f64-array", "examples/node-wasm-f64-array/f64_array.ck"),
-        ("f64-axpy", "examples/wasm/f64-axpy/axpy.ck"),
-        ("f64-sum", "examples/wasm/f64-sum/sum.ck"),
-        ("pricing-soa", "examples/wasm/pricing-soa/pricing_soa.ck"),
+        ("wasm-scalar", fixtures::WASM_SCALAR.oracle),
+        ("wasm-calls", fixtures::WASM_CALLS.oracle),
+        ("wasm-control-flow", fixtures::WASM_CONTROL_FLOW.oracle),
+        ("wasm-memory", fixtures::WASM_MEMORY.oracle),
+        ("wasm-short-circuit", fixtures::WASM_SHORT_CIRCUIT.oracle),
+        ("dijkstra", fixtures::APPLICATION_DIJKSTRA.oracle),
+        ("pricing-aos", fixtures::APPLICATION_PRICING.oracle),
+        ("f64-array", fixtures::WASM_F64_ARRAY.oracle),
+        ("f64-axpy", fixtures::WASM_F64_AXPY.oracle),
+        ("f64-sum", fixtures::WASM_F64_SUM.oracle),
+        ("pricing-soa", fixtures::WASM_PRICING_SOA.oracle),
     ];
 
     for (case_name, example) in cases {
@@ -487,10 +444,10 @@ fn wasm_cli_should_match_typescript_oracle_for_perf_fixture_runtime_behavior() {
     let cases = [
         (
             "bench-pricing-helpers",
-            "bench/perf/fixtures/pricing_helpers.ck",
+            fixtures::BENCH_PRICING_HELPERS.oracle,
         ),
-        ("bench-pricing-soa", "bench/perf/fixtures/pricing_soa.ck"),
-        ("bench-f64-kernels", "bench/perf/fixtures/f64_kernels.ck"),
+        ("bench-pricing-soa", fixtures::BENCH_PRICING_SOA.oracle),
+        ("bench-f64-kernels", fixtures::BENCH_F64_KERNELS.oracle),
     ];
 
     for (case_name, fixture) in cases {

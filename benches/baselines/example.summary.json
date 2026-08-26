@@ -8,7 +8,7 @@
   "results": [
     {
       "case": "pricing",
-      "path": "bench/perf/fixtures/pricing_helpers.ck",
+      "path": "benches/fixtures/pricing_helpers.ck",
       "task": "check",
       "stage": "frontend",
       "iterations": 5,

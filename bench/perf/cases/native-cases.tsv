@@ -1,6 +1,0 @@
-# name	path
-pricing	bench/perf/fixtures/pricing_helpers.ck
-pricing-soa	bench/perf/fixtures/pricing_soa.ck
-f64-kernels	bench/perf/fixtures/f64_kernels.ck
-example-pricing	examples/pricing.ck
-example-dijkstra	examples/dijkstra.ck

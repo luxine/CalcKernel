@@ -372,11 +372,11 @@ fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
 
     for path in ["README.md", "README.zh-CN.md"] {
         assert!(
-            read(path).contains("examples/control_flow.ck"),
+            read(path).contains("examples/core/control_flow.ck"),
             "{path} must link the control-flow example"
         );
     }
-    assert!(repo_root().join("examples/control_flow.ck").is_file());
+    assert!(repo_root().join("examples/core/control_flow.ck").is_file());
 }
 
 #[test]
@@ -440,11 +440,11 @@ fn void_docs_should_cover_return_only_type_and_backend_abis() {
 
     for path in ["README.md", "README.zh-CN.md"] {
         assert!(
-            read(path).contains("examples/void.ck"),
+            read(path).contains("examples/core/void.ck"),
             "{path} must link the void example"
         );
     }
-    assert!(repo_root().join("examples/void.ck").is_file());
+    assert!(repo_root().join("examples/core/void.ck").is_file());
 }
 
 #[test]
@@ -508,7 +508,7 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
 
     for path in ["README.md", "README.zh-CN.md"] {
         assert!(
-            read(path).contains("examples/slices.ck"),
+            read(path).contains("examples/core/slices.ck"),
             "{path} must link the slice example"
         );
     }
@@ -516,7 +516,7 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
 
 #[test]
 fn slice_example_should_run_with_equal_valid_results_across_backends() {
-    let example = repo_root().join("examples/slices.ck");
+    let example = repo_root().join("examples/core/slices.ck");
     let source = fs::read_to_string(&example).expect("read slice example");
     for required in [
         "slice(data, len)",

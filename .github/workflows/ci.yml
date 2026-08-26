@@ -49,5 +49,5 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: ./target/release/ckc --help
-      - run: ./target/release/ckc check examples/scalar.ck
-      - run: ./target/release/ckc emit-mir examples/scalar.ck -O3
+      - run: ./target/release/ckc check examples/core/scalar.ck
+      - run: ./target/release/ckc emit-mir examples/core/scalar.ck -O3

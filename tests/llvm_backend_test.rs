@@ -11,6 +11,9 @@ use calckernel::{
     run_mir_pass_pipeline,
 };
 
+#[path = "support/fixtures.rs"]
+mod fixtures;
+
 fn emit_llvm(source_text: &str) -> String {
     emit_llvm_with_opt_level(source_text, 1)
 }
@@ -142,34 +145,11 @@ fn llvm_backend_should_match_typescript_oracle_for_official_examples() {
         return;
     };
     let target = "ck-test-target";
-    let examples = [
-        "examples/scalar.ck",
-        "examples/explicit_casts.ck",
-        "examples/pricing.ck",
-        "examples/dijkstra.ck",
-        "examples/scalar_checked.ck",
-        "examples/scalar_control_checked.ck",
-        "examples/scalar_calls_checked.ck",
-        "examples/scalar_logical_checked.ck",
-        "examples/llvm_scalar.ck",
-        "examples/llvm_calls.ck",
-        "examples/llvm_memory.ck",
-        "examples/llvm_control_flow.ck",
-        "examples/llvm_short_circuit.ck",
-        "examples/llvm_bool.ck",
-        "examples/wasm_scalar.ck",
-        "examples/wasm_calls.ck",
-        "examples/wasm_memory.ck",
-        "examples/wasm_control_flow.ck",
-        "examples/wasm_short_circuit.ck",
-        "examples/node-wasm-f64-array/f64_array.ck",
-        "examples/wasm/f64-axpy/axpy.ck",
-        "examples/wasm/f64-sum/sum.ck",
-        "examples/wasm/pricing-soa/pricing_soa.ck",
-        "bench/perf/fixtures/pricing_helpers.ck",
-        "bench/perf/fixtures/pricing_soa.ck",
-        "bench/perf/fixtures/f64_kernels.ck",
-    ];
+    let examples = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .chain(fixtures::BENCHMARK_FIXTURES)
+        .map(|fixture| fixture.oracle)
+        .collect::<Vec<_>>();
 
     for example in examples {
         let source = typescript_root().join(example);
@@ -258,7 +238,7 @@ fn llvm_backend_should_match_typescript_oracle_for_perf_f64_kernels_at_o3() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
-    let source = typescript_root().join("bench/perf/fixtures/f64_kernels.ck");
+    let source = typescript_root().join(fixtures::BENCH_F64_KERNELS.oracle);
     let target = "ck-test-target";
 
     let ts_output = Command::new("node")
@@ -301,7 +281,7 @@ fn llvm_cli_should_match_typescript_oracle_for_default_target_detection() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
-    let source = typescript_root().join("examples/scalar.ck");
+    let source = typescript_root().join(fixtures::CORE_SCALAR.oracle);
 
     let ts_output = Command::new("node")
         .arg(ts_cli)
@@ -350,7 +330,7 @@ fn build_llvm_should_match_typescript_oracle_without_default_target_detection() 
     let rust_dir = dir.join("rust");
     fs::create_dir_all(&ts_dir).expect("create TS output dir");
     fs::create_dir_all(&rust_dir).expect("create Rust output dir");
-    let source = typescript_root().join("examples/scalar.ck");
+    let source = typescript_root().join(fixtures::CORE_SCALAR.oracle);
     let ts_object = ts_dir.join("scalar.o");
     let rust_object = rust_dir.join("scalar.o");
 
@@ -412,7 +392,7 @@ fn build_llvm_object_should_match_typescript_oracle_for_pricing_runtime_behavior
     let harness_path = dir.join("pricing_harness.c");
     fs::write(&harness_path, pricing_llvm_object_harness()).expect("write pricing harness");
 
-    let source = typescript_root().join("examples/pricing.ck");
+    let source = typescript_root().join(fixtures::APPLICATION_PRICING.oracle);
     let ts_object = ts_dir.join("pricing.o");
     let rust_object = rust_dir.join("pricing.o");
 
@@ -476,23 +456,17 @@ fn build_llvm_object_should_match_typescript_oracle_for_official_e2e_runtime_beh
     fs::create_dir_all(&ts_dir).expect("create TS output dir");
     fs::create_dir_all(&rust_dir).expect("create Rust output dir");
     let cases = [
-        ("llvm-scalar", "examples/llvm_scalar.ck"),
-        ("llvm-calls", "examples/llvm_calls.ck"),
-        ("llvm-control-flow", "examples/llvm_control_flow.ck"),
-        ("llvm-memory", "examples/llvm_memory.ck"),
-        ("llvm-short-circuit", "examples/llvm_short_circuit.ck"),
-        ("llvm-bool", "examples/llvm_bool.ck"),
-        ("llvm-dijkstra", "examples/dijkstra.ck"),
-        (
-            "llvm-f64-array",
-            "examples/node-wasm-f64-array/f64_array.ck",
-        ),
-        ("llvm-f64-axpy", "examples/wasm/f64-axpy/axpy.ck"),
-        ("llvm-f64-sum", "examples/wasm/f64-sum/sum.ck"),
-        (
-            "llvm-pricing-soa",
-            "examples/wasm/pricing-soa/pricing_soa.ck",
-        ),
+        ("llvm-scalar", fixtures::LLVM_SCALAR.oracle),
+        ("llvm-calls", fixtures::LLVM_CALLS.oracle),
+        ("llvm-control-flow", fixtures::LLVM_CONTROL_FLOW.oracle),
+        ("llvm-memory", fixtures::LLVM_MEMORY.oracle),
+        ("llvm-short-circuit", fixtures::LLVM_SHORT_CIRCUIT.oracle),
+        ("llvm-bool", fixtures::LLVM_BOOL.oracle),
+        ("llvm-dijkstra", fixtures::APPLICATION_DIJKSTRA.oracle),
+        ("llvm-f64-array", fixtures::WASM_F64_ARRAY.oracle),
+        ("llvm-f64-axpy", fixtures::WASM_F64_AXPY.oracle),
+        ("llvm-f64-sum", fixtures::WASM_F64_SUM.oracle),
+        ("llvm-pricing-soa", fixtures::WASM_PRICING_SOA.oracle),
         ("llvm-f64-edges", "tests/fixtures/f64_edges.ck"),
     ];
 
@@ -565,7 +539,7 @@ fn build_llvm_object_should_match_typescript_oracle_for_perf_f64_kernels_runtime
     fs::create_dir_all(&ts_dir).expect("create TS output dir");
     fs::create_dir_all(&rust_dir).expect("create Rust output dir");
     let case_name = "llvm-perf-f64-kernels";
-    let source = typescript_root().join("bench/perf/fixtures/f64_kernels.ck");
+    let source = typescript_root().join(fixtures::BENCH_F64_KERNELS.oracle);
     let harness_path = dir.join("perf_f64_kernels.c");
     fs::write(&harness_path, official_llvm_object_harness(case_name))
         .expect("write perf f64 LLVM harness");
@@ -639,7 +613,7 @@ fn build_llvm_dynamic_should_match_typescript_oracle_for_pricing_runtime_behavio
     let runner = dir.join("run_pricing_llvm_dynamic.py");
     fs::write(&runner, pricing_llvm_dynamic_runner()).expect("write dynamic runner");
 
-    let source = typescript_root().join("examples/pricing.ck");
+    let source = typescript_root().join(fixtures::APPLICATION_PRICING.oracle);
     let ts_base = ts_dir.join("pricing_llvm_dynamic");
     let rust_base = rust_dir.join("pricing_llvm_dynamic");
 
@@ -703,23 +677,17 @@ fn build_llvm_dynamic_should_match_typescript_oracle_for_official_e2e_runtime_be
     let runner = dir.join("run_official_llvm_dynamic.py");
     fs::write(&runner, official_llvm_dynamic_runner()).expect("write official dynamic runner");
     let cases = [
-        ("llvm-scalar", "examples/llvm_scalar.ck"),
-        ("llvm-calls", "examples/llvm_calls.ck"),
-        ("llvm-control-flow", "examples/llvm_control_flow.ck"),
-        ("llvm-memory", "examples/llvm_memory.ck"),
-        ("llvm-short-circuit", "examples/llvm_short_circuit.ck"),
-        ("llvm-bool", "examples/llvm_bool.ck"),
-        ("llvm-dijkstra", "examples/dijkstra.ck"),
-        (
-            "llvm-f64-array",
-            "examples/node-wasm-f64-array/f64_array.ck",
-        ),
-        ("llvm-f64-axpy", "examples/wasm/f64-axpy/axpy.ck"),
-        ("llvm-f64-sum", "examples/wasm/f64-sum/sum.ck"),
-        (
-            "llvm-pricing-soa",
-            "examples/wasm/pricing-soa/pricing_soa.ck",
-        ),
+        ("llvm-scalar", fixtures::LLVM_SCALAR.oracle),
+        ("llvm-calls", fixtures::LLVM_CALLS.oracle),
+        ("llvm-control-flow", fixtures::LLVM_CONTROL_FLOW.oracle),
+        ("llvm-memory", fixtures::LLVM_MEMORY.oracle),
+        ("llvm-short-circuit", fixtures::LLVM_SHORT_CIRCUIT.oracle),
+        ("llvm-bool", fixtures::LLVM_BOOL.oracle),
+        ("llvm-dijkstra", fixtures::APPLICATION_DIJKSTRA.oracle),
+        ("llvm-f64-array", fixtures::WASM_F64_ARRAY.oracle),
+        ("llvm-f64-axpy", fixtures::WASM_F64_AXPY.oracle),
+        ("llvm-f64-sum", fixtures::WASM_F64_SUM.oracle),
+        ("llvm-pricing-soa", fixtures::WASM_PRICING_SOA.oracle),
         ("llvm-f64-edges", "tests/fixtures/f64_edges.ck"),
     ];
 
@@ -803,7 +771,7 @@ fn build_llvm_dynamic_should_match_typescript_oracle_for_perf_f64_kernels_runtim
     let runner = dir.join("run_perf_f64_llvm_dynamic.py");
     fs::write(&runner, official_llvm_dynamic_runner()).expect("write perf dynamic runner");
     let case_name = "llvm-perf-f64-kernels";
-    let source = typescript_root().join("bench/perf/fixtures/f64_kernels.ck");
+    let source = typescript_root().join(fixtures::BENCH_F64_KERNELS.oracle);
     let ts_base = ts_dir.join(case_name);
     let rust_base = rust_dir.join(case_name);
 

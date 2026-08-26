@@ -34,8 +34,8 @@ fn daily_ci_should_gate_pull_requests_and_main_pushes() {
         "cargo test --locked",
         "cargo build --release --locked",
         "./target/release/ckc --help",
-        "./target/release/ckc check examples/scalar.ck",
-        "./target/release/ckc emit-mir examples/scalar.ck -O3",
+        "./target/release/ckc check examples/core/scalar.ck",
+        "./target/release/ckc emit-mir examples/core/scalar.ck -O3",
     ] {
         assert!(
             workflow.contains(required),

@@ -15,8 +15,8 @@ use calckernel::{
 };
 
 const USAGE: &str = "cargo bench --bench ckc_perf -- [--quick] [--case <name>] [--task <name>] [--iterations <n>] [--warmup <n>] [--out-dir <path>]\n\nDefault outputs: build/perf/latest.summary.json and build/perf/latest.summary.md";
-const CASE_MANIFEST: &str = "bench/perf/cases/native-cases.tsv";
-const FIXTURE_ROOT: &str = "bench/perf/fixtures";
+const CASE_MANIFEST: &str = "benches/cases/native-cases.tsv";
+const FIXTURE_ROOT: &str = "benches/fixtures";
 const DEFAULT_OUT_DIR: &str = "build/perf";
 
 fn main() {

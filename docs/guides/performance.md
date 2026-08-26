@@ -3,10 +3,11 @@
 [简体中文](../zh-CN/guides/performance.md)
 
 Use `cargo bench --bench ckc_perf` for the native benchmark harness. Cases are
-declared in `bench/perf/cases/native-cases.tsv` until the repository-layout task
-moves them to `benches/cases/native-cases.tsv`; fixtures and the JSON summary
-schema live beside that manifest. (These paths are updated atomically with the
-move.)
+declared in `benches/cases/native-cases.tsv`; sources are under
+`benches/fixtures`, the sample baseline is under `benches/baselines`, and the
+JSON contract is [the summary schema](../../benches/summary-schema.md).
+The default outputs are `build/perf/latest.summary.json` and
+`build/perf/latest.summary.md`.
 
 Benchmark lexer/parser/checker, MIR lowering/optimization, backend emission,
 toolchain build time, artifact size, and runtime separately. Warm up external

@@ -9,6 +9,9 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "support/fixtures.rs"]
+mod fixtures;
+
 #[test]
 fn cli_should_check_and_emit_core_outputs() {
     let unique = SystemTime::now()
@@ -376,7 +379,7 @@ fn build_should_match_typescript_oracle_for_generated_c_header_and_stdout() {
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("rust_calckernel_build_oracle_{unique}"));
     fs::create_dir_all(&dir).expect("create temp dir");
-    let source = typescript_root().join("examples/scalar.ck");
+    let source = typescript_root().join(fixtures::CORE_SCALAR.oracle);
 
     for overflow in ["unchecked", "checked"] {
         let output_base = dir.join(format!("libscalar_{overflow}"));
@@ -433,7 +436,7 @@ fn build_should_match_typescript_oracle_for_pricing_dynamic_library_runtime_beha
     fs::create_dir_all(&dir).expect("create temp dir");
     let runner = dir.join("run_pricing_dynamic.py");
     fs::write(&runner, pricing_dynamic_library_runner()).expect("write dynamic library runner");
-    let source = typescript_root().join("examples/pricing.ck");
+    let source = typescript_root().join(fixtures::APPLICATION_PRICING.oracle);
 
     for overflow in ["unchecked", "checked"] {
         let ts_base = dir.join(format!("ts_pricing_{overflow}"));
@@ -506,63 +509,67 @@ fn build_should_match_typescript_oracle_for_official_c_dynamic_library_runtime_b
     fs::write(&runner, official_c_dynamic_library_runner())
         .expect("write official C dynamic library runner");
     let cases = [
-        ("c-scalar", "unchecked", "examples/scalar.ck"),
-        ("c-casts", "unchecked", "examples/explicit_casts.ck"),
-        ("c-dijkstra", "unchecked", "examples/dijkstra.ck"),
+        ("c-scalar", "unchecked", fixtures::CORE_SCALAR.oracle),
+        ("c-casts", "unchecked", fixtures::CORE_EXPLICIT_CASTS.oracle),
         (
-            "c-f64-array",
+            "c-dijkstra",
             "unchecked",
-            "examples/node-wasm-f64-array/f64_array.ck",
+            fixtures::APPLICATION_DIJKSTRA.oracle,
         ),
-        ("c-f64-axpy", "unchecked", "examples/wasm/f64-axpy/axpy.ck"),
-        ("c-f64-sum", "unchecked", "examples/wasm/f64-sum/sum.ck"),
+        ("c-f64-array", "unchecked", fixtures::WASM_F64_ARRAY.oracle),
+        ("c-f64-axpy", "unchecked", fixtures::WASM_F64_AXPY.oracle),
+        ("c-f64-sum", "unchecked", fixtures::WASM_F64_SUM.oracle),
         (
             "c-pricing-soa",
             "unchecked",
-            "examples/wasm/pricing-soa/pricing_soa.ck",
+            fixtures::WASM_PRICING_SOA.oracle,
         ),
-        ("c-wasm-scalar", "unchecked", "examples/wasm_scalar.ck"),
-        ("c-wasm-calls", "unchecked", "examples/wasm_calls.ck"),
+        ("c-wasm-scalar", "unchecked", fixtures::WASM_SCALAR.oracle),
+        ("c-wasm-calls", "unchecked", fixtures::WASM_CALLS.oracle),
         (
             "c-wasm-control-flow",
             "unchecked",
-            "examples/wasm_control_flow.ck",
+            fixtures::WASM_CONTROL_FLOW.oracle,
         ),
-        ("c-wasm-memory", "unchecked", "examples/wasm_memory.ck"),
+        ("c-wasm-memory", "unchecked", fixtures::WASM_MEMORY.oracle),
         (
             "c-wasm-short-circuit",
             "unchecked",
-            "examples/wasm_short_circuit.ck",
+            fixtures::WASM_SHORT_CIRCUIT.oracle,
         ),
-        ("c-llvm-scalar", "unchecked", "examples/llvm_scalar.ck"),
-        ("c-llvm-calls", "unchecked", "examples/llvm_calls.ck"),
+        ("c-llvm-scalar", "unchecked", fixtures::LLVM_SCALAR.oracle),
+        ("c-llvm-calls", "unchecked", fixtures::LLVM_CALLS.oracle),
         (
             "c-llvm-control-flow",
             "unchecked",
-            "examples/llvm_control_flow.ck",
+            fixtures::LLVM_CONTROL_FLOW.oracle,
         ),
-        ("c-llvm-memory", "unchecked", "examples/llvm_memory.ck"),
+        ("c-llvm-memory", "unchecked", fixtures::LLVM_MEMORY.oracle),
         (
             "c-llvm-short-circuit",
             "unchecked",
-            "examples/llvm_short_circuit.ck",
+            fixtures::LLVM_SHORT_CIRCUIT.oracle,
         ),
-        ("c-llvm-bool", "unchecked", "examples/llvm_bool.ck"),
-        ("c-scalar-checked", "checked", "examples/scalar_checked.ck"),
+        ("c-llvm-bool", "unchecked", fixtures::LLVM_BOOL.oracle),
+        (
+            "c-scalar-checked",
+            "checked",
+            fixtures::CHECKED_SCALAR.oracle,
+        ),
         (
             "c-control-checked",
             "checked",
-            "examples/scalar_control_checked.ck",
+            fixtures::CHECKED_SCALAR_CONTROL.oracle,
         ),
         (
             "c-logical-checked",
             "checked",
-            "examples/scalar_logical_checked.ck",
+            fixtures::CHECKED_SCALAR_LOGICAL.oracle,
         ),
         (
             "c-calls-checked",
             "checked",
-            "examples/scalar_calls_checked.ck",
+            fixtures::CHECKED_SCALAR_CALLS.oracle,
         ),
     ];
 
@@ -652,22 +659,22 @@ fn build_should_match_typescript_oracle_for_perf_c_dynamic_library_runtime_behav
     let cases = [
         (
             "c-perf-pricing-helpers-o0",
-            "bench/perf/fixtures/pricing_helpers.ck",
+            fixtures::BENCH_PRICING_HELPERS.oracle,
             "-O0",
         ),
         (
             "c-perf-pricing-helpers-o2",
-            "bench/perf/fixtures/pricing_helpers.ck",
+            fixtures::BENCH_PRICING_HELPERS.oracle,
             "-O2",
         ),
         (
             "c-perf-pricing-soa-o3",
-            "bench/perf/fixtures/pricing_soa.ck",
+            fixtures::BENCH_PRICING_SOA.oracle,
             "-O3",
         ),
         (
             "c-perf-f64-kernels-o3",
-            "bench/perf/fixtures/f64_kernels.ck",
+            fixtures::BENCH_F64_KERNELS.oracle,
             "-O3",
         ),
     ];

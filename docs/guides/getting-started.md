@@ -7,8 +7,8 @@ Install stable Rust, clone the repository, and build the native compiler:
 ```sh
 cargo build --release --locked
 ./target/release/ckc --help
-./target/release/ckc check examples/scalar.ck
-./target/release/ckc emit-mir examples/scalar.ck -O3
+./target/release/ckc check examples/core/scalar.ck
+./target/release/ckc emit-mir examples/core/scalar.ck -O3
 ```
 
 A CK file contains structs and typed functions. Exported functions become host
