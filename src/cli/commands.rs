@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::{io, io::Write};
 
 use calckernel::{
     BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode,
@@ -12,6 +13,11 @@ use calckernel::{
 use super::{args::*, output::*, toolchain::*};
 
 pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), String>> {
+    #[cfg(not(feature = "native-toolchain"))]
+    if matches!(command, "run" | "emit-llvm" | "build" | "build-llvm") {
+        return Some(Err(native_unavailable_error()));
+    }
+
     let run_command = match command {
         "check" => run_check,
         "emit-mir" => run_emit_mir,
@@ -21,9 +27,91 @@ pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), Stri
         "emit-llvm" => run_emit_llvm,
         "build" => run_build,
         "build-llvm" => run_build_llvm,
+        "licenses" => run_licenses,
         _ => return None,
     };
     Some(ParsedArgs::parse(args).and_then(|parsed| run_command(&parsed)))
+}
+
+pub(super) fn run_version(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() && args != ["--verbose"] {
+        return Err("Usage: ckc --version [--verbose]".to_string());
+    }
+
+    println!("ckc {}", env!("CARGO_PKG_VERSION"));
+    if args.is_empty() {
+        return Ok(());
+    }
+
+    println!("Native ABI: {}", calckernel::NATIVE_ABI_VERSION);
+    println!("Runtime ABI: {}", calckernel::RUNTIME_ABI_VERSION);
+    #[cfg(feature = "native-toolchain")]
+    {
+        let info = calckernel::bridge_info().map_err(|error| error.to_string())?;
+        let jit = calckernel::NativeJit::new().map_err(|error| error.to_string())?;
+        println!("LLVM: {}", info.llvm_version);
+        println!(
+            "LLVM manifest SHA-256: {}",
+            env!("CKC_LLVM_MANIFEST_SHA256")
+        );
+        println!("Target: {}", env!("CKC_BUILD_TARGET"));
+        println!("Code generator: {}", code_generator_name());
+        println!(
+            "ORC object layer: {}",
+            match jit.object_layer() {
+                calckernel::OrcObjectLayer::JitLink => "JITLink",
+                calckernel::OrcObjectLayer::RuntimeDyldCoffAarch64 => {
+                    "RuntimeDyld (COFF AArch64)"
+                }
+            }
+        );
+    }
+    #[cfg(not(feature = "native-toolchain"))]
+    {
+        println!("LLVM: unavailable (native-toolchain feature disabled)");
+        println!("Target: {}", env!("CKC_BUILD_TARGET"));
+        println!("Code generator: unavailable");
+        println!("ORC object layer: unavailable");
+    }
+    Ok(())
+}
+
+pub(super) fn run_licenses(args: &ParsedArgs) -> Result<(), String> {
+    if !args.positionals.is_empty() {
+        return Err("Usage: ckc licenses".to_string());
+    }
+
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    for notice in calckernel::embedded_notices() {
+        writeln!(output, "===== {} =====", notice.name)
+            .and_then(|_| output.write_all(notice.bytes))
+            .and_then(|_| {
+                if notice.bytes.ends_with(b"\n") {
+                    writeln!(output)
+                } else {
+                    writeln!(output, "\n")
+                }
+            })
+            .map_err(|error| format!("failed to write embedded notices: {error}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "native-toolchain")]
+fn code_generator_name() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "AArch64",
+        "x86_64" => "X86",
+        architecture => architecture,
+    }
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+fn native_unavailable_error() -> String {
+    "error: native toolchain unavailable: this developer build was compiled without the \
+     'native-toolchain' feature"
+        .to_string()
 }
 
 pub(super) fn run_check(args: &ParsedArgs) -> Result<(), String> {

@@ -1,0 +1,66 @@
+schema = 1
+version = "22.1.8"
+tag = "llvmorg-22.1.8"
+commit = "ca7933e47d3a3451d81e72ac174dcb5aa28b59d1"
+archive = "llvm-project-22.1.8.src.tar.xz"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz"
+sha256 = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
+host_only = true
+static_only = true
+
+[cmake]
+build_type = "Release"
+assertions = true
+build_shared_libs = false
+build_llvm_dylib = false
+link_llvm_dylib = false
+enable_rtti = false
+enable_eh = false
+enable_zlib = false
+enable_zstd = false
+enable_libxml2 = false
+enable_terminfo = false
+enable_libedit = false
+
+[profiles.release]
+projects = ["lld"]
+include_clang = false
+install_tools = ["llvm-config"]
+link_components = ["core", "native", "orcjit", "nativecodegen"]
+
+[profiles.oracle]
+projects = ["clang", "lld"]
+include_clang = true
+install_tools = ["clang", "llvm-config"]
+
+[targets.darwin-arm64]
+llvm_target = "AArch64"
+lld_driver = "MachO"
+orc_layer = "JITLink"
+minimum_os = "11.0"
+
+[targets.darwin-x64]
+llvm_target = "X86"
+lld_driver = "MachO"
+orc_layer = "JITLink"
+minimum_os = "11.0"
+
+[targets.linux-arm64]
+llvm_target = "AArch64"
+lld_driver = "ELF"
+orc_layer = "JITLink"
+
+[targets.linux-x64]
+llvm_target = "X86"
+lld_driver = "ELF"
+orc_layer = "JITLink"
+
+[targets.win32-arm64]
+llvm_target = "AArch64"
+lld_driver = "COFF"
+orc_layer = "RuntimeDyld"
+
+[targets.win32-x64]
+llvm_target = "X86"
+lld_driver = "COFF"
+orc_layer = "JITLink"

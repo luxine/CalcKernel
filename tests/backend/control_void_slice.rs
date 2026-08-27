@@ -234,12 +234,19 @@ fn combined_control_void_slice_should_reject_checked_bounds_on_non_c_backends() 
     let source = dir.join("combined.ck");
     fs::write(&source, COMBINED_SOURCE).expect("write fixture");
 
-    for (command, backend, out) in [
+    #[cfg(not(feature = "native-toolchain"))]
+    let cases = vec![
+        ("emit-wat", "WASM", None),
+        ("emit-wasm", "WASM", Some(dir.join("combined.wasm"))),
+    ];
+    #[cfg(feature = "native-toolchain")]
+    let cases = vec![
         ("emit-wat", "WASM", None),
         ("emit-wasm", "WASM", Some(dir.join("combined.wasm"))),
         ("emit-llvm", "LLVM", None),
         ("build-llvm", "LLVM", Some(dir.join("combined-llvm"))),
-    ] {
+    ];
+    for (command, backend, out) in cases {
         let mut args = vec![
             command.into(),
             source.as_os_str().to_owned(),

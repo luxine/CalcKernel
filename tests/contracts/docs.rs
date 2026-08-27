@@ -2,11 +2,15 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
+#[cfg(feature = "native-toolchain")]
+use std::process::Command;
+
+#[cfg(feature = "native-toolchain")]
 use super::support::command::run_stdout;
 use super::support::oracle::repo_root;
+#[cfg(feature = "native-toolchain")]
 use super::support::temp::unique_id;
 
 #[test]
@@ -513,6 +517,7 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
     }
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn slice_example_should_run_with_equal_valid_results_across_backends() {
     let example = repo_root().join("examples/core/slices.ck");
@@ -645,6 +650,7 @@ WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({instance}) => {
     assert_eq!(wasm_output, c_output);
 }
 
+#[cfg(feature = "native-toolchain")]
 fn compile_native(inputs: &[&Path], output: &Path) {
     let compile = Command::new("clang")
         .args(inputs)

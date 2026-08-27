@@ -9,7 +9,16 @@ use crate::{MirFunction, MirInstruction, MirPlace, MirPrimitiveTypeName, MirType
 pub use c::{
     BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_module, emit_c_module_with_header,
 };
-pub use llvm::{EmitLlvmOptions, emit_llvm_module};
+pub use llvm::{
+    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
+    emit_llvm_module,
+};
+#[cfg(feature = "native-toolchain")]
+pub use llvm::{
+    LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeError, NativeJit, NativeModule,
+    NativeObject, NativeStage, NativeTarget, NativeToolchain, OrcObjectLayer, bridge_info,
+    test_error as native_bridge_test_error, test_invalid_input as native_bridge_test_invalid_input,
+};
 pub use wasm::{
     EmitWasmOptions, emit_wasm_module, emit_wasm_module_with_options, emit_wat_module,
     emit_wat_module_with_options,

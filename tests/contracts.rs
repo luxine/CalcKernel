@@ -7,6 +7,8 @@ mod ci;
 mod docs;
 #[path = "contracts/git.rs"]
 mod git;
+#[path = "contracts/native_toolchain.rs"]
+mod native_toolchain;
 #[path = "contracts/release.rs"]
 mod release;
 #[path = "contracts/repository.rs"]

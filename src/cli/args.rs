@@ -218,6 +218,7 @@ pub(super) fn usage() -> &'static str {
         "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc build <file> --out <output-path> [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc licenses\n",
         "\n",
         "Options:\n",
         "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.\n",

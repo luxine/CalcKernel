@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "native-toolchain"))]
 use std::os::unix::fs::PermissionsExt;
 
 use super::support::fixtures;
@@ -16,6 +16,128 @@ use super::support::{
     compiler::shared_library_path,
 };
 
+#[test]
+fn cli_should_report_the_compiler_version() {
+    let output = run_rust_cli(&[os("--version")]);
+
+    assert_eq!(output.status_code, Some(0));
+    assert_eq!(output.stderr, "");
+    assert_eq!(
+        output.stdout,
+        format!("ckc {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn cli_should_report_the_embedded_native_toolchain_verbatim() {
+    let output = run_rust_cli(&[os("--version"), os("--verbose")]);
+
+    assert_eq!(output.status_code, Some(0), "{}", output.stderr);
+    for expected in [
+        format!("ckc {}", env!("CARGO_PKG_VERSION")),
+        "LLVM: 22.1.8".to_string(),
+        "LLVM manifest SHA-256: ".to_string(),
+        "Native ABI: 1".to_string(),
+        "Runtime ABI: 1".to_string(),
+        format!("Target: {}", env!("CKC_BUILD_TARGET")),
+        format!(
+            "Code generator: {}",
+            match std::env::consts::ARCH {
+                "aarch64" => "AArch64",
+                "x86_64" => "X86",
+                architecture => architecture,
+            }
+        ),
+    ] {
+        assert!(
+            output.stdout.contains(&expected),
+            "missing {expected:?} in:\n{}",
+            output.stdout
+        );
+    }
+    assert!(
+        output.stdout.contains("ORC object layer: JITLink")
+            || output
+                .stdout
+                .contains("ORC object layer: RuntimeDyld (COFF AArch64)"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+#[test]
+fn cli_should_report_native_toolchain_as_unavailable_in_verbose_version() {
+    let output = run_rust_cli(&[os("--version"), os("--verbose")]);
+
+    assert_eq!(output.status_code, Some(0), "{}", output.stderr);
+    assert!(
+        output.stdout.contains("LLVM: unavailable"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("ORC object layer: unavailable"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[test]
+fn cli_should_print_embedded_compiler_and_llvm_notices() {
+    let output = run_rust_cli(&[os("licenses")]);
+
+    assert_eq!(output.status_code, Some(0), "{}", output.stderr);
+    assert!(output.stdout.contains("CalcKernel"), "{}", output.stdout);
+    assert!(output.stdout.contains("MIT License"), "{}", output.stdout);
+    assert!(
+        output.stdout.contains("The LLVM Project"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        output
+            .stdout
+            .contains("Apache License v2.0 with LLVM Exceptions"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+#[test]
+fn developer_compiler_should_use_one_native_unavailable_error() {
+    let commands = [
+        vec![os("run"), os("missing.ck")],
+        vec![os("emit-llvm"), os("missing.ck")],
+        vec![os("build"), os("missing.ck"), os("--out"), os("missing")],
+        vec![
+            os("build-llvm"),
+            os("missing.ck"),
+            os("--out"),
+            os("missing"),
+        ],
+    ];
+    let mut errors = Vec::new();
+    for args in commands {
+        let output = run_rust_cli(&args);
+        assert_eq!(output.status_code, Some(1), "args={args:?}");
+        assert_eq!(output.stdout, "", "args={args:?}");
+        errors.push(output.stderr);
+    }
+
+    assert!(
+        errors.windows(2).all(|pair| pair[0] == pair[1]),
+        "{errors:#?}"
+    );
+    assert_eq!(
+        errors[0],
+        "error: native toolchain unavailable: this developer build was compiled without the 'native-toolchain' feature\n"
+    );
+}
+
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_check_and_emit_core_outputs() {
     let unique = SystemTime::now()
@@ -136,6 +258,7 @@ fn cli_should_check_and_emit_core_outputs() {
     assert_eq!(&wasm_bytes[4..8], &[1, 0, 0, 0]);
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_build_native_c_library_and_llvm_object() {
     let unique = SystemTime::now()
@@ -255,7 +378,7 @@ fn emit_c_should_not_leave_c_output_when_header_path_cannot_be_created() {
     assert!(!header_path.exists());
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "native-toolchain"))]
 #[test]
 fn build_should_pass_typescript_compatible_ck_build_dll_define_to_clang() {
     let unique = SystemTime::now()
@@ -333,6 +456,7 @@ exit 0
     );
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn build_llvm_should_print_typescript_compatible_missing_clang_message() {
     let unique = SystemTime::now()
@@ -1601,6 +1725,7 @@ fn cli_should_match_typescript_oracle_for_output_parent_directory_creation_error
     }
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_default_bounds_to_unchecked_for_all_emitters() {
     let unique = SystemTime::now()
@@ -1655,6 +1780,7 @@ fn cli_should_default_bounds_to_unchecked_for_all_emitters() {
     assert!(help.stdout.contains("Default: unchecked"));
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_accept_all_four_c_overflow_bounds_combinations() {
     let unique = SystemTime::now()
@@ -1715,6 +1841,7 @@ fn cli_should_accept_all_four_c_overflow_bounds_combinations() {
     }
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_reject_invalid_bounds_values_on_commands_that_use_them() {
     let unique = SystemTime::now()
@@ -1782,6 +1909,7 @@ fn cli_should_reject_invalid_bounds_values_on_commands_that_use_them() {
     }
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_reject_checked_bounds_for_wasm_and_llvm_with_stable_help() {
     let unique = SystemTime::now()
@@ -1827,6 +1955,7 @@ fn cli_should_reject_checked_bounds_for_wasm_and_llvm_with_stable_help() {
     }
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_report_checked_overflow_before_checked_bounds_for_wasm_and_llvm() {
     let unique = SystemTime::now()
@@ -1938,6 +2067,7 @@ fn run_typescript_cli(ts_cli: &PathBuf, args: &[OsString]) -> CapturedOutput {
     capture(output)
 }
 
+#[cfg(feature = "native-toolchain")]
 #[test]
 fn cli_should_build_void_buffer_mutation_fixture() {
     if !clang_available() {

@@ -1,6 +1,7 @@
 /target/
 /.DS_Store
 /build/
+/build/llvm/
 /npm/bin/
 *.tmp
 .understand-anything
