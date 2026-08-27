@@ -40,7 +40,7 @@ CK source
        -> Native ABI export thunk
        -> LLVM verifier
        -> LLVM PassBuilder O0-O3
-       |  -> ORC/JITLink
+       |  -> ORC -> JITLink 或固定的 COFF/AArch64 RuntimeDyld layer
        `  -> TargetMachine -> object -> archive writer 或 LLD
 ```
 
@@ -57,10 +57,19 @@ failure 属于 internal compiler error，不提交任何 artifact。
 Patch-line 升级必须通过完整 native semantics、ABI、performance 与 release suite；
 LLVM major 升级属于有版本的 compiler 变更，不是普通 dependency update。
 
-Release build 只包含该平台需要的 host code generator、object format、ORC/JITLink
-支持与 LLD driver，不包含 Clang frontend 或无关 LLVM target。LLVM、LLD 与其非
-系统 C++ runtime 静态链接；会给目标机器增加 shared-library 需求的可选 LLVM
-dependency 必须关闭。
+Release build 只包含该平台需要的 host code generator、object format、ORC object
+layer 与 LLD driver。ELF AArch64/x86-64、Mach-O AArch64/x86-64 与 COFF x86-64
+使用 JITLink。LLVM 22.1.8 没有 COFF AArch64 JITLink backend，因此 Windows
+AArch64 使用 ORC `RTDyldObjectLinkingLayer`，以及固定版本的
+`RuntimeDyldCOFFAArch64` 与启用 reservation 的 `SectionMemoryManager`，保证 code、
+stub 与 data 位于 AArch64 relocation range 内。这是 target-specific link-layer
+compatibility choice，不是 interpreter 或 AOT fallback：两条路径都执行相同的 O3
+TargetMachine object，并在 `main` 前完成 eager symbol resolution。
+
+Release 不包含 Clang frontend 或无关 LLVM target。LLVM、LLD 与其非系统 C++ runtime
+静态链接；会给目标机器增加 shared-library 需求的可选 LLVM dependency 必须关闭。
+未来把 Windows AArch64 切换到 JITLink，必须作为 LLVM version 变更，并通过完整的
+run、memory-protection、performance 与 release gate。
 
 ## Source 入口
 
@@ -135,8 +144,19 @@ rollback，并报告受影响 path；普通 filesystem 不提供可移植的多�
 crash consistency 的 consumer 必须构建到新目录，并仅在 `ckc` 成功后发布该目录。
 
 TargetMachine 直接生成 object byte。Archive writer 不通过平台 `ar` command 即可
-封装 native object。LLD 通过内部 FFI boundary 以 in-process library 方式调用，且
-只链接 compiler 生成并验证的 object；0.10 不接受用户提供的任意 object。
+封装 native object。LLD 通过内部 FFI boundary 以 in-process library 方式调用。
+它的 trusted input 仅限 verified compiler-produced object，以及 compiler-owned
+entry/runtime object、helper object、export list 与最小 platform import definition。
+0.10 不接受用户提供的任意 object、library、linker script 或 flag。
+
+这些 compiler-owned input 在不查找 SDK/toolchain 的情况下闭合 platform-linker
+boundary。Linux executable 使用 embedded syscall runtime，不使用 system import
+library。Windows executable 使用内嵌的稳定 process API import definition，纯计算 DLL
+使用 `/noentry`。Darwin executable 使用内嵌的最小 `libSystem` text stub、显式
+platform version 与 LLD ad-hoc signing；生成的 Mach-O executable/dynamic library
+无需调用 `codesign` 即可运行/加载，distributor 之后可以用自己的 identity 替换 ad-hoc
+signature。每个 embedded linker input 的 source、license provenance、symbol 与 hash
+都由仓库控制，并纳入 release test。
 
 ## Native FFI ABI
 
@@ -329,18 +349,18 @@ LLVM、ORC、ABI classifier、embedded runtime 与 LLD failure 保留 stage，�
 source diagnostic。
 
 JIT child 隔离执行 CK raw pointer/unchecked operation 导致的进程失败，但不会让代码
-memory-safe。Persistent compiler process 不加载用户 machine code。LLD 只接收本
-compiler 生成的 object。平台提供相应能力时，temporary output/cache path 拒绝不安全
-ownership 或 symlink replacement。
+memory-safe。Persistent compiler process 不加载用户 machine code。LLD 只接收上述
+compiler-owned trusted input。平台提供相应能力时，temporary output/cache path 拒绝
+不安全 ownership 或 symlink replacement。
 
-JIT code memory 不得同时保持 writable 与 executable。ORC/JITLink memory manager
-在 relocation 阶段分配 writable/non-executable page，完成后把 code finalize 为
-read/execute、data 保持 non-executable，再转移控制。Linux 使用 `mprotect` 或等价
-dual mapping；Windows 使用对应的 allocation/protection transition 与 instruction-
-cache flush；Darwin 使用 `MAP_JIT`，并在适用时使用 Apple 要求的 per-thread JIT
-write-protection API。Signed macOS release binary 仅在 hardened runtime 要求时携带
-最小范围的 `allow-jit` entitlement；不得为运行 JIT 而关闭 library validation 或其他
-code-signing protection。
+执行 JIT code 的 thread 不得写入该 code。Linux/Windows 的 ORC memory manager 在
+relocation 阶段分配 writable/non-executable page，完成后把 code 转为 read/execute、
+data 保持 non-executable，并 flush instruction cache 后再转移控制。Windows AArch64
+`SectionMemoryManager` 必须执行相同的 RW-to-RX finalization。Darwin 使用 `MAP_JIT`
+与 Apple per-thread JIT write protection：mapping 可以声明 writable/executable maximum
+permission，但执行 thread 绝不能同时启用 write 与 execute access。Signed macOS
+release binary 仅在 hardened runtime 要求时携带最小范围的 `allow-jit` entitlement；
+不得为运行 JIT 而关闭 library validation 或其他 code-signing protection。
 
 Compilation、runtime、checked、output 或 abnormal child failure 都使 parent 非零
 退出；child 成功退出前不打印 success line。成功 `run` 完全不打印 compiler status
@@ -372,13 +392,15 @@ pointer 语义的 process-wide crash handler。
 8. 受控 x86-64/AArch64 worker 通过性能 contract。
 9. Release archive 保持现有六个 target name 与 checksum sidecar；
    `ckc --version --verbose` 报告 compiler、LLVM、Native ABI、runtime ABI、target 与
-   enabled CPU backend。
+   enabled CPU backend，以及 active ORC object layer。
 10. Release binary 没有 dynamic LLVM/LLD/Clang 或非系统 C++ runtime dependency。
     LLVM required notice 内嵌并可通过 `ckc licenses` 查看，使功能性 distribution
     仍为单 executable。
-11. 每个 target 的 JIT page-permission test 证明 writable-to-executable transition，
-    且不存在 persistent RWX mapping。Signed macOS AArch64/x86-64 archive 必须在其
-    release signing/hardened-runtime configuration 下实际执行 `ckc run`。
+11. Linux/Windows 的 JIT page-permission test 证明 RW-to-RX transition，包括 COFF
+    AArch64 RuntimeDyld 路径；Darwin test 证明 thread-level JIT write protection，
+    而不是拒绝 `MAP_JIT` mapping 的 maximum permission。Signed macOS
+    AArch64/x86-64 archive 必须在其 release signing/hardened-runtime configuration
+    下实际执行 `ckc run`。
 
 Release CI 在受控、可缓存 stage 构建固定 LLVM source，并静态链接 target-specific
 component。普通 compiler test 无需每次重建 LLVM；required native-toolchain job 负责
