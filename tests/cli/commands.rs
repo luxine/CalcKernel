@@ -65,6 +65,8 @@ fn cli_should_report_version_and_embedded_licenses() {
             .stdout
             .contains("Apache License v2.0 with LLVM Exceptions")
     );
+    assert!(licenses.stdout.contains("Ryu floating-point conversion"));
+    assert!(licenses.stdout.contains("Boost Software License"));
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -312,8 +314,40 @@ fn build_llvm_dynamic_should_be_one_deprecated_alias_without_external_tools() {
 
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn executable_kind_should_parse_and_fail_before_creating_stage_5_outputs() {
-    let (dir, source) = fixture("fn main() -> i32 { return 0; }");
+fn executable_kind_should_build_run_without_path_and_emit_no_header() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture("fn main() -> i32 { print_i32(7); return 7; }");
+    let base = dir.join("program");
+    let output = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&base),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let paths = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &base,
+    );
+    assert!(paths.primary.is_file());
+    assert!(paths.header.is_none());
+    let run = Command::new(&paths.primary)
+        .env("PATH", "")
+        .output()
+        .expect("run standalone executable");
+    assert_eq!(run.status.code(), Some(7));
+    assert_eq!(run.stdout, b"7");
+    assert_eq!(run.stderr, b"");
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn executable_without_entry_should_fail_before_creating_output() {
+    let (dir, source) = fixture("export fn answer() -> i32 { return 42; }");
     let base = dir.join("program");
     let output = run_empty_path([
         os("build"),
@@ -324,7 +358,7 @@ fn executable_kind_should_parse_and_fail_before_creating_stage_5_outputs() {
         os(&base),
     ]);
     assert_eq!(output.code, Some(1));
-    assert!(output.stderr.contains("stage 5 embedded runtime"));
+    assert!(output.stderr.contains("requires fn main()"));
     assert!(!base.exists());
 }
 

@@ -37,5 +37,13 @@ pub const fn embedded_notices() -> &'static [EmbeddedNotice] {
             name: "LLVM Support regex implementation",
             bytes: include_bytes!("../../../native/llvm/third-party/COPYRIGHT.regex"),
         },
+        EmbeddedNotice {
+            name: "Ryu floating-point conversion (Apache-2.0 option)",
+            bytes: include_bytes!("../../../native/runtime/vendor/ryu/LICENSE-Apache2"),
+        },
+        EmbeddedNotice {
+            name: "Ryu floating-point conversion (Boost-1.0 option)",
+            bytes: include_bytes!("../../../native/runtime/vendor/ryu/LICENSE-Boost"),
+        },
     ]
 }

@@ -97,6 +97,11 @@ constexpr int32_t CKC_LLVM_INVALID_ARGUMENT = 1;
 constexpr int32_t CKC_LLVM_OUT_OF_MEMORY = 2;
 constexpr int32_t CKC_LLVM_INTERNAL_ERROR = 3;
 
+std::mutex &lld_driver_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 void clear_bytes(CkcLlvmOwnedBytes *bytes) noexcept {
     if (bytes != nullptr) {
         bytes->data = nullptr;
@@ -269,6 +274,36 @@ llvm::Error validate_import_archive(llvm::StringRef path) {
         return llvm::createStringError(
             "LLD import library is empty or lacks a symbol index");
     }
+    return llvm::Error::success();
+}
+
+llvm::Error validate_executable_output(llvm::StringRef path) {
+    auto binary = llvm::object::createBinary(path);
+    if (!binary) {
+        return binary.takeError();
+    }
+    auto *object = llvm::dyn_cast<llvm::object::ObjectFile>(binary->getBinary());
+    if (object == nullptr || object->isRelocatableObject()) {
+        return llvm::createStringError("LLD output is not a linked executable");
+    }
+#if defined(CKC_LLD_DARWIN)
+    const auto *macho = llvm::dyn_cast<llvm::object::MachOObjectFile>(object);
+    if (macho == nullptr || macho->getHeader().filetype != llvm::MachO::MH_EXECUTE) {
+        return llvm::createStringError("LLD output is not a Mach-O executable");
+    }
+#elif defined(CKC_LLD_COFF)
+    const auto *coff = llvm::dyn_cast<llvm::object::COFFObjectFile>(object);
+    if (coff == nullptr ||
+        (coff->getCharacteristics() & llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE) == 0 ||
+        (coff->getCharacteristics() & llvm::COFF::IMAGE_FILE_DLL) != 0) {
+        return llvm::createStringError("LLD output is not a PE executable");
+    }
+#else
+    const auto *elf = llvm::dyn_cast<llvm::object::ELFObjectFileBase>(object);
+    if (elf == nullptr || elf->getEType() != llvm::ELF::ET_EXEC) {
+        return llvm::createStringError("LLD output is not an ELF executable");
+    }
+#endif
     return llvm::Error::success();
 }
 
@@ -1511,6 +1546,8 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("11.0");
         arguments.emplace_back("11.0");
         arguments.emplace_back("-adhoc_codesign");
+        arguments.emplace_back("-install_name");
+        arguments.emplace_back("@rpath/module.dylib");
         for (size_t index = 0; index < export_count; ++index) {
             const llvm::StringRef name = borrowed_string(exports[index]);
             if (name.empty() || name.contains('\0') || name.contains(',')) {
@@ -1572,10 +1609,9 @@ extern "C" int32_t ckc_lld_link_shared(
 #else
         const lld::DriverDef drivers[] = {{lld::Gnu, &lld::elf::link}};
 #endif
-        static std::mutex lld_mutex;
         lld::Result result;
         {
-            std::lock_guard<std::mutex> lock(lld_mutex);
+            std::lock_guard<std::mutex> lock(lld_driver_mutex());
             result = lld::lldMain(raw_arguments, stdout_stream, stderr_stream,
                                   drivers);
         }
@@ -1606,6 +1642,129 @@ extern "C" int32_t ckc_lld_link_shared(
     } catch (...) {
         return set_error(error, CKC_LLVM_INTERNAL_ERROR,
                          "unknown C++ exception linking shared library");
+    }
+}
+
+extern "C" int32_t ckc_lld_link_executable(
+    const CkcLlvmBytes *object_path_bytes, size_t object_count,
+    CkcLlvmBytes output_path_bytes, CkcLlvmBytes platform_input_path_bytes,
+    CkcLlvmError *error) {
+    clear_error(error);
+    try {
+        if (object_count == 0 || object_path_bytes == nullptr) {
+            return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                             "LLD executable object list is empty");
+        }
+        auto output_path = checked_path(output_path_bytes, "LLD executable output path");
+        if (!output_path) {
+            return set_llvm_error(error, output_path.takeError());
+        }
+        std::vector<std::string> object_paths;
+        object_paths.reserve(object_count);
+        for (size_t index = 0; index < object_count; ++index) {
+            auto path = checked_path(object_path_bytes[index], "LLD executable object path");
+            if (!path) {
+                return set_llvm_error(error, path.takeError());
+            }
+            if (auto validation = validate_link_input(*path)) {
+                return set_llvm_error(error, std::move(validation));
+            }
+            object_paths.push_back(std::move(*path));
+        }
+
+        std::vector<std::string> arguments;
+        arguments.reserve(18 + object_count);
+#if defined(CKC_LLD_DARWIN)
+        auto platform_input = checked_path(platform_input_path_bytes,
+                                           "LLD libSystem stub path");
+        if (!platform_input) {
+            return set_llvm_error(error, platform_input.takeError());
+        }
+        arguments.emplace_back("ld64.lld");
+        arguments.emplace_back("-arch");
+#if defined(__aarch64__) || defined(__arm64__)
+        arguments.emplace_back("arm64");
+#else
+        arguments.emplace_back("x86_64");
+#endif
+        arguments.emplace_back("-platform_version");
+        arguments.emplace_back("macos");
+        arguments.emplace_back("11.0");
+        arguments.emplace_back("11.0");
+        arguments.emplace_back("-adhoc_codesign");
+        arguments.emplace_back("-dead_strip");
+        arguments.emplace_back("-e");
+        arguments.emplace_back("_main");
+#elif defined(CKC_LLD_COFF)
+        auto platform_input = checked_path(platform_input_path_bytes,
+                                           "LLD kernel32 import path");
+        if (!platform_input) {
+            return set_llvm_error(error, platform_input.takeError());
+        }
+        arguments.emplace_back("lld-link");
+        arguments.emplace_back("/subsystem:console");
+        arguments.emplace_back("/entry:mainCRTStartup");
+        arguments.emplace_back("/nodefaultlib");
+#else
+        arguments.emplace_back("ld.lld");
+        arguments.emplace_back("-static");
+        arguments.emplace_back("--gc-sections");
+        arguments.emplace_back("-z");
+        arguments.emplace_back("noexecstack");
+        arguments.emplace_back("-e");
+        arguments.emplace_back("_start");
+#endif
+        arguments.emplace_back("-o");
+        arguments.emplace_back(*output_path);
+        arguments.insert(arguments.end(), object_paths.begin(), object_paths.end());
+#if defined(CKC_LLD_DARWIN) || defined(CKC_LLD_COFF)
+        arguments.emplace_back(*platform_input);
+#endif
+
+        std::vector<const char *> raw_arguments;
+        raw_arguments.reserve(arguments.size());
+        for (const auto &argument : arguments) {
+            raw_arguments.push_back(argument.c_str());
+        }
+        std::string stdout_text;
+        std::string stderr_text;
+        llvm::raw_string_ostream stdout_stream(stdout_text);
+        llvm::raw_string_ostream stderr_stream(stderr_text);
+#if defined(CKC_LLD_DARWIN)
+        const lld::DriverDef drivers[] = {{lld::Darwin, &lld::macho::link}};
+#elif defined(CKC_LLD_COFF)
+        const lld::DriverDef drivers[] = {{lld::WinLink, &lld::coff::link}};
+#else
+        const lld::DriverDef drivers[] = {{lld::Gnu, &lld::elf::link}};
+#endif
+        lld::Result result{1, false};
+        {
+            std::lock_guard<std::mutex> lock(lld_driver_mutex());
+            result = lld::lldMain(raw_arguments, stdout_stream, stderr_stream,
+                                  drivers);
+        }
+        stdout_stream.flush();
+        stderr_stream.flush();
+        if (result.retCode != 0) {
+            std::string message = stderr_text.empty() ? stdout_text : stderr_text;
+            if (message.empty()) {
+                message = "LLD executable link returned a non-zero status";
+            }
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+        }
+        if (!result.canRunAgain) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "LLD completed but cannot safely run again");
+        }
+        if (auto validation = validate_executable_output(*output_path)) {
+            return set_llvm_error(error, std::move(validation));
+        }
+        return CKC_LLVM_OK;
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception linking executable");
     }
 }
 

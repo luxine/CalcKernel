@@ -15,6 +15,7 @@ use calckernel::{
     EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu,
     NativeHeaderMode, NativeLoweringOptions, NativeOptimizationLevel, NativePlatform, NativeTarget,
     create_native_static_archive, emit_native_header, link_native_dynamic_library,
+    link_native_executable, lower_native_executable_module_with_options,
     lower_native_llvm_module_with_options,
 };
 
@@ -310,12 +311,6 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
     let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
-    if kind == ArtifactKind::Executable {
-        return Err(
-            "native executable artifacts require the stage 5 embedded runtime; no output was created"
-                .to_string(),
-        );
-    }
     let overflow_mode = parse_overflow_mode(args)?;
     let bounds_mode = parse_bounds_mode(args)?;
     let opt_level = parse_opt_level(args)?;
@@ -331,8 +326,18 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         MirPassTargetBackend::Llvm,
         &args.debug,
     )?;
-    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::NativeLibrary)
-        .map_err(|error| error.to_string())?;
+    let mir = if kind == ArtifactKind::Executable {
+        if mir.entry.is_none() {
+            return Err(
+                "standalone native executable requires fn main() -> void or i32; no output was created"
+                    .to_string(),
+            );
+        }
+        mir
+    } else {
+        prepare_non_executable_artifact(&mir, MirArtifactConsumer::NativeLibrary)
+            .map_err(|error| error.to_string())?
+    };
     let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
         CpuPolicy::Baseline => NativeCpu::Baseline,
         CpuPolicy::Native => NativeCpu::Native,
@@ -340,48 +345,50 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
-    let optimized = lower_native_llvm_module_with_options(
-        &context,
-        &target,
-        &mir,
-        &NativeLoweringOptions {
-            emit: EmitLlvmOptions {
-                source_file_name: Some(input.to_string()),
-                target_triple: args.target.clone(),
-            },
-            overflow_mode,
-            bounds_mode,
+    let lowering_options = NativeLoweringOptions {
+        emit: EmitLlvmOptions {
+            source_file_name: Some(input.to_string()),
+            target_triple: args.target.clone(),
         },
-    )
-    .map_err(|error| error.to_string())?
-    .verify()
-    .map_err(|error| error.to_string())?
-    .optimize(&target, level)
-    .map_err(|error| error.to_string())?;
+        overflow_mode,
+        bounds_mode,
+    };
+    let lowered = if kind == ArtifactKind::Executable {
+        lower_native_executable_module_with_options(&context, &target, &mir, &lowering_options)
+    } else {
+        lower_native_llvm_module_with_options(&context, &target, &mir, &lowering_options)
+    };
+    let optimized = lowered
+        .map_err(|error| error.to_string())?
+        .verify()
+        .map_err(|error| error.to_string())?
+        .optimize(&target, level)
+        .map_err(|error| error.to_string())?;
     let object = target
         .emit_object(optimized)
         .map_err(|error| error.to_string())?;
     let artifact_kind = match kind {
-        ArtifactKind::Executable => unreachable!("executable rejected before lowering"),
+        ArtifactKind::Executable => NativeArtifactKind::Executable,
         ArtifactKind::Dynamic => NativeArtifactKind::Dynamic,
         ArtifactKind::Static => NativeArtifactKind::Static,
         ArtifactKind::Object => NativeArtifactKind::Object,
     };
     let paths = NativeArtifactPaths::new(NativePlatform::host(), artifact_kind, &absolutize(out));
-    let header_mode = if kind == ArtifactKind::Dynamic {
-        NativeHeaderMode::Dynamic
-    } else {
-        NativeHeaderMode::StaticOrObject
-    };
-    let header = emit_native_header(
-        &mir,
-        EmitCOptions {
-            overflow_mode,
-            bounds_mode,
-            opt_level,
-        },
-        header_mode,
-    );
+    let header = (!matches!(kind, ArtifactKind::Executable)).then(|| {
+        emit_native_header(
+            &mir,
+            EmitCOptions {
+                overflow_mode,
+                bounds_mode,
+                opt_level,
+            },
+            if kind == ArtifactKind::Dynamic {
+                NativeHeaderMode::Dynamic
+            } else {
+                NativeHeaderMode::StaticOrObject
+            },
+        )
+    });
     let exports = mir
         .functions
         .iter()
@@ -389,6 +396,13 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         .map(|function| function.name.clone())
         .collect::<Vec<_>>();
     let (primary, import_library) = match kind {
+        ArtifactKind::Executable => (
+            link_native_executable(&object)
+                .map_err(|error| error.to_string())?
+                .as_bytes()
+                .to_vec(),
+            None,
+        ),
         ArtifactKind::Object => (object.as_bytes().to_vec(), None),
         ArtifactKind::Static => (
             create_native_static_archive(&object)
@@ -405,11 +419,14 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
                 library.import_library().map(<[u8]>::to_vec),
             )
         }
-        ArtifactKind::Executable => unreachable!("executable rejected before lowering"),
     };
     let mut transaction = OutputTransaction::new();
-    transaction.stage(paths.primary.clone(), &primary)?;
-    if let Some(path) = &paths.header {
+    if kind == ArtifactKind::Executable {
+        transaction.stage_executable(paths.primary.clone(), &primary)?;
+    } else {
+        transaction.stage(paths.primary.clone(), &primary)?;
+    }
+    if let (Some(path), Some(header)) = (&paths.header, header.as_deref()) {
         transaction.stage(path.clone(), header.as_bytes())?;
     }
     if let (Some(path), Some(bytes)) = (&paths.import_library, import_library.as_deref()) {

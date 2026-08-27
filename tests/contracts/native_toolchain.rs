@@ -55,10 +55,90 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
     assert!(unix.contains("CMAKE_OSX_DEPLOYMENT_TARGET=11.0"));
     assert!(unix.contains("ckc_components=(core native orcjit nativecodegen lto)"));
     assert!(!unix.contains("--libnames all"));
+    for required in [
+        "native/runtime/common/runtime.c",
+        "native/runtime/common/format_int.c",
+        "native/runtime/common/format_float.c",
+        "native/runtime/vendor/ryu/d2s.c",
+        "native/runtime/linux/syscalls.S",
+        "runtime_sha256",
+    ] {
+        assert!(unix.contains(required), "Unix bootstrap missing {required}");
+    }
 
     let windows = read("scripts/bootstrap-llvm.ps1");
     assert!(windows.contains("core\", \"native\", \"orcjit\", \"nativecodegen\", \"lto"));
     assert!(!windows.contains("--libnames all"));
+    for required in [
+        "native/runtime/windows/process.c",
+        "native/runtime/platform/kernel32.def",
+        "runtime_platform_import_sha256",
+        "llvm-lib.exe",
+    ] {
+        assert!(
+            windows.contains(required),
+            "Windows bootstrap missing {required}"
+        );
+    }
+}
+
+#[test]
+fn native_runtime_should_be_source_owned_hashed_and_auditable() {
+    for path in [
+        "native/runtime/include/ckc_runtime.h",
+        "native/runtime/common/runtime.c",
+        "native/runtime/common/format_int.c",
+        "native/runtime/common/format_float.c",
+        "native/runtime/darwin/process.c",
+        "native/runtime/linux/syscalls.S",
+        "native/runtime/windows/process.c",
+        "native/runtime/platform/libSystem.tbd",
+        "native/runtime/platform/kernel32.def",
+        "native/runtime/provenance.toml",
+        "native/runtime/vendor/ryu/d2s.c",
+        "native/runtime/vendor/ryu/LICENSE-Apache2",
+        "native/runtime/vendor/ryu/LICENSE-Boost",
+        "scripts/audit-native-artifact.sh",
+        "scripts/audit-native-artifact.ps1",
+    ] {
+        assert!(repo_root().join(path).is_file(), "missing {path}");
+    }
+
+    let build = read("build.rs");
+    for required in [
+        "runtime_objects",
+        "runtime_sha256",
+        "CKC_RUNTIME_OBJECT_",
+        "runtime_platform_import_sha256",
+        "CKC_RUNTIME_PLATFORM_IMPORT",
+    ] {
+        assert!(build.contains(required), "build.rs missing {required}");
+    }
+
+    let runtime = read("native/runtime/common/runtime.c");
+    for code in 1..=6 {
+        assert!(runtime.contains(&format!("CKR000{code}:")));
+    }
+    let combined = [
+        runtime,
+        read("native/runtime/common/format_int.c"),
+        read("native/runtime/common/format_float.c"),
+    ]
+    .join("\n");
+    for forbidden in [
+        "malloc(",
+        "calloc(",
+        "realloc(",
+        "free(",
+        "printf(",
+        "snprintf(",
+        "setlocale(",
+    ] {
+        assert!(
+            !combined.contains(forbidden),
+            "native runtime must not use {forbidden}"
+        );
+    }
 }
 
 #[test]

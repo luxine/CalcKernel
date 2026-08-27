@@ -11,6 +11,7 @@ use super::{
     abi::{add_export_thunks, implementation_name},
     builder::{NativeBlock, NativeBuilder, NativeFunction, NativeType, NativeValue},
     context::NativeContext,
+    entry::add_entry_wrapper,
     error::{NativeError, NativeStage},
     ffi::{BridgeBinaryOp, BridgeCastOp, BridgeCompareOp, BridgeOverflowOp, BridgeUnaryOp},
     layout::LlvmStructLayout,
@@ -70,6 +71,27 @@ pub fn lower_native_llvm_module_with_options<'context>(
     mir: &MirModule,
     options: &NativeLoweringOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
+    lower_native_llvm_module_impl(context, target, mir, options, false)
+}
+
+/// Lowers one entry-bearing MIR module and adds the compiler-owned process
+/// `main` wrapper used only by standalone executable artifacts.
+pub fn lower_native_executable_module_with_options<'context>(
+    context: &'context NativeContext,
+    target: &NativeTarget,
+    mir: &MirModule,
+    options: &NativeLoweringOptions,
+) -> Result<NativeModule<'context>, NativeError> {
+    lower_native_llvm_module_impl(context, target, mir, options, true)
+}
+
+fn lower_native_llvm_module_impl<'context>(
+    context: &'context NativeContext,
+    target: &NativeTarget,
+    mir: &MirModule,
+    options: &NativeLoweringOptions,
+    executable: bool,
+) -> Result<NativeModule<'context>, NativeError> {
     if let Some(requested) = options.emit.target_triple.as_deref() {
         let actual = target.triple()?;
         if requested != actual {
@@ -94,8 +116,18 @@ pub fn lower_native_llvm_module_with_options<'context>(
             if status_abi && !matches!(function.return_type, MirType::Void) {
                 params.push(types.pointer);
             }
+            let implementation = if executable
+                && mir
+                    .entry
+                    .as_ref()
+                    .is_some_and(|entry| entry.function_name == function.name)
+            {
+                "__ck_user_main".to_string()
+            } else {
+                implementation_name(function)
+            };
             let handle = module.add_function(
-                &implementation_name(function),
+                &implementation,
                 if status_abi {
                     types.i32
                 } else {
@@ -132,6 +164,9 @@ pub fn lower_native_llvm_module_with_options<'context>(
         add_export_thunks(
             context, &module, target, mir, &types, &functions, status_abi,
         )?;
+        if executable {
+            add_entry_wrapper(context, &module, mir, &types, &functions, status_abi)?;
+        }
     }
     Ok(module)
 }

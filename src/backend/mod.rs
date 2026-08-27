@@ -13,8 +13,9 @@ use crate::{MirFunction, MirInstruction, MirPlace, MirPrimitiveTypeName, MirType
 
 #[cfg(feature = "native-toolchain")]
 pub use artifact::{
-    NativeArchive, NativeArtifactKind, NativeArtifactPaths, NativeDynamicLibrary, NativePlatform,
-    create_native_static_archive, link_native_dynamic_library,
+    NativeArchive, NativeArtifactKind, NativeArtifactPaths, NativeDynamicLibrary, NativeExecutable,
+    NativePlatform, create_native_static_archive, link_native_dynamic_library,
+    link_native_executable,
 };
 pub use c::{
     BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_module,
@@ -29,9 +30,9 @@ pub use llvm::{
     LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu, NativeError, NativeJit,
     NativeLoweringOptions, NativeModule, NativeObject, NativeOptimizationLevel, NativeStage,
     NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer, VerifiedNativeModule,
-    bridge_info, lower_native_llvm_module, lower_native_llvm_module_with_options,
-    test_error as native_bridge_test_error, test_invalid_input as native_bridge_test_invalid_input,
-    test_invalid_module_verification,
+    bridge_info, lower_native_executable_module_with_options, lower_native_llvm_module,
+    lower_native_llvm_module_with_options, test_error as native_bridge_test_error,
+    test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
 };
 #[cfg(feature = "native-toolchain")]
 pub use native_abi::{

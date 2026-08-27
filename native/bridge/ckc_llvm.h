@@ -333,6 +333,11 @@ int32_t ckc_lld_link_shared(CkcLlvmBytes object_path,
                             const CkcLlvmBytes *exports,
                             size_t export_count,
                             CkcLlvmError *error);
+int32_t ckc_lld_link_executable(const CkcLlvmBytes *object_paths,
+                                size_t object_count,
+                                CkcLlvmBytes output_path,
+                                CkcLlvmBytes platform_input_path,
+                                CkcLlvmError *error);
 int32_t ckc_llvm_jit_create(CkcLlvmJit **out, CkcLlvmError *error);
 uint32_t ckc_llvm_jit_object_layer(const CkcLlvmJit *jit);
 void ckc_llvm_jit_dispose(CkcLlvmJit *jit);

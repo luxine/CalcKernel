@@ -14,6 +14,20 @@ pub struct NativeDynamicLibrary {
     import_library: Option<Vec<u8>>,
 }
 
+/// Validated standalone executable bytes produced by embedded LLD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeExecutable {
+    bytes: Vec<u8>,
+}
+
+impl NativeExecutable {
+    /// Returns the validated platform executable bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 impl NativeDynamicLibrary {
     /// Returns the validated shared-library bytes.
     #[must_use]
@@ -71,6 +85,83 @@ pub fn link_native_dynamic_library(
         bytes,
         import_library,
     })
+}
+
+/// Links one verified entry-bearing program with the five embedded runtime
+/// objects and the single allowlisted platform import description.
+pub fn link_native_executable(object: &NativeObject) -> Result<NativeExecutable, NativeError> {
+    let staging = LinkStaging::create()?;
+    let platform = super::NativePlatform::host();
+    let object_extension = if platform == super::NativePlatform::Windows {
+        "obj"
+    } else {
+        "o"
+    };
+    let program_path = staging.path.join(format!("program.{object_extension}"));
+    fs::write(&program_path, object.as_bytes()).map_err(link_io_error)?;
+    let mut object_paths = vec![path_text(&program_path)?.to_string()];
+    for (index, bytes) in embedded_runtime_objects().iter().enumerate() {
+        let path = staging
+            .path
+            .join(format!("runtime-{index}.{object_extension}"));
+        fs::write(&path, bytes).map_err(link_io_error)?;
+        object_paths.push(path_text(&path)?.to_string());
+    }
+    let output_path = staging
+        .path
+        .join(if platform == super::NativePlatform::Windows {
+            "program.exe"
+        } else {
+            "program"
+        });
+    let platform_input_path = match platform {
+        super::NativePlatform::Darwin => {
+            let path = staging.path.join("libSystem.tbd");
+            fs::write(
+                &path,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/native/runtime/platform/libSystem.tbd"
+                )),
+            )
+            .map_err(link_io_error)?;
+            path
+        }
+        super::NativePlatform::Windows => {
+            let path = staging.path.join("kernel32.lib");
+            fs::write(&path, embedded_windows_import_library()).map_err(link_io_error)?;
+            path
+        }
+        super::NativePlatform::Linux => staging.path.join("unused"),
+    };
+    ffi::lld_link_executable(
+        &object_paths,
+        path_text(&output_path)?,
+        path_text(&platform_input_path)?,
+    )?;
+    Ok(NativeExecutable {
+        bytes: fs::read(output_path).map_err(link_io_error)?,
+    })
+}
+
+fn embedded_runtime_objects() -> [&'static [u8]; 5] {
+    [
+        include_bytes!(env!("CKC_RUNTIME_OBJECT_0")),
+        include_bytes!(env!("CKC_RUNTIME_OBJECT_1")),
+        include_bytes!(env!("CKC_RUNTIME_OBJECT_2")),
+        include_bytes!(env!("CKC_RUNTIME_OBJECT_3")),
+        include_bytes!(env!("CKC_RUNTIME_OBJECT_4")),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn embedded_windows_import_library() -> &'static [u8] {
+    include_bytes!(env!("CKC_RUNTIME_PLATFORM_IMPORT"))
+}
+
+#[cfg(not(target_os = "windows"))]
+const fn embedded_windows_import_library() -> &'static [u8] {
+    &[]
 }
 
 fn validate_exports(exports: &[String]) -> Result<(), NativeError> {

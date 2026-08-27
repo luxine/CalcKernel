@@ -133,6 +133,24 @@ impl OutputTransaction {
     }
 
     pub(super) fn stage(&mut self, destination: PathBuf, bytes: &[u8]) -> Result<(), String> {
+        self.stage_with_permissions(destination, bytes, false)
+    }
+
+    #[cfg(feature = "native-toolchain")]
+    pub(super) fn stage_executable(
+        &mut self,
+        destination: PathBuf,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        self.stage_with_permissions(destination, bytes, true)
+    }
+
+    fn stage_with_permissions(
+        &mut self,
+        destination: PathBuf,
+        bytes: &[u8],
+        executable: bool,
+    ) -> Result<(), String> {
         if self
             .entries
             .iter()
@@ -157,6 +175,10 @@ impl OutputTransaction {
                 .map_err(|error| format_open_file_error(&staged, error))
         })();
         if let Err(error) = write_result {
+            let _ = fs::remove_file(&staged);
+            return Err(error);
+        }
+        if let Err(error) = set_staged_executable(&staged, executable) {
             let _ = fs::remove_file(&staged);
             return Err(error);
         }
@@ -252,6 +274,19 @@ impl OutputTransaction {
     fn commit_for_test(mut self, failure: CommitFailure) -> Result<(), String> {
         self.commit_inner(failure)
     }
+}
+
+#[cfg(unix)]
+fn set_staged_executable(path: &Path, executable: bool) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if executable { 0o755 } else { 0o644 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|error| format_open_file_error(path, error))
+}
+
+#[cfg(not(unix))]
+fn set_staged_executable(_path: &Path, _executable: bool) -> Result<(), String> {
+    Ok(())
 }
 
 impl Drop for OutputTransaction {

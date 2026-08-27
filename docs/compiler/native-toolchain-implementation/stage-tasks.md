@@ -430,12 +430,12 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Create: `native/runtime/provenance.toml`
 - Create: `tests/native/runtime.rs`
 
-- [ ] Add failing byte-exact tests for `CKR0001` through `CKR0006`, exit codes
+- [x] Add failing byte-exact tests for `CKR0001` through `CKR0006`, exit codes
   240-245, stdout-failure fallback, no heap symbol imports, and LF on every OS.
-- [ ] Implement bounded stack writes and platform-specific process APIs only.
+- [x] Implement bounded stack writes and platform-specific process APIs only.
   Runtime allocation, locale, libc formatting, CK dynamic runtime, and process
   crash handlers are forbidden.
-- [ ] Compile runtime/entry objects during bootstrap, record their hashes, and
+- [x] Compile runtime/entry objects during bootstrap, record their hashes, and
   embed selected host bytes into `ckc` at Cargo build time.
 
 ### Task 5.2: Implement no-allocation numeric formatting
@@ -449,13 +449,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `native/runtime/provenance.toml`
 - Modify: `tests/native/runtime.rs`
 
-- [ ] Add failing tests for integer extrema, booleans, value functions without
+- [x] Add failing tests for integer extrema, booleans, value functions without
   newline, `print_newline`, finite f64 shortest round trip, halfway cases,
   subnormals, infinities, NaN, and preserved `-0.0`.
-- [ ] Vendor a permissively licensed, bounded-buffer shortest-round-trip
+- [x] Vendor a permissively licensed, bounded-buffer shortest-round-trip
   algorithm and retain its exact notice. Adapt it without heap, locale, static
   mutable state, or libc formatting.
-- [ ] Differentially compare every finite generated spelling by parsing it back
+- [x] Differentially compare every finite generated spelling by parsing it back
   to identical f64 bits, except the documented NaN payload/sign erasure.
 
 ### Task 5.3: Build entry wrappers and standalone executables
@@ -470,16 +470,16 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/native/artifacts.rs`
 - Create: `tests/native/executable.rs`
 
-- [ ] Add failing tests for void/i32 main, checked entry result pointers,
+- [x] Add failing tests for void/i32 main, checked entry result pointers,
   propagated runtime diagnostics, application exit values, no-main failure,
   print reachability, and no sibling header.
-- [ ] Generate a compiler-owned process entry wrapper. Link only the verified
+- [x] Generate a compiler-owned process entry wrapper. Link only the verified
   program object, embedded runtime/entry/helper objects, allowlisted exports,
   and embedded platform import metadata.
-- [ ] Linux uses its syscall boundary; Windows uses stable import definitions
+- [x] Linux uses its syscall boundary; Windows uses stable import definitions
   and `/noentry` only for DLLs; Darwin supplies the pinned minimal libSystem
   text stub, explicit platform version, and LLD ad-hoc signing.
-- [ ] Execute artifacts with an empty external-tool PATH and compare stdout,
+- [x] Execute artifacts with an empty external-tool PATH and compare stdout,
   stderr, and exit status against the runtime contract.
 
 ### Task 5.4: Prove zero-runtime dependencies
@@ -491,13 +491,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/native/artifacts.rs`
 - Modify: `native/runtime/provenance.toml`
 
-- [ ] Add failing audits for ELF `DT_NEEDED`, Mach-O load commands, PE imports,
+- [x] Add failing audits for ELF `DT_NEEDED`, Mach-O load commands, PE imports,
   exported symbols, forbidden LLVM/LLD/Clang/CK names, compiler helpers, and
   runtime object provenance/hash drift.
-- [ ] Allow only the platform loader/API dependencies explicitly listed by the
+- [x] Allow only the platform loader/API dependencies explicitly listed by the
   design. Link any required permissive compiler helper statically and include
   its notice.
-- [ ] Audit object, static, dynamic, and executable artifacts independently.
+- [x] Audit object, static, dynamic, and executable artifacts independently.
 
 ## Stage 6 — ORC execution, parent/child isolation, and cache
 

@@ -11,6 +11,7 @@ fn main() {
     println!("cargo::rerun-if-changed=native/llvm/manifest.toml");
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.cpp");
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.h");
+    println!("cargo::rerun-if-changed=native/runtime");
 
     let target = env::var("TARGET").expect("Cargo always defines TARGET");
     println!("cargo::rustc-env=CKC_BUILD_TARGET={target}");
@@ -90,6 +91,83 @@ fn configure_native_toolchain(target: &str) {
     }
     for library in manifest_array(&text, "system_libraries") {
         println!("cargo::rustc-link-lib={library}");
+    }
+
+    let runtime_objects = manifest_array(&text, "runtime_objects");
+    let runtime_hashes = manifest_array(&text, "runtime_sha256");
+    assert_eq!(
+        runtime_objects.len(),
+        5,
+        "native runtime manifest must contain exactly five objects"
+    );
+    assert_eq!(
+        runtime_hashes.len(),
+        runtime_objects.len(),
+        "native runtime object/hash list length mismatch"
+    );
+    let expected_suffix = if target.ends_with("-msvc") {
+        ".obj"
+    } else {
+        ".o"
+    };
+    let runtime_dir = prefix.join("share/ckc/runtime");
+    for (index, (name, expected_hash)) in runtime_objects
+        .iter()
+        .zip(runtime_hashes.iter())
+        .enumerate()
+    {
+        assert!(
+            name.ends_with(expected_suffix) && !name.contains('/') && !name.contains('\\'),
+            "invalid native runtime object name: {name}"
+        );
+        let path = runtime_dir.join(name);
+        let bytes = fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read native runtime object {}: {error}",
+                path.display()
+            )
+        });
+        let actual_hash = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            actual_hash,
+            *expected_hash,
+            "native runtime object hash mismatch for {}",
+            path.display()
+        );
+        println!(
+            "cargo::rustc-env=CKC_RUNTIME_OBJECT_{index}={}",
+            path.display()
+        );
+        println!("cargo::rustc-env=CKC_RUNTIME_SHA256_{index}={actual_hash}");
+    }
+    if target.ends_with("-msvc") {
+        let name = manifest_scalar(&text, "runtime_platform_import")
+            .expect("native Windows runtime manifest is missing runtime_platform_import");
+        assert!(
+            name.ends_with(".lib") && !name.contains('/') && !name.contains('\\'),
+            "invalid native runtime platform import name: {name}"
+        );
+        let expected_hash = manifest_scalar(&text, "runtime_platform_import_sha256")
+            .expect("native Windows runtime manifest is missing runtime_platform_import_sha256");
+        let path = runtime_dir.join(name);
+        let bytes = fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read native runtime platform import {}: {error}",
+                path.display()
+            )
+        });
+        let actual_hash = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            actual_hash,
+            expected_hash,
+            "native runtime platform import hash mismatch for {}",
+            path.display()
+        );
+        println!(
+            "cargo::rustc-env=CKC_RUNTIME_PLATFORM_IMPORT={}",
+            path.display()
+        );
+        println!("cargo::rustc-env=CKC_RUNTIME_PLATFORM_IMPORT_SHA256={actual_hash}");
     }
 }
 

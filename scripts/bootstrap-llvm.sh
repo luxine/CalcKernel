@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly CKC_LLVM_VERSION="22.1.8"
 readonly CKC_LLVM_SHA256="922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
+readonly ckc_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   echo "usage: $0 --archive <llvm-project.tar.xz> --prefix <install-dir> --target <rust-target> [--build-dir <dir>] [--profile release|oracle] [--jobs <n>]" >&2
@@ -155,6 +156,45 @@ for ckc_flag in $("$ckc_llvm_config" --link-static --system-libs "${ckc_componen
   esac
 done
 
+ckc_runtime_dir="$ckc_prefix/share/ckc/runtime"
+mkdir -p "$ckc_runtime_dir"
+ckc_runtime_cc="${CC:-cc}"
+ckc_runtime_flags=(
+  -std=c11 -O3 -DNDEBUG -DCKC_RYU_NO_MALLOC=1 -fPIC
+  -ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables
+  -fno-unwind-tables -fvisibility=hidden -ffunction-sections -fdata-sections
+  -Wall -Wextra -Werror
+  -I"$ckc_repo_root/native/runtime/include"
+  -I"$ckc_repo_root/native/runtime/vendor"
+)
+if [[ "$ckc_target" == *-apple-darwin ]]; then
+  ckc_runtime_flags+=(-mmacosx-version-min=11.0)
+fi
+"$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
+  "$ckc_repo_root/native/runtime/common/runtime.c" -o "$ckc_runtime_dir/runtime.o"
+"$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
+  "$ckc_repo_root/native/runtime/common/format_int.c" -o "$ckc_runtime_dir/format_int.o"
+"$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
+  "$ckc_repo_root/native/runtime/common/format_float.c" -o "$ckc_runtime_dir/format_float.o"
+"$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
+  "$ckc_repo_root/native/runtime/vendor/ryu/d2s.c" -o "$ckc_runtime_dir/ryu.o"
+if [[ "$ckc_target" == *-apple-darwin ]]; then
+  "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
+    "$ckc_repo_root/native/runtime/darwin/process.c" -o "$ckc_runtime_dir/platform.o"
+else
+  "$ckc_runtime_cc" -O3 -fPIC -c \
+    "$ckc_repo_root/native/runtime/linux/syscalls.S" -o "$ckc_runtime_dir/platform.o"
+fi
+ckc_runtime_objects=(runtime.o format_int.o format_float.o ryu.o platform.o)
+ckc_runtime_hashes=()
+for ckc_runtime_object in "${ckc_runtime_objects[@]}"; do
+  if command -v sha256sum >/dev/null 2>&1; then
+    ckc_runtime_hashes+=("$(sha256sum "$ckc_runtime_dir/$ckc_runtime_object" | awk '{print $1}')")
+  else
+    ckc_runtime_hashes+=("$(shasum -a 256 "$ckc_runtime_dir/$ckc_runtime_object" | awk '{print $1}')")
+  fi
+done
+
 toml_array() {
   local ckc_first=true
   printf '['
@@ -184,6 +224,10 @@ mkdir -p "$ckc_prefix/share/ckc"
   toml_array "${ckc_static_libs[@]}"
   printf '\nsystem_libraries = '
   toml_array "${ckc_system_libs[@]}"
+  printf '\nruntime_objects = '
+  toml_array "${ckc_runtime_objects[@]}"
+  printf '\nruntime_sha256 = '
+  toml_array "${ckc_runtime_hashes[@]}"
   printf '\n'
 } > "$ckc_prefix/share/ckc/llvm-build.toml"
 

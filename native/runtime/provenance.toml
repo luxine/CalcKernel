@@ -1,0 +1,25 @@
+schema = 1
+runtime_abi = 1
+heap = false
+locale = false
+libc_formatting = false
+
+[[vendor]]
+name = "Ryu"
+upstream = "https://github.com/ulfjack/ryu"
+commit = "59661c3f883dfd39cef6dc8eaf2fcbaae53597e8"
+license_files = ["vendor/ryu/LICENSE-Apache2", "vendor/ryu/LICENSE-Boost"]
+files = ["vendor/ryu/d2s.c", "vendor/ryu/common.h", "vendor/ryu/digit_table.h", "vendor/ryu/d2s_intrinsics.h", "vendor/ryu/d2s_full_table.h", "vendor/ryu/ryu.h"]
+adaptations = ["disable allocation convenience API with CKC_RYU_NO_MALLOC", "normalize Ryu scientific output to the shortest CK fixed/scientific spelling"]
+
+[platform.darwin]
+imports = ["/usr/lib/libSystem.B.dylib:fcntl", "/usr/lib/libSystem.B.dylib:signal", "/usr/lib/libSystem.B.dylib:write", "/usr/lib/libSystem.B.dylib:_exit"]
+
+[platform.linux]
+imports = []
+syscalls = ["rt_sigaction", "write", "exit"]
+
+[platform.windows]
+imports = ["kernel32.dll:GetStdHandle", "kernel32.dll:WriteFile", "kernel32.dll:ExitProcess"]
+import_definition = "platform/kernel32.def"
+compiler_helpers = ["_fltused"]

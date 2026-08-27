@@ -278,11 +278,11 @@ GitHub Actions 及平台原生验证工具。
 `common/runtime.c`、`linux/syscalls.S`、`darwin/process.c`、
 `windows/process.c`、`provenance.toml` 与 `tests/native/runtime.rs`。
 
-- [ ] 添加 `CKR0001` 至 `CKR0006` byte-exact 文本、240-245 exit code、stdout failure
+- [x] 添加 `CKR0001` 至 `CKR0006` byte-exact 文本、240-245 exit code、stdout failure
   fallback、无 heap import 与全平台 LF 红灯测试。
-- [ ] 只实现 bounded stack write 与平台 process API；禁止 allocation、locale、libc
+- [x] 只实现 bounded stack write 与平台 process API；禁止 allocation、locale、libc
   formatting、CK dynamic runtime 和 process crash handler。
-- [ ] bootstrap 时编译 runtime/entry object、记录 hash，并在 Cargo 构建时将宿主 bytes
+- [x] bootstrap 时编译 runtime/entry object、记录 hash，并在 Cargo 构建时将宿主 bytes
   嵌入 `ckc`。
 
 ### 任务 5.2：实现无 allocation numeric formatting
@@ -291,11 +291,11 @@ GitHub Actions 及平台原生验证工具。
 `native/runtime/vendor/` 放置 vendored algorithm 与 license；修改 provenance 与
 runtime tests。
 
-- [ ] 测试 integer extrema、bool、无 newline value function、`print_newline`、finite
+- [x] 测试 integer extrema、bool、无 newline value function、`print_newline`、finite
   f64 shortest-round-trip、halfway、subnormal、infinity、NaN 与保留 `-0.0`。
-- [ ] vendor permissive licensed 的 bounded-buffer shortest-round-trip algorithm，
+- [x] vendor permissive licensed 的 bounded-buffer shortest-round-trip algorithm，
   保留原 notice，并改造成不使用 heap、locale、static mutable state 或 libc formatting。
-- [ ] 每个 finite spelling parse-back 后必须得到相同 f64 bits，只有文档规定的 NaN
+- [x] 每个 finite spelling parse-back 后必须得到相同 f64 bits，只有文档规定的 NaN
   payload/sign 丢失例外。
 
 ### 任务 5.3：构建 entry wrapper 与 standalone executable
@@ -304,14 +304,14 @@ runtime tests。
 在 `native/runtime/platform/` 添加 link input；修改 artifact tests 并新建
 `tests/native/executable.rs`。
 
-- [ ] 添加 void/i32 main、checked result pointer、propagated runtime diagnostic、
+- [x] 添加 void/i32 main、checked result pointer、propagated runtime diagnostic、
   application exit、无 main、print reachability 与无 header 红灯测试。
-- [ ] 生成 compiler-owned process entry wrapper，只链接 verified program object、
+- [x] 生成 compiler-owned process entry wrapper，只链接 verified program object、
   embedded runtime/entry/helper、allowlisted export 与 embedded platform import metadata。
-- [ ] Linux 使用 syscall boundary；Windows 使用 stable import definition，且仅 DLL
+- [x] Linux 使用 syscall boundary；Windows 使用 stable import definition，且仅 DLL
   用 `/noentry`；Darwin 使用固定最小 libSystem text stub、显式 platform version 与
   LLD ad-hoc signing。
-- [ ] 在空外部工具 PATH 下执行 artifact，对比 runtime contract 的 stdout、stderr
+- [x] 在空外部工具 PATH 下执行 artifact，对比 runtime contract 的 stdout、stderr
   与 exit status。
 
 ### 任务 5.4：证明零运行时依赖
@@ -319,11 +319,11 @@ runtime tests。
 **文件：**新建 `scripts/audit-native-artifact.sh`、`.ps1`；修改 artifact tests 与
 runtime provenance。
 
-- [ ] 审计 ELF `DT_NEEDED`、Mach-O load command、PE import、exported symbol、禁止的
+- [x] 审计 ELF `DT_NEEDED`、Mach-O load command、PE import、exported symbol、禁止的
   LLVM/LLD/Clang/CK 名称、compiler helper 与 runtime hash drift，先观察红灯。
-- [ ] 只允许设计列出的 platform loader/API dependency；所需 permissive compiler
+- [x] 只允许设计列出的 platform loader/API dependency；所需 permissive compiler
   helper 静态链接并加入 notice。
-- [ ] 分别审计 object、static、dynamic 与 executable。
+- [x] 分别审计 object、static、dynamic 与 executable。
 
 ## 阶段 6 — ORC 执行、parent/child 隔离与 cache
 

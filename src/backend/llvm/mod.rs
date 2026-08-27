@@ -5,6 +5,8 @@ mod builder;
 #[cfg(feature = "native-toolchain")]
 mod context;
 #[cfg(feature = "native-toolchain")]
+mod entry;
+#[cfg(feature = "native-toolchain")]
 mod error;
 #[cfg(feature = "native-toolchain")]
 pub(super) mod ffi;
@@ -40,7 +42,8 @@ pub use ffi::{
 pub use jit::{NativeJit, OrcObjectLayer};
 #[cfg(feature = "native-toolchain")]
 pub use lower::{
-    NativeLoweringOptions, lower_native_llvm_module, lower_native_llvm_module_with_options,
+    NativeLoweringOptions, lower_native_executable_module_with_options, lower_native_llvm_module,
+    lower_native_llvm_module_with_options,
 };
 #[cfg(feature = "native-toolchain")]
 pub use module::NativeModule;

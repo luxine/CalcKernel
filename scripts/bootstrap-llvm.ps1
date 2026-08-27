@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $llvmVersion = "22.1.8"
 $llvmSha256 = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
+$repoRoot = Split-Path -Parent $PSScriptRoot
 
 if (-not (Test-Path -LiteralPath $Archive -PathType Leaf)) {
     throw "LLVM source archive does not exist: $Archive"
@@ -85,6 +86,43 @@ $systemLibraries = ((& $llvmConfig --link-static --system-libs @components) -spl
     Where-Object { $_ -ne "" } |
     ForEach-Object { $_ -replace '^[-/]DEFAULTLIB:', '' -replace '\.lib$', '' }
 
+$runtimeDir = Join-Path $Prefix "share/ckc/runtime"
+New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
+$runtimeInclude = Join-Path $repoRoot "native/runtime/include"
+$runtimeVendor = Join-Path $repoRoot "native/runtime/vendor"
+$runtimeSources = @(
+    @("runtime.obj", (Join-Path $repoRoot "native/runtime/common/runtime.c")),
+    @("format_int.obj", (Join-Path $repoRoot "native/runtime/common/format_int.c")),
+    @("format_float.obj", (Join-Path $repoRoot "native/runtime/common/format_float.c")),
+    @("ryu.obj", (Join-Path $repoRoot "native/runtime/vendor/ryu/d2s.c")),
+    @("platform.obj", (Join-Path $repoRoot "native/runtime/windows/process.c"))
+)
+$runtimeObjects = @()
+foreach ($item in $runtimeSources) {
+    $name = $item[0]
+    $source = $item[1]
+    $destination = Join-Path $runtimeDir $name
+    & cl.exe /nologo /c /TC /O2 /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG /DCKC_RYU_NO_MALLOC=1 "/I$runtimeInclude" "/I$runtimeVendor" "/Fo$destination" $source
+    if ($LASTEXITCODE -ne 0) { throw "native runtime compilation failed: $source" }
+    $runtimeObjects += $name
+}
+$runtimeHashes = $runtimeObjects | ForEach-Object {
+    (Get-FileHash -LiteralPath (Join-Path $runtimeDir $_) -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$runtimeImport = "kernel32.lib"
+$runtimeImportPath = Join-Path $runtimeDir $runtimeImport
+$llvmLib = Join-Path $Prefix "bin/llvm-lib.exe"
+if (-not (Test-Path -LiteralPath $llvmLib -PathType Leaf)) {
+    throw "bootstrap did not install llvm-lib.exe for runtime import metadata"
+}
+$machine = if ($Target.StartsWith("aarch64")) { "arm64" } else { "x64" }
+$definition = Join-Path $repoRoot "native/runtime/platform/kernel32.def"
+& $llvmLib "/def:$definition" "/machine:$machine" "/out:$runtimeImportPath"
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeImportPath -PathType Leaf)) {
+    throw "native runtime import-library generation failed"
+}
+$runtimeImportHash = (Get-FileHash -LiteralPath $runtimeImportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
 $manifestDir = Join-Path $Prefix "share/ckc"
 New-Item -ItemType Directory -Path $manifestDir | Out-Null
 function Format-TomlArray([string[]]$Values) {
@@ -99,7 +137,11 @@ $manifest = @(
     "static_only = true",
     "components = $(Format-TomlArray $components)",
     "static_libraries = $(Format-TomlArray $staticLibraries)",
-    "system_libraries = $(Format-TomlArray $systemLibraries)"
+    "system_libraries = $(Format-TomlArray $systemLibraries)",
+    "runtime_objects = $(Format-TomlArray $runtimeObjects)",
+    "runtime_sha256 = $(Format-TomlArray $runtimeHashes)",
+    "runtime_platform_import = `"$runtimeImport`"",
+    "runtime_platform_import_sha256 = `"$runtimeImportHash`""
 ) -join "`n"
 Set-Content -LiteralPath (Join-Path $manifestDir "llvm-build.toml") -Value $manifest -Encoding utf8NoBOM
 

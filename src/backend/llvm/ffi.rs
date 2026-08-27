@@ -549,6 +549,13 @@ unsafe extern "C" {
         export_count: usize,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_lld_link_executable(
+        object_paths: *const CkcLlvmBytes,
+        object_count: usize,
+        output_path: CkcLlvmBytes,
+        platform_input_path: CkcLlvmBytes,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_jit_create(out: *mut *mut CkcLlvmJit, error: *mut CkcLlvmError) -> i32;
     fn ckc_llvm_jit_object_layer(jit: *const CkcLlvmJit) -> u32;
     fn ckc_llvm_jit_dispose(jit: *mut CkcLlvmJit);
@@ -1333,6 +1340,26 @@ pub(in crate::backend) fn lld_link_shared(
             CkcLlvmBytes::new(import_library_path),
             export_bytes.as_ptr(),
             export_bytes.len(),
+            error,
+        )
+    })
+}
+
+pub(in crate::backend) fn lld_link_executable(
+    object_paths: &[String],
+    output_path: &str,
+    platform_input_path: &str,
+) -> Result<(), NativeError> {
+    let object_path_bytes = object_paths
+        .iter()
+        .map(|path| CkcLlvmBytes::new(path))
+        .collect::<Vec<_>>();
+    status_call(NativeStage::Link, |error| unsafe {
+        ckc_lld_link_executable(
+            object_path_bytes.as_ptr(),
+            object_path_bytes.len(),
+            CkcLlvmBytes::new(output_path),
+            CkcLlvmBytes::new(platform_input_path),
             error,
         )
     })
