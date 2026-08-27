@@ -3,7 +3,8 @@ use std::{marker::PhantomData, ptr::NonNull, rc::Rc};
 use super::{
     context::NativeContext,
     error::NativeError,
-    ffi::{self, CkcLlvmModule, CkcLlvmObject},
+    ffi::{self, CkcLlvmModule},
+    target::NativeTarget,
 };
 
 /// Unique owner of one structural LLVM module tied to its context.
@@ -30,6 +31,18 @@ impl<'context> NativeModule<'context> {
     pub(super) fn handle(&mut self) -> NonNull<CkcLlvmModule> {
         self.handle
     }
+
+    pub(super) const fn shared_handle(&self) -> NonNull<CkcLlvmModule> {
+        self.handle
+    }
+
+    pub(super) fn configure(
+        &mut self,
+        target: &NativeTarget,
+        source_file_name: &str,
+    ) -> Result<(), NativeError> {
+        ffi::module_configure(self.handle, target.handle(), source_file_name)
+    }
 }
 
 impl Drop for NativeModule<'_> {
@@ -37,42 +50,5 @@ impl Drop for NativeModule<'_> {
         // SAFETY: `NativeModule` is the unique owner and its context lifetime
         // is still active while the bridge destroys the module.
         unsafe { ffi::module_dispose(self.handle) };
-    }
-}
-
-/// Unique owner of verified target-machine object bytes.
-#[derive(Debug)]
-pub struct NativeObject {
-    handle: NonNull<CkcLlvmObject>,
-    len: usize,
-    not_send_or_sync: PhantomData<Rc<()>>,
-}
-
-impl NativeObject {
-    pub(super) fn from_handle(handle: NonNull<CkcLlvmObject>) -> Self {
-        Self {
-            len: ffi::object_size(handle),
-            handle,
-            not_send_or_sync: PhantomData,
-        }
-    }
-
-    /// Returns the emitted object size in bytes.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Returns whether this object contains no bytes.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
-impl Drop for NativeObject {
-    fn drop(&mut self) {
-        // SAFETY: `NativeObject` is the unique owner and calls dispose once.
-        unsafe { ffi::object_dispose(self.handle) };
     }
 }

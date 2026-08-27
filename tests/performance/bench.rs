@@ -53,7 +53,7 @@ fn benchmark_harness_should_cover_compiler_stages_and_backends() {
         "emit_wat_module_with_options",
         "emit_wasm_module_with_options",
         "EmitWasmOptions { opt_level: 3 }",
-        "emit_llvm_module",
+        "lower_native_llvm_module",
         "run_mir_pass_pipeline",
         "build/perf/latest.summary.json",
         "build/perf/latest.summary.md",

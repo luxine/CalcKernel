@@ -1,6 +1,6 @@
 use calckernel::{
     BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, OverflowMode, SourceFile, check,
-    emit_c_header, emit_c_module, emit_c_module_with_header, emit_llvm_module, emit_wasm_module,
+    emit_c_header, emit_c_module, emit_c_module_with_header, emit_wasm_module,
     emit_wasm_module_with_options, emit_wat_module, emit_wat_module_with_options, lower_to_mir,
 };
 
@@ -41,6 +41,21 @@ fn backend_public_surface_and_defaults_should_remain_stable() {
     );
     assert_eq!(&wasm[..4], b"\0asm");
 
-    let llvm = emit_llvm_module(&mir, &EmitLlvmOptions::default());
-    assert!(llvm.contains("define i64 @identity"));
+    #[cfg(feature = "native-toolchain")]
+    {
+        let context = calckernel::NativeContext::new().expect("native context");
+        let target = calckernel::NativeTarget::host().expect("native target");
+        let llvm = calckernel::lower_native_llvm_module(
+            &context,
+            &target,
+            &mir,
+            &EmitLlvmOptions::default(),
+        )
+        .expect("structural lowering")
+        .verify()
+        .expect("verified structural LLVM")
+        .to_ir_string()
+        .expect("canonical LLVM print");
+        assert!(llvm.contains("define i64 @identity"));
+    }
 }

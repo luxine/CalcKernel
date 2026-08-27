@@ -7,11 +7,16 @@ use std::{
 };
 
 use calckernel::{
-    EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode, MirPassContext,
+    EmitCOptions, EmitWasmOptions, MirModule, MirPassBoundsMode, MirPassContext,
     MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile,
-    build_mir_optimization_pipeline, check, emit_c_module, emit_llvm_module,
-    emit_wasm_module_with_options, emit_wat_module_with_options, format_diagnostics, lower_to_mir,
-    print_mir_module, run_mir_pass_pipeline,
+    build_mir_optimization_pipeline, check, emit_c_module, emit_wasm_module_with_options,
+    emit_wat_module_with_options, format_diagnostics, lower_to_mir, print_mir_module,
+    run_mir_pass_pipeline,
+};
+
+#[cfg(feature = "native-toolchain")]
+use calckernel::{
+    EmitLlvmOptions, NativeContext, NativeOptimizationLevel, NativeTarget, lower_native_llvm_module,
 };
 
 const USAGE: &str = "cargo bench --bench ckc_perf -- [--quick] [--case <name>] [--task <name>] [--iterations <n>] [--warmup <n>] [--out-dir <path>]\n\nDefault outputs: build/perf/latest.summary.json and build/perf/latest.summary.md";
@@ -363,16 +368,33 @@ fn run_emit_wasm_o3(input: &CaseInput) -> Result<usize, String> {
     Ok(emit_wasm_module_with_options(&module, EmitWasmOptions { opt_level: 3 })?.len())
 }
 
+#[cfg(feature = "native-toolchain")]
 fn run_emit_llvm_o3(input: &CaseInput) -> Result<usize, String> {
     let module = optimized_module(input, 3, MirPassTargetBackend::Llvm)?;
-    Ok(emit_llvm_module(
+    let context = NativeContext::new().map_err(|error| error.to_string())?;
+    let target = NativeTarget::host().map_err(|error| error.to_string())?;
+    let text = lower_native_llvm_module(
+        &context,
+        &target,
         &module,
         &EmitLlvmOptions {
             source_file_name: Some(input.path.display().to_string()),
             target_triple: None,
         },
     )
-    .len())
+    .map_err(|error| error.to_string())?
+    .verify()
+    .map_err(|error| error.to_string())?
+    .optimize(&target, NativeOptimizationLevel::O3)
+    .map_err(|error| error.to_string())?
+    .to_ir_string()
+    .map_err(|error| error.to_string())?;
+    Ok(text.len())
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+fn run_emit_llvm_o3(_input: &CaseInput) -> Result<usize, String> {
+    Err("emit-llvm-o3 requires --features native-toolchain".to_string())
 }
 
 fn checked_program(input: &CaseInput) -> Result<calckernel::CheckedProgram, String> {

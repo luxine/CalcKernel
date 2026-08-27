@@ -12,13 +12,15 @@ pub use c::{
 };
 pub use llvm::{
     EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
-    emit_llvm_module,
 };
 #[cfg(feature = "native-toolchain")]
 pub use llvm::{
-    LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeError, NativeJit, NativeModule,
-    NativeObject, NativeStage, NativeTarget, NativeToolchain, OrcObjectLayer, bridge_info,
+    LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu, NativeError, NativeJit,
+    NativeLoweringOptions, NativeModule, NativeObject, NativeOptimizationLevel, NativeStage,
+    NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer, VerifiedNativeModule,
+    bridge_info, lower_native_llvm_module, lower_native_llvm_module_with_options,
     test_error as native_bridge_test_error, test_invalid_input as native_bridge_test_invalid_input,
+    test_invalid_module_verification,
 };
 pub use wasm::{
     EmitWasmOptions, emit_wasm_module, emit_wasm_module_with_options, emit_wat_module,

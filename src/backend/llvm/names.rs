@@ -1,39 +1,6 @@
-use std::{collections::HashSet, path::Path};
+use std::path::Path;
 
-use crate::*;
-
-use super::layout::LlvmStructLayout;
-
-#[derive(Debug)]
-pub(super) struct LlvmFunctionContext<'layout> {
-    pub(in crate::backend) register_counter: usize,
-    pub(in crate::backend) used_value_names: HashSet<String>,
-    pub(in crate::backend) layout: &'layout LlvmStructLayout,
-}
-
-pub(super) fn llvm_next_register(context: &mut LlvmFunctionContext<'_>) -> String {
-    loop {
-        let name = format!("v{}", context.register_counter);
-        context.register_counter += 1;
-        if context.used_value_names.insert(name.clone()) {
-            return format!("%{name}");
-        }
-    }
-}
-
-pub(super) fn llvm_address_for_value(value: &MirValue) -> String {
-    match value {
-        MirValue::Param { name, .. } | MirValue::Local { name, .. } => llvm_address_name(name),
-        MirValue::Temp { name, .. } => llvm_address_name(&llvm_storage_name_for_temp(name)),
-        MirValue::ConstInt { .. } | MirValue::ConstFloat { .. } | MirValue::ConstBool { .. } => {
-            panic!("LLVM constants do not have storage")
-        }
-    }
-}
-
-pub(super) fn llvm_address_name(name: &str) -> String {
-    format!("%{name}.addr")
-}
+use crate::MirFunction;
 
 pub(super) fn llvm_source_file_name(source_file_name: Option<&str>) -> String {
     source_file_name
@@ -41,10 +8,6 @@ pub(super) fn llvm_source_file_name(source_file_name: Option<&str>) -> String {
         .and_then(|file_name| file_name.to_str())
         .unwrap_or("input.ck")
         .to_string()
-}
-
-pub(super) fn llvm_escape_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 pub(super) fn llvm_block_label(function: &MirFunction, label: &str) -> String {

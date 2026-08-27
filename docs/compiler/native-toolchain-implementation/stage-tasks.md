@@ -227,16 +227,16 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/backend/llvm.rs`
 - Create: `tests/native/llvm_ir.rs`
 
-- [ ] Migrate one scalar fixture at a time to failing structural tests that
+- [x] Migrate one scalar fixture at a time to failing structural tests that
   inspect the verified module printed by LLVM. Cover constants, arithmetic,
   comparisons, branches, loops, phi values, calls, void, structs, pointers,
   slices, index, and sub-slice.
-- [ ] Build LLVM values and blocks through safe wrappers; never construct IR by
+- [x] Build LLVM values and blocks through safe wrappers; never construct IR by
   interpolating strings. Generate target triple and DataLayout from the host
   TargetMachine before laying out types.
-- [ ] Make `emit-llvm` print this module and reject a normalized non-host target
+- [x] Make `emit-llvm` print this module and reject a normalized non-host target
   before opening its destination.
-- [ ] Delete obsolete textual emission helpers only after every migrated
+- [x] Delete obsolete textual emission helpers only after every migrated
   backend test passes.
 
 ### Task 3.2: Verify, optimize, and code-generate through typed states
@@ -250,16 +250,16 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/native/llvm_ir.rs`
 - Create: `tests/native/object.rs`
 
-- [ ] Add failing tests for verifier rejection, O0-O3 pipeline selection,
+- [x] Add failing tests for verifier rejection, O0-O3 pipeline selection,
   strict floating-point flags, baseline/native CPU attributes, object magic,
   and host-target rejection.
-- [ ] Make construction return an unverified module, verification return
+- [x] Make construction return an unverified module, verification return
   `VerifiedModule`, PassBuilder consume it and return `OptimizedModule` only
   after a second verification, and TargetMachine consume that state for object
   bytes.
-- [ ] Use the same optimization selection for MIR and LLVM. O3 must not set
+- [x] Use the same optimization selection for MIR and LLVM. O3 must not set
   fast-math or contract strict operations.
-- [ ] Parse emitted object bytes through LLVM before exposing `NativeObject`;
+- [x] Parse emitted object bytes through LLVM before exposing `NativeObject`;
   preserve compiler stage in all errors.
 
 ### Task 3.3: Implement unchecked and checked lowering
@@ -271,13 +271,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `src/backend/llvm/module.rs`
 - Modify: `tests/native/llvm_ir.rs`
 
-- [ ] Add failing tests for all four overflow/bounds combinations, including
+- [x] Add failing tests for all four overflow/bounds combinations, including
   arithmetic overflow intrinsics, signed division/modulo zero and minimum/-1,
   slice index and `start <= end <= len`, first-error ordering, void results,
   and checked result pointers.
-- [ ] Lower checked control flow to explicit `CK_Status` propagation without
+- [x] Lower checked control flow to explicit `CK_Status` propagation without
   traps. Keep unchecked code guard-free according to its existing semantics.
-- [ ] Compare representative checked modules with pinned structural fixtures
+- [x] Compare representative checked modules with pinned structural fixtures
   and Clang-derived operation semantics where execution is not required. Defer
   executable value/status differential tests to the stage 4 library harness
   and stages 5-6 entry harnesses, which have a valid in-process execution path.
@@ -294,13 +294,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/cli/commands.rs`
 - Modify: `tests/cli/oracle_portability.rs`
 
-- [ ] Add failing tests for O3 defaults on `run`/`build`, O0 defaults on
+- [x] Add failing tests for O3 defaults on `run`/`build`, O0 defaults on
   inspection commands, `-O0` through `-O3`, checked-mode acceptance, CPU
   policy, host target normalization, and absence of partial outputs on errors.
-- [ ] Parse command-specific options rather than allowing unknown flags or
+- [x] Parse command-specific options rather than allowing unknown flags or
   irrelevant values to leak between commands. Model artifact kind and CPU as
   enums.
-- [ ] Remove every product target probe and Clang invocation. Keep Clang command
+- [x] Remove every product target probe and Clang invocation. Keep Clang command
   helpers under `tests/support/oracle.rs` only.
 
 ## Stage 4 — Native C ABI and library artifacts

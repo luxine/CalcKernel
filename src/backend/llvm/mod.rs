@@ -1,23 +1,33 @@
 #[cfg(feature = "native-toolchain")]
+mod builder;
+#[cfg(feature = "native-toolchain")]
 mod context;
-mod emit;
 #[cfg(feature = "native-toolchain")]
 mod error;
 #[cfg(feature = "native-toolchain")]
 mod ffi;
 #[cfg(feature = "native-toolchain")]
 mod jit;
+#[cfg(feature = "native-toolchain")]
 mod layout;
 #[cfg(feature = "native-toolchain")]
+mod lower;
+#[cfg(feature = "native-toolchain")]
 mod module;
+#[cfg(feature = "native-toolchain")]
 mod names;
 mod notices;
 #[cfg(feature = "native-toolchain")]
+mod object;
+#[cfg(feature = "native-toolchain")]
+mod passes;
+#[cfg(feature = "native-toolchain")]
 mod target;
+#[cfg(feature = "native-toolchain")]
+mod verify;
 
 #[cfg(feature = "native-toolchain")]
 pub use context::{NativeContext, NativeToolchain};
-pub use emit::emit_llvm_module;
 #[cfg(feature = "native-toolchain")]
 pub use error::{NativeError, NativeStage};
 #[cfg(feature = "native-toolchain")]
@@ -27,10 +37,20 @@ pub use ffi::{
 #[cfg(feature = "native-toolchain")]
 pub use jit::{NativeJit, OrcObjectLayer};
 #[cfg(feature = "native-toolchain")]
-pub use module::{NativeModule, NativeObject};
+pub use lower::{
+    NativeLoweringOptions, lower_native_llvm_module, lower_native_llvm_module_with_options,
+};
+#[cfg(feature = "native-toolchain")]
+pub use module::NativeModule;
 pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices};
 #[cfg(feature = "native-toolchain")]
-pub use target::NativeTarget;
+pub use object::{NativeObject, OptimizedNativeModule};
+#[cfg(feature = "native-toolchain")]
+pub use passes::NativeOptimizationLevel;
+#[cfg(feature = "native-toolchain")]
+pub use target::{NativeCpu, NativeTarget};
+#[cfg(feature = "native-toolchain")]
+pub use verify::{VerifiedNativeModule, test_invalid_module_verification};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EmitLlvmOptions {

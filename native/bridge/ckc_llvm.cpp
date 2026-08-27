@@ -4,6 +4,8 @@
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -16,15 +18,28 @@
 #include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/LoopAnalysisManager.h>
+#include <llvm/Analysis/ModuleSummaryAnalysis.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Object/ObjectFile.h>
+#include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 
 struct CkcLlvmContext {
     std::unique_ptr<llvm::LLVMContext> value;
@@ -40,11 +55,17 @@ struct CkcLlvmObject {
 
 struct CkcLlvmTarget {
     std::unique_ptr<llvm::TargetMachine> value;
+    std::string cpu;
+    std::string features;
 };
 
 struct CkcLlvmJit {
     std::unique_ptr<llvm::orc::LLJIT> value;
     CkcLlvmOrcObjectLayer object_layer;
+};
+
+struct CkcLlvmBuilder {
+    std::unique_ptr<llvm::IRBuilder<>> value;
 };
 
 namespace {
@@ -102,14 +123,79 @@ int32_t set_llvm_error(CkcLlvmError *error, llvm::Error value) noexcept {
 }
 
 llvm::Error initialize_host_target() {
-    if (llvm::InitializeNativeTarget()) {
-        return llvm::createStringError("initializing native LLVM target failed");
-    }
-    if (llvm::InitializeNativeTargetAsmPrinter()) {
-        return llvm::createStringError(
-            "initializing native LLVM assembly printer failed");
+    static std::once_flag once;
+    static std::string failure;
+    std::call_once(once, [] {
+        if (llvm::InitializeNativeTarget()) {
+            failure = "initializing native LLVM target failed";
+            return;
+        }
+        if (llvm::InitializeNativeTargetAsmPrinter()) {
+            failure = "initializing native LLVM assembly printer failed";
+        }
+    });
+    if (!failure.empty()) {
+        return llvm::createStringError(failure);
     }
     return llvm::Error::success();
+}
+
+llvm::StringRef borrowed_string(CkcLlvmBytes bytes) {
+    if (bytes.data == nullptr) {
+        return {};
+    }
+    return {reinterpret_cast<const char *>(bytes.data), bytes.len};
+}
+
+llvm::Type *llvm_type(CkcLlvmType *value) {
+    return reinterpret_cast<llvm::Type *>(value);
+}
+
+CkcLlvmType *bridge_type(llvm::Type *value) {
+    return reinterpret_cast<CkcLlvmType *>(value);
+}
+
+llvm::Value *llvm_value(CkcLlvmValue *value) {
+    return reinterpret_cast<llvm::Value *>(value);
+}
+
+CkcLlvmValue *bridge_value(llvm::Value *value) {
+    return reinterpret_cast<CkcLlvmValue *>(value);
+}
+
+llvm::Function *llvm_function(CkcLlvmFunction *value) {
+    return reinterpret_cast<llvm::Function *>(value);
+}
+
+CkcLlvmFunction *bridge_function(llvm::Function *value) {
+    return reinterpret_cast<CkcLlvmFunction *>(value);
+}
+
+llvm::BasicBlock *llvm_block(CkcLlvmBlock *value) {
+    return reinterpret_cast<llvm::BasicBlock *>(value);
+}
+
+CkcLlvmBlock *bridge_block(llvm::BasicBlock *value) {
+    return reinterpret_cast<CkcLlvmBlock *>(value);
+}
+
+template <typename Action>
+int32_t guarded(CkcLlvmError *error, std::string_view action,
+                Action &&body) noexcept {
+    clear_error(error);
+    try {
+        return body();
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        std::string message("unknown C++ exception ");
+        message.append(action);
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+    }
+}
+
+int32_t invalid(CkcLlvmError *error, std::string_view message) noexcept {
+    return set_error(error, CKC_LLVM_INVALID_ARGUMENT, message);
 }
 
 } // namespace
@@ -230,7 +316,59 @@ extern "C" void ckc_llvm_module_dispose(CkcLlvmModule *module) {
     delete module;
 }
 
-extern "C" int32_t ckc_llvm_target_create_host(CkcLlvmTarget **out,
+extern "C" int32_t ckc_llvm_module_configure(
+    CkcLlvmModule *module, CkcLlvmTarget *target,
+    CkcLlvmBytes source_file_name, CkcLlvmError *error) {
+    return guarded(error, "configuring LLVM module", [&] {
+        if (module == nullptr || module->value == nullptr || target == nullptr ||
+            target->value == nullptr) {
+            return invalid(error, "LLVM module configuration input is null");
+        }
+        module->value->setTargetTriple(target->value->getTargetTriple());
+        module->value->setDataLayout(target->value->createDataLayout());
+        module->value->setSourceFileName(borrowed_string(source_file_name));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_verify(CkcLlvmModule *module,
+                                             CkcLlvmError *error) {
+    return guarded(error, "verifying LLVM module", [&] {
+        if (module == nullptr || module->value == nullptr) {
+            return invalid(error, "LLVM module verification input is null");
+        }
+        std::string message;
+        llvm::raw_string_ostream stream(message);
+        if (llvm::verifyModule(*module->value, &stream)) {
+            stream.flush();
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_print(CkcLlvmModule *module,
+                                            CkcLlvmOwnedBytes *out,
+                                            CkcLlvmError *error) {
+    return guarded(error, "printing LLVM module", [&] {
+        if (module == nullptr || module->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM module print input or output is null");
+        }
+        clear_bytes(out);
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        module->value->print(stream, nullptr);
+        stream.flush();
+        if (!copy_bytes(text, out)) {
+            return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                             "allocating printed LLVM module failed");
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
+                                                 CkcLlvmTarget **out,
                                                  CkcLlvmError *error) {
     clear_error(error);
     if (out == nullptr) {
@@ -246,12 +384,30 @@ extern "C" int32_t ckc_llvm_target_create_host(CkcLlvmTarget **out,
         if (!builder) {
             return set_llvm_error(error, builder.takeError());
         }
+        if (cpu_policy == CKC_LLVM_CPU_BASELINE) {
+            switch (builder->getTargetTriple().getArch()) {
+            case llvm::Triple::x86_64:
+                builder->setCPU("x86-64");
+                break;
+            case llvm::Triple::aarch64:
+                builder->setCPU("generic");
+                break;
+            default:
+                return invalid(error, "host architecture has no CK baseline CPU");
+            }
+            builder->setFeatures("");
+        } else if (cpu_policy != CKC_LLVM_CPU_NATIVE) {
+            return invalid(error, "unknown LLVM CPU policy");
+        }
+        builder->setRelocationModel(llvm::Reloc::PIC_);
         auto target_machine = builder->createTargetMachine();
         if (!target_machine) {
             return set_llvm_error(error, target_machine.takeError());
         }
         auto target = std::make_unique<CkcLlvmTarget>();
         target->value = std::move(*target_machine);
+        target->cpu = target->value->getTargetCPU().str();
+        target->features = target->value->getTargetFeatureString().str();
         *out = target.release();
         return CKC_LLVM_OK;
     } catch (const std::exception &exception) {
@@ -262,8 +418,702 @@ extern "C" int32_t ckc_llvm_target_create_host(CkcLlvmTarget **out,
     }
 }
 
+extern "C" int32_t ckc_llvm_target_cpu(CkcLlvmTarget *target,
+                                          CkcLlvmOwnedBytes *out,
+                                          CkcLlvmError *error) {
+    return guarded(error, "reading LLVM target CPU", [&] {
+        if (target == nullptr || target->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM target CPU input or output is null");
+        }
+        return copy_bytes(target->cpu, out)
+                   ? CKC_LLVM_OK
+                   : set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                               "allocating LLVM target CPU failed");
+    });
+}
+
+extern "C" int32_t ckc_llvm_target_features(CkcLlvmTarget *target,
+                                               CkcLlvmOwnedBytes *out,
+                                               CkcLlvmError *error) {
+    return guarded(error, "reading LLVM target features", [&] {
+        if (target == nullptr || target->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM target features input or output is null");
+        }
+        return copy_bytes(target->features, out)
+                   ? CKC_LLVM_OK
+                   : set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                               "allocating LLVM target features failed");
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_optimize(
+    CkcLlvmModule *module, CkcLlvmTarget *target, uint32_t opt_level,
+    CkcLlvmError *error) {
+    return guarded(error, "optimizing LLVM module", [&] {
+        if (module == nullptr || module->value == nullptr || target == nullptr ||
+            target->value == nullptr || opt_level > 3) {
+            return invalid(error, "LLVM optimization input is invalid");
+        }
+        llvm::OptimizationLevel level = llvm::OptimizationLevel::O0;
+        switch (opt_level) {
+        case 0: level = llvm::OptimizationLevel::O0; break;
+        case 1: level = llvm::OptimizationLevel::O1; break;
+        case 2: level = llvm::OptimizationLevel::O2; break;
+        case 3: level = llvm::OptimizationLevel::O3; break;
+        default: llvm_unreachable("validated optimization level");
+        }
+
+        llvm::LoopAnalysisManager loop_analyses;
+        llvm::FunctionAnalysisManager function_analyses;
+        llvm::CGSCCAnalysisManager cgscc_analyses;
+        llvm::ModuleAnalysisManager module_analyses;
+        llvm::PassBuilder passes(target->value.get());
+        passes.registerModuleAnalyses(module_analyses);
+        passes.registerCGSCCAnalyses(cgscc_analyses);
+        passes.registerFunctionAnalyses(function_analyses);
+        passes.registerLoopAnalyses(loop_analyses);
+        passes.crossRegisterProxies(loop_analyses, function_analyses,
+                                    cgscc_analyses, module_analyses);
+        auto pipeline = passes.buildPerModuleDefaultPipeline(level);
+        pipeline.run(*module->value, module_analyses);
+
+        std::string message;
+        llvm::raw_string_ostream stream(message);
+        if (llvm::verifyModule(*module->value, &stream)) {
+            stream.flush();
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_make_invalid_for_test(
+    CkcLlvmModule *module, CkcLlvmError *error) {
+    return guarded(error, "creating invalid LLVM test module", [&] {
+        if (module == nullptr || module->value == nullptr) {
+            return invalid(error, "invalid test module input is null");
+        }
+        auto &context = module->value->getContext();
+        auto *type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+        auto *function = llvm::Function::Create(
+            type, llvm::GlobalValue::ExternalLinkage, "invalid_test",
+            *module->value);
+        llvm::BasicBlock::Create(context, "entry", function);
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" void ckc_llvm_target_dispose(CkcLlvmTarget *target) {
     delete target;
+}
+
+extern "C" int32_t ckc_llvm_target_triple(CkcLlvmTarget *target,
+                                             CkcLlvmOwnedBytes *out,
+                                             CkcLlvmError *error) {
+    return guarded(error, "reading LLVM target triple", [&] {
+        if (target == nullptr || target->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM target triple input or output is null");
+        }
+        clear_bytes(out);
+        const std::string text = target->value->getTargetTriple().str();
+        return copy_bytes(text, out)
+                   ? CKC_LLVM_OK
+                   : set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                               "allocating LLVM target triple failed");
+    });
+}
+
+extern "C" int32_t ckc_llvm_target_data_layout(CkcLlvmTarget *target,
+                                                  CkcLlvmOwnedBytes *out,
+                                                  CkcLlvmError *error) {
+    return guarded(error, "reading LLVM target data layout", [&] {
+        if (target == nullptr || target->value == nullptr || out == nullptr) {
+            return invalid(error,
+                           "LLVM target data layout input or output is null");
+        }
+        clear_bytes(out);
+        const std::string text = target->value->createDataLayout().getStringRepresentation();
+        return copy_bytes(text, out)
+                   ? CKC_LLVM_OK
+                   : set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                               "allocating LLVM target data layout failed");
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_void(CkcLlvmContext *context,
+                                         CkcLlvmType **out,
+                                         CkcLlvmError *error) {
+    return guarded(error, "creating void type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "void type input or output is null");
+        }
+        *out = bridge_type(llvm::Type::getVoidTy(*context->value));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_int(CkcLlvmContext *context, uint32_t bits,
+                                        CkcLlvmType **out,
+                                        CkcLlvmError *error) {
+    return guarded(error, "creating integer type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr ||
+            bits == 0) {
+            return invalid(error, "integer type input or output is invalid");
+        }
+        *out = bridge_type(llvm::IntegerType::get(*context->value, bits));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_f64(CkcLlvmContext *context,
+                                        CkcLlvmType **out,
+                                        CkcLlvmError *error) {
+    return guarded(error, "creating f64 type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "f64 type input or output is null");
+        }
+        *out = bridge_type(llvm::Type::getDoubleTy(*context->value));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_ptr(CkcLlvmContext *context,
+                                        CkcLlvmType **out,
+                                        CkcLlvmError *error) {
+    return guarded(error, "creating pointer type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "pointer type input or output is null");
+        }
+        *out = bridge_type(llvm::PointerType::get(*context->value, 0));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_slice(CkcLlvmContext *context,
+                                          CkcLlvmType **out,
+                                          CkcLlvmError *error) {
+    return guarded(error, "creating slice type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "slice type input or output is null");
+        }
+        llvm::Type *fields[] = {llvm::PointerType::get(*context->value, 0),
+                                llvm::Type::getInt32Ty(*context->value)};
+        *out = bridge_type(llvm::StructType::get(
+            *context->value, llvm::ArrayRef<llvm::Type *>(fields)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_named_struct(
+    CkcLlvmContext *context, CkcLlvmBytes name, CkcLlvmType **out,
+    CkcLlvmError *error) {
+    return guarded(error, "creating named struct type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "named struct type input or output is null");
+        }
+        *out = bridge_type(
+            llvm::StructType::create(*context->value, borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_set_struct_body(
+    CkcLlvmType *type, CkcLlvmType *const *fields, size_t field_count,
+    CkcLlvmError *error) {
+    return guarded(error, "setting named struct body", [&] {
+        auto *structure = llvm::dyn_cast_or_null<llvm::StructType>(llvm_type(type));
+        if (structure == nullptr || (field_count != 0 && fields == nullptr)) {
+            return invalid(error, "struct body input is invalid");
+        }
+        std::vector<llvm::Type *> body;
+        body.reserve(field_count);
+        for (size_t index = 0; index < field_count; ++index) {
+            if (fields[index] == nullptr) {
+                return invalid(error, "struct body contains a null field type");
+            }
+            body.push_back(llvm_type(fields[index]));
+        }
+        structure->setBody(body);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_add_function(
+    CkcLlvmModule *module, CkcLlvmBytes name, CkcLlvmType *return_type,
+    CkcLlvmType *const *params, size_t param_count, uint32_t exported,
+    CkcLlvmFunction **out, CkcLlvmError *error) {
+    return guarded(error, "adding LLVM function", [&] {
+        if (module == nullptr || module->value == nullptr ||
+            return_type == nullptr || (param_count != 0 && params == nullptr) ||
+            out == nullptr) {
+            return invalid(error, "LLVM function input or output is invalid");
+        }
+        std::vector<llvm::Type *> types;
+        types.reserve(param_count);
+        for (size_t index = 0; index < param_count; ++index) {
+            if (params[index] == nullptr) {
+                return invalid(error, "LLVM function contains a null parameter type");
+            }
+            types.push_back(llvm_type(params[index]));
+        }
+        auto *function_type =
+            llvm::FunctionType::get(llvm_type(return_type), types, false);
+        auto linkage = exported != 0 ? llvm::GlobalValue::ExternalLinkage
+                                     : llvm::GlobalValue::InternalLinkage;
+        auto *function = llvm::Function::Create(
+            function_type, linkage, borrowed_string(name), *module->value);
+        *out = bridge_function(function);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_preserve_function(
+    CkcLlvmModule *module, CkcLlvmFunction *function,
+    CkcLlvmError *error) {
+    return guarded(error, "preserving LLVM function", [&] {
+        auto *value = llvm_function(function);
+        if (module == nullptr || module->value == nullptr || value == nullptr ||
+            value->getParent() != module->value.get()) {
+            return invalid(error, "LLVM preserved function input is invalid");
+        }
+        llvm::appendToCompilerUsed(*module->value, {value});
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_function_param(
+    CkcLlvmFunction *function, size_t index, CkcLlvmBytes name,
+    CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "reading LLVM function parameter", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr || index >= value->arg_size() || out == nullptr) {
+            return invalid(error, "LLVM function parameter input is invalid");
+        }
+        auto *argument = value->getArg(index);
+        argument->setName(borrowed_string(name));
+        *out = bridge_value(argument);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_function_append_block(
+    CkcLlvmFunction *function, CkcLlvmBytes name, CkcLlvmBlock **out,
+    CkcLlvmError *error) {
+    return guarded(error, "appending LLVM block", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM block input or output is null");
+        }
+        *out = bridge_block(llvm::BasicBlock::Create(
+            value->getContext(), borrowed_string(name), value));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_create(CkcLlvmContext *context,
+                                              CkcLlvmBuilder **out,
+                                              CkcLlvmError *error) {
+    return guarded(error, "creating LLVM builder", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM builder input or output is null");
+        }
+        auto builder = std::make_unique<CkcLlvmBuilder>();
+        builder->value = std::make_unique<llvm::IRBuilder<>>(*context->value);
+        *out = builder.release();
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" void ckc_llvm_builder_dispose(CkcLlvmBuilder *builder) {
+    delete builder;
+}
+
+extern "C" int32_t ckc_llvm_builder_position(CkcLlvmBuilder *builder,
+                                                CkcLlvmBlock *block,
+                                                CkcLlvmError *error) {
+    return guarded(error, "positioning LLVM builder", [&] {
+        if (builder == nullptr || builder->value == nullptr || block == nullptr) {
+            return invalid(error, "LLVM builder position input is null");
+        }
+        builder->value->SetInsertPoint(llvm_block(block));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_alloca(
+    CkcLlvmBuilder *builder, CkcLlvmType *type, CkcLlvmBytes name,
+    CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM alloca", [&] {
+        if (builder == nullptr || builder->value == nullptr || type == nullptr ||
+            out == nullptr) {
+            return invalid(error, "LLVM alloca input or output is null");
+        }
+        *out = bridge_value(
+            builder->value->CreateAlloca(llvm_type(type), nullptr,
+                                         borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_load(
+    CkcLlvmBuilder *builder, CkcLlvmType *type, CkcLlvmValue *pointer,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM load", [&] {
+        if (builder == nullptr || builder->value == nullptr || type == nullptr ||
+            pointer == nullptr || out == nullptr) {
+            return invalid(error, "LLVM load input or output is null");
+        }
+        *out = bridge_value(builder->value->CreateLoad(
+            llvm_type(type), llvm_value(pointer), borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_store(CkcLlvmBuilder *builder,
+                                             CkcLlvmValue *value,
+                                             CkcLlvmValue *pointer,
+                                             CkcLlvmError *error) {
+    return guarded(error, "building LLVM store", [&] {
+        if (builder == nullptr || builder->value == nullptr || value == nullptr ||
+            pointer == nullptr) {
+            return invalid(error, "LLVM store input is null");
+        }
+        builder->value->CreateStore(llvm_value(value), llvm_value(pointer));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_const_int(CkcLlvmType *type,
+                                         CkcLlvmBytes text,
+                                         CkcLlvmValue **out,
+                                         CkcLlvmError *error) {
+    return guarded(error, "creating LLVM integer constant", [&] {
+        auto *integer = llvm::dyn_cast_or_null<llvm::IntegerType>(llvm_type(type));
+        if (integer == nullptr || out == nullptr) {
+            return invalid(error, "LLVM integer constant input is invalid");
+        }
+        llvm::APInt value(integer->getBitWidth(), borrowed_string(text), 10);
+        *out = bridge_value(llvm::ConstantInt::get(integer, value));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_const_float(CkcLlvmType *type,
+                                           CkcLlvmBytes text,
+                                           CkcLlvmValue **out,
+                                           CkcLlvmError *error) {
+    return guarded(error, "creating LLVM floating constant", [&] {
+        if (type == nullptr || out == nullptr || !llvm_type(type)->isDoubleTy()) {
+            return invalid(error, "LLVM floating constant input is invalid");
+        }
+        *out = bridge_value(
+            llvm::ConstantFP::get(llvm_type(type), borrowed_string(text)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_const_bool(CkcLlvmContext *context,
+                                          uint32_t value,
+                                          CkcLlvmValue **out,
+                                          CkcLlvmError *error) {
+    return guarded(error, "creating LLVM bool constant", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM bool constant input or output is null");
+        }
+        *out = bridge_value(llvm::ConstantInt::getBool(*context->value, value != 0));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_const_undef(CkcLlvmType *type,
+                                           CkcLlvmValue **out,
+                                           CkcLlvmError *error) {
+    return guarded(error, "creating LLVM undef value", [&] {
+        if (type == nullptr || out == nullptr) {
+            return invalid(error, "LLVM undef input or output is null");
+        }
+        *out = bridge_value(llvm::UndefValue::get(llvm_type(type)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_binary(
+    CkcLlvmBuilder *builder, uint32_t op, CkcLlvmValue *left,
+    CkcLlvmValue *right, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM binary instruction", [&] {
+        if (builder == nullptr || builder->value == nullptr || left == nullptr ||
+            right == nullptr || out == nullptr) {
+            return invalid(error, "LLVM binary input or output is null");
+        }
+        llvm::Value *result = nullptr;
+        switch (op) {
+        case CKC_LLVM_ADD: result = builder->value->CreateAdd(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_SUB: result = builder->value->CreateSub(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_MUL: result = builder->value->CreateMul(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_SDIV: result = builder->value->CreateSDiv(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_UDIV: result = builder->value->CreateUDiv(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_SREM: result = builder->value->CreateSRem(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_UREM: result = builder->value->CreateURem(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FADD: result = builder->value->CreateFAdd(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FSUB: result = builder->value->CreateFSub(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FMUL: result = builder->value->CreateFMul(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FDIV: result = builder->value->CreateFDiv(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        default: return invalid(error, "unknown LLVM binary opcode");
+        }
+        *out = bridge_value(result);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_overflow(
+    CkcLlvmBuilder *builder, uint32_t op, CkcLlvmValue *left,
+    CkcLlvmValue *right, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM overflow intrinsic", [&] {
+        if (builder == nullptr || builder->value == nullptr || left == nullptr ||
+            right == nullptr || out == nullptr) {
+            return invalid(error, "LLVM overflow intrinsic input or output is null");
+        }
+        llvm::Intrinsic::ID intrinsic;
+        switch (op) {
+        case CKC_LLVM_SADD_OVERFLOW: intrinsic = llvm::Intrinsic::sadd_with_overflow; break;
+        case CKC_LLVM_UADD_OVERFLOW: intrinsic = llvm::Intrinsic::uadd_with_overflow; break;
+        case CKC_LLVM_SSUB_OVERFLOW: intrinsic = llvm::Intrinsic::ssub_with_overflow; break;
+        case CKC_LLVM_USUB_OVERFLOW: intrinsic = llvm::Intrinsic::usub_with_overflow; break;
+        case CKC_LLVM_SMUL_OVERFLOW: intrinsic = llvm::Intrinsic::smul_with_overflow; break;
+        case CKC_LLVM_UMUL_OVERFLOW: intrinsic = llvm::Intrinsic::umul_with_overflow; break;
+        default: return invalid(error, "unknown LLVM overflow intrinsic opcode");
+        }
+        *out = bridge_value(builder->value->CreateBinaryIntrinsic(
+            intrinsic, llvm_value(left), llvm_value(right), nullptr,
+            borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_unary(
+    CkcLlvmBuilder *builder, uint32_t op, CkcLlvmValue *value,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM unary instruction", [&] {
+        if (builder == nullptr || builder->value == nullptr || value == nullptr ||
+            out == nullptr) {
+            return invalid(error, "LLVM unary input or output is null");
+        }
+        llvm::Value *result = nullptr;
+        switch (op) {
+        case CKC_LLVM_NEG: result = builder->value->CreateNeg(llvm_value(value), borrowed_string(name)); break;
+        case CKC_LLVM_FNEG: result = builder->value->CreateFNeg(llvm_value(value), borrowed_string(name)); break;
+        case CKC_LLVM_NOT: result = builder->value->CreateNot(llvm_value(value), borrowed_string(name)); break;
+        default: return invalid(error, "unknown LLVM unary opcode");
+        }
+        *out = bridge_value(result);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_compare(
+    CkcLlvmBuilder *builder, uint32_t op, CkcLlvmValue *left,
+    CkcLlvmValue *right, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM compare instruction", [&] {
+        if (builder == nullptr || builder->value == nullptr || left == nullptr ||
+            right == nullptr || out == nullptr) {
+            return invalid(error, "LLVM compare input or output is null");
+        }
+        llvm::Value *result = nullptr;
+        switch (op) {
+        case CKC_LLVM_ICMP_EQ: result = builder->value->CreateICmpEQ(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_NE: result = builder->value->CreateICmpNE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_SLT: result = builder->value->CreateICmpSLT(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_SLE: result = builder->value->CreateICmpSLE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_SGT: result = builder->value->CreateICmpSGT(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_SGE: result = builder->value->CreateICmpSGE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_ULT: result = builder->value->CreateICmpULT(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_ULE: result = builder->value->CreateICmpULE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_UGT: result = builder->value->CreateICmpUGT(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_ICMP_UGE: result = builder->value->CreateICmpUGE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FCMP_OEQ: result = builder->value->CreateFCmpOEQ(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FCMP_UNE: result = builder->value->CreateFCmpUNE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FCMP_OLT: result = builder->value->CreateFCmpOLT(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FCMP_OLE: result = builder->value->CreateFCmpOLE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FCMP_OGT: result = builder->value->CreateFCmpOGT(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        case CKC_LLVM_FCMP_OGE: result = builder->value->CreateFCmpOGE(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
+        default: return invalid(error, "unknown LLVM compare opcode");
+        }
+        *out = bridge_value(result);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_cast(
+    CkcLlvmBuilder *builder, uint32_t op, CkcLlvmValue *value,
+    CkcLlvmType *target_type, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM cast instruction", [&] {
+        if (builder == nullptr || builder->value == nullptr || value == nullptr ||
+            target_type == nullptr || out == nullptr) {
+            return invalid(error, "LLVM cast input or output is null");
+        }
+        llvm::Value *result = nullptr;
+        switch (op) {
+        case CKC_LLVM_SEXT: result = builder->value->CreateSExt(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
+        case CKC_LLVM_ZEXT: result = builder->value->CreateZExt(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
+        case CKC_LLVM_SITOFP: result = builder->value->CreateSIToFP(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
+        case CKC_LLVM_UITOFP: result = builder->value->CreateUIToFP(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
+        case CKC_LLVM_INTTOPTR: result = builder->value->CreateIntToPtr(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
+        default: return invalid(error, "unknown LLVM cast opcode");
+        }
+        *out = bridge_value(result);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_gep(
+    CkcLlvmBuilder *builder, CkcLlvmType *element_type,
+    CkcLlvmValue *pointer, CkcLlvmValue *const *indices,
+    size_t index_count, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM getelementptr", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            element_type == nullptr || pointer == nullptr || out == nullptr ||
+            (index_count != 0 && indices == nullptr)) {
+            return invalid(error, "LLVM getelementptr input or output is invalid");
+        }
+        std::vector<llvm::Value *> values;
+        values.reserve(index_count);
+        for (size_t index = 0; index < index_count; ++index) {
+            if (indices[index] == nullptr) {
+                return invalid(error, "LLVM getelementptr has a null index");
+            }
+            values.push_back(llvm_value(indices[index]));
+        }
+        *out = bridge_value(builder->value->CreateGEP(
+            llvm_type(element_type), llvm_value(pointer), values,
+            borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_extract_value(
+    CkcLlvmBuilder *builder, CkcLlvmValue *aggregate, uint32_t index,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM extractvalue", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            aggregate == nullptr || out == nullptr) {
+            return invalid(error, "LLVM extractvalue input or output is null");
+        }
+        *out = bridge_value(builder->value->CreateExtractValue(
+            llvm_value(aggregate), {index}, borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_insert_value(
+    CkcLlvmBuilder *builder, CkcLlvmValue *aggregate, CkcLlvmValue *value,
+    uint32_t index, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM insertvalue", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            aggregate == nullptr || value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM insertvalue input or output is null");
+        }
+        *out = bridge_value(builder->value->CreateInsertValue(
+            llvm_value(aggregate), llvm_value(value), {index},
+            borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_select(
+    CkcLlvmBuilder *builder, CkcLlvmValue *condition,
+    CkcLlvmValue *then_value, CkcLlvmValue *else_value, CkcLlvmBytes name,
+    CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM select", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            condition == nullptr || then_value == nullptr ||
+            else_value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM select input or output is null");
+        }
+        *out = bridge_value(builder->value->CreateSelect(
+            llvm_value(condition), llvm_value(then_value),
+            llvm_value(else_value), borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_call(
+    CkcLlvmBuilder *builder, CkcLlvmFunction *function,
+    CkcLlvmValue *const *args, size_t arg_count, CkcLlvmBytes name,
+    CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM call", [&] {
+        auto *callee = llvm_function(function);
+        if (builder == nullptr || builder->value == nullptr || callee == nullptr ||
+            out == nullptr || (arg_count != 0 && args == nullptr)) {
+            return invalid(error, "LLVM call input or output is invalid");
+        }
+        std::vector<llvm::Value *> values;
+        values.reserve(arg_count);
+        for (size_t index = 0; index < arg_count; ++index) {
+            if (args[index] == nullptr) {
+                return invalid(error, "LLVM call has a null argument");
+            }
+            values.push_back(llvm_value(args[index]));
+        }
+        *out = bridge_value(builder->value->CreateCall(
+            callee->getFunctionType(), callee, values, borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_return_void(CkcLlvmBuilder *builder,
+                                                   CkcLlvmError *error) {
+    return guarded(error, "building LLVM void return", [&] {
+        if (builder == nullptr || builder->value == nullptr) {
+            return invalid(error, "LLVM return builder is null");
+        }
+        builder->value->CreateRetVoid();
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_return(CkcLlvmBuilder *builder,
+                                              CkcLlvmValue *value,
+                                              CkcLlvmError *error) {
+    return guarded(error, "building LLVM return", [&] {
+        if (builder == nullptr || builder->value == nullptr || value == nullptr) {
+            return invalid(error, "LLVM return input is null");
+        }
+        builder->value->CreateRet(llvm_value(value));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_branch(CkcLlvmBuilder *builder,
+                                              CkcLlvmBlock *target,
+                                              CkcLlvmError *error) {
+    return guarded(error, "building LLVM branch", [&] {
+        if (builder == nullptr || builder->value == nullptr || target == nullptr) {
+            return invalid(error, "LLVM branch input is null");
+        }
+        builder->value->CreateBr(llvm_block(target));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_cond_branch(
+    CkcLlvmBuilder *builder, CkcLlvmValue *condition,
+    CkcLlvmBlock *then_block, CkcLlvmBlock *else_block,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM conditional branch", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            condition == nullptr || then_block == nullptr || else_block == nullptr) {
+            return invalid(error, "LLVM conditional branch input is null");
+        }
+        builder->value->CreateCondBr(llvm_value(condition), llvm_block(then_block),
+                                     llvm_block(else_block));
+        return CKC_LLVM_OK;
+    });
 }
 
 extern "C" int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
@@ -298,6 +1148,13 @@ extern "C" int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
         }
         passes.run(*module->value);
 
+        llvm::MemoryBufferRef buffer(
+            llvm::StringRef(storage.data(), storage.size()), "ckc-object");
+        auto parsed = llvm::object::ObjectFile::createObjectFile(buffer);
+        if (!parsed) {
+            return set_llvm_error(error, parsed.takeError());
+        }
+
         auto object = std::make_unique<CkcLlvmObject>();
         object->bytes.assign(storage.begin(), storage.end());
         *out = object.release();
@@ -312,6 +1169,11 @@ extern "C" int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
 
 extern "C" size_t ckc_llvm_object_size(const CkcLlvmObject *object) {
     return object == nullptr ? 0 : object->bytes.size();
+}
+
+extern "C" const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object) {
+    return object == nullptr || object->bytes.empty() ? nullptr
+                                                      : object->bytes.data();
 }
 
 extern "C" void ckc_llvm_object_dispose(CkcLlvmObject *object) {

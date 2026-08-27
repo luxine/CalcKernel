@@ -151,40 +151,40 @@ GitHub Actions 及平台原生验证工具。
 `layout.rs`、`names.rs`、`mod.rs`、`tests/backend/llvm.rs`；新建
 `tests/native/llvm_ir.rs`。
 
-- [ ] 逐个 fixture 迁移成检查 LLVM 打印 verified module 的结构化红灯测试，覆盖
+- [x] 逐个 fixture 迁移成检查 LLVM 打印 verified module 的结构化红灯测试，覆盖
   constant、arithmetic、comparison、branch、loop、phi、call、void、struct、pointer、
   slice、index 与 sub-slice。
-- [ ] 通过 safe wrapper 构建 LLVM value/block，绝不插值生成 IR。布局前由宿主
+- [x] 通过 safe wrapper 构建 LLVM value/block，绝不插值生成 IR。布局前由宿主
   TargetMachine 生成 target triple 与 DataLayout。
-- [ ] `emit-llvm` 打印这个 module，并在打开输出目的地前拒绝 normalized non-host
+- [x] `emit-llvm` 打印这个 module，并在打开输出目的地前拒绝 normalized non-host
   target。
-- [ ] 所有迁移后的 backend 测试通过后才删除旧文本 emission helper。
+- [x] 所有迁移后的 backend 测试通过后才删除旧文本 emission helper。
 
 ### 任务 3.2：通过 typed state 完成 verify、optimize 与 codegen
 
 **文件：**新建 `src/backend/llvm/verify.rs`、`passes.rs`、`object.rs`；修改
 `context.rs`；修改 `tests/native/llvm_ir.rs`；新建 `tests/native/object.rs`。
 
-- [ ] 添加 verifier rejection、O0-O3 pipeline、strict floating-point、baseline/native
+- [x] 添加 verifier rejection、O0-O3 pipeline、strict floating-point、baseline/native
   CPU attribute、object magic 与 host-target rejection 红灯测试。
-- [ ] construction 产生 unverified module；verification 产生 `VerifiedModule`；
+- [x] construction 产生 unverified module；verification 产生 `VerifiedModule`；
   PassBuilder 消费它并在二次 verification 后产生 `OptimizedModule`；只有此状态可被
   TargetMachine 消费为 object bytes。
-- [ ] MIR 与 LLVM 使用同一 optimization 选择；O3 不能启用 fast-math 或收缩 strict
+- [x] MIR 与 LLVM 使用同一 optimization 选择；O3 不能启用 fast-math 或收缩 strict
   operation。
-- [ ] 暴露 `NativeObject` 前通过 LLVM 解析 object bytes，并在所有错误中保留 stage。
+- [x] 暴露 `NativeObject` 前通过 LLVM 解析 object bytes，并在所有错误中保留 stage。
 
 ### 任务 3.3：实现 unchecked 与 checked lowering
 
 **文件：**新建 `src/backend/llvm/checked.rs`；修改 `lower.rs`、`module.rs` 与
 `tests/native/llvm_ir.rs`。
 
-- [ ] 为 overflow/bounds 四组合添加红灯测试：overflow intrinsic、signed div/mod
+- [x] 为 overflow/bounds 四组合添加红灯测试：overflow intrinsic、signed div/mod
   zero 与 minimum/-1、slice index、`start <= end <= len`、first-error ordering、void
   result 与 checked result pointer。
-- [ ] checked control flow lower 成显式 `CK_Status` propagation，不用 trap；unchecked
+- [x] checked control flow lower 成显式 `CK_Status` propagation，不用 trap；unchecked
   code 按现有语义保持无 guard。
-- [ ] 将代表性 checked module 与固定结构 fixture 及无需执行的 Clang-derived operation
+- [x] 将代表性 checked module 与固定结构 fixture 及无需执行的 Clang-derived operation
   语义比较。value/status 执行差分推迟到具备合法 in-process execution path 的阶段 4
   library harness 和阶段 5-6 entry harness。required native CI 外缺少 Clang 只能
   显式 skip oracle，绝不能成为产品 fallback。
@@ -194,11 +194,11 @@ GitHub Actions 及平台原生验证工具。
 **文件：**`src/cli/args.rs`、`commands.rs`、`output.rs`、
 `tests/cli/commands.rs`、`oracle_portability.rs`。
 
-- [ ] 添加 `run/build` 默认 O3、inspection 默认 O0、`-O0` 至 `-O3`、checked mode、
+- [x] 添加 `run/build` 默认 O3、inspection 默认 O0、`-O0` 至 `-O3`、checked mode、
   CPU policy、host target normalization 与错误时无部分输出的红灯测试。
-- [ ] 解析 command-specific option，禁止 unknown/irrelevant flag 在命令间泄漏；
+- [x] 解析 command-specific option，禁止 unknown/irrelevant flag 在命令间泄漏；
   artifact kind 与 CPU 使用 enum。
-- [ ] 删除所有产品 target probe 与 Clang invocation；Clang helper 只能留在
+- [x] 删除所有产品 target probe 与 Clang invocation；Clang helper 只能留在
   `tests/support/oracle.rs`。
 
 ## 阶段 4 — Native C ABI 与 library artifact

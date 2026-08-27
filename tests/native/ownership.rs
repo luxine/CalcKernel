@@ -1,7 +1,17 @@
 use calckernel::{
-    NativeContext, NativeJit, NativeModule, NativeTarget, NativeToolchain, OrcObjectLayer,
-    native_bridge_test_error,
+    NativeContext, NativeJit, NativeModule, NativeOptimizationLevel, NativeTarget, NativeToolchain,
+    OrcObjectLayer, native_bridge_test_error,
 };
+
+fn empty_object(context: &NativeContext, target: &NativeTarget) -> calckernel::NativeObject {
+    let module = NativeModule::empty(context).expect("create empty LLVM module");
+    let optimized = module
+        .verify()
+        .expect("verify empty LLVM module")
+        .optimize(target, NativeOptimizationLevel::O0)
+        .expect("optimize empty LLVM module");
+    target.emit_object(optimized).expect("emit verified object")
+}
 
 #[test]
 fn native_context_should_create_and_drop_repeatedly() {
@@ -20,17 +30,29 @@ fn native_target_should_create_and_drop_repeatedly() {
 }
 
 #[test]
+fn native_target_registration_should_be_safe_under_parallel_first_use() {
+    let workers = (0..16)
+        .map(|_| {
+            std::thread::spawn(|| {
+                for _ in 0..8 {
+                    drop(NativeTarget::host().expect("create host target concurrently"));
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    for worker in workers {
+        worker.join().expect("native target worker must not panic");
+    }
+}
+
+#[test]
 fn native_module_and_object_should_create_and_drop_repeatedly() {
     for _ in 0..32 {
         let context = NativeContext::new().expect("create LLVM context");
-        let mut module = NativeModule::empty(&context).expect("create empty LLVM module");
         let target = NativeTarget::host().expect("create host target machine");
-        let object = target
-            .emit_object(&mut module)
-            .expect("emit verified empty object");
+        let object = empty_object(&context, &target);
         assert!(!object.is_empty());
         drop(object);
-        drop(module);
         drop(target);
         drop(context);
     }
@@ -39,15 +61,12 @@ fn native_module_and_object_should_create_and_drop_repeatedly() {
 #[test]
 fn injected_middle_stage_error_should_preserve_live_owner_relationships() {
     let context = NativeContext::new().expect("create LLVM context");
-    let mut module = NativeModule::empty(&context).expect("create empty LLVM module");
     let target = NativeTarget::host().expect("create host target machine");
 
     let injected = native_bridge_test_error();
     assert_eq!(injected.stage.to_string(), "LLVM bridge");
 
-    let object = target
-        .emit_object(&mut module)
-        .expect("owners remain valid after injected bridge error");
+    let object = empty_object(&context, &target);
     assert!(!object.is_empty());
 }
 

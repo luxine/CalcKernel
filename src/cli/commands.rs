@@ -1,17 +1,23 @@
-use std::path::PathBuf;
 use std::{io, io::Write};
 
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirArtifactConsumer, MirModule,
-    MirPassBoundsMode, MirPassContext, MirPassDebugFlags, MirPassOverflowMode,
-    MirPassTargetBackend, OverflowMode, SourceFile, build_mir_optimization_pipeline, check,
-    emit_c_header, emit_c_module_with_header, emit_llvm_module, emit_wasm_module_with_options,
-    emit_wat_module_with_options, format_diagnostics, lower_to_mir,
+    BoundsMode, EmitCOptions, EmitWasmOptions, MirArtifactConsumer, MirModule, MirPassBoundsMode,
+    MirPassContext, MirPassDebugFlags, MirPassOverflowMode, MirPassTargetBackend, OverflowMode,
+    SourceFile, build_mir_optimization_pipeline, check, emit_c_header, emit_c_module_with_header,
+    emit_wasm_module_with_options, emit_wat_module_with_options, format_diagnostics, lower_to_mir,
     prepare_non_executable_artifact, print_mir_module, print_mir_pass_pipeline,
     run_mir_pass_pipeline,
 };
 
-use super::{args::*, output::*, toolchain::*};
+#[cfg(feature = "native-toolchain")]
+use calckernel::{
+    EmitLlvmOptions, NativeContext, NativeCpu, NativeLoweringOptions, NativeOptimizationLevel,
+    NativeTarget, lower_native_llvm_module_with_options,
+};
+
+#[cfg(feature = "native-toolchain")]
+use super::toolchain::*;
+use super::{args::*, output::*};
 
 pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), String>> {
     #[cfg(not(feature = "native-toolchain"))]
@@ -31,7 +37,7 @@ pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), Stri
         "licenses" => run_licenses,
         _ => return None,
     };
-    Some(ParsedArgs::parse(args).and_then(|parsed| run_command(&parsed)))
+    Some(ParsedArgs::parse(command, args).and_then(|parsed| run_command(&parsed)))
 }
 
 pub(super) fn run_version(args: &[String]) -> Result<(), String> {
@@ -255,16 +261,11 @@ pub(super) fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "native-toolchain")]
 pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-llvm")?;
     let overflow_mode = parse_overflow_mode(args)?;
-    if overflow_mode == OverflowMode::Checked {
-        return Err(unsupported_checked_llvm_error());
-    }
     let bounds_mode = parse_bounds_mode(args)?;
-    if bounds_mode == BoundsMode::Checked {
-        return Err(unsupported_checked_llvm_bounds_error());
-    }
     let opt_level = parse_opt_level(args)?;
     let (source, checked) = check_file(input)?;
     if !checked.diagnostics.is_empty() {
@@ -273,27 +274,48 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
     let mir = lower_and_optimize(
         &checked.checked_program,
         opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
+        mir_overflow_mode(overflow_mode),
+        mir_bounds_mode(bounds_mode),
         MirPassTargetBackend::Llvm,
         &args.debug,
     )?;
-    let text = emit_llvm_module(
+    let context = NativeContext::new().map_err(|error| error.to_string())?;
+    let target =
+        NativeTarget::host_with_cpu(NativeCpu::Baseline).map_err(|error| error.to_string())?;
+    let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
+    let text = lower_native_llvm_module_with_options(
+        &context,
+        &target,
         &mir,
-        &EmitLlvmOptions {
-            source_file_name: Some(input.to_string()),
-            target_triple: args
-                .target
-                .clone()
-                .or_else(detect_native_llvm_target_triple),
+        &NativeLoweringOptions {
+            emit: EmitLlvmOptions {
+                source_file_name: Some(input.to_string()),
+                target_triple: args.target.clone(),
+            },
+            overflow_mode,
+            bounds_mode,
         },
-    );
+    )
+    .map_err(|error| error.to_string())?
+    .verify()
+    .map_err(|error| error.to_string())?
+    .optimize(&target, level)
+    .map_err(|error| error.to_string())?
+    .to_ir_string()
+    .map_err(|error| error.to_string())?;
     write_or_print_single_line(args.out.as_deref(), &text, "LLVM IR")
 }
 
+#[cfg(feature = "native-toolchain")]
 pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
+    let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
+    if kind != ArtifactKind::Object {
+        return Err(format!(
+            "native {kind:?} artifacts are introduced by stage 4; no output was created"
+        ));
+    }
     let overflow_mode = parse_overflow_mode(args)?;
     let bounds_mode = parse_bounds_mode(args)?;
     let opt_level = parse_opt_level(args)?;
@@ -301,123 +323,76 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-
     let mir = lower_and_optimize(
         &checked.checked_program,
         opt_level,
-        match overflow_mode {
-            OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
-            OverflowMode::Checked => MirPassOverflowMode::Checked,
-        },
+        mir_overflow_mode(overflow_mode),
         mir_bounds_mode(bounds_mode),
-        MirPassTargetBackend::C,
+        MirPassTargetBackend::Llvm,
         &args.debug,
     )?;
-    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::C)
+    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::NativeLibrary)
         .map_err(|error| error.to_string())?;
-    let requested_output = absolutize(out);
-    let c_path = format!("{}.c", requested_output.display());
-    let header_path = format!("{}.h", requested_output.display());
-    let header_name = header_include_name(&header_path)?;
-    let output_path = shared_library_output_path(&requested_output);
-    let options = EmitCOptions {
-        overflow_mode,
-        bounds_mode,
-        opt_level,
+    let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
+        CpuPolicy::Baseline => NativeCpu::Baseline,
+        CpuPolicy::Native => NativeCpu::Native,
     };
-    write_text_atomic(
-        &c_path,
-        &emit_c_module_with_header(&mir, options, &header_name),
-    )?;
-    write_text_atomic(&header_path, &emit_c_header(&mir, options))?;
-    run_clang(&clang_shared_args(&PathBuf::from(&c_path), &output_path))?;
-    println!(
-        "OK: built library with overflow={}, bounds={}",
-        match overflow_mode {
-            OverflowMode::Unchecked => "unchecked",
-            OverflowMode::Checked => "checked",
+    let context = NativeContext::new().map_err(|error| error.to_string())?;
+    let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
+    let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
+    let optimized = lower_native_llvm_module_with_options(
+        &context,
+        &target,
+        &mir,
+        &NativeLoweringOptions {
+            emit: EmitLlvmOptions {
+                source_file_name: Some(input.to_string()),
+                target_triple: args.target.clone(),
+            },
+            overflow_mode,
+            bounds_mode,
         },
-        bounds_mode_name(bounds_mode),
-    );
+    )
+    .map_err(|error| error.to_string())?
+    .verify()
+    .map_err(|error| error.to_string())?
+    .optimize(&target, level)
+    .map_err(|error| error.to_string())?;
+    let object = target
+        .emit_object(optimized)
+        .map_err(|error| error.to_string())?;
+    let output_path = object_output_path(&absolutize(out));
+    write_bytes_atomic(&output_path.to_string_lossy(), object.as_bytes())?;
+    println!("OK: built native object");
     println!("{}", output_path.display());
     Ok(())
 }
 
+#[cfg(feature = "native-toolchain")]
 pub(super) fn run_build_llvm(args: &ParsedArgs) -> Result<(), String> {
-    let input = require_input(args, "build-llvm")?;
-    let out = require_out(args, "build-llvm")?;
-    let overflow_mode = parse_overflow_mode(args)?;
-    if overflow_mode == OverflowMode::Checked {
-        return Err(unsupported_checked_llvm_error());
+    let _ = require_input(args, "build-llvm")?;
+    let _ = require_out(args, "build-llvm")?;
+    let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
+    if !matches!(kind, ArtifactKind::Dynamic | ArtifactKind::Object) {
+        return Err("build-llvm supports only --kind dynamic or object.".to_string());
     }
-    let bounds_mode = parse_bounds_mode(args)?;
-    if bounds_mode == BoundsMode::Checked {
-        return Err(unsupported_checked_llvm_bounds_error());
-    }
-    let opt_level = parse_opt_level(args)?;
-    let kind = args.kind.as_deref().unwrap_or("dynamic");
-    if kind != "dynamic" && kind != "object" {
-        return Err(format!(
-            "Invalid value for --kind: {kind}. Expected 'dynamic' or 'object'."
-        ));
-    }
+    eprintln!("warning: 'build-llvm' is deprecated; use 'build' instead");
+    run_build(args)
+}
 
-    let (source, checked) = check_file(input)?;
-    if !checked.diagnostics.is_empty() {
-        return Err(format_diagnostics(&source, &checked.diagnostics));
-    }
-    let mir = lower_and_optimize(
-        &checked.checked_program,
-        opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Llvm,
-        &args.debug,
-    )?;
-    let requested_output = absolutize(out);
-    let output_path = if kind == "object" {
-        object_output_path(&requested_output)
-    } else {
-        shared_library_output_path(&requested_output)
-    };
-    let ll_path = llvm_intermediate_path(&requested_output, kind);
-    let text = emit_llvm_module(
-        &mir,
-        &EmitLlvmOptions {
-            source_file_name: Some(input.to_string()),
-            target_triple: args.target.clone(),
-        },
-    );
-    write_text_atomic(&ll_path.to_string_lossy(), &text)?;
-    let clang_args = if kind == "object" {
-        vec![
-            format!("-O{opt_level}"),
-            "-c".to_string(),
-            ll_path.to_string_lossy().into_owned(),
-            "-o".to_string(),
-            output_path.to_string_lossy().into_owned(),
-        ]
-    } else {
-        let mut args = vec![format!("-O{opt_level}"), "-shared".to_string()];
-        if !cfg!(target_os = "windows") {
-            args.push("-fPIC".to_string());
-        }
-        args.push(ll_path.to_string_lossy().into_owned());
-        args.push("-o".to_string());
-        args.push(output_path.to_string_lossy().into_owned());
-        args
-    };
-    run_llvm_clang(&clang_args)?;
-    println!(
-        "OK: built LLVM {}",
-        if kind == "object" {
-            "object"
-        } else {
-            "library"
-        }
-    );
-    println!("{}", output_path.display());
-    Ok(())
+#[cfg(not(feature = "native-toolchain"))]
+pub(super) fn run_emit_llvm(_args: &ParsedArgs) -> Result<(), String> {
+    Err(native_unavailable_error())
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+pub(super) fn run_build(_args: &ParsedArgs) -> Result<(), String> {
+    Err(native_unavailable_error())
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+pub(super) fn run_build_llvm(_args: &ParsedArgs) -> Result<(), String> {
+    Err(native_unavailable_error())
 }
 
 pub(super) fn check_file(input: &str) -> Result<(SourceFile, calckernel::CheckResult), String> {

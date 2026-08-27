@@ -1,5 +1,45 @@
 use calckernel::{BoundsMode, MirPassBoundsMode, MirPassDebugFlags, OverflowMode};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArtifactKind {
+    Executable,
+    Dynamic,
+    Static,
+    Object,
+}
+
+impl ArtifactKind {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "executable" => Ok(Self::Executable),
+            "dynamic" => Ok(Self::Dynamic),
+            "static" => Ok(Self::Static),
+            "object" => Ok(Self::Object),
+            _ => Err(format!(
+                "Invalid value for --kind: {value}. Expected 'executable', 'dynamic', 'static', or 'object'."
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CpuPolicy {
+    Baseline,
+    Native,
+}
+
+impl CpuPolicy {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "baseline" => Ok(Self::Baseline),
+            "native" => Ok(Self::Native),
+            _ => Err(format!(
+                "Invalid value for --cpu: {value}. Expected 'baseline' or 'native'."
+            )),
+        }
+    }
+}
+
 pub(super) fn require_input<'args>(
     args: &'args ParsedArgs,
     command: &str,
@@ -21,20 +61,24 @@ pub(super) fn require_out<'args>(
 
 #[derive(Debug, Clone)]
 pub(super) struct ParsedArgs {
+    command: String,
     pub(super) positionals: Vec<String>,
     pub(super) out: Option<String>,
     pub(super) overflow: Option<String>,
     pub(super) bounds: Option<String>,
     pub(super) opt_level: Option<String>,
     pub(super) target: Option<String>,
-    pub(super) kind: Option<String>,
+    pub(super) kind: Option<ArtifactKind>,
+    pub(super) cpu: Option<CpuPolicy>,
     pub(super) header: Option<String>,
+    pub(super) no_cache: bool,
     pub(super) debug: MirPassDebugFlags,
 }
 
 impl ParsedArgs {
-    pub(super) fn parse(args: &[String]) -> Result<Self, String> {
+    pub(super) fn parse(command: &str, args: &[String]) -> Result<Self, String> {
         let mut parsed = Self {
+            command: command.to_string(),
             positionals: Vec::new(),
             out: None,
             overflow: None,
@@ -42,59 +86,89 @@ impl ParsedArgs {
             opt_level: None,
             target: None,
             kind: None,
+            cpu: None,
             header: None,
+            no_cache: false,
             debug: MirPassDebugFlags::default(),
         };
         let mut index = 0;
         while index < args.len() {
             match args[index].as_str() {
                 "--out" => {
+                    require_allowed(command, "--out")?;
                     index += 1;
                     parsed.out = Some(require_long_flag_value(args, index, "--out")?.to_string());
                 }
                 "-o" => {
+                    require_allowed(command, "--out")?;
                     index += 1;
                     parsed.out = Some(require_short_flag_value(args, index, "-o")?.to_string());
                 }
                 "--overflow" => {
+                    require_allowed(command, "--overflow")?;
                     index += 1;
                     parsed.overflow =
                         Some(require_long_flag_value(args, index, "--overflow")?.to_string());
                 }
                 "--bounds" => {
+                    require_allowed(command, "--bounds")?;
                     index += 1;
                     parsed.bounds =
                         Some(require_long_flag_value(args, index, "--bounds")?.to_string());
                 }
                 "--opt-level" => {
+                    require_allowed(command, "--opt-level")?;
                     index += 1;
                     parsed.opt_level =
                         Some(require_long_flag_value(args, index, "--opt-level")?.to_string());
                 }
                 flag if flag.starts_with("-O") => {
+                    require_allowed(command, "--opt-level")?;
                     parsed.opt_level = Some(flag[2..].to_string());
                 }
                 "--target" => {
+                    require_allowed(command, "--target")?;
                     index += 1;
                     parsed.target =
                         Some(require_long_flag_value(args, index, "--target")?.to_string());
                 }
                 "--kind" => {
+                    require_allowed(command, "--kind")?;
                     index += 1;
-                    parsed.kind = Some(require_long_flag_value(args, index, "--kind")?.to_string());
+                    parsed.kind = Some(ArtifactKind::parse(require_long_flag_value(
+                        args, index, "--kind",
+                    )?)?);
+                }
+                "--cpu" => {
+                    require_allowed(command, "--cpu")?;
+                    index += 1;
+                    parsed.cpu = Some(CpuPolicy::parse(require_long_flag_value(
+                        args, index, "--cpu",
+                    )?)?);
                 }
                 "--header" => {
+                    require_allowed(command, "--header")?;
                     index += 1;
                     parsed.header =
                         Some(require_long_flag_value(args, index, "--header")?.to_string());
                 }
-                "--print-pass-pipeline" => parsed.debug.print_pass_pipeline = true,
-                "--print-mir-before-opt" => parsed.debug.print_mir_before_opt = true,
-                "--print-mir-after-opt" => parsed.debug.print_mir_after_opt = true,
-                flag if flag.starts_with("--") => {
-                    index += 1;
-                    let _ = require_long_flag_value(args, index, flag)?;
+                "--no-cache" => {
+                    require_allowed(command, "--no-cache")?;
+                    parsed.no_cache = true;
                 }
+                "--print-pass-pipeline" => {
+                    require_allowed(command, "--debug")?;
+                    parsed.debug.print_pass_pipeline = true;
+                }
+                "--print-mir-before-opt" => {
+                    require_allowed(command, "--debug")?;
+                    parsed.debug.print_mir_before_opt = true;
+                }
+                "--print-mir-after-opt" => {
+                    require_allowed(command, "--debug")?;
+                    parsed.debug.print_mir_after_opt = true;
+                }
+                flag if flag.starts_with('-') => return Err(format!("Unknown option: {flag}.")),
                 positional => parsed.positionals.push(positional.to_string()),
             }
             index += 1;
@@ -116,9 +190,57 @@ pub(super) fn parse_opt_level_value(value: &str) -> Result<u8, String> {
 }
 
 pub(super) fn parse_opt_level(args: &ParsedArgs) -> Result<u8, String> {
-    args.opt_level
-        .as_deref()
-        .map_or(Ok(0), parse_opt_level_value)
+    args.opt_level.as_deref().map_or_else(
+        || Ok(default_opt_level(&args.command)),
+        parse_opt_level_value,
+    )
+}
+
+fn default_opt_level(command: &str) -> u8 {
+    if matches!(command, "run" | "build" | "build-llvm") {
+        3
+    } else {
+        0
+    }
+}
+
+fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
+    let allowed = match flag {
+        "--out" => matches!(
+            command,
+            "emit-mir" | "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm"
+        ),
+        "--overflow" | "--bounds" => matches!(
+            command,
+            "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm" | "run"
+        ),
+        "--opt-level" => matches!(
+            command,
+            "emit-mir"
+                | "emit-c"
+                | "emit-wat"
+                | "emit-wasm"
+                | "emit-llvm"
+                | "build"
+                | "build-llvm"
+                | "run"
+        ),
+        "--target" => matches!(command, "emit-llvm" | "build" | "build-llvm"),
+        "--kind" => matches!(command, "build" | "build-llvm"),
+        "--cpu" => command == "build",
+        "--header" => command == "emit-c",
+        "--no-cache" => command == "run",
+        "--debug" => matches!(
+            command,
+            "emit-mir" | "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm"
+        ),
+        _ => false,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(format!("Option {flag} is not valid for '{command}'."))
+    }
 }
 
 pub(super) fn parse_overflow_mode(args: &ParsedArgs) -> Result<OverflowMode, String> {
@@ -148,6 +270,14 @@ pub(super) fn mir_bounds_mode(bounds_mode: BoundsMode) -> MirPassBoundsMode {
     }
 }
 
+#[cfg(feature = "native-toolchain")]
+pub(super) fn mir_overflow_mode(overflow_mode: OverflowMode) -> calckernel::MirPassOverflowMode {
+    match overflow_mode {
+        OverflowMode::Unchecked => calckernel::MirPassOverflowMode::Unchecked,
+        OverflowMode::Checked => calckernel::MirPassOverflowMode::Checked,
+    }
+}
+
 pub(super) fn bounds_mode_name(bounds_mode: BoundsMode) -> &'static str {
     match bounds_mode {
         BoundsMode::Unchecked => "unchecked",
@@ -161,20 +291,8 @@ pub(super) fn unsupported_checked_wasm_error() -> String {
         .to_string()
 }
 
-pub(super) fn unsupported_checked_llvm_error() -> String {
-    "error: LLVM backend does not support --overflow checked yet.\n\
-     Use --overflow unchecked, or use the C backend for checked arithmetic."
-        .to_string()
-}
-
 pub(super) fn unsupported_checked_wasm_bounds_error() -> String {
     "error: WASM backend does not support --bounds checked yet.\n\
-     help: use --bounds unchecked, or use emit-c/build for checked C bounds."
-        .to_string()
-}
-
-pub(super) fn unsupported_checked_llvm_bounds_error() -> String {
-    "error: LLVM backend does not support --bounds checked yet.\n\
      help: use --bounds unchecked, or use emit-c/build for checked C bounds."
         .to_string()
 }
@@ -213,21 +331,50 @@ pub(super) fn usage() -> &'static str {
         "  ckc check <file>\n",
         "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-llvm <file> [--out <ll-file>] [--target <triple>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-llvm <file> [--out <ll-file>] [--target <host-triple>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc build <file> --out <output-path> [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
-        "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [--target <triple>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native>] [-O0|-O1|-O2|-O3]\n",
+        "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [native build options]\n",
+        "  ckc run <file> [-O0|-O1|-O2|-O3] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--no-cache]\n",
         "  ckc licenses\n",
         "\n",
         "Options:\n",
         "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.\n",
-        "  --bounds <unchecked|checked>      Slice bounds mode. Default: unchecked; checked is C-only.\n",
+        "  --bounds <unchecked|checked>      Slice bounds mode. Default: unchecked.\n",
         "  -o <file>                         Alias for --out <file>.\n",
-        "  --opt-level <0|1|2|3>            MIR optimization level. Default: 0.\n",
+        "  --opt-level <0|1|2|3>            MIR and LLVM optimization level.\n",
         "  -O0, -O1, -O2, -O3              Alias for --opt-level.\n",
         "  --print-pass-pipeline           Print the selected MIR pass pipeline to stderr.\n",
         "  --print-mir-before-opt          Print MIR before optimization to stderr.\n",
         "  --print-mir-after-opt           Print MIR after optimization to stderr.\n",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ParsedArgs, parse_opt_level};
+
+    #[test]
+    fn execution_commands_default_to_o3_and_inspection_defaults_to_o0() {
+        for command in ["run", "build", "build-llvm"] {
+            let parsed = ParsedArgs::parse(command, &[]).expect("parse execution command");
+            assert_eq!(parse_opt_level(&parsed), Ok(3), "{command}");
+        }
+        for command in ["emit-mir", "emit-c", "emit-wat", "emit-wasm", "emit-llvm"] {
+            let parsed = ParsedArgs::parse(command, &[]).expect("parse inspection command");
+            assert_eq!(parse_opt_level(&parsed), Ok(0), "{command}");
+        }
+    }
+
+    #[test]
+    fn explicit_optimization_level_overrides_every_default() {
+        for command in ["run", "build", "emit-llvm"] {
+            for level in 0..=3 {
+                let parsed = ParsedArgs::parse(command, &[format!("-O{level}")])
+                    .expect("parse optimization override");
+                assert_eq!(parse_opt_level(&parsed), Ok(level), "{command} -O{level}");
+            }
+        }
+    }
 }

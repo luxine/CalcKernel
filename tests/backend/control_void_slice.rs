@@ -1,10 +1,17 @@
 use std::{fs, path::Path, process::Command};
 
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode,
-    MirPassContext, MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile,
-    build_mir_optimization_pipeline, check, emit_c_module, emit_llvm_module,
-    emit_wasm_module_with_options, lower_to_mir, run_mir_pass_pipeline,
+    BoundsMode, EmitCOptions, MirModule, MirPassBoundsMode, MirPassContext, MirPassOverflowMode,
+    MirPassTargetBackend, OverflowMode, SourceFile, build_mir_optimization_pipeline, check,
+    emit_c_module, lower_to_mir, run_mir_pass_pipeline,
+};
+
+#[cfg(feature = "native-toolchain")]
+use calckernel::{EmitWasmOptions, emit_wasm_module_with_options};
+
+#[cfg(feature = "native-toolchain")]
+use calckernel::{
+    EmitLlvmOptions, NativeContext, NativeOptimizationLevel, NativeTarget, lower_native_llvm_module,
 };
 
 use super::support::command::run_stdout;
@@ -72,6 +79,7 @@ export fn write_offset(
 "#;
 
 #[test]
+#[cfg(feature = "native-toolchain")]
 fn combined_control_void_slice_should_match_unchecked_backends_at_all_opt_levels() {
     let unique = unique_id();
     let dir = std::env::temp_dir().join(format!("rust_calckernel_combined_unchecked_{unique}"));
@@ -113,17 +121,30 @@ int main(void) {{
             MirPassBoundsMode::Unchecked,
             MirPassTargetBackend::Llvm,
         );
-        let ir = emit_llvm_module(
+        let context = NativeContext::new().expect("native context");
+        let target = NativeTarget::host().expect("native target");
+        let object = lower_native_llvm_module(
+            &context,
+            &target,
             &llvm_module,
             &EmitLlvmOptions {
                 source_file_name: Some("combined.ck".to_string()),
                 target_triple: None,
             },
-        );
-        let ir_path = dir.join(format!("combined_o{opt_level}.ll"));
+        )
+        .expect("structural LLVM")
+        .verify()
+        .expect("verify structural LLVM")
+        .optimize(
+            &target,
+            NativeOptimizationLevel::try_from(opt_level).expect("optimization level"),
+        )
+        .and_then(|module| target.emit_object(module))
+        .expect("emit structural LLVM object");
+        let object_path = dir.join(format!("combined_o{opt_level}.o"));
         let llvm_harness = dir.join(format!("combined_llvm_o{opt_level}.c"));
         let llvm_binary = dir.join(format!("combined_llvm_o{opt_level}"));
-        fs::write(&ir_path, ir).expect("write LLVM IR");
+        fs::write(&object_path, object.as_bytes()).expect("write LLVM object");
         fs::write(
             &llvm_harness,
             r#"
@@ -140,7 +161,7 @@ int main(void) {
 "#,
         )
         .expect("write LLVM harness");
-        compile_native(&[&ir_path, &llvm_harness], &llvm_binary);
+        compile_native(&[&object_path, &llvm_harness], &llvm_binary);
         let llvm_output = run_stdout(&llvm_binary);
 
         let wasm_module = optimized_module(
@@ -227,24 +248,16 @@ int main(void) {{
 }
 
 #[test]
-fn combined_control_void_slice_should_reject_checked_bounds_on_non_c_backends() {
+fn combined_control_void_slice_should_reject_checked_bounds_on_wasm_backends() {
     let unique = unique_id();
     let dir = std::env::temp_dir().join(format!("rust_calckernel_combined_reject_{unique}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     let source = dir.join("combined.ck");
     fs::write(&source, COMBINED_SOURCE).expect("write fixture");
 
-    #[cfg(not(feature = "native-toolchain"))]
     let cases = vec![
         ("emit-wat", "WASM", None),
         ("emit-wasm", "WASM", Some(dir.join("combined.wasm"))),
-    ];
-    #[cfg(feature = "native-toolchain")]
-    let cases = vec![
-        ("emit-wat", "WASM", None),
-        ("emit-wasm", "WASM", Some(dir.join("combined.wasm"))),
-        ("emit-llvm", "LLVM", None),
-        ("build-llvm", "LLVM", Some(dir.join("combined-llvm"))),
     ];
     for (command, backend, out) in cases {
         let mut args = vec![
