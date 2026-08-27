@@ -2,133 +2,102 @@
 
 [English](README.md)
 
-Rust CalcKernel 0.9.0 发布 `native ckc`：一个由 Rust 构建的 CK / CalcKernel
-命令行编译器。本仓库不再维护脚本语言包装层或包发布表面；产品边界是原生 `ckc`
-可执行文件，以及它背后的 Rust 编译器实现。
+Rust CalcKernel 0.10.0 发布 `native ckc`：一个可自包含运行的 CK computation-kernel
+语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
+仓库同时保留可检查的 C 与 WebAssembly emitter。
 
-## 项目形态
+## 发布能力
 
-CK 是一个面向纯计算 kernel 的小型 DSL，适合定价、数组处理、图算法和数值计算等
-需要生成 C、WASM 或 LLVM 输出的确定性逻辑。
+- Rust lexer、parser、type checker、deterministic MIR 与 O0–O3 optimizer。
+- `break`/`continue`、return-only `void`、caller-owned `slice<T>`、可选 overflow/bounds
+  checked mode 与无参数 `main` entry。
+- `ckc run` 隔离 child、确定性 numeric/boolean print 与安全 persistent object cache。
+- 内嵌 LLVM 22.1.8 codegen 和进程内 LLD 的
+  `ckc build --kind executable|dynamic|static|object`。
+- Object/static/dynamic library 共用 generated-header Native C ABI。
+- Source-only C 与 portable WAT/WASM 输出。
+- 面向 macOS、Linux、Windows 的 AArch64/x86-64 六个零工具链 release archive。
 
-本仓库提供：
+Native checked mode 支持 overflow/bounds 四种组合；C emission 使用相同 status semantics；
+WebAssembly 仅支持 unchecked。Native runtime print 可用于 `run`/executable，library、C、
+WebAssembly root 可达的 print 会被拒绝。
 
-- Rust lexer、parser、type checker、MIR lowering 和 MIR optimizer。
-- 原生 `ckc` CLI：`check`、`emit-mir`、`emit-c`、`emit-wat`、`emit-wasm`、
-  `emit-llvm`、`build`、`build-llvm`。
-- C backend：生成 C/H，支持 unchecked 和 checked overflow ABI，并可通过
-  `clang` 构建 shared library。
-- WASM backend：生成 WAT 或 WASM bytes。
-- LLVM backend：生成 LLVM IR，并可通过 `clang` 构建 dynamic library 或 object。
-- 原生发布流程，见 `docs/project/release.md`。
-
-V0.9 backend mode matrix：
-
-| Backend | `--overflow unchecked` | `--overflow checked` | `--bounds unchecked` | `--bounds checked` |
-| --- | --- | --- | --- | --- |
-| C | 支持 | 支持 | 支持 | 支持 |
-| WASM | 支持 | 不支持 | 支持 | 不支持 |
-| LLVM | 支持 | 不支持 | 支持 | 不支持 |
-
-0.9.0 发布摘要见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)。
-
-## 架构
+## Pipeline
 
 ```text
-.ck source
-  |
-  v
-lexer -> parser -> type checker
-  |
-  v
-MIR lowering -> MIR optimizer
-  |
-  +--> C emitter -> clang -> shared library
-  +--> WAT emitter -> wasm bytes
-  +--> LLVM IR emitter -> clang -> shared library / object
+.ck -> frontend -> validated MIR -> MIR optimizer
+                              +-> C source/header
+                              +-> WAT/WASM
+                              +-> structural LLVM -> object
+                                                   +-> ORC run
+                                                   +-> in-process LLD -> executable/library
 ```
 
-主要入口：
+产品路径不调用 Clang、system linker 或 archiver。固定 Clang 22.1.8 只作为仓库的 differential
+与 ABI test oracle。
 
-- `src/frontend/`：source model、AST、lexer、parser、diagnostics 与 type checking。
-- `src/ir/`：MIR model、lowering、validation 与打印。
-- `src/optimizer/`：O0-O3 pass pipeline、共享 analysis 与 optimization passes。
-- `src/backend/`：独立的 C、WAT/WASM 与 LLVM planning/emission 模块。
-- `src/cli/`：参数解析、command routing、输出处理与 toolchain integration。
-- `src/bin/ckc.rs`：精简的原生 `ckc` 进程入口。
-
-## 使用
-
-构建并运行原生 CLI：
+## 使用 release binary
 
 ```sh
+ckc --version --verbose
+ckc check examples/core/scalar.ck
+ckc run examples/native/hello.ck
+ckc build examples/native/hello.ck --kind executable --out /tmp/hello
+ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
+ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
+ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
+ckc licenses
+```
+
+`run` 与 `build` 默认 O3；Native build 默认 release target 的 portable CPU baseline，
+`--cpu native` 为 opt-in。`build-llvm` 仅保留为 dynamic/object Native build 的 deprecated alias。
+
+## 从源码构建
+
+Native feature 需要 `native/llvm/manifest.toml` 定义的精确 LLVM prefix；仓库脚本将其 bootstrap
+到 `build/llvm`。该 prefix 是 build input，不是 end-user runtime dependency。
+
+```sh
+rustc_host="$(rustc -vV | sed -n 's/^host: //p')"
+llvm_archive=/path/to/llvm-project-22.1.8.src.tar.xz
+./scripts/bootstrap-llvm.sh --archive "$llvm_archive" \
+  --prefix "$PWD/build/llvm/prefix-$rustc_host-release" \
+  --target "$rustc_host" --profile release
+export CKC_LLVM_PREFIX="$PWD/build/llvm/prefix-$rustc_host-release"
+cargo build --release --features native-toolchain --locked
+cargo test --all-features --locked
+```
+
+Default feature 可构建 frontend/C/WASM-only developer 版本：
+
+```sh
+cargo test --locked
 cargo build --release --locked
-./target/release/ckc --help
-./target/release/ckc check examples/core/scalar.ck
-./target/release/ckc check examples/core/control_flow.ck
-./target/release/ckc check examples/core/void.ck
-./target/release/ckc emit-mir examples/core/scalar.ck -O3
-./target/release/ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
-./target/release/ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
-./target/release/ckc emit-llvm examples/llvm/scalar.ck --target ck-test-target
 ```
 
-开发时也可以使用 `cargo run --`：
+## 文档与验证
 
-```sh
-cargo run -- check examples/core/scalar.ck
-```
+入口见 [文档索引](docs/zh-CN/index.md)、[语言参考](docs/zh-CN/reference/language.md)、
+[CLI 参考](docs/zh-CN/reference/cli.md) 与 [Native ABI](docs/zh-CN/abi/llvm.md)。
+语言示例包含 [control flow](examples/core/control_flow.ck)、[void procedure](examples/core/void.ck)
+与 [slice](examples/core/slices.ck)。英文 [release policy](docs/project/release.md) 与中文版本保持镜像。
 
-## 文档
-
-- `docs/zh-CN/reference/language.md`：CK 源语言。
-- `examples/core/control_flow.ck`：`break` / `continue` 控制流示例。
-- `examples/core/void.ck`：显式 `void`、提前返回和 procedure call 示例。
-- `docs/zh-CN/compiler/architecture.md`：compiler pipeline 和模块边界。
-- `docs/zh-CN/reference/mir.md`：MIR 数据模型和打印格式。
-- `docs/zh-CN/compiler/optimizer.md`：MIR 优化等级和 pass 边界。
-- `docs/zh-CN/abi/c.md`、`docs/zh-CN/abi/wasm.md`、`docs/zh-CN/abi/llvm.md`：backend ABI contract。
-- `docs/zh-CN/reference/cli.md`：输出文件以及各 backend 的使用场景。
-- `docs/zh-CN/project/release.md`：原生发布流程和 artifact 检查。
-
-正式用户文档都在 `docs/zh-CN/` 下维护简体中文版本。
-
-## 验证
-
-严格本地门禁：
+严格 Native local gate：
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --locked
-cargo build --release --locked
-./target/release/ckc --help
-./target/release/ckc check examples/core/scalar.ck
+cargo test --all-features --locked
+cargo build --release --features native-toolchain --locked
+./target/release/ckc --version --verbose
+./target/release/ckc licenses
 ```
 
-Rust 测试会在有价值的地方继续使用只读 TypeScript source checkout 作为行为
-oracle。这些测试比较的是原生编译器行为：diagnostics、stdout/stderr、exit code、
-MIR 文本、生成的 C/WASM/LLVM 输出，以及生成 artifact 的运行时行为。它们不保护
-包装 API，也不保护 registry 发布路径。
+Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
+发布见 [release policy](docs/zh-CN/project/release.md)。
 
-## 发布边界
+## 内存边界
 
-发布构建产出 macOS、Linux 和 Windows 的原生 `ckc` 二进制。每个归档都通过 CLI
-冒烟检查和 `SHA256` checksum 签核。带 tag 的构建可以把这些归档附加到
-`GitHub Release`。
-
-No npm。没有 JavaScript compatibility layer。没有 TypeScript declaration parity。
-TypeScript checkout 只作为只读 source material 和行为 oracle；实际发布的产品是
-`native ckc`。
-
-## 非 owning slice
-
-CK 现已支持非 owning 的 `slice<T>` descriptor。可用 `slice(data, len)` 从 raw
-pointer 构造，读取 `.data` / `.len`，执行 index，或用 `items[start..end]` 构造
-半开 sub-slice。内存仍由 caller 拥有；raw pointer 与声明长度的有效性也由 caller
-负责。Descriptor 会 alias 同一内存，不会延长其 lifetime。示例见
-[examples/core/slices.ck](examples/core/slices.ck)。
-
-所有 backend 默认 `--bounds unchecked`。C emission 与 `ckc build` 还接受
-`--bounds checked`，越界返回 `CK_ERR_OUT_OF_BOUNDS`（status 4）。WASM 与 LLVM
-只接受 unchecked bounds，并会明确拒绝 checked bounds。
+`slice(data, len)` 与 `items[start..end]` 创建 non-owning `slice<T>` descriptor。Raw pointer validity、
+allocation extent、alignment、lifetime 与声明 length 仍由 caller 负责。`--bounds checked` 只验证
+slice index/range relation，不会让任意 pointer use 变为 memory-safe。

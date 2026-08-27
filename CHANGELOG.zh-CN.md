@@ -2,6 +2,25 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.10.0 - 2026-08-27
+
+- 新增无参数 internal `main`、`ckc run` 与 Native executable output。
+- 新增 signed/unsigned integer、`f64`、boolean、newline 的确定性 Native print builtin；
+  library、C、WASM root 拒绝可达 print。
+- 以固定 LLVM 22.1.8 structural codegen、ORC、archive writer 与进程内 LLD 取代产品
+  Clang subprocess。
+- `ckc build --kind` 扩展到 executable、dynamic、static、object；dynamic 仍为默认，
+  `build-llvm` 成为 deprecated compatibility alias。
+- Native object/static/dynamic export 统一为 generated-header Native C ABI，包含 target ABI
+  classification 与 checked status thunk。
+- Native 新增 checked overflow/slice bounds，并保持 C `CK_Status` meaning 与 first-error order。
+- 新增 isolated run child、安全 persistent object cache、固定 runtime diagnostic/status、eager
+  symbol resolution 与 JIT page-permission audit。
+- 新增 checked/unchecked C-oracle performance gate，以及六 host functional、artifact、dependency、
+  provenance 与 immutable release gate。
+- 保留 `main` 与七个 print builtin 名称，将 Native target 限制为 host，退出 standalone LLVM
+  export-shape promise，并保持 `emit-c` source-only。迁移见兼容性策略。
+
 ## 0.9.0 - 2026-08-26
 
 - 新增 `while` 循环内的结构化控制语句 `break` 与 `continue`。

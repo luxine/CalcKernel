@@ -1,4 +1,4 @@
-# CalcKernel V0.9 Optimizer
+# CalcKernel 0.10 Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -27,11 +27,16 @@ order. Calls and targetless void calls retain side effects. CFG passes preserve
 valueless returns and innermost-loop `break`/`continue` targets.
 
 `slice<T>` descriptors are copied as values while their data remains aliased.
-Checked `SliceIndex`/`Subslice` guards and address computation are observable;
-they exist only in C `--bounds checked` context. Passes may remove a guard only
-when safety is proven under the active context,
+Checked `SliceIndex`/`Subslice` guards and address computation are observable in
+C and Native `--bounds checked` contexts. Passes may remove a guard only when
+safety is proven under the active context,
 and may not CSE, hoist, or reorder it across a possibly failing call/arithmetic
 operation. Index/place analysis tracks slice data and length uses together.
+
+Native print calls are runtime effects. Optimization may remove only unreachable
+ones and preserves the count and source order of reachable effects through
+calls, loops, and inlining. One selected level controls MIR and the subsequent
+LLVM default pipeline; no level enables fast-math.
 
 `--print-mir-before-opt`, `--print-mir-after-opt`, and
 `--print-pass-pipeline` write deterministic diagnostics to stderr and do not

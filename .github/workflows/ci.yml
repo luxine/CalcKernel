@@ -173,11 +173,11 @@ jobs:
           profile: oracle
       - name: Gate baseline CPU policy
         run: |
-          cargo bench --features native-toolchain --bench ckc_perf -- --case scalar --task check --cpu baseline
+          cargo bench --features native-toolchain --bench ckc_perf -- --case pricing --task check --cpu baseline
           python3 scripts/check-native-performance.py target/ckc-perf/results.json
           cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
       - name: Gate native CPU policy
         run: |
-          cargo bench --features native-toolchain --bench ckc_perf -- --case scalar --task check --cpu native
+          cargo bench --features native-toolchain --bench ckc_perf -- --case pricing --task check --cpu native
           python3 scripts/check-native-performance.py target/ckc-perf/results.json
           cp target/ckc-perf/results.json target/ckc-perf/results-native.json

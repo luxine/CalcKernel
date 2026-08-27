@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, process::Command};
 
 use super::support::oracle::repo_root;
 
@@ -56,6 +56,76 @@ fn release_surface_should_not_include_npm_or_javascript_compatibility_layer() {
         "native ckc release surface must not include npm/JS compatibility files:\n{}",
         present.join("\n")
     );
+}
+
+#[test]
+fn v0_10_release_identity_should_be_consistent_everywhere() {
+    let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
+    let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
+    assert!(cargo.contains("version = \"0.10.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.10.0\""));
+
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "CHANGELOG.md",
+        "CHANGELOG.zh-CN.md",
+    ] {
+        assert!(
+            fs::read_to_string(repo_root().join(path))
+                .unwrap_or_else(|error| panic!("read {path}: {error}"))
+                .contains("0.10.0"),
+            "{path} must identify 0.10.0"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("--version")
+        .output()
+        .expect("run ckc --version");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.10.0");
+
+    let workflow = fs::read_to_string(repo_root().join(".github/workflows/native-release.yml"))
+        .expect("read release workflow");
+    for required in [
+        "expected_tag=\"v${cargo_version}\"",
+        "--version --verbose",
+        "Native ABI",
+        "Runtime ABI",
+        "ckc-darwin-arm64.tar.gz",
+        "ckc-win32-x64.zip",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "release identity missing {required:?}"
+        );
+    }
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn v0_10_verbose_identity_should_report_frozen_native_abis() {
+    let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .args(["--version", "--verbose"])
+        .output()
+        .expect("run ckc --version --verbose");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("verbose version is UTF-8");
+    for required in [
+        "ckc 0.10.0",
+        "Native ABI: 1",
+        "Runtime ABI: 1",
+        "LLVM: 22.1.8",
+        "Target:",
+        "Code generator:",
+        "ORC object layer:",
+    ] {
+        assert!(
+            stdout.contains(required),
+            "verbose identity missing {required:?}"
+        );
+    }
 }
 
 #[test]

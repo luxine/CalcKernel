@@ -1,104 +1,97 @@
-# CK V0.9 语言参考
+# CalcKernel 0.10 语言参考
 
 [English](../../reference/language.md)
 
-本文档是 CalcKernel 0.9 的规范性源码语言 contract。CK 是确定性计算 kernel
-语言，源码文件扩展名为 `.ck`。
+本文档是 CalcKernel 0.10 源语言的规范性契约。CK 是确定性的计算内核语言，源文件扩展名为 `.ck`。
 
 ## 类型与声明
 
 值类型包括 `i32`、`i64`、`u32`、`u64`、`f64`、`bool`、`ptr<T>`、
-`slice<T>` 与命名 struct。`void` 只是 return-only type：`-> void` 只可作为
-return type，不可作为参数、local、field、pointer/slice element、operand 或 value。
-直接的 `slice<slice<T>>` element 与 exported slice return 非法；internal
-function 可以返回 slice。
+`slice<T>` 和具名 struct。`void` 是 return-only type；`-> void` 合法，但不能成为参数、local、field、
+pointer/slice element、operand 或 value。直接嵌套的 `slice<slice<T>>` 与 exported
+slice return 非法；internal function 可以返回 slice。
 
-`ptr<T>` 与 `slice<T>` 都引用 caller-owned memory。CK 不分配、释放、保留或
-延长该内存的 lifetime。Slice descriptor 包含 typed data pointer 与 `u32` 长度。
+Pointer 与 slice 指向 caller-owned memory。CK 不分配、释放、持有或延长其生命周期。
+Slice descriptor 由 typed data pointer 与 `u32` length 组成；struct field 保持声明顺序。
+`export fn` 产生 Native、C 或 WebAssembly library export，普通 `fn` 为 internal。
 
-Struct 按声明顺序包含具名 typed field；函数具有 typed parameter 与唯一 return
-type。`export fn` 产生 backend 对外 symbol，普通 `fn` 仅供内部调用。同一声明
-scope 内名称不可重复，命名 struct type 与被调用函数必须能够解析。
+## 入口与 Native 输出
+
+`main` 是保留名称，只允许以下无参数且非 exported 的形式：
 
 ```ck
-struct Item { value: i32; }
-
-export fn add(a: i64, b: i64) -> i64 {
-  return a + b;
-}
-
-fn touch(items: slice<Item>) -> void {
-  return;
-}
+fn main() -> void
+fn main() -> i32
 ```
 
-## Statement 与控制流
+`ckc run` 与 `ckc build --kind executable` 必须具有 `main`。Void entry 返回进程状态
+0；i32 entry 提供平台进程状态。可移植程序使用 0–239，因为 240–245 保留给 runtime failure。
 
-支持 typed `let`、assignment、`return`、`if` / `else`、`while`、`break;`、
-`continue;`、block，以及 callee 返回 `void` 的 call statement。
+Native entry/runtime-effect model 预声明并保留下列 compiler builtin：
 
-`break;` 退出最内层 `while`；`continue;` 跳到该循环的 condition。两者在循环
-外使用时为 `CK2009`。同一 block 中 non-fallthrough statement 之后的 statement
-为 `CK2010`。非法 void position 使用 `CK2011`，非法 slice shape/operation 使用
-`CK2012`。即使 condition 是 literal `true`，checker 也保守地认为循环可能退出。
+- `print_i32(i32) -> void`、`print_i64(i64) -> void`
+- `print_u32(u32) -> void`、`print_u64(u64) -> void`
+- `print_f64(f64) -> void`、`print_bool(bool) -> void`
+- `print_newline() -> void`
 
-返回 value 的函数必须在每条最终路径返回值。Void 函数可自然结束或使用
-`return;`。Void 函数返回值、非 void 函数空 return、丢弃非 void call 结果，或把
-void call 当作 value 都是非法行为。
+Argument 按源码顺序各求值一次。Native executable 与 `run` root 可以到达这些调用；
+Native library/object export、C artifact root 或 WebAssembly export 可达的 print 会被拒绝。
+不可达 print 可以被删除。0.10 不提供通用 string 或 byte I/O。
 
-Assignment target 可以是 local、parameter、field、pointer index 或 slice index。
-Slice `.data` 与 `.len` projection 是 read-only；完整 descriptor 可以被赋值。
+Value print 不追加 newline；`print_newline` 在所有平台精确输出一个 LF。Integer 使用 base 10，
+无 locale、grouping、leading zero 或 positive sign。Boolean 为 `true`/`false`。Finite f64 在
+round-to-nearest、ties-to-even 下使用 no-allocation shortest-round-trip decimal；negative zero
+为 `-0.0`，特殊值为 `nan`、`inf`、`-inf`，不表达 NaN payload/sign。每个 print 都是有序
+observable effect。Output failure 以 `CKR0005` 终止进程，不返回 `CK_Status`。
 
-## Expression
+## 语句与控制流
 
-Expression 包括 integer、`f64`、boolean literal，identifier，call，parentheses，
-unary `!` / `-`，arithmetic `+ - * / %`，comparison `== != < <= > >=`，
-short-circuit `&&` / `||`，field、pointer/slice index、sub-slice 与 slice 构造。
+语句包括 typed `let`、assignment、`return`、`if`/`else`、`while`、`break;`、
+`continue;`、block 与返回 void 的 call statement。`break` 退出最内层 loop，
+`continue` 跳到其 condition。Loop 外使用为 `CK2009`；同一 block 中 non-fallthrough
+statement 后的代码为 `CK2010`。非法 void 使用为 `CK2011`，非法 slice shape/operation 为
+`CK2012`。分析保守地认为 loop 可以退出。
 
-优先级从高到低：call/index/sub-slice/field；unary；`* / %`；`+ -`；ordered
-comparison；equality；`&&`；`||`。除 unary 为右结合外均为左结合；括号覆盖默认规则。
+非 void function 必须在每条终止路径返回值；void function 可以自然结束或 `return;`。
+赋值目标可以是 local、parameter、field、pointer index 或 slice index。`.data` 与 `.len`
+projection 为 read-only，但整个 slice descriptor 可以赋值。
 
-Operand、call argument、slice 构造 operand 与 range endpoint 按源码顺序各求值
-一次。`&&` / `||` 仅在需要时求值右 operand。
+## 表达式与求值
 
-## 严格类型与数值语义
+表达式包含 literal、identifier、call、parentheses、unary、arithmetic、comparison、
+short-circuit boolean、field、pointer/slice index、sub-slice 与 slice construction。
+优先级从高到低为 postfix、unary、`* / %`、`+ -`、顺序比较、相等比较、`&&`、`||`。
+Operand、argument、construction operand 与 range endpoint 按源码顺序各求值一次；
+`&&` 和 `||` 只在必要时求值右侧。
 
-Operator 要求精确兼容的类型，不存在隐式数值转换。Integer literal 在有 context
-时物化为期望 integer type，否则默认 `i32`；float literal 的类型是 `f64`。
-Integer 支持 `+ - * / %`，`f64` 支持 `+ - * /`，不支持 `%`。
+## 数值语义
 
-唯一转换是保留的 compiler builtin：`i32_to_f64(i32) -> f64` 与
-`u32_to_f64(u32) -> f64`，两者均精确。没有 integer-width cast、f64-to-int、
-隐式 cast、`as` 或 constructor-style cast。
+类型严格匹配，没有隐式数值转换。Integer literal 使用 expected integer type，否则默认
+`i32`；float literal 为 `f64`。仅提供精确的 `i32_to_f64` 与 `u32_to_f64` 转换。
+没有 width cast、float-to-integer cast、`as` 或 constructor cast。浮点遵守严格 double
+语义，不启用 fast-math，也不承诺跨 backend bit-identical。
 
-带小数点的 float literal 必须在点两侧都有 digit，并支持 exponent。`NaN` 与
-infinity 没有 literal syntax，但可由运算产生。Backend 保持普通严格 double
-precision 行为，包括 signed zero 与 NaN unordered comparison；不承诺跨 backend
-bit-identical 浮点结果。
-
-默认生成 unchecked integer code。`--overflow checked` 是 C backend 的错误报告
-mode，不是源码 syntax，也不检查浮点运算。
+Integer arithmetic 默认 unchecked。`--overflow checked` 是 C 与 Native backend mode，
+通过 checked status contract 报告 overflow 和 division/modulo fault，不是源语法。
 
 ## Raw pointer 与 slice
 
-Pointer index 接受 `i32`、`u32` 或 context-compatible integer literal，不做 CK
-validity/bounds check。
+Pointer index 接受 `i32`、`u32` 或 compatible integer literal，不做有效性或边界检查。
 
-`slice(data, len)` 从 `ptr<T>` 与 `u32` length 构造 `slice<T>`。内存有效性、
-alignment、allocation extent、lifetime 与声明长度真实性仍由 caller 负责；复制
-descriptor 会 alias 同一内存。
+`slice(data, len)` 以 `ptr<T>` 和 `u32` length 构造 `slice<T>`。Memory validity、
+alignment、allocation extent、lifetime 及 length 真实性由调用方负责；复制后仍 alias 同一内存。
 
-`items[index]` 要求 `u32` index。`items[start..end]` 创建半开 sub-slice；两个
-endpoint 都是 `u32`，有效执行必须满足 `start <= end <= items.len`。`.data`
-返回 `ptr<T>`，`.len` 返回 `u32`。
+`items[index]` 的 index 必须为 `u32`。`items[start..end]` 创建半开 sub-slice，合法执行
+要求 `start <= end <= len`，等价写作 `start <= end <= items.len`。`.data` 返回 `ptr<T>`，`.len`
+返回 `u32`。
 
-只有选择 `--bounds checked` 时，生成的 C 才进行 slice bounds checking。
-Raw pointer indexing、slice construction 以及通过 `.data` indexing 永远不会由 CK 验证。
-Unchecked C、WASM、LLVM 不生成 guard；WASM 与 LLVM 拒绝 checked bounds。
+C 与 Native 可用 `--bounds checked` 检查 slice index 和 sub-slice。Raw pointer index、
+`slice(data, len)` 与通过 `.data` 的 index 永不由 CK 验证。Unchecked mode 与 WebAssembly
+不生成 slice guard；WebAssembly 拒绝 checked mode。
 
 ## Diagnostic 与非目标
 
-Lexing、parsing、type checking 使用[诊断参考](diagnostics.md)中的稳定 code。
-V0.9 不提供 string、I/O、module/import、dynamic allocation、ownership runtime、
-exception、async、class、closure、`f32`、SIMD、GPU target、JIT 或源码级 checked
-operator。
+稳定 frontend code 见 [Diagnostic](diagnostics.md)。0.10 不提供 module/import、dynamic
+allocation、ownership runtime、exception、async、closure、pointer/slice 之外的 source
+generic、`f32`、SIMD source type、GPU target、program argument、stdin、thread 或公开
+embeddable JIT API。

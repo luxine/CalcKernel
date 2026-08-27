@@ -1,0 +1,57 @@
+schema = 1
+release = "0.10.0"
+
+[[change]]
+id = "native-build-no-clang"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/cli/commands.rs:build_should_default_to_dynamic_and_create_exact_transactional_output_sets"
+
+[[change]]
+id = "native-artifact-kinds"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/cli/commands.rs:build_should_default_to_dynamic_and_create_exact_transactional_output_sets"
+
+[[change]]
+id = "run-main-print"
+fixture = "tests/fixtures/compatibility/v0_10/main_print.ck"
+evidence = "tests/native/run.rs:public_run_should_self_spawn_and_preserve_program_stdio_and_status"
+
+[[change]]
+id = "reserved-native-names"
+fixture = "tests/fixtures/compatibility/v0_10/reserved_print.ck"
+evidence = "tests/frontend/checker.rs:native_print_builtin_names_should_all_reject_user_redeclaration"
+
+[[change]]
+id = "build-llvm-deprecation"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/cli/commands.rs:build_llvm_dynamic_should_be_one_deprecated_alias_without_external_tools"
+
+[[change]]
+id = "native-checked-status"
+fixture = "tests/fixtures/compatibility/v0_10/native_checked.ck"
+evidence = "tests/native/differential.rs:native_exports_should_differentially_match_pinned_clang_c_libraries"
+
+[[change]]
+id = "single-native-c-abi"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/native/abi.rs:native_llvm_should_hide_internal_signatures_behind_host_c_abi_thunks"
+
+[[change]]
+id = "host-only-emit-llvm"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/cli/commands.rs:emit_llvm_should_reject_nonhost_target_before_writing_output"
+
+[[change]]
+id = "no-native-intermediates"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/cli/commands.rs:native_product_should_not_create_partial_output_on_semantic_failure"
+
+[[change]]
+id = "emit-c-source-only"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/cli/commands.rs:cli_should_check_and_emit_portable_outputs"
+
+[[change]]
+id = "unaffected-v0-9-source"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/backend/c.rs:c_backend_should_compile_and_run_scalar_control_and_memory_program"

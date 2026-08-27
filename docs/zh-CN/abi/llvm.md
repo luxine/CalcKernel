@@ -1,30 +1,48 @@
-# CalcKernel V0.9 LLVM ABI
+# CalcKernel 0.10 Native LLVM 与 C ABI
 
 [English](../../abi/llvm.md)
 
-本文档规范 `emit-llvm` 的 textual LLVM IR 与 `build-llvm` 的 object/library。
-IR 使用 opaque pointer 与显式/自动检测的 target triple；最终 platform calling
-detail 由该 triple 与 `clang` 决定。
+CalcKernel 0.10 固定 LLVM 22.1.8。Native MIR 经 checked C++ bridge 结构化 lowering，在
+optimization 前后验证，由 host TargetMachine 生成 object bytes，并在进程内用 LLD 链接。
+`emit-llvm` 输出该 verified module 供 inspection。
 
-`i32`/`u32` 映射为 LLVM `i32`，`i64`/`u64` 为 `i64`，`f64` 为 `double`，
-`bool` 为 `i1`，`ptr<T>` 为 `ptr`，named struct 为 declaration-order 的 named
-LLVM struct，`void` 为 LLVM `void`。Signedness 通过 comparison/division/remainder
-instruction 选择表达。转换使用 `sitofp` / `uitofp`，不添加 fast-math flag。
+Native generation 为 host-only。显式 target 规范化后必须等于 host triple；cross-target 在
+创建 artifact 前拒绝。Release baseline 为 LLVM `x86-64` 加 mandatory SSE2，以及 generic
+ARMv8-A 加 ABI-mandated FP/Advanced SIMD。`--cpu native` 仅为 build opt-in，run 使用 host。
 
-Exported source function 使用 external definition，internal function 使用 internal
-linkage。Void procedure 生成 `define void`，targetless call 生成 `call void`，显式
-或自然结束生成 `ret void`。Exported bool parameter/return 在 V0.9 中是 plain `i1`；
-consumer 必须匹配 emitted target 与 IR shape。
+Release binary 内含所需 host code generator、LLD driver 与 ORC layer，运行时不依赖 LLVM、
+LLD、Clang 或 non-system C++ runtime。`CKC_LLVM_PREFIX` 只用于从源码构建 compiler。
 
-Pointer 是 opaque `ptr`，但 GEP/load/store element type 遵循 CK type。Stored
-`slice<T>` 使用 `{ ptr, i32 }`。每个 physical slice parameter flatten 为 data、
-length 顺序的 `ptr, i32` 并用 `insertvalue` 重建。Move、struct field、memory
-operation、call 与 internal aggregate return 都保留 descriptor；exported slice
-return 非法。
+CK integer 映射为同宽 LLVM integer，`f64` 为 `double`，bool 为 `i1`，pointer 为 opaque
+`ptr`，struct 保持 field 顺序，void return 为 LLVM `void`。Natural void function 使用
+`define void`，targetless call 使用 `call void`，完成时使用 `ret void`。Stored `slice<T>` 为
+`{ ptr, i32 }`。`--overflow`/`--bounds` checked mode 使用显式 control flow 与 status code，
+不使用 trap。这些是
+compiler internal form，不是 public library ABI；0.9 的独立 textual LLVM export-shape promise
+已退出。
 
-Index/sub-slice GEP 使用实际 element type；zero-start sub-slice 保留原 pointer
-bit。Memory 由 caller 拥有且可 alias。
+Native object/static/dynamic 通过 generated header 暴露唯一 Native C ABI。每个 public source
+function 由 export thunk 包装 internal natural function；thunk 实现 target ABI classification、
+bool normalization、slice flattening、checked return/status 与 symbol visibility。三个 library
+artifact kind 采用同一契约。
 
-LLVM 只接受 `--overflow unchecked` 与 `--bounds unchecked`，会在 IR emission 前
-明确 reject checked mode；不会添加 slice guard、trap 或 C status ABI。
-`build-llvm --kind dynamic|object` 由 `clang` 完成 target validation 与产物构建。
+Public mapping 为 fixed-width C integer、strict `double`、target C `_Bool`、保持 declaration
+order 与 target padding/alignment 的 C struct、flattened `(T* data, uint32_t len)` slice
+parameter、direct unchecked return/C `void`，或 module-wide checked status/result out-pointer。
+Source symbol name/default visibility 保持；Windows dynamic export 使用 generated DLL decoration。
+
+Compiler 显式拥有 SysV AMD64、Darwin x86-64、Linux/Darwin AAPCS64、Windows x64 与
+Windows ARM64 classifier。它决定 register class、indirect/by-value aggregate、small aggregate
+return、extension attribute、alignment 与 hidden result。Pinned Clang fixture 只作 development
+oracle；generated header 是 consumer authority。
+
+Native user artifact 不依赖 CK、LLVM、ORC、LLD、Clang、libc formatting 或 external compiler
+runtime。Object/static archive 自然需要 consumer link step，但链接后不增加 CK runtime。
+Dynamic library 只 export 请求的 CK symbol 与 required platform metadata。Linux executable
+runtime 使用 kernel boundary；Windows 使用 embedded stable process import 且 computation DLL
+无 entry；Darwin 使用 embedded minimal system stub 与 LLD ad-hoc signing。
+
+`ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
+x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定
+RuntimeDyld compatibility path。两者都 eager resolve symbol，并在调用 `main` 前完成 RW-to-RX。
+0.10 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。

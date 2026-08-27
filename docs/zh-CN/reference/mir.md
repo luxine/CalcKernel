@@ -1,34 +1,29 @@
-# CalcKernel V0.9 MIR
+# CalcKernel 0.10 MIR
 
 [English](../../reference/mir.md)
 
-本文档规范 `0.9.x` 中 `ckc emit-mir` 的 textual MIR。MIR 是 C、WASM、LLVM
-共享的 typed three-address basic-block representation。
+本文档定义 `ckc emit-mir` 输出的 deterministic textual MIR。MIR 是 C、WebAssembly 与
+Native LLVM lowering 共用的唯一 typed three-address control-flow representation。
 
-`MirModule` 按顺序包含 struct 与 function；`MirFunction` 包含 name、export flag、
-typed parameter、return type、local 与 block；每个 `MirBlock` 按顺序包含
-instruction 且只有一个 terminator。
+`MirModule` 按顺序持有 struct 与 function。Function 记录 name、export flag、entry role、
+parameter、return type、local、block 与 runtime effect reachability。每个 block 有且仅有一个
+return、jump 或 branch terminator。
 
-`MirType` 包括 integer、`f64`、`bool`、pointer、struct、`MirType::Slice` 与
-`MirType::Void`。Void 只可作为 function return；slice 在 backend 中变成明确的
-data/length pair。
+`MirType` 覆盖全部 CK value type，包括 `MirType::Slice` 与 return-only `MirType::Void`。
+Instruction 包括 constant、move、unary/binary/compare、conversion、load/store、call、
+runtime print call、`MakeSlice`、`SliceIndex` 与 `Subslice`。Void call 为 `target: None`，
+void return 为 `value: None`；不存在 synthetic void value/local。`break`/`continue` 分别变成
+到最内层 loop exit/condition 的 `MirTerminator::Jump`。Slice operand 与 endpoint 按源码顺序
+各 lowering 一次。
 
-Instruction 包括 constant、move、unary/binary/compare、cast、load/store、call、
-`MakeSlice`、`SliceIndex` 与 `Subslice`。Place 包括 local、parameter、field 与
-index。Terminator 包括 return、jump 与 branch。
+七个 Native print builtin 成为显式 runtime effect。Optimization 只能删除不可达 effect，
+必须在 call、loop 与 inline 后保持所有可达 print 的次数与源码顺序。Backend root validator
+拒绝所选 artifact 无法承载的 effect。
 
-Void call 使用 `target: None`，void return 使用 `value: None`；自然 fallthrough
-也生成 valueless return，不制造 synthetic void value。`break` 与 `continue`
-分别成为指向最内层 loop exit/condition 的 `MirTerminator::Jump`。
+Overflow/bounds selection 作为 backend context 贯穿 lowering，不改变 source typing。Checked
+Native 与 C 实现相同的 first-error order；MIR optimization 不得改变可能的 checked failure 或
+runtime effect。
 
-Slice 构造、index 与 range operand 按源码顺序各 lower 一次。Checked bounds 是
-明确 backend context，optimizer 不可删除或重排可观察 guard。
-
-Validator 拒绝 unresolved/invalid type、void value、direct nested slice、exported
-slice return、不一致 call/return/place、malformed slice instruction 与未终止 block。
-Printer 的 declaration/local/block/instruction/operand/terminator 顺序确定，不包含
-path、timestamp、address 或 hash-map 顺序。
-
-`-O0` 输出未优化 lowered MIR；`-O1`–`-O3` 使用[Optimizer](../compiler/optimizer.md)
-pipeline。Backend mode 不改变 `emit-mir`。`0.9.x` 保持 MIR syntax、instruction
-meaning 与 deterministic printing 向后兼容；破坏性变化必须遵守[兼容性策略](../project/compatibility.md)。
+Validator 拒绝 unresolved type、void value、非法 slice shape、type-inconsistent operation、
+malformed block/terminator。打印顺序由源码决定，不含 path、time、address 或 hash-map order。
+O0 输出 lowering 后 MIR，O1–O3 使用 deterministic pipeline。`0.10.x` 内 textual format 兼容。

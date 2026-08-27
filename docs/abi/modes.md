@@ -1,22 +1,10 @@
-# CalcKernel V0.9 Checked C Modes
+# CalcKernel 0.10 Checked C and Native Modes
 
 [简体中文](../zh-CN/abi/modes.md)
 
-This document normatively defines the independent C code-generation options
-`--overflow unchecked|checked` and `--bounds unchecked|checked`. All four
-combinations are accepted by `emit-c` and `build`. WASM and LLVM reject either
-checked mode.
-
-## Mode matrix
-
-| Overflow | Bounds | C ABI | Inserted checks |
-| --- | --- | --- | --- |
-| unchecked | unchecked | direct return / C `void` | none |
-| checked | unchecked | status ABI | integer arithmetic and integer division/modulo |
-| unchecked | checked | status ABI | slice index and sub-slice |
-| checked | checked | status ABI | both sets |
-
-Either checked selection activates the full module-wide status ABI:
+`--overflow unchecked|checked` and `--bounds unchecked|checked` are independent.
+All four combinations are accepted by Native and C; WebAssembly accepts only
+both unchecked. Either checked selection enables the module-wide status ABI.
 
 ```c
 typedef int32_t CK_Status;
@@ -27,33 +15,44 @@ typedef int32_t CK_Status;
 #define CK_ERR_OUT_OF_BOUNDS ((CK_Status)4)
 ```
 
-A non-void function returns `CK_Status` and appends `T* ck_return`; it writes the
-source return value only on success. Null `ck_return` yields
-`CK_ERR_NULL_POINTER`. A void function returns `CK_Status` without a result
-pointer and returns `CK_OK` on explicit or natural success. Internal calls use
-the same mode and immediately propagate non-`CK_OK` status.
+A checked non-void function returns `CK_Status` and appends `T* ck_return`; it
+writes the result only on success. A null result pointer returns
+`CK_ERR_NULL_POINTER`. A void function returns status without an output pointer.
+Internal calls use the same mode and propagate the first error; success is `CK_OK`.
 
-## Checked operations and order
+Checked integer add, subtract, multiply, negation, division, and modulo report
+overflow where applicable. Division or modulo by zero has its dedicated code;
+signed minimum divided by -1 is overflow. Floating operations and exact
+32-bit-integer-to-f64 conversions do not create status errors.
 
-Integer add, subtract, multiply, unary negation, divide, and modulo report
-overflow where applicable. Integer divide/modulo by zero reports
-`CK_ERR_DIV_BY_ZERO`; signed minimum divided by `-1` reports overflow. Unsigned
-arithmetic follows its selected checked/unchecked mode. `f64` operations and the
-exact 32-bit integer-to-`f64` casts never produce status errors.
+Checked `slice<T>` indexing requires `index < len`; checked half-open sub-slicing
+requires `start <= end <= len`. Evaluation and first error order is: non-void
+result pointer, then source operands left-to-right, then nested-call/arithmetic
+failure, then the bounds guard. Thus overflow before bounds is observable when
+arithmetic computes an index.
 
-Checked `slice<T>` indexing requires `index < len`. Checked half-open sub-slicing
-requires `start <= end <= len`; failure returns `CK_ERR_OUT_OF_BOUNDS` before
-pointer advance or element access.
+For Native `run` and executable entry, the compiler-owned wrapper supplies a
+valid checked result pointer. A status failure prints one fixed runtime
+diagnostic to stderr and exits 240 through 243. Output failure is 244 and
+abnormal child termination is 245. Libraries return `CK_Status` and do not
+print or translate it to a process exit code.
 
-Observable error order is: a non-void null result pointer is checked first;
-source operands are then evaluated once left-to-right; a nested call or
-arithmetic failure while computing an index/range is propagated before its
-bounds guard. In short: result-pointer failure first, then arithmetic before bounds
-when arithmetic computes the checked access: overflow before bounds.
+The stable runtime diagnostics are ASCII/UTF-8 and end in exactly one LF byte:
 
-## Safety boundary
+| ID | Exact message before LF | Process status |
+| --- | --- | ---: |
+| `CKR0001` | `CKR0001: integer overflow` | 240 |
+| `CKR0002` | `CKR0002: integer division or modulo by zero` | 241 |
+| `CKR0003` | `CKR0003: null checked result pointer` | 242 |
+| `CKR0004` | `CKR0004: slice index or sub-slice out of bounds` | 243 |
+| `CKR0005` | `CKR0005: standard output write failed` | 244 |
+| `CKR0006` | `CKR0006: native child terminated abnormally` | 245 |
 
-Checked modes do not establish memory safety. Raw pointer indexing,
-`slice(data, len)`, indexing through `.data`, user-provided output buffers,
-allocation extent, alignment, lifetime, aliasing, and concurrency remain the
-caller's responsibility. Bounds mode trusts the descriptor's declared length.
+Statuses 240–245 are reserved. `CKR0005` is attempted on stderr after stdout
+fails, and failure of that write does not change 244. Only the `ckc run` parent
+emits `CKR0006`; a standalone executable retains host signal/exception behavior.
+
+Checked modes are not memory safety. Raw pointer operations, `slice(data, len)`,
+`.data` indexing, output buffers, allocation extent, alignment, lifetime,
+aliasing, and concurrency remain caller responsibilities; bounds checks trust
+the declared slice length.

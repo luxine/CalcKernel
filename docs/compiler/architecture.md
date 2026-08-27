@@ -8,8 +8,9 @@ behavior is defined by the reference and ABI documents, not by module placement.
 ```text
 .ck -> source/diagnostics -> lexer -> parser/AST -> type checker
     -> MIR lowering/validation -> MIR optimizer
-    -> C | WAT/WASM | LLVM
-    -> optional clang build
+    +-> C source/header
+    +-> WAT/WASM
+    +-> structural LLVM -> TargetMachine object -> ORC or in-process LLD
 ```
 
 `src/frontend/` owns source coordinates, stable diagnostics, tokenization, AST,
@@ -29,16 +30,19 @@ pipeline selection, per-pass validation, and debug records. A pass may improve
 MIR but cannot change diagnostic, mode, evaluation-order, error-order, or ABI
 semantics.
 
-`src/backend/` owns C, WASM, and LLVM planning/emission. Each backend consumes
-validated MIR and makes its ABI representation explicit. C alone implements the
-checked status modes. Backend output must be deterministic for identical source,
-flags, target, and compiler version.
+`src/backend/` owns C, WASM, Native ABI classification, and LLVM lowering. Each
+backend consumes validated MIR and makes its representation explicit. C and
+Native implement checked status modes; WASM is unchecked-only. Native LLVM is
+structurally built, verified before and after optimization, and emitted to
+object bytes by the host TargetMachine.
 
-`src/cli/` owns argument parsing, command dispatch, atomic output, toolchain
-invocation, and user-facing stdout/stderr. `src/bin/ckc.rs` is a thin process
-entry point. `src/lib.rs` preserves the public Rust re-exports used by tests and
-embedders.
+`src/backend/llvm/` and `native/bridge/` provide typed ownership across the
+Rust/C++ boundary. `native/runtime/` owns entry, status diagnostics, and print
+effects; LLD and ORC are used in process. `src/cli/` owns argument parsing,
+dispatch, transactional output, isolated run/cache policy, and stdout/stderr.
+`src/bin/ckc.rs` is a thin process entry and `src/lib.rs` exposes intentional
+Rust re-exports.
 
-Diagnostics flow forward without being rewritten by later stages. File-system,
-unsupported-mode, backend, and `clang` failures are CLI errors. All generated
-memory is caller-owned; the compiler supplies no runtime allocator.
+Diagnostics flow forward without later rewriting. Filesystem, unsupported-mode,
+backend, link, and runtime failures are CLI errors. All CK-visible generated
+memory is caller-owned; the minimal runtime supplies no allocator.

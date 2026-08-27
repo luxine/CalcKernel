@@ -8,7 +8,9 @@ module 位置定义。
 ```text
 .ck -> source/diagnostics -> lexer -> parser/AST -> type checker
     -> MIR lowering/validation -> MIR optimizer
-    -> C | WAT/WASM | LLVM -> optional clang build
+    +-> C source/header
+    +-> WAT/WASM
+    +-> structural LLVM -> TargetMachine object -> ORC 或 in-process LLD
 ```
 
 `src/frontend/` 负责 source coordinate、稳定 diagnostic、token、AST、parser、
@@ -26,10 +28,12 @@ operation，但不增加 backend-specific check。
 `src/optimizer/` 负责 context、analysis、pass、pipeline、逐 pass validation 与
 debug record。Pass 不可改变 diagnostic、mode、evaluation/error order 或 ABI。
 
-`src/backend/` 负责 C、WASM、LLVM plan/emission。每个 backend 消费 validated
-MIR 并显式实现自身 ABI；只有 C 实现 checked status mode。相同 source、flag、
-target 与 compiler version 必须得到确定输出。
+`src/backend/` 负责 C、WASM、Native ABI classification 与 LLVM lowering。C 和
+Native 实现 checked status mode，WASM 仅支持 unchecked。Native LLVM 采用 structural
+construction，在 optimization 前后 verify，并由 host TargetMachine 生成 object bytes。
 
-`src/cli/` 负责 argument、dispatch、atomic output、toolchain 与 stdout/stderr；
-`src/bin/ckc.rs` 只是薄 process entry；`src/lib.rs` 通过明确 re-export 保持公共
-Rust surface。CK 不提供 runtime allocator，所有 generated memory 都由 caller 拥有。
+`src/backend/llvm/` 与 `native/bridge/` 提供 Rust/C++ boundary 的 typed ownership；
+`native/runtime/` 负责 entry、status diagnostic 与 print effect，LLD/ORC 在进程内使用。
+`src/cli/` 负责 argument、dispatch、transactional output、isolated run/cache 与 stdout/stderr；
+`src/bin/ckc.rs` 是薄 process entry。CK 不提供 runtime allocator，CK-visible memory 由
+caller 拥有。

@@ -1,54 +1,52 @@
-# CalcKernel V0.9 MIR
+# CalcKernel 0.10 MIR
 
 [简体中文](../zh-CN/reference/mir.md)
 
-This document is normative for the textual MIR emitted by `ckc emit-mir` in the
-`0.9.x` line. MIR is a typed, three-address, basic-block representation shared
-by the C, WASM, and LLVM backends.
+This document defines deterministic textual MIR emitted by `ckc emit-mir`.
+MIR is the single typed, three-address control-flow representation consumed by
+C, WebAssembly, and Native LLVM lowering.
 
 ## Model
 
-`MirModule` owns ordered structs and functions. A `MirFunction` owns its name,
-export flag, typed parameters, return type, locals, and ordered blocks. Every
-`MirBlock` has ordered instructions and exactly one terminator.
+`MirModule` owns ordered structs and functions. Each function records its name,
+export flag, optional program-entry role, parameters, return type, locals,
+blocks, and runtime effect reachability. Every block has ordered instructions
+and exactly one return, jump, or branch terminator.
 
-`MirType` covers integers, `f64`, `bool`, pointers, structs, `MirType::Slice`,
-and `MirType::Void`. Void is valid only as a function return. Slices carry an
-element type and lower as a data/length pair in backend-specific form.
+`MirType` covers all CK value types, including `MirType::Slice`, plus return-only
+`MirType::Void`. Instructions include
+constants, moves, unary/binary/compare, conversions, load/store, ordinary call,
+runtime print call, `MakeSlice`, `SliceIndex`, and `Subslice`. Places cover
+local, parameter, field, and indexed storage.
 
-Instructions include constants, move, unary/binary/compare, cast, load/store,
-call, `MakeSlice`, `SliceIndex`, and `Subslice`. Places cover local, parameter,
-field, and index storage. Terminators are return, jump, and branch.
+A void call has `target: None` and a void return has `value: None`. Natural void
+fallthrough becomes a valueless return; no synthetic void value/local exists.
+`break` and `continue` become `MirTerminator::Jump` to the innermost loop exit
+and condition. Slice operands and endpoints are lowered once in source order.
 
-A void call has `target: None`; a void return has `value: None`. Natural void
-fallthrough becomes a valueless return. No synthetic void local or value exists.
-`break` and `continue` lower to `MirTerminator::Jump` targeting the innermost
-loop exit and condition respectively.
+The seven Native print builtins lower to explicit runtime effect instructions.
+Optimization may remove only unreachable effects and must preserve the count
+and source order of every reachable print through calls, loops, and inlining.
+Backend root validation rejects effects that the selected artifact cannot host.
 
-Slice construction, index, and range operands are lowered once in source order.
-`MakeSlice` retains pointer and `u32` length; `SliceIndex` retains the slice and
-index; `Subslice` retains slice, start, and end. Checked bounds remain explicit
-backend context and are never erased or reordered by optimization.
+## Checked semantics
 
-## Validation and printing
+Overflow and bounds selections are backend context carried through lowering;
+they do not alter source typing. Checked Native and C lowering implement the
+same first-error ordering. MIR optimization cannot erase, duplicate, or reorder
+an operation in a way that changes a possible checked failure or runtime effect.
 
-The validator rejects unresolved or invalid types, void values, direct nested
-slices, exported slice returns, type-inconsistent calls/returns/places, malformed
-slice instructions, missing blocks, and malformed terminators. All blocks are
-terminated before a backend receives MIR.
+## Validation, optimization, and printing
 
-Printing is deterministic: declaration, local, block, instruction, operand, and
-terminator order derives solely from the source and selected optimization
-pipeline. It contains no filesystem path, timestamp, address, or hash-map order.
+Validation rejects unresolved types, void values, invalid slice shapes,
+type-inconsistent calls/returns/places, malformed instructions, missing blocks,
+and malformed terminators. All blocks are terminated before backend lowering.
 
-`-O0` prints lowered MIR without optimization. `-O1`–`-O3` print the result of
-the documented pipeline in [Optimizer](../compiler/optimizer.md). Backend modes
-do not change source checking or the MIR emitted by `emit-mir`.
+Text output follows source-derived declaration, local, block, instruction,
+operand, and terminator order. It contains no path, time, address, or hash-map
+order. O0 prints lowered MIR; O1–O3 apply the documented deterministic pipeline.
+One optimization selection is used by MIR and Native LLVM when building.
 
-## Compatibility
-
-Within `0.9.x`, accepted MIR syntax, instruction/terminator meaning, deterministic
-printing, and `emit-mir` behavior are backward compatible. Additive explanatory
-comments are not emitted into the stable text. A breaking MIR change requires a
-minor-version boundary and migration guidance under the project
+The textual format is compatible within `0.10.x`; a breaking grammar or meaning
+change requires a later minor release and migration note under the project
 [compatibility policy](../project/compatibility.md).

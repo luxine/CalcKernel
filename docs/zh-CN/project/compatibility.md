@@ -1,23 +1,31 @@
-# CalcKernel V0.9 兼容性策略
+# CalcKernel 0.10 兼容性策略
 
 [English](../../project/compatibility.md)
 
-本文档是 `0.9.x` release line 的规范性兼容权威。
+本文档是 `0.10.x` 的规范性 compatibility authority。
 
-`0.9.x` patch release 对以下内容保持向后兼容：0.9.0 接受的 CK source program
-及可观察 semantics；stable diagnostic ID 与触发类别；command、flag/alias/default、
-argument precedence、stdout/stderr 类别、成功/失败退出与 artifact naming；textual
-MIR syntax、deterministic printing 与 instruction meaning；已记录的 C/WASM/LLVM、
-checked-mode、slice、void 与 exported function ABI；六个 native target/archive 名称
-及 checksum sidecar。
+Patch release 保持 0.10.0 已接受 source 及 observable semantics、stable diagnostic ID/category、
+documented CLI name/flag/default、stdout/stderr class 与 success/failure behavior、textual MIR、
+public C/WASM/Native C ABI shape、checked first-error order、runtime diagnostic byte/exit status，
+以及六个 release archive name 与 checksum sidecar。
 
-Patch release 可以修复对 invalid input 的误接受、改善 diagnostic prose/caret、
-增加非破坏文档、在不改变可观察 semantics 时优化，并增加默认行为保持兼容的 API
-或 flag。
+Patch release 可以拒绝过去误接受的非法输入、改善 diagnostic prose/caret、添加 opt-in API、
+修复 codegen，并在所有承诺语义不变时优化。Private Rust module、algorithm、test、cache content/
+eviction、benchmark measurement 与 undocumented internal IR 不属于 public contract。
 
-Internal Rust module/file path、private item、test organization、algorithm、benchmark
-数值、build cache 与未记录 backend internal 不属于兼容承诺。仓库 test/embedding
-明确使用的公共 Rust re-export 在 `0.9.x` 内保持稳定。
+## 从 0.9.0 迁移
 
-`0.10.0` 只有在明确记录并提供 migration guidance 时才可改变 language、diagnostic、
-CLI、MIR 或 ABI。未来 `1.0.0` 才开始长期兼容承诺；V0.9 不宣称 1.0 stability。
+- `build` 不再调用 Clang，改用进程内固定 LLVM/LLD；默认仍为 dynamic library。
+- `--kind executable|dynamic|static|object` 新增 Native artifact；library form 共用唯一
+  generated-header Native C ABI。
+- 新增 `run`、无参数 internal `main` 与七个 Native print builtin。`main` 和所有 print 名称
+  已 reserved，冲突声明必须重命名。
+- `build-llvm` 保留为 deprecated dynamic/object alias，每次调用输出一次 warning。
+- Native 接受 checked overflow/bounds，使用已有 C status meaning。
+- 旧 standalone textual LLVM export shape 已退出；Native library 使用 Native C ABI，
+  `emit-llvm` 仅为 host-only inspection output。
+- Native build 不再留下 `.c`/`.ll` intermediate；`emit-c` 仍为 source-only。
+- C 与 WebAssembly 不增加 runtime print，artifact root 可达的 print 会被拒绝。
+
+不涉及以上变化的 0.9.0 source 保持 source semantics。Compatibility fixture 覆盖每项有意变化。
+未来 `1.0.0` 才开始长期 stability commitment；0.10 不宣称 1.0 compatibility。

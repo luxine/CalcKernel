@@ -2,26 +2,30 @@
 
 [简体中文](../zh-CN/guides/backend-selection.md)
 
-Use C for the broadest native FFI and whenever checked integer arithmetic or
-checked slice bounds are required. `emit-c` produces inspectable C/header files;
-`build` invokes `clang` for a dynamic library.
+Use Native for zero-toolchain execution and FFI. `run` executes `main`; `build`
+creates executable, dynamic, static, or object output and supports checked
+integer arithmetic and slice bounds. Library artifacts include a C ABI header.
+
+Use C when portable, inspectable source is the integration boundary. `emit-c`
+produces C/header files only; the consumer deliberately chooses its own compiler.
 
 Use WASM for sandboxed, portable execution in a WebAssembly runtime. `emit-wat`
 is readable; `emit-wasm` is directly instantiable. The host manages linear
 memory and passes byte addresses. WASM is unchecked-only.
 
-Use LLVM for textual IR, native object integration, or a dynamic library built
-from LLVM IR. `emit-llvm` does not require `clang`; `build-llvm` does. Match the
-target triple and consumer toolchain. LLVM is unchecked-only.
+Use `emit-llvm` only to inspect host-native IR. `build-llvm` is a deprecated
+alias for Native dynamic/object output and should not be used by new scripts.
 
 | Need | Recommended command |
 | --- | --- |
 | Syntax/type validation | `ckc check input.ck` |
 | Compiler/debug inspection | `ckc emit-mir input.ck -O0..O3` |
 | Portable native source/FFI | `ckc emit-c input.ck --out input.c` |
-| Checked overflow or slice bounds | C with the corresponding checked flag |
+| Run a CK program | `ckc run input.ck` |
+| Standalone executable | `ckc build input.ck --kind executable --out app` |
+| Checked overflow or slice bounds | Native or C with the corresponding flag |
 | Browser/server WASM runtime | `ckc emit-wasm input.ck --out input.wasm` |
-| Native object/link pipeline | `ckc build-llvm input.ck --kind object --out input.o` |
+| Native library/object | `ckc build input.ck --kind dynamic|static|object --out output` |
 
 All outputs preserve source evaluation order and strict typing. Backend ABI
 shapes differ; consult the relevant document under [ABI](../index.md#abi).

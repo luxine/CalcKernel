@@ -1,4 +1,4 @@
-# CalcKernel V0.9 Optimizer
+# CalcKernel 0.10 Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -22,9 +22,13 @@ void call 的 side effect 必须保留；CFG pass 保留 valueless return 与最
 `break`/`continue` target。
 
 `slice<T>` descriptor 按 value copy，data 仍 alias。Checked `SliceIndex`/`Subslice`
-guard 与 address calculation 可观察，并且只存在于 C `--bounds checked` context；
+guard 与 address calculation 在 C/Native `--bounds checked` context 中可观察；
 除非在 active context 中证明安全，否则不可
 删除，也不可跨可能失败的 call/arithmetic CSE、hoist 或 reorder。
+
+Native print call 是 runtime effect。Optimization 只能删除不可达 effect，并在 call、loop、
+inline 后保留可达 effect 的次数与源码顺序。所选 level 同时控制 MIR 和后续 LLVM default
+pipeline，任何 level 都不启用 fast-math。
 
 `--print-mir-before-opt`、`--print-mir-after-opt`、`--print-pass-pipeline`
 向 stderr 写确定信息且不改变 artifact。

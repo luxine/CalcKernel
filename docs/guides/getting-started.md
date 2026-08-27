@@ -1,14 +1,14 @@
-# Getting Started with CalcKernel 0.9
+# Getting Started with CalcKernel 0.10
 
 [简体中文](../zh-CN/guides/getting-started.md)
 
-Install stable Rust, clone the repository, and build the native compiler:
+For end users, unpack the release archive for the host and run the self-contained
+compiler:
 
 ```sh
-cargo build --release --locked
-./target/release/ckc --help
-./target/release/ckc check examples/core/scalar.ck
-./target/release/ckc emit-mir examples/core/scalar.ck -O3
+ckc --version --verbose
+ckc check examples/core/scalar.ck
+ckc run examples/native/hello.ck
 ```
 
 A CK file contains structs and typed functions. Exported functions become host
@@ -20,16 +20,19 @@ export fn add(a: i32, b: i32) -> i32 {
 }
 ```
 
-Use `check` first, then select an output with the
-[backend guide](backend-selection.md). `emit-*` needs only `ckc`; `build` and
-`build-llvm` also need `clang`. Source diagnostics include a stable `CKxxxx`
-identifier, file, line, column, source excerpt, and caret.
+Use `check` first, then select an output with the [backend guide](backend-selection.md).
+Release `ckc` needs no external compiler for `run` or `build`. Source diagnostics
+include a stable `CKxxxx` identifier, file, line, column, excerpt, and caret.
+
+Building the Native feature from source requires the pinned LLVM prefix; follow
+the exact bootstrap command in the repository README. Default features remain
+available for frontend/C/WASM development without that prefix.
 
 For development, run the strict gate:
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --locked
-cargo build --release --locked
+cargo test --all-features --locked
+cargo build --release --features native-toolchain --locked
 ```

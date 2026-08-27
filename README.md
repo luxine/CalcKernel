@@ -1,143 +1,114 @@
 # Rust CalcKernel
 
-[Simplified Chinese](README.zh-CN.md)
+[简体中文](README.zh-CN.md)
 
-Rust CalcKernel 0.9.0 ships `native ckc`: a Rust-built command-line compiler for the
-CK / CalcKernel language. This repository no longer publishes a wrapper layer
-or a scripting-language package surface. The product boundary is the native
-`ckc` executable plus the Rust compiler implementation behind it.
+Rust CalcKernel 0.10.0 ships `native ckc`, a self-contained command-line
+compiler for the CK computation-kernel language. Release binaries compile, link,
+and run native CK without an external compiler toolchain. The repository also
+retains inspectable C and WebAssembly source/binary emitters.
 
-## Project Shape
+## What ships
 
-CK is a small DSL for pure computation kernels. It is intended for deterministic
-logic such as pricing, array processing, graph algorithms, and numerical
-kernels that need embeddable C, WASM, or LLVM outputs.
+- A Rust lexer, parser, type checker, deterministic MIR, and O0–O3 optimizer.
+- `break` / `continue`, return-only `void`, caller-owned `slice<T>`, optional
+  checked overflow and slice bounds, and a parameterless `main` entry.
+- `ckc run` with an isolated child, deterministic numeric/boolean printing, and
+  a secure persistent object cache.
+- `ckc build --kind executable|dynamic|static|object` using embedded LLVM
+  22.1.8 code generation and in-process LLD.
+- One generated-header Native C ABI for object, static, and dynamic libraries.
+- Source-only C output and portable WAT/WASM output.
+- Six zero-toolchain release archives for macOS, Linux, and Windows on AArch64
+  and x86-64.
 
-This repository provides:
+Native checked modes support all four overflow/bounds combinations. C emission
+supports the same checked status semantics. WebAssembly is unchecked-only.
+Native runtime printing is accepted for `run` and executables; reachable print
+effects are rejected from library, C, and WebAssembly roots.
 
-- Rust lexer, parser, type checker, MIR lowering, and MIR optimization passes.
-- A native `ckc` CLI with `check`, `emit-mir`, `emit-c`, `emit-wat`,
-  `emit-wasm`, `emit-llvm`, `build`, and `build-llvm`.
-- C backend output with C/H generation, unchecked and checked overflow ABI
-  modes, and optional `clang` shared-library builds.
-- WASM backend output as WAT or WASM bytes.
-- LLVM backend output as LLVM IR, dynamic libraries, or object files through
-  `clang`.
-- Native release artifacts documented in `docs/project/release.md`.
-
-The V0.9 backend mode matrix is:
-
-| Backend | `--overflow unchecked` | `--overflow checked` | `--bounds unchecked` | `--bounds checked` |
-| --- | --- | --- | --- | --- |
-| C | yes | yes | yes | yes |
-| WASM | yes | no | yes | no |
-| LLVM | yes | no | yes | no |
-
-See [CHANGELOG.md](CHANGELOG.md) for the 0.9.0 release summary.
-
-## Architecture
+## Pipeline
 
 ```text
-.ck source
-  |
-  v
-lexer -> parser -> type checker
-  |
-  v
-MIR lowering -> MIR optimizer
-  |
-  +--> C emitter -> clang -> shared library
-  +--> WAT emitter -> wasm bytes
-  +--> LLVM IR emitter -> clang -> shared library / object
+.ck -> frontend -> validated MIR -> MIR optimizer
+                              +-> C source/header
+                              +-> WAT/WASM
+                              +-> structural LLVM -> object
+                                                   +-> ORC run
+                                                   +-> in-process LLD -> executable/library
 ```
 
-Primary source entry points:
+The product path does not invoke Clang, a system linker, or an archiver. A
+pinned Clang 22.1.8 build exists only as the repository's differential and ABI
+test oracle.
 
-- `src/frontend/`: source model, AST, lexer, parser, diagnostics, and type
-  checking.
-- `src/ir/`: MIR model, lowering, validation, and printing.
-- `src/optimizer/`: O0-O3 pass pipeline, shared analysis, and optimization
-  passes.
-- `src/backend/`: separate C, WAT/WASM, and LLVM planning and emission modules.
-- `src/cli/`: argument parsing, command routing, output handling, and toolchain
-  integration.
-- `src/bin/ckc.rs`: thin native `ckc` process entry point.
-
-## Usage
-
-Build and run the native CLI:
+## Use a release binary
 
 ```sh
+ckc --version --verbose
+ckc check examples/core/scalar.ck
+ckc run examples/native/hello.ck
+ckc build examples/native/hello.ck --kind executable --out /tmp/hello
+ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
+ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
+ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
+ckc licenses
+```
+
+`run` and `build` default to O3. Native build defaults to the release target's
+portable CPU baseline; `--cpu native` is opt-in. `build-llvm` remains only as a
+deprecated alias for dynamic/object Native builds.
+
+## Build from source
+
+The native feature requires the exact LLVM prefix described by
+`native/llvm/manifest.toml`; repository scripts bootstrap it into `build/llvm`.
+The prefix is a build input, not an end-user runtime dependency.
+
+```sh
+rustc_host="$(rustc -vV | sed -n 's/^host: //p')"
+llvm_archive=/path/to/llvm-project-22.1.8.src.tar.xz
+./scripts/bootstrap-llvm.sh --archive "$llvm_archive" \
+  --prefix "$PWD/build/llvm/prefix-$rustc_host-release" \
+  --target "$rustc_host" --profile release
+export CKC_LLVM_PREFIX="$PWD/build/llvm/prefix-$rustc_host-release"
+cargo build --release --features native-toolchain --locked
+cargo test --all-features --locked
+```
+
+A frontend/C/WASM-only developer build is also available with default features:
+
+```sh
+cargo test --locked
 cargo build --release --locked
-./target/release/ckc --help
-./target/release/ckc check examples/core/scalar.ck
-./target/release/ckc check examples/core/control_flow.ck
-./target/release/ckc check examples/core/void.ck
-./target/release/ckc emit-mir examples/core/scalar.ck -O3
-./target/release/ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
-./target/release/ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
-./target/release/ckc emit-llvm examples/llvm/scalar.ck --target ck-test-target
 ```
 
-During development, `cargo run --` can be used in place of the release binary:
+## Documentation and verification
 
-```sh
-cargo run -- check examples/core/scalar.ck
-```
-
-## Documentation
-
-- `docs/reference/language.md`: CK source language.
-- `examples/core/control_flow.ck`: `break` / `continue` control-flow example.
-- `examples/core/void.ck`: explicit `void`, early return, and procedure-call example.
-- `docs/compiler/architecture.md`: compiler pipeline and module boundaries.
-- `docs/reference/mir.md`: MIR data model and printed format.
-- `docs/compiler/optimizer.md`: MIR optimization levels and pass boundaries.
-- `docs/abi/c.md`, `docs/abi/wasm.md`, and `docs/abi/llvm.md`: backend ABI
-  contracts.
-- `docs/reference/cli.md`: output files and when to use each backend.
-- `docs/project/release.md`: native release process and artifact checks.
-
-Formal user-facing docs have matching Simplified Chinese versions under
+Start with the [documentation index](docs/index.md), the
+[language reference](docs/reference/language.md), the
+[CLI reference](docs/reference/cli.md), and the [Native ABI](docs/abi/llvm.md).
+Runnable language examples cover [control flow](examples/core/control_flow.ck),
+[void procedures](examples/core/void.ck), and [slices](examples/core/slices.ck).
+Every durable user-facing document has a Simplified Chinese mirror under
 `docs/zh-CN/`.
 
-## Verification
-
-The strict local gate is:
+The strict native local gate is:
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --locked
-cargo build --release --locked
-./target/release/ckc --help
-./target/release/ckc check examples/core/scalar.ck
+cargo test --all-features --locked
+cargo build --release --features native-toolchain --locked
+./target/release/ckc --version --verbose
+./target/release/ckc licenses
 ```
 
-The Rust tests preserve compiler behavior against the read-only TypeScript
-source checkout where useful. Those oracle tests compare native compiler
-behavior: diagnostics, stdout/stderr, exit codes, MIR text, generated C/WASM/LLVM
-outputs, and runtime behavior for emitted artifacts. They do not protect a
-wrapper API or a registry publication path.
+Release policy, platform audits, performance gates, archive names, and immutable
+GitHub Release publication are defined in [docs/project/release.md](docs/project/release.md).
 
-## Release Boundary
+## Memory boundary
 
-Release builds produce native `ckc` binaries for supported macOS, Linux, and
-Windows targets. Each archive is signed off with CLI smoke checks and a `SHA256`
-checksum. Tagged builds may attach those archives to a `GitHub Release`.
-
-No npm. No JavaScript compatibility layer. No TypeScript declaration parity.
-The TypeScript checkout remains read-only source material and behavior oracle;
-the shipped product is `native ckc`.
-
-## Non-owning slices
-
-CK now supports non-owning `slice<T>` descriptors. Construct one from a raw
-pointer with `slice(data, len)`, read `.data` / `.len`, index it, or create a
-half-open sub-slice with `items[start..end]`. The caller still owns the memory
-and is responsible for the raw pointer and declared length; descriptors alias
-that memory and do not extend its lifetime. See [examples/core/slices.ck](examples/core/slices.ck).
-
-`--bounds unchecked` is the default on every backend. C emission and `ckc build`
-also accept `--bounds checked` and return `CK_ERR_OUT_OF_BOUNDS` (status 4).
-WASM and LLVM accept only unchecked bounds and reject checked bounds explicitly.
+`slice(data, len)` and `items[start..end]` create non-owning `slice<T>` descriptors. The
+caller remains responsible for raw-pointer validity, allocation extent,
+alignment, lifetime, and declared length. `--bounds checked` validates only slice
+index/range relations; they do not make arbitrary pointer use memory-safe.

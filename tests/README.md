@@ -1,34 +1,40 @@
 # Integration Test Layout
 
-Cargo compiles seven responsibility-based integration drivers: `frontend`,
-`ir`, `optimizer`, `backend`, `cli`, `contracts`, and `performance`. Shared test
-infrastructure lives under `support/`; responsibility files are not standalone
-Cargo test crates.
+Cargo compiles eight responsibility-based integration drivers. Files below each
+driver directory are modules, not standalone Cargo test crates.
 
-The V0.9 reorganization preserved all 222 test functions. Every former test
-name has the exact replacement `<module>::<former-name>` according to this
-mapping; no leaf test function was renamed.
-
-| Former driver | Current driver and module |
+| Driver | Responsibility |
 | --- | --- |
-| `backend_surface_test.rs` | `backend.rs` → `surface` |
-| `c_backend_test.rs` | `backend.rs` → `c` |
-| `control_void_slice_e2e_test.rs` | `backend.rs` → `control_void_slice` |
-| `llvm_backend_test.rs` | `backend.rs` → `llvm` |
-| `wasm_backend_test.rs` | `backend.rs` → `wasm` |
-| `cli_test.rs` | `cli.rs` → `commands` |
-| `typescript_oracle_portability_test.rs` | `cli.rs` → `oracle_portability` |
-| `typescript_oracle_readiness_test.rs` | `cli.rs` → `oracle_readiness` |
-| `ci_surface_test.rs` | `contracts.rs` → `ci` |
-| `docs_surface_test.rs` | `contracts.rs` → `docs` |
-| `git_repository_test.rs` | `contracts.rs` → `git` |
-| `release_surface_test.rs` | `contracts.rs` → `release` |
-| `repository_contract_test.rs` | `contracts.rs` → `repository` |
-| `checker_test.rs` | `frontend.rs` → `checker` |
-| `lexer_test.rs` | `frontend.rs` → `lexer` |
-| `parser_test.rs` | `frontend.rs` → `parser` |
-| `frontend_surface_test.rs` | `frontend.rs` → `surface` |
-| `mir_test.rs` | `ir.rs` → `mir` |
-| `optimizer_test.rs` | `optimizer.rs` → `passes` |
-| `bench_surface_test.rs` | `performance.rs` → `bench` |
-| `typescript_oracle_fixture_coverage_test.rs` | `performance.rs` → `oracle_fixtures` |
+| `frontend.rs` | Lexer, parser, type checker, source model, entry and builtin rules. |
+| `ir.rs` | MIR lowering, validation, effects, and deterministic printing. |
+| `optimizer.rs` | O0–O3 transformations and semantic preservation. |
+| `backend.rs` | C, WAT/WASM, portable output, and non-Native backend contracts. |
+| `cli.rs` | Argument precedence, command behavior, output transactions, and optional oracle parity. |
+| `native.rs` | LLVM bridge/IR, ABI, object/link artifacts, runtime, ORC, run, and cache. |
+| `contracts.rs` | Repository, documentation, CI, provenance, release, and version invariants. |
+| `performance.rs` | Benchmark/report contracts and oracle fixture coverage. |
+
+Shared filesystem, process, temporary-path, source, and oracle helpers live under
+`support/`. Stable test inputs live under `fixtures/`; a test should prefer a
+fixture when bytes, paths, compatibility, ABI, or multi-stage reuse matter.
+Compatibility changes released in 0.10 are indexed by
+`fixtures/compatibility/v0_10/manifest.toml` and must resolve to executable test
+evidence.
+
+Run the feature-disabled suite with:
+
+```sh
+cargo test --locked
+```
+
+Native tests require the pinned release LLVM prefix and, for differential tests,
+the separate pinned Clang oracle:
+
+```sh
+export CKC_LLVM_PREFIX=/absolute/path/to/release-prefix
+export CKC_CLANG_ORACLE=/absolute/path/to/oracle-prefix/bin/clang
+cargo test --all-features --locked
+```
+
+Generated objects, libraries, executables, caches, and benchmark reports belong
+under ignored `target/` or `build/` paths and must not be committed.

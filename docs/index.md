@@ -1,41 +1,37 @@
-# CalcKernel 0.9 Documentation
+# CalcKernel 0.10.0 Documentation
 
 [简体中文](zh-CN/index.md)
 
-This index separates normative V0.9 contracts from explanatory material.
+These documents describe the current 0.10.0 product contract. Git history,
+rather than release-tree planning documents, records design and implementation
+history.
 
-## Language Reference
+## Language and commands
 
-- [Language](reference/language.md) — normative source-language contract.
-- [Diagnostics](reference/diagnostics.md) — normative stable diagnostic identifiers.
-- [CLI](reference/cli.md) — normative command, flag, output, and exit behavior.
-- [MIR](reference/mir.md) — normative textual MIR and validation boundary.
+- [Language](reference/language.md) — source types, control flow, entry, print, and memory boundary.
+- [Diagnostics](reference/diagnostics.md) — stable frontend diagnostic identifiers.
+- [CLI](reference/cli.md) — commands, defaults, artifacts, cache, and failures.
+- [MIR](reference/mir.md) — textual MIR and semantic preservation boundary.
 
 ## ABI
 
-- [C ABI](abi/c.md) — normative C layout and function contract.
-- [WebAssembly ABI](abi/wasm.md) — normative module and linear-memory contract.
-- [LLVM ABI](abi/llvm.md) — normative LLVM IR and exported-shape contract.
-- [Checked modes](abi/modes.md) — normative overflow, bounds, and status contract.
+- [Native LLVM and C ABI](abi/llvm.md) — host-native lowering, public thunks, artifacts, and ORC.
+- [C source ABI](abi/c.md) — source-only generated C and header.
+- [WebAssembly ABI](abi/wasm.md) — module and caller-owned linear memory.
+- [Checked modes](abi/modes.md) — C/Native status, ordering, and runtime mapping.
 
-## Compiler
+## Compiler and guides
 
-- [Architecture](compiler/architecture.md) — explanatory compiler organization.
-- [Optimizer](compiler/optimizer.md) — normative optimization levels with explanatory implementation notes.
-- [0.10 native toolchain design](compiler/native-toolchain-design.md) — approved forward design; not the current V0.9 implementation contract.
-- [0.10 native toolchain implementation control](compiler/native-toolchain-implementation/control.md) — ordered implementation and acceptance authority for the approved design.
-
-## Guides
-
-- [Getting started](guides/getting-started.md) — explanatory build and first-use guide.
-- [Backend selection](guides/backend-selection.md) — explanatory integration guide.
-- [WASM interop](guides/wasm-interop.md) — explanatory host-memory guide.
-- [Performance](guides/performance.md) — explanatory benchmark guide.
+- [Architecture](compiler/architecture.md) — compiler ownership and data flow.
+- [Optimizer](compiler/optimizer.md) — O0–O3 selection and preservation rules.
+- [Getting started](guides/getting-started.md)
+- [Backend selection](guides/backend-selection.md)
+- [WASM interop](guides/wasm-interop.md)
+- [Performance](guides/performance.md)
 
 ## Project
 
-- [Compatibility](project/compatibility.md) — normative authority for the `0.9.x` line.
-- [Roadmap](project/roadmap.md) — non-normative, forward-looking work only.
-- [Release](project/release.md) — normative native artifact policy.
-- [Release checklist](project/release-checklist.md) — normative release sign-off gate.
-- [Conventions](project/conventions.md) — normative repository naming and layout rules.
+- [Compatibility](project/compatibility.md) — normative authority for `0.10.x`.
+- [Release](project/release.md) and [checklist](project/release-checklist.md)
+- [Conventions](project/conventions.md)
+- [Roadmap](project/roadmap.md) — non-normative future possibilities.

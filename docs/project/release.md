@@ -1,21 +1,21 @@
-# Native `ckc` Release Policy
+# Native `ckc` 0.10 Release Policy
 
 [简体中文](../zh-CN/project/release.md)
 
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
 
-The `native ckc release` workflow is self-contained in this repository; it does
-not check out the former TypeScript implementation. Every action is pinned to a
-full commit. The workflow acquires only the LLVM 22.1.8 source archive named in
+The `native ckc release` workflow is self-contained in this repository and does
+not depend on an external source checkout. Every action is pinned to a full
+commit. The workflow acquires only the LLVM 22.1.8 source archive named in
 `native/llvm/manifest.toml`, verifies its SHA-256, and restores or builds a
 manifest-addressed host cache. Verification uses a separate pinned Clang oracle
 prefix. Distribution builds use the target-minimal `release` profile, which
 excludes Clang, and always run `cargo build --release --features
 native-toolchain --locked`.
 
-Before packaging, each host records `ckc --version --verbose` and `ckc
-licenses`, exercises both `ckc run` and a standalone executable produced by
+Before packaging, each host records `ckc --version --verbose` and `ckc licenses`,
+exercises both `ckc run` and a standalone executable produced by
 `ckc build --kind executable`, and runs the generated-artifact, compiler
 dependency, and JIT memory-permission audits. Linux and Windows releases may
 not retain a dynamic non-system C++ runtime; Darwin dependencies must resolve
@@ -41,6 +41,8 @@ that final publish job.
 
 Release tags are annotated `vMAJOR.MINOR.PATCH` tags and are never moved. A
 published Release or asset is never overwritten. If a defect is discovered
-after `v0.9.0`, fix it in a new patch release such as `v0.9.1`.
+after `v0.10.0`, fix it in a new patch release such as `v0.10.1`. The 0.10.0
+release consists of six archives and their six checksum sidecars; publication
+is all-or-nothing.
 
 The [release checklist](release-checklist.md) is the required sign-off record.

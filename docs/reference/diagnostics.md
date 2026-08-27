@@ -1,9 +1,9 @@
-# CK V0.9 Diagnostics
+# CK 0.10 Diagnostics
 
 [简体中文](../zh-CN/reference/diagnostics.md)
 
 This document is normative for diagnostic identifiers. Human-readable wording,
-source excerpts, and caret widths may improve in `0.9.x`, but a code's phase and
+source excerpts, and caret widths may improve in `0.10.x`, but a code's phase and
 meaning do not change. Diagnostics use
 `file:line:column: error CKxxxx: message` followed by the source line and caret.
 

@@ -1,24 +1,41 @@
-# Native Benchmark Summary Schema
+# CalcKernel Benchmark Report Schemas
 
-`cargo bench --bench ckc_perf` writes:
+`cargo bench --bench ckc_perf` writes two kinds of report. They have independent
+schema versions because one describes compiler-stage measurements and the other
+is the strict Native-versus-C performance gate.
+
+## General benchmark summary — schema 1
+
+The general outputs are:
 
 - `build/perf/latest.summary.json`
 - `build/perf/latest.summary.md`
 
-The JSON file is intentionally simple so it can be checked into a local
-baseline or compared by external tooling without depending on a JavaScript
-runner.
+The JSON top level contains `schemaVersion: 1`, the command, generation time,
+host target, measured iteration and warm-up counts, and `results`. Each result
+records the case, compiler task and stage, sample count, nanosecond minimum,
+median, p95 and mean, plus `outputUnits`. The Markdown file presents the same
+measurements for humans. These outputs may be redirected with `--out-dir`.
 
-Top-level fields:
+## Native runtime gate — schema 2
 
-- `schemaVersion`: currently `1`.
-- `command`: the native Cargo benchmark command.
-- `generatedAtUnixSeconds`: local generation timestamp.
-- `target`: operating system and CPU architecture reported by Rust.
-- `iterations`: measured iterations per case/task pair.
-- `warmup`: unmeasured warmup iterations per case/task pair.
-- `results`: measured case/task rows.
+With `--features native-toolchain`, the harness also writes
+`target/ckc-perf/results.json`. Its top level contains:
 
-Each result row records the CK source case, compiler task, stage, sample counts,
-duration statistics in nanoseconds, and `outputUnits` for the generated output
-size or checked symbol count.
+- `schemaVersion: 2`;
+- `cpuPolicy`, either `baseline` or `native`;
+- `fastMath: false` and `clangVersion: "22.1.8"`;
+- positive `warmup` and `sampleRepetitions` counts;
+- separate non-empty `checked` and `unchecked` suites.
+
+Every case records `name`, `referenceEquivalent`, Native and Clang C compile and
+cold-run durations, both repeated sample arrays and medians, peak memory, both
+artifact sizes, batched iteration count, and the validated result. Checked and
+unchecked suites contain the same case names.
+
+`scripts/check-native-performance.py` is the normative reader for schema 2. It
+requires at least 80% of each sample set to lie within 25% of its median, a
+Native/Clang geometric-mean throughput ratio of at least 95%, and no individual
+Native case more than 10% slower than the equivalent strict Clang C O3 case.
+Changing a field, equivalence rule, or threshold requires coordinated changes to
+the harness, checker, performance guide, tests, and CI.

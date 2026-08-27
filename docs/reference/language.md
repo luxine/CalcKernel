@@ -1,141 +1,128 @@
-# CK V0.9 Language Reference
+# CalcKernel 0.10 Language Reference
 
 [简体中文](../zh-CN/reference/language.md)
 
-This document is the normative source-language contract for CalcKernel 0.9.
-CK is a deterministic computation-kernel language. Source files use `.ck`.
+This document is the normative source-language contract for CalcKernel 0.10.
+CK is a deterministic computation-kernel language; source files use `.ck`.
 
 ## Types and declarations
 
-The value types are `i32`, `i64`, `u32`, `u64`, `f64`, `bool`, `ptr<T>`,
-`slice<T>`, and named structs. `void` is a return-only type: `-> void` is valid
-but it is never a parameter, local, field, pointer/slice element, operand, or
-value. Direct `slice<slice<T>>` elements and exported slice returns are invalid;
-internal functions may return slices.
+Value types are `i32`, `i64`, `u32`, `u64`, `f64`, `bool`, `ptr<T>`,
+`slice<T>`, and named structs. `void` is return-only: `-> void` is valid, but it cannot be a parameter,
+local, field, pointer or slice element, operand, or value. Direct
+`slice<slice<T>>` elements and exported slice returns are invalid; internal
+functions may return slices.
 
-`ptr<T>` and `slice<T>` refer to caller-owned memory. CK does not allocate,
-free, retain, or extend the lifetime of that memory. A slice is a descriptor
-containing a typed data pointer and a `u32` length.
+Pointers and slices refer to caller-owned memory. CK does not allocate, free,
+retain, or extend its lifetime. A slice contains a typed data pointer followed
+by a `u32` length. Struct fields retain declaration order.
 
-Structs contain ordered, named, typed fields:
+Functions have typed parameters and one return type. `export fn` contributes a
+Native, C, or WebAssembly library export; plain `fn` is internal. Names in one
+declaration scope are unique and every called function and named type resolves.
 
-```ck
-struct Item {
-  value: i32;
-}
-```
+## Entry and native output
 
-Functions declare typed parameters and one return type. `export fn` contributes
-an externally callable backend symbol; plain `fn` is internal.
+`main` is reserved and has exactly one of these parameterless, non-exported
+forms:
 
 ```ck
-export fn add(a: i64, b: i64) -> i64 {
-  return a + b;
-}
-
-fn touch(items: slice<Item>) -> void {
-  return;
-}
+fn main() -> void
+fn main() -> i32
 ```
 
-Names in the same declaration scope must be unique. Named struct types and
-called functions must resolve.
+`ckc run` and `ckc build --kind executable` require `main`. A void entry exits
+with status 0; an i32 entry supplies the platform process status. Portable CK
+programs use 0 through 239 because 240 through 245 are reserved runtime failure
+statuses.
+
+The following reserved compiler builtins are available only to the Native entry
+and runtime-effect model:
+
+- `print_i32(i32) -> void`, `print_i64(i64) -> void`
+- `print_u32(u32) -> void`, `print_u64(u64) -> void`
+- `print_f64(f64) -> void`, `print_bool(bool) -> void`
+- `print_newline() -> void`
+
+Arguments are evaluated once in source order. Native executable and `run`
+roots may reach these calls. A reachable print from a Native library/object
+export, a C artifact root, or a WebAssembly export is rejected. Unreachable
+print code may be removed. CK 0.10 has no general strings or byte I/O.
+
+Value prints do not append a newline; `print_newline` emits exactly one LF on
+every platform. Integers are base 10 without locale, grouping, leading zero, or
+positive sign. Booleans are `true` or `false`. Finite f64 uses a no-allocation
+shortest-round-trip decimal under round-to-nearest, ties-to-even. Negative zero
+is `-0.0`; special spellings are `nan`, `inf`, and `-inf`, without NaN payload
+or sign. Every print is an ordered observable effect. Output failure terminates
+the process with `CKR0005` rather than returning `CK_Status`.
 
 ## Statements and control flow
 
-Supported statements are typed `let`, assignment, `return`, `if` / `else`,
-`while`, `break;`, `continue;`, a block, and a call statement whose callee
-returns `void`.
+Statements are typed `let`, assignment, `return`, `if` / `else`, `while`,
+`break;`, `continue;`, blocks, and void-returning call statements. `break;`
+exits the innermost loop and `continue;` branches to its condition. Either
+outside a loop is `CK2009`; code after a non-fallthrough statement in the same
+block is `CK2010`. Invalid void use is `CK2011`; invalid slice shape or operation
+is `CK2012`. Loops are conservatively considered able to exit.
 
-`break;` exits the innermost `while`; `continue;` jumps to that loop's condition.
-Either outside a loop is `CK2009`. A statement after a non-fallthrough statement
-in the same block is `CK2010`. Invalid void positions use `CK2011`; invalid slice
-shapes and operations use `CK2012`. A loop is conservatively treated as able to exit,
-even when its condition is the literal `true`.
-
-A value-returning function must return a value on every final path. A void
-function may fall through or use `return;`. Returning a value from a void
-function, omitting a value in a non-void function, discarding a non-void call,
-or using a void call as a value is invalid.
-
+A value-returning function returns a value on every final path. A void function
+may fall through or use `return;`. Returning the wrong presence of value,
+discarding a non-void call, or using a void call as a value is invalid.
 Assignment targets are locals, parameters, fields, pointer indices, or slice
-indices. Slice `.data` and `.len` projections are read-only; a whole slice
-descriptor remains assignable.
+indices. Slice `.data` and `.len` projections are read-only; a whole descriptor
+remains assignable.
 
-## Expressions
+## Expressions and evaluation
 
-Expressions include integer, `f64`, and boolean literals; identifiers; calls;
-parentheses; unary `!` and `-`; arithmetic `+ - * / %`; comparisons
-`== != < <= > >=`; short-circuit `&&` and `||`; field access; pointer/slice
-indexing; sub-slicing; and slice construction.
+Expressions include literals, identifiers, calls, parentheses, unary `!` and
+`-`, arithmetic, comparisons, short-circuit boolean operations, field access,
+pointer/slice indexing, sub-slicing, and slice construction. Precedence from
+high to low is postfix; unary; `* / %`; `+ -`; ordered comparisons; equality;
+`&&`; then `||`. Binary operators associate left and unary operators right.
 
-Precedence, highest to lowest, is:
+Operands, arguments, construction operands, and range endpoints are evaluated
+once in source order. `&&` and `||` evaluate the right side only when needed.
 
-| Level | Forms | Associativity |
-| --- | --- | --- |
-| 1 | call, index/sub-slice, field | left |
-| 2 | unary `!`, unary `-` | right |
-| 3 | `*`, `/`, `%` | left |
-| 4 | `+`, binary `-` | left |
-| 5 | `<`, `<=`, `>`, `>=` | left |
-| 6 | `==`, `!=` | left |
-| 7 | `&&` | left |
-| 8 | `||` | left |
+## Numeric semantics
 
-Operands, call arguments, slice construction operands, and range endpoints are
-evaluated once in source order. `&&` and `||` evaluate the right operand only
-when required.
+Typing is exact; there are no implicit numeric conversions. Integer literals
+use an expected integer type or default to `i32`; floating literals are `f64`.
+Integer types support `+ - * / %`; `f64` supports `+ - * /`.
 
-## Strict typing and numeric semantics
+The only conversions are `i32_to_f64(i32) -> f64` and
+`u32_to_f64(u32) -> f64`. Both are exact. There are no width casts,
+floating-to-integer casts, `as`, or constructor casts. Floating execution uses
+strict double-precision semantics without fast-math; cross-backend bit identity
+is not promised.
 
-Operators require exact compatible types; there are no implicit numeric
-conversions. Integer literals materialize to an expected integer type or
-default to `i32`. Float literals have type `f64`. Integer arithmetic supports
-`+ - * / %`; `f64` supports `+ - * /` but not `%`.
-
-The only conversions are reserved compiler builtins:
-
-- `i32_to_f64(i32) -> f64`
-- `u32_to_f64(u32) -> f64`
-
-Both are exact. There are no integer-width casts, `f64`-to-integer casts,
-implicit casts, `as`, or constructor-style casts.
-
-Float literals require digits on both sides of a decimal point when a point is
-present; exponent notation is supported. `NaN` and infinity have no literal
-syntax but may result from arithmetic. Backends preserve ordinary strict
-double-precision behavior, including signed zero and unordered NaN comparisons;
-bit-identical cross-backend floating-point results are not promised.
-
-Unchecked integer code generation is the default. `--overflow checked` is a C
-backend mode that reports integer overflow and integer division/modulo errors;
-it is not source syntax and does not check floating-point operations.
+Unchecked integer arithmetic is the default. `--overflow checked` is a C and
+Native backend mode that reports overflow and division/modulo faults through
+the checked status contract. It is not source syntax.
 
 ## Raw pointers and slices
 
-Pointer indexing accepts `i32`, `u32`, or a context-compatible integer literal.
-It has no CK validity or bounds check.
+Pointer indexing accepts `i32`, `u32`, or a compatible integer literal and has
+no CK validity or bounds check.
 
 `slice(data, len)` constructs `slice<T>` from `ptr<T>` and a `u32` length.
 Memory validity, alignment, allocation extent, lifetime, and the truth of the
-declared length remain the caller's responsibility. Copying a slice aliases the
-same memory.
+declared length remain the caller's responsibility. Copies alias the same
+memory.
 
-`items[index]` requires a `u32` index. `items[start..end]` creates a half-open
-sub-slice; both endpoints are `u32` and valid execution requires
-`start <= end <= items.len`. `.data` returns `ptr<T>` and `.len` returns `u32`.
+`items[index]` requires `u32`. `items[start..end]` creates a half-open
+sub-slice; valid execution requires `start <= end <= len`, equivalently
+`start <= end <= items.len`. `.data` yields `ptr<T>` and `.len` yields `u32`.
 
-Slice bounds checking exists only in generated C when `--bounds checked` is selected.
-Raw pointer indexing, slice construction, and indexing through `.data` are never validated by CK.
-Unchecked C, WASM, and LLVM emit no slice guards. WASM and LLVM reject checked
-bounds mode.
+C and Native support optional `--bounds checked` guards for slice indexing and
+sub-slicing. Raw pointer indexing, `slice(data, len)`, and indexing through
+`.data` are never validated. Unchecked modes and WebAssembly emit no slice
+guards; WebAssembly rejects checked modes.
 
 ## Diagnostics and non-goals
 
-Lexing, parsing, and type checking report stable codes described in
-[Diagnostics](diagnostics.md). Strict source typing is independent of backend
-selection.
-
-V0.9 has no strings, I/O, modules/imports, dynamic allocation, ownership
-runtime, exceptions, async, classes, closures, generics beyond `ptr<T>` and
-`slice<T>`, `f32`, SIMD, GPU target, JIT, or source-level checked operators.
+Stable frontend codes are listed in [Diagnostics](diagnostics.md). Source
+typing is backend-independent. CalcKernel 0.10 has no modules/imports, dynamic
+allocation, ownership runtime, exceptions, async, closures, source generics
+beyond pointer/slice constructors, `f32`, SIMD source types, GPU target,
+program arguments, stdin, threads, or public embeddable JIT API.

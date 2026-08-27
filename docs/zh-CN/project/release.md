@@ -1,11 +1,11 @@
-# 原生 `ckc` 发布策略
+# 原生 `ckc` 0.10 发布策略
 
 [English](../../project/release.md)
 
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
 
-`native ckc release` workflow 在本仓库内自包含，不 checkout 旧 TypeScript 实现。
+`native ckc release` workflow 在本仓库内自包含，不依赖外部 source checkout。
 所有 action 均锁定到完整 commit。Workflow 只获取 `native/llvm/manifest.toml` 指定的
 LLVM 22.1.8 source archive，验证 SHA-256，并恢复或构建以 manifest 寻址的 host
 cache。验证任务使用独立的 pinned Clang oracle prefix；发行构建使用排除 Clang 的
@@ -34,5 +34,6 @@ run 验证完整的六个 archive 与六个 checksum；若 Release 已存在则�
 publish job 具有 repository write permission。
 
 Release tag 是 annotated `vMAJOR.MINOR.PATCH`，永不移动。Published Release 或
-asset 不覆盖；若 `v0.9.0` 之后发现缺陷，发布 `v0.9.1` 等新 patch version。
+asset 不覆盖；若 `v0.10.0` 之后发现缺陷，发布 `v0.10.1` 等新 patch version。0.10.0
+发布由六个 archive 和对应六个 checksum sidecar 组成，必须 all-or-nothing 发布。
 [发布清单](release-checklist.md)是必须完成的 sign-off record。

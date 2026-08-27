@@ -127,6 +127,35 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
 }
 
 #[test]
+fn performance_ci_should_select_a_case_from_the_benchmark_manifest() {
+    let workflow = read(".github/workflows/ci.yml");
+    let cases = read("benches/cases/native-cases.tsv");
+    let known = cases
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split('\t').next())
+        .collect::<Vec<_>>();
+
+    let mut selected = Vec::new();
+    for line in workflow.lines().filter(|line| line.contains("cargo bench")) {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        if let Some(index) = words.iter().position(|word| *word == "--case") {
+            selected.push(*words.get(index + 1).expect("--case value"));
+        }
+    }
+    assert!(
+        !selected.is_empty(),
+        "performance CI must select a benchmark case"
+    );
+    for name in selected {
+        assert!(
+            known.contains(&name),
+            "performance CI selected unknown benchmark case {name:?}"
+        );
+    }
+}
+
+#[test]
 fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
     let action = read(".github/actions/bootstrap-ckc-llvm/action.yml");
 

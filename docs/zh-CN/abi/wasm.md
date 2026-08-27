@@ -1,27 +1,21 @@
-# CalcKernel V0.9 WebAssembly ABI
+# CalcKernel 0.10 WebAssembly ABI
 
 [English](../../abi/wasm.md)
 
-本文档规范 `emit-wat` / `emit-wasm` 的输出。Module 导出 CK `export fn` 与一个
-caller-owned linear memory；internal function 不导出。
+本文档定义 `emit-wat` 与 `emit-wasm` 输出。Module export 源码中的 `export fn`，并提供一块
+caller-owned linear memory；internal function 保持 internal。
 
-`i32`、`u32`、`bool`、`ptr<T>` 映射为 WASM `i32`；`i64`、`u64` 映射为
-`i64`；`f64` 映射为 `f64`；void function 没有 `(result ...)`，call 为 targetless。
-Signedness 通过 comparison/division instruction 表达。Pointer 是 linear memory
-中的 `i32` byte address。
+`i32`、`u32`、`bool`、`ptr<T>` 使用 WASM `i32`；`i64`/`u64` 使用 `i64`；`f64`
+使用 `f64`；void 无 `(result ...)`，void call 为 targetless。Pointer 是 little-endian linear memory 中的 byte address。
+Caller 负责 allocation、validity、alignment、lifetime、growth 与 alias，并在 `memory.grow`
+后重建 host view；CK 不提供 allocator。
 
-Primitive size/alignment：`i32`、`u32`、`bool`、pointer 为 4/4；`i64`、`u64`、
-`f64` 为 8/8。Struct field 按 declaration order 以 natural alignment 排列，总
-size 向最大 field alignment 对齐。Memory 是 little-endian。
+`slice<T>` parameter 是 data,length 顺序的两个 collision-safe `i32`。Stored descriptor 为
+8 bytes、alignment 4，offset 0 为 address，offset 4 为 `u32` length。Internal call 与
+multi-value return 保持同一顺序。
 
-Host 选择 offset、写 input、调用 export 并读 output；CK 不提供 allocator 或
-lifetime management。`memory.grow` 后必须重建 typed-array/`DataView` view。
+WASM 只接受 `--overflow unchecked` 与 `--bounds unchecked`；任一 checked selection 在
+输出前 rejected，不插入隐式 slice guard 或 trap。C/Native checked status ABI 不属于本 ABI。
 
-`slice<T>` parameter flatten 为 collision-safe 的两个 `i32`，顺序为 data、length；
-length 保持 source `u32` semantics。Local、temporary、call 与 dispatcher path
-保持相同 pair。Internal slice return 使用 WASM multi-value
-`(result i32 i32)`，顺序仍为 data、length。Stored descriptor 大小 8、alignment 4，
-offset 0 为 address，offset 4 为 length。Descriptor 非 owning 且可 alias。
-
-WASM 只接受 `--overflow unchecked` 与 `--bounds unchecked`，会在 emission 前
-明确 reject checked selection；不会插入 implicit slice guard 或 trap。
+WebAssembly 0.10 没有 runtime print；export root 可达的 print 被拒绝。Internal `main`
+不会创建 WASI 或 browser entry。

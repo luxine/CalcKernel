@@ -27,7 +27,7 @@
 - New or materially changed formal documentation must have matching English and
   Simplified Chinese files at identical relative paths under `docs/` and
   `docs/zh-CN/`.
-- Keep the V0.9 language, CLI, MIR, ABI, compatibility, and release contracts
+- Keep the 0.10 language, CLI, MIR, ABI, compatibility, and release contracts
   synchronized with implementation and tests.
 - Do not commit phase plans, dated reviews, readiness reports, migration
   narratives, AI working notes, or release-history snapshots as formal docs.

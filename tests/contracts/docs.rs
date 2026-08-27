@@ -69,6 +69,10 @@ fn durable_docs_should_use_current_contract_wording() {
         "TypeScript-era",
         "if the language gains a length-carrying pointer type",
         "如果语言引入携带长度的 pointer type",
+        "approved forward design",
+        "已获准的未来设计",
+        "not the current V0.9 implementation contract",
+        "不是当前 V0.9 implementation contract",
     ];
     let mut failures = Vec::new();
     for path in markdown_files(&repo_root().join("docs")) {
@@ -88,16 +92,142 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn v0_9_docs_should_define_canonical_slice_and_mode_contracts() {
+fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
+    let required_by_file = [
+        (
+            "docs/reference/language.md",
+            &[
+                "CalcKernel 0.10",
+                "fn main() -> void",
+                "fn main() -> i32",
+                "print_i32",
+                "print_f64",
+                "reachable print",
+                "slice(data, len)",
+                "start <= end <= len",
+            ][..],
+        ),
+        (
+            "docs/reference/cli.md",
+            &[
+                "ckc run",
+                "ckc cache clean",
+                "--version --verbose",
+                "ckc licenses",
+                "executable|dynamic|static|object",
+                "CKC_LLVM_PREFIX",
+                "host triple",
+            ][..],
+        ),
+        (
+            "docs/reference/mir.md",
+            &[
+                "CalcKernel 0.10",
+                "entry",
+                "runtime effect",
+                "print",
+                "checked",
+            ][..],
+        ),
+        (
+            "docs/abi/llvm.md",
+            &[
+                "Native C ABI",
+                "LLVM 22.1.8",
+                "host-only",
+                "export thunk",
+                "JITLink",
+                "RuntimeDyld",
+            ][..],
+        ),
+        (
+            "docs/abi/c.md",
+            &["emit-c", "source-only", "reachable print", "CK_Status"][..],
+        ),
+        (
+            "docs/abi/wasm.md",
+            &["reachable print", "rejected", "caller-owned", "slice<T>"][..],
+        ),
+        (
+            "docs/abi/modes.md",
+            &[
+                "Native",
+                "CK_ERR_OVERFLOW",
+                "CK_ERR_OUT_OF_BOUNDS",
+                "first error",
+                "CKR0001: integer overflow",
+                "CKR0006: native child terminated abnormally",
+            ][..],
+        ),
+        (
+            "docs/project/compatibility.md",
+            &["0.10.x", "0.9.0", "reserved", "build-llvm", "Native C ABI"][..],
+        ),
+        (
+            "docs/guides/performance.md",
+            &["95%", "10%", "checked", "unchecked", "Clang 22.1.8"][..],
+        ),
+        (
+            "docs/project/release.md",
+            &["0.10.0", "native-toolchain", "ckc licenses", "six archives"][..],
+        ),
+    ];
+    for (path, required) in required_by_file {
+        let text = read(path);
+        for phrase in required {
+            assert!(text.contains(phrase), "{path} must contain {phrase:?}");
+        }
+    }
+
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "docs/index.md",
+        "docs/zh-CN/index.md",
+    ] {
+        assert!(read(path).contains("0.10.0"), "{path} must identify 0.10.0");
+    }
+
+    let language = read("docs/reference/language.md");
+    for required in ["shortest-round-trip", "-0.0", "nan", "inf", "CKR0005"] {
+        assert!(
+            language.contains(required),
+            "print contract needs {required:?}"
+        );
+    }
+
+    let cli = read("docs/reference/cli.md");
+    for required in ["SHA-256", "1 GiB", "atomic", "trust boundary"] {
+        assert!(cli.contains(required), "cache contract needs {required:?}");
+    }
+
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "docs/reference/cli.md",
+        "docs/zh-CN/reference/cli.md",
+        "docs/abi/llvm.md",
+        "docs/zh-CN/abi/llvm.md",
+    ] {
+        let text = read(path);
+        for forbidden in ["through `clang`", "通过 `clang`", "-> clang ->"] {
+            assert!(
+                !text.contains(forbidden),
+                "{path} retains obsolete external-Clang product behavior"
+            );
+        }
+    }
+}
+
+#[test]
+fn v0_10_docs_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
-        "Slice bounds checking exists only in generated C when `--bounds checked` is selected."
+        "C and Native support optional `--bounds checked` guards for slice indexing and"
     ));
-    assert!(language.contains(
-        "Raw pointer indexing, slice construction, and indexing through `.data` are never validated by CK."
-    ));
+    assert!(language.contains("Raw pointer indexing, `slice(data, len)`, and indexing through"));
 
-    for path in ["docs/abi/wasm.md", "docs/abi/llvm.md"] {
+    for path in ["docs/abi/wasm.md"] {
         let text = read(path);
         for required in ["`slice<T>`", "`--bounds unchecked`", "reject"] {
             assert!(text.contains(required), "{path} must contain {required:?}");
@@ -106,6 +236,11 @@ fn v0_9_docs_should_define_canonical_slice_and_mode_contracts() {
             !text.contains("slices are unsupported"),
             "{path} must not deny slice support"
         );
+    }
+
+    let llvm = read("docs/abi/llvm.md");
+    for required in ["`slice<T>`", "Checked modes", "Native C ABI"] {
+        assert!(llvm.contains(required), "LLVM contract needs {required:?}");
     }
 
     let modes = read("docs/abi/modes.md");
@@ -164,8 +299,8 @@ fn readmes_should_describe_native_rust_ckc_release_surface() {
         for required in [
             "native ckc",
             "docs/project/release.md",
-            "cargo test --locked",
-            "cargo build --release --locked",
+            "cargo test --all-features --locked",
+            "cargo build --release --features native-toolchain --locked",
         ] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
@@ -347,6 +482,26 @@ fn docs_should_not_reference_unshipped_benchmark_or_example_scripts() {
         "docs must not reference benchmark/example scripts absent from native ckc repo:\n{}",
         failures.join("\n")
     );
+}
+
+#[test]
+fn benchmark_schema_should_document_general_and_native_gate_outputs() {
+    let schema = read("benches/summary-schema.md");
+    for required in [
+        "schemaVersion: 1",
+        "schemaVersion: 2",
+        "target/ckc-perf/results.json",
+        "checked",
+        "unchecked",
+        "95%",
+        "10%",
+        "scripts/check-native-performance.py",
+    ] {
+        assert!(
+            schema.contains(required),
+            "benchmark schema needs {required:?}"
+        );
+    }
 }
 
 #[test]

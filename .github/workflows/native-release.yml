@@ -116,7 +116,12 @@ jobs:
       - name: Record compiler identity and notices
         run: |
           '${{ matrix.executable }}' --help
-          '${{ matrix.executable }}' --version --verbose
+          verbose_identity="$('${{ matrix.executable }}' --version --verbose)"
+          printf '%s\n' "${verbose_identity}"
+          grep -q '^ckc 0.10.0$' <<<"${verbose_identity}"
+          grep -q '^Native ABI: 1$' <<<"${verbose_identity}"
+          grep -q '^Runtime ABI: 1$' <<<"${verbose_identity}"
+          grep -q '^LLVM: 22.1.8$' <<<"${verbose_identity}"
           '${{ matrix.executable }}' licenses
       - name: Functional run and build smoke
         run: |
