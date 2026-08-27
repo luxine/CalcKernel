@@ -22,6 +22,7 @@
 
 - [架构](compiler/architecture.md) — 解释性的 compiler 组织。
 - [Optimizer](compiler/optimizer.md) — 规范性的优化等级及解释性实现说明。
+- [0.10 原生工具链设计](compiler/native-toolchain-design.md) — 已获准的未来设计，不是当前 V0.9 implementation contract。
 
 ## 指南
 

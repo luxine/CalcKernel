@@ -22,6 +22,7 @@ This index separates normative V0.9 contracts from explanatory material.
 
 - [Architecture](compiler/architecture.md) — explanatory compiler organization.
 - [Optimizer](compiler/optimizer.md) — normative optimization levels with explanatory implementation notes.
+- [0.10 native toolchain design](compiler/native-toolchain-design.md) — approved forward design; not the current V0.9 implementation contract.
 
 ## Guides
 
