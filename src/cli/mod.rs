@@ -1,6 +1,10 @@
 mod args;
+#[cfg(feature = "native-toolchain")]
+mod cache;
 mod commands;
 mod output;
+#[cfg(feature = "native-toolchain")]
+mod run;
 
 use args::usage;
 use commands::{dispatch, run_version};
@@ -10,6 +14,16 @@ pub(crate) fn run(args: Vec<String>) -> i32 {
         eprint!("{}", usage());
         return 2;
     };
+
+    #[cfg(feature = "native-toolchain")]
+    if command == "__ckc-run-child" {
+        return run::run_private_child(&args[1..]);
+    }
+
+    #[cfg(feature = "native-toolchain")]
+    if command == "run" {
+        return run::run_public_parent(&args[1..]);
+    }
 
     if command == "--help" || command == "-h" {
         print!("{}", usage());

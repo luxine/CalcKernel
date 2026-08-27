@@ -3,8 +3,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <future>
+#include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,7 +17,11 @@
 #include <llvm-c/TargetMachine.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/ExecutionEngine/JITLink/JITLinkMemoryManager.h>
+#include <llvm/ExecutionEngine/JITLink/JITLink.h>
+#include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
+#include <llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h>
+#include <llvm/ExecutionEngine/Orc/MemoryMapper.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
@@ -43,11 +51,38 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/Process.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <lld/Common/Driver.h>
+
+#if defined(CKC_LLD_DARWIN)
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#elif defined(CKC_LLD_COFF)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+struct CkcJitMemoryAuditState {
+    std::mutex mutex;
+    uint64_t allocations = 0;
+    uint64_t instruction_cache_finalizations = 0;
+    bool saw_relocation_allocation = false;
+    bool relocation_write_non_execute = true;
+    bool saw_final_code = false;
+    bool final_code_read_execute = true;
+    bool saw_final_data = false;
+    bool final_data_non_execute = true;
+    bool darwin_map_jit = false;
+    bool darwin_thread_write_protection_supported = false;
+    bool darwin_thread_write_protection = false;
+};
 
 #if defined(CKC_LLD_DARWIN)
 LLD_HAS_DRIVER(macho)
@@ -83,7 +118,9 @@ struct CkcLlvmTarget {
 
 struct CkcLlvmJit {
     std::unique_ptr<llvm::orc::LLJIT> value;
+    std::shared_ptr<CkcJitMemoryAuditState> memory_audit;
     CkcLlvmOrcObjectLayer object_layer;
+    bool executed;
 };
 
 struct CkcLlvmBuilder {
@@ -96,6 +133,484 @@ constexpr int32_t CKC_LLVM_OK = 0;
 constexpr int32_t CKC_LLVM_INVALID_ARGUMENT = 1;
 constexpr int32_t CKC_LLVM_OUT_OF_MEMORY = 2;
 constexpr int32_t CKC_LLVM_INTERNAL_ERROR = 3;
+constexpr size_t CKC_JIT_RESERVATION_GRANULARITY = 512ULL * 1024ULL * 1024ULL;
+
+class CkcInProcessMemoryMapper final : public llvm::orc::MemoryMapper {
+public:
+    static llvm::Expected<std::unique_ptr<CkcInProcessMemoryMapper>>
+    Create(std::shared_ptr<CkcJitMemoryAuditState> audit) {
+        auto page_size = llvm::sys::Process::getPageSize();
+        if (!page_size) {
+            return page_size.takeError();
+        }
+        return std::make_unique<CkcInProcessMemoryMapper>(
+            *page_size, std::move(audit));
+    }
+
+    CkcInProcessMemoryMapper(
+        size_t page_size, std::shared_ptr<CkcJitMemoryAuditState> audit)
+        : page_size_(page_size), audit_(std::move(audit)) {
+#if defined(CKC_LLD_DARWIN)
+        const bool supported = pthread_jit_write_protect_supported_np() != 0;
+        std::lock_guard<std::mutex> lock(audit_->mutex);
+        audit_->darwin_thread_write_protection_supported = supported;
+#endif
+    }
+
+    unsigned int getPageSize() override {
+        return static_cast<unsigned int>(page_size_);
+    }
+
+    void reserve(size_t byte_count, OnReservedFunction on_reserved) override {
+        std::error_code error;
+        llvm::sys::MemoryBlock block;
+#if defined(CKC_LLD_DARWIN)
+        {
+            std::lock_guard<std::mutex> lock(audit_->mutex);
+            if (!audit_->darwin_thread_write_protection_supported) {
+                on_reserved(llvm::make_error<llvm::StringError>(
+                    "Darwin JIT thread write protection is unavailable",
+                    llvm::inconvertibleErrorCode()));
+                return;
+            }
+        }
+        const size_t rounded = llvm::alignTo(byte_count, page_size_);
+        void *address = mmap(nullptr, rounded,
+                             PROT_READ | PROT_WRITE | PROT_EXEC,
+                             MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+        if (address == MAP_FAILED) {
+            error = std::error_code(errno, std::generic_category());
+            on_reserved(llvm::make_error<llvm::StringError>(
+                "MAP_JIT reservation failed: " + error.message(), error));
+            return;
+        }
+        block = llvm::sys::MemoryBlock(address, rounded);
+        set_darwin_write_mode(true);
+        {
+            std::lock_guard<std::mutex> audit_lock(audit_->mutex);
+            audit_->darwin_map_jit = true;
+        }
+#else
+        block = llvm::sys::Memory::allocateMappedMemory(
+            byte_count, nullptr,
+            llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE,
+            error);
+#endif
+        if (error) {
+            on_reserved(llvm::make_error<llvm::StringError>(
+                "JIT reservation failed: " + error.message(), error));
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            reservations_[block.base()] = {block.allocatedSize(), {}};
+        }
+        {
+            std::lock_guard<std::mutex> lock(audit_->mutex);
+            audit_->saw_relocation_allocation = true;
+            audit_->relocation_write_non_execute =
+                audit_->relocation_write_non_execute &&
+#if defined(CKC_LLD_DARWIN)
+                audit_->darwin_map_jit &&
+                audit_->darwin_thread_write_protection_supported &&
+                audit_->darwin_thread_write_protection;
+#else
+                true;
+#endif
+        }
+        on_reserved(llvm::orc::ExecutorAddrRange(
+            llvm::orc::ExecutorAddr::fromPtr(block.base()),
+            block.allocatedSize()));
+    }
+
+    char *prepare(llvm::jitlink::LinkGraph &graph,
+                  llvm::orc::ExecutorAddr address,
+                  size_t content_size) override {
+#if defined(CKC_LLD_DARWIN)
+        set_darwin_write_mode(true);
+        return graph.allocateBuffer(content_size).data();
+#else
+        return address.toPtr<char *>();
+#endif
+    }
+
+    void initialize(AllocInfo &allocation,
+                    OnInitializedFunction on_initialized) override {
+#if defined(CKC_LLD_DARWIN)
+        // Materialization is recursive: a dependency may finalize after this
+        // graph's prepare call and restore execute mode. Re-enter write mode
+        // at the exact copy boundary for every allocation.
+        set_darwin_write_mode(true);
+#endif
+        llvm::orc::ExecutorAddr minimum(~0ULL);
+        llvm::orc::ExecutorAddr maximum(0);
+        bool saw_code = false;
+        bool saw_data = false;
+        bool code_permissions_valid = true;
+        bool data_permissions_valid = true;
+
+        for (auto &segment : allocation.Segments) {
+            auto base = allocation.MappingBase + segment.Offset;
+            const size_t size = segment.ContentSize + segment.ZeroFillSize;
+            if (size == 0) {
+                continue;
+            }
+            minimum = std::min(minimum, base);
+            maximum = std::max(maximum, base + size);
+
+            const auto protection = segment.AG.getMemProt();
+            const unsigned flags = llvm::orc::toSysMemoryProtectionFlags(
+                protection);
+            const auto protection_bits = llvm::to_underlying(protection);
+            const auto read_bit =
+                llvm::to_underlying(llvm::orc::MemProt::Read);
+            const auto write_bit =
+                llvm::to_underlying(llvm::orc::MemProt::Write);
+            const auto execute_bit =
+                llvm::to_underlying(llvm::orc::MemProt::Exec);
+            const bool executable = (protection_bits & execute_bit) != 0;
+#if defined(CKC_LLD_DARWIN)
+            if (!executable) {
+                const size_t mapped_size = llvm::alignTo(size, page_size_);
+                void *mapped = mmap(base.toPtr<void *>(), mapped_size,
+                                    PROT_READ | PROT_WRITE,
+                                    MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+                if (mapped == MAP_FAILED) {
+                    set_darwin_write_mode(false);
+                    const std::error_code error(errno,
+                                                std::generic_category());
+                    on_initialized(llvm::make_error<llvm::StringError>(
+                        "JIT data mapping failed: " + error.message(),
+                        error));
+                    return;
+                }
+            }
+            std::memcpy(base.toPtr<void *>(), segment.WorkingMem,
+                        segment.ContentSize);
+            std::memset((base + segment.ContentSize).toPtr<void *>(), 0,
+                        segment.ZeroFillSize);
+            if (!executable) {
+                if (auto error = llvm::sys::Memory::protectMappedMemory(
+                        {base.toPtr<void *>(), size}, flags)) {
+                    set_darwin_write_mode(false);
+                    on_initialized(llvm::make_error<llvm::StringError>(
+                        "JIT data finalization failed: " + error.message(),
+                        error));
+                    return;
+                }
+            }
+#else
+            std::memset((base + segment.ContentSize).toPtr<void *>(), 0,
+                        segment.ZeroFillSize);
+            if (auto error = llvm::sys::Memory::protectMappedMemory(
+                    {base.toPtr<void *>(), size}, flags)) {
+                on_initialized(llvm::make_error<llvm::StringError>(
+                    "JIT segment finalization failed: " + error.message(),
+                    error));
+                return;
+            }
+#endif
+            if (executable) {
+                saw_code = true;
+                code_permissions_valid =
+                    code_permissions_valid &&
+                    (protection_bits & read_bit) != 0 &&
+                    (protection_bits & write_bit) == 0;
+                llvm::sys::Memory::InvalidateInstructionCache(
+                    base.toPtr<void *>(), size);
+                std::lock_guard<std::mutex> lock(audit_->mutex);
+                ++audit_->instruction_cache_finalizations;
+            } else {
+                saw_data = true;
+                data_permissions_valid =
+                    data_permissions_valid &&
+                    (protection_bits & execute_bit) == 0;
+            }
+        }
+
+#if defined(CKC_LLD_DARWIN)
+        set_darwin_write_mode(false);
+#endif
+        if (minimum.getValue() == ~0ULL) {
+            on_initialized(llvm::make_error<llvm::StringError>(
+                "JIT allocation has no material segments",
+                llvm::inconvertibleErrorCode()));
+            return;
+        }
+
+        auto deinitialization_actions =
+            llvm::orc::shared::runFinalizeActions(allocation.Actions);
+        if (!deinitialization_actions) {
+            on_initialized(deinitialization_actions.takeError());
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto &record = allocations_[minimum.getValue()];
+            record.size = maximum - minimum;
+            record.deinitialization_actions =
+                std::move(*deinitialization_actions);
+            reservations_[allocation.MappingBase.toPtr<void *>()]
+                .allocations.push_back(minimum.getValue());
+        }
+        {
+            std::lock_guard<std::mutex> lock(audit_->mutex);
+            ++audit_->allocations;
+            audit_->saw_final_code = audit_->saw_final_code || saw_code;
+            audit_->saw_final_data = audit_->saw_final_data || saw_data;
+            audit_->final_code_read_execute =
+                audit_->final_code_read_execute && code_permissions_valid;
+            audit_->final_data_non_execute =
+                audit_->final_data_non_execute && data_permissions_valid;
+        }
+        on_initialized(minimum);
+    }
+
+    void deinitialize(llvm::ArrayRef<llvm::orc::ExecutorAddr> bases,
+                      OnDeinitializedFunction on_deinitialized) override {
+        llvm::Error combined = llvm::Error::success();
+#if defined(CKC_LLD_DARWIN)
+        set_darwin_write_mode(true);
+#endif
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto base : llvm::reverse(bases)) {
+            auto found = allocations_.find(base.getValue());
+            if (found == allocations_.end()) {
+                continue;
+            }
+            if (auto error = llvm::orc::shared::runDeallocActions(
+                    found->second.deinitialization_actions)) {
+                combined = llvm::joinErrors(std::move(combined),
+                                            std::move(error));
+            }
+#if !defined(CKC_LLD_DARWIN)
+            if (auto error = llvm::sys::Memory::protectMappedMemory(
+                    {base.toPtr<void *>(), found->second.size},
+                    llvm::sys::Memory::MF_READ |
+                        llvm::sys::Memory::MF_WRITE)) {
+                combined = llvm::joinErrors(
+                    std::move(combined), llvm::errorCodeToError(error));
+            }
+#endif
+            allocations_.erase(found);
+        }
+#if defined(CKC_LLD_DARWIN)
+        set_darwin_write_mode(false);
+#endif
+        on_deinitialized(std::move(combined));
+    }
+
+    void release(llvm::ArrayRef<llvm::orc::ExecutorAddr> bases,
+                 OnReleasedFunction on_released) override {
+        llvm::Error combined = llvm::Error::success();
+        for (auto base : bases) {
+            Reservation reservation;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto found = reservations_.find(base.toPtr<void *>());
+                if (found == reservations_.end()) {
+                    continue;
+                }
+                reservation = std::move(found->second);
+                reservations_.erase(found);
+            }
+
+            std::promise<llvm::MSVCPError> promise;
+            auto future = promise.get_future();
+            std::vector<llvm::orc::ExecutorAddr> allocation_bases;
+            allocation_bases.reserve(reservation.allocations.size());
+            for (uint64_t allocation_base : reservation.allocations) {
+                allocation_bases.emplace_back(allocation_base);
+            }
+            deinitialize(allocation_bases, [&](llvm::Error error) {
+                promise.set_value(std::move(error));
+            });
+            if (auto error = future.get()) {
+                combined = llvm::joinErrors(std::move(combined),
+                                            std::move(error));
+            }
+
+            llvm::sys::MemoryBlock block(base.toPtr<void *>(),
+                                         reservation.size);
+            if (auto error = llvm::sys::Memory::releaseMappedMemory(block)) {
+                combined = llvm::joinErrors(
+                    std::move(combined), llvm::errorCodeToError(error));
+            }
+        }
+        on_released(std::move(combined));
+    }
+
+    ~CkcInProcessMemoryMapper() override {
+        std::vector<llvm::orc::ExecutorAddr> bases;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            bases.reserve(reservations_.size());
+            for (const auto &[base, _] : reservations_) {
+                bases.push_back(llvm::orc::ExecutorAddr::fromPtr(base));
+            }
+        }
+        if (bases.empty()) {
+            return;
+        }
+        std::promise<llvm::MSVCPError> promise;
+        auto future = promise.get_future();
+        release(bases, [&](llvm::Error error) {
+            promise.set_value(std::move(error));
+        });
+        if (auto error = future.get()) {
+            llvm::consumeError(std::move(error));
+        }
+    }
+
+private:
+    struct Allocation {
+        size_t size = 0;
+        std::vector<llvm::orc::shared::WrapperFunctionCall>
+            deinitialization_actions;
+    };
+
+    struct Reservation {
+        size_t size = 0;
+        std::vector<uint64_t> allocations;
+    };
+
+#if defined(CKC_LLD_DARWIN)
+    void set_darwin_write_mode(bool writable) {
+        bool supported;
+        {
+            std::lock_guard<std::mutex> lock(audit_->mutex);
+            supported =
+                audit_->darwin_thread_write_protection_supported;
+        }
+        if (!supported) {
+            return;
+        }
+        pthread_jit_write_protect_np(writable ? 0 : 1);
+        std::lock_guard<std::mutex> lock(audit_->mutex);
+        audit_->darwin_thread_write_protection = true;
+    }
+#endif
+
+    size_t page_size_;
+    std::shared_ptr<CkcJitMemoryAuditState> audit_;
+    std::mutex mutex_;
+    std::map<void *, Reservation> reservations_;
+    std::map<uint64_t, Allocation> allocations_;
+};
+
+class CkcSectionMemoryMapper
+    : public llvm::SectionMemoryManager::MemoryMapper {
+public:
+    explicit CkcSectionMemoryMapper(
+        std::shared_ptr<CkcJitMemoryAuditState> audit)
+        : audit_(std::move(audit)) {}
+
+    llvm::sys::MemoryBlock allocateMappedMemory(
+        llvm::SectionMemoryManager::AllocationPurpose purpose,
+        size_t byte_count, const llvm::sys::MemoryBlock *near_block,
+        unsigned flags, std::error_code &error) override {
+        auto block = llvm::sys::Memory::allocateMappedMemory(
+            byte_count, near_block, flags, error);
+        if (error || block.base() == nullptr) {
+            return block;
+        }
+
+        const bool writable =
+            (flags & llvm::sys::Memory::MF_WRITE) != 0;
+        const bool executable =
+            (flags & llvm::sys::Memory::MF_EXEC) != 0;
+        {
+            std::lock_guard<std::mutex> lock(audit_->mutex);
+            ++audit_->allocations;
+            audit_->saw_relocation_allocation = true;
+            audit_->relocation_write_non_execute =
+                audit_->relocation_write_non_execute && writable &&
+                !executable;
+            saw_data_allocation_ =
+                saw_data_allocation_ ||
+                purpose !=
+                    llvm::SectionMemoryManager::AllocationPurpose::Code;
+        }
+        return block;
+    }
+
+    std::error_code protectMappedMemory(
+        const llvm::sys::MemoryBlock &block, unsigned flags) override {
+        auto error = llvm::sys::Memory::protectMappedMemory(block, flags);
+        if (error) {
+            return error;
+        }
+
+        const bool readable =
+            (flags & llvm::sys::Memory::MF_READ) != 0;
+        const bool writable =
+            (flags & llvm::sys::Memory::MF_WRITE) != 0;
+        const bool executable =
+            (flags & llvm::sys::Memory::MF_EXEC) != 0;
+        std::lock_guard<std::mutex> lock(audit_->mutex);
+        if (executable) {
+            // RuntimeDyld finalizes relocations before requesting RX. Flush
+            // the exact protected code range here; LLVM 22's base
+            // SectionMemoryManager clears its pending range before its later
+            // invalidateInstructionCache callback.
+            llvm::sys::Memory::InvalidateInstructionCache(
+                block.base(), block.allocatedSize());
+            ++audit_->instruction_cache_finalizations;
+            audit_->saw_final_code = true;
+            audit_->final_code_read_execute =
+                audit_->final_code_read_execute && readable && !writable;
+        } else {
+            audit_->saw_final_data = true;
+            audit_->final_data_non_execute =
+                audit_->final_data_non_execute && !executable;
+        }
+        return error;
+    }
+
+    std::error_code releaseMappedMemory(
+        llvm::sys::MemoryBlock &block) override {
+        return llvm::sys::Memory::releaseMappedMemory(block);
+    }
+
+protected:
+    void record_successful_finalization() {
+        std::lock_guard<std::mutex> lock(audit_->mutex);
+        if (saw_data_allocation_) {
+            // With reservation enabled RuntimeDyld requests one initially-RW,
+            // non-executable allocation and applies RX only to its code
+            // subrange. The remaining data pages therefore stay NX.
+            audit_->saw_final_data = true;
+        }
+    }
+
+private:
+    std::shared_ptr<CkcJitMemoryAuditState> audit_;
+    bool saw_data_allocation_ = false;
+};
+
+// Base order is intentional: SectionMemoryManager's destructor releases
+// mappings through the mapper, so the mapper base must be constructed first
+// and destroyed last.
+class CkcAuditedSectionMemoryManager final
+    : private CkcSectionMemoryMapper,
+      public llvm::SectionMemoryManager {
+public:
+    explicit CkcAuditedSectionMemoryManager(
+        std::shared_ptr<CkcJitMemoryAuditState> audit)
+        : CkcSectionMemoryMapper(std::move(audit)),
+          llvm::SectionMemoryManager(
+              static_cast<CkcSectionMemoryMapper *>(this), true) {}
+
+    bool finalizeMemory(std::string *error_message = nullptr) override {
+        const bool failed =
+            llvm::SectionMemoryManager::finalizeMemory(error_message);
+        if (!failed) {
+            record_successful_finalization();
+        }
+        return failed;
+    }
+};
 
 std::mutex &lld_driver_mutex() {
     static std::mutex mutex;
@@ -230,6 +745,103 @@ llvm::Error validate_link_input(llvm::StringRef path) {
         return llvm::createStringError("LLD input is not a relocatable object");
     }
     return llvm::Error::success();
+}
+
+llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> validated_object_buffer(
+    CkcLlvmBytes bytes, llvm::StringRef name, llvm::Triple::ArchType arch) {
+    if (bytes.data == nullptr || bytes.len == 0) {
+        return llvm::createStringError("%s is empty", name.str().c_str());
+    }
+    auto buffer = llvm::MemoryBuffer::getMemBufferCopy(borrowed_string(bytes), name);
+    auto object = llvm::object::ObjectFile::createObjectFile(
+        buffer->getMemBufferRef());
+    if (!object) {
+        return object.takeError();
+    }
+    if (!(*object)->isRelocatableObject() || (*object)->getArch() != arch) {
+        return llvm::createStringError(
+            "%s is not a host-architecture relocatable object",
+            name.str().c_str());
+    }
+#if defined(CKC_LLD_DARWIN)
+    if (!llvm::isa<llvm::object::MachOObjectFile>(object->get())) {
+        return llvm::createStringError("%s is not a Mach-O object",
+                                       name.str().c_str());
+    }
+#elif defined(CKC_LLD_COFF)
+    if (!llvm::isa<llvm::object::COFFObjectFile>(object->get())) {
+        return llvm::createStringError("%s is not a COFF object",
+                                       name.str().c_str());
+    }
+#else
+    if (!llvm::isa<llvm::object::ELFObjectFileBase>(object->get())) {
+        return llvm::createStringError("%s is not an ELF object",
+                                       name.str().c_str());
+    }
+#endif
+    return std::move(buffer);
+}
+
+llvm::Expected<std::vector<std::string>> defined_linker_symbols(
+    const llvm::MemoryBuffer &buffer) {
+    auto object = llvm::object::ObjectFile::createObjectFile(
+        buffer.getMemBufferRef());
+    if (!object) {
+        return object.takeError();
+    }
+    std::vector<std::string> names;
+    for (const auto &symbol : (*object)->symbols()) {
+        auto flags = symbol.getFlags();
+        if (!flags) {
+            return flags.takeError();
+        }
+        if ((*flags & llvm::object::BasicSymbolRef::SF_Undefined) != 0 ||
+            (*flags & llvm::object::BasicSymbolRef::SF_Global) == 0 ||
+            (*flags & llvm::object::BasicSymbolRef::SF_FormatSpecific) != 0) {
+            continue;
+        }
+        auto name = symbol.getName();
+        if (!name) {
+            return name.takeError();
+        }
+        if (!name->empty()) {
+            names.push_back(name->str());
+        }
+    }
+    return names;
+}
+
+llvm::Error define_allowed_process_symbols(llvm::orc::LLJIT &jit) {
+    llvm::orc::SymbolMap symbols;
+#if defined(CKC_LLD_DARWIN)
+    symbols[jit.mangleAndIntern("fcntl")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::fcntl, llvm::JITSymbolFlags::Exported);
+    symbols[jit.mangleAndIntern("signal")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::signal, llvm::JITSymbolFlags::Exported);
+    symbols[jit.mangleAndIntern("write")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::write, llvm::JITSymbolFlags::Exported);
+    symbols[jit.mangleAndIntern("_exit")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::_exit, llvm::JITSymbolFlags::Exported);
+#elif defined(CKC_LLD_COFF)
+    symbols[jit.mangleAndIntern("GetStdHandle")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::GetStdHandle, llvm::JITSymbolFlags::Exported);
+    symbols[jit.mangleAndIntern("WriteFile")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::WriteFile, llvm::JITSymbolFlags::Exported);
+    symbols[jit.mangleAndIntern("ExitProcess")] =
+        llvm::orc::ExecutorSymbolDef::fromPtr(
+            &::ExitProcess, llvm::JITSymbolFlags::Exported);
+#endif
+    if (symbols.empty()) {
+        return llvm::Error::success();
+    }
+    return jit.getMainJITDylib().define(
+        llvm::orc::absoluteSymbols(std::move(symbols)));
 }
 
 llvm::Error validate_shared_output(llvm::StringRef path) {
@@ -1397,6 +2009,35 @@ extern "C" int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
     }
 }
 
+extern "C" int32_t ckc_llvm_target_parse_object(
+    CkcLlvmTarget *target, CkcLlvmBytes object_bytes, CkcLlvmObject **out,
+    CkcLlvmError *error) {
+    clear_error(error);
+    if (target == nullptr || target->value == nullptr || out == nullptr) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "LLVM cached object input or output is null");
+    }
+    *out = nullptr;
+    try {
+        auto validated = validated_object_buffer(
+            object_bytes, "ckc-cache-object.o",
+            target->value->getTargetTriple().getArch());
+        if (!validated) {
+            return set_llvm_error(error, validated.takeError());
+        }
+        auto object = std::make_unique<CkcLlvmObject>();
+        const llvm::StringRef bytes = (*validated)->getBuffer();
+        object->bytes.assign(bytes.bytes_begin(), bytes.bytes_end());
+        *out = object.release();
+        return CKC_LLVM_OK;
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception parsing cached LLVM object");
+    }
+}
+
 extern "C" size_t ckc_llvm_object_size(const CkcLlvmObject *object) {
     return object == nullptr ? 0 : object->bytes.size();
 }
@@ -1789,6 +2430,7 @@ extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
         const bool use_coff_aarch64_rtdyld =
             triple.getArch() == llvm::Triple::aarch64 &&
             triple.isOSBinFormatCOFF();
+        auto memory_audit = std::make_shared<CkcJitMemoryAuditState>();
 
         llvm::orc::LLJITBuilder builder;
         builder.setJITTargetMachineBuilder(std::move(*target_builder));
@@ -1805,12 +2447,13 @@ extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
             });
         if (use_coff_aarch64_rtdyld) {
             builder.setObjectLinkingLayerCreator(
-                [](llvm::orc::ExecutionSession &session)
+                [memory_audit](llvm::orc::ExecutionSession &session)
                     -> llvm::Expected<
                         std::unique_ptr<llvm::orc::ObjectLayer>> {
-                    auto memory_manager = [](const llvm::MemoryBuffer &) {
-                        return std::make_unique<llvm::SectionMemoryManager>(
-                            nullptr, true);
+                    auto memory_manager =
+                        [memory_audit](const llvm::MemoryBuffer &) {
+                        return std::make_unique<
+                            CkcAuditedSectionMemoryManager>(memory_audit);
                     };
                     return std::unique_ptr<llvm::orc::ObjectLayer>(
                         std::make_unique<llvm::orc::RTDyldObjectLinkingLayer>(
@@ -1818,17 +2461,21 @@ extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
                 });
         } else {
             builder.setObjectLinkingLayerCreator(
-                [](llvm::orc::ExecutionSession &session)
+                [memory_audit](llvm::orc::ExecutionSession &session)
                     -> llvm::Expected<
                         std::unique_ptr<llvm::orc::ObjectLayer>> {
-                    auto memory_manager =
-                        llvm::jitlink::InProcessMemoryManager::Create();
-                    if (!memory_manager) {
-                        return memory_manager.takeError();
+                    auto mapper =
+                        CkcInProcessMemoryMapper::Create(memory_audit);
+                    if (!mapper) {
+                        return mapper.takeError();
                     }
+                    auto memory_manager = std::make_unique<
+                        llvm::orc::MapperJITLinkMemoryManager>(
+                        CKC_JIT_RESERVATION_GRANULARITY,
+                        std::move(*mapper));
                     return std::unique_ptr<llvm::orc::ObjectLayer>(
                         std::make_unique<llvm::orc::ObjectLinkingLayer>(
-                            session, std::move(*memory_manager)));
+                            session, std::move(memory_manager)));
                 });
         }
 
@@ -1838,9 +2485,14 @@ extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
         }
         auto jit = std::make_unique<CkcLlvmJit>();
         jit->value = std::move(*jit_value);
+        jit->memory_audit = std::move(memory_audit);
+        if (auto symbol_error = define_allowed_process_symbols(*jit->value)) {
+            return set_llvm_error(error, std::move(symbol_error));
+        }
         jit->object_layer = use_coff_aarch64_rtdyld
                                 ? CKC_LLVM_ORC_RTDYLD_COFF_AARCH64
                                 : CKC_LLVM_ORC_JITLINK;
+        jit->executed = false;
         *out = jit.release();
         return CKC_LLVM_OK;
     } catch (const std::exception &exception) {
@@ -1856,6 +2508,121 @@ extern "C" uint32_t ckc_llvm_jit_object_layer(const CkcLlvmJit *jit) {
         return 0;
     }
     return static_cast<uint32_t>(jit->object_layer);
+}
+
+extern "C" int32_t ckc_llvm_jit_execute(
+    CkcLlvmJit *jit, CkcLlvmBytes program_object,
+    const CkcLlvmBytes *runtime_objects, size_t runtime_object_count,
+    int32_t *exit_status, CkcLlvmError *error) {
+    clear_error(error);
+    if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
+        runtime_objects == nullptr || runtime_object_count != 5) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "LLVM JIT execution input is invalid");
+    }
+    *exit_status = 0;
+    if (jit->executed) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "native JIT instance already executed an object");
+    }
+    jit->executed = true;
+    try {
+        const auto arch = jit->value->getTargetTriple().getArch();
+        std::vector<std::unique_ptr<llvm::MemoryBuffer>> buffers;
+        std::set<std::string> linker_symbols;
+        buffers.reserve(runtime_object_count + 1);
+        for (size_t index = 0; index < runtime_object_count; ++index) {
+            auto buffer = validated_object_buffer(
+                runtime_objects[index],
+                "ckc-runtime-" + std::to_string(index) + ".o", arch);
+            if (!buffer) {
+                return set_llvm_error(error, buffer.takeError());
+            }
+            auto symbols = defined_linker_symbols(**buffer);
+            if (!symbols) {
+                return set_llvm_error(error, symbols.takeError());
+            }
+            linker_symbols.insert(symbols->begin(), symbols->end());
+            buffers.push_back(std::move(*buffer));
+        }
+        auto program =
+            validated_object_buffer(program_object, "ckc-program.o", arch);
+        if (!program) {
+            return set_llvm_error(error, program.takeError());
+        }
+        auto program_symbols = defined_linker_symbols(**program);
+        if (!program_symbols) {
+            return set_llvm_error(error, program_symbols.takeError());
+        }
+        linker_symbols.insert(program_symbols->begin(),
+                              program_symbols->end());
+        buffers.push_back(std::move(*program));
+
+        for (auto &buffer : buffers) {
+            if (auto add_error = jit->value->addObjectFile(std::move(buffer))) {
+                return set_llvm_error(error, std::move(add_error));
+            }
+        }
+        llvm::orc::ExecutorAddr entry_address;
+        const std::string main_linker_name =
+            jit->value->mangle("main");
+        for (const auto &symbol_name : linker_symbols) {
+            auto address =
+                jit->value->lookupLinkerMangled(symbol_name);
+            if (!address) {
+                return set_llvm_error(error, address.takeError());
+            }
+            if (symbol_name == main_linker_name) {
+                entry_address = *address;
+            }
+        }
+        if (!entry_address) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "LLVM JIT object has no main entry symbol");
+        }
+        using EntryFunction = int32_t();
+        auto *entry_function = entry_address.toPtr<EntryFunction>();
+        if (entry_function == nullptr) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "LLVM JIT entry lookup returned null");
+        }
+        *exit_status = entry_function();
+        return CKC_LLVM_OK;
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception executing LLVM JIT object");
+    }
+}
+
+extern "C" int32_t ckc_llvm_jit_memory_audit(
+    const CkcLlvmJit *jit, CkcLlvmJitMemoryAudit *out,
+    CkcLlvmError *error) {
+    clear_error(error);
+    if (jit == nullptr || jit->memory_audit == nullptr || out == nullptr) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "LLVM JIT memory audit input is invalid");
+    }
+    std::lock_guard<std::mutex> lock(jit->memory_audit->mutex);
+    out->allocations = jit->memory_audit->allocations;
+    out->instruction_cache_finalizations =
+        jit->memory_audit->instruction_cache_finalizations;
+    out->relocation_write_non_execute =
+        jit->memory_audit->saw_relocation_allocation &&
+        jit->memory_audit->relocation_write_non_execute;
+    out->final_code_read_execute =
+        jit->memory_audit->saw_final_code &&
+        jit->memory_audit->final_code_read_execute;
+    out->final_data_non_execute =
+        jit->memory_audit->saw_final_data &&
+        jit->memory_audit->final_data_non_execute;
+    out->darwin_map_jit = jit->memory_audit->darwin_map_jit;
+    out->darwin_thread_write_protection_supported =
+        jit->memory_audit->darwin_thread_write_protection_supported;
+    out->darwin_thread_write_protection =
+        jit->memory_audit->darwin_thread_write_protection;
+    return CKC_LLVM_OK;
 }
 
 extern "C" void ckc_llvm_jit_dispose(CkcLlvmJit *jit) { delete jit; }

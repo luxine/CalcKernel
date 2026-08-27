@@ -6,11 +6,11 @@ use calckernel::{
     lower_native_executable_module_with_options, lower_to_mir,
 };
 
-pub(super) fn executable_bytes(
+pub(super) fn executable_object(
     source: &str,
     overflow_mode: OverflowMode,
     bounds_mode: BoundsMode,
-) -> Vec<u8> {
+) -> calckernel::NativeObject {
     let checked = check(&SourceFile::new("runtime.ck", source));
     assert_eq!(checked.diagnostics, [], "{:#?}", checked.diagnostics);
     let mir = lower_to_mir(&checked.checked_program).expect("lower runtime MIR");
@@ -31,8 +31,15 @@ pub(super) fn executable_bytes(
     .expect("verify executable module")
     .optimize(&target, NativeOptimizationLevel::O3)
     .expect("optimize executable module");
-    let object = target.emit_object(module).expect("emit executable object");
-    link_native_executable(&object)
+    target.emit_object(module).expect("emit executable object")
+}
+
+pub(super) fn executable_bytes(
+    source: &str,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+) -> Vec<u8> {
+    link_native_executable(&executable_object(source, overflow_mode, bounds_mode))
         .expect("link executable")
         .as_bytes()
         .to_vec()

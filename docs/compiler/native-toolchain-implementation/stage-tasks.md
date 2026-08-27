@@ -510,12 +510,12 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `native/bridge/ckc_llvm.cpp`
 - Create: `tests/native/jit.rs`
 
-- [ ] Add failing tests for eager symbol resolution, entry lookup, embedded
+- [x] Add failing tests for eager symbol resolution, entry lookup, embedded
   runtime symbols, unchecked/checked combinations, no lazy hot-function stub,
   and object-layer selection.
-- [ ] Feed ORC the same O3 `NativeObject` used by AOT. Use JITLink on five hosts
+- [x] Feed ORC the same O3 `NativeObject` used by AOT. Use JITLink on five hosts
   and reserve-enabled RuntimeDyld/SectionMemoryManager on Windows AArch64.
-- [ ] Resolve every symbol before calling entry and return typed compile/link/
+- [x] Resolve every symbol before calling entry and return typed compile/link/
   lookup errors before executing user code.
 
 ### Task 6.2: Implement the private child and public run parent
@@ -530,13 +530,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Create: `tests/native/run.rs`
 - Modify: `tests/cli/commands.rs`
 
-- [ ] Add failing CLI tests proving the public parent self-spawns the exact
+- [x] Add failing CLI tests proving the public parent self-spawns the exact
   executable in an unforgeable/private child mode, inherits program stdio,
   prints no success text, returns normal status, forwards interrupt, and maps
   identifiable signals/exceptions to exact `CKR0006`.
-- [ ] Keep compilation, cache, ORC, and user machine code in the child. The
+- [x] Keep compilation, cache, ORC, and user machine code in the child. The
   parent validates the private protocol and never loads generated code.
-- [ ] Distinguish compiler failure, normal checked failure, program exit, output
+- [x] Distinguish compiler failure, normal checked failure, program exit, output
   failure, and abnormal termination without replacing a more specific status.
 
 ### Task 6.3: Define a canonical cache key and validated entry
@@ -549,13 +549,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `src/cli/mod.rs`
 - Create: `tests/native/cache.rs`
 
-- [ ] Add failing unit vectors for the versioned canonical serialization and
+- [x] Add failing unit vectors for the versioned canonical serialization and
   lowercase SHA-256 name. Mutate each required semantic input and prove the key
   changes.
-- [ ] Encode lengths and integers in an architecture-independent format; never
+- [x] Encode lengths and integers in an architecture-independent format; never
   hash debug output, unordered map iteration, paths, timestamps, or host-native
   integer bytes.
-- [ ] Store a bounded manifest, object bytes, and digest over both. Validate
+- [x] Store a bounded manifest, object bytes, and digest over both. Validate
   size, version, key, digest, and LLVM object parsing before returning a hit.
 
 ### Task 6.4: Secure cache storage, eviction, and clean
@@ -570,14 +570,14 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/native/cache.rs`
 - Modify: `tests/cli/commands.rs`
 
-- [ ] Add failing tests for all three OS path rules, missing base directory,
+- [x] Add failing tests for all three OS path rules, missing base directory,
   owner-only creation, unsafe ownership/permissions, symlinks, corruption,
   concurrent writers, atomic rename, 1-GiB soft limit, deterministic
   best-effort LRU, `--no-cache`, and `ckc cache clean` scope.
-- [ ] Treat every invalid entry or unsafe cache root as a miss. Disable caching
+- [x] Treat every invalid entry or unsafe cache root as a miss. Disable caching
   when a required base cannot be resolved; do not invent a globally writable
   path and do not fail a valid source run because cache maintenance failed.
-- [ ] Use owner-checked same-filesystem temporary files and no-follow/open-new
+- [x] Use owner-checked same-filesystem temporary files and no-follow/open-new
   semantics where the host exposes them. Clean only the resolved CK cache root.
 
 ### Task 6.5: Prove JIT memory-protection behavior
@@ -590,13 +590,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Create: `scripts/audit-jit-memory.sh`
 - Create: `scripts/audit-jit-memory.ps1`
 
-- [ ] Add host tests that observe writable/non-executable allocation during
+- [x] Add host tests that observe writable/non-executable allocation during
   relocation and final read/execute code plus non-executable data on Linux and
   Windows, including Windows AArch64 instruction-cache finalization.
-- [ ] On Darwin, test `MAP_JIT` plus per-thread write-protection transitions;
+- [x] On Darwin, test `MAP_JIT` plus per-thread write-protection transitions;
   do not reject a mapping merely because its maximum permissions include both
   write and execute.
-- [ ] Test signed and hardened macOS release candidates with only the narrowly
+- [x] Test signed and hardened macOS release candidates with only the narrowly
   required JIT entitlement.
 
 ## Stage 7 — Performance, CI, release, and legal closure

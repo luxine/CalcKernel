@@ -76,6 +76,12 @@ impl NativeTarget {
     ) -> Result<NativeObject, NativeError> {
         ffi::target_emit_object(self.handle, module.module.handle()).map(NativeObject::from_handle)
     }
+
+    /// Revalidates cached bytes as a host relocatable object before reuse.
+    #[doc(hidden)]
+    pub fn parse_cached_object(&self, bytes: &[u8]) -> Result<NativeObject, NativeError> {
+        ffi::target_parse_object(self.handle, bytes).map(NativeObject::from_handle)
+    }
 }
 
 impl Drop for NativeTarget {

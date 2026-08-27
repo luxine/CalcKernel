@@ -90,6 +90,7 @@ fn cli_should_report_pinned_native_toolchain_metadata() {
 fn cli_should_use_one_native_unavailable_error_without_feature() {
     for args in [
         vec![os("run"), os("missing.ck")],
+        vec![os("cache"), os("clean")],
         vec![os("emit-llvm"), os("missing.ck")],
         vec![os("build"), os("missing.ck"), os("--out"), os("x")],
     ] {

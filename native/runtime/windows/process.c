@@ -4,13 +4,11 @@ typedef void *CK_HANDLE;
 typedef unsigned long CK_DWORD;
 typedef int CK_BOOL;
 
-__declspec(dllimport) CK_HANDLE __stdcall GetStdHandle(CK_DWORD number);
-__declspec(dllimport) CK_BOOL __stdcall WriteFile(CK_HANDLE handle,
-                                                  const void *bytes,
-                                                  CK_DWORD length,
-                                                  CK_DWORD *written,
-                                                  void *overlapped);
-__declspec(dllimport) CKC_NORETURN void __stdcall ExitProcess(CK_DWORD status);
+CK_HANDLE __stdcall GetStdHandle(CK_DWORD number);
+CK_BOOL __stdcall WriteFile(CK_HANDLE handle, const void *bytes,
+                            CK_DWORD length, CK_DWORD *written,
+                            void *overlapped);
+CKC_NORETURN void __stdcall ExitProcess(CK_DWORD status);
 extern int main(void);
 
 int64_t __ck_platform_write(int32_t stream, const uint8_t *bytes,

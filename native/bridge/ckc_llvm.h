@@ -26,6 +26,17 @@ typedef struct CkcLlvmBridgeInfo {
     CkcLlvmOwnedBytes host_triple;
 } CkcLlvmBridgeInfo;
 
+typedef struct CkcLlvmJitMemoryAudit {
+    uint64_t allocations;
+    uint64_t instruction_cache_finalizations;
+    uint32_t relocation_write_non_execute;
+    uint32_t final_code_read_execute;
+    uint32_t final_data_non_execute;
+    uint32_t darwin_map_jit;
+    uint32_t darwin_thread_write_protection_supported;
+    uint32_t darwin_thread_write_protection;
+} CkcLlvmJitMemoryAudit;
+
 #if defined(__cplusplus)
 static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
 static_assert(sizeof(int32_t) == 4, "bridge requires 32-bit int32_t");
@@ -315,6 +326,10 @@ int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
                                     CkcLlvmModule *module,
                                     CkcLlvmObject **out,
                                     CkcLlvmError *error);
+int32_t ckc_llvm_target_parse_object(CkcLlvmTarget *target,
+                                     CkcLlvmBytes object_bytes,
+                                     CkcLlvmObject **out,
+                                     CkcLlvmError *error);
 size_t ckc_llvm_object_size(const CkcLlvmObject *object);
 const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object);
 void ckc_llvm_object_dispose(CkcLlvmObject *object);
@@ -340,6 +355,15 @@ int32_t ckc_lld_link_executable(const CkcLlvmBytes *object_paths,
                                 CkcLlvmError *error);
 int32_t ckc_llvm_jit_create(CkcLlvmJit **out, CkcLlvmError *error);
 uint32_t ckc_llvm_jit_object_layer(const CkcLlvmJit *jit);
+int32_t ckc_llvm_jit_execute(CkcLlvmJit *jit,
+                             CkcLlvmBytes program_object,
+                             const CkcLlvmBytes *runtime_objects,
+                             size_t runtime_object_count,
+                             int32_t *exit_status,
+                             CkcLlvmError *error);
+int32_t ckc_llvm_jit_memory_audit(const CkcLlvmJit *jit,
+                                  CkcLlvmJitMemoryAudit *out,
+                                  CkcLlvmError *error);
 void ckc_llvm_jit_dispose(CkcLlvmJit *jit);
 
 #ifdef __cplusplus

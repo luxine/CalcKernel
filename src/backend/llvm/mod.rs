@@ -39,7 +39,7 @@ pub use ffi::{
     LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, bridge_info, test_error, test_invalid_input,
 };
 #[cfg(feature = "native-toolchain")]
-pub use jit::{NativeJit, OrcObjectLayer};
+pub use jit::{NativeJit, NativeJitMemoryAudit, OrcObjectLayer};
 #[cfg(feature = "native-toolchain")]
 pub use lower::{
     NativeLoweringOptions, lower_native_executable_module_with_options, lower_native_llvm_module,

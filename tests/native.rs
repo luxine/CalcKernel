@@ -6,10 +6,14 @@ mod abi;
 mod artifacts;
 #[path = "native/bridge.rs"]
 mod bridge;
+#[path = "native/cache.rs"]
+mod cache;
 #[path = "native/differential.rs"]
 mod differential;
 #[path = "native/executable.rs"]
 mod executable;
+#[path = "native/jit.rs"]
+mod jit;
 #[path = "native/libraries.rs"]
 mod libraries;
 #[path = "native/llvm_ir.rs"]
@@ -18,6 +22,8 @@ mod llvm_ir;
 mod object;
 #[path = "native/ownership.rs"]
 mod ownership;
+#[path = "native/run.rs"]
+mod run;
 #[path = "native/runtime.rs"]
 mod runtime;
 #[path = "native/runtime_support.rs"]

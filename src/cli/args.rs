@@ -337,6 +337,7 @@ pub(super) fn usage() -> &'static str {
         "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native>] [-O0|-O1|-O2|-O3]\n",
         "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [native build options]\n",
         "  ckc run <file> [-O0|-O1|-O2|-O3] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--no-cache]\n",
+        "  ckc cache clean\n",
         "  ckc licenses\n",
         "\n",
         "Options:\n",

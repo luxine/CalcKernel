@@ -8,9 +8,12 @@ use std::{
 };
 
 pub(super) fn read_text_lossy(path: &str) -> Result<String, String> {
+    read_file_bytes(path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub(super) fn read_file_bytes(path: &str) -> Result<Vec<u8>, String> {
     let path = absolutize(path);
-    let bytes = fs::read(&path).map_err(|error| format_read_file_error(&path, error))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    fs::read(&path).map_err(|error| format_read_file_error(&path, error))
 }
 
 pub(super) fn format_read_file_error(path: &std::path::Path, error: std::io::Error) -> String {

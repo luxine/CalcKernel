@@ -5,7 +5,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::backend::llvm::{NativeError, NativeObject, NativeStage, ffi};
+use crate::backend::{
+    llvm::{NativeError, NativeObject, NativeStage, ffi},
+    native_runtime::{embedded_runtime_objects, embedded_windows_import_library},
+};
 
 /// Validated outputs produced by the in-process, allowlisted LLD driver.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,26 +145,6 @@ pub fn link_native_executable(object: &NativeObject) -> Result<NativeExecutable,
     Ok(NativeExecutable {
         bytes: fs::read(output_path).map_err(link_io_error)?,
     })
-}
-
-fn embedded_runtime_objects() -> [&'static [u8]; 5] {
-    [
-        include_bytes!(env!("CKC_RUNTIME_OBJECT_0")),
-        include_bytes!(env!("CKC_RUNTIME_OBJECT_1")),
-        include_bytes!(env!("CKC_RUNTIME_OBJECT_2")),
-        include_bytes!(env!("CKC_RUNTIME_OBJECT_3")),
-        include_bytes!(env!("CKC_RUNTIME_OBJECT_4")),
-    ]
-}
-
-#[cfg(target_os = "windows")]
-fn embedded_windows_import_library() -> &'static [u8] {
-    include_bytes!(env!("CKC_RUNTIME_PLATFORM_IMPORT"))
-}
-
-#[cfg(not(target_os = "windows"))]
-const fn embedded_windows_import_library() -> &'static [u8] {
-    &[]
 }
 
 fn validate_exports(exports: &[String]) -> Result<(), NativeError> {

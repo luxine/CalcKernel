@@ -127,6 +127,19 @@ struct CkcLlvmBridgeInfo {
 }
 
 #[repr(C)]
+#[derive(Debug, Default)]
+struct CkcLlvmJitMemoryAudit {
+    allocations: u64,
+    instruction_cache_finalizations: u64,
+    relocation_write_non_execute: u32,
+    final_code_read_execute: u32,
+    final_data_non_execute: u32,
+    darwin_map_jit: u32,
+    darwin_thread_write_protection_supported: u32,
+    darwin_thread_write_protection: u32,
+}
+
+#[repr(C)]
 pub(super) struct CkcLlvmContext {
     _private: [u8; 0],
 }
@@ -190,6 +203,10 @@ struct CkcLlvmBytes {
 
 impl CkcLlvmBytes {
     fn new(value: &str) -> Self {
+        Self::from_bytes(value.as_bytes())
+    }
+
+    fn from_bytes(value: &[u8]) -> Self {
         Self {
             data: value.as_ptr(),
             len: value.len(),
@@ -527,6 +544,12 @@ unsafe extern "C" {
         out: *mut *mut CkcLlvmObject,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_target_parse_object(
+        target: *mut CkcLlvmTarget,
+        object_bytes: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmObject,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_object_size(object: *const CkcLlvmObject) -> usize;
     fn ckc_llvm_object_data(object: *const CkcLlvmObject) -> *const u8;
     fn ckc_llvm_object_dispose(object: *mut CkcLlvmObject);
@@ -558,6 +581,19 @@ unsafe extern "C" {
     ) -> i32;
     fn ckc_llvm_jit_create(out: *mut *mut CkcLlvmJit, error: *mut CkcLlvmError) -> i32;
     fn ckc_llvm_jit_object_layer(jit: *const CkcLlvmJit) -> u32;
+    fn ckc_llvm_jit_execute(
+        jit: *mut CkcLlvmJit,
+        program_object: CkcLlvmBytes,
+        runtime_objects: *const CkcLlvmBytes,
+        runtime_object_count: usize,
+        exit_status: *mut i32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_jit_memory_audit(
+        jit: *const CkcLlvmJit,
+        out: *mut CkcLlvmJitMemoryAudit,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_jit_dispose(jit: *mut CkcLlvmJit);
 }
 
@@ -1263,6 +1299,15 @@ pub(super) fn target_emit_object(
     handle_result(NativeStage::Object, status, handle, &mut error)
 }
 
+pub(super) fn target_parse_object(
+    target: NonNull<CkcLlvmTarget>,
+    bytes: &[u8],
+) -> Result<NonNull<CkcLlvmObject>, NativeError> {
+    handle_call(NativeStage::Object, |out, error| unsafe {
+        ckc_llvm_target_parse_object(target.as_ptr(), CkcLlvmBytes::from_bytes(bytes), out, error)
+    })
+}
+
 pub(super) fn object_size(handle: NonNull<CkcLlvmObject>) -> usize {
     // SAFETY: The object owner keeps the immutable handle live for this query.
     unsafe { ckc_llvm_object_size(handle.as_ptr()) }
@@ -1378,6 +1423,49 @@ pub(super) fn jit_object_layer(handle: NonNull<CkcLlvmJit>) -> u32 {
     // SAFETY: The unique wrapper keeps the JIT handle live for this shared
     // query and the bridge does not retain the pointer.
     unsafe { ckc_llvm_jit_object_layer(handle.as_ptr()) }
+}
+
+pub(super) fn jit_execute(
+    handle: NonNull<CkcLlvmJit>,
+    program_object: &[u8],
+    runtime_objects: &[&[u8]],
+) -> Result<i32, NativeError> {
+    let runtime_bytes = runtime_objects
+        .iter()
+        .map(|bytes| CkcLlvmBytes::from_bytes(bytes))
+        .collect::<Vec<_>>();
+    let mut exit_status = 0;
+    status_call(NativeStage::Orc, |error| unsafe {
+        ckc_llvm_jit_execute(
+            handle.as_ptr(),
+            CkcLlvmBytes::from_bytes(program_object),
+            runtime_bytes.as_ptr(),
+            runtime_bytes.len(),
+            &mut exit_status,
+            error,
+        )
+    })?;
+    Ok(exit_status)
+}
+
+pub(super) fn jit_memory_audit(
+    handle: NonNull<CkcLlvmJit>,
+) -> Result<super::jit::NativeJitMemoryAudit, NativeError> {
+    let mut audit = CkcLlvmJitMemoryAudit::default();
+    status_call(NativeStage::Orc, |error| unsafe {
+        ckc_llvm_jit_memory_audit(handle.as_ptr(), &mut audit, error)
+    })?;
+    Ok(super::jit::NativeJitMemoryAudit {
+        allocations: audit.allocations,
+        instruction_cache_finalizations: audit.instruction_cache_finalizations,
+        relocation_write_non_execute: audit.relocation_write_non_execute != 0,
+        final_code_read_execute: audit.final_code_read_execute != 0,
+        final_data_non_execute: audit.final_data_non_execute != 0,
+        darwin_map_jit: audit.darwin_map_jit != 0,
+        darwin_thread_write_protection_supported: audit.darwin_thread_write_protection_supported
+            != 0,
+        darwin_thread_write_protection: audit.darwin_thread_write_protection != 0,
+    })
 }
 
 pub(super) unsafe fn jit_dispose(handle: NonNull<CkcLlvmJit>) {

@@ -9,19 +9,141 @@ use calckernel::{
     run_mir_pass_pipeline,
 };
 
+#[cfg(feature = "native-toolchain")]
+use super::cache::{self, CacheKeyInput, CacheManifest};
 use super::{args::*, output::*};
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
     EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu,
-    NativeHeaderMode, NativeLoweringOptions, NativeOptimizationLevel, NativePlatform, NativeTarget,
-    create_native_static_archive, emit_native_header, link_native_dynamic_library,
+    NativeHeaderMode, NativeLoweringOptions, NativeObject, NativeOptimizationLevel, NativePlatform,
+    NativeTarget, create_native_static_archive, emit_native_header, link_native_dynamic_library,
     link_native_executable, lower_native_executable_module_with_options,
     lower_native_llvm_module_with_options,
 };
 
+#[cfg(feature = "native-toolchain")]
+pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, String> {
+    let input = require_input(args, "run")?;
+    validate_source_file_extension(input)?;
+    let overflow_mode = parse_overflow_mode(args)?;
+    let bounds_mode = parse_bounds_mode(args)?;
+    let opt_level = parse_opt_level(args)?;
+    let source_bytes = read_file_bytes(input)?;
+    let target =
+        NativeTarget::host_with_cpu(NativeCpu::Native).map_err(|error| error.to_string())?;
+    let bridge = calckernel::bridge_info().map_err(|error| error.to_string())?;
+    let target_triple = target.triple().map_err(|error| error.to_string())?;
+    let cpu = target.cpu().map_err(|error| error.to_string())?;
+    let features = target.features().map_err(|error| error.to_string())?;
+    let codegen_contract = "strict-fp;entry-wrapper-v1;native-cpu;host-only".to_string();
+    let key_input = CacheKeyInput {
+        source: source_bytes.clone(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        native_abi: calckernel::NATIVE_ABI_VERSION,
+        runtime_abi: calckernel::RUNTIME_ABI_VERSION,
+        bridge_abi: calckernel::LLVM_BRIDGE_ABI_VERSION,
+        llvm_version: bridge.llvm_version.clone(),
+        llvm_manifest_sha256: env!("CKC_LLVM_MANIFEST_SHA256").to_string(),
+        target_triple: target_triple.clone(),
+        optimization_level: opt_level,
+        overflow_mode: mode_value(overflow_mode),
+        bounds_mode: bounds_mode_value(bounds_mode),
+        cpu: cpu.clone(),
+        features: features.clone(),
+        codegen_contract: codegen_contract.clone(),
+        runtime_sha256: [
+            env!("CKC_RUNTIME_SHA256_0").to_string(),
+            env!("CKC_RUNTIME_SHA256_1").to_string(),
+            env!("CKC_RUNTIME_SHA256_2").to_string(),
+            env!("CKC_RUNTIME_SHA256_3").to_string(),
+            env!("CKC_RUNTIME_SHA256_4").to_string(),
+        ],
+    };
+    let key = cache::cache_key_hex(&key_input);
+    let manifest = CacheManifest {
+        key: key.clone(),
+        compiler_version: key_input.compiler_version,
+        llvm_version: key_input.llvm_version,
+        target_triple,
+        cpu,
+        features,
+        codegen_contract,
+        native_abi: key_input.native_abi,
+        runtime_abi: key_input.runtime_abi,
+        bridge_abi: key_input.bridge_abi,
+        optimization_level: opt_level,
+        overflow_mode: key_input.overflow_mode,
+        bounds_mode: key_input.bounds_mode,
+    };
+    if let Some(object) = cache::load_object(&target, &key, args.no_cache) {
+        return Ok(object);
+    }
+
+    let source = SourceFile::new(input, String::from_utf8_lossy(&source_bytes).into_owned());
+    let checked = check(&source);
+    if !checked.diagnostics.is_empty() {
+        return Err(format_diagnostics(&source, &checked.diagnostics));
+    }
+    let mir = lower_and_optimize(
+        &checked.checked_program,
+        opt_level,
+        mir_overflow_mode(overflow_mode),
+        mir_bounds_mode(bounds_mode),
+        MirPassTargetBackend::Llvm,
+        &args.debug,
+    )?;
+    if mir.entry.is_none() {
+        return Err("ckc run requires fn main() -> void or i32".to_string());
+    }
+    let context = NativeContext::new().map_err(|error| error.to_string())?;
+    let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
+    let module = lower_native_executable_module_with_options(
+        &context,
+        &target,
+        &mir,
+        &NativeLoweringOptions {
+            emit: EmitLlvmOptions {
+                source_file_name: None,
+                target_triple: None,
+            },
+            overflow_mode,
+            bounds_mode,
+        },
+    )
+    .map_err(|error| error.to_string())?
+    .verify()
+    .map_err(|error| error.to_string())?
+    .optimize(&target, level)
+    .map_err(|error| error.to_string())?;
+    let object = target
+        .emit_object(module)
+        .map_err(|error| error.to_string())?;
+    cache::store_object(&manifest, &object, args.no_cache);
+    Ok(object)
+}
+
+#[cfg(feature = "native-toolchain")]
+const fn mode_value(mode: OverflowMode) -> u8 {
+    match mode {
+        OverflowMode::Unchecked => 0,
+        OverflowMode::Checked => 1,
+    }
+}
+
+#[cfg(feature = "native-toolchain")]
+const fn bounds_mode_value(mode: BoundsMode) -> u8 {
+    match mode {
+        BoundsMode::Unchecked => 0,
+        BoundsMode::Checked => 1,
+    }
+}
+
 pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), String>> {
     #[cfg(not(feature = "native-toolchain"))]
-    if matches!(command, "run" | "emit-llvm" | "build" | "build-llvm") {
+    if matches!(
+        command,
+        "run" | "cache" | "emit-llvm" | "build" | "build-llvm"
+    ) {
         return Some(Err(native_unavailable_error()));
     }
 
@@ -34,10 +156,26 @@ pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), Stri
         "emit-llvm" => run_emit_llvm,
         "build" => run_build,
         "build-llvm" => run_build_llvm,
+        "cache" => run_cache,
         "licenses" => run_licenses,
         _ => return None,
     };
     Some(ParsedArgs::parse(command, args).and_then(|parsed| run_command(&parsed)))
+}
+
+#[cfg(feature = "native-toolchain")]
+pub(super) fn run_cache(args: &ParsedArgs) -> Result<(), String> {
+    if args.positionals != ["clean"] {
+        return Err("Usage: ckc cache clean".to_string());
+    }
+    cache::clean_default()?;
+    println!("OK: native cache cleaned");
+    Ok(())
+}
+
+#[cfg(not(feature = "native-toolchain"))]
+pub(super) fn run_cache(_args: &ParsedArgs) -> Result<(), String> {
+    Err(native_unavailable_error())
 }
 
 pub(super) fn run_version(args: &[String]) -> Result<(), String> {

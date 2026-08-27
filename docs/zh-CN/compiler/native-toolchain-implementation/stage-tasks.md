@@ -331,11 +331,11 @@ runtime provenance。
 
 **文件：**修改 `src/backend/llvm/jit.rs` 与 bridge；新建 `tests/native/jit.rs`。
 
-- [ ] 添加 eager resolution、entry lookup、embedded runtime symbol、checked 四组合、
+- [x] 添加 eager resolution、entry lookup、embedded runtime symbol、checked 四组合、
   无 lazy hot-function stub 与 object-layer 选择红灯测试。
-- [ ] ORC 消费与 AOT 完全相同的 O3 `NativeObject`；五平台用 JITLink，Windows
+- [x] ORC 消费与 AOT 完全相同的 O3 `NativeObject`；五平台用 JITLink，Windows
   AArch64 用 reserve-enabled RuntimeDyld/SectionMemoryManager。
-- [ ] 调用 entry 前解析所有 symbol，并在执行用户代码前返回 typed compile/link/lookup
+- [x] 调用 entry 前解析所有 symbol，并在执行用户代码前返回 typed compile/link/lookup
   error。
 
 ### 任务 6.2：实现 private child 与 public run parent
@@ -343,12 +343,12 @@ runtime provenance。
 **文件：**新建 `src/cli/run.rs`；修改 CLI mod/commands/args、thin binary；新建
 `tests/native/run.rs` 并修改 CLI tests。
 
-- [ ] CLI 红灯测试证明 parent 以不可伪造/private child mode self-spawn 同一 executable，
+- [x] CLI 红灯测试证明 parent 以不可伪造/private child mode self-spawn 同一 executable，
   继承 program stdio、不输出成功文本、返回 normal status、转发 interrupt，并把可识别
   signal/exception 映射成精确 `CKR0006`。
-- [ ] compilation、cache、ORC 与 user machine code 全在 child；parent 校验私有协议，
+- [x] compilation、cache、ORC 与 user machine code 全在 child；parent 校验私有协议，
   绝不加载生成代码。
-- [ ] 区分 compiler failure、normal checked failure、program exit、output failure 与
+- [x] 区分 compiler failure、normal checked failure、program exit、output failure 与
   abnormal termination，不覆盖更具体 status。
 
 ### 任务 6.3：定义 canonical cache key 与 validated entry
@@ -356,11 +356,11 @@ runtime provenance。
 **文件：**新建 `src/cli/cache/mod.rs`、`key.rs`、`entry.rs`；修改 CLI mod；新建
 `tests/native/cache.rs`。
 
-- [ ] 为 versioned canonical serialization 与 lowercase SHA-256 name 添加固定向量红灯
+- [x] 为 versioned canonical serialization 与 lowercase SHA-256 name 添加固定向量红灯
   测试；逐个改变所有语义输入，证明 key 改变。
-- [ ] 用架构无关格式编码 length/integer；不得 hash debug output、unordered map 顺序、
+- [x] 用架构无关格式编码 length/integer；不得 hash debug output、unordered map 顺序、
   path、timestamp 或 host-native integer bytes。
-- [ ] 保存 bounded manifest、object bytes 与二者 digest；hit 前校验 size、version、
+- [x] 保存 bounded manifest、object bytes 与二者 digest；hit 前校验 size、version、
   key、digest 与 LLVM object parsing。
 
 ### 任务 6.4：安全 cache storage、eviction 与 clean
@@ -368,12 +368,12 @@ runtime provenance。
 **文件：**新建 `src/cli/cache/path.rs`、`store.rs`、`evict.rs`；修改 CLI；扩展 cache
 和 commands tests。
 
-- [ ] 添加三 OS path、缺失 base dir、owner-only creation、不安全 owner/permission、
+- [x] 添加三 OS path、缺失 base dir、owner-only creation、不安全 owner/permission、
   symlink、corruption、并发 writer、atomic rename、1-GiB soft limit、deterministic
   best-effort LRU、`--no-cache` 与 `ckc cache clean` scope 红灯测试。
-- [ ] 非法 entry 或 unsafe root 一律视为 miss；required base 无法解析时关闭 cache，
+- [x] 非法 entry 或 unsafe root 一律视为 miss；required base 无法解析时关闭 cache，
   不创建全局可写路径，cache maintenance 失败也不能让合法 source run 失败。
-- [ ] 使用 owner-checked same-filesystem temp，以及宿主可用时的 no-follow/open-new。
+- [x] 使用 owner-checked same-filesystem temp，以及宿主可用时的 no-follow/open-new。
   clean 只能删除解析出的 CK cache root。
 
 ### 任务 6.5：证明 JIT memory-protection 行为
@@ -381,12 +381,12 @@ runtime provenance。
 **文件：**扩展 bridge；修改 `tests/native/jit.rs`；新建
 `scripts/audit-jit-memory.sh`、`.ps1`。
 
-- [ ] Linux/Windows 宿主测试观察 relocation 期间 writable/non-executable、final
+- [x] Linux/Windows 宿主测试观察 relocation 期间 writable/non-executable、final
   read/execute code 与 non-executable data；Windows AArch64 包括 instruction-cache
   finalization。
-- [ ] Darwin 测试 `MAP_JIT` 与 per-thread write-protection transition，不能仅因 mapping
+- [x] Darwin 测试 `MAP_JIT` 与 per-thread write-protection transition，不能仅因 mapping
   最大 permission 同时含 write/execute 就拒绝。
-- [ ] signed/hardened macOS release candidate 只能使用狭义所需 JIT entitlement。
+- [x] signed/hardened macOS release candidate 只能使用狭义所需 JIT entitlement。
 
 ## 阶段 7 — 性能、CI、发布与法律闭环
 
