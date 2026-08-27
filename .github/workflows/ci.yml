@@ -23,36 +23,161 @@ env:
 
 jobs:
   quality:
-    name: quality
+    name: quality (no native toolchain)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: luxine/CalcKernel
           ref: 5e989939d89d75056e5f3bea25f3bf7204d5529a
           path: typescript-oracle
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 20
+          node-version: 20.19.5
       - run: corepack enable
       - run: corepack prepare pnpm@9.15.9 --activate
       - run: pnpm install --frozen-lockfile
         working-directory: typescript-oracle
       - run: pnpm build
         working-directory: typescript-oracle
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
+          toolchain: 1.90.0
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: ./target/release/ckc --help
       - run: ./target/release/ckc check examples/core/scalar.ck
       - run: ./target/release/ckc emit-mir examples/core/scalar.ck -O3
-      - name: Smoke native backends
+      - name: Smoke feature-disabled backends
         run: |
           ./target/release/ckc emit-c examples/applications/pricing.ck --out build/pricing.c --header build/pricing.h
           ./target/release/ckc emit-wasm examples/wasm/scalar.ck --out build/scalar.wasm
-          ./target/release/ckc emit-llvm examples/llvm/scalar.ck --out build/scalar.ll
+
+  native-integration:
+    name: native integration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.90.0
+          components: rustfmt, clippy
+      - name: Bootstrap pinned oracle toolchain
+        uses: ./.github/actions/bootstrap-ckc-llvm
+        with:
+          target: x86_64-unknown-linux-gnu
+          profile: oracle
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --all-features --locked
+      - run: cargo build --release --features native-toolchain --locked
+      - name: Build native audit fixtures
+        run: cargo test --all-features --locked --test native artifacts
+      - name: Audit native artifacts and dependencies
+        run: scripts/audit-native-artifact.sh target/native-acceptance
+      - name: Audit JIT memory permissions
+        run: scripts/audit-jit-memory.sh target/release/ckc
+      - name: Test bridge ownership under ASan and UBSan
+        env:
+          CXXFLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer
+          RUSTFLAGS: -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: cargo test --all-features --locked --test native ownership --target-dir target/sanitized
+
+  native-hosts:
+    name: native host (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-arm64
+            target: aarch64-apple-darwin
+            runner: macos-15
+            executable: target/release/ckc
+          - name: darwin-x64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+            executable: target/release/ckc
+          - name: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            executable: target/release/ckc
+          - name: linux-x64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            executable: target/release/ckc
+          - name: win32-arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            executable: target/release/ckc.exe
+          - name: win32-x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            executable: target/release/ckc.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.90.0
+      - name: Bootstrap pinned host oracle
+        uses: ./.github/actions/bootstrap-ckc-llvm
+        with:
+          target: ${{ matrix.target }}
+          profile: oracle
+      - run: cargo test --all-features --locked --test native
+      - run: cargo test --all-features --locked --test cli
+      - run: cargo build --release --features native-toolchain --locked
+      - name: Audit native artifacts on Unix
+        if: runner.os != 'Windows'
+        run: scripts/audit-native-artifact.sh target/native-acceptance
+      - name: Audit native artifacts on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/audit-native-artifact.ps1 -Path target/native-acceptance
+      - name: Audit JIT permissions on Unix
+        if: runner.os != 'Windows'
+        run: scripts/audit-jit-memory.sh '${{ matrix.executable }}'
+      - name: Audit JIT permissions on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/audit-jit-memory.ps1 -Path '${{ matrix.executable }}'
+
+  performance:
+    name: performance (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86-64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - arch: AArch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.90.0
+      - name: Bootstrap pinned performance oracle
+        uses: ./.github/actions/bootstrap-ckc-llvm
+        with:
+          target: ${{ matrix.target }}
+          profile: oracle
+      - name: Gate baseline CPU policy
+        run: |
+          cargo bench --features native-toolchain --bench ckc_perf -- --case scalar --task check --cpu baseline
+          python3 scripts/check-native-performance.py target/ckc-perf/results.json
+          cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
+      - name: Gate native CPU policy
+        run: |
+          cargo bench --features native-toolchain --bench ckc_perf -- --case scalar --task check --cpu native
+          python3 scripts/check-native-performance.py target/ckc-perf/results.json
+          cp target/ckc-perf/results.json target/ckc-perf/results-native.json

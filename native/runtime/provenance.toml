@@ -10,6 +10,8 @@ upstream = "https://github.com/ulfjack/ryu"
 commit = "59661c3f883dfd39cef6dc8eaf2fcbaae53597e8"
 license_files = ["vendor/ryu/LICENSE-Apache2", "vendor/ryu/LICENSE-Boost"]
 files = ["vendor/ryu/d2s.c", "vendor/ryu/common.h", "vendor/ryu/digit_table.h", "vendor/ryu/d2s_intrinsics.h", "vendor/ryu/d2s_full_table.h", "vendor/ryu/ryu.h"]
+source_sha256 = ["f50df6ebc19075d2aa7b2ff5114bb6b2d953ee905bf2b2d4d8deb5390a36c631", "0bbd71d26da6193e678d0776cf418f43f287c73d6fd6725353df0aadf70f2a19", "8b782573abc0b8554d74163ae6c02f0beb5c30d1e63eaebdb0ddf2c98d817e01", "1d05702f2edacce428223d4b43dd3095c1bd1f3ad30128ce1761d84356dddc7d", "2618f6e5fae6c4443899b184efe3d08295dd267dc9f1a994c983c7caca59ebe6", "b7feab0ba1df5e9ef3d602f386592ad152491405e49b408fb21c0e0e9e6bfb16"]
+license_sha256 = ["c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4", "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"]
 adaptations = ["disable allocation convenience API with CKC_RYU_NO_MALLOC", "normalize Ryu scientific output to the shortest CK fixed/scientific spelling"]
 
 [platform.darwin]

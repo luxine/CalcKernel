@@ -81,6 +81,8 @@ fi
 ckc_platform_args=()
 if [[ "$ckc_target" == *-apple-darwin ]]; then
   ckc_platform_args=(-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
+elif [[ "$ckc_target" == *-unknown-linux-gnu ]]; then
+  ckc_platform_args=(-DLLVM_STATIC_LINK_CXX_STDLIB=ON)
 fi
 
 mkdir -p "$ckc_build_dir/source" "$ckc_build_dir/build"

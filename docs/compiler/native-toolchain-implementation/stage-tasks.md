@@ -611,14 +611,14 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Add fixtures: `tests/fixtures/performance/native/*.ck`
 - Create: `scripts/check-native-performance.py`
 
-- [ ] Add failing harness tests for reference equivalence, warm-up, sample
+- [x] Add failing harness tests for reference equivalence, warm-up, sample
   stability, geometric mean, individual regression threshold, checked and
   unchecked separation, CPU policy, and rejection of fast-math references.
-- [ ] Compile the C reference with pinned Clang strict `-O3`; compile CK through
+- [x] Compile the C reference with pinned Clang strict `-O3`; compile CK through
   native TargetMachine O3 with the same baseline/native selection. Batch FFI
   calls and report compilation, cold run, warm run, memory, artifact size, and
   throughput separately.
-- [ ] Gate geometric mean at 95% and each kernel at no more than 10% slower,
+- [x] Gate geometric mean at 95% and each kernel at no more than 10% slower,
   unless a reviewed reproducible target limitation is added to the normative
   release evidence rather than hidden in the harness.
 
@@ -631,15 +631,15 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/contracts/ci.rs`
 - Modify: `tests/contracts/native_toolchain.rs`
 
-- [ ] Add failing workflow contract tests for exact manifest/checksum use,
+- [x] Add failing workflow contract tests for exact manifest/checksum use,
   cached host bootstrap, fast non-native quality job, native all-feature lint
   and test job, six-host functional matrix, and controlled x86-64/AArch64
   performance workers.
-- [ ] Keep the fast job independent of LLVM and remove its incorrect
+- [x] Keep the fast job independent of LLVM and remove its incorrect
   `--all-features`. Make the required native job run fmt, all-feature clippy,
   all tests, bridge sanitizers where supported, artifact/dependency audits,
   JIT permissions, and cache/process suites.
-- [ ] Pin every action and external tool version according to repository release
+- [x] Pin every action and external tool version according to repository release
   policy. CI may acquire the checksum-verified LLVM source; it may not accept a
   runner's arbitrary system LLVM.
 
@@ -654,14 +654,14 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `docs/project/release-checklist.md`
 - Modify: `docs/zh-CN/project/release-checklist.md`
 
-- [ ] Add failing release contract tests requiring native feature builds,
+- [x] Add failing release contract tests requiring native feature builds,
   exact six archive names, checksum sidecars, verbose version evidence,
   notices, zero-dependency audits, functional run/build smoke tests, macOS
   signing/JIT checks, and immutable GitHub release behavior.
-- [ ] Bootstrap target-minimal static LLVM/ORC/LLD on each host, build one
+- [x] Bootstrap target-minimal static LLVM/ORC/LLD on each host, build one
   self-contained `ckc`, and reject any archive with dynamic LLVM/LLD/Clang or
   non-system C++ runtime dependencies.
-- [ ] Preserve existing archive names and publish only after all six artifacts
+- [x] Preserve existing archive names and publish only after all six artifacts
   and checksum verification complete.
 
 ### Task 7.4: Close source and license provenance
@@ -674,10 +674,10 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `native/runtime/provenance.toml`
 - Modify: `tests/contracts/native_toolchain.rs`
 
-- [ ] Add failing tests that enumerate every embedded or statically linked
+- [x] Add failing tests that enumerate every embedded or statically linked
   third-party component and compare source hash, license file, notice text, and
   `ckc licenses` output.
-- [ ] Make missing, stale, or unreferenced provenance fail both source builds
+- [x] Make missing, stale, or unreferenced provenance fail both source builds
   and release CI.
 
 ## Stage 8 — 0.10 contract and repository freeze

@@ -9,16 +9,19 @@
 - [ ] 英文/简体中文文档树镜像，所有 local link 可解析。
 - [ ] `cargo fmt --check`
 - [ ] `cargo clippy --all-targets --all-features --locked -- -D warnings`
-- [ ] `cargo test --locked`
-- [ ] `cargo build --release --locked`
-- [ ] `./target/release/ckc --help` 与代表性 check/O0–O3 backend smoke。
+- [ ] 使用 checksum-verified LLVM 22.1.8 release prefix 与 pinned Clang oracle 执行 `cargo test --all-features --locked`。
+- [ ] `cargo build --release --features native-toolchain --locked`
+- [ ] `./target/release/ckc --help`、`--version --verbose` 与 `licenses` 暴露完整 identity/notice evidence。
+- [ ] `ckc run` 与 `ckc build --kind executable` 均在 external-tool `PATH` 为空时通过。
+- [ ] 每个 host 的 generated artifact、release binary dependency 与 JIT memory audit 通过；hardened macOS 只使用允许的 allow-JIT entitlement。
+- [ ] Controlled x86-64/AArch64 worker 上的 checked/unchecked、baseline/native CPU performance gate 均通过。
 - [ ] 精确 release commit 的 main CI 为 green。
 - [ ] publish=false 的六平台 preview 为 green。
 - [ ] Annotated `vX.Y.Z` 指向精确 commit 且从未存在。
 - [ ] Workflow 在 artifact build 前验证 tag 等于 `v` 加 `Cargo.toml` version。
 - [ ] Release verification 自包含，不依赖可选的 TypeScript oracle checkout。
 - [ ] Tag workflow 创建恰好六个 archive 与六个 SHA256 sidecar。
-- [ ] 所有 checksum 验证成功，解压 binary 可打印 CLI help。
+- [ ] 所有 checksum 验证成功；解压后的 native-enabled binary 通过 version、licenses、run、build、dependency 与 JIT smoke。
 - [ ] 此 tag 尚无 Release；workflow 创建而不是覆盖 Release。
 - [ ] GitHub Release 已 publish，非 draft/prerelease，关联 changelog 且恰有 12 个 asset。
 

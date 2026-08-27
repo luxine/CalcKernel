@@ -22,6 +22,34 @@ pub const fn embedded_notices() -> &'static [EmbeddedNotice] {
             bytes: include_bytes!("../../../LICENSE"),
         },
         EmbeddedNotice {
+            name: "CalcKernel third-party component index",
+            bytes: include_bytes!("../../../THIRD_PARTY_NOTICES.md"),
+        },
+        EmbeddedNotice {
+            name: "CalcKernel Cargo provenance manifest",
+            bytes: include_bytes!("../../../third_party/cargo/provenance.toml"),
+        },
+        EmbeddedNotice {
+            name: "Rust Project copyright",
+            bytes: include_bytes!("../../../third_party/licenses/RUST-COPYRIGHT"),
+        },
+        EmbeddedNotice {
+            name: "Rust Project MIT license",
+            bytes: include_bytes!("../../../third_party/licenses/RUST-LICENSE-MIT"),
+        },
+        EmbeddedNotice {
+            name: "generic-array MIT license",
+            bytes: include_bytes!("../../../third_party/licenses/generic-array-MIT.txt"),
+        },
+        EmbeddedNotice {
+            name: "memchr MIT license",
+            bytes: include_bytes!("../../../third_party/licenses/memchr-MIT.txt"),
+        },
+        EmbeddedNotice {
+            name: "Unicode License V3",
+            bytes: include_bytes!("../../../third_party/licenses/LICENSE-UNICODE"),
+        },
+        EmbeddedNotice {
             name: "LLVM Project 22.1.8 (LLVM and LLD)",
             bytes: include_bytes!("../../../native/llvm/LICENSE.TXT"),
         },

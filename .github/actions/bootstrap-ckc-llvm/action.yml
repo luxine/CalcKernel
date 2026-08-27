@@ -1,0 +1,145 @@
+name: Bootstrap pinned CalcKernel LLVM
+description: Restore or build the checksum-verified host LLVM/ORC/LLD prefix
+
+inputs:
+  target:
+    description: Exact Rust host target triple
+    required: true
+  profile:
+    description: release excludes Clang; oracle includes the pinned Clang oracle
+    required: false
+    default: release
+
+outputs:
+  prefix:
+    description: Validated LLVM installation prefix
+    value: ${{ steps.layout.outputs.prefix }}
+  clang:
+    description: Pinned Clang path for the oracle profile
+    value: ${{ steps.layout.outputs.clang }}
+
+runs:
+  using: composite
+  steps:
+    - name: Derive manifest-addressed paths
+      id: layout
+      shell: pwsh
+      env:
+        CKC_BOOTSTRAP_TARGET: ${{ inputs.target }}
+        CKC_BOOTSTRAP_PROFILE: ${{ inputs.profile }}
+      run: |
+        if ($env:CKC_BOOTSTRAP_PROFILE -notin @("release", "oracle")) {
+          throw "unsupported LLVM bootstrap profile: $env:CKC_BOOTSTRAP_PROFILE"
+        }
+        $manifest = Join-Path $env:GITHUB_WORKSPACE "native/llvm/manifest.toml"
+        $digest = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+        $identity = "$env:CKC_BOOTSTRAP_TARGET-$($digest.Substring(0, 16))"
+        $prefix = Join-Path $env:RUNNER_TEMP "ckc-llvm-prefix-$identity-release"
+        $build = Join-Path $env:RUNNER_TEMP "ckc-llvm-build-$identity-release"
+        $oraclePrefix = Join-Path $env:RUNNER_TEMP "ckc-llvm-prefix-$identity-oracle"
+        $oracleBuild = Join-Path $env:RUNNER_TEMP "ckc-llvm-build-$identity-oracle"
+        $archive = Join-Path $env:RUNNER_TEMP "llvm-project-22.1.8.src.tar.xz"
+        $clangName = if ($env:RUNNER_OS -eq "Windows") { "clang.exe" } else { "clang" }
+        $clang = Join-Path $oraclePrefix "bin/$clangName"
+        "manifest-digest=$digest" >> $env:GITHUB_OUTPUT
+        "prefix=$prefix" >> $env:GITHUB_OUTPUT
+        "build=$build" >> $env:GITHUB_OUTPUT
+        "oracle-prefix=$oraclePrefix" >> $env:GITHUB_OUTPUT
+        "oracle-build=$oracleBuild" >> $env:GITHUB_OUTPUT
+        "archive=$archive" >> $env:GITHUB_OUTPUT
+        "clang=$clang" >> $env:GITHUB_OUTPUT
+
+    - name: Restore manifest-addressed LLVM prefix
+      id: cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ steps.layout.outputs.prefix }}
+        key: ckc-llvm-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-release-${{ steps.layout.outputs.manifest-digest }}
+
+    - name: Restore manifest-addressed Clang oracle prefix
+      id: oracle-cache
+      if: inputs.profile == 'oracle'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ steps.layout.outputs.oracle-prefix }}
+        key: ckc-llvm-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-oracle-${{ steps.layout.outputs.manifest-digest }}
+
+    - name: Download pinned LLVM source on Unix
+      if: runner.os != 'Windows' && (steps.cache.outputs.cache-hit != 'true' || (inputs.profile == 'oracle' && steps.oracle-cache.outputs.cache-hit != 'true'))
+      shell: bash
+      run: |
+        curl --fail --location --proto '=https' --tlsv1.2 --retry 5 \
+          --output '${{ steps.layout.outputs.archive }}' \
+          'https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz'
+
+    - name: Download pinned LLVM source on Windows
+      if: runner.os == 'Windows' && (steps.cache.outputs.cache-hit != 'true' || (inputs.profile == 'oracle' && steps.oracle-cache.outputs.cache-hit != 'true'))
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz" -OutFile "${{ steps.layout.outputs.archive }}"
+
+    - name: Build pinned LLVM on Unix
+      if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        scripts/bootstrap-llvm.sh \
+          --archive '${{ steps.layout.outputs.archive }}' \
+          --prefix '${{ steps.layout.outputs.prefix }}' \
+          --build-dir '${{ steps.layout.outputs.build }}' \
+          --target '${{ inputs.target }}' \
+          --profile release
+
+    - name: Build pinned LLVM on Windows
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        scripts/bootstrap-llvm.ps1 -Archive "${{ steps.layout.outputs.archive }}" -Prefix "${{ steps.layout.outputs.prefix }}" -BuildDir "${{ steps.layout.outputs.build }}" -Target "${{ inputs.target }}" -Profile release
+
+    - name: Build pinned Clang oracle on Unix
+      if: runner.os != 'Windows' && inputs.profile == 'oracle' && steps.oracle-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        scripts/bootstrap-llvm.sh \
+          --archive '${{ steps.layout.outputs.archive }}' \
+          --prefix '${{ steps.layout.outputs.oracle-prefix }}' \
+          --build-dir '${{ steps.layout.outputs.oracle-build }}' \
+          --target '${{ inputs.target }}' \
+          --profile oracle
+
+    - name: Build pinned Clang oracle on Windows
+      if: runner.os == 'Windows' && inputs.profile == 'oracle' && steps.oracle-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        scripts/bootstrap-llvm.ps1 -Archive "${{ steps.layout.outputs.archive }}" -Prefix "${{ steps.layout.outputs.oracle-prefix }}" -BuildDir "${{ steps.layout.outputs.oracle-build }}" -Target "${{ inputs.target }}" -Profile oracle
+
+    - name: Validate cached or built prefix
+      shell: pwsh
+      env:
+        CKC_BOOTSTRAP_TARGET: ${{ inputs.target }}
+        CKC_BOOTSTRAP_PREFIX: ${{ steps.layout.outputs.prefix }}
+        CKC_BOOTSTRAP_ORACLE_PREFIX: ${{ steps.layout.outputs.oracle-prefix }}
+      run: |
+        $configName = if ($env:RUNNER_OS -eq "Windows") { "llvm-config.exe" } else { "llvm-config" }
+        function Assert-Prefix([string]$Prefix, [string]$Profile) {
+          $config = Join-Path $Prefix "bin/$configName"
+          $evidence = Join-Path $Prefix "share/ckc/llvm-build.toml"
+          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing llvm-config in $Prefix" }
+          if ((& $config --version).Trim() -ne "22.1.8") { throw "unexpected LLVM version" }
+          $text = Get-Content -Raw -LiteralPath $evidence
+          foreach ($required in @(
+            "target = `"$env:CKC_BOOTSTRAP_TARGET`"",
+            "profile = `"$Profile`"",
+            "source_sha256 = `"922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888`"",
+            "static_only = true"
+          )) {
+            if (-not $text.Contains($required)) { throw "invalid LLVM bootstrap evidence: $required" }
+          }
+        }
+        Assert-Prefix $env:CKC_BOOTSTRAP_PREFIX "release"
+        "CKC_LLVM_PREFIX=$env:CKC_BOOTSTRAP_PREFIX" >> $env:GITHUB_ENV
+        if ("${{ inputs.profile }}" -eq "oracle") {
+          Assert-Prefix $env:CKC_BOOTSTRAP_ORACLE_PREFIX "oracle"
+          $clang = "${{ steps.layout.outputs.clang }}"
+          if (-not (Test-Path -LiteralPath $clang -PathType Leaf)) { throw "missing pinned Clang oracle" }
+          "CKC_CLANG_ORACLE=$clang" >> $env:GITHUB_ENV
+        }

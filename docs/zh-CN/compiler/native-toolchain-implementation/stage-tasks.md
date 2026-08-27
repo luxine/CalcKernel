@@ -395,13 +395,13 @@ runtime provenance。
 **文件：**修改 benchmark/performance tests；增加 native performance fixtures；新建
 `scripts/check-native-performance.py`。
 
-- [ ] 添加 reference equivalence、warm-up、sample stability、geometric mean、单项
+- [x] 添加 reference equivalence、warm-up、sample stability、geometric mean、单项
   regression threshold、checked/unchecked 分离、CPU policy 与拒绝 fast-math reference
   的 harness 红灯测试。
-- [ ] C reference 用固定 Clang strict `-O3`；CK 用相同 baseline/native 的 native
+- [x] C reference 用固定 Clang strict `-O3`；CK 用相同 baseline/native 的 native
   TargetMachine O3。批量 FFI call，并分别报告 compilation、cold/warm run、memory、
   artifact size 与 throughput。
-- [ ] geometric mean 门槛 95%，每 kernel 不得慢超过 10%；例外只能作为经审查、可复现
+- [x] geometric mean 门槛 95%，每 kernel 不得慢超过 10%；例外只能作为经审查、可复现
   的 target limitation 加入 normative release evidence，不能藏在 harness。
 
 ### 任务 7.2：添加固定 native integration CI
@@ -409,13 +409,13 @@ runtime provenance。
 **文件：**修改 `.github/workflows/ci.yml`；新建
 `.github/actions/bootstrap-ckc-llvm/action.yml`；修改 CI/native contract tests。
 
-- [ ] workflow contract 红灯测试要求精确 manifest/checksum、cached host bootstrap、
+- [x] workflow contract 红灯测试要求精确 manifest/checksum、cached host bootstrap、
   fast non-native quality job、native all-feature lint/test、六宿主功能矩阵及受控
   x86-64/AArch64 性能 worker。
-- [ ] fast job 不依赖 LLVM 并移除错误的 `--all-features`；required native job 运行
+- [x] fast job 不依赖 LLVM 并移除错误的 `--all-features`；required native job 运行
   fmt、all-feature clippy、全部测试、支持平台的 bridge sanitizer、artifact/dependency
   audit、JIT permission 与 cache/process suite。
-- [ ] 按发布政策固定 action 与外部工具版本。CI 可获取 checksum-verified LLVM source，
+- [x] 按发布政策固定 action 与外部工具版本。CI 可获取 checksum-verified LLVM source，
   但不能接受 runner 任意 system LLVM。
 
 ### 任务 7.3：生成完整六宿主 release archive
@@ -423,22 +423,22 @@ runtime provenance。
 **文件：**修改 native release workflow、release contract tests、中英 release policy
 与 checklist。
 
-- [ ] release contract 红灯测试要求 native feature build、六个精确 archive 名称、
+- [x] release contract 红灯测试要求 native feature build、六个精确 archive 名称、
   checksum sidecar、verbose version evidence、notice、zero-dependency audit、run/build
   smoke、macOS signing/JIT 与 immutable GitHub release。
-- [ ] 每个 host bootstrap target-minimal static LLVM/ORC/LLD，构建唯一 self-contained
+- [x] 每个 host bootstrap target-minimal static LLVM/ORC/LLD，构建唯一 self-contained
   `ckc`；包含 dynamic LLVM/LLD/Clang 或 non-system C++ runtime dependency 的 archive
   一律拒绝。
-- [ ] 保持现有 archive 名称，只在六份 artifact 与 checksum 都验证后 publish。
+- [x] 保持现有 archive 名称，只在六份 artifact 与 checksum 都验证后 publish。
 
 ### 任务 7.4：闭合源码与 license provenance
 
 **文件：**新建 `THIRD_PARTY_NOTICES.md`；修改 notices、LLVM manifest、runtime
 provenance 与 native contract tests。
 
-- [ ] 测试枚举每个 embedded/statically linked third-party component，对比 source hash、
+- [x] 测试枚举每个 embedded/statically linked third-party component，对比 source hash、
   license、notice 与 `ckc licenses` 输出，先观察红灯。
-- [ ] 缺失、过期或无引用 provenance 必须同时让 source build 与 release CI 失败。
+- [x] 缺失、过期或无引用 provenance 必须同时让 source build 与 release CI 失败。
 
 ## 阶段 8 — 0.10 contract 与仓库冻结
 

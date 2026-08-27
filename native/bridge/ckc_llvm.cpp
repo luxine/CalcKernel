@@ -50,6 +50,7 @@
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Error.h>
+#include <llvm/Support/Alignment.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/Process.h>
 #include <llvm/Support/TargetSelect.h>
@@ -1435,6 +1436,9 @@ extern "C" int32_t ckc_llvm_module_add_function(
                                      : llvm::GlobalValue::InternalLinkage;
         auto *function = llvm::Function::Create(
             function_type, linkage, borrowed_string(name), *module->value);
+        if (exported != 0) {
+            function->setAlignment(llvm::Align(64));
+        }
         *out = bridge_function(function);
         return CKC_LLVM_OK;
     });

@@ -8,6 +8,10 @@ sha256 = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
 host_only = true
 static_only = true
 
+[provenance]
+license_files = ["LICENSE.TXT", "LLD-LICENSE.TXT", "third-party/BLAKE3-LICENSE", "third-party/COPYRIGHT.regex"]
+license_sha256 = ["3340babe8ac7bc6ae294d93aa01c310a250d43d5b760e5c12954882d4e5c83c7", "f7891568956e34643eb6a0db1462db30820d40d7266e2a78063f2fe233ece5a0", "6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e", "0424e57d4303164dc59a8509c20dae0518b853692e5c2b0e98b11816fdbc97c7"]
+
 [cmake]
 build_type = "Release"
 assertions = true

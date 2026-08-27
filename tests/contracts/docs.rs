@@ -217,8 +217,8 @@ fn native_release_docs_should_own_release_checklist_language() {
     for required in [
         "cargo fmt --check",
         "cargo clippy --all-targets --all-features --locked -- -D warnings",
-        "cargo test --locked",
-        "cargo build --release --locked",
+        "cargo test --all-features --locked",
+        "cargo build --release --features native-toolchain --locked",
         "SHA256",
         "GitHub Release",
     ] {

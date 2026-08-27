@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, process::Command};
 
 use super::support::oracle::repo_root;
 
@@ -63,6 +63,121 @@ fn benchmark_harness_should_cover_compiler_stages_and_backends() {
             "native benchmark harness must mention `{required}`"
         );
     }
+}
+
+#[test]
+fn native_runtime_harness_should_define_strict_equivalent_differential_measurement() {
+    let root = repo_root();
+    let harness =
+        fs::read_to_string(root.join("benches/ckc_perf.rs")).expect("read benchmark harness");
+    for required in [
+        "tests/fixtures/performance/native",
+        "CKC_CLANG_ORACLE",
+        "NativeCpu::Baseline",
+        "NativeCpu::Native",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
+        "-falign-functions=64",
+        "OverflowMode::Checked",
+        "BoundsMode::Checked",
+        "reference_equivalent",
+        "native_cold_ns",
+        "clang_c_cold_ns",
+        "peak_memory_bytes",
+        "artifact_bytes",
+        "batch_iterations",
+    ] {
+        assert!(
+            harness.contains(required),
+            "strict native runtime harness must mention `{required}`"
+        );
+    }
+    let bridge =
+        fs::read_to_string(root.join("native/bridge/ckc_llvm.cpp")).expect("read native bridge");
+    assert!(
+        bridge.contains("function->setAlignment(llvm::Align(64))"),
+        "native and strict C reference exports must share function alignment"
+    );
+
+    let fixture_root = root.join("tests/fixtures/performance/native");
+    let fixtures = fs::read_dir(&fixture_root)
+        .expect("read native performance fixtures")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect native performance fixtures");
+    assert!(
+        fixtures.len() >= 3,
+        "runtime suite needs at least three kernels"
+    );
+    assert!(
+        fixtures.iter().all(|entry| {
+            entry.path().extension().and_then(|value| value.to_str()) == Some("ck")
+        })
+    );
+}
+
+#[test]
+fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds() {
+    let root = repo_root();
+    let checker = root.join("scripts/check-native-performance.py");
+    assert!(checker.is_file(), "native performance checker must exist");
+    let temp = std::env::temp_dir().join(format!(
+        "ckc-performance-gate-{}-{}",
+        std::process::id(),
+        super::support::temp::unique_id()
+    ));
+    fs::create_dir_all(&temp).expect("create performance gate fixture");
+
+    let passing = temp.join("passing.json");
+    fs::write(&passing, performance_report(100, 102, true, false)).expect("write passing report");
+    let pass = Command::new("python3")
+        .arg(&checker)
+        .arg(&passing)
+        .output()
+        .expect("run passing performance gate");
+    assert!(
+        pass.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pass.stderr)
+    );
+
+    for (label, report) in [
+        ("individual", performance_report(112, 100, true, false)),
+        ("equivalence", performance_report(100, 102, false, false)),
+        ("fast-math", performance_report(100, 102, true, true)),
+        ("stability", performance_report(100, 180, true, false)),
+    ] {
+        let path = temp.join(format!("{label}.json"));
+        fs::write(&path, report).expect("write rejected report");
+        let output = Command::new("python3")
+            .arg(&checker)
+            .arg(&path)
+            .output()
+            .expect("run rejected performance gate");
+        assert!(!output.status.success(), "{label} report must fail");
+    }
+}
+
+fn performance_report(
+    native_ns: u64,
+    last_native_sample: u64,
+    equivalent: bool,
+    fast_math: bool,
+) -> String {
+    format!(
+        r#"{{
+  "schemaVersion": 2,
+  "cpuPolicy": "baseline",
+  "fastMath": {fast_math},
+  "warmup": 3,
+  "sampleRepetitions": 3,
+  "suites": [
+    {{"mode":"unchecked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"nativeSamplesNs":[100,101,{last_native_sample}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}},
+    {{"mode":"checked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"nativeSamplesNs":[100,101,{last_native_sample}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}}
+  ]
+}}"#
+    )
 }
 
 #[test]

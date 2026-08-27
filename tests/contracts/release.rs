@@ -2,6 +2,25 @@ use std::fs;
 
 use super::support::oracle::repo_root;
 
+fn assert_actions_are_commit_pinned(workflow: &str) {
+    for line in workflow.lines().map(str::trim) {
+        let Some(reference) = line.strip_prefix("- uses: ") else {
+            continue;
+        };
+        if reference.starts_with("./") {
+            continue;
+        }
+        let revision = reference
+            .rsplit_once('@')
+            .unwrap_or_else(|| panic!("release action is missing a revision: {reference}"))
+            .1;
+        assert!(
+            revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "release action must be pinned to a full commit: {reference}"
+        );
+    }
+}
+
 #[test]
 fn release_surface_should_not_include_npm_or_javascript_compatibility_layer() {
     let root = repo_root();
@@ -68,7 +87,7 @@ fn native_release_docs_should_replace_npm_release_docs() {
             "cargo build --release",
             "SHA256",
             "GitHub Release",
-            "cargo test --locked",
+            "cargo test --all-features --locked",
         ] {
             assert!(
                 text.contains(required),
@@ -100,9 +119,20 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         "default: false",
         "cargo fmt --check",
         "cargo clippy --all-targets --all-features --locked -- -D warnings",
-        "cargo test --locked",
-        "cargo build --release --locked",
+        "cargo test --all-features --locked",
+        "cargo build --release --features native-toolchain --locked",
+        "-C target-feature=+crt-static",
+        "uses: ./.github/actions/bootstrap-ckc-llvm",
+        "profile: release",
+        "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888",
         "ckc --help",
+        "--version --verbose",
+        "' licenses",
+        "' run ",
+        "--kind executable",
+        "audit-ckc-release",
+        "audit-native-artifact",
+        "audit-jit-memory",
         "GITHUB_REF_NAME",
         "expected_tag=\"v${cargo_version}\"",
         "needs: build-artifacts",
@@ -158,6 +188,29 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         assert!(
             !workflow.contains(forbidden),
             "native release workflow must not contain {forbidden:?}"
+        );
+    }
+
+    assert_actions_are_commit_pinned(&workflow);
+
+    for audit in [
+        "scripts/audit-ckc-release.sh",
+        "scripts/audit-ckc-release.ps1",
+    ] {
+        assert!(
+            repo_root().join(audit).is_file(),
+            "release dependency audit is missing {audit}"
+        );
+    }
+    let jit_audit = fs::read_to_string(repo_root().join("scripts/audit-jit-memory.sh"))
+        .expect("read Darwin JIT release audit");
+    for required in [
+        "codesign --verify --strict",
+        "com.apple.security.cs.allow-jit",
+    ] {
+        assert!(
+            jit_audit.contains(required),
+            "Darwin JIT release audit must contain {required:?}"
         );
     }
 }
