@@ -321,8 +321,8 @@ fn c_backend_should_emit_status_void_without_ck_return() {
     "#,
     );
 
-    assert!(c.contains("static CK_Status no_op()"), "{c}");
-    assert!(c.contains("CK_Status run()"), "{c}");
+    assert!(c.contains("static CK_Status no_op(void)"), "{c}");
+    assert!(c.contains("CK_Status run(void)"), "{c}");
     assert!(!c.contains("ck_return"), "{c}");
     assert!(c.contains("return CK_OK;"), "{c}");
 }

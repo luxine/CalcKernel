@@ -8,6 +8,7 @@ use crate::{
 
 use super::{
     EmitLlvmOptions,
+    abi::{add_export_thunks, implementation_name},
     builder::{NativeBlock, NativeBuilder, NativeFunction, NativeType, NativeValue},
     context::NativeContext,
     error::{NativeError, NativeStage},
@@ -94,14 +95,14 @@ pub fn lower_native_llvm_module_with_options<'context>(
                 params.push(types.pointer);
             }
             let handle = module.add_function(
-                &function.name,
+                &implementation_name(function),
                 if status_abi {
                     types.i32
                 } else {
                     types.get(&function.return_type)?
                 },
                 &params,
-                function.exported,
+                false,
             )?;
             functions.insert(function.name.clone(), handle);
         }
@@ -128,6 +129,9 @@ pub fn lower_native_llvm_module_with_options<'context>(
                 context, &module, &types, &functions, &layout, function, options,
             )?;
         }
+        add_export_thunks(
+            context, &module, target, mir, &types, &functions, status_abi,
+        )?;
     }
     Ok(module)
 }
@@ -136,13 +140,13 @@ fn status_abi(options: &NativeLoweringOptions) -> bool {
     options.overflow_mode == OverflowMode::Checked || options.bounds_mode == BoundsMode::Checked
 }
 
-struct TypeRegistry<'context> {
-    void: NativeType<'context>,
+pub(super) struct TypeRegistry<'context> {
+    pub(super) void: NativeType<'context>,
     i1: NativeType<'context>,
-    i32: NativeType<'context>,
+    pub(super) i32: NativeType<'context>,
     i64: NativeType<'context>,
     f64: NativeType<'context>,
-    pointer: NativeType<'context>,
+    pub(super) pointer: NativeType<'context>,
     slice: NativeType<'context>,
     structs: HashMap<String, NativeType<'context>>,
 }
@@ -181,7 +185,7 @@ impl<'context> TypeRegistry<'context> {
         Ok(registry)
     }
 
-    fn get(&self, type_node: &MirType) -> Result<NativeType<'context>, NativeError> {
+    pub(super) fn get(&self, type_node: &MirType) -> Result<NativeType<'context>, NativeError> {
         match type_node {
             MirType::Void => Ok(self.void),
             MirType::Primitive(MirPrimitiveTypeName::Bool) => Ok(self.i1),

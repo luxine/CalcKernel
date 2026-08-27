@@ -76,7 +76,7 @@ if ($Profile -eq "oracle" -and -not (Test-Path -LiteralPath $clang -PathType Lea
     throw "oracle prefix is missing Clang"
 }
 
-$components = @("core", "native", "orcjit", "nativecodegen")
+$components = @("core", "native", "orcjit", "nativecodegen", "lto")
 $llvmLibraries = ((& $llvmConfig --link-static --libnames @components) -split "\s+") |
     Where-Object { $_ -ne "" } |
     ForEach-Object { $_ -replace '^lib', '' -replace '\.lib$', '' }

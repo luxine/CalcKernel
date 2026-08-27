@@ -41,6 +41,7 @@ _Static_assert(sizeof(CkcLlvmOwnedBytes) >= sizeof(void *) + sizeof(size_t),
 typedef struct CkcLlvmContext CkcLlvmContext;
 typedef struct CkcLlvmModule CkcLlvmModule;
 typedef struct CkcLlvmObject CkcLlvmObject;
+typedef struct CkcLlvmArchive CkcLlvmArchive;
 typedef struct CkcLlvmTarget CkcLlvmTarget;
 typedef struct CkcLlvmJit CkcLlvmJit;
 typedef struct CkcLlvmBuilder CkcLlvmBuilder;
@@ -120,6 +121,19 @@ typedef enum CkcLlvmOrcObjectLayer {
     CKC_LLVM_ORC_RTDYLD_COFF_AARCH64 = 2
 } CkcLlvmOrcObjectLayer;
 
+typedef enum CkcLlvmAttributeKind {
+    CKC_LLVM_ATTR_ZEROEXT = 1,
+    CKC_LLVM_ATTR_SIGNEXT = 2,
+    CKC_LLVM_ATTR_SRET = 3,
+    CKC_LLVM_ATTR_BYVAL = 4
+} CkcLlvmAttributeKind;
+
+typedef enum CkcLlvmArchiveKind {
+    CKC_LLVM_ARCHIVE_GNU = 1,
+    CKC_LLVM_ARCHIVE_DARWIN = 2,
+    CKC_LLVM_ARCHIVE_COFF = 3
+} CkcLlvmArchiveKind;
+
 int32_t ckc_llvm_bridge_info(CkcLlvmBridgeInfo *out, CkcLlvmError *error);
 int32_t ckc_llvm_test_error(CkcLlvmError *error);
 void ckc_llvm_owned_bytes_dispose(CkcLlvmOwnedBytes *bytes);
@@ -171,6 +185,12 @@ int32_t ckc_llvm_type_ptr(CkcLlvmContext *context, CkcLlvmType **out,
                           CkcLlvmError *error);
 int32_t ckc_llvm_type_slice(CkcLlvmContext *context, CkcLlvmType **out,
                             CkcLlvmError *error);
+int32_t ckc_llvm_type_array(CkcLlvmType *element, uint32_t count,
+                            CkcLlvmType **out, CkcLlvmError *error);
+int32_t ckc_llvm_type_struct(CkcLlvmContext *context,
+                             CkcLlvmType *const *fields,
+                             size_t field_count, CkcLlvmType **out,
+                             CkcLlvmError *error);
 int32_t ckc_llvm_type_named_struct(CkcLlvmContext *context, CkcLlvmBytes name,
                                    CkcLlvmType **out,
                                    CkcLlvmError *error);
@@ -197,6 +217,15 @@ int32_t ckc_llvm_function_append_block(CkcLlvmFunction *function,
                                        CkcLlvmBytes name,
                                        CkcLlvmBlock **out,
                                        CkcLlvmError *error);
+int32_t ckc_llvm_function_add_attribute(CkcLlvmFunction *function,
+                                         uint32_t kind,
+                                         uint32_t return_attribute,
+                                         size_t param_index,
+                                         CkcLlvmType *pointee_type,
+                                         uint32_t alignment,
+                                         CkcLlvmError *error);
+int32_t ckc_llvm_function_set_dll_export(CkcLlvmFunction *function,
+                                         CkcLlvmError *error);
 
 int32_t ckc_llvm_builder_create(CkcLlvmContext *context,
                                 CkcLlvmBuilder **out,
@@ -289,6 +318,21 @@ int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
 size_t ckc_llvm_object_size(const CkcLlvmObject *object);
 const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object);
 void ckc_llvm_object_dispose(CkcLlvmObject *object);
+int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
+                                uint32_t kind,
+                                CkcLlvmArchive **out,
+                                CkcLlvmError *error);
+size_t ckc_llvm_archive_size(const CkcLlvmArchive *archive);
+const uint8_t *ckc_llvm_archive_data(const CkcLlvmArchive *archive);
+size_t ckc_llvm_archive_member_count(const CkcLlvmArchive *archive);
+uint32_t ckc_llvm_archive_has_symbol_index(const CkcLlvmArchive *archive);
+void ckc_llvm_archive_dispose(CkcLlvmArchive *archive);
+int32_t ckc_lld_link_shared(CkcLlvmBytes object_path,
+                            CkcLlvmBytes output_path,
+                            CkcLlvmBytes import_library_path,
+                            const CkcLlvmBytes *exports,
+                            size_t export_count,
+                            CkcLlvmError *error);
 int32_t ckc_llvm_jit_create(CkcLlvmJit **out, CkcLlvmError *error);
 uint32_t ckc_llvm_jit_object_layer(const CkcLlvmJit *jit);
 void ckc_llvm_jit_dispose(CkcLlvmJit *jit);

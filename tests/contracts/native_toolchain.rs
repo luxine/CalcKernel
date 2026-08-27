@@ -34,7 +34,7 @@ fn native_toolchain_manifest_should_pin_the_official_llvm_source() {
         "host_only = true",
         "static_only = true",
         "include_clang = false",
-        "link_components = [\"core\", \"native\", \"orcjit\", \"nativecodegen\"]",
+        "link_components = [\"core\", \"native\", \"orcjit\", \"nativecodegen\", \"lto\"]",
         "minimum_os = \"11.0\"",
         "[profiles.oracle]",
         "include_clang = true",
@@ -53,11 +53,11 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
     }
     let unix = read("scripts/bootstrap-llvm.sh");
     assert!(unix.contains("CMAKE_OSX_DEPLOYMENT_TARGET=11.0"));
-    assert!(unix.contains("ckc_components=(core native orcjit nativecodegen)"));
+    assert!(unix.contains("ckc_components=(core native orcjit nativecodegen lto)"));
     assert!(!unix.contains("--libnames all"));
 
     let windows = read("scripts/bootstrap-llvm.ps1");
-    assert!(windows.contains("core\", \"native\", \"orcjit\", \"nativecodegen"));
+    assert!(windows.contains("core\", \"native\", \"orcjit\", \"nativecodegen\", \"lto"));
     assert!(!windows.contains("--libnames all"));
 }
 

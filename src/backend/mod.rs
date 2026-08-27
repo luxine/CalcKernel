@@ -1,15 +1,26 @@
+#[cfg(feature = "native-toolchain")]
+mod artifact;
 mod c;
+mod header;
 mod llvm;
+#[cfg(feature = "native-toolchain")]
+mod native_abi;
 mod wasm;
 
 use std::collections::HashSet;
 
 use crate::{MirFunction, MirInstruction, MirPlace, MirPrimitiveTypeName, MirType, MirValue};
 
+#[cfg(feature = "native-toolchain")]
+pub use artifact::{
+    NativeArchive, NativeArtifactKind, NativeArtifactPaths, NativeDynamicLibrary, NativePlatform,
+    create_native_static_archive, link_native_dynamic_library,
+};
 pub use c::{
     BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_module,
     emit_c_module_with_header, try_emit_c_module,
 };
+pub use header::{NativeHeaderMode, emit_native_header};
 pub use llvm::{
     EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
 };
@@ -21,6 +32,12 @@ pub use llvm::{
     bridge_info, lower_native_llvm_module, lower_native_llvm_module_with_options,
     test_error as native_bridge_test_error, test_invalid_input as native_bridge_test_invalid_input,
     test_invalid_module_verification,
+};
+#[cfg(feature = "native-toolchain")]
+pub use native_abi::{
+    NativeAbiArgument, NativeAbiArgumentRole, NativeAbiClassifier, NativeAbiError,
+    NativeAbiExtension, NativeAbiFunction, NativeAbiHiddenResult, NativeAbiLayout,
+    NativeAbiPassMode, NativeAbiRegister, NativeAbiRegisterClass, NativeAbiTarget, NativeAbiValue,
 };
 pub use wasm::{
     EmitWasmOptions, emit_wasm_module, emit_wasm_module_with_options, emit_wat_module,

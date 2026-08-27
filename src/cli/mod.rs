@@ -1,7 +1,6 @@
 mod args;
 mod commands;
 mod output;
-mod toolchain;
 
 use args::usage;
 use commands::{dispatch, run_version};

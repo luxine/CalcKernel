@@ -68,6 +68,10 @@ impl NativeObject {
         // and `len` came from the same object handle.
         unsafe { std::slice::from_raw_parts(data, self.len) }
     }
+
+    pub(in crate::backend) fn shared_handle(&self) -> NonNull<CkcLlvmObject> {
+        self.handle
+    }
 }
 
 impl Drop for NativeObject {

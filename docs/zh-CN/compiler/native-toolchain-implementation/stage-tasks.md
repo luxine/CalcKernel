@@ -209,11 +209,11 @@ GitHub Actions 及平台原生验证工具。
 修改 `src/backend/mod.rs`；新建 `tests/native/abi.rs` 与
 `tests/fixtures/native/abi/*`。
 
-- [ ] 为每个 primitive、pointer、slice、struct size/alignment boundary、aggregate
+- [x] 为每个 primitive、pointer、slice、struct size/alignment boundary、aggregate
   parameter/return、bool、checked result 和 target family 添加 table-driven 红灯测试。
-- [ ] 显式实现 register class、indirect/by-value、extension、alignment 和 hidden-result
+- [x] 显式实现 register class、indirect/by-value、extension、alignment 和 hidden-result
   决策；不能查询 host C layout 来推断别的 family。
-- [ ] 每个 release host 将 LLVM attribute/calling sequence fixture 与固定 Clang 22
+- [x] 每个 release host 将 LLVM attribute/calling sequence fixture 与固定 Clang 22
   development oracle 比较。
 
 ### 任务 4.2：生成并校验 Native C ABI export thunk
@@ -222,14 +222,14 @@ GitHub Actions 及平台原生验证工具。
 `llvm/module.rs`、`backend/c/emit.rs`、`layout.rs`、`backend/mod.rs`、
 `tests/native/abi.rs`、`tests/backend/c.rs`；新建 `tests/native/differential.rs`。
 
-- [ ] 添加 native header 对现有 C commitment 的比较红灯测试，并断言 internal LLVM
+- [x] 添加 native header 对现有 C commitment 的比较红灯测试，并断言 internal LLVM
   signature 不会导出。
-- [ ] 只把共享 header/layout concept 移入 `backend::header` 与 `native_abi`；C emitter
+- [x] 只把共享 header/layout concept 移入 `backend::header` 与 `native_abi`；C emitter
   特有文本仍在 `backend::c`。
-- [ ] 在 O3 前插入 external thunk，保留 source symbol 与 visibility；允许 LLVM inline
+- [x] 在 O3 前插入 external thunk，保留 source symbol 与 visibility；允许 LLVM inline
   internal implementation，但不能删除 public boundary。
-- [ ] 六个 target job 都用固定 C harness 编译每份生成 header。
-- [ ] 通过阶段 4 system-FFI loader，将所有 exported scalar、control-flow、void、call、
+- [x] 六个 target job 都用固定 C harness 编译每份生成 header。
+- [x] 通过阶段 4 system-FFI loader，将所有 exported scalar、control-flow、void、call、
   struct、pointer、slice 与 checked-ordering fixture 和 `CKC_CLANG_ORACLE` 从 C emission
   产生的 library 做执行差分。
 
@@ -238,24 +238,24 @@ GitHub Actions 及平台原生验证工具。
 **文件：**新建 `src/backend/artifact/mod.rs`、`archive.rs`；修改 bridge header/cpp、
 `src/backend/mod.rs`；新建 `tests/native/artifacts.rs`。
 
-- [ ] 添加平台 suffix、object/header pair、deterministic static archive、symbol index、
+- [x] 添加平台 suffix、object/header pair、deterministic static archive、symbol index、
   拒绝任意输入 object 的红灯测试。
-- [ ] 通过 trusted bridge 暴露 LLVM archive writer；Rust API 只接受 `NativeObject`
+- [x] 通过 trusted bridge 暴露 LLVM archive writer；Rust API 只接受 `NativeObject`
   与 compiler-owned helper identity。
-- [ ] CLI 接收前校验每个 staged object/archive。
+- [x] CLI 接收前校验每个 staged object/archive。
 
 ### 任务 4.4：链接 dynamic library 并提交多文件输出
 
 **文件：**新建 `src/backend/artifact/lld.rs`、`platform.rs`；修改 bridge、
 `src/cli/output.rs`、`commands.rs`；新建 `tests/native/libraries.rs`；修改 CLI 测试。
 
-- [ ] 添加 trusted LLD argument、平台动态库与 Windows import lib、header `CK_API`
+- [x] 添加 trusted LLD argument、平台动态库与 Windows import lib、header `CK_API`
   mode、pre-commit failure、commit rollback、symlink rejection 与 cleanup 红灯测试。
-- [ ] bridge `lld::lldMain` 并捕获 diagnostic，只用 allowlisted argument builder。
+- [x] bridge `lld::lldMain` 并捕获 diagnostic，只用 allowlisted argument builder。
   user object/library/linker script/response file/raw flag 均不得进入。
-- [ ] 实现 same-filesystem staging、逐文件 atomic replace 以及 multi-output backup。
+- [x] 实现 same-filesystem staging、逐文件 atomic replace 以及 multi-output backup。
   commit 前失败保持全部 destination 不变；commit 中失败尝试 rollback 并报告。
-- [ ] 用空外部工具 PATH 经 system FFI 加载动态库，覆盖每个 export shape 与 checked
+- [x] 用空外部工具 PATH 经 system FFI 加载动态库，覆盖每个 export shape 与 checked
   组合。
 
 ### 任务 4.5：统一 `build` 并弃用 `build-llvm`
@@ -263,11 +263,11 @@ GitHub Actions 及平台原生验证工具。
 **文件：**`src/cli/args.rs`、`commands.rs`、`toolchain.rs`、
 `tests/cli/commands.rs`、`oracle_readiness.rs`。
 
-- [ ] 添加四种 `--kind`、dynamic 默认、CPU mode、header rule、精确路径、空 PATH 和
+- [x] 添加四种 `--kind`、dynamic 默认、CPU mode、header rule、精确路径、空 PATH 和
   `build-llvm` dynamic/object 单次弃用 warning 的 CLI 红灯测试。
-- [ ] `build` 直接调用 native backend；executable 无 entry 要拒绝，library/object
+- [x] `build` 直接调用 native backend；executable 无 entry 要拒绝，library/object
   可达 print 在 staging 前拒绝。
-- [ ] 删除产品 Clang discovery、`.c`/`.ll` 中间件和 fallback message；`emit-c`
+- [x] 删除产品 Clang discovery、`.c`/`.ll` 中间件和 fallback message；`emit-c`
   保持只输出源码。
 
 ## 阶段 5 — 最小运行时与 standalone executable

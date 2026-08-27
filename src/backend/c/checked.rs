@@ -185,7 +185,9 @@ pub(super) fn checked_c_signature(function: &MirFunction) -> String {
     if !matches!(function.return_type, MirType::Void) {
         params.push(format!("{}* ck_return", c_type(&function.return_type)));
     }
-    format!("{prefix}CK_Status {}({})", function.name, params.join(", "))
+    let params = params.join(", ");
+    let params = if params.is_empty() { "void" } else { &params };
+    format!("{prefix}CK_Status {}({params})", function.name)
 }
 
 pub(super) fn c_export_signature_checked(function: &MirFunction) -> String {
@@ -197,7 +199,9 @@ pub(super) fn c_export_signature_checked(function: &MirFunction) -> String {
     if !matches!(function.return_type, MirType::Void) {
         params.push(format!("{}* ck_return", c_type(&function.return_type)));
     }
-    format!("CK_Status {}({})", function.name, params.join(", "))
+    let params = params.join(", ");
+    let params = if params.is_empty() { "void" } else { &params };
+    format!("CK_Status {}({params})", function.name)
 }
 
 pub(super) fn emit_checked_c_instruction(

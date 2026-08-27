@@ -21,6 +21,20 @@ fn run(args: impl IntoIterator<Item = OsString>) -> CapturedOutput {
     }
 }
 
+#[cfg(feature = "native-toolchain")]
+fn run_empty_path(args: impl IntoIterator<Item = OsString>) -> CapturedOutput {
+    let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .args(args)
+        .env("PATH", "")
+        .output()
+        .expect("run ckc without external tools");
+    CapturedOutput {
+        code: output.status.code(),
+        stdout: String::from_utf8(output.stdout).expect("stdout UTF-8"),
+        stderr: String::from_utf8(output.stderr).expect("stderr UTF-8"),
+    }
+}
+
 fn os(value: impl AsRef<std::ffi::OsStr>) -> OsString {
     value.as_ref().to_os_string()
 }
@@ -239,6 +253,79 @@ fn build_llvm_object_should_be_one_deprecated_alias_without_clang() {
         output.stderr
     );
     assert!(object_path(&out).is_file());
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn build_should_default_to_dynamic_and_create_exact_transactional_output_sets() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture("export fn answer() -> i32 { return 42; }");
+    for (kind, artifact_kind) in [
+        (None, NativeArtifactKind::Dynamic),
+        (Some("static"), NativeArtifactKind::Static),
+        (Some("object"), NativeArtifactKind::Object),
+    ] {
+        let base = dir.join(kind.unwrap_or("dynamic-default"));
+        let mut arguments = vec![os("build"), os(&source), os("--out"), os(&base)];
+        if let Some(kind) = kind {
+            arguments.extend([os("--kind"), os(kind)]);
+        }
+        let output = run_empty_path(arguments);
+        assert_eq!(output.code, Some(0), "{}", output.stderr);
+        let paths = NativeArtifactPaths::new(NativePlatform::host(), artifact_kind, &base);
+        assert!(paths.primary.is_file(), "{}", paths.primary.display());
+        let header =
+            fs::read_to_string(paths.header.expect("library header")).expect("read native header");
+        assert!(header.contains("CK_API int32_t answer(void);"), "{header}");
+        if artifact_kind == NativeArtifactKind::Dynamic {
+            assert!(header.contains("dllimport"), "{header}");
+        } else {
+            assert!(!header.contains("dllimport"), "{header}");
+            assert!(!header.contains("dllexport"), "{header}");
+        }
+    }
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn build_llvm_dynamic_should_be_one_deprecated_alias_without_external_tools() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture("export fn answer() -> i32 { return 42; }");
+    let base = dir.join("alias-dynamic");
+    let output = run_empty_path([
+        os("build-llvm"),
+        os(&source),
+        os("--kind"),
+        os("dynamic"),
+        os("--out"),
+        os(&base),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(output.stderr.matches("deprecated").count(), 1);
+    let paths =
+        NativeArtifactPaths::new(NativePlatform::host(), NativeArtifactKind::Dynamic, &base);
+    assert!(paths.primary.is_file());
+    assert!(paths.header.expect("header").is_file());
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn executable_kind_should_parse_and_fail_before_creating_stage_5_outputs() {
+    let (dir, source) = fixture("fn main() -> i32 { return 0; }");
+    let base = dir.join("program");
+    let output = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&base),
+    ]);
+    assert_eq!(output.code, Some(1));
+    assert!(output.stderr.contains("stage 5 embedded runtime"));
+    assert!(!base.exists());
 }
 
 #[cfg(feature = "native-toolchain")]

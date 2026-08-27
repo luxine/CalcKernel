@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 const LLVM_VERSION: &str = "22.1.8";
 const LLVM_SOURCE_SHA256: &str = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888";
-const LLVM_COMPONENTS: [&str; 4] = ["core", "native", "orcjit", "nativecodegen"];
+const LLVM_COMPONENTS: [&str; 5] = ["core", "native", "orcjit", "nativecodegen", "lto"];
 
 fn main() {
     println!("cargo::rerun-if-env-changed=CKC_LLVM_PREFIX");
@@ -63,6 +63,13 @@ fn configure_native_toolchain(target: &str) {
         .include("native/bridge")
         .file("native/bridge/ckc_llvm.cpp")
         .warnings(false);
+    if target.contains("apple-darwin") {
+        bridge.define("CKC_LLD_DARWIN", None);
+    } else if target.contains("windows-msvc") {
+        bridge.define("CKC_LLD_COFF", None);
+    } else {
+        bridge.define("CKC_LLD_ELF", None);
+    }
     if target.ends_with("-msvc") {
         bridge.flag_if_supported("/GR-");
         bridge.flag_if_supported("/EHsc");

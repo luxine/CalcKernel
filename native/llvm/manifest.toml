@@ -26,7 +26,7 @@ enable_libedit = false
 projects = ["lld"]
 include_clang = false
 install_tools = ["llvm-config"]
-link_components = ["core", "native", "orcjit", "nativecodegen"]
+link_components = ["core", "native", "orcjit", "nativecodegen", "lto"]
 
 [profiles.oracle]
 projects = ["clang", "lld"]

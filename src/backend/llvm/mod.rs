@@ -1,11 +1,13 @@
 #[cfg(feature = "native-toolchain")]
+mod abi;
+#[cfg(feature = "native-toolchain")]
 mod builder;
 #[cfg(feature = "native-toolchain")]
 mod context;
 #[cfg(feature = "native-toolchain")]
 mod error;
 #[cfg(feature = "native-toolchain")]
-mod ffi;
+pub(super) mod ffi;
 #[cfg(feature = "native-toolchain")]
 mod jit;
 #[cfg(feature = "native-toolchain")]

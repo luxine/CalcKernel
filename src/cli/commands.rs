@@ -9,15 +9,14 @@ use calckernel::{
     run_mir_pass_pipeline,
 };
 
+use super::{args::*, output::*};
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    EmitLlvmOptions, NativeContext, NativeCpu, NativeLoweringOptions, NativeOptimizationLevel,
-    NativeTarget, lower_native_llvm_module_with_options,
+    EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu,
+    NativeHeaderMode, NativeLoweringOptions, NativeOptimizationLevel, NativePlatform, NativeTarget,
+    create_native_static_archive, emit_native_header, link_native_dynamic_library,
+    lower_native_llvm_module_with_options,
 };
-
-#[cfg(feature = "native-toolchain")]
-use super::toolchain::*;
-use super::{args::*, output::*};
 
 pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), String>> {
     #[cfg(not(feature = "native-toolchain"))]
@@ -311,10 +310,11 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
     let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
-    if kind != ArtifactKind::Object {
-        return Err(format!(
-            "native {kind:?} artifacts are introduced by stage 4; no output was created"
-        ));
+    if kind == ArtifactKind::Executable {
+        return Err(
+            "native executable artifacts require the stage 5 embedded runtime; no output was created"
+                .to_string(),
+        );
     }
     let overflow_mode = parse_overflow_mode(args)?;
     let bounds_mode = parse_bounds_mode(args)?;
@@ -361,11 +361,80 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let object = target
         .emit_object(optimized)
         .map_err(|error| error.to_string())?;
-    let output_path = object_output_path(&absolutize(out));
-    write_bytes_atomic(&output_path.to_string_lossy(), object.as_bytes())?;
-    println!("OK: built native object");
-    println!("{}", output_path.display());
+    let artifact_kind = match kind {
+        ArtifactKind::Executable => unreachable!("executable rejected before lowering"),
+        ArtifactKind::Dynamic => NativeArtifactKind::Dynamic,
+        ArtifactKind::Static => NativeArtifactKind::Static,
+        ArtifactKind::Object => NativeArtifactKind::Object,
+    };
+    let paths = NativeArtifactPaths::new(NativePlatform::host(), artifact_kind, &absolutize(out));
+    let header_mode = if kind == ArtifactKind::Dynamic {
+        NativeHeaderMode::Dynamic
+    } else {
+        NativeHeaderMode::StaticOrObject
+    };
+    let header = emit_native_header(
+        &mir,
+        EmitCOptions {
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+        },
+        header_mode,
+    );
+    let exports = mir
+        .functions
+        .iter()
+        .filter(|function| function.exported)
+        .map(|function| function.name.clone())
+        .collect::<Vec<_>>();
+    let (primary, import_library) = match kind {
+        ArtifactKind::Object => (object.as_bytes().to_vec(), None),
+        ArtifactKind::Static => (
+            create_native_static_archive(&object)
+                .map_err(|error| error.to_string())?
+                .as_bytes()
+                .to_vec(),
+            None,
+        ),
+        ArtifactKind::Dynamic => {
+            let library = link_native_dynamic_library(&object, &exports)
+                .map_err(|error| error.to_string())?;
+            (
+                library.as_bytes().to_vec(),
+                library.import_library().map(<[u8]>::to_vec),
+            )
+        }
+        ArtifactKind::Executable => unreachable!("executable rejected before lowering"),
+    };
+    let mut transaction = OutputTransaction::new();
+    transaction.stage(paths.primary.clone(), &primary)?;
+    if let Some(path) = &paths.header {
+        transaction.stage(path.clone(), header.as_bytes())?;
+    }
+    if let (Some(path), Some(bytes)) = (&paths.import_library, import_library.as_deref()) {
+        transaction.stage(path.clone(), bytes)?;
+    }
+    transaction.commit()?;
+    println!("OK: built native {}", artifact_kind_name(artifact_kind));
+    println!("{}", paths.primary.display());
+    if let Some(path) = paths.header {
+        println!("{}", path.display());
+    }
+    if let Some(path) = paths.import_library {
+        println!("{}", path.display());
+    }
     Ok(())
+}
+
+#[cfg(feature = "native-toolchain")]
+const fn artifact_kind_name(kind: NativeArtifactKind) -> &'static str {
+    match kind {
+        NativeArtifactKind::Executable => "executable",
+        NativeArtifactKind::Dynamic => "dynamic library",
+        NativeArtifactKind::Static => "static library",
+        NativeArtifactKind::Object => "object",
+    }
 }
 
 #[cfg(feature = "native-toolchain")]

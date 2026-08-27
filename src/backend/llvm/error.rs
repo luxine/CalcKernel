@@ -13,6 +13,10 @@ pub enum NativeStage {
     Target,
     /// Target-machine object emission or ownership.
     Object,
+    /// Deterministic archive construction or validation.
+    Archive,
+    /// In-process LLD linking or linked binary validation.
+    Link,
     /// ORC JIT ownership or linking.
     Orc,
 }
@@ -25,6 +29,8 @@ impl fmt::Display for NativeStage {
             Self::Module => formatter.write_str("LLVM module"),
             Self::Target => formatter.write_str("LLVM target"),
             Self::Object => formatter.write_str("LLVM object"),
+            Self::Archive => formatter.write_str("LLVM archive"),
+            Self::Link => formatter.write_str("LLD link"),
             Self::Orc => formatter.write_str("LLVM ORC"),
         }
     }
@@ -43,7 +49,7 @@ pub struct NativeError {
 }
 
 impl NativeError {
-    pub(super) fn new(stage: NativeStage, code: i32, message: String) -> Self {
+    pub(in crate::backend) fn new(stage: NativeStage, code: i32, message: String) -> Self {
         Self {
             stage,
             code,

@@ -46,6 +46,18 @@ impl<'context> NativeType<'context> {
         ffi::type_slice(context.handle()).map(Self::from_handle)
     }
 
+    pub(super) fn array(element: Self, count: u32) -> Result<Self, NativeError> {
+        ffi::type_array(element.handle, count).map(Self::from_handle)
+    }
+
+    pub(super) fn literal_struct(
+        context: &'context NativeContext,
+        fields: &[Self],
+    ) -> Result<Self, NativeError> {
+        let fields = fields.iter().map(|field| field.handle).collect::<Vec<_>>();
+        ffi::type_struct(context.handle(), &fields).map(Self::from_handle)
+    }
+
     pub(super) fn named_struct(
         context: &'context NativeContext,
         name: &str,
@@ -85,6 +97,69 @@ impl<'module> NativeFunction<'module> {
 
     pub(super) fn append_block(self, name: &str) -> Result<NativeBlock<'module>, NativeError> {
         ffi::function_append_block(self.handle, name).map(NativeBlock::from_handle)
+    }
+
+    pub(super) fn add_return_extension(
+        self,
+        extension: super::super::native_abi::NativeAbiExtension,
+    ) -> Result<(), NativeError> {
+        use super::super::native_abi::NativeAbiExtension;
+        let kind = match extension {
+            NativeAbiExtension::None => return Ok(()),
+            NativeAbiExtension::Zero => ffi::BridgeAttributeKind::ZeroExt,
+            NativeAbiExtension::Sign => ffi::BridgeAttributeKind::SignExt,
+        };
+        ffi::function_add_attribute(self.handle, kind, true, 0, None, 0)
+    }
+
+    pub(super) fn add_param_extension(
+        self,
+        index: usize,
+        extension: super::super::native_abi::NativeAbiExtension,
+    ) -> Result<(), NativeError> {
+        use super::super::native_abi::NativeAbiExtension;
+        let kind = match extension {
+            NativeAbiExtension::None => return Ok(()),
+            NativeAbiExtension::Zero => ffi::BridgeAttributeKind::ZeroExt,
+            NativeAbiExtension::Sign => ffi::BridgeAttributeKind::SignExt,
+        };
+        ffi::function_add_attribute(self.handle, kind, false, index, None, 0)
+    }
+
+    pub(super) fn add_sret(
+        self,
+        index: usize,
+        pointee: NativeType<'_>,
+        alignment: u32,
+    ) -> Result<(), NativeError> {
+        ffi::function_add_attribute(
+            self.handle,
+            ffi::BridgeAttributeKind::Sret,
+            false,
+            index,
+            Some(pointee.handle),
+            alignment,
+        )
+    }
+
+    pub(super) fn add_byval(
+        self,
+        index: usize,
+        pointee: NativeType<'_>,
+        alignment: u32,
+    ) -> Result<(), NativeError> {
+        ffi::function_add_attribute(
+            self.handle,
+            ffi::BridgeAttributeKind::ByVal,
+            false,
+            index,
+            Some(pointee.handle),
+            alignment,
+        )
+    }
+
+    pub(super) fn set_dll_export(self) -> Result<(), NativeError> {
+        ffi::function_set_dll_export(self.handle)
     }
 }
 

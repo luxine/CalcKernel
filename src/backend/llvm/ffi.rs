@@ -77,6 +77,15 @@ pub(super) enum BridgeOverflowOp {
     UnsignedMul = 6,
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(u32)]
+pub(super) enum BridgeAttributeKind {
+    ZeroExt = 1,
+    SignExt = 2,
+    Sret = 3,
+    ByVal = 4,
+}
+
 #[repr(C)]
 #[derive(Debug)]
 struct CkcLlvmOwnedBytes {
@@ -128,7 +137,12 @@ pub(super) struct CkcLlvmModule {
 }
 
 #[repr(C)]
-pub(super) struct CkcLlvmObject {
+pub(in crate::backend) struct CkcLlvmObject {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub(in crate::backend) struct CkcLlvmArchive {
     _private: [u8; 0],
 }
 
@@ -279,6 +293,19 @@ unsafe extern "C" {
         out: *mut *mut CkcLlvmType,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_type_array(
+        element: *mut CkcLlvmType,
+        count: u32,
+        out: *mut *mut CkcLlvmType,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_type_struct(
+        context: *mut CkcLlvmContext,
+        fields: *const *mut CkcLlvmType,
+        field_count: usize,
+        out: *mut *mut CkcLlvmType,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_type_named_struct(
         context: *mut CkcLlvmContext,
         name: CkcLlvmBytes,
@@ -317,6 +344,19 @@ unsafe extern "C" {
         function: *mut CkcLlvmFunction,
         name: CkcLlvmBytes,
         out: *mut *mut CkcLlvmBlock,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_function_add_attribute(
+        function: *mut CkcLlvmFunction,
+        kind: u32,
+        return_attribute: u32,
+        param_index: usize,
+        pointee_type: *mut CkcLlvmType,
+        alignment: u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_function_set_dll_export(
+        function: *mut CkcLlvmFunction,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_builder_create(
@@ -490,6 +530,25 @@ unsafe extern "C" {
     fn ckc_llvm_object_size(object: *const CkcLlvmObject) -> usize;
     fn ckc_llvm_object_data(object: *const CkcLlvmObject) -> *const u8;
     fn ckc_llvm_object_dispose(object: *mut CkcLlvmObject);
+    fn ckc_llvm_archive_create(
+        object: *const CkcLlvmObject,
+        kind: u32,
+        out: *mut *mut CkcLlvmArchive,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_archive_size(archive: *const CkcLlvmArchive) -> usize;
+    fn ckc_llvm_archive_data(archive: *const CkcLlvmArchive) -> *const u8;
+    fn ckc_llvm_archive_member_count(archive: *const CkcLlvmArchive) -> usize;
+    fn ckc_llvm_archive_has_symbol_index(archive: *const CkcLlvmArchive) -> u32;
+    fn ckc_llvm_archive_dispose(archive: *mut CkcLlvmArchive);
+    fn ckc_lld_link_shared(
+        object_path: CkcLlvmBytes,
+        output_path: CkcLlvmBytes,
+        import_library_path: CkcLlvmBytes,
+        exports: *const CkcLlvmBytes,
+        export_count: usize,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_jit_create(out: *mut *mut CkcLlvmJit, error: *mut CkcLlvmError) -> i32;
     fn ckc_llvm_jit_object_layer(jit: *const CkcLlvmJit) -> u32;
     fn ckc_llvm_jit_dispose(jit: *mut CkcLlvmJit);
@@ -709,6 +768,28 @@ pub(super) fn type_slice(
     })
 }
 
+pub(super) fn type_array(
+    element: NonNull<CkcLlvmType>,
+    count: u32,
+) -> Result<NonNull<CkcLlvmType>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_type_array(element.as_ptr(), count, out, error)
+    })
+}
+
+pub(super) fn type_struct(
+    context: NonNull<CkcLlvmContext>,
+    fields: &[NonNull<CkcLlvmType>],
+) -> Result<NonNull<CkcLlvmType>, NativeError> {
+    let fields = fields
+        .iter()
+        .map(|field| field.as_ptr())
+        .collect::<Vec<_>>();
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_type_struct(context.as_ptr(), fields.as_ptr(), fields.len(), out, error)
+    })
+}
+
 pub(super) fn type_named_struct(
     context: NonNull<CkcLlvmContext>,
     name: &str,
@@ -787,6 +868,35 @@ pub(super) fn function_append_block(
 ) -> Result<NonNull<CkcLlvmBlock>, NativeError> {
     handle_call(NativeStage::Module, |out, error| unsafe {
         ckc_llvm_function_append_block(function.as_ptr(), CkcLlvmBytes::new(name), out, error)
+    })
+}
+
+pub(super) fn function_add_attribute(
+    function: NonNull<CkcLlvmFunction>,
+    kind: BridgeAttributeKind,
+    return_attribute: bool,
+    param_index: usize,
+    pointee_type: Option<NonNull<CkcLlvmType>>,
+    alignment: u32,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_add_attribute(
+            function.as_ptr(),
+            kind as u32,
+            u32::from(return_attribute),
+            param_index,
+            pointee_type.map_or(ptr::null_mut(), NonNull::as_ptr),
+            alignment,
+            error,
+        )
+    })
+}
+
+pub(super) fn function_set_dll_export(
+    function: NonNull<CkcLlvmFunction>,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_set_dll_export(function.as_ptr(), error)
     })
 }
 
@@ -1159,6 +1269,73 @@ pub(super) fn object_data(handle: NonNull<CkcLlvmObject>) -> *const u8 {
 pub(super) unsafe fn object_dispose(handle: NonNull<CkcLlvmObject>) {
     // SAFETY: The caller returns the unique live object handle exactly once.
     unsafe { ckc_llvm_object_dispose(handle.as_ptr()) };
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(in crate::backend) enum BridgeArchiveKind {
+    Gnu = 1,
+    Darwin = 2,
+    Coff = 3,
+}
+
+pub(in crate::backend) fn archive_create(
+    object: NonNull<CkcLlvmObject>,
+    kind: BridgeArchiveKind,
+) -> Result<NonNull<CkcLlvmArchive>, NativeError> {
+    let mut handle = ptr::null_mut();
+    let mut error = CkcLlvmError::empty();
+    // SAFETY: The object remains live, the kind is allowlisted, and both
+    // out-pointers refer to initialized writable storage.
+    let status =
+        unsafe { ckc_llvm_archive_create(object.as_ptr(), kind as u32, &mut handle, &mut error) };
+    handle_result(NativeStage::Archive, status, handle, &mut error)
+}
+
+pub(in crate::backend) fn archive_size(handle: NonNull<CkcLlvmArchive>) -> usize {
+    // SAFETY: The archive owner keeps the immutable handle live.
+    unsafe { ckc_llvm_archive_size(handle.as_ptr()) }
+}
+
+pub(in crate::backend) fn archive_data(handle: NonNull<CkcLlvmArchive>) -> *const u8 {
+    // SAFETY: The archive owner keeps its immutable byte storage live.
+    unsafe { ckc_llvm_archive_data(handle.as_ptr()) }
+}
+
+pub(in crate::backend) fn archive_member_count(handle: NonNull<CkcLlvmArchive>) -> usize {
+    // SAFETY: The archive owner keeps the immutable handle live.
+    unsafe { ckc_llvm_archive_member_count(handle.as_ptr()) }
+}
+
+pub(in crate::backend) fn archive_has_symbol_index(handle: NonNull<CkcLlvmArchive>) -> bool {
+    // SAFETY: The archive owner keeps the immutable handle live.
+    unsafe { ckc_llvm_archive_has_symbol_index(handle.as_ptr()) != 0 }
+}
+
+pub(in crate::backend) unsafe fn archive_dispose(handle: NonNull<CkcLlvmArchive>) {
+    // SAFETY: The caller returns the unique live archive handle exactly once.
+    unsafe { ckc_llvm_archive_dispose(handle.as_ptr()) };
+}
+
+pub(in crate::backend) fn lld_link_shared(
+    object_path: &str,
+    output_path: &str,
+    import_library_path: &str,
+    exports: &[String],
+) -> Result<(), NativeError> {
+    let export_bytes = exports
+        .iter()
+        .map(|name| CkcLlvmBytes::new(name))
+        .collect::<Vec<_>>();
+    status_call(NativeStage::Link, |error| unsafe {
+        ckc_lld_link_shared(
+            CkcLlvmBytes::new(object_path),
+            CkcLlvmBytes::new(output_path),
+            CkcLlvmBytes::new(import_library_path),
+            export_bytes.as_ptr(),
+            export_bytes.len(),
+            error,
+        )
+    })
 }
 
 pub(super) fn jit_create() -> Result<NonNull<CkcLlvmJit>, NativeError> {

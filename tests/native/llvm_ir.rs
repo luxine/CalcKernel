@@ -100,7 +100,8 @@ fn structural_llvm_should_lower_constants_arithmetic_comparisons_calls_and_void(
     );
     for needle in [
         "define internal void @touch",
-        "define i1 @calc",
+        "@__ck_impl_calc(i32",
+        "@calc(i32",
         "call void @touch",
         "mul i32",
         "add i32",
@@ -321,8 +322,8 @@ fn checked_calls_should_propagate_status_and_void_should_not_gain_result_pointer
         text.contains("define internal i32 @touch(i32 %value)"),
         "{text}"
     );
-    assert!(text.contains("define i32 @run(i32 %value)"), "{text}");
-    assert!(!text.contains("@run(i32 %value, ptr"), "{text}");
+    assert!(text.contains("define i32 @run(i32"), "{text}");
+    assert!(!text.contains("define i32 @run(i32 %arg0, ptr"), "{text}");
     assert!(text.contains("call i32 @touch(i32"), "{text}");
     assert!(text.contains("icmp ne i32"), "{text}");
 }

@@ -136,7 +136,7 @@ if [[ "$ckc_profile" == "oracle" && ! -x "$ckc_prefix/bin/clang" ]]; then
   exit 1
 fi
 
-ckc_components=(core native orcjit nativecodegen)
+ckc_components=(core native orcjit nativecodegen lto)
 ckc_llvm_libs=()
 while IFS= read -r ckc_library; do
   ckc_llvm_libs+=("$ckc_library")

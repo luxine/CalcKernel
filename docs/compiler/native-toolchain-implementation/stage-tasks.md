@@ -319,13 +319,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Create: `tests/native/abi.rs`
 - Add fixtures: `tests/fixtures/native/abi/*`
 
-- [ ] Generate failing table tests for every supported primitive, pointer,
+- [x] Generate failing table tests for every supported primitive, pointer,
   slice, struct size/alignment boundary, aggregate parameter/return, bool,
   checked result, and target family.
-- [ ] Implement explicit register class, indirect/by-value, extension,
+- [x] Implement explicit register class, indirect/by-value, extension,
   alignment, and hidden-result decisions without querying host C layout for a
   foreign family.
-- [ ] On each release host, compare LLVM function attributes and calling
+- [x] On each release host, compare LLVM function attributes and calling
   sequence fixtures with pinned Clang 22 development-oracle output.
 
 ### Task 4.2: Generate and verify Native C ABI export thunks
@@ -342,15 +342,15 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/backend/c.rs`
 - Create: `tests/native/differential.rs`
 
-- [ ] Add failing tests that compare generated native headers with existing C
+- [x] Add failing tests that compare generated native headers with existing C
   commitments and assert no internal LLVM signature is exported.
-- [ ] Move only shared header/layout concepts into `backend::header` and
+- [x] Move only shared header/layout concepts into `backend::header` and
   `native_abi`; retain C emitter-specific text in `backend::c`.
-- [ ] Insert external thunks before O3, preserve source symbol names and
+- [x] Insert external thunks before O3, preserve source symbol names and
   visibility, and allow LLVM to inline internal implementations without
   deleting the public boundary.
-- [ ] Compile every generated header in a pinned C harness on all target jobs.
-- [ ] Through the stage 4 system-FFI loader, differentially execute all exported
+- [x] Compile every generated header in a pinned C harness on all target jobs.
+- [x] Through the stage 4 system-FFI loader, differentially execute all exported
   scalar, control-flow, void, call, struct, pointer, slice, and checked-ordering
   fixtures against libraries produced from C emission by `CKC_CLANG_ORACLE`.
 
@@ -365,12 +365,12 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `src/backend/mod.rs`
 - Create: `tests/native/artifacts.rs`
 
-- [ ] Add failing tests for platform suffixes, object/header pairs, deterministic
+- [x] Add failing tests for platform suffixes, object/header pairs, deterministic
   static archives, archive symbol indexes, and rejection of arbitrary input
   objects.
-- [ ] Expose LLVM archive writing through the trusted bridge. Its Rust API
+- [x] Expose LLVM archive writing through the trusted bridge. Its Rust API
   accepts only `NativeObject` plus compiler-owned helper identities.
-- [ ] Validate every staged object/archive before returning it to the CLI.
+- [x] Validate every staged object/archive before returning it to the CLI.
 
 ### Task 4.4: Link dynamic libraries and commit multi-file output
 
@@ -385,16 +385,16 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Create: `tests/native/libraries.rs`
 - Modify: `tests/cli/commands.rs`
 
-- [ ] Add failing tests for trusted LLD arguments, `.so`/`.dylib`/`.dll` plus
+- [x] Add failing tests for trusted LLD arguments, `.so`/`.dylib`/`.dll` plus
   Windows import library, header `CK_API` mode, pre-commit failure, commit-time
   rollback, symlink rejection, and cleanup.
-- [ ] Bridge `lld::lldMain` with captured diagnostics and an allowlisted argument
+- [x] Bridge `lld::lldMain` with captured diagnostics and an allowlisted argument
   builder. No user object, library, linker script, response file, or raw flag
   enters it.
-- [ ] Implement same-filesystem staging and per-file atomic replacement with
+- [x] Implement same-filesystem staging and per-file atomic replacement with
   backups for a multi-output transaction. A failure before commit leaves all
   destinations unchanged; a commit failure attempts and reports rollback.
-- [ ] Load the resulting dynamic library through system FFI with an empty tool
+- [x] Load the resulting dynamic library through system FFI with an empty tool
   PATH and exercise every exported shape and checked combination.
 
 ### Task 4.5: Unify `build` and deprecate `build-llvm`
@@ -407,13 +407,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/cli/commands.rs`
 - Modify: `tests/cli/oracle_readiness.rs`
 
-- [ ] Add failing CLI tests for four `--kind` values, dynamic default, CPU
+- [x] Add failing CLI tests for four `--kind` values, dynamic default, CPU
   modes, header rules, exact output paths, empty PATH, and one deprecation
   warning from supported `build-llvm` dynamic/object forms.
-- [ ] Route `build` directly to native backend services. Reject executable
+- [x] Route `build` directly to native backend services. Reject executable
   without entry and reject reachable print calls for library/object forms
   before staging.
-- [ ] Delete product Clang discovery, generated `.c`/`.ll` intermediates, and
+- [x] Delete product Clang discovery, generated `.c`/`.ll` intermediates, and
   fallback messages. Retain `emit-c` as emission only.
 
 ## Stage 5 — Minimal runtime and standalone executable artifacts

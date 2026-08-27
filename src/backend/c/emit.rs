@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::*;
 
 use super::super::collect_temps;
+use super::super::header::HeaderExportMode;
 use super::{checked::*, layout::*, names::*, options::*};
 
 #[must_use]
@@ -95,8 +96,16 @@ pub fn emit_c_module_with_header(
 
 #[must_use]
 pub fn emit_c_header(module: &MirModule, options: EmitCOptions) -> String {
+    emit_c_header_with_mode(module, options, HeaderExportMode::Dynamic)
+}
+
+pub(in crate::backend) fn emit_c_header_with_mode(
+    module: &MirModule,
+    options: EmitCOptions,
+    export_mode: HeaderExportMode,
+) -> String {
     if use_planned_c_emitter(module, options) {
-        return emit_planned_c_header(module, options);
+        return emit_planned_c_header(module, options, export_mode);
     }
     let mut out = String::new();
     out.push_str("#pragma once\n\n");
@@ -104,9 +113,7 @@ pub fn emit_c_header(module: &MirModule, options: EmitCOptions) -> String {
     if options.overflow_mode == OverflowMode::Checked {
         out.push_str("#include <stddef.h>\n");
     }
-    out.push_str(
-        "\n#if defined(_WIN32) || defined(__CYGWIN__)\n  #ifdef CK_BUILD_DLL\n    #define CK_API __declspec(dllexport)\n  #else\n    #define CK_API __declspec(dllimport)\n  #endif\n#else\n  #define CK_API __attribute__((visibility(\"default\")))\n#endif\n",
-    );
+    emit_header_api_macro(&mut out, export_mode);
     if options.overflow_mode == OverflowMode::Checked {
         out.push_str(
             "\ntypedef int32_t CK_Status;\n\n#define CK_OK ((CK_Status)0)\n#define CK_ERR_OVERFLOW ((CK_Status)1)\n#define CK_ERR_DIV_BY_ZERO ((CK_Status)2)\n#define CK_ERR_NULL_POINTER ((CK_Status)3)\n#define CK_ERR_OUT_OF_BOUNDS ((CK_Status)4)\n",
@@ -189,16 +196,19 @@ pub(super) fn emit_planned_c_module(
     out
 }
 
-pub(super) fn emit_planned_c_header(module: &MirModule, options: EmitCOptions) -> String {
+pub(super) fn emit_planned_c_header(
+    module: &MirModule,
+    options: EmitCOptions,
+    export_mode: HeaderExportMode,
+) -> String {
     let plan = CModulePlan::new(module, options);
     let mut out = String::new();
     out.push_str("#pragma once\n\n#include <stdint.h>\n#include <stdbool.h>\n");
     if plan.status_abi {
         out.push_str("#include <stddef.h>\n");
     }
-    out.push_str(
-        "\n#if defined(_WIN32) || defined(__CYGWIN__)\n  #ifdef CK_BUILD_DLL\n    #define CK_API __declspec(dllexport)\n  #else\n    #define CK_API __declspec(dllimport)\n  #endif\n#else\n  #define CK_API __attribute__((visibility(\"default\")))\n#endif\n\n",
-    );
+    emit_header_api_macro(&mut out, export_mode);
+    out.push('\n');
     emit_planned_status_declarations(&mut out, plan.status_abi);
     emit_planned_type_declarations(&mut out, module, &plan);
     out.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
@@ -210,6 +220,17 @@ pub(super) fn emit_planned_c_header(module: &MirModule, options: EmitCOptions) -
     }
     out.push_str("\n#ifdef __cplusplus\n}\n#endif\n");
     out
+}
+
+fn emit_header_api_macro(out: &mut String, export_mode: HeaderExportMode) {
+    match export_mode {
+        HeaderExportMode::Dynamic => out.push_str(
+            "\n#if defined(_WIN32) || defined(__CYGWIN__)\n  #ifdef CK_BUILD_DLL\n    #define CK_API __declspec(dllexport)\n  #else\n    #define CK_API __declspec(dllimport)\n  #endif\n#else\n  #define CK_API __attribute__((visibility(\"default\")))\n#endif\n",
+        ),
+        HeaderExportMode::StaticOrObject => out.push_str(
+            "\n#if defined(_WIN32) || defined(__CYGWIN__)\n  #define CK_API\n#else\n  #define CK_API __attribute__((visibility(\"default\")))\n#endif\n",
+        ),
+    }
 }
 
 pub(super) fn planned_c_signature(
@@ -649,6 +670,7 @@ pub(super) fn c_signature(function: &MirFunction) -> String {
         .map(|param| format!("{} {}", c_type(&param.type_node), param.name))
         .collect::<Vec<_>>()
         .join(", ");
+    let params = if params.is_empty() { "void" } else { &params };
     format!(
         "{prefix}{} {}({})",
         c_type(&function.return_type),
@@ -664,6 +686,7 @@ pub(super) fn c_export_signature(function: &MirFunction) -> String {
         .map(|param| format!("{} {}", c_type(&param.type_node), param.name))
         .collect::<Vec<_>>()
         .join(", ");
+    let params = if params.is_empty() { "void" } else { &params };
     format!(
         "{} {}({})",
         c_type(&function.return_type),

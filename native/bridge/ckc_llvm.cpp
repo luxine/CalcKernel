@@ -18,6 +18,7 @@
 #include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
@@ -32,6 +33,12 @@
 #include <llvm/Analysis/ModuleSummaryAnalysis.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Object/ObjectFile.h>
+#include <llvm/Object/Archive.h>
+#include <llvm/Object/ArchiveWriter.h>
+#include <llvm/Object/Binary.h>
+#include <llvm/Object/COFF.h>
+#include <llvm/Object/ELFObjectFile.h>
+#include <llvm/Object/MachO.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Error.h>
@@ -40,6 +47,15 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
+#include <lld/Common/Driver.h>
+
+#if defined(CKC_LLD_DARWIN)
+LLD_HAS_DRIVER(macho)
+#elif defined(CKC_LLD_COFF)
+LLD_HAS_DRIVER(coff)
+#else
+LLD_HAS_DRIVER(elf)
+#endif
 
 struct CkcLlvmContext {
     std::unique_ptr<llvm::LLVMContext> value;
@@ -51,6 +67,12 @@ struct CkcLlvmModule {
 
 struct CkcLlvmObject {
     std::vector<uint8_t> bytes;
+};
+
+struct CkcLlvmArchive {
+    std::vector<uint8_t> bytes;
+    size_t member_count;
+    bool has_symbol_index;
 };
 
 struct CkcLlvmTarget {
@@ -177,6 +199,77 @@ llvm::BasicBlock *llvm_block(CkcLlvmBlock *value) {
 
 CkcLlvmBlock *bridge_block(llvm::BasicBlock *value) {
     return reinterpret_cast<CkcLlvmBlock *>(value);
+}
+
+llvm::Expected<std::string> checked_path(CkcLlvmBytes bytes,
+                                         llvm::StringRef description) {
+    const llvm::StringRef value = borrowed_string(bytes);
+    if (value.empty() || value.contains('\0')) {
+        return llvm::createStringError("%s is empty or contains NUL",
+                                       description.str().c_str());
+    }
+    return value.str();
+}
+
+llvm::Error validate_link_input(llvm::StringRef path) {
+    auto buffer = llvm::MemoryBuffer::getFile(path, false, false);
+    if (!buffer) {
+        return llvm::errorCodeToError(buffer.getError());
+    }
+    auto object = llvm::object::ObjectFile::createObjectFile(
+        (*buffer)->getMemBufferRef());
+    if (!object) {
+        return object.takeError();
+    }
+    if (!(*object)->isRelocatableObject()) {
+        return llvm::createStringError("LLD input is not a relocatable object");
+    }
+    return llvm::Error::success();
+}
+
+llvm::Error validate_shared_output(llvm::StringRef path) {
+    auto binary = llvm::object::createBinary(path);
+    if (!binary) {
+        return binary.takeError();
+    }
+    auto *object = llvm::dyn_cast<llvm::object::ObjectFile>(binary->getBinary());
+    if (object == nullptr || object->isRelocatableObject()) {
+        return llvm::createStringError("LLD output is not a linked object");
+    }
+#if defined(CKC_LLD_DARWIN)
+    const auto *macho = llvm::dyn_cast<llvm::object::MachOObjectFile>(object);
+    if (macho == nullptr || macho->getHeader().filetype != llvm::MachO::MH_DYLIB) {
+        return llvm::createStringError("LLD output is not a Mach-O dynamic library");
+    }
+#elif defined(CKC_LLD_COFF)
+    const auto *coff = llvm::dyn_cast<llvm::object::COFFObjectFile>(object);
+    if (coff == nullptr ||
+        (coff->getCharacteristics() & llvm::COFF::IMAGE_FILE_DLL) == 0) {
+        return llvm::createStringError("LLD output is not a PE dynamic library");
+    }
+#else
+    const auto *elf = llvm::dyn_cast<llvm::object::ELFObjectFileBase>(object);
+    if (elf == nullptr || elf->getEType() != llvm::ELF::ET_DYN) {
+        return llvm::createStringError("LLD output is not an ELF shared object");
+    }
+#endif
+    return llvm::Error::success();
+}
+
+llvm::Error validate_import_archive(llvm::StringRef path) {
+    auto buffer = llvm::MemoryBuffer::getFile(path, false, false);
+    if (!buffer) {
+        return llvm::errorCodeToError(buffer.getError());
+    }
+    auto archive = llvm::object::Archive::create((*buffer)->getMemBufferRef());
+    if (!archive) {
+        return archive.takeError();
+    }
+    if (!(*archive)->hasSymbolTable() || (*archive)->isEmpty()) {
+        return llvm::createStringError(
+            "LLD import library is empty or lacks a symbol index");
+    }
+    return llvm::Error::success();
 }
 
 template <typename Action>
@@ -604,6 +697,39 @@ extern "C" int32_t ckc_llvm_type_slice(CkcLlvmContext *context,
     });
 }
 
+extern "C" int32_t ckc_llvm_type_array(CkcLlvmType *element, uint32_t count,
+                                          CkcLlvmType **out,
+                                          CkcLlvmError *error) {
+    return guarded(error, "creating array type", [&] {
+        if (element == nullptr || count == 0 || out == nullptr) {
+            return invalid(error, "array type input or output is invalid");
+        }
+        *out = bridge_type(llvm::ArrayType::get(llvm_type(element), count));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_struct(
+    CkcLlvmContext *context, CkcLlvmType *const *fields, size_t field_count,
+    CkcLlvmType **out, CkcLlvmError *error) {
+    return guarded(error, "creating literal struct type", [&] {
+        if (context == nullptr || context->value == nullptr || out == nullptr ||
+            (field_count != 0 && fields == nullptr)) {
+            return invalid(error, "literal struct type input or output is invalid");
+        }
+        std::vector<llvm::Type *> body;
+        body.reserve(field_count);
+        for (size_t index = 0; index < field_count; ++index) {
+            if (fields[index] == nullptr) {
+                return invalid(error, "literal struct type has a null field");
+            }
+            body.push_back(llvm_type(fields[index]));
+        }
+        *out = bridge_type(llvm::StructType::get(*context->value, body));
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_type_named_struct(
     CkcLlvmContext *context, CkcLlvmBytes name, CkcLlvmType **out,
     CkcLlvmError *error) {
@@ -706,6 +832,75 @@ extern "C" int32_t ckc_llvm_function_append_block(
         }
         *out = bridge_block(llvm::BasicBlock::Create(
             value->getContext(), borrowed_string(name), value));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_function_add_attribute(
+    CkcLlvmFunction *function, uint32_t kind, uint32_t return_attribute,
+    size_t param_index, CkcLlvmType *pointee_type, uint32_t alignment,
+    CkcLlvmError *error) {
+    return guarded(error, "adding LLVM function attribute", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr ||
+            (return_attribute == 0 && param_index >= value->arg_size())) {
+            return invalid(error, "LLVM function attribute location is invalid");
+        }
+        if (return_attribute != 0 &&
+            kind != CKC_LLVM_ATTR_ZEROEXT && kind != CKC_LLVM_ATTR_SIGNEXT) {
+            return invalid(error, "only extension attributes may apply to a return");
+        }
+
+        llvm::Attribute attribute;
+        switch (kind) {
+        case CKC_LLVM_ATTR_ZEROEXT:
+            attribute = llvm::Attribute::get(value->getContext(), llvm::Attribute::ZExt);
+            break;
+        case CKC_LLVM_ATTR_SIGNEXT:
+            attribute = llvm::Attribute::get(value->getContext(), llvm::Attribute::SExt);
+            break;
+        case CKC_LLVM_ATTR_SRET:
+            if (pointee_type == nullptr || alignment == 0) {
+                return invalid(error, "sret requires a pointee type and alignment");
+            }
+            attribute = llvm::Attribute::getWithStructRetType(
+                value->getContext(), llvm_type(pointee_type));
+            break;
+        case CKC_LLVM_ATTR_BYVAL:
+            if (pointee_type == nullptr || alignment == 0) {
+                return invalid(error, "byval requires a pointee type and alignment");
+            }
+            attribute = llvm::Attribute::getWithByValType(
+                value->getContext(), llvm_type(pointee_type));
+            break;
+        default:
+            return invalid(error, "unknown LLVM function attribute kind");
+        }
+
+        if (return_attribute != 0) {
+            value->addRetAttr(attribute);
+        } else {
+            value->addParamAttr(param_index, attribute);
+            if (alignment != 0 &&
+                (kind == CKC_LLVM_ATTR_SRET || kind == CKC_LLVM_ATTR_BYVAL)) {
+                value->addParamAttr(
+                    param_index,
+                    llvm::Attribute::getWithAlignment(value->getContext(),
+                                                      llvm::Align(alignment)));
+            }
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_function_set_dll_export(
+    CkcLlvmFunction *function, CkcLlvmError *error) {
+    return guarded(error, "setting LLVM DLL export storage", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr) {
+            return invalid(error, "LLVM DLL export function is null");
+        }
+        value->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
         return CKC_LLVM_OK;
     });
 }
@@ -1178,6 +1373,240 @@ extern "C" const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object) {
 
 extern "C" void ckc_llvm_object_dispose(CkcLlvmObject *object) {
     delete object;
+}
+
+extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
+                                             uint32_t kind,
+                                             CkcLlvmArchive **out,
+                                             CkcLlvmError *error) {
+    clear_error(error);
+    if (object == nullptr || object->bytes.empty() || out == nullptr) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "LLVM archive input or output is null");
+    }
+    *out = nullptr;
+    try {
+        llvm::object::Archive::Kind archive_kind;
+        switch (kind) {
+        case CKC_LLVM_ARCHIVE_GNU:
+            archive_kind = llvm::object::Archive::K_GNU;
+            break;
+        case CKC_LLVM_ARCHIVE_DARWIN:
+            archive_kind = llvm::object::Archive::K_DARWIN;
+            break;
+        case CKC_LLVM_ARCHIVE_COFF:
+            archive_kind = llvm::object::Archive::K_COFF;
+            break;
+        default:
+            return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                             "unknown LLVM archive kind");
+        }
+
+        const llvm::StringRef object_bytes(
+            reinterpret_cast<const char *>(object->bytes.data()),
+            object->bytes.size());
+        auto object_buffer = llvm::MemoryBuffer::getMemBufferCopy(
+            object_bytes, "ck_module.o");
+        llvm::NewArchiveMember member(object_buffer->getMemBufferRef());
+        member.MemberName = "ck_module.o";
+        const llvm::NewArchiveMember members[] = {std::move(member)};
+        auto written = llvm::writeArchiveToBuffer(
+            members, llvm::SymtabWritingMode::NormalSymtab, archive_kind,
+            true, false, [](llvm::Error warning) { llvm::consumeError(std::move(warning)); });
+        if (!written) {
+            return set_llvm_error(error, written.takeError());
+        }
+
+        auto parsed = llvm::object::Archive::create((*written)->getMemBufferRef());
+        if (!parsed) {
+            return set_llvm_error(error, parsed.takeError());
+        }
+        size_t member_count = 0;
+        llvm::Error child_error = llvm::Error::success();
+        for (const auto &child : (*parsed)->children(child_error)) {
+            (void)child;
+            ++member_count;
+        }
+        if (child_error) {
+            return set_llvm_error(error, std::move(child_error));
+        }
+        if (member_count != 1 || !(*parsed)->hasSymbolTable()) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "LLVM produced an invalid one-member indexed archive");
+        }
+
+        auto archive = std::make_unique<CkcLlvmArchive>();
+        const llvm::StringRef archive_bytes = (*written)->getBuffer();
+        archive->bytes.assign(archive_bytes.bytes_begin(), archive_bytes.bytes_end());
+        archive->member_count = member_count;
+        archive->has_symbol_index = true;
+        *out = archive.release();
+        return CKC_LLVM_OK;
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception creating LLVM archive");
+    }
+}
+
+extern "C" size_t ckc_llvm_archive_size(const CkcLlvmArchive *archive) {
+    return archive == nullptr ? 0 : archive->bytes.size();
+}
+
+extern "C" const uint8_t *ckc_llvm_archive_data(const CkcLlvmArchive *archive) {
+    return archive == nullptr || archive->bytes.empty() ? nullptr
+                                                        : archive->bytes.data();
+}
+
+extern "C" size_t
+ckc_llvm_archive_member_count(const CkcLlvmArchive *archive) {
+    return archive == nullptr ? 0 : archive->member_count;
+}
+
+extern "C" uint32_t
+ckc_llvm_archive_has_symbol_index(const CkcLlvmArchive *archive) {
+    return archive != nullptr && archive->has_symbol_index ? 1u : 0u;
+}
+
+extern "C" void ckc_llvm_archive_dispose(CkcLlvmArchive *archive) {
+    delete archive;
+}
+
+extern "C" int32_t ckc_lld_link_shared(
+    CkcLlvmBytes object_path_bytes, CkcLlvmBytes output_path_bytes,
+    CkcLlvmBytes import_library_path_bytes, const CkcLlvmBytes *exports,
+    size_t export_count, CkcLlvmError *error) {
+    clear_error(error);
+    try {
+        auto object_path = checked_path(object_path_bytes, "LLD object path");
+        if (!object_path) {
+            return set_llvm_error(error, object_path.takeError());
+        }
+        auto output_path = checked_path(output_path_bytes, "LLD output path");
+        if (!output_path) {
+            return set_llvm_error(error, output_path.takeError());
+        }
+        if (export_count != 0 && exports == nullptr) {
+            return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                             "LLD export list is null");
+        }
+        if (auto validation = validate_link_input(*object_path)) {
+            return set_llvm_error(error, std::move(validation));
+        }
+
+        std::vector<std::string> arguments;
+        arguments.reserve(14 + export_count);
+#if defined(CKC_LLD_DARWIN)
+        arguments.emplace_back("ld64.lld");
+        arguments.emplace_back("-dylib");
+        arguments.emplace_back("-arch");
+#if defined(__aarch64__) || defined(__arm64__)
+        arguments.emplace_back("arm64");
+#else
+        arguments.emplace_back("x86_64");
+#endif
+        arguments.emplace_back("-platform_version");
+        arguments.emplace_back("macos");
+        arguments.emplace_back("11.0");
+        arguments.emplace_back("11.0");
+        arguments.emplace_back("-adhoc_codesign");
+        for (size_t index = 0; index < export_count; ++index) {
+            const llvm::StringRef name = borrowed_string(exports[index]);
+            if (name.empty() || name.contains('\0') || name.contains(',')) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "invalid LLD export symbol");
+            }
+            arguments.emplace_back("-exported_symbol");
+            arguments.emplace_back("_" + name.str());
+        }
+#elif defined(CKC_LLD_COFF)
+        arguments.emplace_back("lld-link");
+        arguments.emplace_back("/dll");
+        arguments.emplace_back("/noentry");
+        arguments.emplace_back("/nodefaultlib");
+        auto import_path = checked_path(import_library_path_bytes,
+                                        "LLD import library path");
+        if (!import_path) {
+            return set_llvm_error(error, import_path.takeError());
+        }
+        arguments.emplace_back("/implib:" + *import_path);
+        for (size_t index = 0; index < export_count; ++index) {
+            const llvm::StringRef name = borrowed_string(exports[index]);
+            if (name.empty() || name.contains('\0') || name.contains(',') ||
+                name.contains(':')) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "invalid LLD export symbol");
+            }
+            arguments.emplace_back("/export:" + name.str());
+        }
+#else
+        arguments.emplace_back("ld.lld");
+        arguments.emplace_back("-shared");
+        arguments.emplace_back("--no-undefined");
+        for (size_t index = 0; index < export_count; ++index) {
+            const llvm::StringRef name = borrowed_string(exports[index]);
+            if (name.empty() || name.contains('\0') || name.contains(',')) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "invalid LLD export symbol");
+            }
+        }
+#endif
+        arguments.emplace_back("-o");
+        arguments.emplace_back(*output_path);
+        arguments.emplace_back(*object_path);
+
+        std::vector<const char *> raw_arguments;
+        raw_arguments.reserve(arguments.size());
+        for (const auto &argument : arguments) {
+            raw_arguments.push_back(argument.c_str());
+        }
+        std::string stdout_text;
+        std::string stderr_text;
+        llvm::raw_string_ostream stdout_stream(stdout_text);
+        llvm::raw_string_ostream stderr_stream(stderr_text);
+#if defined(CKC_LLD_DARWIN)
+        const lld::DriverDef drivers[] = {{lld::Darwin, &lld::macho::link}};
+#elif defined(CKC_LLD_COFF)
+        const lld::DriverDef drivers[] = {{lld::WinLink, &lld::coff::link}};
+#else
+        const lld::DriverDef drivers[] = {{lld::Gnu, &lld::elf::link}};
+#endif
+        static std::mutex lld_mutex;
+        lld::Result result;
+        {
+            std::lock_guard<std::mutex> lock(lld_mutex);
+            result = lld::lldMain(raw_arguments, stdout_stream, stderr_stream,
+                                  drivers);
+        }
+        stdout_stream.flush();
+        stderr_stream.flush();
+        if (result.retCode != 0) {
+            std::string message = stderr_text.empty() ? stdout_text : stderr_text;
+            if (message.empty()) {
+                message = "LLD returned a non-zero status";
+            }
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+        }
+        if (!result.canRunAgain) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "LLD completed but cannot safely run again");
+        }
+        if (auto validation = validate_shared_output(*output_path)) {
+            return set_llvm_error(error, std::move(validation));
+        }
+#if defined(CKC_LLD_COFF)
+        if (auto validation = validate_import_archive(*import_path)) {
+            return set_llvm_error(error, std::move(validation));
+        }
+#endif
+        return CKC_LLVM_OK;
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception linking shared library");
+    }
 }
 
 extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
