@@ -100,6 +100,19 @@ fn wasm_backend_should_compile_wat_to_wasm_bytes() {
 }
 
 #[test]
+fn wasm_backend_should_reject_reachable_print_before_binary_emission() {
+    let checked = check(&SourceFile::new(
+        "print.ck",
+        "export fn api() -> void { print_newline(); }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("lower print");
+    let error = emit_wasm_module(&mir).expect_err("WASM cannot link native print runtime");
+    assert!(error.contains("WebAssembly artifact"), "{error}");
+    assert!(error.contains("print_newline"), "{error}");
+}
+
+#[test]
 fn wat_backend_should_emit_structured_while_at_o3_without_dispatcher() {
     let wat = emit_wat(
         r#"

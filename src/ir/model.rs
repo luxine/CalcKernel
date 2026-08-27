@@ -21,8 +21,21 @@ pub enum MirType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirModule {
+    pub entry: Option<MirEntryPoint>,
     pub structs: Vec<MirStruct>,
     pub functions: Vec<MirFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirEntryPoint {
+    pub function_name: String,
+    pub result: MirEntryResult,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirEntryResult {
+    Void,
+    I32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +151,17 @@ pub enum MirCastOp {
     U32ToF64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MirRuntimeIntrinsic {
+    PrintI32,
+    PrintI64,
+    PrintU32,
+    PrintU64,
+    PrintF64,
+    PrintBool,
+    PrintNewline,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirInstruction {
     ConstInt {
@@ -212,6 +236,10 @@ pub enum MirInstruction {
     Call {
         target: Option<MirValue>,
         function_name: String,
+        args: Vec<MirValue>,
+    },
+    RuntimeCall {
+        intrinsic: MirRuntimeIntrinsic,
         args: Vec<MirValue>,
     },
 }

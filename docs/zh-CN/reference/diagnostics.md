@@ -22,6 +22,7 @@
 | `CK2010` | Type checking | 同一 block 中 terminating statement 之后出现 unreachable statement。 |
 | `CK2011` | Type checking | 非法 `void` position 或 void/value return mismatch。 |
 | `CK2012` | Type checking | 非法 slice element、构造、projection、index/range、赋值/call/return shape 或 exported slice return。 |
+| `CK2013` | Type checking | 可执行消费方的 `main` 入口非法、重复或缺失。有效入口必须是 internal、无参数，并返回 `void` 或 `i32`。 |
 
 同一源码可按确定的 source order 报告多个 diagnostic。任一 error 都使进程非零退出。
 Backend/toolchain failure 属于 CLI error，不产生新的 `CKxxxx` semantic code。

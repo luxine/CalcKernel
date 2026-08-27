@@ -100,34 +100,34 @@ GitHub Actions 及平台原生验证工具。
 **文件：**`src/frontend/typeck.rs`、`diagnostics.rs`、
 `tests/frontend/checker.rs`、`surface.rs`、`tests/fixtures/native/entry/*.ck`。
 
-- [ ] 为每个拒绝形态添加独立红灯测试：有参数、`export`、非法结果、重复 entry，以及
+- [x] 为每个拒绝形态添加独立红灯测试：有参数、`export`、非法结果、重复 entry，以及
   executable consumer 要求 entry；同时覆盖合法 void/i32 和无 main library。
   diagnostic 使用稳定 `CK` ID 与精确 span。
-- [ ] 在 checked program 数据中保存 entry classification，不允许 CLI 再按名字解析。
+- [x] 在 checked program 数据中保存 entry classification，不允许 CLI 再按名字解析。
   合法 `main` 在 library/object root 中保持 internal。
-- [ ] 保留普通 function/export 的 V0.9 行为并运行完整 frontend suite。
+- [x] 保留普通 function/export 的 V0.9 行为并运行完整 frontend suite。
 
 ### 任务 2.2：添加七个保留 native print symbol
 
 **文件：**`src/frontend/typeck.rs`，必要时 `ast.rs`，
 `tests/frontend/checker.rs`、`tests/fixtures/native/print/*.ck`。
 
-- [ ] 为精确签名、仅 void statement 使用、arity/type error、用户重定义及七个名字添加
+- [x] 为精确签名、仅 void statement 使用、arity/type error、用户重定义及七个名字添加
   红灯测试。
-- [ ] compiler builtin metadata 增加 backend availability 和 observable effect
+- [x] compiler builtin metadata 增加 backend availability 和 observable effect
   identity；不能把 print 建模为 user declaration，也不能让其地址 escape。
-- [ ] `check` 与 MIR inspection 接受合法调用，source error 仍为普通诊断。
+- [x] `check` 与 MIR inspection 接受合法调用，source error 仍为普通诊断。
 
 ### 任务 2.3：让 entry 与 print effect 贯穿 MIR
 
 **文件：**`src/ir/model.rs`、`lower.rs`、`validate.rs`、`print.rs`、
 `tests/ir/mir.rs`。
 
-- [ ] 添加 entry metadata、typed print instruction、source-order operand、validator
+- [x] 添加 entry metadata、typed print instruction、source-order operand、validator
   拒绝非法 builtin 签名及稳定 inspection text 的红灯测试。
-- [ ] 引入显式 effectful runtime-call MIR instruction 或同等 typed callee identity；
+- [x] 引入显式 effectful runtime-call MIR instruction 或同等 typed callee identity；
   不得按名称编码成可被删除的普通 call。
-- [ ] effect 之前先 lower argument，并保留源码求值顺序。module-wide checked mode 下
+- [x] effect 之前先 lower argument，并保留源码求值顺序。module-wide checked mode 下
   print 仍为 void。
 
 ### 任务 2.4：让 optimization 与 artifact-root analysis 感知 effect
@@ -136,11 +136,11 @@ GitHub Actions 及平台原生验证工具。
 `loops.rs`、`pipeline.rs`、`tests/optimizer/passes.rs`、
 `src/ir/reachability.rs`、`src/ir/mod.rs`。
 
-- [ ] 添加 O0-O3 红灯测试，证明 print 不被删除、复制、合并、hoist、sink 或重排，
+- [x] 添加 O0-O3 红灯测试，证明 print 不被删除、复制、合并、hoist、sink 或重排，
   包括 inline function 和 loop 内调用。
-- [ ] 集中 effect classification，并让每个 transformation pass 查询它；增加 entry、
+- [x] 集中 effect classification，并让每个 transformation pass 查询它；增加 entry、
   requested export 与 non-executable print rejection 的 artifact-root reachability。
-- [ ] 添加 backend 红灯测试：C/WASM 与 native library 在写 artifact 前拒绝可达 print；
+- [x] 添加 backend 红灯测试：C/WASM 与 native library 在写 artifact 前拒绝可达 print；
   library root 不可达的 print-only function 可以被消除。
 
 ## 阶段 3 — 结构化 LLVM lowering 与 verified native object

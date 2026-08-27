@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{MirBinaryOp, MirCompareOp, MirInstruction, MirModule, MirType, MirUnaryOp, MirValue};
+use crate::{
+    MirBinaryOp, MirCompareOp, MirInstruction, MirInstructionEffect, MirModule, MirType,
+    MirUnaryOp, MirValue, instruction_effect,
+};
 
 use super::super::{analysis::*, pipeline::*};
 
@@ -48,6 +51,9 @@ fn fold_instruction(
     instruction: &MirInstruction,
     constants: &HashMap<String, KnownConstant>,
 ) -> Option<MirInstruction> {
+    if instruction_effect(instruction) != MirInstructionEffect::Pure {
+        return None;
+    }
     match instruction {
         MirInstruction::Binary {
             target,
@@ -110,7 +116,8 @@ fn fold_instruction(
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
         | MirInstruction::Subslice { .. }
-        | MirInstruction::Call { .. } => None,
+        | MirInstruction::Call { .. }
+        | MirInstruction::RuntimeCall { .. } => None,
     }
 }
 
@@ -154,7 +161,8 @@ fn remember_instruction_constant(
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
         | MirInstruction::Subslice { .. }
-        | MirInstruction::Call { .. } => {}
+        | MirInstruction::Call { .. }
+        | MirInstruction::RuntimeCall { .. } => {}
     }
 }
 

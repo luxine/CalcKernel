@@ -292,7 +292,7 @@ fn collect_slice_types_from_instruction(
             collect_slice_types_from_value(start, slices);
             collect_slice_types_from_value(end, slices);
         }
-        MirInstruction::Call { args, .. } => {
+        MirInstruction::Call { args, .. } | MirInstruction::RuntimeCall { args, .. } => {
             for arg in args {
                 collect_slice_types_from_value(arg, slices);
             }

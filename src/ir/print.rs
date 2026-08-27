@@ -3,6 +3,16 @@ use super::*;
 
 pub fn print_mir_module(module: &MirModule) -> String {
     let mut parts = Vec::new();
+    if let Some(entry) = &module.entry {
+        parts.push(format!(
+            "entry {} -> {}",
+            entry.function_name,
+            match entry.result {
+                MirEntryResult::Void => "void",
+                MirEntryResult::I32 => "i32",
+            }
+        ));
+    }
     for struct_info in &module.structs {
         parts.push(print_mir_struct(struct_info));
     }
@@ -211,6 +221,27 @@ fn print_mir_instruction(instruction: &MirInstruction) -> String {
                 )
             })
         }
+        MirInstruction::RuntimeCall { intrinsic, args } => format!(
+            "runtime_call {}({})",
+            print_runtime_intrinsic(*intrinsic),
+            args.iter()
+                .map(print_mir_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+#[must_use]
+pub fn print_runtime_intrinsic(intrinsic: MirRuntimeIntrinsic) -> &'static str {
+    match intrinsic {
+        MirRuntimeIntrinsic::PrintI32 => "print_i32",
+        MirRuntimeIntrinsic::PrintI64 => "print_i64",
+        MirRuntimeIntrinsic::PrintU32 => "print_u32",
+        MirRuntimeIntrinsic::PrintU64 => "print_u64",
+        MirRuntimeIntrinsic::PrintF64 => "print_f64",
+        MirRuntimeIntrinsic::PrintBool => "print_bool",
+        MirRuntimeIntrinsic::PrintNewline => "print_newline",
     }
 }
 

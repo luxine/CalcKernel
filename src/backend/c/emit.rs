@@ -59,6 +59,12 @@ pub fn emit_c_module(module: &MirModule, options: EmitCOptions) -> String {
     out
 }
 
+pub fn try_emit_c_module(module: &MirModule, options: EmitCOptions) -> Result<String, String> {
+    let artifact = prepare_non_executable_artifact(module, MirArtifactConsumer::C)
+        .map_err(|error| error.to_string())?;
+    Ok(emit_c_module(&artifact, options))
+}
+
 #[must_use]
 pub fn emit_c_module_with_header(
     module: &MirModule,
@@ -551,6 +557,9 @@ pub(super) fn planned_c_instruction_lines(
                 )
             }
         }
+        MirInstruction::RuntimeCall { .. } => {
+            unreachable!("runtime calls must be rejected before C emission")
+        }
     }
 }
 
@@ -748,8 +757,9 @@ pub(super) fn emit_c_instruction(instruction: &MirInstruction) -> String {
         MirInstruction::MakeSlice { .. }
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
-        | MirInstruction::Subslice { .. } => {
-            unreachable!("slice modules must use the planned C emitter")
+        | MirInstruction::Subslice { .. }
+        | MirInstruction::RuntimeCall { .. } => {
+            unreachable!("slice/runtime modules must use a validated artifact plan")
         }
     }
 }

@@ -411,6 +411,9 @@ pub(super) fn emit_llvm_instruction(
             ));
             emit_llvm_store(out, target, &result);
         }
+        MirInstruction::RuntimeCall { .. } => {
+            unreachable!("runtime calls require native executable lowering")
+        }
     }
 }
 

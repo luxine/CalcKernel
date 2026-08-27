@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    MirBinaryOp, MirCompareOp, MirFunction, MirInstruction, MirModule, MirPlace,
-    MirPrimitiveTypeName, MirType, MirUnaryOp, MirValue,
+    MirBinaryOp, MirCompareOp, MirFunction, MirInstruction, MirInstructionEffect, MirModule,
+    MirPlace, MirPrimitiveTypeName, MirType, MirUnaryOp, MirValue, instruction_effect,
 };
 
 use super::super::{analysis::*, pipeline::*};
@@ -30,10 +30,7 @@ pub(in crate::optimizer) fn run_local_cse(
             let mut expressions: HashMap<String, CseEntry> = HashMap::new();
 
             for instruction in &mut block.instructions {
-                if matches!(
-                    instruction,
-                    MirInstruction::Store { .. } | MirInstruction::Call { .. }
-                ) {
+                if instruction_effect(instruction).invalidates_value_facts() {
                     expressions.clear();
                 }
 
@@ -148,7 +145,8 @@ fn cse_key(instruction: &MirInstruction) -> Option<String> {
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
         | MirInstruction::Subslice { .. }
-        | MirInstruction::Call { .. } => None,
+        | MirInstruction::Call { .. }
+        | MirInstruction::RuntimeCall { .. } => None,
     }
 }
 
@@ -248,7 +246,8 @@ fn collect_instruction_dependencies(instruction: &MirInstruction) -> HashSet<Str
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
         | MirInstruction::Store { .. }
-        | MirInstruction::Call { .. } => {}
+        | MirInstruction::Call { .. }
+        | MirInstruction::RuntimeCall { .. } => {}
     }
     dependencies
 }
@@ -373,7 +372,10 @@ pub(in crate::optimizer) fn run_address_cse(
             let mut next_instructions = Vec::with_capacity(block.instructions.len());
 
             for instruction in std::mem::take(&mut block.instructions) {
-                if matches!(instruction, MirInstruction::Call { .. }) {
+                if matches!(
+                    instruction_effect(&instruction),
+                    MirInstructionEffect::UnknownCall | MirInstructionEffect::ObservableOutput
+                ) {
                     addresses.clear();
                     next_instructions.push(instruction);
                     continue;
@@ -392,11 +394,12 @@ pub(in crate::optimizer) fn run_address_cse(
                 }
                 next_instructions.extend(inserted);
 
-                let is_store = matches!(rewritten, MirInstruction::Store { .. });
+                let invalidates_value_facts =
+                    instruction_effect(&rewritten).invalidates_value_facts();
                 let target = instruction_target(&rewritten).cloned();
                 next_instructions.push(rewritten);
 
-                if is_store {
+                if invalidates_value_facts {
                     addresses.clear();
                     continue;
                 }

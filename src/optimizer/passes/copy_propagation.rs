@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{MirInstruction, MirModule, MirPlace, MirTerminator, MirValue};
+use crate::{MirInstruction, MirModule, MirPlace, MirTerminator, MirValue, instruction_effect};
 
 use super::super::{analysis::*, pipeline::*};
 
@@ -15,10 +15,7 @@ pub(in crate::optimizer) fn run_copy_propagation(
             for instruction in &mut block.instructions {
                 changed |= rewrite_instruction_copies(instruction, &copies);
 
-                if matches!(
-                    instruction,
-                    MirInstruction::Call { .. } | MirInstruction::Store { .. }
-                ) {
+                if instruction_effect(instruction).invalidates_value_facts() {
                     copies.clear();
                     continue;
                 }
@@ -92,7 +89,7 @@ fn rewrite_instruction_copies(
             changed |= rewrite_value_copy(value, copies);
             changed
         }
-        MirInstruction::Call { args, .. } => {
+        MirInstruction::Call { args, .. } | MirInstruction::RuntimeCall { args, .. } => {
             for arg in args {
                 changed |= rewrite_value_copy(arg, copies);
             }

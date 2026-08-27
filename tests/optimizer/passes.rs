@@ -1,9 +1,12 @@
 use calckernel::{
-    MirOptimizationPipeline, MirPass, MirPassBoundsMode, MirPassContext, MirPassDebugFlags,
-    MirPassManagerResult, MirPassOverflowMode, MirPassRecord, MirPassResult, MirPassTargetBackend,
-    OptimizationLevel, SourceFile, build_mir_optimization_pipeline, cfg_simplify_pass, check,
-    constant_folding_pass, copy_propagation_pass, dead_code_elimination_pass, identity_pass,
-    lower_to_mir, print_mir_module, print_mir_pass_pipeline, run_mir_pass_pipeline,
+    MirArtifactConsumer, MirInstructionEffect, MirOptimizationPipeline, MirPass, MirPassBoundsMode,
+    MirPassContext, MirPassDebugFlags, MirPassManagerResult, MirPassOverflowMode, MirPassRecord,
+    MirPassResult, MirPassTargetBackend, OptimizationLevel, SourceFile,
+    build_mir_optimization_pipeline, cfg_simplify_pass, check, constant_folding_pass,
+    copy_propagation_pass, dead_code_elimination_pass, identity_pass, instruction_effect,
+    lower_to_mir, prepare_executable_artifact, prepare_non_executable_artifact,
+    prepare_non_executable_artifact_from_roots, print_mir_module, print_mir_pass_pipeline,
+    run_mir_pass_pipeline,
 };
 
 fn optimize(source_text: &str, opt_level: u8, overflow_mode: MirPassOverflowMode) -> String {
@@ -347,6 +350,170 @@ fn optimizer_should_keep_targetless_calls_as_side_effects_at_all_levels() {
             "O{opt_level}:\n{text}"
         );
     }
+}
+
+#[test]
+fn optimizer_should_preserve_runtime_print_count_and_order_at_all_levels() {
+    let source = r#"
+      fn main() -> void {
+        print_i32(1);
+        print_bool(true);
+        print_newline();
+      }
+    "#;
+
+    for opt_level in 0..=3 {
+        let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
+        assert_eq!(
+            text.matches("runtime_call").count(),
+            3,
+            "O{opt_level}:\n{text}"
+        );
+        let integer = text.find("runtime_call print_i32").expect("integer print");
+        let boolean = text.find("runtime_call print_bool").expect("boolean print");
+        let newline = text
+            .find("runtime_call print_newline")
+            .expect("newline print");
+        assert!(
+            integer < boolean && boolean < newline,
+            "O{opt_level}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn optimizer_should_inline_helpers_without_losing_or_duplicating_print_effects() {
+    let source = r#"
+      fn echo(value: i32) -> i32 {
+        print_i32(value);
+        return value;
+      }
+      fn main() -> i32 { return echo(7); }
+    "#;
+
+    for opt_level in 2..=3 {
+        let text = optimize(source, opt_level, MirPassOverflowMode::Unchecked);
+        assert!(!text.contains("call echo"), "O{opt_level}:\n{text}");
+        assert!(!text.contains("fn echo"), "O{opt_level}:\n{text}");
+        assert_eq!(
+            text.matches("runtime_call print_i32").count(),
+            1,
+            "O{opt_level}:\n{text}"
+        );
+        assert!(text.contains("entry main -> i32"), "O{opt_level}:\n{text}");
+    }
+}
+
+#[test]
+fn optimizer_should_keep_print_effect_inside_loop_at_o3() {
+    let text = optimize(
+        r#"
+      fn main() -> void {
+        let i: i32 = 0;
+        while i < 3 {
+          print_i32(i);
+          i = i + 1;
+        }
+      }
+    "#,
+        3,
+        MirPassOverflowMode::Unchecked,
+    );
+
+    let loop_header = text.find("bb1:").expect("loop header");
+    let loop_effect = text
+        .find("runtime_call print_i32")
+        .expect("loop print effect");
+    assert!(loop_header < loop_effect, "{text}");
+    assert_eq!(text.matches("runtime_call print_i32").count(), 1, "{text}");
+}
+
+#[test]
+fn artifact_roots_should_reject_only_reachable_native_print_effects() {
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        r#"
+      fn hidden() -> void { print_i32(1); }
+      export fn safe() -> i32 { return 7; }
+    "#,
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower artifact");
+    let artifact = prepare_non_executable_artifact(&module, MirArtifactConsumer::C)
+        .expect("unreachable print is pruned");
+    assert_eq!(
+        artifact
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>(),
+        ["safe"]
+    );
+
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        r#"
+      fn noisy() -> void { print_i32(1); }
+      export fn api() -> void { noisy(); }
+    "#,
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower artifact");
+    let error = prepare_non_executable_artifact(&module, MirArtifactConsumer::WebAssembly)
+        .expect_err("reachable print must be rejected");
+    assert!(error.to_string().contains("api -> noisy"), "{error}");
+    assert!(error.to_string().contains("print_i32"), "{error}");
+    let native_error = prepare_non_executable_artifact(&module, MirArtifactConsumer::NativeLibrary)
+        .expect_err("native libraries cannot terminate their host on print failure");
+    assert!(
+        native_error.to_string().contains("api -> noisy"),
+        "{native_error}"
+    );
+
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        "fn main() -> void { print_newline(); }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower executable");
+    let executable = prepare_executable_artifact(&module).expect("executable permits prints");
+    assert_eq!(executable.entry, module.entry);
+}
+
+#[test]
+fn runtime_print_should_have_the_strongest_centralized_instruction_effect() {
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        "fn main() -> void { print_newline(); }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower print");
+    let instruction = &module.functions[0].blocks[0].instructions[0];
+    assert_eq!(
+        instruction_effect(instruction),
+        MirInstructionEffect::ObservableOutput
+    );
+}
+
+#[test]
+fn requested_export_roots_should_not_pull_in_unrequested_noisy_exports() {
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        r#"
+      export fn noisy() -> void { print_newline(); }
+      export fn safe() -> i32 { return 7; }
+    "#,
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower exports");
+    let artifact = prepare_non_executable_artifact_from_roots(
+        &module,
+        MirArtifactConsumer::NativeLibrary,
+        &["safe".to_string()],
+    )
+    .expect("unrequested noisy export is outside artifact roots");
+    assert_eq!(artifact.functions.len(), 1);
+    assert_eq!(artifact.functions[0].name, "safe");
 }
 
 #[test]

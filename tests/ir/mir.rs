@@ -1,9 +1,9 @@
 use std::process::Command;
 
 use calckernel::{
-    MirBlock, MirFunction, MirInstruction, MirLocal, MirModule, MirParam, MirPlace,
-    MirPrimitiveTypeName, MirStruct, MirStructField, MirTerminator, MirType, MirValue, SourceFile,
-    check, lower_to_mir, print_mir_module, validate_mir_module,
+    MirBlock, MirEntryResult, MirFunction, MirInstruction, MirLocal, MirModule, MirParam, MirPlace,
+    MirPrimitiveTypeName, MirRuntimeIntrinsic, MirStruct, MirStructField, MirTerminator, MirType,
+    MirValue, SourceFile, check, lower_to_mir, print_mir_module, validate_mir_module,
 };
 
 use super::support::fixtures;
@@ -15,6 +15,143 @@ fn lower_and_print(source_text: &str) -> String {
     let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
     assert_eq!(validate_mir_module(&mir).errors, []);
     print_mir_module(&mir)
+}
+
+#[test]
+fn mir_should_carry_checked_entry_metadata_without_reparsing_names() {
+    for (source, expected) in [
+        ("fn main() -> void {}", MirEntryResult::Void),
+        ("fn main() -> i32 { return 7; }", MirEntryResult::I32),
+    ] {
+        let checked = check(&SourceFile::new("test.ck", source));
+        assert_eq!(checked.diagnostics, []);
+        let module = lower_to_mir(&checked.checked_program).expect("lower entry");
+        let entry = module.entry.expect("MIR entry metadata");
+        assert_eq!(entry.function_name, "main");
+        assert_eq!(entry.result, expected);
+    }
+
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower library");
+    assert_eq!(module.entry, None);
+}
+
+#[test]
+fn mir_should_lower_all_prints_as_typed_effectful_runtime_calls() {
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        include_str!("../fixtures/native/print/valid_all.ck"),
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let module = lower_to_mir(&checked.checked_program).expect("lower print builtins");
+    assert_eq!(validate_mir_module(&module).errors, []);
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "write_values")
+        .expect("print fixture function");
+    let runtime_calls = function.blocks[0]
+        .instructions
+        .iter()
+        .filter_map(|instruction| {
+            let MirInstruction::RuntimeCall { intrinsic, args } = instruction else {
+                return None;
+            };
+            Some((*intrinsic, args.len()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        runtime_calls,
+        vec![
+            (MirRuntimeIntrinsic::PrintI32, 1),
+            (MirRuntimeIntrinsic::PrintI64, 1),
+            (MirRuntimeIntrinsic::PrintU32, 1),
+            (MirRuntimeIntrinsic::PrintU64, 1),
+            (MirRuntimeIntrinsic::PrintF64, 1),
+            (MirRuntimeIntrinsic::PrintBool, 1),
+            (MirRuntimeIntrinsic::PrintNewline, 0),
+        ]
+    );
+}
+
+#[test]
+fn mir_should_evaluate_print_operands_before_each_effect_in_source_order() {
+    let text = lower_and_print(
+        r#"
+      fn next(state: ptr<i32>) -> i32 {
+        let value: i32 = state[0];
+        state[0] = value + 1;
+        return value;
+      }
+      fn main() -> void {
+        print_i32(next(state));
+        print_i32(next(state));
+      }
+    "#
+        .replace("fn main() -> void", "fn emit(state: ptr<i32>) -> void")
+        .as_str(),
+    );
+
+    let emit = text.split("fn emit").nth(1).expect("emit function");
+    let first_value = emit.find("call next(state)").expect("first value call");
+    let first_effect = emit
+        .find("runtime_call print_i32")
+        .expect("first print effect");
+    let second_value = emit[first_effect + 1..]
+        .find("call next(state)")
+        .map(|offset| first_effect + 1 + offset)
+        .expect("second value call");
+    let second_effect = emit[first_effect + 1..]
+        .find("runtime_call print_i32")
+        .map(|offset| first_effect + 1 + offset)
+        .expect("second print effect");
+    assert!(
+        first_value < first_effect && first_effect < second_value && second_value < second_effect,
+        "{emit}"
+    );
+}
+
+#[test]
+fn mir_validator_should_reject_invalid_runtime_print_signatures() {
+    let checked = check(&SourceFile::new(
+        "test.ck",
+        "fn main() -> void { print_i32(1); }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mut module = lower_to_mir(&checked.checked_program).expect("lower valid print");
+    let instruction = &mut module.functions[0].blocks[0].instructions[1];
+    *instruction = MirInstruction::RuntimeCall {
+        intrinsic: MirRuntimeIntrinsic::PrintI32,
+        args: vec![MirValue::ConstBool {
+            value: true,
+            type_node: MirType::Primitive(MirPrimitiveTypeName::Bool),
+        }],
+    };
+
+    let messages = validate_mir_module(&module)
+        .errors
+        .into_iter()
+        .map(|error| error.message)
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Runtime print_i32 argument 1")
+                && message.contains("i32")),
+        "{messages:#?}"
+    );
+}
+
+#[test]
+fn mir_should_print_stable_entry_and_runtime_effect_text() {
+    let text = lower_and_print("fn main() -> void { print_i32(7); print_newline(); }");
+    assert!(text.starts_with("entry main -> void\n\n"), "{text}");
+    assert!(text.contains("  runtime_call print_i32(%t0)\n"), "{text}");
+    assert!(text.contains("  runtime_call print_newline()\n"), "{text}");
 }
 
 #[test]
@@ -285,6 +422,7 @@ fn mir_validator_should_reject_void_values_and_call_return_mismatches() {
         type_node: i32_type.clone(),
     };
     let module = MirModule {
+        entry: None,
         structs: vec![MirStruct {
             name: "Bad".to_string(),
             fields: vec![MirStructField {
@@ -549,6 +687,7 @@ fn mir_validator_should_reject_each_malformed_slice_operation() {
         },
     ];
     let module = MirModule {
+        entry: None,
         structs: vec![],
         functions: vec![MirFunction {
             name: "bad".to_string(),
@@ -606,6 +745,7 @@ fn mir_validator_should_reject_void_or_direct_slice_elements_and_exported_return
     let slice_i32 = MirType::Slice(Box::new(i32_type));
     let slice_i64 = MirType::Slice(Box::new(MirType::Primitive(MirPrimitiveTypeName::I64)));
     let module = MirModule {
+        entry: None,
         structs: vec![
             MirStruct {
                 name: "VoidElement".to_string(),

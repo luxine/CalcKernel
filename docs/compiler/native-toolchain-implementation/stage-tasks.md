@@ -142,14 +142,14 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/frontend/surface.rs`
 - Add fixtures: `tests/fixtures/native/entry/*.ck`
 
-- [ ] Add one failing test for each rejected `main` shape: parameters,
+- [x] Add one failing test for each rejected `main` shape: parameters,
   exported declaration, unsupported result, duplicate entry, and entry required
   by an executable consumer. Add accepted void/i32 and library-without-main
   cases. Diagnostics must have stable `CK` identifiers and exact spans.
-- [ ] Represent entry classification in checked program data instead of
+- [x] Represent entry classification in checked program data instead of
   re-parsing names in the CLI. A valid `main` remains internal for library and
   object roots.
-- [ ] Preserve V0.9 behavior for ordinary functions and exports, then run the
+- [x] Preserve V0.9 behavior for ordinary functions and exports, then run the
   complete frontend suite.
 
 ### Task 2.2: Add the seven reserved native print symbols
@@ -161,12 +161,12 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `tests/frontend/checker.rs`
 - Add fixtures: `tests/fixtures/native/print/*.ck`
 
-- [ ] Add failing tests for exact signatures, void-only statement use,
+- [x] Add failing tests for exact signatures, void-only statement use,
   arity/type errors, user redeclaration, and all seven names.
-- [ ] Extend compiler builtin metadata with backend availability and observable
+- [x] Extend compiler builtin metadata with backend availability and observable
   effect identity. Do not model prints as user declarations or allow their
   addresses to escape.
-- [ ] Ensure `check` and MIR inspection accept valid calls while source errors
+- [x] Ensure `check` and MIR inspection accept valid calls while source errors
   remain ordinary diagnostics.
 
 ### Task 2.3: Carry entry and print effects through MIR
@@ -179,13 +179,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Modify: `src/ir/print.rs`
 - Modify: `tests/ir/mir.rs`
 
-- [ ] Add failing MIR tests for entry metadata, typed print instructions,
+- [x] Add failing MIR tests for entry metadata, typed print instructions,
   source-order operands, validator rejection of invalid builtin signatures,
   and stable inspection text.
-- [ ] Introduce an explicit effectful runtime-call MIR instruction or equally
+- [x] Introduce an explicit effectful runtime-call MIR instruction or equally
   typed callee identity. Do not encode a print as a normal removable call by
   name.
-- [ ] Lower arguments before the effect and preserve source evaluation order.
+- [x] Lower arguments before the effect and preserve source evaluation order.
   Keep print calls void even in module-wide checked mode.
 
 ### Task 2.4: Make optimization and artifact-root analysis effect-aware
@@ -202,13 +202,13 @@ boundary run the matching section of [stage acceptance](stage-acceptance.md).
 - Create: `src/ir/reachability.rs`
 - Modify: `src/ir/mod.rs`
 
-- [ ] Add failing O0-O3 tests proving print calls are not removed, duplicated,
+- [x] Add failing O0-O3 tests proving print calls are not removed, duplicated,
   combined, hoisted, sunk, or reordered. Include calls nested in inlined
   functions and loops.
-- [ ] Centralize effect classification and make every transforming pass query
+- [x] Centralize effect classification and make every transforming pass query
   it. Add artifact-root reachability for entry, requested exports, and
   non-executable print rejection.
-- [ ] Add failing/backend tests proving C/WASM and native library artifacts
+- [x] Add failing/backend tests proving C/WASM and native library artifacts
   reject reachable prints before any output is written, while unreachable
   print-only functions can be eliminated from library roots.
 

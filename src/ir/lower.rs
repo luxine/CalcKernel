@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    AssignmentStatement, CalcKernelType, CheckedProgram, Expression, FunctionInfo, LetStatement,
-    PrimitiveTypeName, Statement, get_expr_type, get_let_type, materialize_integer_literal_type,
-    primitive_type,
+    AssignmentStatement, CalcKernelType, CheckedProgram, CompilerBuiltinKind, EntryResult,
+    Expression, FunctionInfo, LetStatement, PrimitiveTypeName, Statement, get_compiler_builtin,
+    get_expr_type, get_let_type, materialize_integer_literal_type, primitive_type,
 };
 
 use super::model::{place_type, value_type};
@@ -62,6 +62,13 @@ struct LoopTargets {
 
 pub fn lower_to_mir(checked_program: &CheckedProgram) -> Result<MirModule, MirLowerError> {
     Ok(MirModule {
+        entry: checked_program.entry.as_ref().map(|entry| MirEntryPoint {
+            function_name: entry.name.clone(),
+            result: match entry.result {
+                EntryResult::Void => MirEntryResult::Void,
+                EntryResult::I32 => MirEntryResult::I32,
+            },
+        }),
         structs: checked_program
             .structs
             .iter()
@@ -709,6 +716,11 @@ fn lower_call_expression(
         )?;
         return Ok(target);
     }
+    if print_runtime_intrinsic(name).is_some() {
+        return Err(MirLowerError::new(format!(
+            "MIR lowering invariant violation: void runtime builtin '{name}' used as a value."
+        )));
+    }
 
     let args = args
         .iter()
@@ -750,6 +762,9 @@ fn lower_call_statement(
         .iter()
         .map(|arg| lower_expression(context, arg))
         .collect::<Result<Vec<_>, MirLowerError>>()?;
+    if let Some(intrinsic) = print_runtime_intrinsic(name) {
+        return emit_instruction(context, MirInstruction::RuntimeCall { intrinsic, args });
+    }
     emit_instruction(
         context,
         MirInstruction::Call {
@@ -1069,10 +1084,23 @@ fn compare_op(operator: &str) -> Option<MirCompareOp> {
 }
 
 fn cast_builtin_op(name: &str) -> Option<MirCastOp> {
-    match name {
-        "i32_to_f64" => Some(MirCastOp::I32ToF64),
-        "u32_to_f64" => Some(MirCastOp::U32ToF64),
+    match get_compiler_builtin(name)?.kind {
+        CompilerBuiltinKind::I32ToF64 => Some(MirCastOp::I32ToF64),
+        CompilerBuiltinKind::U32ToF64 => Some(MirCastOp::U32ToF64),
         _ => None,
+    }
+}
+
+fn print_runtime_intrinsic(name: &str) -> Option<MirRuntimeIntrinsic> {
+    match get_compiler_builtin(name)?.kind {
+        CompilerBuiltinKind::PrintI32 => Some(MirRuntimeIntrinsic::PrintI32),
+        CompilerBuiltinKind::PrintI64 => Some(MirRuntimeIntrinsic::PrintI64),
+        CompilerBuiltinKind::PrintU32 => Some(MirRuntimeIntrinsic::PrintU32),
+        CompilerBuiltinKind::PrintU64 => Some(MirRuntimeIntrinsic::PrintU64),
+        CompilerBuiltinKind::PrintF64 => Some(MirRuntimeIntrinsic::PrintF64),
+        CompilerBuiltinKind::PrintBool => Some(MirRuntimeIntrinsic::PrintBool),
+        CompilerBuiltinKind::PrintNewline => Some(MirRuntimeIntrinsic::PrintNewline),
+        CompilerBuiltinKind::I32ToF64 | CompilerBuiltinKind::U32ToF64 => None,
     }
 }
 

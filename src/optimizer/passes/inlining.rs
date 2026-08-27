@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{MirBlock, MirFunction, MirInstruction, MirLocal, MirModule, MirTerminator, MirValue};
+use crate::{
+    MirBlock, MirFunction, MirInstruction, MirInstructionEffect, MirLocal, MirModule,
+    MirTerminator, MirValue, instruction_effect, optimizer_artifact_roots,
+    reachable_function_names,
+};
 
 use super::super::{analysis::*, pipeline::*};
 
@@ -97,6 +101,9 @@ fn collect_inline_candidates(
 
 fn is_inlineable_instruction(instruction: &MirInstruction) -> bool {
     matches!(
+        instruction_effect(instruction),
+        MirInstructionEffect::Pure | MirInstructionEffect::ObservableOutput
+    ) && matches!(
         instruction,
         MirInstruction::ConstInt { .. }
             | MirInstruction::ConstFloat { .. }
@@ -105,6 +112,7 @@ fn is_inlineable_instruction(instruction: &MirInstruction) -> bool {
             | MirInstruction::Binary { .. }
             | MirInstruction::Unary { .. }
             | MirInstruction::Compare { .. }
+            | MirInstruction::RuntimeCall { .. }
     )
 }
 
@@ -257,6 +265,13 @@ fn clone_inline_instruction(
             left: rewrite_inline_value(left, maps),
             right: rewrite_inline_value(right, maps),
         },
+        MirInstruction::RuntimeCall { intrinsic, args } => MirInstruction::RuntimeCall {
+            intrinsic: *intrinsic,
+            args: args
+                .iter()
+                .map(|arg| rewrite_inline_value(arg, maps))
+                .collect(),
+        },
         MirInstruction::Cast { .. }
         | MirInstruction::Address { .. }
         | MirInstruction::Load { .. }
@@ -265,7 +280,9 @@ fn clone_inline_instruction(
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
         | MirInstruction::Subslice { .. }
-        | MirInstruction::Call { .. } => unreachable!("candidate instruction must be inlineable"),
+        | MirInstruction::Call { .. } => {
+            unreachable!("candidate instruction must be inlineable")
+        }
     }
 }
 
@@ -372,21 +389,14 @@ fn unique_inline_name(base: &str, existing_names: &mut HashSet<String>) -> Strin
 }
 
 fn remove_unreferenced_internal_functions(module: &mut MirModule) -> bool {
-    let mut referenced = HashSet::new();
-    for function in &module.functions {
-        for block in &function.blocks {
-            for instruction in &block.instructions {
-                if let MirInstruction::Call { function_name, .. } = instruction {
-                    referenced.insert(function_name.clone());
-                }
-            }
-        }
-    }
-
+    let roots = optimizer_artifact_roots(module);
+    let reachable = reachable_function_names(module, &roots)
+        .into_iter()
+        .collect::<HashSet<_>>();
     let before = module.functions.len();
     module
         .functions
-        .retain(|function| function.exported || referenced.contains(&function.name));
+        .retain(|function| reachable.contains(&function.name));
     module.functions.len() != before
 }
 

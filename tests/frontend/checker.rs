@@ -1,7 +1,8 @@
 use calckernel::{
-    CalcKernelType, DiagnosticCode, Expression, PrimitiveTypeName, Scope, SourceFile, Statement,
-    VariableSymbol, check, get_expr_type, get_field_info, get_function_info, get_let_type,
-    get_struct_info,
+    CalcKernelType, CompilerBuiltinAvailability, CompilerBuiltinEffect, CompilerBuiltinKind,
+    DiagnosticCode, EntryResult, Expression, PrimitiveTypeName, Scope, SourceFile, Statement,
+    VariableSymbol, check, get_compiler_builtin, get_expr_type, get_field_info, get_function_info,
+    get_let_type, get_struct_info, require_executable_entry,
 };
 
 fn check_source(text: &str) -> calckernel::CheckResult {
@@ -14,6 +15,251 @@ fn messages_of(text: &str) -> Vec<String> {
         .into_iter()
         .map(|diagnostic| diagnostic.message)
         .collect()
+}
+
+#[test]
+fn check_should_classify_only_valid_internal_main_entries() {
+    for (text, expected) in [
+        (
+            include_str!("../fixtures/native/entry/valid_void.ck"),
+            EntryResult::Void,
+        ),
+        (
+            include_str!("../fixtures/native/entry/valid_i32.ck"),
+            EntryResult::I32,
+        ),
+    ] {
+        let result = check_source(text);
+        assert_eq!(result.diagnostics, []);
+        let entry = result.checked_program.entry.expect("classified main entry");
+        assert_eq!(entry.name, "main");
+        assert_eq!(entry.result, expected);
+        assert!(!entry.declaration.exported);
+        assert!(entry.declaration.params.is_empty());
+    }
+
+    let library = check_source(include_str!("../fixtures/native/entry/library_no_main.ck"));
+    assert_eq!(library.diagnostics, []);
+    assert_eq!(library.checked_program.entry, None);
+}
+
+#[test]
+fn check_should_reject_parameterized_main_with_ck2013_and_parameter_span() {
+    let result = check_source(include_str!(
+        "../fixtures/native/entry/invalid_parameter.ck"
+    ));
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagnosticCode::Ck2013)
+        .expect("entry diagnostic");
+
+    assert_eq!(
+        diagnostic.message,
+        "Program entry 'main' must not declare parameters."
+    );
+    assert_eq!(diagnostic.line, 1);
+    assert_eq!(diagnostic.column, 9);
+    assert_eq!(diagnostic.span.start.offset, 8);
+    assert_eq!(diagnostic.span.end.offset, 18);
+    assert_eq!(result.checked_program.entry, None);
+}
+
+#[test]
+fn check_should_reject_exported_main_with_ck2013_and_name_span() {
+    let result = check_source(include_str!("../fixtures/native/entry/invalid_export.ck"));
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagnosticCode::Ck2013)
+        .expect("entry diagnostic");
+
+    assert_eq!(
+        diagnostic.message,
+        "Program entry 'main' cannot be exported."
+    );
+    assert_eq!(diagnostic.line, 1);
+    assert_eq!(diagnostic.column, 11);
+    assert_eq!(diagnostic.span.start.offset, 10);
+    assert_eq!(diagnostic.span.end.offset, 14);
+    assert_eq!(result.checked_program.entry, None);
+}
+
+#[test]
+fn check_should_reject_unsupported_main_result_with_ck2013_and_type_span() {
+    let result = check_source(include_str!("../fixtures/native/entry/invalid_result.ck"));
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagnosticCode::Ck2013)
+        .expect("entry diagnostic");
+
+    assert_eq!(
+        diagnostic.message,
+        "Program entry 'main' must return void or i32."
+    );
+    assert_eq!(diagnostic.line, 1);
+    assert_eq!(diagnostic.column, 14);
+    assert_eq!(diagnostic.span.start.offset, 13);
+    assert_eq!(diagnostic.span.end.offset, 16);
+    assert_eq!(result.checked_program.entry, None);
+}
+
+#[test]
+fn check_should_reject_duplicate_main_at_the_second_name_span() {
+    let result = check_source(include_str!("../fixtures/native/entry/duplicate.ck"));
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message == "Duplicate function 'main'.")
+        .expect("duplicate main diagnostic");
+
+    assert_eq!(diagnostic.code, DiagnosticCode::Ck2005);
+    assert_eq!(diagnostic.line, 2);
+    assert_eq!(diagnostic.column, 4);
+    assert_eq!(diagnostic.span.start.offset, 24);
+    assert_eq!(diagnostic.span.end.offset, 28);
+    assert_eq!(result.checked_program.entry, None);
+}
+
+#[test]
+fn executable_consumer_should_require_a_valid_main_at_eof() {
+    let source = SourceFile::new(
+        "test.ck",
+        include_str!("../fixtures/native/entry/library_no_main.ck"),
+    );
+    let result = check(&source);
+    assert_eq!(result.diagnostics, []);
+
+    let diagnostic = require_executable_entry(&source, &result.checked_program)
+        .expect("missing entry diagnostic");
+    assert_eq!(diagnostic.code, DiagnosticCode::Ck2013);
+    assert_eq!(
+        diagnostic.message,
+        "Executable input requires a valid 'main' entry."
+    );
+    assert_eq!(diagnostic.span.start, diagnostic.span.end);
+    assert_eq!(diagnostic.span.start.offset, source.text.len());
+    assert_eq!(diagnostic.line, 2);
+    assert_eq!(diagnostic.column, 1);
+}
+
+#[test]
+fn native_print_builtins_should_have_exact_typed_observable_metadata() {
+    let expected = [
+        (
+            "print_i32",
+            CompilerBuiltinKind::PrintI32,
+            Some(PrimitiveTypeName::I32),
+        ),
+        (
+            "print_i64",
+            CompilerBuiltinKind::PrintI64,
+            Some(PrimitiveTypeName::I64),
+        ),
+        (
+            "print_u32",
+            CompilerBuiltinKind::PrintU32,
+            Some(PrimitiveTypeName::U32),
+        ),
+        (
+            "print_u64",
+            CompilerBuiltinKind::PrintU64,
+            Some(PrimitiveTypeName::U64),
+        ),
+        (
+            "print_f64",
+            CompilerBuiltinKind::PrintF64,
+            Some(PrimitiveTypeName::F64),
+        ),
+        (
+            "print_bool",
+            CompilerBuiltinKind::PrintBool,
+            Some(PrimitiveTypeName::Bool),
+        ),
+        ("print_newline", CompilerBuiltinKind::PrintNewline, None),
+    ];
+
+    for (name, kind, parameter) in expected {
+        let builtin = get_compiler_builtin(name).expect("reserved print builtin");
+        assert_eq!(builtin.name, name);
+        assert_eq!(builtin.kind, kind);
+        assert_eq!(
+            builtin.params,
+            parameter
+                .map(|primitive| vec![CalcKernelType::Primitive(primitive)])
+                .unwrap_or_default()
+        );
+        assert_eq!(builtin.return_type, CalcKernelType::Void);
+        assert_eq!(
+            builtin.availability,
+            CompilerBuiltinAvailability::NativeExecutable
+        );
+        assert_eq!(builtin.effect, CompilerBuiltinEffect::ObservableOutput);
+    }
+}
+
+#[test]
+fn native_print_builtins_should_accept_all_exact_statement_calls() {
+    let result = check_source(include_str!("../fixtures/native/print/valid_all.ck"));
+    assert_eq!(result.diagnostics, []);
+}
+
+#[test]
+fn native_print_builtins_should_reject_arity_and_argument_type_errors() {
+    let messages = messages_of(include_str!("../fixtures/native/print/invalid_calls.ck"));
+    assert!(
+        messages.contains(
+            &"Compiler builtin 'print_newline' expects 0 arguments but got 1.".to_string()
+        )
+    );
+    assert!(messages.contains(
+        &"Argument 1 of compiler builtin 'print_i32' expects i32 but got bool.".to_string()
+    ));
+    assert!(messages.contains(
+        &"Argument 1 of compiler builtin 'print_bool' expects bool but got i32.".to_string()
+    ));
+}
+
+#[test]
+fn native_print_builtins_should_be_void_only_statement_calls() {
+    let result = check_source(include_str!("../fixtures/native/print/invalid_value.ck"));
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagnosticCode::Ck2011)
+        .expect("void value diagnostic");
+    assert_eq!(
+        diagnostic.message,
+        "A void compiler builtin call cannot be used where a value is required."
+    );
+}
+
+#[test]
+fn native_print_builtin_names_should_all_reject_user_redeclaration() {
+    let result = check_source(include_str!("../fixtures/native/print/redeclare_all.ck"));
+    let messages = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+
+    for name in [
+        "print_i32",
+        "print_i64",
+        "print_u32",
+        "print_u64",
+        "print_f64",
+        "print_bool",
+        "print_newline",
+    ] {
+        assert!(
+            messages
+                .contains(&format!("Cannot define reserved compiler builtin '{name}'.").as_str()),
+            "missing redeclaration diagnostic for {name}: {messages:?}"
+        );
+    }
+    assert_eq!(messages.len(), 7, "{messages:?}");
 }
 
 #[test]

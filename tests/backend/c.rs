@@ -7,7 +7,7 @@ use std::{
 use calckernel::{
     BoundsMode, EmitCOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend,
     OverflowMode, SourceFile, check, emit_c_header, emit_c_module, emit_c_module_with_header,
-    lower_to_mir,
+    lower_to_mir, try_emit_c_module,
 };
 
 use super::support::compiler::optimized_module;
@@ -148,6 +148,20 @@ int main(void) {{
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
+}
+
+#[test]
+fn c_backend_should_reject_reachable_print_before_emission() {
+    let checked = check(&SourceFile::new(
+        "print.ck",
+        "export fn api() -> void { print_i32(1); }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("lower print");
+    let error = try_emit_c_module(&mir, EmitCOptions::default())
+        .expect_err("C cannot link native print runtime");
+    assert!(error.contains("C artifact"), "{error}");
+    assert!(error.contains("print_i32"), "{error}");
 }
 
 #[test]

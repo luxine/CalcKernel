@@ -1,5 +1,6 @@
 use calckernel::{
-    CheckResult, Expression, ParseResult, Program, SourceFile, TokenKind, check, lex, parse,
+    CheckResult, EntryPoint, EntryResult, Expression, ParseResult, Program, SourceFile, TokenKind,
+    check, lex, parse,
 };
 
 #[test]
@@ -21,4 +22,6 @@ fn frontend_types_and_functions_should_remain_flat_root_exports() {
     let checked: CheckResult = check(&source);
     assert!(checked.diagnostics.is_empty());
     let _: Option<Expression> = None;
+    let _: Option<EntryPoint> = checked.checked_program.entry;
+    let _: Option<EntryResult> = None;
 }

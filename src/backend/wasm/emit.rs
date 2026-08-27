@@ -455,6 +455,9 @@ pub(super) fn emit_wat_paired_instruction(
                 }
             }
         }
+        MirInstruction::RuntimeCall { .. } => {
+            unreachable!("runtime calls must be rejected before WebAssembly emission")
+        }
     }
 }
 
@@ -917,8 +920,9 @@ pub(super) fn emit_wat_instruction(
         MirInstruction::MakeSlice { .. }
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
-        | MirInstruction::Subslice { .. } => {
-            unreachable!("slice functions must use the paired WAT emitter")
+        | MirInstruction::Subslice { .. }
+        | MirInstruction::RuntimeCall { .. } => {
+            unreachable!("slice/runtime functions require a validated artifact plan")
         }
     }
 }

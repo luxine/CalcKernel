@@ -23,6 +23,7 @@ meaning do not change. Diagnostics use
 | `CK2010` | Type checking | Unreachable statement after a terminating statement in the same block. |
 | `CK2011` | Type checking | Invalid `void` position or value/empty-return mismatch involving `void`. |
 | `CK2012` | Type checking | Invalid slice element, construction, projection, index/range, assignment/call/return shape, or exported slice return. |
+| `CK2013` | Type checking | Invalid, duplicate, or missing `main` entry for an executable consumer. A valid entry is internal, parameterless, and returns `void` or `i32`. |
 
 One source file may produce multiple diagnostics in deterministic source order.
 Exit status is nonzero when any error is reported. Backend/toolchain failures

@@ -17,7 +17,7 @@ pub(in crate::optimizer) fn instruction_target(instruction: &MirInstruction) -> 
         | MirInstruction::SliceLen { target, .. }
         | MirInstruction::Subslice { target, .. } => Some(target),
         MirInstruction::Call { target, .. } => target.as_ref(),
-        MirInstruction::Store { .. } => None,
+        MirInstruction::Store { .. } | MirInstruction::RuntimeCall { .. } => None,
     }
 }
 

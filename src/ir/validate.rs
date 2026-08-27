@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::print::print_cast_op;
+use super::print::{print_cast_op, print_runtime_intrinsic};
 use super::*;
 
 pub fn validate_mir_module(module: &MirModule) -> MirValidationResult {
@@ -56,11 +56,45 @@ pub fn validate_mir_module(module: &MirModule) -> MirValidationResult {
         }
     }
 
+    validate_entry(&mut ctx, module.entry.as_ref());
+
     for function in &module.functions {
         validate_function(&mut ctx, function);
     }
 
     MirValidationResult { errors: ctx.errors }
+}
+
+fn validate_entry(ctx: &mut ModuleValidationContext<'_>, entry: Option<&MirEntryPoint>) {
+    let Some(entry) = entry else {
+        return;
+    };
+    let Some(function) = ctx.functions.get(&entry.function_name) else {
+        ctx.errors.push(MirValidationError {
+            message: format!(
+                "MIR entry '{}' does not name a module function.",
+                entry.function_name
+            ),
+            function_name: Some(entry.function_name.clone()),
+            block_label: None,
+        });
+        return;
+    };
+    let expected_result = match entry.result {
+        MirEntryResult::Void => MirType::Void,
+        MirEntryResult::I32 => mir_primitive(MirPrimitiveTypeName::I32),
+    };
+    if function.exported || !function.params.is_empty() || function.return_type != expected_result {
+        ctx.errors.push(MirValidationError {
+            message: format!(
+                "MIR entry '{}' must be internal, parameterless, and match its declared result {}.",
+                entry.function_name,
+                print_mir_type(&expected_result)
+            ),
+            function_name: Some(entry.function_name.clone()),
+            block_label: None,
+        });
+    }
 }
 
 struct ModuleValidationContext<'module> {
@@ -734,6 +768,59 @@ fn validate_instruction(
             }
             validate_call(ctx, block, function_name, args, target.as_ref());
         }
+        MirInstruction::RuntimeCall { intrinsic, args } => {
+            for arg in args {
+                validate_value(ctx, block, arg);
+            }
+            validate_runtime_call(ctx, block, *intrinsic, args);
+        }
+    }
+}
+
+fn validate_runtime_call(
+    ctx: &mut FunctionValidationContext<'_, '_>,
+    block: &MirBlock,
+    intrinsic: MirRuntimeIntrinsic,
+    args: &[MirValue],
+) {
+    let expected = match intrinsic {
+        MirRuntimeIntrinsic::PrintI32 => Some(mir_primitive(MirPrimitiveTypeName::I32)),
+        MirRuntimeIntrinsic::PrintI64 => Some(mir_primitive(MirPrimitiveTypeName::I64)),
+        MirRuntimeIntrinsic::PrintU32 => Some(mir_primitive(MirPrimitiveTypeName::U32)),
+        MirRuntimeIntrinsic::PrintU64 => Some(mir_primitive(MirPrimitiveTypeName::U64)),
+        MirRuntimeIntrinsic::PrintF64 => Some(mir_primitive(MirPrimitiveTypeName::F64)),
+        MirRuntimeIntrinsic::PrintBool => Some(mir_primitive(MirPrimitiveTypeName::Bool)),
+        MirRuntimeIntrinsic::PrintNewline => None,
+    };
+    let expected_arity = usize::from(expected.is_some());
+    if args.len() != expected_arity {
+        add_validation_error(
+            ctx,
+            format!(
+                "Runtime {} in function '{}' expects {} argument{}, got {}.",
+                print_runtime_intrinsic(intrinsic),
+                ctx.function.name,
+                expected_arity,
+                if expected_arity == 1 { "" } else { "s" },
+                args.len()
+            ),
+            Some(&block.label),
+        );
+    }
+    if let (Some(expected), Some(arg)) = (expected, args.first())
+        && !same_mir_type(value_type(arg), &expected)
+    {
+        add_validation_error(
+            ctx,
+            format!(
+                "Runtime {} argument 1 in function '{}' must be {}, got {}.",
+                print_runtime_intrinsic(intrinsic),
+                ctx.function.name,
+                print_mir_type(&expected),
+                print_mir_type(value_type(arg))
+            ),
+            Some(&block.label),
+        );
     }
 }
 
@@ -1293,7 +1380,7 @@ fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
         | MirInstruction::SliceLen { target, .. }
         | MirInstruction::Subslice { target, .. } => Some(target),
         MirInstruction::Call { target, .. } => target.as_ref(),
-        MirInstruction::Store { .. } => None,
+        MirInstruction::Store { .. } | MirInstruction::RuntimeCall { .. } => None,
     }
 }
 

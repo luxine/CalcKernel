@@ -7,7 +7,8 @@ use std::collections::HashSet;
 use crate::{MirFunction, MirInstruction, MirPlace, MirPrimitiveTypeName, MirType, MirValue};
 
 pub use c::{
-    BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_module, emit_c_module_with_header,
+    BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_module,
+    emit_c_module_with_header, try_emit_c_module,
 };
 pub use llvm::{
     EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
@@ -104,6 +105,6 @@ pub(super) fn instruction_target(instruction: &MirInstruction) -> Option<&MirVal
         | MirInstruction::SliceLen { target, .. }
         | MirInstruction::Subslice { target, .. } => Some(target),
         MirInstruction::Call { target, .. } => target.as_ref(),
-        MirInstruction::Store { .. } => None,
+        MirInstruction::Store { .. } | MirInstruction::RuntimeCall { .. } => None,
     }
 }

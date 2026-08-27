@@ -2,11 +2,12 @@ use std::path::PathBuf;
 use std::{io, io::Write};
 
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirModule, MirPassBoundsMode,
-    MirPassContext, MirPassDebugFlags, MirPassOverflowMode, MirPassTargetBackend, OverflowMode,
-    SourceFile, build_mir_optimization_pipeline, check, emit_c_header, emit_c_module_with_header,
-    emit_llvm_module, emit_wasm_module_with_options, emit_wat_module_with_options,
-    format_diagnostics, lower_to_mir, print_mir_module, print_mir_pass_pipeline,
+    BoundsMode, EmitCOptions, EmitLlvmOptions, EmitWasmOptions, MirArtifactConsumer, MirModule,
+    MirPassBoundsMode, MirPassContext, MirPassDebugFlags, MirPassOverflowMode,
+    MirPassTargetBackend, OverflowMode, SourceFile, build_mir_optimization_pipeline, check,
+    emit_c_header, emit_c_module_with_header, emit_llvm_module, emit_wasm_module_with_options,
+    emit_wat_module_with_options, format_diagnostics, lower_to_mir,
+    prepare_non_executable_artifact, print_mir_module, print_mir_pass_pipeline,
     run_mir_pass_pipeline,
 };
 
@@ -167,6 +168,8 @@ pub(super) fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
         MirPassTargetBackend::C,
         &args.debug,
     )?;
+    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::C)
+        .map_err(|error| error.to_string())?;
     let header_name = header_include_name(&header)?;
     let options = EmitCOptions {
         overflow_mode,
@@ -213,6 +216,8 @@ pub(super) fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
         MirPassTargetBackend::Wasm,
         &args.debug,
     )?;
+    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::WebAssembly)
+        .map_err(|error| error.to_string())?;
     write_or_print_single_line(
         args.out.as_deref(),
         &emit_wat_module_with_options(&mir, EmitWasmOptions { opt_level }),
@@ -308,6 +313,8 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         MirPassTargetBackend::C,
         &args.debug,
     )?;
+    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::C)
+        .map_err(|error| error.to_string())?;
     let requested_output = absolutize(out);
     let c_path = format!("{}.c", requested_output.display());
     let header_path = format!("{}.h", requested_output.display());

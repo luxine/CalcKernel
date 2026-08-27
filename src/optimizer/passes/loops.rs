@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    MirBinaryOp, MirFunction, MirInstruction, MirModule, MirPlace, MirTerminator, MirValue,
+    MirBinaryOp, MirFunction, MirInstruction, MirInstructionEffect, MirModule, MirPlace,
+    MirTerminator, MirValue, instruction_effect,
 };
 
 use super::super::{analysis::*, pipeline::*};
@@ -102,6 +103,9 @@ fn is_hoistable_instruction(
     loop_assigned_locals: &HashSet<String>,
     hoisted_temps: &HashSet<String>,
 ) -> bool {
+    if instruction_effect(instruction) != MirInstructionEffect::Pure {
+        return false;
+    }
     match instruction {
         MirInstruction::ConstInt { target, .. } | MirInstruction::ConstBool { target, .. } => {
             matches!(target, MirValue::Temp { .. })
@@ -142,7 +146,8 @@ fn is_hoistable_instruction(
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
         | MirInstruction::Subslice { .. }
-        | MirInstruction::Call { .. } => false,
+        | MirInstruction::Call { .. }
+        | MirInstruction::RuntimeCall { .. } => false,
     }
 }
 

@@ -293,8 +293,9 @@ pub(super) fn emit_checked_c_instruction(
         MirInstruction::MakeSlice { .. }
         | MirInstruction::SliceData { .. }
         | MirInstruction::SliceLen { .. }
-        | MirInstruction::Subslice { .. } => {
-            unreachable!("slice modules must use the planned C emitter")
+        | MirInstruction::Subslice { .. }
+        | MirInstruction::RuntimeCall { .. } => {
+            unreachable!("slice/runtime modules must use a validated artifact plan")
         }
     }
 }

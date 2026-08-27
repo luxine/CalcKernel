@@ -378,6 +378,54 @@ fn emit_c_should_not_leave_c_output_when_header_path_cannot_be_created() {
     assert!(!header_path.exists());
 }
 
+#[test]
+fn non_executable_emitters_should_reject_reachable_print_before_writing_any_output() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("rust_calckernel_print_rejection_{unique}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let source = dir.join("print.ck");
+    fs::write(
+        &source,
+        "fn noisy() -> void { print_i32(1); } export fn api() -> void { noisy(); }",
+    )
+    .expect("write source");
+
+    let c_path = dir.join("print.c");
+    let header_path = dir.join("print.h");
+    let c_output = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("emit-c")
+        .arg(&source)
+        .arg("--out")
+        .arg(&c_path)
+        .arg("--header")
+        .arg(&header_path)
+        .output()
+        .expect("run emit-c print rejection");
+    assert!(!c_output.status.success());
+    assert!(!c_path.exists(), "C output must not be created");
+    assert!(!header_path.exists(), "C header must not be created");
+    let c_stderr = String::from_utf8_lossy(&c_output.stderr);
+    assert!(c_stderr.contains("api -> noisy"), "{c_stderr}");
+    assert!(c_stderr.contains("print_i32"), "{c_stderr}");
+
+    let wasm_path = dir.join("print.wasm");
+    let wasm_output = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("emit-wasm")
+        .arg(&source)
+        .arg("--out")
+        .arg(&wasm_path)
+        .output()
+        .expect("run emit-wasm print rejection");
+    assert!(!wasm_output.status.success());
+    assert!(!wasm_path.exists(), "WASM output must not be created");
+    let wasm_stderr = String::from_utf8_lossy(&wasm_output.stderr);
+    assert!(wasm_stderr.contains("api -> noisy"), "{wasm_stderr}");
+    assert!(wasm_stderr.contains("print_i32"), "{wasm_stderr}");
+}
+
 #[cfg(all(unix, feature = "native-toolchain"))]
 #[test]
 fn build_should_pass_typescript_compatible_ck_build_dll_define_to_clang() {

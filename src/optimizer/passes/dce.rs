@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::{MirFunction, MirInstruction, MirModule, MirPlace, MirTerminator, MirValue};
+use crate::{
+    MirFunction, MirInstruction, MirInstructionEffect, MirModule, MirPlace, MirTerminator,
+    MirValue, instruction_effect,
+};
 
 use super::super::{analysis::*, pipeline::*};
 
@@ -52,6 +55,9 @@ fn is_removable_unused_instruction(
 }
 
 fn is_pure_removable_instruction(instruction: &MirInstruction, context: &MirPassContext) -> bool {
+    if instruction_effect(instruction) != MirInstructionEffect::Pure {
+        return false;
+    }
     if context.overflow_mode == MirPassOverflowMode::Checked
         && matches!(
             instruction,
@@ -138,7 +144,7 @@ fn collect_instruction_uses(instruction: &MirInstruction, used: &mut HashSet<Str
             collect_place_uses(place, used);
             collect_value_use(value, used);
         }
-        MirInstruction::Call { args, .. } => {
+        MirInstruction::Call { args, .. } | MirInstruction::RuntimeCall { args, .. } => {
             for arg in args {
                 collect_value_use(arg, used);
             }

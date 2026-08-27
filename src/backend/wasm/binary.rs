@@ -10,7 +10,9 @@ pub fn emit_wasm_module_with_options(
     module: &MirModule,
     options: EmitWasmOptions,
 ) -> Result<Vec<u8>, String> {
-    let bytes = wat::parse_str(emit_wat_module_with_options(module, options))
+    let artifact = prepare_non_executable_artifact(module, MirArtifactConsumer::WebAssembly)
+        .map_err(|error| error.to_string())?;
+    let bytes = wat::parse_str(emit_wat_module_with_options(&artifact, options))
         .map_err(|error| error.to_string())?;
     strip_wasm_name_section(&bytes)
 }

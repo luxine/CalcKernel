@@ -86,6 +86,19 @@ pub struct FunctionInfo {
     pub return_type: CalcKernelType,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryResult {
+    Void,
+    I32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryPoint {
+    pub name: String,
+    pub declaration: FunctionDeclaration,
+    pub result: EntryResult,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedProgram {
     pub ast: Program,
@@ -96,6 +109,7 @@ pub struct CheckedProgram {
     pub functions: Vec<FunctionInfo>,
     pub struct_map: HashMap<String, StructInfo>,
     pub function_map: HashMap<String, FunctionInfo>,
+    pub entry: Option<EntryPoint>,
 }
 
 pub type TypeMap = HashMap<SourceSpan, CalcKernelType>;
@@ -122,11 +136,60 @@ pub fn check(source: &SourceFile) -> CheckResult {
     Checker::new(source, parse_result).check()
 }
 
-#[derive(Debug, Clone)]
-struct CompilerBuiltin {
-    name: &'static str,
-    params: Vec<CalcKernelType>,
-    return_type: CalcKernelType,
+#[must_use]
+pub fn require_executable_entry(
+    source: &SourceFile,
+    checked_program: &CheckedProgram,
+) -> Option<Diagnostic> {
+    if checked_program.entry.is_some() {
+        return None;
+    }
+
+    let position = checked_program.ast.span.end;
+    Some(Diagnostic::error(
+        DiagnosticCode::Ck2013,
+        "Executable input requires a valid 'main' entry.",
+        source.file_name.clone(),
+        SourceSpan {
+            start: position,
+            end: position,
+        },
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilerBuiltinKind {
+    I32ToF64,
+    U32ToF64,
+    PrintI32,
+    PrintI64,
+    PrintU32,
+    PrintU64,
+    PrintF64,
+    PrintBool,
+    PrintNewline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilerBuiltinAvailability {
+    AllBackends,
+    NativeExecutable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilerBuiltinEffect {
+    Pure,
+    ObservableOutput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompilerBuiltin {
+    pub name: &'static str,
+    pub kind: CompilerBuiltinKind,
+    pub params: Vec<CalcKernelType>,
+    pub return_type: CalcKernelType,
+    pub availability: CompilerBuiltinAvailability,
+    pub effect: CompilerBuiltinEffect,
 }
 
 struct Checker<'source> {
@@ -322,7 +385,7 @@ impl<'source> Checker<'source> {
                 continue;
             };
             let name = function_decl.name.name.clone();
-            if compiler_builtin(&name).is_some() {
+            if get_compiler_builtin(&name).is_some() {
                 self.error(
                     function_decl.name.span,
                     format!("Cannot define reserved compiler builtin '{name}'."),
@@ -343,6 +406,32 @@ impl<'source> Checker<'source> {
                 .collect();
             let return_type =
                 self.resolve_type(&function_decl.return_type, TypeUseContext::FunctionReturn);
+            if name == "main" {
+                if function_decl.exported {
+                    self.error_with_code(
+                        function_decl.name.span,
+                        DiagnosticCode::Ck2013,
+                        "Program entry 'main' cannot be exported.",
+                    );
+                }
+                if let Some(param) = function_decl.params.first() {
+                    self.error_with_code(
+                        param.span,
+                        DiagnosticCode::Ck2013,
+                        "Program entry 'main' must not declare parameters.",
+                    );
+                }
+                if !matches!(
+                    return_type,
+                    CalcKernelType::Void | CalcKernelType::Primitive(PrimitiveTypeName::I32)
+                ) {
+                    self.error_with_code(
+                        function_decl.return_type.span(),
+                        DiagnosticCode::Ck2013,
+                        "Program entry 'main' must return void or i32.",
+                    );
+                }
+            }
             if function_decl.exported && matches!(return_type, CalcKernelType::Slice(_)) {
                 self.error_with_code(
                     function_decl.return_type.span(),
@@ -972,8 +1061,17 @@ impl<'source> Checker<'source> {
             return CalcKernelType::Unknown;
         };
 
-        if let Some(builtin) = compiler_builtin(name) {
-            return self.check_builtin_call(&builtin, args, span, scope);
+        if let Some(builtin) = get_compiler_builtin(name) {
+            let return_type = self.check_builtin_call(&builtin, args, span, scope);
+            if value_required && matches!(return_type, CalcKernelType::Void) {
+                self.error_with_code(
+                    span,
+                    DiagnosticCode::Ck2011,
+                    "A void compiler builtin call cannot be used where a value is required.",
+                );
+                return CalcKernelType::Unknown;
+            }
+            return return_type;
         }
 
         let Some(function_symbol) = self.symbols.functions.get(name).cloned() else {
@@ -1421,6 +1519,34 @@ fn create_checked_program(
             (symbol.declaration == *function_decl).then(|| to_function_info(symbol))
         })
         .collect();
+    let main_declaration_count = ast
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            matches!(
+                declaration,
+                Declaration::Function(function) if function.name.name == "main"
+            )
+        })
+        .count();
+    let entry = (main_declaration_count == 1)
+        .then(|| functions.iter().find(|function| function.name == "main"))
+        .flatten()
+        .and_then(|function| {
+            if function.exported || !function.params.is_empty() {
+                return None;
+            }
+            let result = match function.return_type {
+                CalcKernelType::Void => EntryResult::Void,
+                CalcKernelType::Primitive(PrimitiveTypeName::I32) => EntryResult::I32,
+                _ => return None,
+            };
+            Some(EntryPoint {
+                name: function.name.clone(),
+                declaration: function.declaration.clone(),
+                result,
+            })
+        });
     CheckedProgram {
         ast,
         symbols,
@@ -1438,6 +1564,7 @@ fn create_checked_program(
             .collect(),
         structs,
         functions,
+        entry,
     }
 }
 
@@ -1493,19 +1620,76 @@ fn to_function_info(symbol: &FunctionSymbol) -> FunctionInfo {
     }
 }
 
-fn compiler_builtin(name: &str) -> Option<CompilerBuiltin> {
+#[must_use]
+pub fn get_compiler_builtin(name: &str) -> Option<CompilerBuiltin> {
     match name {
         "i32_to_f64" => Some(CompilerBuiltin {
             name: "i32_to_f64",
+            kind: CompilerBuiltinKind::I32ToF64,
             params: vec![primitive_i32()],
             return_type: primitive_f64(),
+            availability: CompilerBuiltinAvailability::AllBackends,
+            effect: CompilerBuiltinEffect::Pure,
         }),
         "u32_to_f64" => Some(CompilerBuiltin {
             name: "u32_to_f64",
+            kind: CompilerBuiltinKind::U32ToF64,
             params: vec![primitive_u32()],
             return_type: primitive_f64(),
+            availability: CompilerBuiltinAvailability::AllBackends,
+            effect: CompilerBuiltinEffect::Pure,
         }),
+        "print_i32" => Some(native_print_builtin(
+            "print_i32",
+            CompilerBuiltinKind::PrintI32,
+            Some(primitive_i32()),
+        )),
+        "print_i64" => Some(native_print_builtin(
+            "print_i64",
+            CompilerBuiltinKind::PrintI64,
+            Some(primitive_i64()),
+        )),
+        "print_u32" => Some(native_print_builtin(
+            "print_u32",
+            CompilerBuiltinKind::PrintU32,
+            Some(primitive_u32()),
+        )),
+        "print_u64" => Some(native_print_builtin(
+            "print_u64",
+            CompilerBuiltinKind::PrintU64,
+            Some(primitive_u64()),
+        )),
+        "print_f64" => Some(native_print_builtin(
+            "print_f64",
+            CompilerBuiltinKind::PrintF64,
+            Some(primitive_f64()),
+        )),
+        "print_bool" => Some(native_print_builtin(
+            "print_bool",
+            CompilerBuiltinKind::PrintBool,
+            Some(primitive_bool()),
+        )),
+        "print_newline" => Some(native_print_builtin(
+            "print_newline",
+            CompilerBuiltinKind::PrintNewline,
+            None,
+        )),
         _ => None,
+    }
+}
+
+fn native_print_builtin(
+    name: &'static str,
+    kind: CompilerBuiltinKind,
+    parameter: Option<CalcKernelType>,
+) -> CompilerBuiltin {
+    CompilerBuiltin {
+        name,
+        kind,
+        params: parameter.into_iter().collect(),
+        return_type: CalcKernelType::Void,
+        availability: CompilerBuiltinAvailability::NativeExecutable,
+        effect: CompilerBuiltinEffect::ObservableOutput,
     }
 }
 
