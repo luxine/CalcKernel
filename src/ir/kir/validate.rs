@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::{MirBinaryOp, MirType, MirUnaryOp};
 
@@ -21,12 +21,72 @@ enum MemoryDefinition {
 #[must_use]
 pub fn validate_kir_module(module: &KirModule) -> KirValidationResult {
     let mut errors = Vec::new();
-    let mut function_ids = BTreeSet::new();
-    let mut block_ids = BTreeSet::new();
-    let mut instruction_ids = BTreeSet::new();
-    let mut module_value_ids = BTreeSet::new();
-    let mut module_region_ids = BTreeSet::new();
-    let mut module_memory_ids = BTreeSet::new();
+    let block_capacity = module
+        .functions
+        .iter()
+        .map(|function| function.blocks.len())
+        .sum();
+    let instruction_capacity = module
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .map(|block| block.instructions.len())
+        .sum();
+    let value_capacity = module
+        .functions
+        .iter()
+        .map(|function| {
+            function.params.len()
+                + function
+                    .blocks
+                    .iter()
+                    .map(|block| {
+                        block.params.len()
+                            + block
+                                .instructions
+                                .iter()
+                                .map(|instruction| instruction.results.len())
+                                .sum::<usize>()
+                    })
+                    .sum::<usize>()
+        })
+        .sum();
+    let region_capacity = module
+        .functions
+        .iter()
+        .map(|function| function.regions.len())
+        .sum();
+    let memory_capacity = module
+        .functions
+        .iter()
+        .map(|function| {
+            function.initial_memory.len()
+                + function
+                    .blocks
+                    .iter()
+                    .map(|block| {
+                        block.memory_params.len()
+                            + block
+                                .instructions
+                                .iter()
+                                .filter(|instruction| {
+                                    instruction
+                                        .memory
+                                        .as_ref()
+                                        .and_then(|memory| memory.output)
+                                        .is_some()
+                                })
+                                .count()
+                    })
+                    .sum::<usize>()
+        })
+        .sum();
+    let mut function_ids = HashSet::with_capacity(module.functions.len());
+    let mut block_ids = HashSet::with_capacity(block_capacity);
+    let mut instruction_ids = HashSet::with_capacity(instruction_capacity);
+    let mut module_value_ids = HashSet::with_capacity(value_capacity);
+    let mut module_region_ids = HashSet::with_capacity(region_capacity);
+    let mut module_memory_ids = HashSet::with_capacity(memory_capacity);
 
     for function in &module.functions {
         if !function_ids.insert(function.id) {
@@ -52,18 +112,50 @@ pub fn validate_kir_module(module: &KirModule) -> KirValidationResult {
 
 fn validate_function(
     function: &KirFunction,
-    module_block_ids: &mut BTreeSet<BlockId>,
-    module_instruction_ids: &mut BTreeSet<InstructionId>,
-    module_value_ids: &mut BTreeSet<ValueId>,
-    module_region_ids: &mut BTreeSet<MemoryRegionId>,
-    module_memory_ids: &mut BTreeSet<MemoryVersionId>,
+    module_block_ids: &mut HashSet<BlockId>,
+    module_instruction_ids: &mut HashSet<InstructionId>,
+    module_value_ids: &mut HashSet<ValueId>,
+    module_region_ids: &mut HashSet<MemoryRegionId>,
+    module_memory_ids: &mut HashSet<MemoryVersionId>,
     errors: &mut Vec<KirValidationError>,
 ) {
-    let mut definitions = BTreeMap::new();
-    let mut types = BTreeMap::new();
-    let mut memory_definitions = BTreeMap::new();
-    let mut memory_regions = BTreeMap::new();
-    let mut function_region_ids = BTreeSet::new();
+    let value_capacity = function.params.len()
+        + function
+            .blocks
+            .iter()
+            .map(|block| {
+                block.params.len()
+                    + block
+                        .instructions
+                        .iter()
+                        .map(|instruction| instruction.results.len())
+                        .sum::<usize>()
+            })
+            .sum::<usize>();
+    let memory_capacity = function.initial_memory.len()
+        + function
+            .blocks
+            .iter()
+            .map(|block| {
+                block.memory_params.len()
+                    + block
+                        .instructions
+                        .iter()
+                        .filter(|instruction| {
+                            instruction
+                                .memory
+                                .as_ref()
+                                .and_then(|memory| memory.output)
+                                .is_some()
+                        })
+                        .count()
+            })
+            .sum::<usize>();
+    let mut definitions = HashMap::with_capacity(value_capacity);
+    let mut types = HashMap::with_capacity(value_capacity);
+    let mut memory_definitions = HashMap::with_capacity(memory_capacity);
+    let mut memory_regions = HashMap::with_capacity(memory_capacity);
+    let mut function_region_ids = HashSet::with_capacity(function.regions.len());
     for region in &function.regions {
         function_region_ids.insert(region.id);
         if !module_region_ids.insert(region.id) {
@@ -211,9 +303,15 @@ fn validate_function(
         .blocks
         .iter()
         .map(|block| (block.id, block))
-        .collect::<BTreeMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     let dominators = compute_kir_dominators(function);
-    let mut effect_orders = BTreeSet::new();
+    let mut effect_orders = HashSet::with_capacity(
+        function
+            .blocks
+            .iter()
+            .map(|block| block.instructions.len() + 1)
+            .sum(),
+    );
     for block in &function.blocks {
         let mut previous_effect_order = None;
         for (index, instruction) in block.instructions.iter().enumerate() {
@@ -340,7 +438,7 @@ fn validate_instruction_structure(
     function: &KirFunction,
     block: &KirBlock,
     index: usize,
-    types: &BTreeMap<ValueId, MirType>,
+    types: &HashMap<ValueId, MirType>,
     errors: &mut Vec<KirValidationError>,
 ) {
     let instruction = &block.instructions[index];
@@ -440,8 +538,8 @@ fn define_memory(
     definition: MemoryDefinition,
     block: Option<BlockId>,
     instruction: Option<InstructionId>,
-    module_memory_ids: &mut BTreeSet<MemoryVersionId>,
-    definitions: &mut BTreeMap<MemoryVersionId, MemoryDefinition>,
+    module_memory_ids: &mut HashSet<MemoryVersionId>,
+    definitions: &mut HashMap<MemoryVersionId, MemoryDefinition>,
     errors: &mut Vec<KirValidationError>,
 ) {
     if !module_memory_ids.insert(version) || definitions.insert(version, definition).is_some() {
@@ -462,9 +560,9 @@ fn define_value(
     definition: ValueDefinition,
     block: Option<BlockId>,
     instruction: Option<InstructionId>,
-    module_value_ids: &mut BTreeSet<ValueId>,
-    definitions: &mut BTreeMap<ValueId, ValueDefinition>,
-    types: &mut BTreeMap<ValueId, MirType>,
+    module_value_ids: &mut HashSet<ValueId>,
+    definitions: &mut HashMap<ValueId, ValueDefinition>,
+    types: &mut HashMap<ValueId, MirType>,
     errors: &mut Vec<KirValidationError>,
 ) {
     if !module_value_ids.insert(value) || definitions.insert(value, definition).is_some() {
@@ -485,7 +583,7 @@ fn validate_use(
     use_index: usize,
     value: ValueId,
     instruction: Option<InstructionId>,
-    definitions: &BTreeMap<ValueId, ValueDefinition>,
+    definitions: &HashMap<ValueId, ValueDefinition>,
     dominators: &KirDominators,
     errors: &mut Vec<KirValidationError>,
 ) {
@@ -529,7 +627,7 @@ fn validate_memory_use(
     use_index: usize,
     version: MemoryVersionId,
     instruction: Option<InstructionId>,
-    definitions: &BTreeMap<MemoryVersionId, MemoryDefinition>,
+    definitions: &HashMap<MemoryVersionId, MemoryDefinition>,
     dominators: &KirDominators,
     errors: &mut Vec<KirValidationError>,
 ) {
@@ -570,9 +668,9 @@ fn validate_edge(
     function: &KirFunction,
     source: BlockId,
     edge: &KirEdge,
-    blocks: &BTreeMap<BlockId, &KirBlock>,
-    types: &BTreeMap<ValueId, MirType>,
-    memory_regions: &BTreeMap<MemoryVersionId, MemoryRegionId>,
+    blocks: &HashMap<BlockId, &KirBlock>,
+    types: &HashMap<ValueId, MirType>,
+    memory_regions: &HashMap<MemoryVersionId, MemoryRegionId>,
     errors: &mut Vec<KirValidationError>,
 ) {
     let Some(target) = blocks.get(&edge.target) else {

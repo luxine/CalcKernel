@@ -82,6 +82,31 @@ fn kir_o3_pipeline_should_use_the_exact_verified_pass_order() {
 }
 
 #[test]
+fn unchecked_guard_free_pipeline_should_skip_unconsumed_scalar_analysis() {
+    let (kir, contracts) = build_with_modes(
+        include_str!("../../examples/applications/dijkstra.ck"),
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, contracts.as_ref());
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.stats.scalar_functions_analyzed, 0);
+}
+
+#[test]
+fn checked_guard_pipeline_should_keep_demanded_scalar_analysis() {
+    let (kir, contracts) = build(
+        "export fn answer() -> i32 { return 20 + 22; }",
+        KirOverflowMode::Checked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, contracts.as_ref());
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(result.stats.scalar_functions_analyzed >= 1);
+}
+
+#[test]
 fn loop_analysis_should_build_nested_natural_loop_tree_with_inductions() {
     let (kir, _) = build(
         r#"

@@ -21,4 +21,4 @@ pub(crate) use inline::run_effect_aware_inline;
 pub(crate) use licm::run_licm;
 pub(crate) use load_forward::run_load_forwarding;
 pub(crate) use memory::run_memory_ssa_refine;
-pub(crate) use sccp::run_sccp_range;
+pub(crate) use sccp::{ScalarAnalysisCache, run_sccp_range};

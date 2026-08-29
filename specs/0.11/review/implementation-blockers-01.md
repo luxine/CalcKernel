@@ -79,16 +79,44 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   schema-2 report。所有 24 个 runtime 条目都必须有 Clang median，八份冻结 C source 都
   必须通过摘要契约；不得改动语料或阈值来迁就候选。
 
+## I05：KIR O3 在较大控制流语料上超过 individual 3x 时延上限
+
+- x86-64 performance job `99116972035` 的 artifact `performance-x86-64`（ID
+  `9718529599`，zip digest
+  `95a7226f244674ca83b8658f0e7b90790a0051257d66ec24fa0bff5ae3332df8`）记录
+  `example-dijkstra` 的 KIR/V0.10 MIR optimizer median 为 3,648,012/832,254 ns，
+  即 4.38x；AArch64 对应项为 3,148,172/703,886 ns，即 4.47x。runtime 的 Native/Clang
+  语义与吞吐门都未指向同一退化，因此这是 compiler latency 的独立真实阻断，不能归因于
+  hosted runner 共模漂移，也不能提高 3x 门槛。
+- release 阶段计时把热点定位为两部分：unchecked KIR 中没有 `Guard`，但两轮
+  `sccp-range` 仍对所有函数构造完整 product-domain result，随后没有任何消费者；每次
+  changed-pass 验证成功又为验证缓存深拷贝完整 KIR。前者是缺少 demand boundary，后者把
+  debug 防御性核验成本带进了 release 热路径。
+- TDD 先增加两条行为契约：unchecked/guard-free Dijkstra O3 必须记录 0 个 scalar analyzed
+  function；checked guard case 必须继续记录至少 1 个。实现让 `sccp-range` pass、顺序与
+  verifier record 保持不变，只对含 guard、可能参与 check elimination 的函数执行 scalar
+  analysis。所有实际 rewrite 后仍运行完整 KIR/fact/proof verifier。
+- no-change verification cache 在 debug 构建继续保存并逐字段比较 KIR/proof/elimination/
+  contract 快照，以捕获错误的 pass change declaration；release 只复用该内部 change
+  contract，避免深拷贝。结构验证器只把不参与迭代输出的 lookup/set 从树结构换为预分配
+  hash 结构，错误遍历顺序和诊断保持由 module 顺序决定。输入失败仍返回原 module，artifact
+  transaction 边界未改变。
+- 修复后 debug/release optimizer suite 均为 49/49，全特性测试和 all-feature Clippy 通过。
+  高负载本机的非规范 quick 复诊中六项 KIR/V0.10 比率分别为 0.85x、0.63x、0.56x、
+  0.71x、0.53x、1.78x；`example-dijkstra` 为 923,917/518,666 ns。该结果只证明修复数量级，
+  最终判定仍必须由修复 commit 上的 x86-64/AArch64 完整 performance jobs 给出。
+
 ## 修订边界
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
 - 不跳过任何 Native/JIT/cache/run test，不把失败 job 改成 optional，不降低性能门槛。
 - 本轮修订必须在同一 commit 上重新通过 quality、native integration、六 native host 与两
-  performance runner；在此之前 I01–I04 只算本地修复，不算远程验收完成。
+  performance runner；在此之前 I01–I05 只算本地修复，不算远程验收完成。
 
 ## 修订后对抗性复审
 
 待修复后的全量本地与六 host 证据完成后追加。复审重点是 Windows archive/CRT identity、
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
-是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source，以及是否有测试
-被跳过。
+是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source、release
+no-change cache 是否只复用准确的 pass change declaration、guard-free demand skip 是否会
+漏掉安全消费者，以及是否有测试被跳过。

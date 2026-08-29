@@ -47,6 +47,7 @@ pub struct KirOptimizationExplanation {
 /// Deterministic rewrite counts used by acceptance and optimization explanations.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KirOptimizationStats {
+    pub scalar_functions_analyzed: u32,
     pub inlined_calls: u32,
     pub gvn_rewrites: u32,
     pub forwarded_loads: u32,
@@ -73,9 +74,13 @@ pub struct KirPassManagerResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VerifiedKirState {
+    #[cfg(debug_assertions)]
     module: KirModule,
+    #[cfg(debug_assertions)]
     proofs: ProofArena,
+    #[cfg(debug_assertions)]
     eliminated_guards: Vec<KirGuardElimination>,
+    #[cfg(debug_assertions)]
     contract_facts: Option<ContractFactSet>,
 }
 
@@ -86,8 +91,14 @@ pub fn run_kir_pass_pipeline(
     contracts: Option<&ContractFactSet>,
 ) -> KirPassManagerResult {
     const GENERATION: u32 = 0;
+    let pending_module = KirModule {
+        config: module.config,
+        entry: None,
+        structs: Vec::new(),
+        functions: Vec::new(),
+    };
     let mut result = KirPassManagerResult {
-        module: module.clone(),
+        module: pending_module,
         artifact: None,
         records: Vec::new(),
         errors: Vec::new(),
@@ -112,12 +123,17 @@ pub fn run_kir_pass_pipeline(
             .into_iter()
             .map(|error| error.message)
             .collect();
+        result.module = module;
         return result;
     }
     result.verification_cache = Some(VerifiedKirState {
+        #[cfg(debug_assertions)]
         module: module.clone(),
+        #[cfg(debug_assertions)]
         proofs: result.proofs.clone(),
+        #[cfg(debug_assertions)]
         eliminated_guards: result.eliminated_guards.clone(),
+        #[cfg(debug_assertions)]
         contract_facts: result.contract_facts.clone(),
     });
 
@@ -144,6 +160,7 @@ pub fn run_kir_pass_pipeline(
         return result;
     }
     let mut scalar_analysis_cache = kir_passes::run_sccp_range(&module);
+    add_scalar_analysis_stats(&mut result.stats, scalar_analysis_cache.as_ref());
     if !record_current_pass(&module, "sccp-range", false, &mut result, GENERATION) {
         result.module = module;
         return result;
@@ -251,6 +268,7 @@ pub fn run_kir_pass_pipeline(
         }
 
         scalar_analysis_cache = kir_passes::run_sccp_range(&module);
+        add_scalar_analysis_stats(&mut result.stats, scalar_analysis_cache.as_ref());
         if !record_current_pass(
             &module,
             "sccp-range-post-inline",
@@ -338,7 +356,8 @@ pub fn run_kir_pass_pipeline(
             .as_ref()
             .is_none_or(|cache| !cache.covers(&module))
         {
-            let _ = kir_passes::run_sccp_range(&module);
+            let loop_scalar_analysis = kir_passes::run_sccp_range(&module);
+            add_scalar_analysis_stats(&mut result.stats, loop_scalar_analysis.as_ref());
         }
         if !record_current_pass(
             &module,
@@ -399,6 +418,16 @@ pub fn run_kir_pass_pipeline(
     result
 }
 
+fn add_scalar_analysis_stats(
+    stats: &mut KirOptimizationStats,
+    cache: Option<&kir_passes::ScalarAnalysisCache>,
+) {
+    let analyzed = cache.map_or(0, |cache| {
+        u32::try_from(cache.analyzed_functions()).unwrap_or(u32::MAX)
+    });
+    stats.scalar_functions_analyzed = stats.scalar_functions_analyzed.saturating_add(analyzed);
+}
+
 fn record_verified_pass(
     module: &KirModule,
     name: &str,
@@ -408,10 +437,18 @@ fn record_verified_pass(
 ) -> bool {
     let cache_hit = !changed
         && result.verification_cache.as_ref().is_some_and(|cached| {
-            cached.module == *module
-                && cached.proofs == result.proofs
-                && cached.eliminated_guards == result.eliminated_guards
-                && cached.contract_facts == result.contract_facts
+            #[cfg(debug_assertions)]
+            {
+                cached.module == *module
+                    && cached.proofs == result.proofs
+                    && cached.eliminated_guards == result.eliminated_guards
+                    && cached.contract_facts == result.contract_facts
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                let _ = cached;
+                true
+            }
         });
     if cache_hit {
         result.records.push(KirPassRecord {
@@ -439,9 +476,13 @@ fn record_verified_pass(
         .extend(evidence.errors.into_iter().map(|error| error.message));
     if verified {
         result.verification_cache = Some(VerifiedKirState {
+            #[cfg(debug_assertions)]
             module: module.clone(),
+            #[cfg(debug_assertions)]
             proofs: result.proofs.clone(),
+            #[cfg(debug_assertions)]
             eliminated_guards: result.eliminated_guards.clone(),
+            #[cfg(debug_assertions)]
             contract_facts: result.contract_facts.clone(),
         });
     }

@@ -26,6 +26,9 @@ CFG/inlining/loop 改动必须显式 invalidate 或 remap evidence；stale evide
 - O3：增加 `natural-loop-analysis`、保守 `licm`、induction analysis、post-loop
   range/check elimination、DCE 与 cleanup。
 
+Scalar range analysis 按函数按需执行。无 guard 的函数没有 safety-check consumer，因此命名
+pass 与 verifier record 仍保留在 pipeline 中，但不会构造无人消费的 product-domain result。
+
 `emit-kir`、`--print-facts`、`--print-effect-summaries`、
 `--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。
 

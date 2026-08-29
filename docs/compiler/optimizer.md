@@ -30,6 +30,10 @@ or remap affected evidence. Invalid or stale evidence is a compiler error.
 - O3 adds `natural-loop-analysis`, conservative `licm`, induction analysis,
   post-loop range/check elimination, DCE, and cleanup.
 
+Scalar range analysis is demand-driven per function. A guard-free function has
+no safety-check consumer, so the named pass and its verifier record remain in
+the pipeline without constructing an unused product-domain result.
+
 KIR inspection uses `emit-kir`, `--print-facts`,
 `--print-effect-summaries`, and `--explain-optimization`. Output is
 deterministic and distinguishes trusted from proven evidence.
