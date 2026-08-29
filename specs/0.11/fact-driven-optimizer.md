@@ -57,6 +57,24 @@ retain two permanent optimization pipelines.
 KIR text is deterministic and available for inspection, but is an internal
 compiler format without cross-version compatibility guarantees.
 
+KIR construction is parameterized by the selected overflow mode, bounds mode,
+and artifact consumer. The required pipeline is:
+
+```text
+checked source -> semantic MIR -> select consumer roots and prune reachability
+               -> mode-specific KIR -> verify and optimize KIR -> backend
+```
+
+The semantic MIR remains mode-neutral. KIR materializes exactly the guards and
+ordered effects required by the selected modes; backends do not recreate hidden
+semantic guards. Library consumers root exported functions, executable
+consumers root the valid `main` entry, and optimizer inspection roots the union
+of exports and `main`. `emit-kir` uses the inspection roots, defaults both modes
+to unchecked, and honors explicit `--overflow` and `--bounds` selections. A
+consumer rejects unsupported modes before KIR construction. Reachability and
+runtime-capability checks therefore occur before interprocedural KIR summaries
+are solved, and every backend receives the same consumer-specific verified KIR.
+
 ## Trusted source contracts
 
 ### Syntax and unsafe boundary
@@ -92,6 +110,10 @@ unsafe {
 An unsafe function must have at least one `requires` clause. A contract and an
 `effects` clause are invalid on a safe function. Unsafe blocks do not suppress
 unrelated type, control-flow, bounds-mode, or ABI diagnostics.
+
+The executable entry function `main` cannot be `unsafe` and cannot carry a
+`contract` or `effects` clause. Violations use `CK2014` and do not create an
+executable entry.
 
 The contract is required to hold when control enters the function. A false
 `requires` clause makes that execution immediately undefined, independently of
@@ -140,12 +162,22 @@ A zero-length slice denotes an empty range. `aligned(p, n)` requires `n` to be a
 positive `u32` power of two no greater than `2^31` and the pointer address to be
 divisible by `n`; a null pointer is aligned by this predicate, while its
 dereferenceability continues to follow the existing slice-validity rules.
-Effect targets in 0.11 are named slice parameters.
+Effect targets in 0.11 are named slice parameters. The clause is specifically
+an upper bound on accesses to externally reachable memory, not a ceiling on all
+observable behavior. `effects none` means no externally reachable memory read
+or write. Reads and writes of private local storage do not appear in the
+ceiling. Runtime print, possible checked failure, and unsafe-call presence are
+always inferred and cannot be hidden by an effect clause in 0.11.
 
-An effect clause is an upper bound, not an unchecked promise. The compiler
-checks it against the function body and transitive callee summaries. Omitting
-the clause requests inferred effects. An incomplete clause is diagnostic
-`CK2016`, not undefined behavior.
+The compiler checks the memory ceiling against the function body and transitive
+callee summaries. An access through a sub-slice or derived pointer is mapped
+back to its named slice parameter when proven. Any externally reachable access
+that cannot be mapped to a declared slice target, including an applicable raw
+pointer or unknown call, is conservatively `readwrite all` and cannot be covered
+by the closed 0.11 effect syntax. Omitting the clause requests inferred effects.
+An incomplete clause is diagnostic `CK2016`, not undefined behavior. Effect
+summaries retain runtime print, possible checked failure, unsafe calls, and the
+conservative `all` set independently of the source ceiling.
 
 Local `assume`, loop contracts, and arbitrary contract expressions are not part
 of 0.11. Loop facts must be derived from entry contracts, SSA values, branch
@@ -175,6 +207,13 @@ Facts have stable in-compilation identifiers and one of two origins:
 
 Proofs form a dependency DAG over facts, instructions, blocks, and effect
 summaries. Transformations and diagnostic output retain the origin distinction.
+
+Each unsafe call creates a distinct contract-fact instance after argument
+evaluation and parameter substitution. Its facts dominate only that dynamic
+callee entry. After inlining, they dominate only the corresponding cloned
+callee region and cannot become caller-entry facts or escape to unrelated
+paths. Every recursive call edge creates a fresh instance and must satisfy its
+own unsafe boundary and substitution rules.
 
 ## Analyses
 
@@ -212,9 +251,21 @@ becomes `readwrite all + may_fail + runtime_effect`.
 
 A pass cannot silently erase or weaken a bounds or overflow guard. It submits a
 transformation with a `ProofId` identifying the dominating range, control,
-slice-length, alias, alignment, effect, and contract facts used. The independent
-KIR verifier checks the proof against the current CFG, scalar SSA, Memory SSA,
-and effect order after every pass.
+slice-length, alias, alignment, effect, and contract facts used.
+
+`ProofId` references a closed certificate language checked by a small verifier
+that does not call the optimizing analysis to ask whether its proposed result
+is true. Certificates contain locally checkable derivation steps for scalar
+transfer and refinement, dominance and path conditions, contract-instance
+substitution, region separation, Memory SSA versions, effect ordering, and the
+specific rewrite preconditions. For loop facts, the checker validates the
+stated invariant against entry and transfer edges; it need not rediscover the
+strongest invariant. Analysis output and pass preservation claims are untrusted
+inputs until these checks succeed. `TrustedContract` leaves are checked for a
+valid dominating contract instance rather than re-proved.
+
+The independent KIR verifier checks each certificate against the current CFG,
+scalar SSA, Memory SSA, and effect order after every pass.
 
 CFG edits, inlining, and loop edits invalidate facts and proofs through explicit
 analysis-preservation declarations. A stale or invalid proof is a compiler
@@ -249,9 +300,22 @@ The Native LLVM lowering uses a reviewed whitelist that includes `noalias`,
 `readonly`, `writeonly`, applicable `memory(...)` effects, alignment,
 `alias.scope`/`noalias` metadata, integer ranges, and proven `nuw`/`nsw` flags.
 It emits `llvm.assume` only when a verified fact has no more direct
-representation and the assumption is useful. Every strengthening retains a
-`FactId` or `ProofId` in the compiler's audit map. A post-lowering audit rejects
-an LLVM attribute or flag without an admissible KIR source.
+representation and the assumption is useful. Every strengthening emitted by CK
+retains a `FactId` or `ProofId` in the compiler's audit map. The CK fact audit
+runs immediately after KIR-to-LLVM lowering and LLVM structural verification,
+before invoking any LLVM optimization pipeline, and rejects a CK-emitted
+attribute or flag without an admissible KIR source. Attributes or flags inferred
+later by LLVM are LLVM-owned results and are outside this source-fact audit.
+
+A pairwise `noalias(a, b)` contract maps by default only to access-scoped
+`alias.scope`/`noalias` metadata for the proven pair. CK may emit an LLVM
+parameter `noalias` attribute only after proving the parameter satisfies the
+complete LLVM promise against every relevant pointer root, including applicable
+capture and return constraints. The C backend follows the same rule: it emits
+`restrict` only when the complete C restriction association is proven, never
+from one pairwise relation alone. `readonly`, `writeonly`, and `memory(...)`
+mappings likewise use the parameter-mapped memory summary plus the shared alias
+partition and cannot ignore writes through an aliasing root.
 
 The C backend consumes the same optimized KIR and may express equivalent facts
 through standard `restrict` and conditionally defined compiler alignment hints;
@@ -289,6 +353,15 @@ reserved for this sanitizer failure in 0.11; production runtime statuses remain
 those selected by the normal overflow, bounds, output, and child-process
 contracts.
 
+Sanitizer evaluation preserves the contract's unbounded mathematical integer
+semantics with an exact limb evaluator or an equivalent overflow-safe algorithm;
+it never evaluates a contract with wrapping CK or host arithmetic. Dynamic
+`noalias` checks form byte intervals with checked integer-address arithmetic.
+An element-byte-length overflow, an address-end overflow at the target address
+width, or any interval wrap is a contract violation and follows the same exact
+`CKR0007`/246 path; the implementation must not compare unrelated host-language
+pointers or trigger host undefined behavior.
+
 The source diagnostics added by this specification are:
 
 | Code | Meaning |
@@ -311,16 +384,20 @@ CK 0.11 is not complete until all of the following hold:
    and Native testing at O0 through O3 in every supported checked/unchecked
    combination.
 3. Contract tests cover valid syntax, every invalid boundary and predicate,
-   foreign-export comments, unsafe calls, immediate-UB model, and positive and
-   negative sanitizer executions.
+   forbidden unsafe `main`, foreign-export comments with flattened slice-field
+   mapping, unsafe calls, structural fact import for the immediate-UB model, and
+   positive and negative sanitizer executions including integer and address
+   extremes.
 4. KIR mutation tests prove that the verifier rejects missing dominance,
    malformed scalar or memory phi nodes, incorrect alias partitions, stale
    facts, invalid ProofIds, and reordered possible failures or runtime effects.
 5. Fixed-seed generated kernels compare unoptimized and optimized observable
    behavior; contract-generated cases are run only with inputs satisfying the
    declared domain.
-6. LLVM fact audits pass for all six release targets and reject intentionally
-   injected attributes without a KIR source.
+6. LLVM fact audits run natively on each of the six existing release runners,
+   pass before LLVM optimization for all six targets, and reject intentionally
+   injected CK-owned attributes without a KIR source. LLVM-owned attributes
+   inferred after that boundary are not misclassified.
 7. Canonical provable loops contain no redundant hot-loop bounds guard at O2 or
    O3, as verified structurally in KIR and backend IR.
 8. The existing Native-versus-pinned-Clang O3 gate remains at a minimum 95%

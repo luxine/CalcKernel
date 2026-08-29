@@ -48,6 +48,22 @@ KIR：标量 SSA + 区域 Memory SSA + 事实 + 效果 + 证明
 
 KIR 文本确定且可检查，但它是内部编译器格式，不承诺跨版本兼容。
 
+KIR 构造由选定的 overflow mode、bounds mode 和 artifact consumer 参数化。固定
+管线为：
+
+```text
+已检查源码 -> 语义 MIR -> 选择 consumer roots 并裁剪可达性
+           -> mode-specific KIR -> 验证并优化 KIR -> backend
+```
+
+语义 MIR 保持 mode-neutral。KIR 只物化所选模式要求的 guard 和有序效果；后端
+不得重新创建隐藏的语义 guard。库 consumer 以导出函数为 roots，可执行 consumer
+以合法 `main` 入口为 root，优化器检查以导出函数和 `main` 的并集为 roots。
+`emit-kir` 使用检查 roots，两个模式默认均为 unchecked，并接受显式
+`--overflow` 和 `--bounds` 选择。不支持某模式的 consumer 必须在 KIR 构造前拒
+绝。由此，可达性和 runtime capability 检查先于跨过程 KIR 摘要求解，每个后端
+接收相同的 consumer-specific 已验证 KIR。
+
 ## 可信源码契约
 
 ### 语法与 unsafe 边界
@@ -83,6 +99,9 @@ unsafe {
 unsafe 函数至少要有一个 `requires` 子句。安全函数不能带 contract 或 effects
 子句。unsafe 块不会抑制其他类型、控制流、bounds mode 或 ABI 诊断。
 
+可执行入口函数 `main` 不能是 `unsafe`，也不能带 `contract` 或 `effects` 子句。
+违反时使用 `CK2014`，并且不得形成可执行入口。
+
 控制流进入函数时契约必须成立。任一 `requires` 为假会使该次执行立即成为 UB，
 与优化级别、后端或某个 pass 是否恰好使用该事实无关。正常 O0–O3 编译不会插入
 契约检查。
@@ -117,11 +136,17 @@ unsafe 函数至少要有一个 `requires` 子句。安全函数不能带 contra
 态期间不重叠。这些区间是数学分配区间，不会在目标地址宽度处环绕。零长度 slice
 表示空区间。`aligned(p, n)` 要求 `n` 是不超过 `2^31` 的正 `u32` 2 的幂，且指
 针地址能被 `n` 整除；该谓词认为空指针对齐，而其可解引用性继续遵循既有 slice
-有效性规则。0.11 中 effects 的目标必须是具名 slice 参数。
+有效性规则。0.11 中 effects 的目标必须是具名 slice 参数。该子句明确只是对外
+部可达内存访问的上限，而不是所有可观察行为的上限。`effects none` 表示不读取
+或写入外部可达内存。私有局部存储的读写不进入上限。runtime print、潜在 checked
+失败和 unsafe call 的存在始终自动推导，0.11 的 effects 子句不能隐藏它们。
 
-effects 子句是允许效果的上限，不是未经检查的承诺。编译器会根据函数体和传递
-callee 摘要检查它。省略该子句表示请求自动推导。声明不完整产生 `CK2016`，而
-不是 UB。
+编译器会根据函数体和传递 callee 摘要检查内存效果上限。通过 sub-slice 或派生指
+针发生的访问，在可以证明时映射回具名 slice 参数。无法映射到已声明 slice 目标
+的外部可达访问——包括适用的 raw pointer 或未知调用——保守归为 `readwrite all`，
+且无法由封闭的 0.11 effects 语法覆盖。省略该子句表示请求自动推导。声明不完整
+产生 `CK2016`，而不是 UB。无论源码上限如何，效果摘要始终独立保留 runtime
+print、潜在 checked 失败、unsafe call 和保守 `all` 集合。
 
 0.11 不包含局部 `assume`、循环契约或任意契约表达式。循环事实必须从入口契约、
 SSA 值、分支条件和归纳分析中推导。
@@ -146,6 +171,11 @@ runtime print 都是有序效果；没有不可观察性证明时，变换不能
 
 证明在事实、指令、基本块和效果摘要之上形成依赖 DAG。变换和诊断输出始终保留
 来源区别。
+
+每次 unsafe 调用都在参数求值和形参替换后建立独立的契约事实实例。这些事实只支
+配该次动态 callee 入口。内联后，它们只支配对应的 callee clone 区域，不能成为
+caller-entry 事实，也不能逃逸到无关路径。每条递归调用边都会建立新实例，并独立
+满足 unsafe 边界和替换规则。
 
 ## 分析
 
@@ -176,9 +206,18 @@ runtime print、潜在 checked 失败和 unsafe 调用。递归分量使用单�
 ## 携带证明的变换
 
 pass 不能静默删除或弱化 bounds/overflow guard。它必须提交带 `ProofId` 的变换，
-标明使用的支配范围、控制、slice 长度、别名、对齐、效果和契约事实。独立 KIR
-verifier 在每个 pass 后，依据当前 CFG、标量 SSA、Memory SSA 和效果顺序检查证
-明。
+标明使用的支配范围、控制、slice 长度、别名、对齐、效果和契约事实。
+
+`ProofId` 引用一个封闭的 certificate 语言，由不向优化分析查询其提议结论是否为
+真的小型 verifier 检查。certificate 包含可局部检查的标量 transfer/refinement、
+支配与路径条件、契约实例替换、区域分离、Memory SSA 版本、效果顺序和具体 rewrite
+前提等推导步骤。对于循环事实，checker 验证声明的不变量满足入口和 transfer 边，
+不必重新发现最强不变量。analysis 输出和 pass preservation 声明在这些检查通过前
+都属于不可信输入。`TrustedContract` 叶节点检查是否存在合法且支配当前位置的契
+约实例，而不是重新证明契约。
+
+独立 KIR verifier 在每个 pass 后，依据当前 CFG、标量 SSA、Memory SSA 和效果
+顺序检查每份 certificate。
 
 CFG 修改、内联和循环修改通过显式分析保留声明使事实和证明失效。过期或无效证
 明属于编译器内部错误：停止编译且不提交任何制品。编译器不得通过生成未验证机
@@ -206,9 +245,19 @@ ABI 行为保持不变。
 Native LLVM lowering 使用经过审查的白名单，包括 `noalias`、`readonly`、
 `writeonly`、适用的 `memory(...)` 效果、alignment、`alias.scope`/`noalias`
 metadata、整数 range 和已证明的 `nuw`/`nsw`。只有当经过验证的事实没有更直接
-表示且假设确实有用时才生成 `llvm.assume`。每项加强都在编译器审计映射中保留
-`FactId` 或 `ProofId`。lowering 后审计会拒绝没有可接受 KIR 来源的 LLVM 属性或
-flag。
+表示且假设确实有用时才生成 `llvm.assume`。CK 生成的每项加强都在编译器审计映
+射中保留 `FactId` 或 `ProofId`。CK 事实审计在 KIR-to-LLVM lowering 和 LLVM 结
+构验证完成后、调用任何 LLVM optimization pipeline 前立即执行，并拒绝没有可接
+受 KIR 来源的 CK-owned 属性或 flag。此边界之后由 LLVM 自行推导的属性或 flag
+属于 LLVM-owned 结果，不进入该源码事实审计。
+
+成对 `noalias(a, b)` 契约默认只映射为该已证明访问对的 access-scoped
+`alias.scope`/`noalias` metadata。只有进一步证明该参数相对每个相关 pointer root
+满足完整 LLVM 承诺（包括适用的 capture 和 return 限制），CK 才能生成 LLVM 参
+数级 `noalias`。C 后端遵循同一规则：只有证明完整 C restriction association 时
+才能生成 `restrict`，不能仅从一组成对关系推出。`readonly`、`writeonly` 和
+`memory(...)` 映射同样使用参数映射内存摘要与共享 alias partition，不能忽略经
+由别名 root 发生的写入。
 
 C 后端消费相同的优化 KIR，并可以通过标准 `restrict` 和条件定义的编译器对齐
 提示表达等价事实；可移植 fallback 仍是有效 C。WebAssembly 后端消费 KIR 检查
@@ -239,6 +288,12 @@ LLVM 继续负责机器级 canonicalization、指令选择、寄存器分配、�
 证据。0.11 将状态 246 保留给该 sanitizer 失败；生产 runtime 状态仍由正常
 overflow、bounds、输出和子进程契约决定。
 
+sanitizer 求值通过精确 limb evaluator 或等价的 overflow-safe 算法保持契约的无
+界数学整数语义；不得用会回绕的 CK 或宿主算术计算契约。动态 `noalias` 检查通过
+checked integer-address arithmetic 构造字节区间。元素字节长度溢出、地址末端在
+目标地址宽度上溢出或任意区间回绕都视为契约违反，并走完全相同的
+`CKR0007`/246 路径；实现不得比较无关的宿主语言指针或触发宿主 UB。
+
 本规范新增源码诊断：
 
 | Code | 含义 |
@@ -257,15 +312,17 @@ KIR verifier 和后端事实审计失败是编译器错误，不是 CK 源码诊
    在没有 ignored test 或降低门槛的情况下继续通过。
 2. 所有正式及兼容 fixtures 在 O0–O3 和每个受支持 checked/unchecked 组合上通
    过 C、WebAssembly 和 Native 差分测试。
-3. 契约测试覆盖合法语法、每种非法边界和谓词、外部导出注释、unsafe 调用、即
-   时 UB 模型及 sanitizer 正反执行。
+3. 契约测试覆盖合法语法、每种非法边界和谓词、禁止 unsafe `main`、带展平 slice
+   字段映射的外部导出注释、unsafe 调用、立即 UB 模型的结构化事实导入，以及包
+   含整数和地址极值的 sanitizer 正反执行。
 4. KIR mutation tests 能证明 verifier 拒绝缺失支配、错误标量或 memory phi、
    错误 alias partition、过期事实、无效 ProofId，以及潜在失败或 runtime 效果
    重排。
 5. 固定种子的生成 Kernel 对比未优化和优化后的可观察行为；契约生成用例只使用
    满足声明定义域的输入。
-6. LLVM 事实审计在全部六个发布目标上通过，并拒绝故意注入且没有 KIR 来源的属
-   性。
+6. LLVM 事实审计在六个既有 release runner 上分别原生执行，在 LLVM 优化前覆盖
+   六个目标并全部通过，且拒绝故意注入而没有 KIR 来源的 CK-owned 属性；不得把
+   审计边界之后由 LLVM 推导的属性误判为 CK 属性。
 7. 典型可证明循环在 O2/O3 热循环内没有冗余 bounds guard，并通过 KIR 和后端
    IR 结构检查确认。
 8. 既有 Native 对固定 Clang O3 门禁继续保持至少 95% 几何平均吞吐，且单个
