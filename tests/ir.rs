@@ -6,3 +6,6 @@ mod mir;
 
 #[path = "ir/kir.rs"]
 mod kir;
+
+#[path = "ir/proofs.rs"]
+mod proofs;

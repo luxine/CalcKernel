@@ -1,3 +1,15 @@
+mod affine;
+mod budget;
+mod congruence;
+mod known_bits;
+mod scalar;
+
+pub use affine::*;
+pub use budget::*;
+pub use congruence::*;
+pub use known_bits::*;
+pub use scalar::*;
+
 use crate::{MirInstruction, MirPlace, MirPrimitiveTypeName, MirType, MirValue};
 
 pub(in crate::optimizer) fn instruction_target(instruction: &MirInstruction) -> Option<&MirValue> {
@@ -55,15 +67,7 @@ pub(in crate::optimizer) fn temp_name(value: &MirValue) -> Option<&str> {
 }
 
 pub(in crate::optimizer) fn is_integer_type(type_node: &MirType) -> bool {
-    matches!(
-        type_node,
-        MirType::Primitive(
-            MirPrimitiveTypeName::I32
-                | MirPrimitiveTypeName::I64
-                | MirPrimitiveTypeName::U32
-                | MirPrimitiveTypeName::U64
-        )
-    )
+    IntegerType::from_mir(type_node).is_some()
 }
 
 pub(in crate::optimizer) fn is_f64_type(type_node: &MirType) -> bool {
@@ -79,41 +83,13 @@ pub(in crate::optimizer) fn contains_slice_type(type_node: &MirType) -> bool {
 }
 
 pub(in crate::optimizer) fn is_signed_integer_type(type_node: &MirType) -> bool {
-    matches!(
-        type_node,
-        MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::I64)
-    )
+    IntegerType::from_mir(type_node).is_some_and(IntegerType::is_signed)
 }
 
 pub(in crate::optimizer) fn integer_min(type_node: &MirType) -> Option<i128> {
-    match type_node {
-        MirType::Primitive(MirPrimitiveTypeName::I32) => Some(-(1_i128 << 31)),
-        MirType::Primitive(MirPrimitiveTypeName::I64) => Some(-(1_i128 << 63)),
-        MirType::Primitive(MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64) => Some(0),
-        MirType::Primitive(MirPrimitiveTypeName::F64 | MirPrimitiveTypeName::Bool)
-        | MirType::Pointer(_)
-        | MirType::Slice(_)
-        | MirType::Struct(_)
-        | MirType::Void => None,
-    }
-}
-
-pub(in crate::optimizer) fn integer_max(type_node: &MirType) -> Option<i128> {
-    match type_node {
-        MirType::Primitive(MirPrimitiveTypeName::I32) => Some((1_i128 << 31) - 1),
-        MirType::Primitive(MirPrimitiveTypeName::I64) => Some((1_i128 << 63) - 1),
-        MirType::Primitive(MirPrimitiveTypeName::U32) => Some((1_i128 << 32) - 1),
-        MirType::Primitive(MirPrimitiveTypeName::U64) => Some((1_i128 << 64) - 1),
-        MirType::Primitive(MirPrimitiveTypeName::F64 | MirPrimitiveTypeName::Bool)
-        | MirType::Pointer(_)
-        | MirType::Slice(_)
-        | MirType::Struct(_)
-        | MirType::Void => None,
-    }
+    IntegerType::from_mir(type_node).map(IntegerType::minimum_i128)
 }
 
 pub(in crate::optimizer) fn fits_integer_type(value: i128, type_node: &MirType) -> bool {
-    is_integer_type(type_node)
-        && integer_min(type_node).is_some_and(|min| value >= min)
-        && integer_max(type_node).is_some_and(|max| value <= max)
+    IntegerType::from_mir(type_node).is_some_and(|integer| integer.contains_i128(value))
 }
