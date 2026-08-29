@@ -36,6 +36,8 @@ live in `benches/cases/native-cases.tsv`, sources under `benches/fixtures`, and
 the report contract in `benches/summary-schema.md`. The harness rejects semantic
 mismatches before timing and records compiler, LLVM, OS, architecture, target,
 CPU policy, mode, warm-up, sample, batching, and statistic identity.
+The normative checker rejects any non-pinned identity or investigative CPU
+policy and recomputes each reported upper median from its sample array.
 The general compiler-stage summaries remain `build/perf/latest.summary.json`
 and `build/perf/latest.summary.md`.
 

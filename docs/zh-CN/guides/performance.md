@@ -22,6 +22,8 @@ python3 scripts/check-native-performance.py target/ckc-perf/results.json
 
 严格 report 是 `target/ckc-perf/results.json`；case manifest 位于
 `benches/cases/native-cases.tsv`，schema 位于 `benches/summary-schema.md`。
+Normative checker 拒绝非固定 identity 或 investigative CPU policy，并从 sample array
+重新计算每个已报告的 upper median。
 General compiler-stage summary 仍写入 `build/perf/latest.summary.json` 与
 `build/perf/latest.summary.md`。
 `benches/baselines/v0_10_compiler.toml` 固定 0.10 commit/compiler/LLVM、target/CPU/mode、

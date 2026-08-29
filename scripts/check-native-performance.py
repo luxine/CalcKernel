@@ -6,20 +6,35 @@ from __future__ import annotations
 import json
 import math
 import pathlib
+import platform
 import statistics
 import sys
 
 BASELINE_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
-BASELINE_DIGEST_NAMES = {
-    "branch_mix",
-    "integer_accumulate",
-    "proof_loop",
-    "remainder_chain",
-    "pricing",
-    "pricing_soa",
-    "f64_kernels",
-    "example_pricing",
-    "example_dijkstra",
+BASELINE_COMPILER_IDENTITY = f"calckernel 0.10.0 ({BASELINE_COMMIT})"
+BASELINE_LLVM_VERSION = "22.1.8"
+BASELINE_HARNESS = (
+    "ckc_perf schema 2 + proof-loop ABI adapter "
+    "sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + "
+    "MIR optimizer timer "
+    "sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + "
+    "Linux C++ runtime link adapter "
+    "sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff; "
+    "warmup=3; samples=20; repetitions=7; batch=20000000"
+)
+BASELINE_STATISTICS = (
+    "minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8"
+)
+BASELINE_SOURCE_DIGESTS = {
+    "branch_mix": "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8",
+    "integer_accumulate": "4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39",
+    "proof_loop": "ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d",
+    "remainder_chain": "87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e",
+    "pricing": "be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416",
+    "pricing_soa": "5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad",
+    "f64_kernels": "58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be",
+    "example_pricing": "aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a",
+    "example_dijkstra": "490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96",
 }
 
 
@@ -50,25 +65,48 @@ def geometric_mean(values: list[float], field: str) -> float:
     return math.exp(sum(math.log(value) for value in values) / len(values))
 
 
+def upper_median(values: list[float]) -> float:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+def host_target_name() -> str:
+    os_name = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(
+        platform.system()
+    )
+    arch_name = {
+        "aarch64": "aarch64",
+        "arm64": "aarch64",
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+    }.get(platform.machine().lower())
+    if os_name is None or arch_name is None:
+        fail(
+            f"unsupported performance host identity: {platform.system()}/"
+            f"{platform.machine()}"
+        )
+    return f"{os_name}-{arch_name}"
+
+
 def check_baseline_identity(report: dict[str, object]) -> None:
     baseline = report.get("baselineV010")
     if not isinstance(baseline, dict) or baseline.get("commit") != BASELINE_COMMIT:
         fail("baselineV010 must name the pinned v0.10 commit")
-    for field in ("compilerIdentity", "llvmVersion", "target", "harness", "statistics"):
-        if not isinstance(baseline.get(field), str) or not baseline[field]:
-            fail(f"baselineV010 {field} must be non-empty")
-    if baseline.get("sourceDigestCount") != len(BASELINE_DIGEST_NAMES):
+    expected = {
+        "compilerIdentity": BASELINE_COMPILER_IDENTITY,
+        "llvmVersion": BASELINE_LLVM_VERSION,
+        "target": host_target_name(),
+        "harness": BASELINE_HARNESS,
+        "statistics": BASELINE_STATISTICS,
+    }
+    for field, value in expected.items():
+        if baseline.get(field) != value:
+            fail(f"baselineV010 {field} does not match the pinned identity")
+    if baseline.get("sourceDigestCount") != len(BASELINE_SOURCE_DIGESTS):
         fail("baselineV010 must cover every pinned source digest")
     digests = baseline.get("sourceDigests")
-    if not isinstance(digests, dict) or set(digests) != BASELINE_DIGEST_NAMES:
-        fail("baselineV010 sourceDigests must name the exact pinned corpus")
-    for name, digest in digests.items():
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
-        ):
-            fail(f"baselineV010 source digest {name} must be lowercase SHA-256")
+    if digests != BASELINE_SOURCE_DIGESTS:
+        fail("baselineV010 sourceDigests do not match the exact pinned corpus")
 
 
 def check_case(case: object, mode: str) -> tuple[str, float, float, bool, float]:
@@ -80,8 +118,16 @@ def check_case(case: object, mode: str) -> tuple[str, float, float, bool, float]
     native = positive_number(case.get("nativeMedianNs"), f"{mode}/{name} nativeMedianNs")
     clang = positive_number(case.get("clangCMedianNs"), f"{mode}/{name} clangCMedianNs")
     baseline = positive_number(case.get("v010MedianNs"), f"{mode}/{name} v010MedianNs")
-    stable_samples(case.get("nativeSamplesNs"), f"{mode}/{name} nativeSamplesNs")
-    stable_samples(case.get("clangCSamplesNs"), f"{mode}/{name} clangCSamplesNs")
+    native_samples = stable_samples(
+        case.get("nativeSamplesNs"), f"{mode}/{name} nativeSamplesNs"
+    )
+    clang_samples = stable_samples(
+        case.get("clangCSamplesNs"), f"{mode}/{name} clangCSamplesNs"
+    )
+    if native != upper_median(native_samples):
+        fail(f"{mode}/{name} nativeMedianNs does not match its sample array")
+    if clang != upper_median(clang_samples):
+        fail(f"{mode}/{name} clangCMedianNs does not match its sample array")
     for field in (
         "nativeCompileNs",
         "clangCCompileNs",
@@ -137,12 +183,14 @@ def check(path: pathlib.Path) -> None:
         fail("performance report schemaVersion must be 4")
     if report.get("fastMath") is not False:
         fail("fast-math references are forbidden")
-    if report.get("cpuPolicy") not in ("baseline", "native"):
-        fail("cpuPolicy must be baseline or native")
-    if not isinstance(report.get("warmup"), int) or report["warmup"] <= 0:
-        fail("warmup must be a positive integer")
-    if not isinstance(report.get("sampleRepetitions"), int) or report["sampleRepetitions"] < 3:
-        fail("sampleRepetitions must be at least 3")
+    if report.get("cpuPolicy") != "baseline":
+        fail("the release performance gate requires the portable baseline CPU policy")
+    if report.get("clangVersion") != BASELINE_LLVM_VERSION:
+        fail("clangVersion must match the pinned Clang 22.1.8 oracle")
+    if report.get("warmup") != 3:
+        fail("warmup must match the pinned value 3")
+    if report.get("sampleRepetitions") != 7:
+        fail("sampleRepetitions must match the pinned value 7")
     check_baseline_identity(report)
 
     suites = report.get("suites")

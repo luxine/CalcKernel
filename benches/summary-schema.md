@@ -31,7 +31,9 @@ lowercase SHA-256 `sourceDigests` for every runtime and optimizer source. Any
 identity, set, or digest mismatch rejects the report.
 
 `scripts/check-native-performance.py` is the normative schema 4 reader. It
-requires stable samples, at least 95% Native/Clang geometric-mean throughput,
+requires the exact pinned identities and portable baseline CPU policy,
+recomputes each upper median from its stable sample array, and requires at
+least 95% Native/Clang geometric-mean throughput,
 at most 10% individual Native/Clang regression, at most 3% geometric and 8%
 individual 0.11/0.10 runtime regression, at least 97% checked/unchecked
 proof-loop throughput, and a median KIR/0.10-MIR optimizer ratio of at most 2x

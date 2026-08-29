@@ -223,6 +223,28 @@ fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds()
         String::from_utf8_lossy(&pass.stderr)
     );
 
+    let forged_identity = performance_report(100, 102, true, false, 100, 102, 150).replace(
+        "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)",
+        "calckernel 0.10.0 (forged)",
+    );
+    let forged_digest = performance_report(100, 102, true, false, 100, 102, 150).replace(
+        "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    );
+    let wrong_clang = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(r#""clangVersion": "22.1.8""#, r#""clangVersion": "23.0.0""#);
+    let native_cpu = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(r#""cpuPolicy": "baseline""#, r#""cpuPolicy": "native""#);
+    let false_median = performance_report(100, 102, true, false, 100, 102, 150).replacen(
+        r#""nativeMedianNs":100"#,
+        r#""nativeMedianNs":1"#,
+        1,
+    );
+    let wrong_warmup = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(r#""warmup": 3"#, r#""warmup": 2"#);
+    let wrong_repetitions = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(r#""sampleRepetitions": 7"#, r#""sampleRepetitions": 3"#);
+
     for (label, report) in [
         (
             "native-clang",
@@ -252,6 +274,13 @@ fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds()
             "stability",
             performance_report(100, 180, true, false, 100, 102, 150),
         ),
+        ("baseline-identity", forged_identity),
+        ("source-digest", forged_digest),
+        ("clang-version", wrong_clang),
+        ("native-cpu-policy", native_cpu),
+        ("reported-median", false_median),
+        ("warmup-identity", wrong_warmup),
+        ("repetition-identity", wrong_repetitions),
     ] {
         let path = temp.join(format!("{label}.json"));
         fs::write(&path, report).expect("write rejected report");
@@ -290,17 +319,19 @@ fn performance_report(
     checked_proof_ns: u64,
     kir_optimize_ns: u64,
 ) -> String {
+    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     format!(
         r#"{{
   "schemaVersion": 4,
   "cpuPolicy": "baseline",
   "fastMath": {fast_math},
+  "clangVersion": "22.1.8",
   "warmup": 3,
-  "sampleRepetitions": 3,
-  "baselineV010": {{"commit":"df816502876fba41676f9ebc190e4fadd18cd5a5","compilerIdentity":"calckernel 0.10.0","llvmVersion":"22.1.8","target":"test","harness":"test","statistics":"median","sourceDigestCount":9,"sourceDigests":{{"branch_mix":"0000000000000000000000000000000000000000000000000000000000000000","integer_accumulate":"0000000000000000000000000000000000000000000000000000000000000000","proof_loop":"0000000000000000000000000000000000000000000000000000000000000000","remainder_chain":"0000000000000000000000000000000000000000000000000000000000000000","pricing":"0000000000000000000000000000000000000000000000000000000000000000","pricing_soa":"0000000000000000000000000000000000000000000000000000000000000000","f64_kernels":"0000000000000000000000000000000000000000000000000000000000000000","example_pricing":"0000000000000000000000000000000000000000000000000000000000000000","example_dijkstra":"0000000000000000000000000000000000000000000000000000000000000000"}}}},
+  "sampleRepetitions": 7,
+  "baselineV010": {{"commit":"df816502876fba41676f9ebc190e4fadd18cd5a5","compilerIdentity":"calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)","llvmVersion":"22.1.8","target":"{target}","harness":"ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + MIR optimizer timer sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + Linux C++ runtime link adapter sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff; warmup=3; samples=20; repetitions=7; batch=20000000","statistics":"minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8","sourceDigestCount":9,"sourceDigests":{{"branch_mix":"d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8","integer_accumulate":"4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39","proof_loop":"ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d","remainder_chain":"87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e","pricing":"be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416","pricing_soa":"5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad","f64_kernels":"58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be","example_pricing":"aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a","example_dijkstra":"490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96"}}}},
   "suites": [
-    {{"mode":"unchecked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":false,"nativeSamplesNs":[100,101,{last_native_sample}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}},{{"name":"proof_loop","referenceEquivalent":true,"nativeMedianNs":100,"clangCMedianNs":100,"v010MedianNs":100,"proofLoop":true,"nativeSamplesNs":[99,100,101],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}},
-    {{"mode":"checked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":false,"nativeSamplesNs":[100,101,{last_native_sample}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}},{{"name":"proof_loop","referenceEquivalent":true,"nativeMedianNs":{checked_proof_ns},"clangCMedianNs":100,"v010MedianNs":{checked_proof_ns},"proofLoop":true,"nativeSamplesNs":[{checked_proof_ns},{checked_proof_ns},{checked_proof_ns}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}}
+    {{"mode":"unchecked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":false,"nativeSamplesNs":[{native_ns},{native_ns},{last_native_sample}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}},{{"name":"proof_loop","referenceEquivalent":true,"nativeMedianNs":100,"clangCMedianNs":100,"v010MedianNs":100,"proofLoop":true,"nativeSamplesNs":[99,100,101],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}},
+    {{"mode":"checked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":false,"nativeSamplesNs":[{native_ns},{native_ns},{last_native_sample}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}},{{"name":"proof_loop","referenceEquivalent":true,"nativeMedianNs":{checked_proof_ns},"clangCMedianNs":100,"v010MedianNs":{checked_proof_ns},"proofLoop":true,"nativeSamplesNs":[{checked_proof_ns},{checked_proof_ns},{checked_proof_ns}],"clangCSamplesNs":[99,100,101],"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}}
   ],
   "optimizerComparisons": [{{"case":"pricing","kirMedianNs":{kir_optimize_ns},"v010MirMedianNs":100}}]
 }}"#
