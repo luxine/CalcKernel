@@ -18,6 +18,9 @@ ABI-mandated FP/Advanced SIMD facilities. `--cpu native` is opt-in for builds;
 The release binary contains the required host code generator, LLD driver, and
 ORC layer. It has no runtime dependency on LLVM, LLD, Clang, or a non-system C++
 runtime. `CKC_LLVM_PREFIX` is used only when building the compiler from source.
+The bootstrap cache identity includes every native runtime source, header,
+assembly file, and platform link input in addition to the pinned LLVM manifest
+and bootstrap recipes, so a cached prefix cannot retain stale runtime objects.
 
 ## Internal representation
 
@@ -85,7 +88,11 @@ that section to remain non-`ALLOC` while independently rejecting loader-visible
 dependencies, undefined executable symbols, and unexpected exports.
 Linux executable runtime uses its kernel boundary; Windows uses embedded stable
 process imports and computation DLLs have no entry; Darwin uses embedded minimal
-system stubs and LLD ad-hoc signing.
+system stubs and LLD ad-hoc signing. A runtime-owned Darwin `__ck_start` is the
+Mach-O process entry: on x86-64 it normalizes the process stack before calling
+the LLVM C-ABI `main`, and on both Darwin architectures it terminates through
+the embedded platform exit helper. The user `main` body is never exposed as a
+raw `LC_MAIN` entry.
 
 ## ORC execution
 

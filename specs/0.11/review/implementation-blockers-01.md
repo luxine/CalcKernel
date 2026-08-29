@@ -158,12 +158,53 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `disable-library-validation`、`unsigned-executable-memory` 或其他豁免。本机真实 hardened
   JIT audit 在修订后通过；macOS 15 仍须由下一轮同提交 job 复验。
 
+## I09：Darwin x86-64 把 C-ABI `main` 直接当作 process entry
+
+- Run `33267646660` 最后完成的 macOS x86-64 job `99140467067` 运行于 macOS 15.7.9；
+  bootstrap、pre-LLVM fact audit 及其 artifact 均成功。I02 修订后，首轮曾失败的全部 cache/run
+  cases 已转绿，但完整 Native suite 仍在需要执行 standalone Mach-O 的 scalar sanitizer cases
+  出现失败，测试进程最终以 SIGBUS 终止；这不是 I08 entitlement audit，因为失败发生在
+  release build/audit 之前。
+- 复诊定位到 embedded Darwin LLD 的 `-e _main`。本机 Apple `ld(1)` 对 `-e` 的平台契约明确
+  说明默认 entry 是 CRT `start`，该 glue 负责 setup 并调用 `main`；旧实现却把 LLVM 按正常
+  C function ABI 生成的 `_main` 暴露为 raw process entry。简单无调用入口可能偶然工作，但
+  real Intel Darwin 上包含 call/spill 的 sanitizer/printing 路径不再拥有可靠的 x86-64 stack
+  phase，因而可 SIGBUS。AArch64 或 Rosetta 成功不能证明该 x86 process boundary 合法。
+- TDD 先要求 runtime-owned `__ck_start`、x86-64 stack normalization、两架构 call-to-main /
+  platform-exit，以及 LLD 不再接受 `_main` 为 entry，旧实现稳定失败。修订把 stub 放入既有
+  Darwin `platform.o`：x86-64 先把 process stack 向下规范化到 16 bytes 再 `callq _main`，
+  AArch64 保持 ABI-aligned `bl _main`，两者随后调用 `__ck_platform_exit` 且不返回。这样不增加
+  runtime object/ABI 数量，JIT 仍直接以 C ABI 调用 `main`，只修复 standalone process boundary。
+- 两架构 platform source 均以 release 的 strict freestanding flags 编译通过，symbol table
+  精确包含 Mach-O symbol `___ck_start`、undefined `_main` 与 platform exit。另从 pinned
+  LLVM 22.1.8 source 构建原生 X86 `llc`，把失败类 sanitizer fixture 的同一 LLVM IR 生成为
+  x86-64 Mach-O object；其 `_main` 含 stack frame 与两个 call。经 pinned LLVM 22.1.8
+  `ld64.lld` 链接后，`LC_MAIN` entry offset 精确指向 `___ck_start`。Raw `_main` 与新 stub
+  在 Rosetta 下都返回 0，进一步证明 emulator 结果不能替代 real Intel 验收。本机以重算 object
+  hash 的临时 prefix 运行完整 Native suite 为 91/91；真实 Intel 结论仍必须由下一轮同提交
+  host job 给出。
+
+## I10：LLVM prefix cache 未绑定 runtime 输入且只在整 job 成功后保存
+
+- I09 必须重编 Darwin `platform.o`，但旧 cache digest 只包含 LLVM manifest 与两个 bootstrap
+  script；`native/runtime/**` 完全不参与 identity。命中旧 prefix 会让新 compiler 静默嵌入旧
+  runtime object，manifest 内 object hash 仍自洽，现有 validation 无法知道 repository source
+  已变化。这是供应链正确性缺口，不能靠再改一次 bootstrap script 人工撞 key。
+- 同一 macOS x86-64 job 已成功完成约三小时 bootstrap，但随后 Native 失败；旧
+  `actions/cache` post 没有保存 Darwin prefix，仓库 cache list 也没有对应 Darwin key。若每次
+  downstream 失败都丢弃已验证 prefix，诊断循环会重复冷构建且无法稳定复现。
+- TDD 先要求 runtime C/header/assembly/definition/text-stub 输入进入 `hashFiles`，并要求 pinned
+  `actions/cache/restore`/`save` 在 validation 前后分别恢复、保存 release/oracle prefix；旧 action
+  稳定失败。修订保留原 manifest/object/version/static validation 与 cache key 内容寻址，只把真实
+  输入纳入 digest，并在 prefix 自身验证成功后立即保存；restore-only action 不会在 job 结束时
+  重复 post-save。下游测试仍是 required gate，缓存成功不等于 candidate 成功，也不降低任何验收门槛。
+
 ## 修订边界
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
 - 不跳过任何 Native/JIT/cache/run test，不把失败 job 改成 optional，不降低性能门槛。
 - 本轮修订必须在同一 commit 上重新通过 quality、native integration、六 native host 与两
-  performance runner；在此之前 I01–I08 只算本地修复，不算远程验收完成。
+  performance runner；在此之前 I01–I10 只算本地修复，不算远程验收完成。
 
 ## 修订后对抗性复审
 
@@ -171,4 +212,5 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
 是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source、release
 no-change cache 是否只复用准确的 pass change declaration、guard-free demand skip 是否会
-漏掉安全消费者，以及是否有测试被跳过。
+漏掉安全消费者、Darwin standalone entry 是否真正建立 C ABI stack/exit boundary、runtime
+cache 是否可能命中旧 source，以及是否有测试被跳过。

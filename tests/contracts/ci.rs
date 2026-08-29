@@ -197,12 +197,19 @@ fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
 
     for required in [
         "native/llvm/manifest.toml",
-        "hashFiles('native/llvm/manifest.toml', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1')",
+        "native/runtime/**/*.c",
+        "native/runtime/**/*.h",
+        "native/runtime/**/*.S",
+        "native/runtime/**/*.def",
+        "native/runtime/**/*.tbd",
         "recipe-digest",
         "ckc-llvm-v3-",
         "llvm-project-22.1.8.src.tar.xz",
         "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888",
-        "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
+        "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+        "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830",
+        "Save manifest-addressed LLVM prefix",
+        "Save manifest-addressed Clang oracle prefix",
         "scripts/bootstrap-llvm.sh",
         "scripts/bootstrap-llvm.ps1",
         "cache-hit",
@@ -217,6 +224,33 @@ fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
             "native bootstrap action must contain {required:?}"
         );
     }
+    assert_eq!(
+        action.matches("actions/cache/restore@").count(),
+        2,
+        "release and oracle prefixes must use restore-only cache actions"
+    );
+    assert_eq!(
+        action.matches("actions/cache/save@").count(),
+        2,
+        "release and oracle prefixes must be saved explicitly"
+    );
+    assert!(
+        !action.contains("uses: actions/cache@"),
+        "explicit cache saves must not be paired with a duplicate post-job cache action"
+    );
+    let validation = action
+        .find("- name: Validate cached or built prefix")
+        .expect("native bootstrap action must validate prefixes");
+    let release_save = action
+        .find("- name: Save manifest-addressed LLVM prefix")
+        .expect("native bootstrap action must save the release prefix");
+    let oracle_save = action
+        .find("- name: Save manifest-addressed Clang oracle prefix")
+        .expect("native bootstrap action must save the oracle prefix");
+    assert!(
+        validation < release_save && validation < oracle_save,
+        "prefix caches must be saved only after manifest and object validation"
+    );
     assert_actions_are_commit_pinned(&action, "native bootstrap");
 }
 

@@ -36,6 +36,11 @@
 - Host bootstrap 必须把 Windows CMake 明确绑定到 MSVC，不能接受 GNU `.a` 冒充 MSVC
   `.lib`。Darwin JIT 必须按运行时能力选择 `MAP_JIT` 线程级 W^X 或普通 mapping 的页级
   RW-to-RX/R-NX；两条路径都运行完整 Native suite 和 memory audit，禁止 RWX fallback。
+- Bootstrap cache identity 必须覆盖 LLVM manifest、两个 bootstrap recipe 及全部 runtime
+  source/header/assembly/platform link input；新 prefix 在自身 manifest/object hash 验证后立即
+  保存，不能等待下游测试成功，也不能让 runtime 修订命中旧 object。Darwin executable 必须
+  以 runtime-owned `__ck_start` 作为 process entry；x86-64 规范化 stack 后再 call C-ABI
+  `main`，两个 architecture 都由 platform exit helper 终止。
 - 可选 TypeScript oracle 的 checkout、build 与 `CALCKERNEL_TS_ROOT` 必须同属 quality job；
   Native/release jobs 保持 self-contained，不能继承一个不存在的 oracle 路径。
 - ELF artifact audit 必须分别证明 loader-visible dependency 与 producer provenance：linked

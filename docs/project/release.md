@@ -9,8 +9,11 @@ The `native ckc release` workflow is self-contained in this repository and does
 not depend on an external source checkout. Every action is pinned to a full
 commit. The workflow acquires only the LLVM 22.1.8 source archive named in
 `native/llvm/manifest.toml`, verifies its SHA-256, and restores or builds a
-manifest-addressed host cache. Verification uses a separate pinned Clang oracle
-prefix. Distribution builds use the target-minimal `release` profile, which
+manifest-addressed host cache. Its identity also covers every compiled native
+runtime and platform-link input, and a newly built prefix is saved immediately
+after its manifest and object hashes pass validation rather than waiting for
+downstream tests. Verification uses a separate pinned Clang oracle prefix.
+Distribution builds use the target-minimal `release` profile, which
 excludes Clang, and always run `cargo build --release --features
 native-toolchain --locked`.
 
@@ -25,7 +28,10 @@ extracts explicit XML and compares canonical binary plists, rather than parsing
 version-dependent human-readable `codesign` or `plutil` output. The audit
 requires the runtime-capability-consistent Darwin W^X path: either per-thread
 `MAP_JIT`, or page-level RW/NX-to-RX/R-NX finalization when per-thread support is
-unavailable; an RWX fallback is never accepted. On a tag run,
+unavailable; an RWX fallback is never accepted. Darwin standalone executables
+additionally enter through the runtime-owned
+`__ck_start` glue; x86-64 stack normalization and platform-owned exit are tested
+instead of treating the C-ABI user `main` as a raw process entry. On a tag run,
 verification requires the tag to equal `v` plus the version in `Cargo.toml`
 before any artifact job starts. The workflow then builds these six archives:
 

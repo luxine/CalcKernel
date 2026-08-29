@@ -12,6 +12,9 @@ ARMv8-A 加 ABI-mandated FP/Advanced SIMD。`--cpu native` 仅为 build opt-in�
 
 Release binary 内含所需 host code generator、LLD driver 与 ORC layer，运行时不依赖 LLVM、
 LLD、Clang 或 non-system C++ runtime。`CKC_LLVM_PREFIX` 只用于从源码构建 compiler。
+Bootstrap cache identity 除 pinned LLVM manifest 与 bootstrap recipe 外，还包含全部 native
+runtime source、header、assembly 与 platform link input，cached prefix 因而不能保留过期
+runtime object。
 
 Native 只接受 verified KIR artifact。Pre-LLVM fact audit 检查每个 attribute/metadata
 candidate 的 origin、dominance、contract-instance scope、alias completeness、alignment、
@@ -53,7 +56,10 @@ Dynamic library 只 export 请求的 CK symbol 与 required platform metadata。
 `Linker: LLD 22.1.8` `.comment`，artifact audit 要求该 section 必须为 non-`ALLOC`，并独立
 拒绝 loader-visible dependency、executable undefined symbol 与 unexpected export。Linux executable
 runtime 使用 kernel boundary；Windows 使用 embedded stable process import 且 computation DLL
-无 entry；Darwin 使用 embedded minimal system stub 与 LLD ad-hoc signing。
+无 entry；Darwin 使用 embedded minimal system stub 与 LLD ad-hoc signing。Runtime-owned
+Darwin `__ck_start` 是 Mach-O process entry：x86-64 先规范化 process stack，再调用 LLVM
+C-ABI `main`；两个 Darwin architecture 都经 embedded platform exit helper 终止。User
+`main` body 不会直接成为 raw `LC_MAIN` entry。
 
 `ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
 x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定

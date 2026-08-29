@@ -292,6 +292,30 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
             "native runtime must not use {forbidden}"
         );
     }
+
+    let darwin_runtime = read("native/runtime/darwin/process.c");
+    for required in [
+        "___ck_start:",
+        "andq $-16, %rsp",
+        "callq _main",
+        "callq ___ck_platform_exit",
+        "bl _main",
+        "bl ___ck_platform_exit",
+    ] {
+        assert!(
+            darwin_runtime.contains(required),
+            "Darwin freestanding runtime must provide an ABI-safe process entry containing {required:?}"
+        );
+    }
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    assert!(
+        bridge.contains("arguments.emplace_back(\"___ck_start\")"),
+        "Darwin LLD must enter through the runtime stack-normalizing stub"
+    );
+    assert!(
+        !bridge.contains("arguments.emplace_back(\"_main\")"),
+        "Darwin LLD must not expose the C ABI main body as a raw process entry"
+    );
 }
 
 #[cfg(unix)]

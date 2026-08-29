@@ -27,7 +27,7 @@ runs:
       env:
         CKC_BOOTSTRAP_TARGET: ${{ inputs.target }}
         CKC_BOOTSTRAP_PROFILE: ${{ inputs.profile }}
-        CKC_BOOTSTRAP_RECIPE_DIGEST: ${{ hashFiles('native/llvm/manifest.toml', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1') }}
+        CKC_BOOTSTRAP_RECIPE_DIGEST: ${{ hashFiles('native/llvm/manifest.toml', 'native/runtime/**/*.c', 'native/runtime/**/*.h', 'native/runtime/**/*.S', 'native/runtime/**/*.def', 'native/runtime/**/*.tbd', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1') }}
       run: |
         if ($env:CKC_BOOTSTRAP_PROFILE -notin @("release", "oracle")) {
           throw "unsupported LLVM bootstrap profile: $env:CKC_BOOTSTRAP_PROFILE"
@@ -54,7 +54,7 @@ runs:
 
     - name: Restore manifest-addressed LLVM prefix
       id: cache
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ${{ steps.layout.outputs.prefix }}
         key: ckc-llvm-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-release-${{ steps.layout.outputs.recipe-digest }}
@@ -62,7 +62,7 @@ runs:
     - name: Restore manifest-addressed Clang oracle prefix
       id: oracle-cache
       if: inputs.profile == 'oracle'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ${{ steps.layout.outputs.oracle-prefix }}
         key: ckc-llvm-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-oracle-${{ steps.layout.outputs.recipe-digest }}
@@ -147,3 +147,17 @@ runs:
           if (-not (Test-Path -LiteralPath $clang -PathType Leaf)) { throw "missing pinned Clang oracle" }
           "CKC_CLANG_ORACLE=$clang" >> $env:GITHUB_ENV
         }
+
+    - name: Save manifest-addressed LLVM prefix
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ steps.layout.outputs.prefix }}
+        key: ckc-llvm-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-release-${{ steps.layout.outputs.recipe-digest }}
+
+    - name: Save manifest-addressed Clang oracle prefix
+      if: inputs.profile == 'oracle' && steps.oracle-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ steps.layout.outputs.oracle-prefix }}
+        key: ckc-llvm-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-oracle-${{ steps.layout.outputs.recipe-digest }}

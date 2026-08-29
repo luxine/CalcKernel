@@ -33,6 +33,9 @@
   必须接受且只接受与 runtime capability 一致的安全 tuple：`map-jit=yes / thread-wx-supported=yes / thread-wx=yes`，
   或 `map-jit=no / thread-wx-supported=no / thread-wx=no`；两者共同满足
   relocation=RW/NX、code=RX、data=NX，不得出现 RWX。
+- Cache key 必须随任一 runtime 编译/链接输入变化，且成功 bootstrap 即保存验证过的
+  release/oracle prefix。Darwin host 必须执行经 `__ck_start` 进入的 standalone executable；
+  x86-64 不得把 LLVM C-ABI `main` 直接用作 raw `LC_MAIN` entry。
 - Linux artifact audit 必须同时拒绝 loader-visible dependency/undefined executable symbol/
   unexpected export，并只在 `.comment` 为 non-`ALLOC` 且包含 pinned LLD 22.1.8 marker 时接受
   provenance。Darwin entitlement 必须与仓库唯一 `allow-jit=true` policy canonical 等值。
