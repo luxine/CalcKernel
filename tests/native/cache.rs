@@ -144,6 +144,16 @@ fn cache_key_should_change_for_source_modes_and_optimization_but_not_path() {
 }
 
 #[test]
+fn cache_sanitizer_and_normal_objects_should_never_collide() {
+    let fixture = Fixture::new("fn main() -> i32 { return 0; }");
+    let normal = fixture.run(&[]);
+    assert_eq!(normal.status.code(), Some(0), "{normal:?}");
+    let sanitized = fixture.run(&["--sanitize-contracts"]);
+    assert_eq!(sanitized.status.code(), Some(0), "{sanitized:?}");
+    assert_eq!(cache_entries(&fixture.cache_root()).len(), 2);
+}
+
+#[test]
 fn no_cache_should_bypass_reads_writes_and_corrupt_entries() {
     let fixture = Fixture::new("fn main() -> void { print_i32(42); print_newline(); }");
     assert_successful_program(&fixture.run(&["--no-cache"]));

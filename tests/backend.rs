@@ -5,6 +5,8 @@ mod support;
 mod c;
 #[path = "backend/control_void_slice.rs"]
 mod control_void_slice;
+#[path = "backend/header_contracts.rs"]
+mod header_contracts;
 #[path = "backend/kir_c.rs"]
 mod kir_c;
 #[path = "backend/kir_wasm.rs"]

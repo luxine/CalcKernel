@@ -115,7 +115,7 @@ fn v0_10_verbose_identity_should_report_frozen_native_abis() {
     for required in [
         "ckc 0.10.0",
         "Native ABI: 1",
-        "Runtime ABI: 1",
+        "Runtime ABI: 2",
         "LLVM: 22.1.8",
         "Target:",
         "Code generator:",

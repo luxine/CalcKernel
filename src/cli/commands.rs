@@ -1,11 +1,14 @@
 use std::{io, io::Write};
 
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitWasmOptions, MirArtifactConsumer, MirModule, MirPassBoundsMode,
-    MirPassContext, MirPassDebugFlags, MirPassOverflowMode, MirPassTargetBackend, OverflowMode,
-    SourceFile, build_mir_optimization_pipeline, check, emit_c_header, emit_c_module_with_header,
-    emit_wasm_module_with_options, emit_wat_module_with_options, format_diagnostics, lower_to_mir,
-    prepare_non_executable_artifact, print_mir_module, print_mir_pass_pipeline,
+    BoundsMode, CheckedProgram, EffectTarget, EmitWasmOptions, KirBoundsMode, KirBuildConfig,
+    KirConsumer, KirOptimizationLevel, KirOverflowMode, KirPassManagerResult, KirSanitizerMode,
+    MemoryEffect, MirModule, MirPassBoundsMode, MirPassContext, MirPassDebugFlags,
+    MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile, annotate_unsafe_contracts,
+    build_kir_module, build_mir_optimization_pipeline, check, emit_c_kir_header,
+    emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
+    format_diagnostics, import_contract_facts, lower_to_mir, print_fact_arena, print_kir_module,
+    print_mir_module, print_mir_pass_pipeline, print_proof_arena, run_kir_pass_pipeline,
     run_mir_pass_pipeline,
 };
 
@@ -14,11 +17,10 @@ use super::cache::{self, CacheKeyInput, CacheManifest};
 use super::{args::*, output::*};
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu,
-    NativeHeaderMode, NativeLoweringOptions, NativeObject, NativeOptimizationLevel, NativePlatform,
+    EmitCOptions, EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext,
+    NativeCpu, NativeHeaderMode, NativeObject, NativeOptimizationLevel, NativePlatform,
     NativeTarget, create_native_static_archive, emit_native_header, link_native_dynamic_library,
-    link_native_executable, lower_native_executable_module_with_options,
-    lower_native_llvm_module_with_options,
+    link_native_executable, lower_native_kir_module,
 };
 
 #[cfg(feature = "native-toolchain")]
@@ -35,7 +37,10 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     let target_triple = target.triple().map_err(|error| error.to_string())?;
     let cpu = target.cpu().map_err(|error| error.to_string())?;
     let features = target.features().map_err(|error| error.to_string())?;
-    let codegen_contract = "strict-fp;entry-wrapper-v1;native-cpu;host-only".to_string();
+    let codegen_contract = format!(
+        "kir-v1;strict-fp;entry-wrapper-v1;native-cpu;host-only;sanitizer-contracts={}",
+        u8::from(args.sanitize_contracts)
+    );
     let key_input = CacheKeyInput {
         source: source_bytes.clone(),
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -48,6 +53,8 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
         optimization_level: opt_level,
         overflow_mode: mode_value(overflow_mode),
         bounds_mode: bounds_mode_value(bounds_mode),
+        kir_contract_version: 1,
+        sanitizer_mode: u8::from(args.sanitize_contracts),
         cpu: cpu.clone(),
         features: features.clone(),
         codegen_contract: codegen_contract.clone(),
@@ -74,6 +81,8 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
         optimization_level: opt_level,
         overflow_mode: key_input.overflow_mode,
         bounds_mode: key_input.bounds_mode,
+        kir_contract_version: key_input.kir_contract_version,
+        sanitizer_mode: key_input.sanitizer_mode,
     };
     if let Some(object) = cache::load_object(&target, &key, args.no_cache) {
         return Ok(object);
@@ -84,30 +93,27 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-    let mir = lower_and_optimize(
+    let compiled = compile_kir(
         &checked.checked_program,
+        KirConsumer::NativeExecutable,
+        overflow_mode,
+        bounds_mode,
         opt_level,
-        mir_overflow_mode(overflow_mode),
-        mir_bounds_mode(bounds_mode),
-        MirPassTargetBackend::Llvm,
-        &args.debug,
+        args.sanitize_contracts,
+        args,
     )?;
-    if mir.entry.is_none() {
+    if compiled.semantic_mir.entry.is_none() {
         return Err("ckc run requires fn main() -> void or i32".to_string());
     }
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
-    let module = lower_native_executable_module_with_options(
+    let module = lower_native_kir_module(
         &context,
         &target,
-        &mir,
-        &NativeLoweringOptions {
-            emit: EmitLlvmOptions {
-                source_file_name: None,
-                target_triple: None,
-            },
-            overflow_mode,
-            bounds_mode,
+        &compiled.result,
+        &EmitLlvmOptions {
+            source_file_name: None,
+            target_triple: None,
         },
     )
     .map_err(|error| error.to_string())?
@@ -152,6 +158,7 @@ pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), Stri
     let run_command = match command {
         "check" => run_check,
         "emit-mir" => run_emit_mir,
+        "emit-kir" => run_emit_kir,
         "emit-c" => run_emit_c,
         "emit-wat" => run_emit_wat,
         "emit-wasm" => run_emit_wasm,
@@ -163,6 +170,187 @@ pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), Stri
         _ => return None,
     };
     Some(ParsedArgs::parse(command, args).and_then(|parsed| run_command(&parsed)))
+}
+
+struct CompiledKir {
+    #[cfg(feature = "native-toolchain")]
+    semantic_mir: MirModule,
+    result: KirPassManagerResult,
+}
+
+fn compile_kir(
+    program: &CheckedProgram,
+    consumer: KirConsumer,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+    sanitize_contracts: bool,
+    args: &ParsedArgs,
+) -> Result<CompiledKir, String> {
+    let semantic_mir = lower_to_mir(program).map_err(|error| error.to_string())?;
+    let kir = build_kir_module(
+        &semantic_mir,
+        KirBuildConfig {
+            consumer,
+            overflow_mode: match overflow_mode {
+                OverflowMode::Unchecked => KirOverflowMode::Unchecked,
+                OverflowMode::Checked => KirOverflowMode::Checked,
+            },
+            bounds_mode: match bounds_mode {
+                BoundsMode::Unchecked => KirBoundsMode::Unchecked,
+                BoundsMode::Checked => KirBoundsMode::Checked,
+            },
+            sanitizer_mode: if sanitize_contracts {
+                KirSanitizerMode::Contracts
+            } else {
+                KirSanitizerMode::Disabled
+            },
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let contracts = import_contract_facts(&kir, program, 0).map_err(|error| error.to_string())?;
+    let result = run_kir_pass_pipeline(
+        kir,
+        match opt_level {
+            0 => KirOptimizationLevel::O0,
+            1 => KirOptimizationLevel::O1,
+            2 => KirOptimizationLevel::O2,
+            3 => KirOptimizationLevel::O3,
+            _ => return Err("optimization level is outside 0..=3".to_string()),
+        },
+        Some(&contracts),
+    );
+    if !result.errors.is_empty() {
+        return Err(format!(
+            "KIR verification failed: {}",
+            result.errors.join("; ")
+        ));
+    }
+    emit_kir_inspection(program, &result, args)?;
+    Ok(CompiledKir {
+        #[cfg(feature = "native-toolchain")]
+        semantic_mir,
+        result,
+    })
+}
+
+fn emit_kir_inspection(
+    program: &CheckedProgram,
+    result: &KirPassManagerResult,
+    args: &ParsedArgs,
+) -> Result<(), String> {
+    let mut sections = Vec::new();
+    if args.print_facts {
+        let facts = result.contract_facts.as_ref().map_or_else(
+            || "facts generation=0\n".to_string(),
+            |facts| print_fact_arena(facts.facts()),
+        );
+        sections.push(format!("===== KIR FACTS =====\n{facts}"));
+        sections.push(format!(
+            "===== KIR PROOFS =====\n{}",
+            print_proof_arena(&result.proofs)
+        ));
+    }
+    if args.print_effect_summaries {
+        let mut text = String::from("===== EFFECT SUMMARIES =====\n");
+        for (name, summary) in &program.effect_summaries {
+            let accesses = summary
+                .accesses()
+                .map(|access| {
+                    let target = match access.target {
+                        EffectTarget::Parameter(index) => format!("param{index}"),
+                        EffectTarget::All => "all".to_string(),
+                    };
+                    let effect = match access.effect {
+                        MemoryEffect::None => "none",
+                        MemoryEffect::Read => "read",
+                        MemoryEffect::Write => "write",
+                        MemoryEffect::ReadWrite => "readwrite",
+                    };
+                    format!("{target}:{effect}")
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            text.push_str(&format!(
+                "{name} memory=[{accesses}] runtime={} may-fail={} unsafe-calls={} conservative={}\n",
+                summary.runtime_effect,
+                summary.may_fail,
+                summary.unsafe_calls,
+                summary.conservative
+            ));
+        }
+        sections.push(text);
+    }
+    if args.explain_optimization {
+        let mut text = String::from("===== OPTIMIZATION EXPLANATIONS =====\n");
+        for explanation in &result.explanations {
+            let trusted = result.eliminated_guards.iter().any(|elimination| {
+                elimination.guard_instruction == explanation.guard_instruction
+                    && elimination.used_trusted_contract
+            });
+            let proof = explanation.proof.map_or_else(
+                || "none".to_string(),
+                |proof| format!("proof{}", proof.index()),
+            );
+            text.push_str(&format!(
+                "f{} b{} i{} removed={} proof={proof} trusted-contract={trusted} reason={}\n",
+                explanation.function.index(),
+                explanation.block.index(),
+                explanation.guard_instruction.index(),
+                explanation.removed,
+                explanation.reason
+            ));
+        }
+        sections.push(text);
+    }
+    if sections.is_empty() {
+        return Ok(());
+    }
+    let mut stderr = io::stderr().lock();
+    for section in sections {
+        stderr
+            .write_all(section.as_bytes())
+            .and_then(|_| {
+                if section.ends_with('\n') {
+                    Ok(())
+                } else {
+                    stderr.write_all(b"\n")
+                }
+            })
+            .map_err(|error| format!("failed to write KIR inspection output: {error}"))?;
+    }
+    Ok(())
+}
+
+pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
+    let input = require_input(args, "emit-kir")?;
+    let overflow_mode = parse_overflow_mode(args)?;
+    let bounds_mode = parse_bounds_mode(args)?;
+    let opt_level = parse_opt_level(args)?;
+    let (source, checked) = check_file(input)?;
+    if !checked.diagnostics.is_empty() {
+        return Err(format_diagnostics(&source, &checked.diagnostics));
+    }
+    let compiled = compile_kir(
+        &checked.checked_program,
+        KirConsumer::Inspection,
+        overflow_mode,
+        bounds_mode,
+        opt_level,
+        false,
+        args,
+    )?;
+    write_or_print(
+        args.out.as_deref(),
+        &print_kir_module(
+            compiled
+                .result
+                .artifact
+                .as_ref()
+                .expect("verified KIR artifact"),
+        ),
+        "KIR",
+    )
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -303,27 +491,22 @@ pub(super) fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-    let mir = lower_and_optimize(
+    let compiled = compile_kir(
         &checked.checked_program,
-        opt_level,
-        match overflow_mode {
-            OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
-            OverflowMode::Checked => MirPassOverflowMode::Checked,
-        },
-        mir_bounds_mode(bounds_mode),
-        MirPassTargetBackend::C,
-        &args.debug,
-    )?;
-    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::C)
-        .map_err(|error| error.to_string())?;
-    let header_name = header_include_name(&header)?;
-    let options = EmitCOptions {
+        KirConsumer::C,
         overflow_mode,
         bounds_mode,
         opt_level,
-    };
-    let text = emit_c_module_with_header(&mir, options, &header_name);
-    let header_text = emit_c_header(&mir, options);
+        false,
+        args,
+    )?;
+    let kir = compiled
+        .result
+        .artifact
+        .as_ref()
+        .expect("verified C KIR artifact");
+    let text = emit_c_kir_module_with_contracts(kir, compiled.result.contract_facts.as_ref())?;
+    let header_text = annotate_unsafe_contracts(&emit_c_kir_header(kir), &checked.checked_program);
     write_text_atomic(&header, &header_text)?;
     write_text_atomic(out, &text)?;
     println!(
@@ -354,19 +537,23 @@ pub(super) fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-    let mir = lower_and_optimize(
+    let compiled = compile_kir(
         &checked.checked_program,
+        KirConsumer::WebAssembly,
+        overflow_mode,
+        bounds_mode,
         opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Wasm,
-        &args.debug,
+        false,
+        args,
     )?;
-    let mir = prepare_non_executable_artifact(&mir, MirArtifactConsumer::WebAssembly)
-        .map_err(|error| error.to_string())?;
+    let kir = compiled
+        .result
+        .artifact
+        .as_ref()
+        .expect("verified WebAssembly KIR artifact");
     write_or_print_single_line(
         args.out.as_deref(),
-        &emit_wat_module_with_options(&mir, EmitWasmOptions { opt_level }),
+        &emit_wat_kir_module(kir, EmitWasmOptions { opt_level })?,
         "WAT",
     )
 }
@@ -387,15 +574,23 @@ pub(super) fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-    let mir = lower_and_optimize(
+    let compiled = compile_kir(
         &checked.checked_program,
+        KirConsumer::WebAssembly,
+        overflow_mode,
+        bounds_mode,
         opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Wasm,
-        &args.debug,
+        false,
+        args,
     )?;
-    let bytes = emit_wasm_module_with_options(&mir, EmitWasmOptions { opt_level })?;
+    let bytes = emit_wasm_kir_module(
+        compiled
+            .result
+            .artifact
+            .as_ref()
+            .expect("verified WebAssembly KIR artifact"),
+        EmitWasmOptions { opt_level },
+    )?;
     write_bytes_atomic(out, &bytes)?;
     println!("OK: emitted WASM {out}");
     Ok(())
@@ -411,29 +606,26 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-    let mir = lower_and_optimize(
+    let compiled = compile_kir(
         &checked.checked_program,
+        KirConsumer::NativeLibrary,
+        overflow_mode,
+        bounds_mode,
         opt_level,
-        mir_overflow_mode(overflow_mode),
-        mir_bounds_mode(bounds_mode),
-        MirPassTargetBackend::Llvm,
-        &args.debug,
+        false,
+        args,
     )?;
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let target =
         NativeTarget::host_with_cpu(NativeCpu::Baseline).map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
-    let text = lower_native_llvm_module_with_options(
+    let text = lower_native_kir_module(
         &context,
         &target,
-        &mir,
-        &NativeLoweringOptions {
-            emit: EmitLlvmOptions {
-                source_file_name: Some(input.to_string()),
-                target_triple: args.target.clone(),
-            },
-            overflow_mode,
-            bounds_mode,
+        &compiled.result,
+        &EmitLlvmOptions {
+            source_file_name: Some(input.to_string()),
+            target_triple: args.target.clone(),
         },
     )
     .map_err(|error| error.to_string())?
@@ -460,26 +652,26 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
-    let mir = lower_and_optimize(
-        &checked.checked_program,
-        opt_level,
-        mir_overflow_mode(overflow_mode),
-        mir_bounds_mode(bounds_mode),
-        MirPassTargetBackend::Llvm,
-        &args.debug,
-    )?;
-    let mir = if kind == ArtifactKind::Executable {
-        if mir.entry.is_none() {
-            return Err(
-                "standalone native executable requires fn main() -> void or i32; no output was created"
-                    .to_string(),
-            );
-        }
-        mir
+    let consumer = if kind == ArtifactKind::Executable {
+        KirConsumer::NativeExecutable
     } else {
-        prepare_non_executable_artifact(&mir, MirArtifactConsumer::NativeLibrary)
-            .map_err(|error| error.to_string())?
+        KirConsumer::NativeLibrary
     };
+    let compiled = compile_kir(
+        &checked.checked_program,
+        consumer,
+        overflow_mode,
+        bounds_mode,
+        opt_level,
+        args.sanitize_contracts,
+        args,
+    )?;
+    if kind == ArtifactKind::Executable && compiled.semantic_mir.entry.is_none() {
+        return Err(
+            "standalone native executable requires fn main() -> void or i32; no output was created"
+                .to_string(),
+        );
+    }
     let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
         CpuPolicy::Baseline => NativeCpu::Baseline,
         CpuPolicy::Native => NativeCpu::Native,
@@ -487,19 +679,15 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
-    let lowering_options = NativeLoweringOptions {
-        emit: EmitLlvmOptions {
+    let lowered = lower_native_kir_module(
+        &context,
+        &target,
+        &compiled.result,
+        &EmitLlvmOptions {
             source_file_name: Some(input.to_string()),
             target_triple: args.target.clone(),
         },
-        overflow_mode,
-        bounds_mode,
-    };
-    let lowered = if kind == ArtifactKind::Executable {
-        lower_native_executable_module_with_options(&context, &target, &mir, &lowering_options)
-    } else {
-        lower_native_llvm_module_with_options(&context, &target, &mir, &lowering_options)
-    };
+    );
     let optimized = lowered
         .map_err(|error| error.to_string())?
         .verify()
@@ -519,21 +707,28 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     };
     let paths = NativeArtifactPaths::new(NativePlatform::host(), artifact_kind, &absolutize(out));
     let header = (!matches!(kind, ArtifactKind::Executable)).then(|| {
-        emit_native_header(
-            &mir,
-            EmitCOptions {
-                overflow_mode,
-                bounds_mode,
-                opt_level,
-            },
-            if kind == ArtifactKind::Dynamic {
-                NativeHeaderMode::Dynamic
-            } else {
-                NativeHeaderMode::StaticOrObject
-            },
+        annotate_unsafe_contracts(
+            &emit_native_header(
+                &compiled.semantic_mir,
+                EmitCOptions {
+                    overflow_mode,
+                    bounds_mode,
+                    opt_level,
+                },
+                if kind == ArtifactKind::Dynamic {
+                    NativeHeaderMode::Dynamic
+                } else {
+                    NativeHeaderMode::StaticOrObject
+                },
+            ),
+            &checked.checked_program,
         )
     });
-    let exports = mir
+    let exports = compiled
+        .result
+        .artifact
+        .as_ref()
+        .expect("verified Native KIR artifact")
         .functions
         .iter()
         .filter(|function| function.exported)

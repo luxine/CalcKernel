@@ -2,7 +2,7 @@
 pub const NATIVE_ABI_VERSION: u32 = 1;
 
 /// Version of the no-heap executable runtime ABI contract.
-pub const RUNTIME_ABI_VERSION: u32 = 1;
+pub const RUNTIME_ABI_VERSION: u32 = 2;
 
 /// One notice embedded into every `ckc` binary.
 #[derive(Debug, Clone, Copy)]

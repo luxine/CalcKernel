@@ -15,6 +15,7 @@ static const uint8_t CKR0004[] =
 static const uint8_t CKR0005[] = "CKR0005: standard output write failed\n";
 static const uint8_t CKR0006[] =
     "CKR0006: native child terminated abnormally\n";
+static const uint8_t CKR0007[] = "CKR0007: unsafe contract violation\n";
 
 static CK_RuntimeFailure failure_for_status(int32_t status) {
   switch (status) {
@@ -28,6 +29,8 @@ static CK_RuntimeFailure failure_for_status(int32_t status) {
     return (CK_RuntimeFailure){CKR0004, sizeof(CKR0004) - 1u, 243};
   case 5:
     return (CK_RuntimeFailure){CKR0005, sizeof(CKR0005) - 1u, 244};
+  case 7:
+    return (CK_RuntimeFailure){CKR0007, sizeof(CKR0007) - 1u, 246};
   default:
     return (CK_RuntimeFailure){CKR0006, sizeof(CKR0006) - 1u, 245};
   }
@@ -59,3 +62,5 @@ void __ck_runtime_fail(int32_t status) {
   (void)write_all(2, failure.message, failure.length);
   __ck_platform_exit(failure.exit_status);
 }
+
+#include "contract.c"

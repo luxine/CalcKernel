@@ -114,6 +114,7 @@ fn checked_runtime_failures_should_use_exact_messages_and_reserved_statuses() {
         "CKR0004: slice index or sub-slice out of bounds\\n",
         "CKR0005: standard output write failed\\n",
         "CKR0006: native child terminated abnormally\\n",
+        "CKR0007: unsafe contract violation\\n",
     ] {
         assert!(runtime_source.contains(message), "missing {message}");
     }
@@ -123,6 +124,7 @@ fn checked_runtime_failures_should_use_exact_messages_and_reserved_statuses() {
             "missing exit status {exit_status}"
         );
     }
+    assert!(runtime_source.contains(", 246}"), "missing exit status 246");
 }
 
 #[cfg(unix)]

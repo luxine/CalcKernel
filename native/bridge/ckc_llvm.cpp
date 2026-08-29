@@ -1999,6 +1999,7 @@ extern "C" int32_t ckc_llvm_builder_cast(
         case CKC_LLVM_SITOFP: result = builder->value->CreateSIToFP(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
         case CKC_LLVM_UITOFP: result = builder->value->CreateUIToFP(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
         case CKC_LLVM_INTTOPTR: result = builder->value->CreateIntToPtr(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
+        case CKC_LLVM_PTRTOINT: result = builder->value->CreatePtrToInt(llvm_value(value), llvm_type(target_type), borrowed_string(name)); break;
         default: return invalid(error, "unknown LLVM cast opcode");
         }
         *out = bridge_value(result);

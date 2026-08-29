@@ -77,7 +77,7 @@ fn cli_should_report_pinned_native_toolchain_metadata() {
     for needle in [
         "LLVM: 22.1.8",
         "Native ABI: 1",
-        "Runtime ABI: 1",
+        "Runtime ABI: 2",
         "LLVM manifest SHA-256:",
         "ORC object layer:",
     ] {

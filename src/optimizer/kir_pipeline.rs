@@ -144,11 +144,16 @@ pub fn run_kir_pass_pipeline(
     }
 
     if matches!(level, KirOptimizationLevel::O2 | KirOptimizationLevel::O3) {
-        result.stats.inlined_calls = kir_passes::run_effect_aware_inline(
-            &mut module,
-            &mut result.contract_facts,
-            &result.eliminated_guards,
-        );
+        result.stats.inlined_calls =
+            if module.config.sanitizer_mode == crate::KirSanitizerMode::Contracts {
+                0
+            } else {
+                kir_passes::run_effect_aware_inline(
+                    &mut module,
+                    &mut result.contract_facts,
+                    &result.eliminated_guards,
+                )
+            };
         if !record_current_pass(
             &module,
             "effect-aware-inline",

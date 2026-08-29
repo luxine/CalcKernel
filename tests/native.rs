@@ -8,6 +8,8 @@ mod artifacts;
 mod bridge;
 #[path = "native/cache.rs"]
 mod cache;
+#[path = "native/contract_sanitizer.rs"]
+mod contract_sanitizer;
 #[path = "native/differential.rs"]
 mod differential;
 #[path = "native/executable.rs"]

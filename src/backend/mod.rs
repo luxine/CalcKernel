@@ -23,7 +23,7 @@ pub use c::{
     BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_kir_header, emit_c_kir_module,
     emit_c_kir_module_with_contracts, emit_c_module, emit_c_module_with_header, try_emit_c_module,
 };
-pub use header::{NativeHeaderMode, emit_native_header};
+pub use header::{NativeHeaderMode, annotate_unsafe_contracts, emit_native_header};
 #[cfg(feature = "native-toolchain")]
 pub use llvm::{
     AuditedNativeModule, LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu,

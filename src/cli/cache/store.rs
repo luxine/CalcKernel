@@ -959,6 +959,8 @@ mod tests {
             optimization_level: 3,
             overflow_mode: 0,
             bounds_mode: 0,
+            kir_contract_version: 1,
+            sanitizer_mode: 0,
         }
     }
 

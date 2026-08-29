@@ -57,6 +57,7 @@ pub(super) enum BridgeCastOp {
     Sitofp = 3,
     Uitofp = 4,
     IntToPtr = 5,
+    PtrToInt = 6,
 }
 
 #[derive(Debug, Clone, Copy)]

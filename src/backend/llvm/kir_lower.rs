@@ -10,7 +10,7 @@ use super::{
     entry::add_entry_wrapper,
     error::NativeError,
     fact_audit::{NativeFactProperty, NativeFactSource, NativeStrengtheningKind},
-    ffi::{BridgeCastOp, BridgeCompareOp, BridgeMemoryEffects, BridgeOverflowOp},
+    ffi::{BridgeBinaryOp, BridgeCastOp, BridgeCompareOp, BridgeMemoryEffects, BridgeOverflowOp},
     layout::LlvmStructLayout,
     lower::{TypeRegistry, binary_op, compare_op, lowering_error, runtime_signature, unary_op},
     module::NativeModule,
@@ -58,11 +58,36 @@ pub fn lower_native_kir_module<'context>(
         target,
         &llvm_source_file_name(options.source_file_name.as_deref()),
     )?;
-    let wrap_proofs = collect_wrap_proofs(kir, result);
-    let contract_attributes = collect_contract_attributes(kir, result);
-    let contract_assumes = collect_contract_assumes(kir, result);
-    let contract_memory_effects = collect_contract_memory_effects(kir, result);
-    let scoped_alias_facts = collect_scoped_alias_facts(kir, result);
+    let sanitized = kir.config.sanitizer_mode == KirSanitizerMode::Contracts;
+    // Entry contracts are not valid LLVM promises until the sanitizer has
+    // dynamically established them. Attribute/assume/metadata strengthening
+    // would otherwise make the check itself undefined and removable.
+    let wrap_proofs = if sanitized {
+        BTreeMap::new()
+    } else {
+        collect_wrap_proofs(kir, result)
+    };
+    let contract_attributes = if sanitized {
+        BTreeMap::new()
+    } else {
+        collect_contract_attributes(kir, result)
+    };
+    let contract_assumes = if sanitized {
+        BTreeMap::new()
+    } else {
+        collect_contract_assumes(kir, result)
+    };
+    let contract_memory_effects = if sanitized {
+        BTreeMap::new()
+    } else {
+        collect_contract_memory_effects(kir, result)
+    };
+    let scoped_alias_facts = if sanitized {
+        BTreeMap::new()
+    } else {
+        collect_scoped_alias_facts(kir, result)
+    };
+    let contract_checks = collect_contract_checks(kir, result);
     for ((function, instruction), (proof, kind)) in &wrap_proofs {
         let function_name = kir
             .functions
@@ -124,6 +149,7 @@ pub fn lower_native_kir_module<'context>(
         wrap_proofs: &wrap_proofs,
         contract_assumes: &contract_assumes,
         scoped_alias_facts: &scoped_alias_facts,
+        contract_checks: &contract_checks,
     };
     {
         let types = TypeRegistry::new(context, &shape)?;
@@ -187,6 +213,7 @@ pub fn lower_native_kir_module<'context>(
             types: &types,
             functions: &functions,
             layout: &layout,
+            structs: &shape.structs,
             status_abi: status,
             facts: &lowering_facts,
         };
@@ -205,17 +232,46 @@ struct NativeKirFacts<'a> {
     wrap_proofs: &'a WrapProofMap,
     contract_assumes: &'a BTreeMap<FunctionId, Vec<ContractAssume>>,
     scoped_alias_facts: &'a ScopedAliasFactMap,
+    contract_checks: &'a ContractCheckMap,
 }
 
 struct KirLoweringEnvironment<'module, 'context, 'a> {
     types: &'a TypeRegistry<'context>,
     functions: &'a HashMap<String, NativeFunction<'module>>,
     layout: &'a LlvmStructLayout,
+    structs: &'a [MirStruct],
     status_abi: bool,
     facts: &'a NativeKirFacts<'a>,
 }
 
 type ScopedAliasFactMap = BTreeMap<FunctionId, Vec<(FactId, ValueId, ValueId)>>;
+type ContractCheckMap = BTreeMap<FunctionId, Vec<(FactId, ContractFactPredicate)>>;
+
+fn collect_contract_checks(module: &KirModule, result: &KirPassManagerResult) -> ContractCheckMap {
+    if module.config.sanitizer_mode != KirSanitizerMode::Contracts {
+        return BTreeMap::new();
+    }
+    let Some(contracts) = result.contract_facts.as_ref() else {
+        return BTreeMap::new();
+    };
+    let mut checks: ContractCheckMap = BTreeMap::new();
+    for fact in contracts.facts().facts() {
+        let FactScope::FunctionEntry(function) = fact.scope else {
+            continue;
+        };
+        let FactPredicate::Contract(predicate) = &fact.predicate else {
+            continue;
+        };
+        if matches!(predicate, ContractFactPredicate::EffectCeiling { .. }) {
+            continue;
+        }
+        checks
+            .entry(function)
+            .or_default()
+            .push((fact.id, predicate.clone()));
+    }
+    checks
+}
 
 fn collect_scoped_alias_facts(
     module: &KirModule,
@@ -675,6 +731,7 @@ fn collect_wrap_proofs(module: &KirModule, result: &KirPassManagerResult) -> Wra
 fn status_abi(module: &KirModule) -> bool {
     module.config.overflow_mode == KirOverflowMode::Checked
         || module.config.bounds_mode == KirBoundsMode::Checked
+        || module.config.sanitizer_mode == KirSanitizerMode::Contracts
 }
 
 fn mir_shape(module: &KirModule) -> MirModule {
@@ -740,10 +797,12 @@ struct Storage<'module> {
 }
 
 struct KirFunctionLowerer<'module, 'context, 'a> {
+    context: &'context NativeContext,
     builder: NativeBuilder<'module, 'context>,
     types: &'a TypeRegistry<'context>,
     functions: &'a HashMap<String, NativeFunction<'module>>,
     layout: &'a LlvmStructLayout,
+    structs: &'a [MirStruct],
     handle: NativeFunction<'module>,
     function: &'a KirFunction,
     status_abi: bool,
@@ -774,10 +833,12 @@ fn lower_function<'module, 'context>(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let mut lowerer = KirFunctionLowerer {
+        context,
         builder: NativeBuilder::new(context, module)?,
         types: environment.types,
         functions: environment.functions,
         layout: environment.layout,
+        structs: environment.structs,
         handle,
         function,
         status_abi: environment.status_abi,
@@ -800,6 +861,7 @@ fn lower_function<'module, 'context>(
     lowerer.builder.position(entry)?;
     lowerer.allocate_values()?;
     lowerer.store_parameters()?;
+    lowerer.emit_contract_checks()?;
     lowerer.emit_contract_assumes()?;
     let Some(first) = function.blocks.first() else {
         return if lowerer.status_abi {
@@ -886,6 +948,405 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             self.guard_status(failed, self.status(3)?)?;
         }
         Ok(())
+    }
+
+    fn emit_contract_checks(&mut self) -> Result<(), NativeError> {
+        let checks = self
+            .facts
+            .contract_checks
+            .get(&self.function.id)
+            .cloned()
+            .unwrap_or_default();
+        for (fact, predicate) in checks {
+            let failed = self.contract_predicate_failed(&predicate, fact)?;
+            self.guard_status(failed, self.status(7)?)?;
+        }
+        Ok(())
+    }
+
+    fn contract_predicate_failed(
+        &mut self,
+        predicate: &ContractFactPredicate,
+        fact: FactId,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        match predicate {
+            ContractFactPredicate::Comparison {
+                operator,
+                left,
+                right,
+            } => {
+                let bits = contract_integer_width(&[left, right], None);
+                let left = self.contract_affine_value(left, bits, fact)?;
+                let right = self.contract_affine_value(right, bits, fact)?;
+                let name = self.name(&format!("contract.sanitize.fact{}.holds", fact.index()));
+                let holds =
+                    self.builder
+                        .compare(contract_compare_op(operator)?, left, right, &name)?;
+                self.invert_contract_condition(holds, fact)
+            }
+            ContractFactPredicate::MultipleOf { value, modulus } => {
+                let bits = contract_integer_width(&[value], Some(modulus));
+                let type_node = NativeType::int(self.context, bits)?;
+                let value = self.contract_affine_value(value, bits, fact)?;
+                let modulus = self.builder.const_int(type_node, &modulus.to_string())?;
+                let name = self.name(&format!("contract.sanitize.fact{}.remainder", fact.index()));
+                let remainder = self
+                    .builder
+                    .binary(BridgeBinaryOp::SRem, value, modulus, &name)?;
+                let zero = self.builder.const_int(type_node, "0")?;
+                let name = self.name(&format!("contract.sanitize.fact{}.failed", fact.index()));
+                self.builder
+                    .compare(BridgeCompareOp::IcmpNe, remainder, zero, &name)
+            }
+            ContractFactPredicate::NoAlias { left, right } => {
+                self.contract_noalias_failed(*left, *right, fact)
+            }
+            ContractFactPredicate::Aligned { pointer, alignment } => {
+                let pointer = match pointer {
+                    ContractFactPointer::Value(value) => self.load(*value)?,
+                    ContractFactPointer::SliceData(value) => {
+                        let slice = self.load(*value)?;
+                        let name = self.name(&format!(
+                            "contract.sanitize.fact{}.aligned.data",
+                            fact.index()
+                        ));
+                        self.builder.extract_value(slice, 0, &name)?
+                    }
+                };
+                let name = self.name(&format!(
+                    "contract.sanitize.fact{}.aligned.address",
+                    fact.index()
+                ));
+                let address =
+                    self.builder
+                        .cast(BridgeCastOp::PtrToInt, pointer, self.types.i64, &name)?;
+                let divisor = self
+                    .builder
+                    .const_int(self.types.i64, &alignment.to_string())?;
+                let name = self.name(&format!(
+                    "contract.sanitize.fact{}.aligned.remainder",
+                    fact.index()
+                ));
+                let remainder =
+                    self.builder
+                        .binary(BridgeBinaryOp::URem, address, divisor, &name)?;
+                let zero = self.builder.const_int(self.types.i64, "0")?;
+                let name = self.name(&format!(
+                    "contract.sanitize.fact{}.aligned.failed",
+                    fact.index()
+                ));
+                self.builder
+                    .compare(BridgeCompareOp::IcmpNe, remainder, zero, &name)
+            }
+            ContractFactPredicate::EffectCeiling { .. } => Err(lowering_error(
+                "effect ceilings are compile-time-only contract predicates",
+            )),
+        }
+    }
+
+    fn contract_affine_value(
+        &mut self,
+        expression: &ContractFactAffineExpression,
+        bits: u32,
+        fact: FactId,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let wide = NativeType::int(self.context, bits)?;
+        let mut value = self
+            .builder
+            .const_int(wide, &expression.constant.to_string())?;
+        for term in &expression.terms {
+            let operand = match term.term {
+                ContractFactAffineTerm::Value(value) => {
+                    let operand = self.load(value)?;
+                    let op = match self.type_of(value)? {
+                        MirType::Primitive(
+                            MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::I64,
+                        ) => BridgeCastOp::Sext,
+                        MirType::Primitive(
+                            MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64,
+                        ) => BridgeCastOp::Zext,
+                        _ => {
+                            return Err(lowering_error(
+                                "contract affine operand is not an integer value",
+                            ));
+                        }
+                    };
+                    let name =
+                        self.name(&format!("contract.sanitize.fact{}.operand", fact.index()));
+                    self.builder.cast(op, operand, wide, &name)?
+                }
+                ContractFactAffineTerm::SliceLength(value) => {
+                    let slice = self.load(value)?;
+                    let name =
+                        self.name(&format!("contract.sanitize.fact{}.slice.len", fact.index()));
+                    let len = self.builder.extract_value(slice, 1, &name)?;
+                    let name = self.name(&format!(
+                        "contract.sanitize.fact{}.slice.len.wide",
+                        fact.index()
+                    ));
+                    self.builder.cast(BridgeCastOp::Zext, len, wide, &name)?
+                }
+            };
+            let coefficient = self
+                .builder
+                .const_int(wide, &term.coefficient.to_string())?;
+            let name = self.name(&format!("contract.sanitize.fact{}.product", fact.index()));
+            let product = self
+                .builder
+                .binary(BridgeBinaryOp::Mul, coefficient, operand, &name)?;
+            let name = self.name(&format!("contract.sanitize.fact{}.sum", fact.index()));
+            value = self
+                .builder
+                .binary(BridgeBinaryOp::Add, value, product, &name)?;
+        }
+        Ok(value)
+    }
+
+    fn contract_noalias_failed(
+        &mut self,
+        left: ValueId,
+        right: ValueId,
+        fact: FactId,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let left_element = match self.type_of(left)? {
+            MirType::Slice(element) => element.as_ref(),
+            _ => {
+                return Err(lowering_error(
+                    "contract noalias left operand is not a slice",
+                ));
+            }
+        };
+        let right_element = match self.type_of(right)? {
+            MirType::Slice(element) => element.as_ref(),
+            _ => {
+                return Err(lowering_error(
+                    "contract noalias right operand is not a slice",
+                ));
+            }
+        };
+        let left_size = mir_type_layout(left_element, self.structs)?.0;
+        let right_size = mir_type_layout(right_element, self.structs)?.0;
+        let left_slice = self.load(left)?;
+        let right_slice = self.load(right)?;
+        let left_data_name =
+            self.name(&format!("contract.sanitize.fact{}.left.data", fact.index()));
+        let left_data = self.builder.extract_value(left_slice, 0, &left_data_name)?;
+        let left_len_name = self.name(&format!("contract.sanitize.fact{}.left.len", fact.index()));
+        let left_len = self.builder.extract_value(left_slice, 1, &left_len_name)?;
+        let right_data_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.data",
+            fact.index()
+        ));
+        let right_data = self
+            .builder
+            .extract_value(right_slice, 0, &right_data_name)?;
+        let right_len_name =
+            self.name(&format!("contract.sanitize.fact{}.right.len", fact.index()));
+        let right_len = self
+            .builder
+            .extract_value(right_slice, 1, &right_len_name)?;
+
+        let address_width = NativeType::int(self.context, 192)?;
+        let left_address_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.address",
+            fact.index()
+        ));
+        let left_address = self.builder.cast(
+            BridgeCastOp::PtrToInt,
+            left_data,
+            self.types.i64,
+            &left_address_name,
+        )?;
+        let left_address_wide_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.address.wide",
+            fact.index()
+        ));
+        let left_address = self.builder.cast(
+            BridgeCastOp::Zext,
+            left_address,
+            address_width,
+            &left_address_wide_name,
+        )?;
+        let right_address_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.address",
+            fact.index()
+        ));
+        let right_address = self.builder.cast(
+            BridgeCastOp::PtrToInt,
+            right_data,
+            self.types.i64,
+            &right_address_name,
+        )?;
+        let right_address_wide_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.address.wide",
+            fact.index()
+        ));
+        let right_address = self.builder.cast(
+            BridgeCastOp::Zext,
+            right_address,
+            address_width,
+            &right_address_wide_name,
+        )?;
+        let left_len_wide_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.len.wide",
+            fact.index()
+        ));
+        let left_len_wide = self.builder.cast(
+            BridgeCastOp::Zext,
+            left_len,
+            address_width,
+            &left_len_wide_name,
+        )?;
+        let right_len_wide_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.len.wide",
+            fact.index()
+        ));
+        let right_len_wide = self.builder.cast(
+            BridgeCastOp::Zext,
+            right_len,
+            address_width,
+            &right_len_wide_name,
+        )?;
+        let left_size = self
+            .builder
+            .const_int(address_width, &left_size.to_string())?;
+        let right_size = self
+            .builder
+            .const_int(address_width, &right_size.to_string())?;
+        let left_bytes_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.bytes",
+            fact.index()
+        ));
+        let left_bytes = self.builder.binary(
+            BridgeBinaryOp::Mul,
+            left_len_wide,
+            left_size,
+            &left_bytes_name,
+        )?;
+        let right_bytes_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.bytes",
+            fact.index()
+        ));
+        let right_bytes = self.builder.binary(
+            BridgeBinaryOp::Mul,
+            right_len_wide,
+            right_size,
+            &right_bytes_name,
+        )?;
+        let left_end_name = self.name(&format!("contract.sanitize.fact{}.left.end", fact.index()));
+        let left_end = self.builder.binary(
+            BridgeBinaryOp::Add,
+            left_address,
+            left_bytes,
+            &left_end_name,
+        )?;
+        let right_end_name =
+            self.name(&format!("contract.sanitize.fact{}.right.end", fact.index()));
+        let right_end = self.builder.binary(
+            BridgeBinaryOp::Add,
+            right_address,
+            right_bytes,
+            &right_end_name,
+        )?;
+        let address_max = self
+            .builder
+            .const_int(address_width, "18446744073709551615")?;
+        let left_invalid_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.interval.invalid",
+            fact.index()
+        ));
+        let left_invalid = self.builder.compare(
+            BridgeCompareOp::IcmpUgt,
+            left_end,
+            address_max,
+            &left_invalid_name,
+        )?;
+        let right_invalid_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.interval.invalid",
+            fact.index()
+        ));
+        let right_invalid = self.builder.compare(
+            BridgeCompareOp::IcmpUgt,
+            right_end,
+            address_max,
+            &right_invalid_name,
+        )?;
+        let left_before_right_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.before.right",
+            fact.index()
+        ));
+        let left_before_right = self.builder.compare(
+            BridgeCompareOp::IcmpUle,
+            left_end,
+            right_address,
+            &left_before_right_name,
+        )?;
+        let right_before_left_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.before.left",
+            fact.index()
+        ));
+        let right_before_left = self.builder.compare(
+            BridgeCompareOp::IcmpUle,
+            right_end,
+            left_address,
+            &right_before_left_name,
+        )?;
+        let separated = self.contract_bool_or(left_before_right, right_before_left, fact)?;
+        let overlap = self.invert_contract_condition(separated, fact)?;
+        let zero = self.builder.const_int(self.types.i32, "0")?;
+        let left_empty_name = self.name(&format!(
+            "contract.sanitize.fact{}.left.empty",
+            fact.index()
+        ));
+        let left_empty =
+            self.builder
+                .compare(BridgeCompareOp::IcmpEq, left_len, zero, &left_empty_name)?;
+        let right_empty_name = self.name(&format!(
+            "contract.sanitize.fact{}.right.empty",
+            fact.index()
+        ));
+        let right_empty =
+            self.builder
+                .compare(BridgeCompareOp::IcmpEq, right_len, zero, &right_empty_name)?;
+        let left_nonempty = self.invert_contract_condition(left_empty, fact)?;
+        let right_nonempty = self.invert_contract_condition(right_empty, fact)?;
+        let both_nonempty = self.contract_bool_and(left_nonempty, right_nonempty, fact)?;
+        let overlapping_nonempty = self.contract_bool_and(both_nonempty, overlap, fact)?;
+        let invalid = self.contract_bool_or(left_invalid, right_invalid, fact)?;
+        self.contract_bool_or(invalid, overlapping_nonempty, fact)
+    }
+
+    fn invert_contract_condition(
+        &mut self,
+        condition: NativeValue<'module>,
+        fact: FactId,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let false_value = self.builder.const_bool(false)?;
+        let name = self.name(&format!("contract.sanitize.fact{}.inverted", fact.index()));
+        self.builder
+            .compare(BridgeCompareOp::IcmpEq, condition, false_value, &name)
+    }
+
+    fn contract_bool_or(
+        &mut self,
+        left: NativeValue<'module>,
+        right: NativeValue<'module>,
+        fact: FactId,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let true_value = self.builder.const_bool(true)?;
+        let name = self.name(&format!("contract.sanitize.fact{}.or", fact.index()));
+        self.builder.select(left, true_value, right, &name)
+    }
+
+    fn contract_bool_and(
+        &mut self,
+        left: NativeValue<'module>,
+        right: NativeValue<'module>,
+        fact: FactId,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let false_value = self.builder.const_bool(false)?;
+        let name = self.name(&format!("contract.sanitize.fact{}.and", fact.index()));
+        self.builder.select(left, right, false_value, &name)
     }
 
     fn emit_contract_assumes(&mut self) -> Result<(), NativeError> {
@@ -1608,6 +2069,115 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                     .map(|result| &result.type_node)
             })
             .ok_or_else(|| lowering_error(format!("unknown KIR value v{}", value.index())))
+    }
+}
+
+fn contract_integer_width(
+    expressions: &[&ContractFactAffineExpression],
+    modulus: Option<&num_bigint::BigInt>,
+) -> u32 {
+    let mut decimal_digits = modulus
+        .map(ToString::to_string)
+        .map_or(1, |value| value.trim_start_matches('-').len());
+    let mut term_count = 0usize;
+    for expression in expressions {
+        decimal_digits = decimal_digits.max(
+            expression
+                .constant
+                .to_string()
+                .trim_start_matches('-')
+                .len(),
+        );
+        term_count += expression.terms.len();
+        for term in &expression.terms {
+            decimal_digits =
+                decimal_digits.max(term.coefficient.to_string().trim_start_matches('-').len());
+        }
+    }
+    let mut sum_bits = 0u32;
+    let mut terms = term_count.max(1) - 1;
+    while terms != 0 {
+        sum_bits += 1;
+        terms >>= 1;
+    }
+    let decimal_bits = u32::try_from(decimal_digits)
+        .unwrap_or(u32::MAX / 4)
+        .saturating_mul(4);
+    let required = decimal_bits
+        .saturating_add(64)
+        .saturating_add(sum_bits)
+        .saturating_add(4)
+        .max(128);
+    required.saturating_add(63) / 64 * 64
+}
+
+fn contract_compare_op(operator: &str) -> Result<BridgeCompareOp, NativeError> {
+    match operator {
+        "==" => Ok(BridgeCompareOp::IcmpEq),
+        "!=" => Ok(BridgeCompareOp::IcmpNe),
+        "<" => Ok(BridgeCompareOp::IcmpSlt),
+        "<=" => Ok(BridgeCompareOp::IcmpSle),
+        ">" => Ok(BridgeCompareOp::IcmpSgt),
+        ">=" => Ok(BridgeCompareOp::IcmpSge),
+        _ => Err(lowering_error(format!(
+            "unknown contract comparison operator '{operator}'"
+        ))),
+    }
+}
+
+fn mir_type_layout(type_node: &MirType, structs: &[MirStruct]) -> Result<(u64, u64), NativeError> {
+    mir_type_layout_inner(type_node, structs, &mut HashSet::new())
+}
+
+fn mir_type_layout_inner(
+    type_node: &MirType,
+    structs: &[MirStruct],
+    active: &mut HashSet<String>,
+) -> Result<(u64, u64), NativeError> {
+    match type_node {
+        MirType::Primitive(MirPrimitiveTypeName::Bool) => Ok((1, 1)),
+        MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32) => Ok((4, 4)),
+        MirType::Primitive(
+            MirPrimitiveTypeName::I64 | MirPrimitiveTypeName::U64 | MirPrimitiveTypeName::F64,
+        )
+        | MirType::Pointer(_) => Ok((8, 8)),
+        MirType::Slice(_) => Ok((16, 8)),
+        MirType::Struct(name) => {
+            if !active.insert(name.clone()) {
+                return Err(lowering_error(format!(
+                    "recursive struct '{name}' has no finite contract byte range"
+                )));
+            }
+            let structure = structs
+                .iter()
+                .find(|structure| structure.name == *name)
+                .ok_or_else(|| lowering_error(format!("unknown KIR struct '{name}'")))?;
+            let mut size = 0u64;
+            let mut alignment = 1u64;
+            for field in &structure.fields {
+                let (field_size, field_alignment) =
+                    mir_type_layout_inner(&field.type_node, structs, active)?;
+                size = align_contract_size(size, field_alignment)?;
+                size = size.checked_add(field_size).ok_or_else(|| {
+                    lowering_error(format!("struct '{name}' is too large for contract layout"))
+                })?;
+                alignment = alignment.max(field_alignment);
+            }
+            active.remove(name);
+            Ok((align_contract_size(size, alignment)?, alignment))
+        }
+        MirType::Void => Err(lowering_error("void has no contract element layout")),
+    }
+}
+
+fn align_contract_size(value: u64, alignment: u64) -> Result<u64, NativeError> {
+    let remainder = value % alignment;
+    if remainder == 0 {
+        Ok(value)
+    } else {
+        value
+            .checked_add(alignment - remainder)
+            .ok_or_else(|| lowering_error("contract element layout overflows u64"))
     }
 }
 

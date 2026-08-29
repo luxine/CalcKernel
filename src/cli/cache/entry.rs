@@ -2,7 +2,7 @@ use sha2::{Digest, Sha256};
 
 const ENTRY_MAGIC: &[u8; 8] = b"CKCOBJ01";
 const MANIFEST_MAGIC: &[u8] = b"CKC-MANIFEST\0";
-const MANIFEST_SCHEMA: u32 = 1;
+const MANIFEST_SCHEMA: u32 = 2;
 const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 
@@ -21,6 +21,8 @@ pub(in crate::cli) struct CacheManifest {
     pub(in crate::cli) optimization_level: u8,
     pub(in crate::cli) overflow_mode: u8,
     pub(in crate::cli) bounds_mode: u8,
+    pub(in crate::cli) kir_contract_version: u32,
+    pub(in crate::cli) sanitizer_mode: u8,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -128,6 +130,8 @@ fn encode_manifest(manifest: &CacheManifest) -> Result<Vec<u8>, &'static str> {
     output.push(manifest.optimization_level);
     output.push(manifest.overflow_mode);
     output.push(manifest.bounds_mode);
+    output.extend_from_slice(&manifest.kir_contract_version.to_be_bytes());
+    output.push(manifest.sanitizer_mode);
     if output.len() > MAX_MANIFEST_BYTES {
         return Err("cache manifest exceeds size limit");
     }
@@ -163,6 +167,8 @@ fn decode_manifest(bytes: &[u8]) -> Result<CacheManifest, &'static str> {
     let optimization_level = reader.u8()?;
     let overflow_mode = reader.u8()?;
     let bounds_mode = reader.u8()?;
+    let kir_contract_version = reader.u32()?;
+    let sanitizer_mode = reader.u8()?;
     if reader.offset != bytes.len() || !valid_key(&key) {
         return Err("cache manifest has trailing or invalid data");
     }
@@ -180,6 +186,8 @@ fn decode_manifest(bytes: &[u8]) -> Result<CacheManifest, &'static str> {
         optimization_level,
         overflow_mode,
         bounds_mode,
+        kir_contract_version,
+        sanitizer_mode,
     })
 }
 
@@ -259,6 +267,8 @@ mod tests {
             optimization_level: 3,
             overflow_mode: 1,
             bounds_mode: 0,
+            kir_contract_version: 1,
+            sanitizer_mode: 0,
         }
     }
 

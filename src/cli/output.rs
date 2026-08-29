@@ -399,14 +399,6 @@ pub(super) fn default_header_file_for_c_output(c_file: &str) -> String {
     header.to_string_lossy().into_owned()
 }
 
-pub(super) fn header_include_name(header: &str) -> Result<String, String> {
-    PathBuf::from(header)
-        .file_name()
-        .and_then(|file_name| file_name.to_str())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| format!("Invalid header path '{header}'."))
-}
-
 #[cfg(test)]
 mod transaction_tests {
     use super::*;

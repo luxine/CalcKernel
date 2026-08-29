@@ -127,6 +127,12 @@ fn validate_third_party_provenance() {
     validate_file_hashes(
         &root.join("native/runtime"),
         &runtime,
+        "runtime_files",
+        "runtime_source_sha256",
+    );
+    validate_file_hashes(
+        &root.join("native/runtime"),
+        &runtime,
         "files",
         "source_sha256",
     );

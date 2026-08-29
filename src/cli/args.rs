@@ -1,4 +1,4 @@
-use calckernel::{BoundsMode, MirPassBoundsMode, MirPassDebugFlags, OverflowMode};
+use calckernel::{BoundsMode, MirPassDebugFlags, OverflowMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArtifactKind {
@@ -72,6 +72,10 @@ pub(super) struct ParsedArgs {
     pub(super) cpu: Option<CpuPolicy>,
     pub(super) header: Option<String>,
     pub(super) no_cache: bool,
+    pub(super) print_facts: bool,
+    pub(super) print_effect_summaries: bool,
+    pub(super) explain_optimization: bool,
+    pub(super) sanitize_contracts: bool,
     pub(super) debug: MirPassDebugFlags,
 }
 
@@ -89,6 +93,10 @@ impl ParsedArgs {
             cpu: None,
             header: None,
             no_cache: false,
+            print_facts: false,
+            print_effect_summaries: false,
+            explain_optimization: false,
+            sanitize_contracts: false,
             debug: MirPassDebugFlags::default(),
         };
         let mut index = 0;
@@ -156,6 +164,22 @@ impl ParsedArgs {
                     require_allowed(command, "--no-cache")?;
                     parsed.no_cache = true;
                 }
+                "--print-facts" => {
+                    require_allowed(command, "--inspection")?;
+                    parsed.print_facts = true;
+                }
+                "--print-effect-summaries" => {
+                    require_allowed(command, "--inspection")?;
+                    parsed.print_effect_summaries = true;
+                }
+                "--explain-optimization" => {
+                    require_allowed(command, "--inspection")?;
+                    parsed.explain_optimization = true;
+                }
+                "--sanitize-contracts" => {
+                    require_allowed(command, "--sanitize-contracts")?;
+                    parsed.sanitize_contracts = true;
+                }
                 "--print-pass-pipeline" => {
                     require_allowed(command, "--debug")?;
                     parsed.debug.print_pass_pipeline = true;
@@ -172,6 +196,17 @@ impl ParsedArgs {
                 positional => parsed.positionals.push(positional.to_string()),
             }
             index += 1;
+        }
+        if parsed.sanitize_contracts
+            && command == "build"
+            && parsed.kind != Some(ArtifactKind::Executable)
+        {
+            return Err(
+                "Option --sanitize-contracts requires 'build --kind executable'.".to_string(),
+            );
+        }
+        if parsed.sanitize_contracts && command == "build-llvm" {
+            return Err("Option --sanitize-contracts is not valid for 'build-llvm'.".to_string());
         }
         Ok(parsed)
     }
@@ -208,15 +243,30 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
     let allowed = match flag {
         "--out" => matches!(
             command,
-            "emit-mir" | "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm"
+            "emit-mir"
+                | "emit-kir"
+                | "emit-c"
+                | "emit-wat"
+                | "emit-wasm"
+                | "emit-llvm"
+                | "build"
+                | "build-llvm"
         ),
         "--overflow" | "--bounds" => matches!(
             command,
-            "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm" | "run"
+            "emit-kir"
+                | "emit-c"
+                | "emit-wat"
+                | "emit-wasm"
+                | "emit-llvm"
+                | "build"
+                | "build-llvm"
+                | "run"
         ),
         "--opt-level" => matches!(
             command,
             "emit-mir"
+                | "emit-kir"
                 | "emit-c"
                 | "emit-wat"
                 | "emit-wasm"
@@ -230,6 +280,18 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
         "--cpu" => command == "build",
         "--header" => command == "emit-c",
         "--no-cache" => command == "run",
+        "--inspection" => matches!(
+            command,
+            "emit-kir"
+                | "emit-c"
+                | "emit-wat"
+                | "emit-wasm"
+                | "emit-llvm"
+                | "build"
+                | "build-llvm"
+                | "run"
+        ),
+        "--sanitize-contracts" => matches!(command, "run" | "build" | "build-llvm"),
         "--debug" => matches!(
             command,
             "emit-mir" | "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm"
@@ -260,21 +322,6 @@ pub(super) fn parse_bounds_mode(args: &ParsedArgs) -> Result<BoundsMode, String>
         other => Err(format!(
             "Invalid value for --bounds: {other}. Expected 'unchecked' or 'checked'."
         )),
-    }
-}
-
-pub(super) fn mir_bounds_mode(bounds_mode: BoundsMode) -> MirPassBoundsMode {
-    match bounds_mode {
-        BoundsMode::Unchecked => MirPassBoundsMode::Unchecked,
-        BoundsMode::Checked => MirPassBoundsMode::Checked,
-    }
-}
-
-#[cfg(feature = "native-toolchain")]
-pub(super) fn mir_overflow_mode(overflow_mode: OverflowMode) -> calckernel::MirPassOverflowMode {
-    match overflow_mode {
-        OverflowMode::Unchecked => calckernel::MirPassOverflowMode::Unchecked,
-        OverflowMode::Checked => calckernel::MirPassOverflowMode::Checked,
     }
 }
 
@@ -331,12 +378,13 @@ pub(super) fn usage() -> &'static str {
         "  ckc check <file>\n",
         "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-kir <file> [--out <kir-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
         "  ckc emit-llvm <file> [--out <ll-file>] [--target <host-triple>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native>] [-O0|-O1|-O2|-O3]\n",
+        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native>] [-O0|-O1|-O2|-O3] [--sanitize-contracts]\n",
         "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [native build options]\n",
-        "  ckc run <file> [-O0|-O1|-O2|-O3] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--no-cache]\n",
+        "  ckc run <file> [-O0|-O1|-O2|-O3] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--no-cache] [--sanitize-contracts]\n",
         "  ckc cache clean\n",
         "  ckc licenses\n",
         "\n",
@@ -349,6 +397,10 @@ pub(super) fn usage() -> &'static str {
         "  --print-pass-pipeline           Print the selected MIR pass pipeline to stderr.\n",
         "  --print-mir-before-opt          Print MIR before optimization to stderr.\n",
         "  --print-mir-after-opt           Print MIR after optimization to stderr.\n",
+        "  --print-facts                   Print deterministic verified KIR facts to stderr.\n",
+        "  --print-effect-summaries        Print deterministic effect summaries to stderr.\n",
+        "  --explain-optimization          Explain removed and retained KIR checks to stderr.\n",
+        "  --sanitize-contracts            Check unsafe contracts in run/executable builds.\n",
     )
 }
 
@@ -362,7 +414,14 @@ mod tests {
             let parsed = ParsedArgs::parse(command, &[]).expect("parse execution command");
             assert_eq!(parse_opt_level(&parsed), Ok(3), "{command}");
         }
-        for command in ["emit-mir", "emit-c", "emit-wat", "emit-wasm", "emit-llvm"] {
+        for command in [
+            "emit-mir",
+            "emit-kir",
+            "emit-c",
+            "emit-wat",
+            "emit-wasm",
+            "emit-llvm",
+        ] {
             let parsed = ParsedArgs::parse(command, &[]).expect("parse inspection command");
             assert_eq!(parse_opt_level(&parsed), Ok(0), "{command}");
         }

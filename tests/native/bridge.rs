@@ -10,7 +10,7 @@ fn bridge_should_report_the_private_abi_version() {
     assert_eq!(info.abi_version, LLVM_BRIDGE_ABI_VERSION);
     assert_eq!(LLVM_BRIDGE_ABI_VERSION, 2);
     assert_eq!(NATIVE_ABI_VERSION, 1);
-    assert_eq!(RUNTIME_ABI_VERSION, 1);
+    assert_eq!(RUNTIME_ABI_VERSION, 2);
 }
 
 #[test]

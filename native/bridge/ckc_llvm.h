@@ -110,7 +110,8 @@ typedef enum CkcLlvmCastOp {
     CKC_LLVM_ZEXT = 2,
     CKC_LLVM_SITOFP = 3,
     CKC_LLVM_UITOFP = 4,
-    CKC_LLVM_INTTOPTR = 5
+    CKC_LLVM_INTTOPTR = 5,
+    CKC_LLVM_PTRTOINT = 6
 } CkcLlvmCastOp;
 
 typedef enum CkcLlvmCpuPolicy {
