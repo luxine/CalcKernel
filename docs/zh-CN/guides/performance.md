@@ -31,6 +31,10 @@ harness/statistics 与每个 source 的 SHA-256 `sourceDigests`。Identity 或 d
 harness 应用 checksum 固定的 `benches/baselines/v0_10_proof_loop_harness.patch`；编译器仍为
 精确固定的 0.10 commit。该补丁提供与 0.11 harness 相同的确定性输入和调用 ABI。
 
+第二个 checksum 固定的 `benches/baselines/v0_10_mir_optimizer_harness.patch` 只测量冻结的
+0.10 MIR pass pipeline，解析与 MIR 构造位于计时区外。这与 0.11 仅计 KIR pipeline 的边界
+一致，防止把 frontend `check` 时间错误标记为 optimizer 基线。
+
 Performance 不允许改变 diagnostic、evaluation order、modular integer/strict floating
 semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated
 contract case 只能使用满足声明 domain 的输入；不能为通过候选版本而降低阈值。

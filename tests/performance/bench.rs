@@ -44,18 +44,52 @@ fn benchmark_tree_should_own_final_assets() {
 }
 
 #[test]
-fn v0_10_proof_loop_harness_adapter_should_be_checksum_pinned() {
-    const DIGEST: &str = "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e";
+fn v0_10_baseline_harness_adapters_should_be_checksum_pinned() {
+    const PROOF_DIGEST: &str = "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e";
+    const OPTIMIZER_DIGEST: &str =
+        "828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b";
     let root = repo_root();
     let patch = fs::read(root.join("benches/baselines/v0_10_proof_loop_harness.patch"))
         .expect("read v0.10 proof-loop harness adapter");
-    assert_eq!(format!("{:x}", Sha256::digest(&patch)), DIGEST);
+    assert_eq!(format!("{:x}", Sha256::digest(&patch)), PROOF_DIGEST);
+    let optimizer_patch =
+        fs::read(root.join("benches/baselines/v0_10_mir_optimizer_harness.patch"))
+            .expect("read v0.10 MIR optimizer harness adapter");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&optimizer_patch)),
+        OPTIMIZER_DIGEST
+    );
+    let optimizer_patch = String::from_utf8(optimizer_patch).expect("UTF-8 optimizer patch");
+    for required in [
+        "let start = Instant::now();",
+        "run_mir_pass_pipeline(mir, &pipeline, &context)",
+        "v0-10-mir-optimizer.tsv",
+    ] {
+        assert!(
+            optimizer_patch.contains(required),
+            "optimizer adapter must contain {required:?}"
+        );
+    }
+    let preparation = optimizer_patch
+        .find("let mir = lower_to_mir")
+        .expect("MIR preparation");
+    let timer = optimizer_patch
+        .find("let start = Instant::now()")
+        .expect("optimizer timer");
+    let pipeline = optimizer_patch
+        .find("run_mir_pass_pipeline(mir, &pipeline, &context)")
+        .expect("MIR pass pipeline");
+    assert!(
+        preparation < timer && timer < pipeline,
+        "MIR construction must remain outside the optimizer timing region"
+    );
 
     let baseline = fs::read_to_string(root.join("benches/baselines/v0_10_compiler.toml"))
         .expect("read v0.10 baseline");
     assert!(
-        baseline.contains(&format!("proof-loop ABI adapter sha256={DIGEST}")),
-        "baseline harness identity must bind the proof-loop adapter"
+        baseline.contains(&format!("proof-loop ABI adapter sha256={PROOF_DIGEST}"))
+            && baseline.contains(&format!("MIR optimizer timer sha256={OPTIMIZER_DIGEST}")),
+        "baseline harness identity must bind both adapters"
     );
 }
 

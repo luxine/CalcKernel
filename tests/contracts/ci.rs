@@ -199,8 +199,11 @@ fn registered_release_workflow_should_dispatch_feature_candidate_ci_without_publ
         "uses: ./.github/workflows/ci.yml",
         "inputs.candidate_ci != true",
         "git -C baseline rev-parse HEAD",
+        "git -C baseline apply --check ../benches/baselines/v0_10_mir_optimizer_harness.patch",
         "git -C baseline apply --check ../benches/baselines/v0_10_proof_loop_harness.patch",
         "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e",
+        "828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b",
+        "v0-10-mir-optimizer.tsv",
     ] {
         assert!(
             workflow.contains(required),

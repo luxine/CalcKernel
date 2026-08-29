@@ -2,7 +2,7 @@ schema_version = 1
 commit = "df816502876fba41676f9ebc190e4fadd18cd5a5"
 compiler_identity = "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)"
 llvm_version = "22.1.8"
-harness = "ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e; warmup=3; samples=20; repetitions=7; batch=20000000"
+harness = "ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + MIR optimizer timer sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b; warmup=3; samples=20; repetitions=7; batch=20000000"
 statistics = "minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8"
 
 # Source digests make the baseline input corpus immutable and independently auditable.

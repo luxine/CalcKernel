@@ -99,6 +99,9 @@ jobs:
         run: |
           test "$(git -C baseline rev-parse HEAD)" = df816502876fba41676f9ebc190e4fadd18cd5a5
           test "$(sha256sum benches/baselines/v0_10_proof_loop_harness.patch | cut -d' ' -f1)" = 316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e
+          test "$(sha256sum benches/baselines/v0_10_mir_optimizer_harness.patch | cut -d' ' -f1)" = 828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b
+          git -C baseline apply --check ../benches/baselines/v0_10_mir_optimizer_harness.patch
+          git -C baseline apply ../benches/baselines/v0_10_mir_optimizer_harness.patch
           git -C baseline apply --check ../benches/baselines/v0_10_proof_loop_harness.patch
           git -C baseline apply ../benches/baselines/v0_10_proof_loop_harness.patch
           cp benches/fixtures/proof_loop.ck baseline/benches/fixtures/proof_loop.ck
@@ -120,7 +123,6 @@ jobs:
           arch = {"x86_64": "x86_64", "aarch64": "aarch64"}[platform.machine().lower()]
           target = f"linux-{arch}"
           runtime = json.loads(Path("target/ckc-perf/results.json").read_text())
-          summary = json.loads(Path("build/perf/latest.summary.json").read_text())
           for suite in runtime["suites"]:
               for case in suite["cases"]:
                   print("[[runtime]]")
@@ -129,13 +131,15 @@ jobs:
                   print(f'mode = "{suite["mode"]}"')
                   print(f'case = "{case["name"]}"')
                   print(f'median_ns = {case["nativeMedianNs"]}\n')
-          for result in summary["results"]:
-              if result["task"] != "check":
-                  continue
+          optimizer = Path("target/ckc-perf/v0-10-mir-optimizer.tsv").read_text().splitlines()
+          if not optimizer or optimizer[0] != "case\tmedian_ns":
+              raise SystemExit("invalid v0.10 MIR optimizer timing header")
+          for line in optimizer[1:]:
+              case, median_ns = line.split("\t")
               print("[[optimizer]]")
               print(f'target = "{target}"')
-              print(f'case = "{result["case"]}"')
-              print(f'median_ns = {result["medianNs"]}\n')
+              print(f'case = "{case}"')
+              print(f'median_ns = {median_ns}\n')
           PY
           cat target/v0-10-baseline/fragment.toml
       - name: Upload raw and rendered baseline evidence
@@ -144,6 +148,7 @@ jobs:
           name: v0-10-baseline-${{ matrix.arch }}
           path: |
             baseline/target/ckc-perf/results.json
+            baseline/target/ckc-perf/v0-10-mir-optimizer.tsv
             baseline/build/perf/latest.summary.json
             baseline/target/v0-10-baseline/fragment.toml
           if-no-files-found: error

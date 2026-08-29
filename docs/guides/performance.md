@@ -50,6 +50,12 @@ capture therefore applies the checksum-pinned
 only; the compiler remains the exact pinned 0.10 commit. The patch supplies the
 same deterministic input and call ABI used by the 0.11 harness.
 
+A second checksum-pinned adapter,
+`benches/baselines/v0_10_mir_optimizer_harness.patch`, measures only the frozen
+0.10 MIR pass pipeline: parsing and MIR construction happen outside the timed
+region. This matches the 0.11 KIR-only timing boundary and prevents frontend
+`check` time from being mislabeled as the optimizer baseline.
+
 Performance never permits changed diagnostics, evaluation order, modular
 integer or strict floating semantics, checked first-error order, runtime print
 order, semantic MIR, ABI, or contract domain. Generated contract cases contain
