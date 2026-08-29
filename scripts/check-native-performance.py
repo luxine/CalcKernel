@@ -37,6 +37,20 @@ BASELINE_SOURCE_DIGESTS = {
     "example_pricing": "aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a",
     "example_dijkstra": "490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96",
 }
+RUNTIME_CASE_NAMES = {
+    "branch_mix",
+    "integer_accumulate",
+    "proof_loop",
+    "remainder_chain",
+}
+OPTIMIZER_CASE_NAMES = {
+    "pricing",
+    "pricing-soa",
+    "f64-kernels",
+    "proof",
+    "example-pricing",
+    "example-dijkstra",
+}
 
 
 def fail(message: str) -> None:
@@ -169,6 +183,8 @@ def check_optimizer(report: dict[str, object]) -> None:
         if ratio > 3.0:
             fail(f"optimizer/{name} exceeds the 3x individual v0.10 MIR limit")
         ratios.append(ratio)
+    if names != OPTIMIZER_CASE_NAMES:
+        fail("optimizerComparisons must cover the exact frozen optimizer corpus")
     suite_median = statistics.median(ratios)
     if suite_median > 2.0:
         fail("KIR optimizer suite-median time exceeds 2x pinned v0.10 MIR")
@@ -239,8 +255,11 @@ def check(path: pathlib.Path) -> None:
         )
     if names_by_mode["checked"] != names_by_mode["unchecked"]:
         fail("checked and unchecked suites must cover identical kernels")
-    if not proof_times["checked"] or proof_times["checked"].keys() != proof_times["unchecked"].keys():
-        fail("checked and unchecked proof-loop corpus must be identical and non-empty")
+    if any(names != RUNTIME_CASE_NAMES for names in names_by_mode.values()):
+        fail("checked and unchecked suites must cover the exact frozen runtime corpus")
+    expected_proof_loops = {"proof_loop"}
+    if any(set(times) != expected_proof_loops for times in proof_times.values()):
+        fail("checked and unchecked suites must identify the exact proof-loop corpus")
     proof_ratios = [
         proof_times["unchecked"][name] / checked
         for name, checked in proof_times["checked"].items()

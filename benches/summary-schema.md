@@ -22,7 +22,8 @@ suites, a proof-loop comparison, optimizer timing, and `baselineV010`.
 Every runtime case records semantic equivalence, compile/cold-run duration,
 repeated Native and Clang sample arrays and medians, peak memory, artifact size,
 batch iterations, and validated result. Checked and unchecked suites use the
-same names.
+same exact four-case runtime corpus. `optimizerComparisons` uses the exact six
+entries from `benches/cases/native-cases.tsv`; omitting a case is a hard failure.
 
 `baselineV010` must identify commit
 `df816502876fba41676f9ebc190e4fadd18cd5a5`, compiler `calckernel 0.10.0`, LLVM,

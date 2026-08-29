@@ -250,6 +250,23 @@ fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds()
         r#""nativeSamplesNs":[100,100,100]"#,
         1,
     );
+    let omitted_runtime_case = performance_case(
+        "remainder_chain",
+        true,
+        100,
+        100,
+        false,
+        &performance_samples(100, 100),
+    );
+    let missing_runtime_case = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(&format!(",{omitted_runtime_case}"), "");
+    let full_optimizer = optimizer_comparisons(150);
+    let missing_optimizer = full_optimizer.replace(
+        r#",{"case":"example-dijkstra","kirMedianNs":150,"v010MirMedianNs":100}"#,
+        "",
+    );
+    let missing_optimizer_case = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(&full_optimizer, &missing_optimizer);
 
     for (label, report) in [
         (
@@ -288,6 +305,8 @@ fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds()
         ("warmup-identity", wrong_warmup),
         ("repetition-identity", wrong_repetitions),
         ("sample-count", short_samples),
+        ("runtime-corpus", missing_runtime_case),
+        ("optimizer-corpus", missing_optimizer_case),
     ] {
         let path = temp.join(format!("{label}.json"));
         fs::write(&path, report).expect("write rejected report");
@@ -301,8 +320,8 @@ fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds()
 
     let optimizer_median = performance_report(100, 102, true, false, 100, 102, 150)
         .replace(
-            r#""optimizerComparisons": [{"case":"pricing","kirMedianNs":150,"v010MirMedianNs":100}]"#,
-            r#""optimizerComparisons": [{"case":"a","kirMedianNs":10,"v010MirMedianNs":100},{"case":"b","kirMedianNs":10,"v010MirMedianNs":100},{"case":"c","kirMedianNs":210,"v010MirMedianNs":100},{"case":"d","kirMedianNs":210,"v010MirMedianNs":100},{"case":"e","kirMedianNs":210,"v010MirMedianNs":100},{"case":"f","kirMedianNs":210,"v010MirMedianNs":100}]"#,
+            &optimizer_comparisons(150),
+            r#"[{"case":"pricing","kirMedianNs":10,"v010MirMedianNs":100},{"case":"pricing-soa","kirMedianNs":10,"v010MirMedianNs":100},{"case":"f64-kernels","kirMedianNs":210,"v010MirMedianNs":100},{"case":"proof","kirMedianNs":210,"v010MirMedianNs":100},{"case":"example-pricing","kirMedianNs":210,"v010MirMedianNs":100},{"case":"example-dijkstra","kirMedianNs":210,"v010MirMedianNs":100}]"#,
         );
     let path = temp.join("optimizer-median.json");
     fs::write(&path, optimizer_median).expect("write optimizer median rejection");
@@ -328,9 +347,42 @@ fn performance_report(
 ) -> String {
     let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     let native_samples = performance_samples(native_ns, last_native_sample);
-    let clang_samples = performance_samples(100, 100);
     let proof_samples = performance_samples(100, 100);
     let checked_proof_samples = performance_samples(checked_proof_ns, checked_proof_ns);
+    let branch_mix = performance_case(
+        "branch_mix",
+        equivalent,
+        native_ns,
+        baseline_ns,
+        false,
+        &native_samples,
+    );
+    let integer_accumulate = performance_case(
+        "integer_accumulate",
+        true,
+        100,
+        100,
+        false,
+        &performance_samples(100, 100),
+    );
+    let proof_loop = performance_case("proof_loop", true, 100, 100, true, &proof_samples);
+    let checked_proof_loop = performance_case(
+        "proof_loop",
+        true,
+        checked_proof_ns,
+        checked_proof_ns,
+        true,
+        &checked_proof_samples,
+    );
+    let remainder_chain = performance_case(
+        "remainder_chain",
+        true,
+        100,
+        100,
+        false,
+        &performance_samples(100, 100),
+    );
+    let optimizer_comparisons = optimizer_comparisons(kir_optimize_ns);
     format!(
         r#"{{
   "schemaVersion": 4,
@@ -341,11 +393,46 @@ fn performance_report(
   "sampleRepetitions": 7,
   "baselineV010": {{"commit":"df816502876fba41676f9ebc190e4fadd18cd5a5","compilerIdentity":"calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)","llvmVersion":"22.1.8","target":"{target}","harness":"ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + MIR optimizer timer sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + Linux C++ runtime link adapter sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff; warmup=3; samples=20; repetitions=7; batch=20000000","statistics":"minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8","sourceDigestCount":9,"sourceDigests":{{"branch_mix":"d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8","integer_accumulate":"4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39","proof_loop":"ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d","remainder_chain":"87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e","pricing":"be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416","pricing_soa":"5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad","f64_kernels":"58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be","example_pricing":"aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a","example_dijkstra":"490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96"}}}},
   "suites": [
-    {{"mode":"unchecked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":false,"nativeSamplesNs":{native_samples},"clangCSamplesNs":{clang_samples},"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}},{{"name":"proof_loop","referenceEquivalent":true,"nativeMedianNs":100,"clangCMedianNs":100,"v010MedianNs":100,"proofLoop":true,"nativeSamplesNs":{proof_samples},"clangCSamplesNs":{clang_samples},"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}},
-    {{"mode":"checked","cases":[{{"name":"integer","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":false,"nativeSamplesNs":{native_samples},"clangCSamplesNs":{clang_samples},"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}},{{"name":"proof_loop","referenceEquivalent":true,"nativeMedianNs":{checked_proof_ns},"clangCMedianNs":100,"v010MedianNs":{checked_proof_ns},"proofLoop":true,"nativeSamplesNs":{checked_proof_samples},"clangCSamplesNs":{clang_samples},"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}]}}
+    {{"mode":"unchecked","cases":[{branch_mix},{integer_accumulate},{proof_loop},{remainder_chain}]}},
+    {{"mode":"checked","cases":[{branch_mix},{integer_accumulate},{checked_proof_loop},{remainder_chain}]}}
   ],
-  "optimizerComparisons": [{{"case":"pricing","kirMedianNs":{kir_optimize_ns},"v010MirMedianNs":100}}]
+  "optimizerComparisons": {optimizer_comparisons}
 }}"#
+    )
+}
+
+fn performance_case(
+    name: &str,
+    equivalent: bool,
+    native_ns: u64,
+    baseline_ns: u64,
+    proof_loop: bool,
+    native_samples: &str,
+) -> String {
+    let clang_samples = performance_samples(100, 100);
+    format!(
+        r#"{{"name":"{name}","referenceEquivalent":{equivalent},"nativeMedianNs":{native_ns},"clangCMedianNs":100,"v010MedianNs":{baseline_ns},"proofLoop":{proof_loop},"nativeSamplesNs":{native_samples},"clangCSamplesNs":{clang_samples},"nativeCompileNs":100,"clangCCompileNs":100,"nativeColdNs":100,"clangCColdNs":100,"peakMemoryBytes":1024,"nativeArtifactBytes":1024,"clangCArtifactBytes":1024,"batchIterations":1000}}"#
+    )
+}
+
+fn optimizer_comparisons(kir_optimize_ns: u64) -> String {
+    let cases = [
+        "pricing",
+        "pricing-soa",
+        "f64-kernels",
+        "proof",
+        "example-pricing",
+        "example-dijkstra",
+    ];
+    format!(
+        "[{}]",
+        cases
+            .iter()
+            .map(|case| format!(
+                r#"{{"case":"{case}","kirMedianNs":{kir_optimize_ns},"v010MirMedianNs":100}}"#
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 
