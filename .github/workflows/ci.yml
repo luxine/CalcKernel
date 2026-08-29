@@ -140,7 +140,21 @@ jobs:
           if-no-files-found: error
       - run: cargo test --all-features --locked --test native
       - run: cargo test --all-features --locked --test cli
-      - run: cargo build --release --features native-toolchain --locked
+      - name: Build release compiler on Unix
+        if: runner.os != 'Windows'
+        run: cargo build --release --features native-toolchain --locked
+      - name: Build release compiler with static Windows CRT
+        if: runner.os == 'Windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --features native-toolchain --locked
+      - name: Audit release compiler dependencies on Unix
+        if: runner.os != 'Windows'
+        run: scripts/audit-ckc-release.sh '${{ matrix.executable }}'
+      - name: Audit release compiler dependencies on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/audit-ckc-release.ps1 -Path '${{ matrix.executable }}'
       - name: Audit native artifacts on Unix
         if: runner.os != 'Windows'
         run: scripts/audit-native-artifact.sh target/native-acceptance
