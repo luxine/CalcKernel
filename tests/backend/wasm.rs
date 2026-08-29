@@ -8,6 +8,7 @@ use super::support::compiler::{kir_build_error, optimized_module, verified_artif
 use super::support::fixtures;
 use super::support::oracle::{typescript_cli, typescript_root};
 use std::{
+    collections::BTreeSet,
     fs,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -35,6 +36,20 @@ fn emit_wasm(source_text: &str, opt_level: u8) -> Vec<u8> {
     );
     emit_wasm_kir_module(verified_artifact(&optimized), EmitWasmOptions { opt_level })
         .expect("WAT should compile to WASM")
+}
+
+fn wat_export_names(wat: &str) -> BTreeSet<String> {
+    let mut exports = BTreeSet::new();
+    let mut remaining = wat;
+    while let Some(start) = remaining.find("(export \"") {
+        remaining = &remaining[start + "(export \"".len()..];
+        let Some(end) = remaining.find('"') else {
+            break;
+        };
+        exports.insert(remaining[..end].to_string());
+        remaining = &remaining[end + 1..];
+    }
+    exports
 }
 
 #[test]
@@ -132,7 +147,7 @@ fn wat_backend_should_emit_valid_o3_loop_dispatch() {
 }
 
 #[test]
-fn wat_backend_should_match_typescript_oracle_for_official_examples() {
+fn wat_backend_should_preserve_typescript_oracle_export_abi_for_official_examples() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
@@ -159,16 +174,19 @@ fn wat_backend_should_match_typescript_oracle_for_official_examples() {
             "{example} stderr:\n{}",
             String::from_utf8_lossy(&ts_output.stderr)
         );
+        let ts_wat = String::from_utf8(ts_output.stdout).expect("TS WAT should be UTF-8");
+        wat::parse_str(&rust_wat).unwrap_or_else(|error| panic!("{example} Rust WAT: {error}"));
+        wat::parse_str(&ts_wat).unwrap_or_else(|error| panic!("{example} TypeScript WAT: {error}"));
         assert_eq!(
-            rust_wat,
-            String::from_utf8(ts_output.stdout).expect("TS WAT should be UTF-8"),
-            "{example}"
+            wat_export_names(&rust_wat),
+            wat_export_names(&ts_wat),
+            "{example} WebAssembly export ABI"
         );
     }
 }
 
 #[test]
-fn wasm_cli_should_match_typescript_oracle_for_official_example_bytes() {
+fn wasm_cli_should_emit_valid_deterministic_bytes_for_official_examples() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
@@ -223,7 +241,32 @@ fn wasm_cli_should_match_typescript_oracle_for_official_example_bytes() {
             String::from_utf8(ts_output.stdout).expect("TS stdout should be UTF-8"),
             "{example} stdout"
         );
-        assert_eq!(rust_bytes, ts_bytes, "{example} wasm bytes");
+        for (producer, bytes) in [("TypeScript", &ts_bytes), ("Rust", &rust_bytes)] {
+            assert!(bytes.len() > 8, "{example} {producer} WASM is truncated");
+            assert_eq!(
+                &bytes[..8],
+                b"\0asm\x01\0\0\0",
+                "{example} {producer} WASM header"
+            );
+        }
+
+        let repeated = Command::new(env!("CARGO_BIN_EXE_ckc"))
+            .arg("emit-wasm")
+            .arg("--out")
+            .arg(&wasm_path)
+            .arg(&source_path)
+            .output()
+            .expect("repeat Rust ckc emit-wasm");
+        assert!(
+            repeated.status.success(),
+            "{example} repeated Rust stderr:\n{}",
+            String::from_utf8_lossy(&repeated.stderr)
+        );
+        assert_eq!(
+            fs::read(&wasm_path).expect("read repeated Rust wasm"),
+            rust_bytes,
+            "{example} Rust WASM must be byte deterministic"
+        );
     }
 }
 

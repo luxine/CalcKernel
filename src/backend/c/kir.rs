@@ -468,9 +468,7 @@ fn emit_function(
             _ => unreachable!("KIR C parameter layout matches type"),
         }
     }
-    if !function.params.is_empty() {
-        out.push_str(&format!("  goto b{};\n", function.blocks[0].id.index()));
-    }
+    out.push_str(&format!("  goto b{};\n", function.blocks[0].id.index()));
     let callee_types = module
         .functions
         .iter()

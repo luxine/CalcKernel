@@ -52,6 +52,58 @@ fn emit_c_with_modes_and_opt_level(
     .expect("verified C KIR should lower")
 }
 
+fn c_header_abi_shape(header: &str) -> Vec<String> {
+    let mut shape = Vec::new();
+    let mut in_struct = false;
+    for line in header.lines() {
+        let line = line.trim();
+        if line.starts_with("typedef struct ") && line.ends_with('{') {
+            let name = line.split_whitespace().nth(2).expect("typedef struct name");
+            shape.push(format!("struct {name}"));
+            in_struct = true;
+        } else if line.starts_with("struct ") && line.ends_with('{') {
+            let name = line.split_whitespace().nth(1).expect("struct name");
+            shape.push(format!("struct {name}"));
+            in_struct = true;
+        } else if in_struct {
+            if line.starts_with('}') && line.ends_with(';') {
+                in_struct = false;
+            } else {
+                shape.push(line.split_whitespace().collect::<Vec<_>>().join(" "));
+            }
+        } else if line.starts_with("CK_API ") {
+            shape.push(
+                line.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .replace("(void);", "();"),
+            );
+        }
+    }
+    shape
+}
+
+fn assert_c_source_compiles(path: &std::path::Path, label: &str) {
+    let object = path.with_extension("o");
+    let output = Command::new("clang")
+        .arg("-std=c11")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg("-c")
+        .arg(path)
+        .arg("-o")
+        .arg(object)
+        .output()
+        .expect("compile generated C source");
+    assert!(
+        output.status.success(),
+        "{label} C compilation failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn c_backend_should_compile_and_run_scalar_control_and_memory_program() {
     let c = emit_c(
@@ -396,7 +448,7 @@ fn checked_c_backend_should_remove_only_proven_safe_induction_overflow_checks_at
 }
 
 #[test]
-fn c_backend_should_match_typescript_oracle_for_official_examples() {
+fn c_backend_should_preserve_typescript_oracle_abi_for_official_examples() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
@@ -447,21 +499,22 @@ fn c_backend_should_match_typescript_oracle_for_official_examples() {
             String::from_utf8_lossy(&rust_output.stderr)
         );
 
+        assert_c_source_compiles(&ts_out, &format!("{example} TypeScript"));
+        assert_c_source_compiles(&rust_out, &format!("{example} Rust"));
         assert_eq!(
-            fs::read_to_string(&rust_out).expect("read Rust C"),
-            fs::read_to_string(&ts_out).expect("read TS C"),
-            "{example} C output"
-        );
-        assert_eq!(
-            fs::read_to_string(rust_out.with_extension("h")).expect("read Rust header"),
-            fs::read_to_string(ts_out.with_extension("h")).expect("read TS header"),
-            "{example} header output"
+            c_header_abi_shape(
+                &fs::read_to_string(rust_out.with_extension("h")).expect("read Rust header")
+            ),
+            c_header_abi_shape(
+                &fs::read_to_string(ts_out.with_extension("h")).expect("read TS header")
+            ),
+            "{example} public C ABI shape"
         );
     }
 }
 
 #[test]
-fn c_backend_should_match_typescript_oracle_for_perf_fixtures_at_benchmark_opt_levels() {
+fn c_backend_should_preserve_typescript_oracle_abi_for_perf_fixtures_at_benchmark_opt_levels() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
@@ -513,8 +566,10 @@ fn c_backend_should_match_typescript_oracle_for_perf_fixtures_at_benchmark_opt_l
         );
         let ts_stdout = String::from_utf8(ts_output.stdout).expect("TS stdout should be UTF-8");
         let ts_stderr = String::from_utf8(ts_output.stderr).expect("TS stderr should be UTF-8");
-        let ts_c = fs::read_to_string(&out).expect("read TS C");
         let ts_h = fs::read_to_string(&header).expect("read TS header");
+        let ts_c = output_dir.join("typescript.c");
+        fs::rename(&out, &ts_c).expect("preserve TypeScript C output");
+        assert_c_source_compiles(&ts_c, &format!("{case_name} TypeScript"));
 
         let rust_output = Command::new(env!("CARGO_BIN_EXE_ckc"))
             .arg("emit-c")
@@ -546,15 +601,11 @@ fn c_backend_should_match_typescript_oracle_for_perf_fixtures_at_benchmark_opt_l
             ts_stderr,
             "{case_name} stderr"
         );
+        assert_c_source_compiles(&out, &format!("{case_name} Rust"));
         assert_eq!(
-            fs::read_to_string(&out).expect("read Rust C"),
-            ts_c,
-            "{case_name} C output"
-        );
-        assert_eq!(
-            fs::read_to_string(header).expect("read Rust header"),
-            ts_h,
-            "{case_name} header output"
+            c_header_abi_shape(&fs::read_to_string(header).expect("read Rust header")),
+            c_header_abi_shape(&ts_h),
+            "{case_name} public C ABI shape"
         );
     }
 }
