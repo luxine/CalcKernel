@@ -12,3 +12,6 @@ mod kir_o1;
 
 #[path = "optimizer/kir_o2.rs"]
 mod kir_o2;
+
+#[path = "optimizer/kir_o3.rs"]
+mod kir_o3;

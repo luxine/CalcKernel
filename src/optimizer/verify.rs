@@ -10,7 +10,7 @@ use super::{
     ContractFactAffineExpression, ContractFactAffineTerm, ContractFactPredicate, ContractFactSet,
     FactArena, FactDerivation, FactOrigin, FactPredicate, ProofArena, ProofCertificate, ProofStep,
     ScalarAnalysisBudget, ScalarAnalysisResult, ScalarClaim, ScalarFailure, ScalarValue,
-    contract_fact_dominates_at, refine_scalar_comparison, scalar_binary,
+    analyze_natural_loops, contract_fact_dominates_at, refine_scalar_comparison, scalar_binary,
 };
 
 /// A deterministic compiler-internal evidence validation error.
@@ -488,6 +488,7 @@ fn check_step(
         ProofStep::GuardSafety {
             condition_instruction,
             premises,
+            allow_loop_reasoning,
         } => {
             let premises = premises
                 .iter()
@@ -497,7 +498,12 @@ fn check_step(
                         .ok_or_else(|| prefix("guard-safety premise is missing"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            if !guard_safety_matches(function, *condition_instruction, &premises) {
+            if !guard_safety_matches(
+                function,
+                *condition_instruction,
+                &premises,
+                *allow_loop_reasoning,
+            ) {
                 return Err(prefix(
                     "guard-safety claim does not follow from local KIR and premises",
                 ));
@@ -590,6 +596,7 @@ fn guard_safety_matches(
     function: &KirFunction,
     condition_instruction: InstructionId,
     premises: &[&CheckedStep],
+    allow_loop_reasoning: bool,
 ) -> bool {
     let Some(instruction) = function
         .blocks
@@ -621,6 +628,8 @@ fn guard_safety_matches(
             };
             scalar_binary(*op, KirArithmeticSemantics::Checked, &left, &right)
                 .is_ok_and(|result| result.failure() == ScalarFailure::None)
+                || (allow_loop_reasoning
+                    && canonical_induction_increment_is_safe(function, instruction))
         }
         KirInstructionKind::Unary {
             op: MirUnaryOp::Neg,
@@ -650,6 +659,13 @@ fn guard_safety_matches(
             }
             KirCheckConditionKind::SliceOutOfBounds => {
                 slice_index_is_safe(function, premises, args)
+                    || (allow_loop_reasoning
+                        && canonical_loop_slice_index_is_safe(
+                            function,
+                            instruction.id,
+                            premises,
+                            args,
+                        ))
             }
             KirCheckConditionKind::InvalidSubslice => subslice_is_safe(function, premises, args),
         },
@@ -791,6 +807,177 @@ fn contract_proves_value_below_slice_len(
         || (operator == ">"
             && affine_is_single_term(left, ContractFactAffineTerm::SliceLength(slice))
             && affine_is_single_term(right, ContractFactAffineTerm::Value(value)))
+}
+
+fn contract_proves_value_at_most_slice_len(
+    predicate: &ContractFactPredicate,
+    value: ValueId,
+    slice: ValueId,
+) -> bool {
+    let ContractFactPredicate::Comparison {
+        operator,
+        left,
+        right,
+    } = predicate
+    else {
+        return false;
+    };
+    (operator == "<="
+        && affine_is_single_term(left, ContractFactAffineTerm::Value(value))
+        && affine_is_single_term(right, ContractFactAffineTerm::SliceLength(slice)))
+        || (operator == ">="
+            && affine_is_single_term(left, ContractFactAffineTerm::SliceLength(slice))
+            && affine_is_single_term(right, ContractFactAffineTerm::Value(value)))
+}
+
+fn canonical_loop_slice_index_is_safe(
+    function: &KirFunction,
+    condition_instruction: InstructionId,
+    premises: &[&CheckedStep],
+    args: &[ValueId],
+) -> bool {
+    let [slice, index] = args else {
+        return false;
+    };
+    let Some(use_block) = function.blocks.iter().find(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|instruction| instruction.id == condition_instruction)
+    }) else {
+        return false;
+    };
+    let canonical = canonical_block_param_values(function);
+    let index = canonical.get(index).copied().unwrap_or(*index);
+    let slice = canonical_function_param(function, *slice).unwrap_or(*slice);
+    let analysis = analyze_natural_loops(function);
+    analysis.inductions.iter().any(|induction| {
+        induction.value == index
+            && induction.start >= BigInt::from(0)
+            && induction.step == BigInt::from(1)
+            && induction.comparison == crate::MirCompareOp::Lt
+            && induction.wrap_safe_for_strict_bound
+            && analysis.loops.iter().any(|loop_info| {
+                loop_info.header == induction.header
+                    && loop_info.blocks.binary_search(&use_block.id).is_ok()
+                    && loop_taken_edge_dominates(function, loop_info.header, use_block.id)
+            })
+            && premises.iter().any(|premise| {
+                matches!(
+                    premise,
+                    CheckedStep::Fact(FactPredicate::Contract(predicate))
+                        if contract_proves_value_at_most_slice_len(
+                            predicate,
+                            induction.bound,
+                            slice,
+                        )
+                )
+            })
+    })
+}
+
+fn canonical_function_param(function: &KirFunction, value: ValueId) -> Option<ValueId> {
+    if function.params.iter().any(|param| param.value == value) {
+        return Some(value);
+    }
+    let block_param = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.params)
+        .find(|param| param.value == value)?;
+    function
+        .params
+        .iter()
+        .find(|param| param.name == block_param.slot && param.type_node == block_param.type_node)
+        .map(|param| param.value)
+}
+
+fn canonical_induction_increment_is_safe(
+    function: &KirFunction,
+    instruction: &KirInstruction,
+) -> bool {
+    let KirInstructionKind::Binary {
+        op: crate::MirBinaryOp::Add,
+        left,
+        right,
+        semantics: KirArithmeticSemantics::Checked,
+    } = instruction.kind
+    else {
+        return false;
+    };
+    let canonical = canonical_block_param_values(function);
+    let left = canonical.get(&left).copied().unwrap_or(left);
+    let right = canonical.get(&right).copied().unwrap_or(right);
+    let (induction_value, step) = if resolve_constant(function, right) == Some(BigInt::from(1)) {
+        (left, right)
+    } else if resolve_constant(function, left) == Some(BigInt::from(1)) {
+        (right, left)
+    } else {
+        return false;
+    };
+    if resolve_constant(function, step) != Some(BigInt::from(1)) {
+        return false;
+    }
+    let Some(use_block) = function.blocks.iter().find(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|candidate| candidate.id == instruction.id)
+    }) else {
+        return false;
+    };
+    let analysis = analyze_natural_loops(function);
+    analysis.inductions.iter().any(|induction| {
+        induction.value == induction_value
+            && induction.step == BigInt::from(1)
+            && induction.wrap_safe_for_strict_bound
+            && analysis.loops.iter().any(|loop_info| {
+                loop_info.header == induction.header
+                    && loop_info.blocks.binary_search(&use_block.id).is_ok()
+                    && loop_taken_edge_dominates(function, loop_info.header, use_block.id)
+            })
+    })
+}
+
+fn loop_taken_edge_dominates(
+    function: &KirFunction,
+    header: crate::BlockId,
+    use_block: crate::BlockId,
+) -> bool {
+    let Some(header) = function.blocks.iter().find(|block| block.id == header) else {
+        return false;
+    };
+    let KirTerminator::Branch { then_edge, .. } = &header.terminator else {
+        return false;
+    };
+    compute_kir_dominators(function).dominates(then_edge.target, use_block)
+}
+
+fn canonical_block_param_values(
+    function: &KirFunction,
+) -> std::collections::BTreeMap<ValueId, ValueId> {
+    let mut canonical = std::collections::BTreeMap::new();
+    loop {
+        let before = canonical.len();
+        for block in &function.blocks {
+            for (index, param) in block.params.iter().enumerate() {
+                let values = predecessor_edges(function, block.id)
+                    .into_iter()
+                    .filter_map(|(_, edge)| edge.args.get(index))
+                    .map(|value| canonical.get(value).copied().unwrap_or(*value))
+                    .collect::<Vec<_>>();
+                if let Some(first) = values.first().copied()
+                    && values.iter().all(|value| *value == first)
+                {
+                    canonical.insert(param.value, first);
+                }
+            }
+        }
+        if canonical.len() == before {
+            break;
+        }
+    }
+    canonical
 }
 
 fn affine_is_single_term(

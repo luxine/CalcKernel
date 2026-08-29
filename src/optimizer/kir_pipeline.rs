@@ -53,6 +53,9 @@ pub struct KirOptimizationStats {
     pub gvn_rewrites: u32,
     pub forwarded_loads: u32,
     pub eliminated_stores: u32,
+    pub natural_loops: u32,
+    pub induction_variables: u32,
+    pub hoisted_instructions: u32,
 }
 
 /// Transactional output. `artifact` is absent whenever any verification failed.
@@ -127,6 +130,7 @@ pub fn run_kir_pass_pipeline(
         &mut result.eliminated_guards,
         &mut result.explanations,
         GENERATION,
+        false,
     );
     if !record_current_pass(
         &module,
@@ -230,10 +234,97 @@ pub fn run_kir_pass_pipeline(
             &mut result.eliminated_guards,
             &mut result.explanations,
             GENERATION,
+            true,
         );
         if !record_current_pass(
             &module,
             "check-elimination-post-inline",
+            changed,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+    }
+
+    if level == KirOptimizationLevel::O3 {
+        result.stats.natural_loops = module
+            .functions
+            .iter()
+            .map(|function| {
+                u32::try_from(super::analyze_natural_loops(function).loops.len())
+                    .unwrap_or(u32::MAX)
+            })
+            .fold(0_u32, u32::saturating_add);
+        result.stats.induction_variables = module
+            .functions
+            .iter()
+            .map(|function| {
+                u32::try_from(super::analyze_natural_loops(function).inductions.len())
+                    .unwrap_or(u32::MAX)
+            })
+            .fold(0_u32, u32::saturating_add);
+        if !record_current_pass(
+            &module,
+            "natural-loop-analysis",
+            false,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+
+        let protected = result
+            .eliminated_guards
+            .iter()
+            .map(|elimination| elimination.condition_instruction)
+            .collect();
+        result.stats.hoisted_instructions = kir_passes::run_licm(&mut module, &protected);
+        if !record_current_pass(
+            &module,
+            "licm",
+            result.stats.hoisted_instructions != 0,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+        if !record_current_pass(
+            &module,
+            "induction-simplify",
+            false,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+        let changed = kir_passes::run_sccp_range(&mut module);
+        if !record_current_pass(
+            &module,
+            "sccp-range-post-loop",
+            changed,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+        let changed = kir_passes::run_check_elimination(
+            &mut module,
+            result.contract_facts.as_ref(),
+            &mut result.proofs,
+            &mut result.eliminated_guards,
+            &mut result.explanations,
+            GENERATION,
+            true,
+        );
+        if !record_current_pass(
+            &module,
+            "check-elimination-post-loop",
             changed,
             &mut result,
             GENERATION,

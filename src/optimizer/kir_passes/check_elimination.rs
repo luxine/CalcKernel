@@ -21,6 +21,7 @@ pub(crate) fn run_check_elimination(
     eliminations: &mut Vec<KirGuardElimination>,
     explanations: &mut Vec<KirOptimizationExplanation>,
     generation: u32,
+    allow_loop_reasoning: bool,
 ) -> bool {
     let candidates = collect_candidates(module);
     let mut changed = false;
@@ -47,6 +48,7 @@ pub(crate) fn run_check_elimination(
         steps.push(ProofStep::GuardSafety {
             condition_instruction: candidate.condition_instruction,
             premises,
+            allow_loop_reasoning,
         });
 
         let mut proposed = proofs.clone();

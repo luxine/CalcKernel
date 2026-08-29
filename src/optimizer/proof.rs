@@ -73,6 +73,7 @@ pub enum ProofStep {
     GuardSafety {
         condition_instruction: InstructionId,
         premises: Vec<ProofStepId>,
+        allow_loop_reasoning: bool,
     },
 }
 
@@ -260,9 +261,11 @@ fn print_step(step: &ProofStep) -> String {
         ProofStep::GuardSafety {
             condition_instruction,
             premises,
+            allow_loop_reasoning,
         } => format!(
-            "guard-safety i{} [{}]",
+            "guard-safety i{} loop={} [{}]",
             condition_instruction.index(),
+            allow_loop_reasoning,
             premises
                 .iter()
                 .map(|premise| format!("step{}", premise.index()))
