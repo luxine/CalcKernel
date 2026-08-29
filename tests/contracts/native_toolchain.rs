@@ -209,6 +209,14 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
         assert!(build.contains(required), "build.rs missing {required}");
     }
 
+    let unix_audit = read("scripts/audit-native-artifact.sh");
+    for line in unix_audit.lines().filter(|line| line.contains('|')) {
+        assert!(
+            !line.contains("grep -q") && !line.contains("grep -Eiq"),
+            "pipefail audit must not use early-exit grep in a pipeline: {line}"
+        );
+    }
+
     let runtime = read("native/runtime/common/runtime.c");
     for code in 1..=6 {
         assert!(runtime.contains(&format!("CKR000{code}:")));
