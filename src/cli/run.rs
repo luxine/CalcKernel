@@ -110,10 +110,13 @@ fn emit_jit_memory_audit(jit: &NativeJit) -> Result<(), String> {
         && audit.final_code_read_execute
         && audit.final_data_non_execute
         && audit.instruction_cache_finalizations > 0;
-    let darwin_policy = !cfg!(target_os = "macos")
-        || (audit.darwin_map_jit
-            && audit.darwin_thread_write_protection_supported
-            && audit.darwin_thread_write_protection);
+    let darwin_thread_policy = audit.darwin_map_jit
+        && audit.darwin_thread_write_protection_supported
+        && audit.darwin_thread_write_protection;
+    let darwin_page_policy = !audit.darwin_map_jit
+        && !audit.darwin_thread_write_protection_supported
+        && !audit.darwin_thread_write_protection;
+    let darwin_policy = !cfg!(target_os = "macos") || darwin_thread_policy || darwin_page_policy;
     if !common_policy || !darwin_policy {
         return Err(format!("internal JIT memory audit failed: {audit:?}"));
     }
@@ -126,10 +129,11 @@ fn emit_jit_memory_audit(jit: &NativeJit) -> Result<(), String> {
     let mut stderr = io::stderr().lock();
     writeln!(
         stderr,
-        "CKC_JIT_AUDIT_V1 layer={layer} allocations={} relocation=rw-nx code=rx data=nx icache=flushed icache-count={} map-jit={} thread-wx={}",
+        "CKC_JIT_AUDIT_V1 layer={layer} allocations={} relocation=rw-nx code=rx data=nx icache=flushed icache-count={} map-jit={} thread-wx-supported={} thread-wx={}",
         audit.allocations,
         audit.instruction_cache_finalizations,
         yes_no(audit.darwin_map_jit),
+        yes_no(audit.darwin_thread_write_protection_supported),
         yes_no(audit.darwin_thread_write_protection),
     )
     .map_err(|error| format!("failed to write internal JIT memory audit: {error}"))

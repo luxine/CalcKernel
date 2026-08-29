@@ -21,12 +21,13 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  CALCKERNEL_TS_ROOT: ${{ github.workspace }}/typescript-oracle
 
 jobs:
   quality:
     name: quality (no native toolchain)
     runs-on: ubuntu-24.04
+    env:
+      CALCKERNEL_TS_ROOT: ${{ github.workspace }}/typescript-oracle
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

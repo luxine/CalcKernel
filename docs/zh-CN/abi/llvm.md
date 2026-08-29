@@ -55,4 +55,10 @@ runtime 使用 kernel boundary；Windows 使用 embedded stable process import �
 `ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
 x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定
 RuntimeDyld compatibility path。两者都 eager resolve symbol，并在调用 `main` 前完成 RW-to-RX。
+Darwin ORC 按 runtime capability 在两条互斥 W^X 机制中选择：支持 per-thread JIT write
+protection 时使用 `MAP_JIT`，在线程级 writable/non-executable 与 readable/executable 间
+切换；能力不可用（包括 Darwin x86-64 和受限 virtual host）时，先预留普通 RW/NX pages，
+再逐 segment 以页保护 finalization 为 RX 或 R/NX。后者不是 RWX fallback。Internal audit
+拒绝混合 capability tuple，并为两条路径验证 relocation、最终 code/data permission 与
+instruction-cache finalization。
 0.11 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。

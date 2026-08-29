@@ -44,10 +44,12 @@
 - [ ] fmt、all-feature clippy、default/all-feature tests、sanitized ownership 全绿，无 ignore。
 - [ ] fixed-seed generated differential 与全部 KIR mutations 全绿。
 - [ ] Native/Clang >=95% geometric mean，individual regression <=10%。
-- [ ] 0.11/固定 0.10 runtime regression <=3% geometric mean、<=8% individual。
+- [ ] 0.11/固定 0.10 的冻结 C-oracle Clang 配对归一化 runtime regression <=3%
+      geometric mean、<=8% individual。
 - [ ] proof-loop checked/unchecked throughput >=97% geometric mean。
 - [ ] KIR/MIR optimizer time median <=2x、individual <=3x，fallback 有稳定 reason。
-- [ ] 六 native host 与两 controlled performance runner 对同一 commit 全绿。
+- [ ] 六 native host 与两 performance runner 对同一 commit 全绿；hosted runner 漂移只由
+      同机冻结 C oracle 归一化，不假定 worker 物理同一。
 
 ## F. Git 交付边界
 

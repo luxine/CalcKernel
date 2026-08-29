@@ -144,6 +144,25 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
 
     let windows = read("scripts/bootstrap-llvm.ps1");
     assert!(windows.contains("core\", \"native\", \"orcjit\", \"nativecodegen\", \"lto"));
+    for required in [
+        "vswhere.exe",
+        "VsDevCmd.bat",
+        "Import-MsvcEnvironment",
+        "$msvcHostArch = \"amd64\"",
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+        "VSCMD_ARG_TGT_ARCH",
+        "CKC_MSVC_TARGET",
+        "Get-Command cl.exe",
+        "Get-Command link.exe",
+        "CMAKE_C_COMPILER_ID",
+        "CMAKE_CXX_COMPILER_ID",
+    ] {
+        assert!(
+            windows.contains(required),
+            "Windows bootstrap must import and validate the target MSVC environment with {required}"
+        );
+    }
     for required in ["-DCMAKE_C_COMPILER=cl.exe", "-DCMAKE_CXX_COMPILER=cl.exe"] {
         assert!(
             windows.contains(required),

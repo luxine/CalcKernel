@@ -402,10 +402,14 @@ CK 0.11 is not complete until all of the following hold:
    O3, as verified structurally in KIR and backend IR.
 8. The existing Native-versus-pinned-Clang O3 gate remains at a minimum 95%
    geometric-mean throughput with no individual kernel more than 10% slower.
-9. Against the pinned accepted 0.10 compiler baseline on controlled workers,
-   0.11 loses no more than 3% geometric-mean runtime throughput and no more than
-   8% on an individual kernel. The benchmark manifest records the exact 0.10
-   source digest and compiler identity rather than relying on a moving branch.
+9. Against the pinned accepted 0.10 compiler baseline, the ratio
+   `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` loses no
+   more than 3% in geometric-mean runtime throughput and no more than 8% on an
+   individual kernel. Both Clang terms compile the same digest-pinned C source
+   emitted by the exact 0.10 compiler, so pairing removes runner common-mode
+   drift without masking 0.11 frontend, KIR, or Native regressions. The manifest
+   records the exact 0.10 source digests, paired medians, and compiler identity
+   rather than relying on a moving branch.
 10. For the accepted suite of loops whose checks are fully proven redundant,
     checked geometric-mean throughput is at least 97% of the corresponding
     unchecked execution.
@@ -413,9 +417,10 @@ CK 0.11 is not complete until all of the following hold:
     0.10 MIR optimization time, and no accepted case exceeds 3 times. A budget
     fallback must preserve semantics and report the conservative reason.
 
-Runtime comparisons pin source, compiler identity, target, CPU policy, safety
-modes, strict floating-point behavior, harness, warm-up, repetition count, and
-statistical rule. Threshold or corpus changes are reviewed contract changes.
+Runtime comparisons pin CK and frozen C-oracle sources, compiler identity,
+target, CPU policy, safety modes, strict floating-point behavior, harness,
+warm-up, repetition count, and statistical rule. Threshold or corpus changes
+are reviewed contract changes.
 
 ## Performance program after 0.11
 

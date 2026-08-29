@@ -77,6 +77,11 @@ Source/AST/contracts
 - 规范反例：先在 review 文档复诊，再同步修订双语规范、master、相关 task/acceptance，
   不得只改一个语言版本或悄悄降低门槛。
 
+阶段 11 首轮真实六 host 暴露的 Windows compiler identity、Darwin JIT capability 与
+可选 oracle job-scope 问题，按上述规则记录在
+`../review/implementation-blockers-01.md`。它们只能以保留 ABI/W^X、环境所有权和全部
+required jobs 的修复闭环，不得改成兼容错误 archive、RWX fallback 或 optional test。
+
 ## 提交与证据
 
 计划与规范修订先单独提交。之后每阶段提交信息使用

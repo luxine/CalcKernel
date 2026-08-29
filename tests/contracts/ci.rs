@@ -61,6 +61,23 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
         .split("  native-integration:")
         .next()
         .expect("quality job before native integration");
+    assert_eq!(
+        workflow.matches("CALCKERNEL_TS_ROOT:").count(),
+        1,
+        "the optional TypeScript oracle root must be scoped only to its owning job"
+    );
+    let workflow_header = workflow
+        .split("jobs:")
+        .next()
+        .expect("workflow header before jobs");
+    assert!(
+        !workflow_header.contains("CALCKERNEL_TS_ROOT:"),
+        "optional TypeScript oracle configuration must not leak into native jobs"
+    );
+    assert!(
+        quality.contains("CALCKERNEL_TS_ROOT: ${{ github.workspace }}/typescript-oracle"),
+        "quality must configure the exact TypeScript oracle checkout it owns"
+    );
     for forbidden in [
         "--all-features",
         "CKC_LLVM_PREFIX",

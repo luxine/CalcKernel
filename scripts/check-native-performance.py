@@ -9,6 +9,7 @@ import pathlib
 import platform
 import statistics
 import sys
+import tomllib
 
 BASELINE_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
 BASELINE_COMPILER_IDENTITY = f"calckernel 0.10.0 ({BASELINE_COMMIT})"
@@ -38,6 +39,14 @@ BASELINE_SOURCE_DIGESTS = {
     "f64_kernels": "58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be",
     "example_pricing": "aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a",
     "example_dijkstra": "490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96",
+    "v0_10_c_branch_mix_checked": "fb5b95130998c20a0014b01af5659720771d836614c5bd0aa85e5c02d68921e2",
+    "v0_10_c_branch_mix_unchecked": "523e5f4af4c4bb64e6949dd7bfcd15578adb8ff47aa4437b5e1d01e6df84512b",
+    "v0_10_c_integer_accumulate_checked": "91b9abc17ff50d7d55733ba0972f268779e8f2ea07ed96683dfa376a57113952",
+    "v0_10_c_integer_accumulate_unchecked": "82b09a2e7428d99190cc50b03c709e5b018b082d0c265564bb4618e547fadf8a",
+    "v0_10_c_proof_loop_checked": "044bc8d4b456a64d9cb6f3af057466796466b8cf32628fa4cb5e78b0e57bfee8",
+    "v0_10_c_proof_loop_unchecked": "fed666f2048f254401e8554f8447b874cd4f602c1996f16825ea01d55e968326",
+    "v0_10_c_remainder_chain_checked": "1dc89902f0e636a2c0a8f63a644a734ffcbbedb0b3039e299bc0c8b6ac439eda",
+    "v0_10_c_remainder_chain_unchecked": "855c5bcb9bf82a8b06aab295c05211663a97a505654613a7b5dae33d2a6e9aeb",
 }
 RUNTIME_CASE_NAMES = {
     "branch_mix",
@@ -53,6 +62,12 @@ OPTIMIZER_CASE_NAMES = {
     "example-pricing",
     "example-dijkstra",
 }
+DEFAULT_BASELINE_MANIFEST = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "benches"
+    / "baselines"
+    / "v0_10_compiler.toml"
+)
 
 
 def fail(message: str) -> None:
@@ -105,6 +120,38 @@ def host_target_name() -> str:
     return f"{os_name}-{arch_name}"
 
 
+def load_runtime_baseline(path: pathlib.Path) -> dict[tuple[str, str, str, str], tuple[int, int]]:
+    with path.open("rb") as source:
+        manifest = tomllib.load(source)
+    if manifest.get("schema_version") != 2:
+        fail("v0.10 baseline manifest schema_version must be 2")
+    if manifest.get("commit") != BASELINE_COMMIT:
+        fail("v0.10 baseline manifest commit does not match the pinned identity")
+    if manifest.get("compiler_identity") != BASELINE_COMPILER_IDENTITY:
+        fail("v0.10 baseline manifest compiler identity does not match")
+    if manifest.get("llvm_version") != BASELINE_LLVM_VERSION:
+        fail("v0.10 baseline manifest LLVM version does not match")
+    entries = manifest.get("runtime")
+    if not isinstance(entries, list) or not entries:
+        fail("v0.10 baseline manifest must contain runtime entries")
+    runtime: dict[tuple[str, str, str, str], tuple[int, int]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            fail("v0.10 baseline manifest contains a malformed runtime entry")
+        identity = tuple(entry.get(field) for field in ("target", "cpu", "mode", "case"))
+        if not all(isinstance(value, str) for value in identity):
+            fail("v0.10 baseline runtime identity must contain strings")
+        key = (identity[0], identity[1], identity[2], identity[3])
+        if key in runtime:
+            fail(f"duplicate v0.10 baseline runtime entry {key}")
+        native = entry.get("median_ns")
+        clang = entry.get("clang_median_ns")
+        if type(native) is not int or native <= 0 or type(clang) is not int or clang <= 0:
+            fail(f"v0.10 baseline runtime entry {key} must contain positive integer medians")
+        runtime[key] = (native, clang)
+    return runtime
+
+
 def check_baseline_identity(report: dict[str, object]) -> None:
     baseline = report.get("baselineV010")
     if not isinstance(baseline, dict) or baseline.get("commit") != BASELINE_COMMIT:
@@ -126,7 +173,11 @@ def check_baseline_identity(report: dict[str, object]) -> None:
         fail("baselineV010 sourceDigests do not match the exact pinned corpus")
 
 
-def check_case(case: object, mode: str) -> tuple[str, float, float, bool, float]:
+def check_case(
+    case: object,
+    mode: str,
+    expected_baseline: tuple[int, int],
+) -> tuple[str, float, float, bool, float]:
     if not isinstance(case, dict) or not isinstance(case.get("name"), str):
         fail(f"{mode} suite contains a malformed case")
     name = case["name"]
@@ -135,6 +186,13 @@ def check_case(case: object, mode: str) -> tuple[str, float, float, bool, float]
     native = positive_number(case.get("nativeMedianNs"), f"{mode}/{name} nativeMedianNs")
     clang = positive_number(case.get("clangCMedianNs"), f"{mode}/{name} clangCMedianNs")
     baseline = positive_number(case.get("v010MedianNs"), f"{mode}/{name} v010MedianNs")
+    baseline_clang = positive_number(
+        case.get("v010ClangMedianNs"), f"{mode}/{name} v010ClangMedianNs"
+    )
+    if case.get("v010MedianNs") != expected_baseline[0]:
+        fail(f"{mode}/{name} v010MedianNs does not match the frozen manifest")
+    if case.get("v010ClangMedianNs") != expected_baseline[1]:
+        fail(f"{mode}/{name} v010ClangMedianNs does not match the frozen manifest")
     native_samples = stable_samples(
         case.get("nativeSamplesNs"), f"{mode}/{name} nativeSamplesNs"
     )
@@ -158,10 +216,11 @@ def check_case(case: object, mode: str) -> tuple[str, float, float, bool, float]
         positive_number(case.get(field), f"{mode}/{name} {field}")
     if native / clang > 1.10:
         fail(f"{mode}/{name} is more than 10% slower than strict Clang C O3")
-    if native / baseline > 1.08:
+    normalized_baseline_ratio = (native / clang) / (baseline / baseline_clang)
+    if normalized_baseline_ratio > 1.08:
         fail(f"{mode}/{name} regressed more than 8% from pinned v0.10")
     proof_loop = case.get("proofLoop") is True
-    return name, clang / native, native / baseline, proof_loop, native
+    return name, clang / native, normalized_baseline_ratio, proof_loop, native
 
 
 def check_optimizer(report: dict[str, object]) -> None:
@@ -196,10 +255,11 @@ def check_optimizer(report: dict[str, object]) -> None:
     )
 
 
-def check(path: pathlib.Path) -> None:
+def check(path: pathlib.Path, baseline_manifest: pathlib.Path) -> None:
     report = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(report, dict) or report.get("schemaVersion") != 4:
-        fail("performance report schemaVersion must be 4")
+    baseline_runtime = load_runtime_baseline(baseline_manifest)
+    if not isinstance(report, dict) or report.get("schemaVersion") != 5:
+        fail("performance report schemaVersion must be 5")
     if report.get("fastMath") is not False:
         fail("fast-math references are forbidden")
     if report.get("cpuPolicy") != "baseline":
@@ -236,7 +296,15 @@ def check(path: pathlib.Path) -> None:
         baseline_ratios = []
         names = set()
         for case in cases:
-            name, clang_ratio, baseline_ratio, proof_loop, native = check_case(case, mode)
+            if not isinstance(case, dict) or not isinstance(case.get("name"), str):
+                fail(f"{mode} suite contains a malformed case")
+            baseline_key = (host_target_name(), "baseline", mode, case["name"])
+            expected_baseline = baseline_runtime.get(baseline_key)
+            if expected_baseline is None:
+                fail(f"v0.10 baseline manifest is missing runtime {baseline_key}")
+            name, clang_ratio, baseline_ratio, proof_loop, native = check_case(
+                case, mode, expected_baseline
+            )
             if name in names:
                 fail(f"duplicate {mode}/{name} case")
             names.add(name)
@@ -274,12 +342,19 @@ def check(path: pathlib.Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(f"usage: {pathlib.Path(sys.argv[0]).name} <results.json>", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print(
+            f"usage: {pathlib.Path(sys.argv[0]).name} <results.json> "
+            "[baseline.toml]",
+            file=sys.stderr,
+        )
         return 2
+    baseline_manifest = (
+        pathlib.Path(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_BASELINE_MANIFEST
+    )
     try:
-        check(pathlib.Path(sys.argv[1]))
-    except (OSError, json.JSONDecodeError, ValueError) as error:
+        check(pathlib.Path(sys.argv[1]), baseline_manifest)
+    except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, ValueError) as error:
         print(f"native performance gate failed: {error}", file=sys.stderr)
         return 1
     print("native performance gate passed")

@@ -7,11 +7,14 @@ Native runtime contract 同时比较固定 Clang 22.1.8 C oracle，以及精确 
 strict floating-point、相同 target/CPU policy/mode、固定输入、warm-up、batch 与 statistic。
 
 Native/Clang geometric-mean throughput 至少 95%，单 case 回退不超过 10%；checked 与
-unchecked 在受控 x86-64/AArch64 worker 上以 portable baseline CPU policy 分别验收；
-native-CPU 测量只用于调查，不与冻结 baseline 比较。相对记录的 0.10 compiler，0.11 runtime
-geometric 回退最多 3%、单 case 最多 8%。Canonical proof-loop checked throughput 至少为
-unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite median ratio 最多 2x、
-单 case 最多 3x。
+unchecked 在 x86-64/AArch64 worker 上以 portable baseline CPU policy 分别验收。每次运行
+都由同一 Clang 22.1.8 编译精确 0.10 compiler 生成且摘要固定的 C oracle；native-CPU 测量
+只用于调查，不与冻结 baseline 比较。相对记录的 0.10 compiler，门禁比较
+`(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)`，geometric 回退最多 3%、
+单 case 最多 8%。两端 Clang 都使用同一冻结 0.10 C source，因此配对分母只消除 runner/
+频率的共模漂移，不会抵消 0.11 frontend、KIR 或 Native 退化。Canonical proof-loop checked
+throughput 至少为 unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite median
+ratio 最多 2x、单 case 最多 3x。
 
 ```sh
 cargo bench --bench ckc_perf
@@ -22,12 +25,14 @@ python3 scripts/check-native-performance.py target/ckc-perf/results.json
 
 严格 report 是 `target/ckc-perf/results.json`；case manifest 位于
 `benches/cases/native-cases.tsv`，schema 位于 `benches/summary-schema.md`。
-Normative checker 拒绝非固定 identity 或 investigative CPU policy，并从 sample array
-重新计算每个已报告的 upper median。
+Normative checker 拒绝非固定 identity 或 investigative CPU policy，逐项核对 schema-2
+baseline manifest 中的 V0.10 配对 median，并从 sample array 重新计算每个已报告的 upper
+median。
 General compiler-stage summary 仍写入 `build/perf/latest.summary.json` 与
 `build/perf/latest.summary.md`。
 `benches/baselines/v0_10_compiler.toml` 固定 0.10 commit/compiler/LLVM、target/CPU/mode、
-harness/statistics 与每个 source 的 SHA-256 `sourceDigests`。Identity 或 digest 不符必须失败。
+配对 Native/Clang median、harness/statistics，以及每个 CK 与冻结 C-oracle source 的
+SHA-256 `sourceDigests`。Identity 或 digest 不符必须失败。
 
 冻结的 0.10 benchmark 尚不知道后续 proof-loop 的 slice ABI，因此基线采集只对测量
 harness 应用 checksum 固定的 `benches/baselines/v0_10_proof_loop_harness.patch`；编译器仍为

@@ -334,3 +334,35 @@ fn repository_should_not_keep_javascript_helper_scripts() {
         javascript_scripts.join("\n")
     );
 }
+
+#[test]
+fn darwin_jit_policy_should_cover_thread_and_page_wx_paths() {
+    let bridge = fs::read_to_string(repo_root().join("native/bridge/ckc_llvm.cpp"))
+        .expect("read native LLVM bridge");
+    assert!(
+        bridge.contains("uses_darwin_thread_write_protection()"),
+        "Darwin JIT must select its W^X mechanism from the runtime capability"
+    );
+    assert!(
+        bridge.contains("Darwin page-protection JIT fallback"),
+        "Darwin without per-thread MAP_JIT protection must retain a page-level RW-to-RX path"
+    );
+    assert!(
+        !bridge.contains("Darwin JIT thread write protection is unavailable"),
+        "lack of per-thread protection is not lack of a safe page-protection JIT path"
+    );
+
+    let audit = fs::read_to_string(repo_root().join("scripts/audit-jit-memory.sh"))
+        .expect("read Darwin JIT audit");
+    for required in [
+        "thread-wx-supported=yes",
+        "thread-wx-supported=no",
+        "map-jit=yes thread-wx-supported=yes thread-wx=yes",
+        "map-jit=no thread-wx-supported=no thread-wx=no",
+    ] {
+        assert!(
+            audit.contains(required),
+            "Darwin JIT audit must validate the secure capability tuple {required:?}"
+        );
+    }
+}

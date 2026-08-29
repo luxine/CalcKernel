@@ -20,7 +20,10 @@ exercises both `ckc run` and a standalone executable produced by
 dependency, and JIT memory-permission audits. Linux and Windows releases may
 not retain a dynamic non-system C++ runtime; Darwin dependencies must resolve
 only to Apple system libraries. macOS additionally tests the hardened runtime
-with only the `com.apple.security.cs.allow-jit` entitlement. On a tag run,
+with only the `com.apple.security.cs.allow-jit` entitlement. Its JIT audit
+requires the runtime-capability-consistent Darwin W^X path: either per-thread
+`MAP_JIT`, or page-level RW/NX-to-RX/R-NX finalization when per-thread support is
+unavailable; an RWX fallback is never accepted. On a tag run,
 verification requires the tag to equal `v` plus the version in `Cargo.toml`
 before any artifact job starts. The workflow then builds these six archives:
 

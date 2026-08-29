@@ -173,30 +173,32 @@ public:
         std::error_code error;
         llvm::sys::MemoryBlock block;
 #if defined(CKC_LLD_DARWIN)
-        {
-            std::lock_guard<std::mutex> lock(audit_->mutex);
-            if (!audit_->darwin_thread_write_protection_supported) {
+        if (uses_darwin_thread_write_protection()) {
+            const size_t rounded = llvm::alignTo(byte_count, page_size_);
+            void *address = mmap(nullptr, rounded,
+                                 PROT_READ | PROT_WRITE | PROT_EXEC,
+                                 MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+            if (address == MAP_FAILED) {
+                error = std::error_code(errno, std::generic_category());
                 on_reserved(llvm::make_error<llvm::StringError>(
-                    "Darwin JIT thread write protection is unavailable",
-                    llvm::inconvertibleErrorCode()));
+                    "MAP_JIT reservation failed: " + error.message(), error));
                 return;
             }
-        }
-        const size_t rounded = llvm::alignTo(byte_count, page_size_);
-        void *address = mmap(nullptr, rounded,
-                             PROT_READ | PROT_WRITE | PROT_EXEC,
-                             MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-        if (address == MAP_FAILED) {
-            error = std::error_code(errno, std::generic_category());
-            on_reserved(llvm::make_error<llvm::StringError>(
-                "MAP_JIT reservation failed: " + error.message(), error));
-            return;
-        }
-        block = llvm::sys::MemoryBlock(address, rounded);
-        set_darwin_write_mode(true);
-        {
-            std::lock_guard<std::mutex> audit_lock(audit_->mutex);
-            audit_->darwin_map_jit = true;
+            block = llvm::sys::MemoryBlock(address, rounded);
+            set_darwin_write_mode(true);
+            {
+                std::lock_guard<std::mutex> audit_lock(audit_->mutex);
+                audit_->darwin_map_jit = true;
+            }
+        } else {
+            // Darwin page-protection JIT fallback: platforms without
+            // per-thread MAP_JIT protection reserve RW/NX pages and finalize
+            // each segment with mprotect, exactly like the other JITLink
+            // hosts. A page is never writable and executable at once.
+            block = llvm::sys::Memory::allocateMappedMemory(
+                byte_count, nullptr,
+                llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE,
+                error);
         }
 #else
         block = llvm::sys::Memory::allocateMappedMemory(
@@ -220,9 +222,9 @@ public:
             audit_->relocation_write_non_execute =
                 audit_->relocation_write_non_execute &&
 #if defined(CKC_LLD_DARWIN)
-                audit_->darwin_map_jit &&
-                audit_->darwin_thread_write_protection_supported &&
-                audit_->darwin_thread_write_protection;
+                (!audit_->darwin_thread_write_protection_supported ||
+                 (audit_->darwin_map_jit &&
+                  audit_->darwin_thread_write_protection));
 #else
                 true;
 #endif
@@ -236,20 +238,25 @@ public:
                   llvm::orc::ExecutorAddr address,
                   size_t content_size) override {
 #if defined(CKC_LLD_DARWIN)
-        set_darwin_write_mode(true);
-        return graph.allocateBuffer(content_size).data();
-#else
-        return address.toPtr<char *>();
+        if (uses_darwin_thread_write_protection()) {
+            set_darwin_write_mode(true);
+            return graph.allocateBuffer(content_size).data();
+        }
 #endif
+        return address.toPtr<char *>();
     }
 
     void initialize(AllocInfo &allocation,
                     OnInitializedFunction on_initialized) override {
 #if defined(CKC_LLD_DARWIN)
+        const bool uses_thread_write_protection =
+            uses_darwin_thread_write_protection();
         // Materialization is recursive: a dependency may finalize after this
         // graph's prepare call and restore execute mode. Re-enter write mode
         // at the exact copy boundary for every allocation.
-        set_darwin_write_mode(true);
+        if (uses_thread_write_protection) {
+            set_darwin_write_mode(true);
+        }
 #endif
         llvm::orc::ExecutorAddr minimum(~0ULL);
         llvm::orc::ExecutorAddr maximum(0);
@@ -279,31 +286,45 @@ public:
                 llvm::to_underlying(llvm::orc::MemProt::Exec);
             const bool executable = (protection_bits & execute_bit) != 0;
 #if defined(CKC_LLD_DARWIN)
-            if (!executable) {
-                const size_t mapped_size = llvm::alignTo(size, page_size_);
-                void *mapped = mmap(base.toPtr<void *>(), mapped_size,
-                                    PROT_READ | PROT_WRITE,
-                                    MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
-                if (mapped == MAP_FAILED) {
-                    set_darwin_write_mode(false);
-                    const std::error_code error(errno,
-                                                std::generic_category());
-                    on_initialized(llvm::make_error<llvm::StringError>(
-                        "JIT data mapping failed: " + error.message(),
-                        error));
-                    return;
+            if (uses_thread_write_protection) {
+                if (!executable) {
+                    const size_t mapped_size = llvm::alignTo(size, page_size_);
+                    void *mapped =
+                        mmap(base.toPtr<void *>(), mapped_size,
+                             PROT_READ | PROT_WRITE,
+                             MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+                    if (mapped == MAP_FAILED) {
+                        set_darwin_write_mode(false);
+                        const std::error_code error(
+                            errno, std::generic_category());
+                        on_initialized(llvm::make_error<llvm::StringError>(
+                            "JIT data mapping failed: " + error.message(),
+                            error));
+                        return;
+                    }
                 }
-            }
-            std::memcpy(base.toPtr<void *>(), segment.WorkingMem,
-                        segment.ContentSize);
-            std::memset((base + segment.ContentSize).toPtr<void *>(), 0,
-                        segment.ZeroFillSize);
-            if (!executable) {
+                std::memcpy(base.toPtr<void *>(), segment.WorkingMem,
+                            segment.ContentSize);
+                std::memset((base + segment.ContentSize).toPtr<void *>(), 0,
+                            segment.ZeroFillSize);
+                if (!executable) {
+                    if (auto error = llvm::sys::Memory::protectMappedMemory(
+                            {base.toPtr<void *>(), size}, flags)) {
+                        set_darwin_write_mode(false);
+                        on_initialized(llvm::make_error<llvm::StringError>(
+                            "JIT data finalization failed: " +
+                                error.message(),
+                            error));
+                        return;
+                    }
+                }
+            } else {
+                std::memset((base + segment.ContentSize).toPtr<void *>(), 0,
+                            segment.ZeroFillSize);
                 if (auto error = llvm::sys::Memory::protectMappedMemory(
                         {base.toPtr<void *>(), size}, flags)) {
-                    set_darwin_write_mode(false);
                     on_initialized(llvm::make_error<llvm::StringError>(
-                        "JIT data finalization failed: " + error.message(),
+                        "JIT segment finalization failed: " + error.message(),
                         error));
                     return;
                 }
@@ -338,7 +359,9 @@ public:
         }
 
 #if defined(CKC_LLD_DARWIN)
-        set_darwin_write_mode(false);
+        if (uses_thread_write_protection) {
+            set_darwin_write_mode(false);
+        }
 #endif
         if (minimum.getValue() == ~0ULL) {
             on_initialized(llvm::make_error<llvm::StringError>(
@@ -379,7 +402,11 @@ public:
                       OnDeinitializedFunction on_deinitialized) override {
         llvm::Error combined = llvm::Error::success();
 #if defined(CKC_LLD_DARWIN)
-        set_darwin_write_mode(true);
+        const bool uses_thread_write_protection =
+            uses_darwin_thread_write_protection();
+        if (uses_thread_write_protection) {
+            set_darwin_write_mode(true);
+        }
 #endif
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto base : llvm::reverse(bases)) {
@@ -392,7 +419,17 @@ public:
                 combined = llvm::joinErrors(std::move(combined),
                                             std::move(error));
             }
-#if !defined(CKC_LLD_DARWIN)
+#if defined(CKC_LLD_DARWIN)
+            if (!uses_thread_write_protection) {
+                if (auto error = llvm::sys::Memory::protectMappedMemory(
+                        {base.toPtr<void *>(), found->second.size},
+                        llvm::sys::Memory::MF_READ |
+                            llvm::sys::Memory::MF_WRITE)) {
+                    combined = llvm::joinErrors(
+                        std::move(combined), llvm::errorCodeToError(error));
+                }
+            }
+#else
             if (auto error = llvm::sys::Memory::protectMappedMemory(
                     {base.toPtr<void *>(), found->second.size},
                     llvm::sys::Memory::MF_READ |
@@ -404,7 +441,9 @@ public:
             allocations_.erase(found);
         }
 #if defined(CKC_LLD_DARWIN)
-        set_darwin_write_mode(false);
+        if (uses_thread_write_protection) {
+            set_darwin_write_mode(false);
+        }
 #endif
         on_deinitialized(std::move(combined));
     }
@@ -484,14 +523,13 @@ private:
     };
 
 #if defined(CKC_LLD_DARWIN)
+    bool uses_darwin_thread_write_protection() const {
+        std::lock_guard<std::mutex> lock(audit_->mutex);
+        return audit_->darwin_thread_write_protection_supported;
+    }
+
     void set_darwin_write_mode(bool writable) {
-        bool supported;
-        {
-            std::lock_guard<std::mutex> lock(audit_->mutex);
-            supported =
-                audit_->darwin_thread_write_protection_supported;
-        }
-        if (!supported) {
+        if (!uses_darwin_thread_write_protection()) {
             return;
         }
         pthread_jit_write_protect_np(writable ? 0 : 1);

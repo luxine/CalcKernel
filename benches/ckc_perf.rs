@@ -176,6 +176,7 @@ struct BaselineRuntime {
     mode: String,
     case_name: String,
     median_ns: u128,
+    clang_median_ns: u128,
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -205,6 +206,9 @@ impl CompilerBaseline {
                     median_ns: baseline_value(block, "median_ns")?
                         .parse()
                         .map_err(|error| format!("invalid runtime median_ns: {error}"))?,
+                    clang_median_ns: baseline_value(block, "clang_median_ns")?
+                        .parse()
+                        .map_err(|error| format!("invalid runtime clang_median_ns: {error}"))?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -271,6 +275,46 @@ impl CompilerBaseline {
                 "source_digest_example_dijkstra",
                 &["examples/applications/dijkstra.ck"][..],
             ),
+            (
+                "v0_10_c_branch_mix_checked",
+                "source_digest_v0_10_c_branch_mix_checked",
+                &["benches/baselines/v0_10_c_oracle/branch_mix-checked.c"][..],
+            ),
+            (
+                "v0_10_c_branch_mix_unchecked",
+                "source_digest_v0_10_c_branch_mix_unchecked",
+                &["benches/baselines/v0_10_c_oracle/branch_mix-unchecked.c"][..],
+            ),
+            (
+                "v0_10_c_integer_accumulate_checked",
+                "source_digest_v0_10_c_integer_accumulate_checked",
+                &["benches/baselines/v0_10_c_oracle/integer_accumulate-checked.c"][..],
+            ),
+            (
+                "v0_10_c_integer_accumulate_unchecked",
+                "source_digest_v0_10_c_integer_accumulate_unchecked",
+                &["benches/baselines/v0_10_c_oracle/integer_accumulate-unchecked.c"][..],
+            ),
+            (
+                "v0_10_c_proof_loop_checked",
+                "source_digest_v0_10_c_proof_loop_checked",
+                &["benches/baselines/v0_10_c_oracle/proof_loop-checked.c"][..],
+            ),
+            (
+                "v0_10_c_proof_loop_unchecked",
+                "source_digest_v0_10_c_proof_loop_unchecked",
+                &["benches/baselines/v0_10_c_oracle/proof_loop-unchecked.c"][..],
+            ),
+            (
+                "v0_10_c_remainder_chain_checked",
+                "source_digest_v0_10_c_remainder_chain_checked",
+                &["benches/baselines/v0_10_c_oracle/remainder_chain-checked.c"][..],
+            ),
+            (
+                "v0_10_c_remainder_chain_unchecked",
+                "source_digest_v0_10_c_remainder_chain_unchecked",
+                &["benches/baselines/v0_10_c_oracle/remainder_chain-unchecked.c"][..],
+            ),
         ];
         let repo_root = path
             .parent()
@@ -336,7 +380,8 @@ impl CompilerBaseline {
             runtime,
             optimizer,
         };
-        if baseline.commit != "df816502876fba41676f9ebc190e4fadd18cd5a5"
+        if scalar("schema_version")? != "2"
+            || baseline.commit != "df816502876fba41676f9ebc190e4fadd18cd5a5"
             || baseline.compiler_identity
                 != "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)"
             || baseline.llvm_version != "22.1.8"
@@ -352,12 +397,12 @@ impl CompilerBaseline {
         Ok(baseline)
     }
 
-    fn runtime_median(
+    fn runtime_medians(
         &self,
         cpu_policy: CpuPolicy,
         mode: &str,
         case_name: &str,
-    ) -> Result<u128, String> {
+    ) -> Result<(u128, u128), String> {
         let target = host_target_name();
         let cpu = cpu_policy_name(cpu_policy);
         self.runtime
@@ -368,7 +413,7 @@ impl CompilerBaseline {
                     && entry.mode == mode
                     && entry.case_name == case_name
             })
-            .map(|entry| entry.median_ns)
+            .map(|entry| (entry.median_ns, entry.clang_median_ns))
             .ok_or_else(|| {
                 format!("v0.10 baseline is missing runtime {target}/{cpu}/{mode}/{case_name}")
             })
@@ -917,7 +962,7 @@ fn measure_native_runtime(
             let mut cases = Vec::new();
             for fixture in &fixtures {
                 cases.push(measure_native_case(
-                    fixture, &root, &clang, checked, config, baseline,
+                    repo_root, fixture, &root, &clang, checked, config, baseline,
                 )?);
             }
             suites.push(NativeRuntimeSuite {
@@ -940,6 +985,7 @@ fn measure_native_runtime(
 
 #[cfg(feature = "native-toolchain")]
 fn measure_native_case(
+    repo_root: &Path,
     fixture: &Path,
     root: &Path,
     clang: &Path,
@@ -1020,15 +1066,10 @@ fn measure_native_case(
         .map_err(|error| format!("failed to write {}: {error}", native_path.display()))?;
 
     let clang_compile_start = Instant::now();
-    let (_, c_kir) = compile_kir(&input, 3, KirConsumer::C, overflow_mode, bounds_mode)?;
-    let c_source = emit_c_kir_module_with_contracts(
-        verified_artifact(&c_kir)?,
-        c_kir.contract_facts.as_ref(),
-    )?;
-    let c_path = root.join(format!("{name}-{suffix}.c"));
+    let c_path = repo_root.join(format!(
+        "benches/baselines/v0_10_c_oracle/{name}-{suffix}.c"
+    ));
     let clang_path = root.join(format!("{name}-{suffix}-clang{}", dynamic_suffix()));
-    fs::write(&c_path, c_source)
-        .map_err(|error| format!("failed to write {}: {error}", c_path.display()))?;
     compile_strict_clang_library(clang, &c_path, &clang_path, config.cpu_policy)?;
     let clang_c_compile_ns = clang_compile_start.elapsed().as_nanos();
 
@@ -1134,6 +1175,12 @@ fn measure_native_case(
     let native_median_ns = median(&native_samples_ns);
     let clang_c_median_ns = median(&clang_c_samples_ns);
 
+    let (v0_10_median_ns, v0_10_clang_median_ns) = baseline.runtime_medians(
+        config.cpu_policy,
+        if checked { "checked" } else { "unchecked" },
+        name,
+    )?;
+
     Ok(NativeRuntimeCase {
         name: name.to_string(),
         reference_equivalent,
@@ -1150,11 +1197,8 @@ fn measure_native_case(
         clang_c_artifact_bytes,
         batch_iterations,
         result: native_result,
-        v0_10_median_ns: baseline.runtime_median(
-            config.cpu_policy,
-            if checked { "checked" } else { "unchecked" },
-            name,
-        )?,
+        v0_10_median_ns,
+        v0_10_clang_median_ns,
         proof_loop: name == "proof_loop",
     })
 }
@@ -1418,6 +1462,7 @@ struct NativeRuntimeCase {
     batch_iterations: i64,
     result: i64,
     v0_10_median_ns: u128,
+    v0_10_clang_median_ns: u128,
     proof_loop: bool,
 }
 
@@ -1432,7 +1477,7 @@ struct OptimizerComparison {
 impl NativeRuntimeReport {
     fn to_json(&self) -> String {
         let mut output = String::new();
-        output.push_str("{\n  \"schemaVersion\": 4,\n");
+        output.push_str("{\n  \"schemaVersion\": 5,\n");
         output.push_str(&format!(
             "  \"cpuPolicy\": \"{}\",\n",
             match self.cpu_policy {
@@ -1502,7 +1547,7 @@ impl NativeRuntimeReport {
 impl NativeRuntimeCase {
     fn to_json(&self) -> String {
         format!(
-            "      {{ \"name\": \"{}\", \"referenceEquivalent\": {}, \"nativeCompileNs\": {}, \"clangCCompileNs\": {}, \"nativeColdNs\": {}, \"clangCColdNs\": {}, \"nativeMedianNs\": {}, \"clangCMedianNs\": {}, \"v010MedianNs\": {}, \"proofLoop\": {}, \"nativeSamplesNs\": {}, \"clangCSamplesNs\": {}, \"peakMemoryBytes\": {}, \"nativeArtifactBytes\": {}, \"clangCArtifactBytes\": {}, \"batchIterations\": {}, \"result\": {} }}",
+            "      {{ \"name\": \"{}\", \"referenceEquivalent\": {}, \"nativeCompileNs\": {}, \"clangCCompileNs\": {}, \"nativeColdNs\": {}, \"clangCColdNs\": {}, \"nativeMedianNs\": {}, \"clangCMedianNs\": {}, \"v010MedianNs\": {}, \"v010ClangMedianNs\": {}, \"proofLoop\": {}, \"nativeSamplesNs\": {}, \"clangCSamplesNs\": {}, \"peakMemoryBytes\": {}, \"nativeArtifactBytes\": {}, \"clangCArtifactBytes\": {}, \"batchIterations\": {}, \"result\": {} }}",
             json_escape(&self.name),
             self.reference_equivalent,
             self.native_compile_ns,
@@ -1512,6 +1557,7 @@ impl NativeRuntimeCase {
             self.native_median_ns,
             self.clang_c_median_ns,
             self.v0_10_median_ns,
+            self.v0_10_clang_median_ns,
             self.proof_loop,
             json_u128_array(&self.native_samples_ns),
             json_u128_array(&self.clang_c_samples_ns),

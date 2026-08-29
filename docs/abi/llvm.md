@@ -91,5 +91,15 @@ RuntimeDyld compatibility path because LLVM 22.1.8 lacks its JITLink backend.
 Both resolve all symbols eagerly and enforce writable-to-executable page
 transitions before calling `main`.
 
+On Darwin, ORC selects one of two mutually exclusive W^X mechanisms from the
+runtime capability. Where per-thread JIT write protection is supported, code
+uses `MAP_JIT` and toggles the thread between writable/non-executable and
+readable/executable modes. Where that capability is unavailable, including
+Darwin x86-64 and restricted virtual hosts, it reserves ordinary RW/NX pages
+and finalizes each segment with page protection to RX or R/NX. The latter is
+not an RWX fallback. The internal audit rejects mixed capability tuples and
+proves relocation, final code/data permissions, and instruction-cache
+finalization for both paths.
+
 ORC is not a public embeddable API in 0.11. `emit-llvm` is host-only diagnostic
 output and does not promise a stable external LLVM ABI.

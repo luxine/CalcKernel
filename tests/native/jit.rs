@@ -111,7 +111,12 @@ fn jit_memory_audit_should_prove_relocation_and_final_permissions() {
     assert!(audit.instruction_cache_finalizations > 0, "{audit:?}");
     #[cfg(target_os = "macos")]
     {
-        assert!(audit.darwin_map_jit, "{audit:?}");
-        assert!(audit.darwin_thread_write_protection, "{audit:?}");
+        if audit.darwin_thread_write_protection_supported {
+            assert!(audit.darwin_map_jit, "{audit:?}");
+            assert!(audit.darwin_thread_write_protection, "{audit:?}");
+        } else {
+            assert!(!audit.darwin_map_jit, "{audit:?}");
+            assert!(!audit.darwin_thread_write_protection, "{audit:?}");
+        }
     }
 }

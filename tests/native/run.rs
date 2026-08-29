@@ -45,8 +45,11 @@ fn internal_jit_audit_should_report_enforced_memory_policy() {
     assert!(stderr.contains(" icache=flushed"), "{stderr:?}");
     #[cfg(target_os = "macos")]
     {
-        assert!(stderr.contains(" map-jit=yes"), "{stderr:?}");
-        assert!(stderr.contains(" thread-wx=yes"), "{stderr:?}");
+        assert!(
+            stderr.contains(" map-jit=yes thread-wx-supported=yes thread-wx=yes")
+                || stderr.contains(" map-jit=no thread-wx-supported=no thread-wx=no"),
+            "{stderr:?}"
+        );
     }
 }
 

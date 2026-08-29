@@ -26,8 +26,15 @@
 - feature branch 上显式 `workflow_dispatch` 的 quality、native-integration、六个
   native-host、x86-64/AArch64 performance jobs 全绿。
 - 每个 native-host 上传/记录 pre-LLVM fact audit evidence，并拒绝注入 mutation。
-- performance artifacts 记录 pinned 0.10 digest/compiler identity，四组阈值全通过。
+- performance artifacts 使用 schema 5，记录 pinned 0.10 digest/compiler identity、每项
+  `v010MedianNs`/`v010ClangMedianNs` 与冻结 C-oracle digest；配对归一化后的四组阈值全通过。
 - 不允许 skipped/neutralized required job；重跑必须保留失败日志并说明非代码 flake 证据。
+- Windows job 的 bootstrap/compiler/archive identity 必须为 MSVC/`.lib`。Darwin JIT audit
+  必须接受且只接受与 runtime capability 一致的安全 tuple：`map-jit=yes / thread-wx-supported=yes / thread-wx=yes`，
+  或 `map-jit=no / thread-wx-supported=no / thread-wx=no`；两者共同满足
+  relocation=RW/NX、code=RX、data=NX，不得出现 RWX。
+- `CALCKERNEL_TS_ROOT` 在 CI workflow 只属于实际 checkout/build oracle 的 quality job；Native
+  jobs 的 CLI suite 在无该变量时完整通过，不能指向不存在的目录。
 
 ## 仓库判定
 
@@ -40,3 +47,6 @@
 
 追加本地命令结果、远程 workflow run URL/commit、六 host job IDs、两架构 performance 摘
 要与最终阶段 SHA。
+
+首轮候选 CI 的真实阻断、原始 job 与不降门槛的修订边界见
+`../review/implementation-blockers-01.md`；必须在修复后的完整 matrix 全绿后补写复审结论。

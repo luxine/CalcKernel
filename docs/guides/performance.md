@@ -10,12 +10,18 @@ inputs, warm-up, batching, and measurement statistics.
 
 For the geometric mean of accepted kernels, Native throughput must be at least
 95% of the C oracle. No individual kernel may regress by more than 10%. Checked
-and unchecked suites are reported and gated separately on controlled x86-64 and
-AArch64 workers under the portable baseline CPU policy. Native-CPU measurements
-remain available for investigation but are not compared with the frozen baseline.
+and unchecked suites are reported and gated separately on x86-64 and AArch64
+workers under the portable baseline CPU policy. Each run compiles the
+digest-pinned C oracle emitted by the exact 0.10 compiler with the same Clang
+22.1.8 process used to calibrate the candidate. Native-CPU measurements remain
+available for investigation but are not compared with the frozen baseline.
 
-Relative to the recorded 0.10 compiler, 0.11 runtime may regress at most 3%
-geometrically and 8% for an individual case. A canonical proof-loop checked
+Relative to the recorded 0.10 compiler, the gate compares
+`(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` and permits at
+most 3% geometric and 8% individual regression. The paired Clang denominator
+removes runner/frequency common-mode drift without allowing 0.11 frontend, KIR,
+or Native regressions to cancel, because both Clang measurements use the exact
+frozen 0.10 C source. A canonical proof-loop checked
 suite must deliver at least 97% of unchecked throughput for the same workload.
 KIR optimizer latency is gated against the 0.10 MIR optimizer: the suite median
 ratio is at most 2x and every individual ratio at most 3x. Runtime throughput,
@@ -37,14 +43,16 @@ the report contract in `benches/summary-schema.md`. The harness rejects semantic
 mismatches before timing and records compiler, LLVM, OS, architecture, target,
 CPU policy, mode, warm-up, sample, batching, and statistic identity.
 The normative checker rejects any non-pinned identity or investigative CPU
-policy and recomputes each reported upper median from its sample array.
+policy, verifies every reported paired V0.10 median against the schema-2
+baseline manifest, and recomputes each reported upper median from its sample array.
 The general compiler-stage summaries remain `build/perf/latest.summary.json`
 and `build/perf/latest.summary.md`.
 
 `benches/baselines/v0_10_compiler.toml` pins the 0.10 commit, compiler identity,
-LLVM version, target/CPU/mode, harness/statistics identity, and SHA-256 of every
-measured source. A digest or identity mismatch is a hard failure, not permission
-to silently refresh a baseline.
+LLVM version, target/CPU/mode, paired Native/Clang medians, harness/statistics
+identity, and SHA-256 of every measured CK and frozen C-oracle source. A digest
+or identity mismatch is a hard failure, not permission to silently refresh a
+baseline.
 
 The frozen 0.10 benchmark did not know the later proof-loop slice ABI. Baseline
 capture therefore applies the checksum-pinned

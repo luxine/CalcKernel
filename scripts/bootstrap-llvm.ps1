@@ -12,6 +12,78 @@ $llvmVersion = "22.1.8"
 $llvmSha256 = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+function Import-MsvcEnvironment([string]$RequestedTarget, [string]$ProbeRoot) {
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $programFilesX86 = $env:ProgramFiles
+    }
+    $vswhere = Join-Path $programFilesX86 "Microsoft Visual Studio/Installer/vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+        throw "Visual Studio locator does not exist: $vswhere"
+    }
+
+    $requiredComponents = @("Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
+    if ($RequestedTarget.StartsWith("aarch64")) {
+        $requiredComponents += "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+    }
+    $installations = @(
+        & $vswhere -latest -products "*" -requires $requiredComponents -property installationPath
+    )
+    if ($LASTEXITCODE -ne 0) { throw "vswhere.exe failed to locate Visual Studio" }
+    $installationPath = $installations |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($installationPath)) {
+        throw "Visual Studio with MSVC is not installed"
+    }
+
+    $vsDevCmd = Join-Path $installationPath "Common7/Tools/VsDevCmd.bat"
+    if (-not (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) {
+        throw "Visual Studio developer command does not exist: $vsDevCmd"
+    }
+    $msvcTargetArch = if ($RequestedTarget.StartsWith("aarch64")) { "arm64" } else { "amd64" }
+    $msvcHostArch = "amd64"
+    $devCommand = "call `"$vsDevCmd`" -no_logo -arch=$msvcTargetArch -host_arch=$msvcHostArch >nul && set"
+    $environmentLines = @(& $env:ComSpec /d /s /c $devCommand)
+    if ($LASTEXITCODE -ne 0) {
+        throw "VsDevCmd.bat failed for target $msvcTargetArch on host tools $msvcHostArch"
+    }
+    foreach ($line in $environmentLines) {
+        if ($line -match '^([^=]+)=(.*)$') {
+            [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process")
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:VSCMD_ARG_TGT_ARCH)) {
+        throw "VsDevCmd.bat did not record VSCMD_ARG_TGT_ARCH"
+    }
+    $null = Get-Command cl.exe -CommandType Application -ErrorAction Stop
+    $null = Get-Command link.exe -CommandType Application -ErrorAction Stop
+
+    $probe = Join-Path $ProbeRoot "ckc-msvc-target.c"
+    $probeSource = @"
+#if defined(_M_ARM64)
+CKC_MSVC_TARGET=arm64
+#elif defined(_M_X64)
+CKC_MSVC_TARGET=x64
+#else
+CKC_MSVC_TARGET=unsupported
+#endif
+"@
+    Set-Content -LiteralPath $probe -Value $probeSource -Encoding ascii
+    $probeOutput = (& cl.exe /nologo /EP /TC $probe 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "MSVC target probe failed" }
+    $expectedTarget = if ($RequestedTarget.StartsWith("aarch64")) {
+        "CKC_MSVC_TARGET=arm64"
+    } else {
+        "CKC_MSVC_TARGET=x64"
+    }
+    if (-not $probeOutput.Contains($expectedTarget)) {
+        throw "MSVC target mismatch: expected $expectedTarget, got $probeOutput"
+    }
+    Remove-Item -LiteralPath $probe -Force
+}
+
 if (-not (Test-Path -LiteralPath $Archive -PathType Leaf)) {
     throw "LLVM source archive does not exist: $Archive"
 }
@@ -35,6 +107,7 @@ $projects = if ($Profile -eq "oracle") { "clang;lld" } else { "lld" }
 $sourceDir = Join-Path $BuildDir "source"
 $binaryDir = Join-Path $BuildDir "build"
 New-Item -ItemType Directory -Path $sourceDir, $binaryDir | Out-Null
+Import-MsvcEnvironment -RequestedTarget $Target -ProbeRoot $binaryDir
 tar -xf $Archive --strip-components=1 -C $sourceDir
 if ($LASTEXITCODE -ne 0) { throw "failed to extract LLVM source" }
 
@@ -54,6 +127,24 @@ $configure = @(
 )
 & cmake @configure
 if ($LASTEXITCODE -ne 0) { throw "LLVM CMake configuration failed" }
+foreach ($language in @("C", "CXX")) {
+    $metadata = Get-ChildItem -LiteralPath $binaryDir -Recurse -File |
+        Where-Object { $_.Name -eq "CMake${language}Compiler.cmake" } |
+        Select-Object -First 1
+    if ($null -eq $metadata) {
+        throw "LLVM CMake configuration omitted ${language} compiler metadata"
+    }
+    $identity = Get-Content -Raw -LiteralPath $metadata.FullName
+    $identityVariable = if ($language -eq "C") {
+        "CMAKE_C_COMPILER_ID"
+    } else {
+        "CMAKE_CXX_COMPILER_ID"
+    }
+    $expectedIdentity = "set(${identityVariable} `"MSVC`")"
+    if (-not $identity.Contains($expectedIdentity)) {
+        throw "LLVM CMake selected a non-MSVC ${language} compiler"
+    }
+}
 
 $build = @("--build", $binaryDir)
 if ($Jobs -gt 0) { $build += @("--parallel", "$Jobs") }

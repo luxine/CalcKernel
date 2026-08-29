@@ -22,12 +22,22 @@
 - 增加 canonical proof-loop corpus，同时结构检查 KIR/C/WASM/LLVM hot loop guard。
 - 新增 `benches/baselines/v0_10_compiler.toml`，固定 commit
   `df816502876fba41676f9ebc190e4fadd18cd5a5`、source digest、compiler identity、LLVM、
-  target/CPU/mode/harness/statistics。
+  target/CPU/mode/harness/statistics、配对 Native/Clang median，以及由精确 V0.10
+  compiler 生成且摘要固定的 C oracle source。
 - 扩展 benchmark schema/checker：既有 Native/Clang 95% geo 与 10% individual；0.11 对
-  0.10 最多 3% geo/8% individual 回退；proof-loop checked 至少 97% unchecked geo；KIR
-  optimize time 中位最多 2x、individual 最多 3x 0.10 MIR optimize。
+  0.10 的配对归一化比率
+  `(T0.11-Native/Tcurrent-Clang)/(T0.10-Native/T0.10-Clang)` 最多 3% geo/8%
+  individual 回退；两个 Clang 项必须编译同一冻结 V0.10 C oracle，不能使用候选自己
+  导出的 C 抵消 KIR 回退；proof-loop checked 至少 97% unchecked geo；KIR optimize time
+  中位最多 2x、individual 最多 3x 0.10 MIR optimize。
 - CI 增加可在 feature branch 显式触发的 `workflow_dispatch`，六 native-host runner 都执
-  行 pre-LLVM fact audit；x86-64/AArch64 controlled performance runner 执行全部新 gate。
+  行 pre-LLVM fact audit；x86-64/AArch64 performance runner 执行全部新 gate，并通过同机
+  冻结 Clang oracle 校准 hosted runner 共模漂移。
+- Host bootstrap 必须把 Windows CMake 明确绑定到 MSVC，不能接受 GNU `.a` 冒充 MSVC
+  `.lib`。Darwin JIT 必须按运行时能力选择 `MAP_JIT` 线程级 W^X 或普通 mapping 的页级
+  RW-to-RX/R-NX；两条路径都运行完整 Native suite 和 memory audit，禁止 RWX fallback。
+- 可选 TypeScript oracle 的 checkout、build 与 `CALCKERNEL_TS_ROOT` 必须同属 quality job；
+  Native/release jobs 保持 self-contained，不能继承一个不存在的 oracle 路径。
 
 ## 版本、ABI 与文档
 
@@ -50,6 +60,8 @@
 4. 先写 docs parity/required-term red tests，再同步双语文档。
 5. 本地总验收通过后推送 feature branch，显式触发 CI 并等待所有六 host 与 performance
    jobs；修复真实失败，绝不改低阈值。
+6. 若真实 runner 暴露 toolchain/capability 假设错误，先在 review 文档保存原 job/log 与
+   复诊，再用失败契约测试锁定正确边界；修复后必须重新跑同一完整 matrix。
 
 ## 明确不做
 

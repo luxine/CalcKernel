@@ -327,16 +327,20 @@ KIR verifier 和后端事实审计失败是编译器错误，不是 CK 源码诊
    IR 结构检查确认。
 8. 既有 Native 对固定 Clang O3 门禁继续保持至少 95% 几何平均吞吐，且单个
    Kernel 不得慢于 10%。
-9. 在受控 worker 上相对固定且已验收的 0.10 编译器基线，0.11 runtime 吞吐几何
-   平均回退不得超过 3%，单项不得超过 8%。benchmark manifest 必须记录准确的
-   0.10 源码摘要和编译器身份，不能依赖移动分支。
+9. 相对固定且已验收的 0.10 编译器基线，
+   `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` 的 runtime
+   吞吐几何平均回退不得超过 3%，单项不得超过 8%。两个 Clang 项都编译由精确
+   0.10 compiler 生成且摘要固定的同一 C source，因此配对只消除 runner 共模漂移，
+   不会掩盖 0.11 frontend、KIR 或 Native 回退。benchmark manifest 必须记录准确的
+   0.10 source digest、配对 median 和 compiler identity，不能依赖移动分支。
 10. 对检查已被完全证明冗余的验收循环套件，checked 几何平均吞吐至少达到对应
     unchecked 执行的 97%。
 11. KIR 分析与优化耗时中位数最多为固定 0.10 MIR 优化耗时的 2 倍，任一验收用
     例不得超过 3 倍。预算 fallback 必须保持语义并报告保守原因。
 
-运行时比较固定源码、编译器身份、target、CPU policy、安全模式、严格浮点行为、
-harness、warm-up、重复次数和统计规则。修改门槛或语料属于需要审查的契约变更。
+运行时比较固定 CK 与 C-oracle source、编译器身份、target、CPU policy、安全模式、
+严格浮点行为、harness、warm-up、重复次数和统计规则。修改门槛或语料属于需要审查的
+契约变更。
 
 ## 0.11 之后的性能计划
 

@@ -55,6 +55,7 @@ try {
         ' icache=flushed',
         ' icache-count=[1-9][0-9]*',
         ' map-jit=no',
+        ' thread-wx-supported=no',
         ' thread-wx=no'
     )
     foreach ($field in $required) {

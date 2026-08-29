@@ -85,12 +85,21 @@ done
 case "$(uname -s)" in
   Darwin)
     grep -q ' layer=jitlink' <<<"$ckc_report"
-    grep -q ' map-jit=yes' <<<"$ckc_report"
-    grep -q ' thread-wx=yes' <<<"$ckc_report"
+    if grep -q ' map-jit=yes thread-wx-supported=yes thread-wx=yes' \
+      <<<"$ckc_report"; then
+      :
+    elif grep -q ' map-jit=no thread-wx-supported=no thread-wx=no' \
+      <<<"$ckc_report"; then
+      :
+    else
+      echo "JIT memory audit: inconsistent Darwin W^X capability tuple" >&2
+      exit 1
+    fi
     ;;
   Linux)
     grep -q ' layer=jitlink' <<<"$ckc_report"
     grep -q ' map-jit=no' <<<"$ckc_report"
+    grep -q ' thread-wx-supported=no' <<<"$ckc_report"
     grep -q ' thread-wx=no' <<<"$ckc_report"
     ;;
   *)

@@ -504,7 +504,7 @@ fn benchmark_schema_should_document_general_and_native_gate_outputs() {
     let schema = read("benches/summary-schema.md");
     for required in [
         "schemaVersion: 1",
-        "schemaVersion: 4",
+        "schemaVersion: 5",
         "target/ckc-perf/results.json",
         "checked",
         "unchecked",
@@ -517,6 +517,8 @@ fn benchmark_schema_should_document_general_and_native_gate_outputs() {
         "3x",
         "baselineV010",
         "sourceDigests",
+        "v010ClangMedianNs",
+        "Clang-normalized",
         "scripts/check-native-performance.py",
     ] {
         assert!(
