@@ -9,3 +9,6 @@ mod kir;
 
 #[path = "ir/proofs.rs"]
 mod proofs;
+
+#[path = "ir/memory_ssa.rs"]
+mod memory_ssa;

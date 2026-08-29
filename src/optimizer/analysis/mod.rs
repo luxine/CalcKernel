@@ -1,13 +1,21 @@
 mod affine;
+mod alias;
 mod budget;
 mod congruence;
+mod effects;
 mod known_bits;
+mod memory_ssa;
+mod regions;
 mod scalar;
 
 pub use affine::*;
+pub use alias::*;
 pub use budget::*;
 pub use congruence::*;
+pub use effects::*;
 pub use known_bits::*;
+pub use memory_ssa::*;
+pub use regions::*;
 pub use scalar::*;
 
 use crate::{MirInstruction, MirPlace, MirPrimitiveTypeName, MirType, MirValue};

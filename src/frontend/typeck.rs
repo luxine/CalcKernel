@@ -173,6 +173,7 @@ pub struct CheckedProgram {
     pub struct_map: HashMap<String, StructInfo>,
     pub function_map: HashMap<String, FunctionInfo>,
     pub entry: Option<EntryPoint>,
+    pub effect_summaries: BTreeMap<String, crate::EffectSummary>,
 }
 
 pub type TypeMap = HashMap<SourceSpan, CalcKernelType>;
@@ -439,13 +440,21 @@ impl<'source> Checker<'source> {
             program: self.program.clone(),
             expression_types: self.expression_types.clone(),
         };
-        let checked_program = create_checked_program(
+        let mut checked_program = create_checked_program(
             self.program.clone(),
             self.symbols.clone(),
             self.expression_types.clone(),
             self.local_types.clone(),
             self.checked_contracts.clone(),
         );
+        let effect_result = super::analyze_checked_program_effects(
+            &checked_program,
+            crate::EffectSolveConfig::default(),
+        );
+        checked_program.effect_summaries = effect_result.summaries;
+        for violation in super::validate_effect_ceilings(&checked_program) {
+            self.error_with_code(violation.span, DiagnosticCode::Ck2016, violation.message);
+        }
         CheckResult {
             ast: self.program,
             typed_ast,
@@ -2229,6 +2238,7 @@ fn create_checked_program(
         structs,
         functions,
         entry,
+        effect_summaries: BTreeMap::new(),
     }
 }
 

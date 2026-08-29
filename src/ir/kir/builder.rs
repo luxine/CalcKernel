@@ -789,6 +789,14 @@ impl InstructionBuilder<'_> {
                     byte_interval: Some(KirSymbolicByteInterval {
                         start: start_value,
                         end: end_value,
+                        element_type: match mir_value_type(target) {
+                            MirType::Slice(element_type) => (**element_type).clone(),
+                            _ => {
+                                return Err(KirBuildError::new(
+                                    "MIR subslice result does not have slice type",
+                                ));
+                            }
+                        },
                     }),
                 });
                 value_regions.insert(value_name(target), region);

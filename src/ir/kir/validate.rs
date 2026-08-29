@@ -62,6 +62,7 @@ fn validate_function(
     let mut definitions = BTreeMap::new();
     let mut types = BTreeMap::new();
     let mut memory_definitions = BTreeMap::new();
+    let mut memory_regions = BTreeMap::new();
     let mut function_region_ids = BTreeSet::new();
     for region in &function.regions {
         function_region_ids.insert(region.id);
@@ -103,6 +104,7 @@ fn validate_function(
         }
     }
     for initial in &function.initial_memory {
+        memory_regions.insert(initial.version, initial.region);
         define_memory(
             function,
             initial.version,
@@ -152,6 +154,7 @@ fn validate_function(
             );
         }
         for param in &block.memory_params {
+            memory_regions.insert(param.version, param.region);
             define_memory(
                 function,
                 param.version,
@@ -187,6 +190,9 @@ fn validate_function(
                 );
             }
             if let Some(output) = instruction.memory.as_ref().and_then(|memory| memory.output) {
+                if let Some(memory) = &instruction.memory {
+                    memory_regions.insert(output, memory.region);
+                }
                 define_memory(
                     function,
                     output,
@@ -233,6 +239,14 @@ fn validate_function(
                     &dominators,
                     errors,
                 );
+                if memory_regions.get(&memory.input) != Some(&memory.region) {
+                    errors.push(error(
+                        "memory input version partition does not match instruction access",
+                        Some(function.id),
+                        Some(block.id),
+                        Some(instruction.id),
+                    ));
+                }
             }
         }
         let terminator_index = block.instructions.len();
@@ -249,7 +263,15 @@ fn validate_function(
             );
         }
         for edge in terminator_edges(&block.terminator) {
-            validate_edge(function, block.id, edge, &blocks, &types, errors);
+            validate_edge(
+                function,
+                block.id,
+                edge,
+                &blocks,
+                &types,
+                &memory_regions,
+                errors,
+            );
             for version in &edge.memory_args {
                 validate_memory_use(
                     function,
@@ -264,7 +286,7 @@ fn validate_function(
             }
         }
         if let KirTerminator::Return { memory, .. } = &block.terminator {
-            for (_, version) in memory {
+            for (region, version) in memory {
                 validate_memory_use(
                     function,
                     block.id,
@@ -275,6 +297,14 @@ fn validate_function(
                     &dominators,
                     errors,
                 );
+                if memory_regions.get(version) != Some(region) {
+                    errors.push(error(
+                        "return memory version partition does not match returned region",
+                        Some(function.id),
+                        Some(block.id),
+                        None,
+                    ));
+                }
             }
         }
     }
@@ -516,6 +546,7 @@ fn validate_edge(
     edge: &KirEdge,
     blocks: &BTreeMap<BlockId, &KirBlock>,
     types: &BTreeMap<ValueId, MirType>,
+    memory_regions: &BTreeMap<MemoryVersionId, MemoryRegionId>,
     errors: &mut Vec<KirValidationError>,
 ) {
     let Some(target) = blocks.get(&edge.target) else {
@@ -567,6 +598,16 @@ fn validate_edge(
                     edge.target.index(),
                     argument.index()
                 ),
+                Some(function.id),
+                Some(source),
+                None,
+            ));
+        }
+    }
+    for (argument, param) in edge.memory_args.iter().zip(&target.memory_params) {
+        if memory_regions.get(argument) != Some(&param.region) {
+            errors.push(error(
+                "memory edge argument partition does not match target phi",
                 Some(function.id),
                 Some(source),
                 None,

@@ -116,6 +116,7 @@ pub enum KirMemoryRegionOrigin {
 pub struct KirSymbolicByteInterval {
     pub start: ValueId,
     pub end: ValueId,
+    pub element_type: MirType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

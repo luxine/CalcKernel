@@ -129,9 +129,11 @@ fn print_region(region: &KirMemoryRegion) -> String {
         .as_ref()
         .map(|interval| {
             format!(
-                " interval=[v{}, v{})",
+                " interval=[v{}*sizeof({}), v{}*sizeof({}))",
                 interval.start.index(),
-                interval.end.index()
+                print_mir_type(&interval.element_type),
+                interval.end.index(),
+                print_mir_type(&interval.element_type),
             )
         })
         .unwrap_or_default();

@@ -559,3 +559,146 @@ fn contract_checker_should_not_suppress_unrelated_errors_inside_unsafe_block() {
             .any(|diagnostic| diagnostic.code == DiagnosticCode::Ck2014)
     );
 }
+
+#[test]
+fn ck2016_effects_none_should_allow_no_external_memory_but_keep_other_summary_flags() {
+    let result = check(&source(
+        r#"
+        unsafe fn observable(n: i32) -> void
+        contract { requires n >= 0; effects none; }
+        { print_i32(n + 1); }
+        "#,
+    ));
+
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2016)
+            .count(),
+        0
+    );
+    let summary = &result.checked_program.effect_summaries["observable"];
+    assert!(summary.runtime_effect);
+    assert!(summary.may_fail);
+    assert_eq!(
+        summary.effect(calckernel::EffectTarget::All),
+        calckernel::MemoryEffect::None
+    );
+}
+
+#[test]
+fn ck2016_effect_ceiling_should_accept_exact_read_write_and_readwrite_accesses() {
+    let result = check(&source(
+        r#"
+        unsafe fn kernel(x: slice<i32>, y: slice<i32>, z: slice<i32>) -> i32
+        contract {
+          requires x.len > 0 && y.len > 0 && z.len > 0;
+          effects read(x), write(y), readwrite(z);
+        }
+        { y[0] = x[0]; z[0] = z[0] + 1; return x[0]; }
+        "#,
+    ));
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::Ck2016),
+        "{:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn ck2016_effect_ceiling_should_reject_each_underdeclared_slice_access() {
+    for (name, body, expected) in [
+        (
+            "write",
+            "x[0] = 1;",
+            "does not allow write access to slice parameter 'x'",
+        ),
+        (
+            "read",
+            "let value: i32 = x[0];",
+            "does not allow read access to slice parameter 'x'",
+        ),
+        (
+            "readwrite",
+            "x[0] = x[0] + 1;",
+            "does not allow readwrite access to slice parameter 'x'",
+        ),
+    ] {
+        let text = format!(
+            "unsafe fn kernel(x: slice<i32>) -> void contract {{ requires x.len > 0; effects none; }} {{ {body} }}"
+        );
+        let result = check(&source(&text));
+        let diagnostics = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2016)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "case {name}: {:?}",
+            result.diagnostics
+        );
+        assert!(diagnostics[0].message.contains(expected));
+    }
+}
+
+#[test]
+fn ck2016_effect_ceiling_should_map_subslice_and_transitive_callee_back_to_parameter() {
+    let accepted = check(&source(
+        r#"
+        fn write_first(items: slice<i32>) -> void { items[0] = 1; }
+        unsafe fn wrapper(items: slice<i32>) -> void
+        contract { requires items.len > 1; effects write(items); }
+        { let tail: slice<i32> = items[1..items.len]; write_first(tail); }
+        "#,
+    ));
+    assert!(
+        !accepted
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::Ck2016),
+        "{:?}",
+        accepted.diagnostics
+    );
+
+    let rejected = check(&source(
+        r#"
+        fn write_first(items: slice<i32>) -> void { items[0] = 1; }
+        unsafe fn wrapper(items: slice<i32>) -> void
+        contract { requires items.len > 0; effects read(items); }
+        { write_first(items); }
+        "#,
+    ));
+    assert_eq!(
+        rejected
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::Ck2016)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn ck2016_effect_ceiling_should_reject_raw_pointer_and_unknown_all_access() {
+    let result = check(&source(
+        r#"
+        unsafe fn kernel(x: slice<i32>, raw: ptr<i32>) -> void
+        contract { requires x.len > 0; effects read(x); }
+        { raw[0] = x[0]; }
+        "#,
+    ));
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagnosticCode::Ck2016)
+        .expect("CK2016");
+
+    assert!(diagnostic.message.contains("conservative write access"));
+}
