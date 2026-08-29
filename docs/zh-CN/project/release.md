@@ -17,7 +17,8 @@ native-toolchain --locked`。
 generated-artifact、compiler dependency 与 JIT memory-permission audit。Linux 与
 Windows release 不得保留 dynamic non-system C++ runtime；Darwin 依赖只能解析到
 Apple system library。macOS 还要在 hardened runtime 下验证唯一的
-`com.apple.security.cs.allow-jit` entitlement。JIT audit 必须验证与 runtime capability
+`com.apple.security.cs.allow-jit` entitlement。Audit 显式提取 XML 并比较 canonical binary
+plist，不解析随系统版本变化的 `codesign`/`plutil` 人类可读输出。JIT audit 必须验证与 runtime capability
 一致的 Darwin W^X 路径：per-thread `MAP_JIT`，或在不支持 per-thread 时用页级
 RW/NX-to-RX/R-NX finalization；永不接受 RWX fallback。Tag run 必须在任何 artifact job
 启动前验证 tag 等于 `v` 加 `Cargo.toml` 中的版本。随后生成六个 archive：

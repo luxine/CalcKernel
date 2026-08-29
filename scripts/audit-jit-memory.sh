@@ -30,15 +30,17 @@ if [[ "$(uname -s)" == Darwin ]]; then
     echo "JIT memory audit: candidate is not hardened" >&2
     exit 1
   }
-  codesign -d --entitlements :- "$ckc_run_candidate" \
+  codesign -d --entitlements - --xml "$ckc_run_candidate" \
     >"$ckc_audit_root/entitlements.plist" 2>/dev/null
-  readonly ckc_entitlement_dump="$(plutil -p "$ckc_audit_root/entitlements.plist")"
-  [[ "$(grep -c '=>' <<<"$ckc_entitlement_dump")" -eq 1 ]] &&
-    grep -q '"com.apple.security.cs.allow-jit" => true' \
-      <<<"$ckc_entitlement_dump" || {
-      echo "JIT memory audit: hardened candidate has unexpected entitlements" >&2
-      exit 1
-    }
+  plutil -convert binary1 -o "$ckc_audit_root/actual-entitlements.plist" \
+    "$ckc_audit_root/entitlements.plist"
+  plutil -convert binary1 -o "$ckc_audit_root/required-entitlements.plist" \
+    "$ckc_entitlements"
+  cmp -s "$ckc_audit_root/actual-entitlements.plist" \
+    "$ckc_audit_root/required-entitlements.plist" || {
+    echo "JIT memory audit: hardened candidate has unexpected entitlements" >&2
+    exit 1
+  }
 fi
 
 printf '%s\n' \

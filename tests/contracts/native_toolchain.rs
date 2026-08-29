@@ -1,5 +1,8 @@
 use std::{collections::BTreeSet, fs, path::Path, process::Command};
 
+#[cfg(unix)]
+use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+
 use sha2::{Digest, Sha256};
 
 use super::support::oracle::repo_root;
@@ -170,6 +173,10 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
         );
     }
     assert!(
+        windows.contains("New-Item -ItemType Directory -Path $manifestDir -Force"),
+        "Windows bootstrap must tolerate the runtime step having already created share/ckc"
+    );
+    assert!(
         windows.contains(
             "$staticLibraries = @(\"lldCOFF\", \"lldCommon\", \"LLVMDTLTO\") + $llvmLibraries"
         ),
@@ -283,6 +290,131 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
         assert!(
             !combined.contains(forbidden),
             "native runtime must not use {forbidden}"
+        );
+    }
+}
+
+#[cfg(unix)]
+fn write_executable(path: &Path, source: &str) {
+    fs::write(path, source).unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
+}
+
+#[cfg(unix)]
+fn mocked_elf_audit_root() -> (PathBuf, PathBuf) {
+    let root = super::support::temp::temp_dir("ckc-elf-audit-contract");
+    let artifacts = root.join("artifacts");
+    let runtime = artifacts.join("runtime");
+    let tools = root.join("tools");
+    fs::create_dir_all(&runtime).expect("create mock runtime artifacts");
+    fs::create_dir_all(&tools).expect("create mock audit tools");
+    for relative in [
+        "module.o",
+        "libmodule.a",
+        "libmodule.so",
+        "program",
+        "runtime/runtime.o",
+        "runtime/SHA256SUMS",
+    ] {
+        fs::write(artifacts.join(relative), b"fixture").expect("write mock artifact");
+    }
+
+    let dispatcher = r#"#!/usr/bin/env bash
+set -euo pipefail
+case "$(basename "$0")" in
+  uname) printf 'Linux\n' ;;
+  sha256sum) exit 0 ;;
+  file) printf '%s: current ar archive\n' "$1" ;;
+  nm)
+    if [[ " $* " == *' -D --defined-only '* ]]; then
+      printf '00000000 T answer\n'
+    fi
+    ;;
+  readelf)
+    case "$1:$2" in
+      -h:*module.o) printf '  Type:                              REL (Relocatable file)\n' ;;
+      -h:*libmodule.so) printf '  Type:                              DYN (Shared object file)\n' ;;
+      -h:*program) printf '  Type:                              EXEC (Executable file)\n' ;;
+      -d:*) printf 'There is no dynamic section in this file.\n' ;;
+      -p:.comment)
+        printf "String dump of section '.comment':\n  [     0]  %s\n" "${CKC_TEST_ELF_COMMENT:-Linker: LLD 22.1.8}"
+        ;;
+      -SW:*) printf '  [ 1] .comment PROGBITS 00000000 000040 000013 01  %s  0   0  1\n' "${CKC_TEST_ELF_COMMENT_FLAGS:-MS}" ;;
+      *) printf 'unexpected readelf arguments: %s\n' "$*" >&2; exit 64 ;;
+    esac
+    ;;
+  *) printf 'unexpected mock tool: %s\n' "$0" >&2; exit 64 ;;
+esac
+"#;
+    for tool in ["uname", "sha256sum", "file", "nm", "readelf"] {
+        write_executable(&tools.join(tool), dispatcher);
+    }
+    (artifacts, tools)
+}
+
+#[cfg(unix)]
+fn run_mocked_elf_audit(comment: &str, flags: &str) -> std::process::Output {
+    let (artifacts, tools) = mocked_elf_audit_root();
+    let inherited_path = std::env::var_os("PATH").expect("PATH must be set");
+    let path = std::env::join_paths(
+        std::iter::once(tools.clone()).chain(std::env::split_paths(&inherited_path)),
+    )
+    .expect("construct mock PATH");
+    let output = Command::new("bash")
+        .arg(repo_root().join("scripts/audit-native-artifact.sh"))
+        .arg(&artifacts)
+        .env("PATH", path)
+        .env("CKC_TEST_ELF_COMMENT", comment)
+        .env("CKC_TEST_ELF_COMMENT_FLAGS", flags)
+        .output()
+        .expect("run native ELF audit with pinned LLD provenance");
+    let root = artifacts.parent().expect("mock audit parent");
+    let _ = fs::remove_dir_all(root);
+    output
+}
+
+#[cfg(unix)]
+#[test]
+fn native_elf_audit_should_accept_pinned_non_alloc_lld_provenance() {
+    let output = run_mocked_elf_audit("Linker: LLD 22.1.8", "MS");
+    assert!(
+        output.status.success(),
+        "pinned non-ALLOC LLD provenance is metadata, not a runtime dependency:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn native_elf_audit_should_reject_allocated_or_unpinned_provenance() {
+    for (comment, flags, expected) in [
+        (
+            "Linker: LLD 22.1.8",
+            "AMS",
+            "ELF producer metadata must be non-ALLOC",
+        ),
+        (
+            "Linker: LLD 22.1.7",
+            "MS",
+            "missing pinned ELF linker provenance",
+        ),
+        (
+            "Linker: LLD 22.1.80",
+            "MS",
+            "missing pinned ELF linker provenance",
+        ),
+    ] {
+        let output = run_mocked_elf_audit(comment, flags);
+        assert!(
+            !output.status.success(),
+            "audit unexpectedly accepted {comment}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "audit did not report {expected:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }

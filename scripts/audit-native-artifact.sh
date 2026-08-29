@@ -10,6 +10,7 @@ readonly ckc_audit_root="$(cd "$1" && pwd -P)"
 readonly ckc_runtime_root="$ckc_audit_root/runtime"
 readonly ckc_forbidden_dependency='LLVM|LLD|Clang|CalcKernel|libck|libstdc\+\+|libc\+\+'
 readonly ckc_forbidden_symbol='(^|_)(malloc|calloc|realloc|free|printf|fprintf|sprintf|snprintf|vsnprintf|setlocale|localeconv|__stack_chk_fail)(@|$)'
+readonly ckc_pinned_lld_marker='Linker: LLD 22.1.8'
 
 require_file() {
   [[ -f "$1" ]] || {
@@ -103,10 +104,23 @@ audit_elf() {
     echo "native artifact audit: static ELF executable has undefined symbols" >&2
     exit 1
   fi
-  if readelf -p .comment "$ckc_object" "$ckc_dynamic" "$ckc_executable" 2>/dev/null | grep -Ei "$ckc_forbidden_dependency" >/dev/null; then
-    echo "native artifact audit: forbidden ELF producer marker" >&2
-    exit 1
-  fi
+  local ckc_linked_artifact
+  for ckc_linked_artifact in "$ckc_dynamic" "$ckc_executable"; do
+    local ckc_comment_flags
+    ckc_comment_flags="$(readelf -SW "$ckc_linked_artifact" | awk '$3 == ".comment" { print $9 }')"
+    [[ -n "$ckc_comment_flags" && "$ckc_comment_flags" != *A* ]] || {
+      echo "native artifact audit: ELF producer metadata must be non-ALLOC" >&2
+      exit 1
+    }
+    local ckc_comment_dump
+    ckc_comment_dump="$(readelf -p .comment "$ckc_linked_artifact" 2>/dev/null)"
+    local ckc_lld_markers
+    ckc_lld_markers="$(awk '/Linker: LLD/ { line = $0; sub(/^[^]]*][[:space:]]*/, "", line); print line }' <<<"$ckc_comment_dump")"
+    [[ "$ckc_lld_markers" == "$ckc_pinned_lld_marker" ]] || {
+      echo "native artifact audit: missing pinned ELF linker provenance" >&2
+      exit 1
+    }
+  done
 }
 
 audit_runtime_objects

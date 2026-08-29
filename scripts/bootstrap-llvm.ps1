@@ -221,7 +221,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeImportPath -Pat
 $runtimeImportHash = (Get-FileHash -LiteralPath $runtimeImportPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 $manifestDir = Join-Path $Prefix "share/ckc"
-New-Item -ItemType Directory -Path $manifestDir | Out-Null
+New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
 function Format-TomlArray([string[]]$Values) {
     return "[" + (($Values | ForEach-Object { '"' + $_ + '"' }) -join ", ") + "]"
 }

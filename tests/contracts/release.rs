@@ -300,13 +300,29 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         .expect("read Darwin JIT release audit");
     for required in [
         "codesign --verify --strict",
-        "com.apple.security.cs.allow-jit",
+        "codesign -d --entitlements - --xml",
+        "plutil -convert binary1",
+        "cmp -s",
     ] {
         assert!(
             jit_audit.contains(required),
             "Darwin JIT release audit must contain {required:?}"
         );
     }
+    let entitlements =
+        fs::read_to_string(repo_root().join("native/macos/ckc-jit.entitlements.plist"))
+            .expect("read Darwin JIT entitlement policy");
+    assert_eq!(
+        entitlements
+            .matches("<key>com.apple.security.cs.allow-jit</key>")
+            .count(),
+        1,
+        "Darwin JIT entitlement policy must contain exactly allow-jit"
+    );
+    assert!(
+        entitlements.contains("<key>com.apple.security.cs.allow-jit</key>\n    <true/>"),
+        "Darwin JIT entitlement policy must enable allow-jit"
+    );
 }
 
 #[test]

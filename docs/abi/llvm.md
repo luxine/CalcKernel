@@ -79,6 +79,10 @@ Native user artifacts contain no CK, LLVM, ORC, LLD, Clang, libc formatting,
 or external compiler-runtime dependency. Objects and static archives naturally
 need a consumer link step, but add no CK runtime after linking. Dynamic
 libraries export only requested CK symbols and required platform metadata.
+Non-allocating producer provenance is not a dependency: ELF linked products
+retain the exact `Linker: LLD 22.1.8` `.comment`, and the artifact audit requires
+that section to remain non-`ALLOC` while independently rejecting loader-visible
+dependencies, undefined executable symbols, and unexpected exports.
 Linux executable runtime uses its kernel boundary; Windows uses embedded stable
 process imports and computation DLLs have no entry; Darwin uses embedded minimal
 system stubs and LLD ad-hoc signing.

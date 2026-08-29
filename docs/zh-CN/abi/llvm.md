@@ -48,7 +48,10 @@ oracle；generated header 是 consumer authority。
 
 Native user artifact 不依赖 CK、LLVM、ORC、LLD、Clang、libc formatting 或 external compiler
 runtime。Object/static archive 自然需要 consumer link step，但链接后不增加 CK runtime。
-Dynamic library 只 export 请求的 CK symbol 与 required platform metadata。Linux executable
+Dynamic library 只 export 请求的 CK symbol 与 required platform metadata。ELF linked product
+中的 non-allocating producer provenance 不是依赖：产物保留精确的
+`Linker: LLD 22.1.8` `.comment`，artifact audit 要求该 section 必须为 non-`ALLOC`，并独立
+拒绝 loader-visible dependency、executable undefined symbol 与 unexpected export。Linux executable
 runtime 使用 kernel boundary；Windows 使用 embedded stable process import 且 computation DLL
 无 entry；Darwin 使用 embedded minimal system stub 与 LLD ad-hoc signing。
 

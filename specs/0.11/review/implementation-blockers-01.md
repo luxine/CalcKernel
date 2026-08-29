@@ -108,14 +108,62 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 修复后 debug/release optimizer suite 均为 49/49，全特性测试和 all-feature Clippy 通过。
   高负载本机的非规范 quick 复诊中六项 KIR/V0.10 比率分别为 0.85x、0.63x、0.56x、
   0.71x、0.53x、1.78x；`example-dijkstra` 为 923,917/518,666 ns。该结果只证明修复数量级，
-  最终判定仍必须由修复 commit 上的 x86-64/AArch64 完整 performance jobs 给出。
+  最终判定仍必须由修复 commit 上的 x86-64/AArch64 完整 performance jobs 给出。后续 run
+  `33267646660` 的 AArch64 performance job `99140467105` 已正式通过：unchecked/checked
+  Clang mean 为 1.0002/0.9995，配对 V0.10 ratio 为 0.9990/0.9992，proof-loop ratio 为
+  1.0253，optimizer suite-median ratio 为 0.7880。x86-64 job `99140467190` 也已通过，
+  对应数值为 1.0499/1.0047、1.0006/1.0118、0.9954 与 0.8659；最终修复 commit 仍须
+  重新给出同提交证据。
+
+## I06：Windows release prefix 完成后重复创建 manifest 目录
+
+- 修复候选 run `33267646660` 的 Windows x64 job `99140467224` 与 ARM64 job
+  `99140467113` 都已成功使用 MSVC 完成
+  LLVM/LLD release prefix 安装，并继续通过 `LLVMDTLTO.lib`、runtime C object 与
+  `kernel32.lib` 生成检查；随后在脚本第 224 行执行
+  `New-Item -ItemType Directory -Path $manifestDir` 时失败，因为更早的 runtime 步骤已用
+  `-Force` 创建 `share/ckc/runtime`，父目录 `share/ckc` 必然已存在。
+- 这是 bootstrap 尾部的目录幂等性错误，不是编译器、MSVC identity 或 archive 格式错误。
+  契约测试先要求 manifest directory creation 可容忍 runtime 先创建父目录并稳定失败；实现
+  只给该 `New-Item` 增加 `-Force`。修复后针对性 Rust 契约测试与 PowerShell AST parse 均
+  通过；不得通过删除 manifest/evidence 写入来绕过。
+
+## I07：ELF 审计把非加载的 LLD provenance 误判成运行时依赖
+
+- 同一 run 的 Linux ARM64 job `99140467324` 已通过 bootstrap、pre-LLVM fact audit、Native
+  91/91、CLI 21/21、release build 与 compiler dependency audit，唯一失败是 generated
+  artifact audit 报 `forbidden ELF producer marker`。该 audit 同时已经证明 dynamic/executable
+  无 `NEEDED`、static executable 无 undefined symbol、dynamic export 精确为 `answer`。
+- LLVM 22.1.8 的 ELF LLD 对每个非 relocatable 输出无条件生成非 `ALLOC` 的 `.comment`，固定
+  内容为 `Linker: LLD 22.1.8`；这说明构建来源，不会被 loader 映射，也不是运行时依赖。
+  旧脚本却复用了 dependency 名称正则扫描 `.comment`，所以任何合规的 embedded-LLD ELF
+  dynamic/executable 都必然被自己拒绝。
+- TDD 用 mock GNU binutils 构造零依赖 ELF 审计面，旧脚本先稳定失败。修订保留全部 dynamic、
+  undefined-symbol、export 与 runtime-object 门，并进一步要求 linked ELF 的 `.comment` 必须
+  非 `ALLOC` 且包含精确 pinned LLD marker；不得简单删除 producer provenance 检查或接受任意
+  LLD 版本。
+
+## I08：Darwin entitlement audit 依赖非稳定的人类展示格式
+
+- 同一 run 的 macOS ARM64 job `99140467216` 已通过 Native 91/91、CLI 21/21、release compiler
+  dependency audit 与 generated artifact audit；仅 JIT shell audit 在 hardened ad-hoc signing
+  后报 `hardened candidate has unexpected entitlements`。runner 是 macOS 15.7.7；同一脚本和
+  policy 在本机 macOS 26.6.2 完整通过，说明不是额外 entitlement 或 JIT 权限本身失败。
+- 原脚本以旧式 `codesign -d --entitlements :-` 取得 abstract representation，再用
+  `plutil -p` 的人类可读行数和字符串拼写判定唯一 key。该展示不是跨 macOS 版本的机器契约；
+  `codesign` 的 documented extraction surface 是显式 `--entitlements - --xml`。
+- 契约测试先要求 documented XML extraction、canonical plist conversion 与 exact comparison
+  并对旧脚本失败。修订将实际 entitlement 与仓库 policy 都规范化为 binary plist 后用
+  `cmp` 比较，因此仍要求且只接受唯一 `com.apple.security.cs.allow-jit=true`，没有增加
+  `disable-library-validation`、`unsigned-executable-memory` 或其他豁免。本机真实 hardened
+  JIT audit 在修订后通过；macOS 15 仍须由下一轮同提交 job 复验。
 
 ## 修订边界
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
 - 不跳过任何 Native/JIT/cache/run test，不把失败 job 改成 optional，不降低性能门槛。
 - 本轮修订必须在同一 commit 上重新通过 quality、native integration、六 native host 与两
-  performance runner；在此之前 I01–I05 只算本地修复，不算远程验收完成。
+  performance runner；在此之前 I01–I08 只算本地修复，不算远程验收完成。
 
 ## 修订后对抗性复审
 

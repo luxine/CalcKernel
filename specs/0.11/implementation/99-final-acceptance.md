@@ -30,6 +30,8 @@
 - [ ] canonical proof loops 的 KIR/backend hot loop 无冗余 bounds guard。
 - [ ] normal build 无 contract checks；sanitizer 精确 CKR0007/LF/246 且极值无 host UB。
 - [ ] Native ABI=1、Runtime ABI=2、private Bridge ABI=2，六 release artifact 仍零工具链依赖。
+- [ ] ELF producer metadata non-`ALLOC` 且绑定 pinned LLD；Darwin hardened entitlement 与唯一
+      `allow-jit=true` policy canonical 等值，不以人类展示格式替代语义比较。
 
 ## D. CLI、兼容与文档
 

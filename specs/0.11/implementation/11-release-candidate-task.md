@@ -38,6 +38,11 @@
   RW-to-RX/R-NX；两条路径都运行完整 Native suite 和 memory audit，禁止 RWX fallback。
 - 可选 TypeScript oracle 的 checkout、build 与 `CALCKERNEL_TS_ROOT` 必须同属 quality job；
   Native/release jobs 保持 self-contained，不能继承一个不存在的 oracle 路径。
+- ELF artifact audit 必须分别证明 loader-visible dependency 与 producer provenance：linked
+  `.comment` 只允许 non-`ALLOC` 且必须包含 pinned `Linker: LLD 22.1.8`，不能把该 marker
+  当成动态依赖，也不能删除版本/provenance 检查。Darwin hardened entitlement audit 必须用
+  documented XML extraction 和 canonical plist 等值验证唯一 `allow-jit` policy，不能解析随
+  macOS 版本变化的人类可读输出。
 
 ## 版本、ABI 与文档
 

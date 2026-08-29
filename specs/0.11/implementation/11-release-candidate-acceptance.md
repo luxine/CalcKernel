@@ -33,6 +33,9 @@
   必须接受且只接受与 runtime capability 一致的安全 tuple：`map-jit=yes / thread-wx-supported=yes / thread-wx=yes`，
   或 `map-jit=no / thread-wx-supported=no / thread-wx=no`；两者共同满足
   relocation=RW/NX、code=RX、data=NX，不得出现 RWX。
+- Linux artifact audit 必须同时拒绝 loader-visible dependency/undefined executable symbol/
+  unexpected export，并只在 `.comment` 为 non-`ALLOC` 且包含 pinned LLD 22.1.8 marker 时接受
+  provenance。Darwin entitlement 必须与仓库唯一 `allow-jit=true` policy canonical 等值。
 - `CALCKERNEL_TS_ROOT` 在 CI workflow 只属于实际 checkout/build oracle 的 quality job；Native
   jobs 的 CLI suite 在无该变量时完整通过，不能指向不存在的目录。
 
