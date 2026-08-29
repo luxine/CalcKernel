@@ -3,3 +3,6 @@ mod support;
 
 #[path = "ir/mir.rs"]
 mod mir;
+
+#[path = "ir/kir.rs"]
+mod kir;

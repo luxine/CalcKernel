@@ -54,6 +54,7 @@ pub enum MirArtifactConsumer {
     WebAssembly,
     NativeLibrary,
     NativeExecutable,
+    Inspection,
 }
 
 impl fmt::Display for MirArtifactConsumer {
@@ -63,6 +64,7 @@ impl fmt::Display for MirArtifactConsumer {
             Self::WebAssembly => "WebAssembly",
             Self::NativeLibrary => "native library",
             Self::NativeExecutable => "native executable",
+            Self::Inspection => "optimizer inspection",
         })
     }
 }
@@ -162,6 +164,22 @@ pub fn prepare_executable_artifact(module: &MirModule) -> Result<MirModule, MirA
         true,
         true,
     )
+}
+
+pub fn prepare_artifact_for_consumer(
+    module: &MirModule,
+    consumer: MirArtifactConsumer,
+) -> Result<MirModule, MirArtifactError> {
+    match consumer {
+        MirArtifactConsumer::C
+        | MirArtifactConsumer::WebAssembly
+        | MirArtifactConsumer::NativeLibrary => prepare_non_executable_artifact(module, consumer),
+        MirArtifactConsumer::NativeExecutable => prepare_executable_artifact(module),
+        MirArtifactConsumer::Inspection => {
+            let roots = optimizer_artifact_roots(module);
+            prepare_artifact(module, &roots, consumer, true, true)
+        }
+    }
 }
 
 fn prepare_artifact(
