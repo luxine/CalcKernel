@@ -302,12 +302,28 @@ fn collect_scoped_alias_facts(
                 }
                 _ => None,
             })
+            .filter(|(_, left, right)| function_emits_scoped_alias(function, *left, *right))
             .collect::<Vec<_>>();
         if !facts.is_empty() {
             collected.insert(function.id, facts);
         }
     }
     collected
+}
+
+fn function_emits_scoped_alias(function: &KirFunction, left: ValueId, right: ValueId) -> bool {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            KirInstructionKind::Load { place } | KirInstructionKind::Store { place, .. } => {
+                Some(place)
+            }
+            _ => None,
+        })
+        .filter_map(|place| root_parameter_for_region(function, kir_place_region(place)))
+        .any(|root| root == left || root == right)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

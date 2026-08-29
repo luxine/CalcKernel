@@ -122,6 +122,21 @@ struct CkcLlvmError {
     message: CkcLlvmOwnedBytes,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CkcLlvmFactAuditCounts {
+    pub range: u64,
+    pub alignment: u64,
+    pub no_unsigned_wrap: u64,
+    pub no_signed_wrap: u64,
+    pub readonly_count: u64,
+    pub writeonly_count: u64,
+    pub memory_effects: u64,
+    pub alias_scope: u64,
+    pub parameter_noalias: u64,
+    pub assume_count: u64,
+}
+
 impl CkcLlvmError {
     const fn empty() -> Self {
         Self {
@@ -301,9 +316,13 @@ unsafe extern "C" {
         module: *mut CkcLlvmModule,
         error: *mut CkcLlvmError,
     ) -> i32;
-    fn ckc_llvm_module_has_untracked_strengthening(
+    fn ckc_llvm_module_test_inject_untracked_flag(
         module: *mut CkcLlvmModule,
-        out: *mut u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_fact_audit_counts(
+        module: *mut CkcLlvmModule,
+        out: *mut CkcLlvmFactAuditCounts,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_type_void(
@@ -834,14 +853,22 @@ pub(super) fn module_test_inject_untracked_strengthening(
     })
 }
 
-pub(super) fn module_has_untracked_strengthening(
+pub(super) fn module_test_inject_untracked_flag(
     module: NonNull<CkcLlvmModule>,
-) -> Result<bool, NativeError> {
-    let mut out = 0_u32;
+) -> Result<(), NativeError> {
     status_call(NativeStage::Module, |error| unsafe {
-        ckc_llvm_module_has_untracked_strengthening(module.as_ptr(), &mut out, error)
+        ckc_llvm_module_test_inject_untracked_flag(module.as_ptr(), error)
+    })
+}
+
+pub(super) fn module_fact_audit_counts(
+    module: NonNull<CkcLlvmModule>,
+) -> Result<CkcLlvmFactAuditCounts, NativeError> {
+    let mut out = CkcLlvmFactAuditCounts::default();
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_fact_audit_counts(module.as_ptr(), &mut out, error)
     })?;
-    Ok(out != 0)
+    Ok(out)
 }
 
 pub(super) fn type_void(

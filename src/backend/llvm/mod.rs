@@ -41,7 +41,7 @@ pub use error::{NativeError, NativeStage};
 #[cfg(feature = "native-toolchain")]
 pub use fact_audit::{
     AuditedNativeModule, NativeFactAuditReport, NativeFactProperty, NativeFactSource,
-    NativeStrengtheningKind, test_inject_untracked_strengthening,
+    NativeStrengtheningKind, test_inject_untracked_flag, test_inject_untracked_strengthening,
 };
 #[cfg(feature = "native-toolchain")]
 pub use ffi::{

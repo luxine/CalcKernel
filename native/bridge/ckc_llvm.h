@@ -37,6 +37,19 @@ typedef struct CkcLlvmJitMemoryAudit {
     uint32_t darwin_thread_write_protection;
 } CkcLlvmJitMemoryAudit;
 
+typedef struct CkcLlvmFactAuditCounts {
+    uint64_t range;
+    uint64_t alignment;
+    uint64_t no_unsigned_wrap;
+    uint64_t no_signed_wrap;
+    uint64_t readonly_count;
+    uint64_t writeonly_count;
+    uint64_t memory_effects;
+    uint64_t alias_scope;
+    uint64_t parameter_noalias;
+    uint64_t assume_count;
+} CkcLlvmFactAuditCounts;
+
 #if defined(__cplusplus)
 static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
 static_assert(sizeof(int32_t) == 4, "bridge requires 32-bit int32_t");
@@ -198,8 +211,11 @@ int32_t ckc_llvm_module_make_invalid_for_test(CkcLlvmModule *module,
                                                CkcLlvmError *error);
 int32_t ckc_llvm_module_test_inject_untracked_strengthening(
     CkcLlvmModule *module, CkcLlvmError *error);
-int32_t ckc_llvm_module_has_untracked_strengthening(
-    CkcLlvmModule *module, uint32_t *out, CkcLlvmError *error);
+int32_t ckc_llvm_module_test_inject_untracked_flag(
+    CkcLlvmModule *module, CkcLlvmError *error);
+int32_t ckc_llvm_module_fact_audit_counts(
+    CkcLlvmModule *module, CkcLlvmFactAuditCounts *out,
+    CkcLlvmError *error);
 
 int32_t ckc_llvm_type_void(CkcLlvmContext *context, CkcLlvmType **out,
                            CkcLlvmError *error);

@@ -32,6 +32,7 @@ pub use llvm::{
     NativeStrengtheningKind, NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer,
     VerifiedNativeModule, bridge_info, lower_native_kir_module,
     test_error as native_bridge_test_error,
+    test_inject_untracked_flag as native_fact_audit_test_inject_untracked_flag,
     test_inject_untracked_strengthening as native_fact_audit_test_inject_untracked,
     test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
 };

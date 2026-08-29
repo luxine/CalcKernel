@@ -55,11 +55,15 @@ pub struct AuditedNativeModule<'context> {
 impl<'context> VerifiedNativeModule<'context> {
     /// Audits every CK-owned strengthening before LLVM is allowed to optimize.
     pub fn audit(self) -> Result<AuditedNativeModule<'context>, NativeError> {
-        if ffi::module_has_untracked_strengthening(self.module.shared_handle())? {
+        let actual = ffi::module_fact_audit_counts(self.module.shared_handle())?;
+        let expected = expected_counts(&self.module.fact_properties);
+        if actual != expected {
             return Err(NativeError::new(
                 NativeStage::Module,
                 FACT_AUDIT_ERROR,
-                "untracked CK-owned strengthening detected before LLVM optimization".to_string(),
+                format!(
+                    "untracked CK-owned strengthening detected before LLVM optimization: expected {expected:?}, enumerated {actual:?}"
+                ),
             ));
         }
         Ok(AuditedNativeModule {
@@ -67,6 +71,25 @@ impl<'context> VerifiedNativeModule<'context> {
             module: self.module,
         })
     }
+}
+
+fn expected_counts(properties: &[NativeFactProperty]) -> ffi::CkcLlvmFactAuditCounts {
+    let mut counts = ffi::CkcLlvmFactAuditCounts::default();
+    for property in properties {
+        match property.kind {
+            NativeStrengtheningKind::Range => counts.range += 1,
+            NativeStrengtheningKind::Alignment => counts.alignment += 1,
+            NativeStrengtheningKind::NoUnsignedWrap => counts.no_unsigned_wrap += 1,
+            NativeStrengtheningKind::NoSignedWrap => counts.no_signed_wrap += 1,
+            NativeStrengtheningKind::ReadOnly => counts.readonly_count += 1,
+            NativeStrengtheningKind::WriteOnly => counts.writeonly_count += 1,
+            NativeStrengtheningKind::MemoryEffects => counts.memory_effects += 1,
+            NativeStrengtheningKind::AliasScope => counts.alias_scope += 1,
+            NativeStrengtheningKind::ParameterNoAlias => counts.parameter_noalias += 1,
+            NativeStrengtheningKind::Assume => counts.assume_count += 1,
+        }
+    }
+    counts
 }
 
 impl AuditedNativeModule<'_> {
@@ -105,4 +128,10 @@ pub fn test_inject_untracked_strengthening(
     module: &VerifiedNativeModule<'_>,
 ) -> Result<(), NativeError> {
     ffi::module_test_inject_untracked_strengthening(module.module.shared_handle())
+}
+
+/// Test-only mutation hook for an unregistered LLVM no-wrap flag.
+#[doc(hidden)]
+pub fn test_inject_untracked_flag(module: &VerifiedNativeModule<'_>) -> Result<(), NativeError> {
+    ffi::module_test_inject_untracked_flag(module.module.shared_handle())
 }

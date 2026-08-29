@@ -373,6 +373,11 @@ fn native_release_docs_should_own_release_checklist_language() {
         );
     }
 
+    let chinese = read("docs/zh-CN/project/release-checklist.md");
+    assert!(checklist.contains("portable baseline CPU policy"));
+    assert!(chinese.contains("portable baseline CPU policy"));
+    assert!(!checklist.contains("baseline and native CPU policies"));
+
     for forbidden in [
         "package.json",
         "pnpm ",

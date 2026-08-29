@@ -36,6 +36,7 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -102,7 +103,6 @@ struct CkcLlvmContext {
 
 struct CkcLlvmModule {
     std::unique_ptr<llvm::Module> value;
-    bool untracked_strengthening = false;
 };
 
 struct CkcLlvmObject {
@@ -1265,18 +1265,135 @@ extern "C" int32_t ckc_llvm_module_test_inject_untracked_strengthening(
             *module->value);
         probe->addParamAttr(
             0, llvm::Attribute::get(context, llvm::Attribute::NoAlias));
-        module->untracked_strengthening = true;
         return CKC_LLVM_OK;
     });
 }
 
-extern "C" int32_t ckc_llvm_module_has_untracked_strengthening(
-    CkcLlvmModule *module, uint32_t *out, CkcLlvmError *error) {
+extern "C" int32_t ckc_llvm_module_test_inject_untracked_flag(
+    CkcLlvmModule *module, CkcLlvmError *error) {
+    return guarded(error, "injecting untracked LLVM flag", [&] {
+        if (module == nullptr || module->value == nullptr) {
+            return invalid(error, "untracked-flag test module is null");
+        }
+        auto &context = module->value->getContext();
+        auto *i32 = llvm::Type::getInt32Ty(context);
+        auto *type = llvm::FunctionType::get(i32, {i32}, false);
+        auto *probe = llvm::Function::Create(
+            type, llvm::GlobalValue::ExternalLinkage, "__ck_untracked_flag_probe",
+            *module->value);
+        auto *entry = llvm::BasicBlock::Create(context, "entry", probe);
+        llvm::IRBuilder<> builder(entry);
+        auto *incremented = llvm::cast<llvm::BinaryOperator>(
+            builder.CreateAdd(probe->getArg(0), llvm::ConstantInt::get(i32, 1),
+                              "untracked.nuw"));
+        incremented->setHasNoUnsignedWrap(true);
+        builder.CreateRet(incremented);
+        return CKC_LLVM_OK;
+    });
+}
+
+static bool ckc_alias_scope_id(llvm::Metadata *metadata, uint32_t *out) {
+    auto *node = llvm::dyn_cast_or_null<llvm::MDNode>(metadata);
+    if (node == nullptr || node->getNumOperands() < 3 || out == nullptr) {
+        return false;
+    }
+    auto *name = llvm::dyn_cast_or_null<llvm::MDString>(node->getOperand(2).get());
+    if (name == nullptr) {
+        return false;
+    }
+    auto text = name->getString();
+    if (!text.consume_front("ck.alias.scope.")) {
+        return false;
+    }
+    uint32_t value = 0;
+    if (text.getAsInteger(10, value) || value == 0) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+extern "C" int32_t ckc_llvm_module_fact_audit_counts(
+    CkcLlvmModule *module, CkcLlvmFactAuditCounts *out,
+    CkcLlvmError *error) {
     return guarded(error, "enumerating LLVM strengthenings", [&] {
         if (module == nullptr || module->value == nullptr || out == nullptr) {
             return invalid(error, "LLVM strengthening audit input or output is null");
         }
-        *out = module->untracked_strengthening ? 1u : 0u;
+        *out = {};
+        std::set<std::pair<uint32_t, uint32_t>> alias_pairs;
+        for (auto &function : *module->value) {
+            for (unsigned index = 0; index < function.arg_size(); ++index) {
+                if (function.hasParamAttribute(index, llvm::Attribute::NoAlias)) {
+                    ++out->parameter_noalias;
+                }
+                if (function.hasParamAttribute(index, llvm::Attribute::ReadOnly)) {
+                    ++out->readonly_count;
+                }
+                if (function.hasParamAttribute(index, llvm::Attribute::WriteOnly)) {
+                    ++out->writeonly_count;
+                }
+                const bool aggregate_abi =
+                    function.hasParamAttribute(index, llvm::Attribute::StructRet) ||
+                    function.hasParamAttribute(index, llvm::Attribute::ByVal);
+                if (!aggregate_abi &&
+                    function.hasParamAttribute(index, llvm::Attribute::Alignment)) {
+                    ++out->alignment;
+                }
+            }
+            if (!function.isDeclaration()) {
+                auto effects = function.getMemoryEffects();
+                if (effects == llvm::MemoryEffects::none() ||
+                    effects == llvm::MemoryEffects::readOnly() ||
+                    effects == llvm::MemoryEffects::writeOnly()) {
+                    ++out->memory_effects;
+                }
+            }
+            for (auto &block : function) {
+                for (auto &instruction : block) {
+                    if (auto *binary =
+                            llvm::dyn_cast<llvm::OverflowingBinaryOperator>(&instruction)) {
+                        if (binary->hasNoUnsignedWrap()) {
+                            ++out->no_unsigned_wrap;
+                        }
+                        if (binary->hasNoSignedWrap()) {
+                            ++out->no_signed_wrap;
+                        }
+                    }
+                    if (auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+                        auto *callee = call->getCalledFunction();
+                        if (callee != nullptr &&
+                            callee->getIntrinsicID() == llvm::Intrinsic::assume) {
+                            ++out->assume_count;
+                            ++out->range;
+                        }
+                    }
+                    auto *aliases = instruction.getMetadata(
+                        llvm::LLVMContext::MD_alias_scope);
+                    auto *noaliases = instruction.getMetadata(
+                        llvm::LLVMContext::MD_noalias);
+                    if (aliases == nullptr || noaliases == nullptr) {
+                        continue;
+                    }
+                    for (const auto &alias_operand : aliases->operands()) {
+                        uint32_t alias = 0;
+                        if (!ckc_alias_scope_id(alias_operand.get(), &alias)) {
+                            continue;
+                        }
+                        for (const auto &noalias_operand : noaliases->operands()) {
+                            uint32_t noalias = 0;
+                            if (!ckc_alias_scope_id(noalias_operand.get(), &noalias) ||
+                                alias == noalias) {
+                                continue;
+                            }
+                            alias_pairs.emplace(std::min(alias, noalias),
+                                                std::max(alias, noalias));
+                        }
+                    }
+                }
+            }
+        }
+        out->alias_scope = alias_pairs.size();
         return CKC_LLVM_OK;
     });
 }

@@ -4,7 +4,8 @@ use calckernel::{
     NativeFactAuditReport, NativeModule, NativeOptimizationLevel, NativeStage,
     NativeStrengtheningKind, NativeTarget, SourceFile, build_kir_module, check,
     import_contract_facts, lower_native_kir_module, lower_to_mir,
-    native_fact_audit_test_inject_untracked, run_kir_pass_pipeline,
+    native_fact_audit_test_inject_untracked, native_fact_audit_test_inject_untracked_flag,
+    run_kir_pass_pipeline,
 };
 
 fn audited_kir(source: &str) -> (String, NativeFactAuditReport) {
@@ -63,6 +64,19 @@ fn fact_audit_should_reject_injected_untracked_strengthening_before_optimization
         .expect("verify");
     native_fact_audit_test_inject_untracked(&verified).expect("inject mutation");
     let error = verified.audit().expect_err("untracked property must fail");
+    assert_eq!(error.stage, NativeStage::Module);
+    assert!(error.message.contains("untracked CK-owned strengthening"));
+}
+
+#[test]
+fn fact_audit_should_reject_an_untracked_llvm_flag_without_a_test_side_channel() {
+    let context = NativeContext::new().expect("context");
+    let verified = NativeModule::empty(&context)
+        .expect("empty module")
+        .verify()
+        .expect("verify");
+    native_fact_audit_test_inject_untracked_flag(&verified).expect("inject flag mutation");
+    let error = verified.audit().expect_err("untracked flag must fail");
     assert_eq!(error.stage, NativeStage::Module);
     assert!(error.message.contains("untracked CK-owned strengthening"));
 }
