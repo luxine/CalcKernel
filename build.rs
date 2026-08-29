@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, env, fs, path::PathBuf};
+use std::{collections::BTreeSet, env, fs, path::PathBuf, process::Command};
 
 use sha2::{Digest, Sha256};
 
@@ -252,6 +252,7 @@ fn configure_native_toolchain(target: &str) {
     } else {
         bridge.flag_if_supported("-fno-rtti");
     }
+    let bridge_compiler = bridge.get_compiler();
     bridge.compile("ckc_llvm_bridge");
     configure_sanitizer_linkage(target);
 
@@ -271,7 +272,7 @@ fn configure_native_toolchain(target: &str) {
     if target.contains("apple-darwin") {
         println!("cargo::rustc-link-lib=c++");
     } else if target.contains("unknown-linux-gnu") {
-        println!("cargo::rustc-link-lib=static=stdc++");
+        link_static_linux_cpp_runtime(&bridge_compiler);
     }
 
     let runtime_objects = manifest_array(&text, "runtime_objects");
@@ -374,6 +375,40 @@ fn configure_sanitizer_linkage(target: &str) {
             println!("cargo::rustc-link-lib=ubsan");
         }
     }
+}
+
+fn link_static_linux_cpp_runtime(compiler: &cc::Tool) {
+    let mut command: Command = compiler.to_command();
+    let output = command
+        .arg("-print-file-name=libstdc++.a")
+        .output()
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to locate the static Linux C++ runtime with {}: {error}",
+                compiler.path().display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "{} could not locate the static Linux C++ runtime: {}",
+        compiler.path().display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let archive = PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("C++ compiler returned a non-UTF-8 libstdc++ path")
+            .trim(),
+    );
+    assert!(
+        archive.is_absolute() && archive.is_file(),
+        "C++ compiler returned an invalid static libstdc++ path: {}",
+        archive.display()
+    );
+    let directory = archive
+        .parent()
+        .expect("static libstdc++ archive must have a parent directory");
+    println!("cargo::rustc-link-search=native={}", directory.display());
+    println!("cargo::rustc-link-lib=static=stdc++");
 }
 
 fn static_library_path(lib_dir: &std::path::Path, library: &str, target: &str) -> PathBuf {

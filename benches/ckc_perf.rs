@@ -48,6 +48,12 @@ const V0_10_MIR_OPTIMIZER_HARNESS_PATH: &str =
 const V0_10_MIR_OPTIMIZER_HARNESS_SHA256: &str =
     "828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b";
 #[cfg(feature = "native-toolchain")]
+const V0_10_LINUX_CPP_RUNTIME_HARNESS_PATH: &str =
+    "benches/baselines/v0_10_linux_cpp_runtime_harness.patch";
+#[cfg(feature = "native-toolchain")]
+const V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256: &str =
+    "099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff";
+#[cfg(feature = "native-toolchain")]
 const SAMPLE_REPETITIONS: usize = 7;
 
 fn main() {
@@ -280,6 +286,13 @@ impl CompilerBaseline {
                 "v0.10 MIR optimizer harness digest mismatch: expected {V0_10_MIR_OPTIMIZER_HARNESS_SHA256}, got {optimizer_patch_digest}"
             ));
         }
+        let linux_cpp_runtime_patch = repo_root.join(V0_10_LINUX_CPP_RUNTIME_HARNESS_PATH);
+        let linux_cpp_runtime_patch_digest = sha256_file(&linux_cpp_runtime_patch)?;
+        if linux_cpp_runtime_patch_digest != V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256 {
+            return Err(format!(
+                "v0.10 Linux C++ runtime link harness digest mismatch: expected {V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256}, got {linux_cpp_runtime_patch_digest}"
+            ));
+        }
         let mut source_digests = Vec::new();
         for (name, key, relative_paths) in source_specs {
             let expected = scalar(key)?;
@@ -317,7 +330,7 @@ impl CompilerBaseline {
             || baseline.llvm_version != "22.1.8"
             || baseline.harness
                 != format!(
-                    "ckc_perf schema 2 + proof-loop ABI adapter sha256={V0_10_PROOF_LOOP_HARNESS_SHA256} + MIR optimizer timer sha256={V0_10_MIR_OPTIMIZER_HARNESS_SHA256}; warmup=3; samples=20; repetitions=7; batch=20000000"
+                    "ckc_perf schema 2 + proof-loop ABI adapter sha256={V0_10_PROOF_LOOP_HARNESS_SHA256} + MIR optimizer timer sha256={V0_10_MIR_OPTIMIZER_HARNESS_SHA256} + Linux C++ runtime link adapter sha256={V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256}; warmup=3; samples=20; repetitions=7; batch=20000000"
                 )
             || baseline.source_digest_count != source_specs.len()
             || baseline.source_digests.len() != source_specs.len()

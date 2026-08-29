@@ -35,6 +35,11 @@ harness 应用 checksum 固定的 `benches/baselines/v0_10_proof_loop_harness.pa
 0.10 MIR pass pipeline，解析与 MIR 构造位于计时区外。这与 0.11 仅计 KIR pipeline 的边界
 一致，防止把 frontend `check` 时间错误标记为 optimizer 基线。
 
+第三个 checksum 固定的 `benches/baselines/v0_10_linux_cpp_runtime_harness.patch` 在 Cargo
+链接未改动的 0.10 编译器前，向选定 C++ 编译器查询静态 `libstdc++.a` 的绝对目录。它只
+修复 hosted Ubuntu AArch64 的搜索路径缺口，不改变 CK source、IR、codegen、benchmark
+输入或计时边界。
+
 Performance 不允许改变 diagnostic、evaluation order、modular integer/strict floating
 semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated
 contract case 只能使用满足声明 domain 的输入；不能为通过候选版本而降低阈值。

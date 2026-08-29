@@ -48,6 +48,8 @@ fn v0_10_baseline_harness_adapters_should_be_checksum_pinned() {
     const PROOF_DIGEST: &str = "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e";
     const OPTIMIZER_DIGEST: &str =
         "828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b";
+    const LINUX_CPP_RUNTIME_DIGEST: &str =
+        "099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff";
     let root = repo_root();
     let patch = fs::read(root.join("benches/baselines/v0_10_proof_loop_harness.patch"))
         .expect("read v0.10 proof-loop harness adapter");
@@ -83,13 +85,35 @@ fn v0_10_baseline_harness_adapters_should_be_checksum_pinned() {
         preparation < timer && timer < pipeline,
         "MIR construction must remain outside the optimizer timing region"
     );
+    let linux_cpp_runtime_patch =
+        fs::read(root.join("benches/baselines/v0_10_linux_cpp_runtime_harness.patch"))
+            .expect("read v0.10 Linux C++ runtime link adapter");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&linux_cpp_runtime_patch)),
+        LINUX_CPP_RUNTIME_DIGEST
+    );
+    let linux_cpp_runtime_patch =
+        String::from_utf8(linux_cpp_runtime_patch).expect("UTF-8 Linux link patch");
+    for required in [
+        "-print-file-name=libstdc++.a",
+        "cargo::rustc-link-search=native=",
+        "cargo::rustc-link-lib=static=stdc++",
+    ] {
+        assert!(
+            linux_cpp_runtime_patch.contains(required),
+            "Linux link adapter must contain {required:?}"
+        );
+    }
 
     let baseline = fs::read_to_string(root.join("benches/baselines/v0_10_compiler.toml"))
         .expect("read v0.10 baseline");
     assert!(
         baseline.contains(&format!("proof-loop ABI adapter sha256={PROOF_DIGEST}"))
-            && baseline.contains(&format!("MIR optimizer timer sha256={OPTIMIZER_DIGEST}")),
-        "baseline harness identity must bind both adapters"
+            && baseline.contains(&format!("MIR optimizer timer sha256={OPTIMIZER_DIGEST}"))
+            && baseline.contains(&format!(
+                "Linux C++ runtime link adapter sha256={LINUX_CPP_RUNTIME_DIGEST}"
+            )),
+        "baseline harness identity must bind every adapter"
     );
 }
 

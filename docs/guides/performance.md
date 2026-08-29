@@ -56,6 +56,12 @@ A second checksum-pinned adapter,
 region. This matches the 0.11 KIR-only timing boundary and prevents frontend
 `check` time from being mislabeled as the optimizer baseline.
 
+A third checksum-pinned adapter,
+`benches/baselines/v0_10_linux_cpp_runtime_harness.patch`, asks the selected C++
+compiler for the absolute static `libstdc++.a` directory before Cargo links the
+unchanged 0.10 compiler. This closes a hosted Ubuntu AArch64 search-path gap; it
+does not alter CK source, IR, code generation, benchmark inputs, or timing.
+
 Performance never permits changed diagnostics, evaluation order, modular
 integer or strict floating semantics, checked first-error order, runtime print
 order, semantic MIR, ABI, or contract domain. Generated contract cases contain

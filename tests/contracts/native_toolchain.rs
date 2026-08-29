@@ -166,6 +166,9 @@ fn release_toolchain_should_static_link_non_system_cpp_runtimes() {
     for required in [
         "cpp_link_stdlib(None)",
         "static_crt(true)",
+        "fn link_static_linux_cpp_runtime",
+        "-print-file-name=libstdc++.a",
+        "cargo::rustc-link-search=native=",
         "cargo::rustc-link-lib=static=stdc++",
         "cargo::rustc-link-lib=c++",
     ] {
