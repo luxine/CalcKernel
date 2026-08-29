@@ -46,6 +46,15 @@ pub struct KirOptimizationExplanation {
     pub proof: Option<ProofId>,
 }
 
+/// Deterministic rewrite counts used by acceptance and optimization explanations.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KirOptimizationStats {
+    pub inlined_calls: u32,
+    pub gvn_rewrites: u32,
+    pub forwarded_loads: u32,
+    pub eliminated_stores: u32,
+}
+
 /// Transactional output. `artifact` is absent whenever any verification failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KirPassManagerResult {
@@ -56,6 +65,8 @@ pub struct KirPassManagerResult {
     pub proofs: ProofArena,
     pub eliminated_guards: Vec<KirGuardElimination>,
     pub explanations: Vec<KirOptimizationExplanation>,
+    pub contract_facts: Option<ContractFactSet>,
+    pub stats: KirOptimizationStats,
 }
 
 #[must_use]
@@ -73,6 +84,8 @@ pub fn run_kir_pass_pipeline(
         proofs: ProofArena::new(GENERATION),
         eliminated_guards: Vec::new(),
         explanations: Vec::new(),
+        contract_facts: contracts.cloned(),
+        stats: KirOptimizationStats::default(),
     };
 
     let input_errors = validate_kir_module(&module).errors;
@@ -101,7 +114,7 @@ pub fn run_kir_pass_pipeline(
     ];
     for (name, pass) in passes {
         let changed = pass(&mut module);
-        if !record_verified_pass(&module, name, changed, contracts, &mut result, GENERATION) {
+        if !record_current_pass(&module, name, changed, &mut result, GENERATION) {
             result.module = module;
             return result;
         }
@@ -109,22 +122,125 @@ pub fn run_kir_pass_pipeline(
 
     let changed = kir_passes::run_check_elimination(
         &mut module,
-        contracts,
+        result.contract_facts.as_ref(),
         &mut result.proofs,
         &mut result.eliminated_guards,
         &mut result.explanations,
         GENERATION,
     );
-    if !record_verified_pass(
+    if !record_current_pass(
         &module,
         "check-elimination",
         changed,
-        contracts,
         &mut result,
         GENERATION,
     ) {
         result.module = module;
         return result;
+    }
+
+    if matches!(level, KirOptimizationLevel::O2 | KirOptimizationLevel::O3) {
+        result.stats.inlined_calls = kir_passes::run_effect_aware_inline(
+            &mut module,
+            &mut result.contract_facts,
+            &result.eliminated_guards,
+        );
+        if !record_current_pass(
+            &module,
+            "effect-aware-inline",
+            result.stats.inlined_calls != 0,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+
+        let memory_changed =
+            match kir_passes::run_memory_ssa_refine(&mut module, result.contract_facts.as_ref()) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    result.errors.push(error);
+                    result.module = module;
+                    return result;
+                }
+            };
+        if !record_current_pass(
+            &module,
+            "memory-ssa-refine",
+            memory_changed,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+
+        result.stats.gvn_rewrites = kir_passes::run_gvn(&mut module);
+        if !record_current_pass(
+            &module,
+            "gvn",
+            result.stats.gvn_rewrites != 0,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+
+        result.stats.forwarded_loads = kir_passes::run_load_forwarding(&mut module);
+        if !record_current_pass(
+            &module,
+            "load-forwarding",
+            result.stats.forwarded_loads != 0,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+
+        result.stats.eliminated_stores = kir_passes::run_dead_store_elimination(&mut module);
+        if !record_current_pass(
+            &module,
+            "dead-store-elimination",
+            result.stats.eliminated_stores != 0,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+
+        let changed = kir_passes::run_sccp_range(&mut module);
+        if !record_current_pass(
+            &module,
+            "sccp-range-post-inline",
+            changed,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
+        let changed = kir_passes::run_check_elimination(
+            &mut module,
+            result.contract_facts.as_ref(),
+            &mut result.proofs,
+            &mut result.eliminated_guards,
+            &mut result.explanations,
+            GENERATION,
+        );
+        if !record_current_pass(
+            &module,
+            "check-elimination-post-inline",
+            changed,
+            &mut result,
+            GENERATION,
+        ) {
+            result.module = module;
+            return result;
+        }
     }
 
     let protected = result
@@ -133,11 +249,10 @@ pub fn run_kir_pass_pipeline(
         .map(|elimination| elimination.condition_instruction)
         .collect();
     let changed = kir_passes::run_dead_code_elimination(&mut module, &protected);
-    if !record_verified_pass(
+    if !record_current_pass(
         &module,
         "dead-code-elimination",
         changed,
-        contracts,
         &mut result,
         GENERATION,
     ) {
@@ -146,14 +261,7 @@ pub fn run_kir_pass_pipeline(
     }
 
     let changed = kir_passes::run_cleanup(&mut module);
-    if !record_verified_pass(
-        &module,
-        "cleanup",
-        changed,
-        contracts,
-        &mut result,
-        GENERATION,
-    ) {
+    if !record_current_pass(&module, "cleanup", changed, &mut result, GENERATION) {
         result.module = module;
         return result;
     }
@@ -188,6 +296,24 @@ fn record_verified_pass(
         .errors
         .extend(evidence.errors.into_iter().map(|error| error.message));
     verified
+}
+
+fn record_current_pass(
+    module: &KirModule,
+    name: &str,
+    changed: bool,
+    result: &mut KirPassManagerResult,
+    generation: u32,
+) -> bool {
+    let contracts = result.contract_facts.clone();
+    record_verified_pass(
+        module,
+        name,
+        changed,
+        contracts.as_ref(),
+        result,
+        generation,
+    )
 }
 
 /// Rechecks the rewritten KIR, all fact/proof certificates, and each rewrite-to-proof binding.

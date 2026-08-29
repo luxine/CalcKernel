@@ -122,6 +122,17 @@ pub fn verify_fact_arena(
                 ));
                 continue;
             }
+            if !trusted_fact_scope_matches(record, instance, &fact.scope) {
+                errors.push(fact_error(
+                    Some(fact.id),
+                    format!(
+                        "fact{} scope does not match contract instance ci{} source",
+                        fact.id.index(),
+                        instance.index()
+                    ),
+                ));
+                continue;
+            }
             if let Some(expected) = contracts.facts().get(fact.id)
                 && (expected.scope != fact.scope || expected.predicate != fact.predicate)
             {
@@ -138,6 +149,42 @@ pub fn verify_fact_arena(
         }
     }
     EvidenceValidationResult { errors }
+}
+
+fn trusted_fact_scope_matches(
+    record: &super::ContractFactInstance,
+    instance: super::ContractInstanceId,
+    scope: &super::FactScope,
+) -> bool {
+    match (&record.source, scope) {
+        (
+            super::ContractInstanceSource::FunctionEntry,
+            super::FactScope::FunctionEntry(function),
+        ) => *function == record.callee,
+        (
+            super::ContractInstanceSource::Call { .. },
+            super::FactScope::CalleeInstance {
+                instance: scoped,
+                callee,
+            },
+        ) => *scoped == instance && *callee == record.callee,
+        (
+            super::ContractInstanceSource::InlineClone {
+                function, clone, ..
+            },
+            super::FactScope::InlineClone {
+                function: scoped_function,
+                clone: scoped_clone,
+                blocks,
+            },
+        ) => {
+            *function == *scoped_function
+                && *clone == *scoped_clone
+                && !blocks.is_empty()
+                && blocks.windows(2).all(|pair| pair[0] < pair[1])
+        }
+        _ => false,
+    }
 }
 
 #[must_use]

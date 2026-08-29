@@ -303,6 +303,11 @@ impl ContractFactSet {
         &self.facts
     }
 
+    /// Mutable access is intentionally exposed for verifier mutation tests and explicit cloning.
+    pub fn facts_mut(&mut self) -> &mut FactArena {
+        &mut self.facts
+    }
+
     #[must_use]
     pub fn instances(&self) -> &[ContractFactInstance] {
         &self.instances
