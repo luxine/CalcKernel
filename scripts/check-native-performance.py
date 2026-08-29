@@ -25,6 +25,7 @@ BASELINE_HARNESS = (
 BASELINE_STATISTICS = (
     "minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8"
 )
+SAMPLE_COUNT = 20
 BASELINE_SOURCE_DIGESTS = {
     "branch_mix": "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8",
     "integer_accumulate": "4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39",
@@ -49,8 +50,8 @@ def positive_number(value: object, field: str) -> float:
 
 
 def stable_samples(value: object, field: str) -> list[float]:
-    if not isinstance(value, list) or len(value) < 3:
-        fail(f"{field} must contain at least three samples")
+    if not isinstance(value, list) or len(value) != SAMPLE_COUNT:
+        fail(f"{field} must contain exactly {SAMPLE_COUNT} samples")
     samples = [positive_number(sample, field) for sample in value]
     median = statistics.median(samples)
     stable = sum(median * 0.75 <= sample <= median * 1.25 for sample in samples)
@@ -187,9 +188,12 @@ def check(path: pathlib.Path) -> None:
         fail("the release performance gate requires the portable baseline CPU policy")
     if report.get("clangVersion") != BASELINE_LLVM_VERSION:
         fail("clangVersion must match the pinned Clang 22.1.8 oracle")
-    if report.get("warmup") != 3:
+    if type(report.get("warmup")) is not int or report.get("warmup") != 3:
         fail("warmup must match the pinned value 3")
-    if report.get("sampleRepetitions") != 7:
+    if (
+        type(report.get("sampleRepetitions")) is not int
+        or report.get("sampleRepetitions") != 7
+    ):
         fail("sampleRepetitions must match the pinned value 7")
     check_baseline_identity(report)
 
