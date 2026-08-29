@@ -33,6 +33,10 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   时使用普通 RW/NX reservation，并在 materialization 后逐 segment 页级 finalization。
   两条路径都必须由同一 audit 证明 relocation=RW/NX、code=RX、data=NX 与 instruction-cache
   finalization；不允许 RWX fallback。
+- 最后完成的 macOS x86-64 job `99116972003` 也先通过 bootstrap 与 pre-LLVM fact audit，
+  随后 full Native suite 在 cache/run/sanitizer/executable 的 JIT 消费路径出现成组失败并最终
+  SIGBUS。它没有暴露新的 bootstrap、fact audit 或 ABI 阻断，仍由同一 Darwin capability/
+  finalization 修订覆盖；修复后的 x86-64 job 必须以完整 suite 和 memory audit 证明这一点。
 - Repository contract test 先以缺少双路径失败。实现后，本机真实 MAP_JIT 路径的 JIT tests
   为 5/5；临时强制关闭能力探测后完整 Native suite 为 91/91，随后立即恢复真实探测。正式
   shell audit 仍以 hardened runtime 和唯一 `com.apple.security.cs.allow-jit` entitlement
