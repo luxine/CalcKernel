@@ -54,6 +54,11 @@ const V0_10_LINUX_CPP_RUNTIME_HARNESS_PATH: &str =
 const V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256: &str =
     "099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff";
 #[cfg(feature = "native-toolchain")]
+const V0_10_CLANG_CPU_HARNESS_PATH: &str = "benches/baselines/v0_10_clang_cpu_harness.patch";
+#[cfg(feature = "native-toolchain")]
+const V0_10_CLANG_CPU_HARNESS_SHA256: &str =
+    "f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1";
+#[cfg(feature = "native-toolchain")]
 const SAMPLE_REPETITIONS: usize = 7;
 
 fn main() {
@@ -293,6 +298,13 @@ impl CompilerBaseline {
                 "v0.10 Linux C++ runtime link harness digest mismatch: expected {V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256}, got {linux_cpp_runtime_patch_digest}"
             ));
         }
+        let clang_cpu_patch = repo_root.join(V0_10_CLANG_CPU_HARNESS_PATH);
+        let clang_cpu_patch_digest = sha256_file(&clang_cpu_patch)?;
+        if clang_cpu_patch_digest != V0_10_CLANG_CPU_HARNESS_SHA256 {
+            return Err(format!(
+                "v0.10 Clang CPU policy harness digest mismatch: expected {V0_10_CLANG_CPU_HARNESS_SHA256}, got {clang_cpu_patch_digest}"
+            ));
+        }
         let mut source_digests = Vec::new();
         for (name, key, relative_paths) in source_specs {
             let expected = scalar(key)?;
@@ -330,7 +342,7 @@ impl CompilerBaseline {
             || baseline.llvm_version != "22.1.8"
             || baseline.harness
                 != format!(
-                    "ckc_perf schema 2 + proof-loop ABI adapter sha256={V0_10_PROOF_LOOP_HARNESS_SHA256} + MIR optimizer timer sha256={V0_10_MIR_OPTIMIZER_HARNESS_SHA256} + Linux C++ runtime link adapter sha256={V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256}; warmup=3; samples=20; repetitions=7; batch=20000000"
+                    "ckc_perf schema 2 + proof-loop ABI adapter sha256={V0_10_PROOF_LOOP_HARNESS_SHA256} + MIR optimizer timer sha256={V0_10_MIR_OPTIMIZER_HARNESS_SHA256} + Linux C++ runtime link adapter sha256={V0_10_LINUX_CPP_RUNTIME_HARNESS_SHA256} + Clang CPU policy adapter sha256={V0_10_CLANG_CPU_HARNESS_SHA256}; warmup=3; samples=20; repetitions=7; batch=20000000"
                 )
             || baseline.source_digest_count != source_specs.len()
             || baseline.source_digests.len() != source_specs.len()
@@ -1265,10 +1277,28 @@ fn compile_strict_clang_library(
     ]);
     match cpu_policy {
         CpuPolicy::Baseline => {
-            command.arg("-mcpu=generic");
+            if cfg!(target_arch = "x86_64") {
+                command.args(["-march=x86-64", "-mtune=generic"]);
+            } else if cfg!(target_arch = "aarch64") {
+                command.arg("-mcpu=generic");
+            } else {
+                return Err(format!(
+                    "the baseline Clang oracle has no policy for {}",
+                    env::consts::ARCH
+                ));
+            }
         }
         CpuPolicy::Native => {
-            command.arg("-march=native");
+            if cfg!(target_arch = "x86_64") {
+                command.arg("-march=native");
+            } else if cfg!(target_arch = "aarch64") {
+                command.arg("-mcpu=native");
+            } else {
+                return Err(format!(
+                    "the native Clang oracle has no policy for {}",
+                    env::consts::ARCH
+                ));
+            }
         }
     }
     if cfg!(target_os = "macos") {

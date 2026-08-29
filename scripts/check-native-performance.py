@@ -19,7 +19,9 @@ BASELINE_HARNESS = (
     "MIR optimizer timer "
     "sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + "
     "Linux C++ runtime link adapter "
-    "sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff; "
+    "sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff + "
+    "Clang CPU policy adapter "
+    "sha256=f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1; "
     "warmup=3; samples=20; repetitions=7; batch=20000000"
 )
 BASELINE_STATISTICS = (

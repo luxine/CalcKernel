@@ -64,6 +64,12 @@ compiler for the absolute static `libstdc++.a` directory before Cargo links the
 unchanged 0.10 compiler. This closes a hosted Ubuntu AArch64 search-path gap; it
 does not alter CK source, IR, code generation, benchmark inputs, or timing.
 
+The checksum-pinned `benches/baselines/v0_10_clang_cpu_harness.patch` makes the
+portable Clang reference architecture-specific: x86-64 uses
+`-march=x86-64 -mtune=generic`, matching CK's `x86-64` baseline, while AArch64
+keeps `-mcpu=generic`, matching CK's generic ARMv8-A baseline. Native-CPU flags
+remain investigative and are never accepted by the release gate.
+
 Performance never permits changed diagnostics, evaluation order, modular
 integer or strict floating semantics, checked first-error order, runtime print
 order, semantic MIR, ABI, or contract domain. Generated contract cases contain

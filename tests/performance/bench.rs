@@ -50,6 +50,8 @@ fn v0_10_baseline_harness_adapters_should_be_checksum_pinned() {
         "828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b";
     const LINUX_CPP_RUNTIME_DIGEST: &str =
         "099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff";
+    const CLANG_CPU_DIGEST: &str =
+        "f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1";
     let root = repo_root();
     let patch = fs::read(root.join("benches/baselines/v0_10_proof_loop_harness.patch"))
         .expect("read v0.10 proof-loop harness adapter");
@@ -104,6 +106,19 @@ fn v0_10_baseline_harness_adapters_should_be_checksum_pinned() {
             "Linux link adapter must contain {required:?}"
         );
     }
+    let clang_cpu_patch = fs::read(root.join("benches/baselines/v0_10_clang_cpu_harness.patch"))
+        .expect("read v0.10 Clang CPU policy adapter");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&clang_cpu_patch)),
+        CLANG_CPU_DIGEST
+    );
+    let clang_cpu_patch = String::from_utf8(clang_cpu_patch).expect("UTF-8 Clang CPU patch");
+    for required in ["-march=x86-64", "-mtune=generic", "-mcpu=generic"] {
+        assert!(
+            clang_cpu_patch.contains(required),
+            "Clang CPU adapter must contain {required:?}"
+        );
+    }
 
     let baseline = fs::read_to_string(root.join("benches/baselines/v0_10_compiler.toml"))
         .expect("read v0.10 baseline");
@@ -112,6 +127,9 @@ fn v0_10_baseline_harness_adapters_should_be_checksum_pinned() {
             && baseline.contains(&format!("MIR optimizer timer sha256={OPTIMIZER_DIGEST}"))
             && baseline.contains(&format!(
                 "Linux C++ runtime link adapter sha256={LINUX_CPP_RUNTIME_DIGEST}"
+            ))
+            && baseline.contains(&format!(
+                "Clang CPU policy adapter sha256={CLANG_CPU_DIGEST}"
             )),
         "baseline harness identity must bind every adapter"
     );
@@ -157,6 +175,9 @@ fn native_runtime_harness_should_define_strict_equivalent_differential_measureme
         "-fno-unwind-tables",
         "-fno-asynchronous-unwind-tables",
         "-falign-functions=64",
+        "-march=x86-64",
+        "-mtune=generic",
+        "-mcpu=generic",
         "OverflowMode::Checked",
         "BoundsMode::Checked",
         "reference_equivalent",
@@ -391,7 +412,7 @@ fn performance_report(
   "clangVersion": "22.1.8",
   "warmup": 3,
   "sampleRepetitions": 7,
-  "baselineV010": {{"commit":"df816502876fba41676f9ebc190e4fadd18cd5a5","compilerIdentity":"calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)","llvmVersion":"22.1.8","target":"{target}","harness":"ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + MIR optimizer timer sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + Linux C++ runtime link adapter sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff; warmup=3; samples=20; repetitions=7; batch=20000000","statistics":"minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8","sourceDigestCount":9,"sourceDigests":{{"branch_mix":"d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8","integer_accumulate":"4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39","proof_loop":"ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d","remainder_chain":"87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e","pricing":"be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416","pricing_soa":"5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad","f64_kernels":"58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be","example_pricing":"aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a","example_dijkstra":"490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96"}}}},
+  "baselineV010": {{"commit":"df816502876fba41676f9ebc190e4fadd18cd5a5","compilerIdentity":"calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)","llvmVersion":"22.1.8","target":"{target}","harness":"ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + MIR optimizer timer sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + Linux C++ runtime link adapter sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff + Clang CPU policy adapter sha256=f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1; warmup=3; samples=20; repetitions=7; batch=20000000","statistics":"minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8","sourceDigestCount":9,"sourceDigests":{{"branch_mix":"d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8","integer_accumulate":"4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39","proof_loop":"ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d","remainder_chain":"87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e","pricing":"be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416","pricing_soa":"5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad","f64_kernels":"58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be","example_pricing":"aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a","example_dijkstra":"490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96"}}}},
   "suites": [
     {{"mode":"unchecked","cases":[{branch_mix},{integer_accumulate},{proof_loop},{remainder_chain}]}},
     {{"mode":"checked","cases":[{branch_mix},{integer_accumulate},{checked_proof_loop},{remainder_chain}]}}

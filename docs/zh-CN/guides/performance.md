@@ -42,6 +42,11 @@ harness 应用 checksum 固定的 `benches/baselines/v0_10_proof_loop_harness.pa
 修复 hosted Ubuntu AArch64 的搜索路径缺口，不改变 CK source、IR、codegen、benchmark
 输入或计时边界。
 
+Checksum 固定的 `benches/baselines/v0_10_clang_cpu_harness.patch` 按架构冻结 portable
+Clang reference：x86-64 使用 `-march=x86-64 -mtune=generic`，对应 CK 的 `x86-64`
+baseline；AArch64 保持 `-mcpu=generic`，对应 CK 的 generic ARMv8-A baseline。Native-CPU
+flag 仍只用于调查，不会被 release gate 接受。
+
 Performance 不允许改变 diagnostic、evaluation order、modular integer/strict floating
 semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated
 contract case 只能使用满足声明 domain 的输入；不能为通过候选版本而降低阈值。
