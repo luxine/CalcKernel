@@ -29,6 +29,8 @@ pub(super) fn executable_object(
     .expect("lower executable module")
     .verify()
     .expect("verify executable module")
+    .audit()
+    .expect("audit executable module facts")
     .optimize(&target, NativeOptimizationLevel::O3)
     .expect("optimize executable module");
     target.emit_object(module).expect("emit executable object")

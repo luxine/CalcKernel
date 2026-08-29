@@ -3,7 +3,7 @@ use calckernel::{BoundsMode, OverflowMode};
 use super::runtime_support::{executable_bytes, run_executable};
 
 #[test]
-fn standalone_void_and_i32_entries_should_run_without_external_tools() {
+fn executable_standalone_void_and_i32_entries_should_run_without_external_tools() {
     for (label, source, expected_status, expected_stdout) in [
         (
             "void-entry",
@@ -29,7 +29,7 @@ fn standalone_void_and_i32_entries_should_run_without_external_tools() {
 }
 
 #[test]
-fn checked_i32_entry_should_use_an_internal_nonnull_result_pointer() {
+fn executable_checked_i32_entry_should_use_an_internal_nonnull_result_pointer() {
     let output = run_executable(
         &executable_bytes(
             "fn main() -> i32 { return 23 + 19; }",

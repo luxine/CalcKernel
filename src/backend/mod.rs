@@ -24,18 +24,20 @@ pub use c::{
     emit_c_kir_module_with_contracts, emit_c_module, emit_c_module_with_header, try_emit_c_module,
 };
 pub use header::{NativeHeaderMode, emit_native_header};
-pub use llvm::{
-    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
-};
 #[cfg(feature = "native-toolchain")]
 pub use llvm::{
-    LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu, NativeError, NativeJit,
+    AuditedNativeModule, LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu,
+    NativeError, NativeFactAuditReport, NativeFactProperty, NativeFactSource, NativeJit,
     NativeJitMemoryAudit, NativeLoweringOptions, NativeModule, NativeObject,
-    NativeOptimizationLevel, NativeStage, NativeTarget, NativeToolchain, OptimizedNativeModule,
-    OrcObjectLayer, VerifiedNativeModule, bridge_info, lower_native_executable_module_with_options,
-    lower_native_llvm_module, lower_native_llvm_module_with_options,
-    test_error as native_bridge_test_error, test_invalid_input as native_bridge_test_invalid_input,
-    test_invalid_module_verification,
+    NativeOptimizationLevel, NativeStage, NativeStrengtheningKind, NativeTarget, NativeToolchain,
+    OptimizedNativeModule, OrcObjectLayer, VerifiedNativeModule, bridge_info,
+    lower_native_executable_module_with_options, lower_native_kir_module, lower_native_llvm_module,
+    lower_native_llvm_module_with_options, test_error as native_bridge_test_error,
+    test_inject_untracked_strengthening as native_fact_audit_test_inject_untracked,
+    test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
+};
+pub use llvm::{
+    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
 };
 #[cfg(feature = "native-toolchain")]
 pub use native_abi::{

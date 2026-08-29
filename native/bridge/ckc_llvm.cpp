@@ -32,7 +32,9 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/ADT/SmallVector.h>
@@ -52,6 +54,7 @@
 #include <llvm/Support/Error.h>
 #include <llvm/Support/Alignment.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/ModRef.h>
 #include <llvm/Support/Process.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
@@ -99,6 +102,7 @@ struct CkcLlvmContext {
 
 struct CkcLlvmModule {
     std::unique_ptr<llvm::Module> value;
+    bool untracked_strengthening = false;
 };
 
 struct CkcLlvmObject {
@@ -126,6 +130,8 @@ struct CkcLlvmJit {
 
 struct CkcLlvmBuilder {
     std::unique_ptr<llvm::IRBuilder<>> value;
+    llvm::MDNode *alias_domain = nullptr;
+    std::map<uint32_t, llvm::MDNode *> alias_scopes;
 };
 
 namespace {
@@ -1244,6 +1250,37 @@ extern "C" int32_t ckc_llvm_module_make_invalid_for_test(
     });
 }
 
+extern "C" int32_t ckc_llvm_module_test_inject_untracked_strengthening(
+    CkcLlvmModule *module, CkcLlvmError *error) {
+    return guarded(error, "injecting untracked LLVM strengthening", [&] {
+        if (module == nullptr || module->value == nullptr) {
+            return invalid(error, "untracked-strengthening test module is null");
+        }
+        auto &context = module->value->getContext();
+        auto *pointer = llvm::PointerType::get(context, 0);
+        auto *type = llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                                             {pointer}, false);
+        auto *probe = llvm::Function::Create(
+            type, llvm::GlobalValue::ExternalLinkage, "__ck_untracked_probe",
+            *module->value);
+        probe->addParamAttr(
+            0, llvm::Attribute::get(context, llvm::Attribute::NoAlias));
+        module->untracked_strengthening = true;
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_has_untracked_strengthening(
+    CkcLlvmModule *module, uint32_t *out, CkcLlvmError *error) {
+    return guarded(error, "enumerating LLVM strengthenings", [&] {
+        if (module == nullptr || module->value == nullptr || out == nullptr) {
+            return invalid(error, "LLVM strengthening audit input or output is null");
+        }
+        *out = module->untracked_strengthening ? 1u : 0u;
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" void ckc_llvm_target_dispose(CkcLlvmTarget *target) {
     delete target;
 }
@@ -1524,6 +1561,22 @@ extern "C" int32_t ckc_llvm_function_add_attribute(
             attribute = llvm::Attribute::getWithByValType(
                 value->getContext(), llvm_type(pointee_type));
             break;
+        case CKC_LLVM_ATTR_NOALIAS:
+            attribute = llvm::Attribute::get(value->getContext(), llvm::Attribute::NoAlias);
+            break;
+        case CKC_LLVM_ATTR_READONLY:
+            attribute = llvm::Attribute::get(value->getContext(), llvm::Attribute::ReadOnly);
+            break;
+        case CKC_LLVM_ATTR_WRITEONLY:
+            attribute = llvm::Attribute::get(value->getContext(), llvm::Attribute::WriteOnly);
+            break;
+        case CKC_LLVM_ATTR_ALIGN:
+            if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+                return invalid(error, "align requires a nonzero power-of-two alignment");
+            }
+            attribute = llvm::Attribute::getWithAlignment(value->getContext(),
+                                                          llvm::Align(alignment));
+            break;
         default:
             return invalid(error, "unknown LLVM function attribute kind");
         }
@@ -1539,6 +1592,30 @@ extern "C" int32_t ckc_llvm_function_add_attribute(
                     llvm::Attribute::getWithAlignment(value->getContext(),
                                                       llvm::Align(alignment)));
             }
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_function_set_memory_effects(
+    CkcLlvmFunction *function, uint32_t effects, CkcLlvmError *error) {
+    return guarded(error, "setting LLVM function memory effects", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr) {
+            return invalid(error, "LLVM memory-effects function is null");
+        }
+        switch (effects) {
+        case CKC_LLVM_MEMORY_NONE:
+            value->setMemoryEffects(llvm::MemoryEffects::none());
+            break;
+        case CKC_LLVM_MEMORY_READ:
+            value->setMemoryEffects(llvm::MemoryEffects::readOnly());
+            break;
+        case CKC_LLVM_MEMORY_WRITE:
+            value->setMemoryEffects(llvm::MemoryEffects::writeOnly());
+            break;
+        default:
+            return invalid(error, "unknown LLVM function memory effects");
         }
         return CKC_LLVM_OK;
     });
@@ -1615,6 +1692,85 @@ extern "C" int32_t ckc_llvm_builder_load(
     });
 }
 
+static llvm::MDNode *ckc_alias_scope(CkcLlvmBuilder *builder, uint32_t id) {
+    auto existing = builder->alias_scopes.find(id);
+    if (existing != builder->alias_scopes.end()) {
+        return existing->second;
+    }
+    auto &context = builder->value->getContext();
+    if (builder->alias_domain == nullptr) {
+        builder->alias_domain = llvm::MDNode::getDistinct(
+            context, {nullptr, llvm::MDString::get(context, "ck.alias.domain")});
+        builder->alias_domain->replaceOperandWith(0, builder->alias_domain);
+    }
+    auto *scope = llvm::MDNode::getDistinct(
+        context,
+        {nullptr, builder->alias_domain,
+         llvm::MDString::get(context, "ck.alias.scope." + std::to_string(id))});
+    scope->replaceOperandWith(0, scope);
+    builder->alias_scopes.emplace(id, scope);
+    return scope;
+}
+
+static int32_t ckc_set_alias_metadata(
+    CkcLlvmBuilder *builder, llvm::Instruction *instruction,
+    const uint32_t *alias_scopes, size_t alias_scope_count,
+    const uint32_t *noalias_scopes, size_t noalias_scope_count,
+    CkcLlvmError *error) {
+    if ((alias_scope_count != 0 && alias_scopes == nullptr) ||
+        (noalias_scope_count != 0 && noalias_scopes == nullptr)) {
+        return invalid(error, "LLVM scoped alias metadata array is null");
+    }
+    auto &context = builder->value->getContext();
+    llvm::SmallVector<llvm::Metadata *, 4> aliases;
+    llvm::SmallVector<llvm::Metadata *, 4> noaliases;
+    for (size_t index = 0; index < alias_scope_count; ++index) {
+        if (alias_scopes[index] == 0) {
+            return invalid(error, "LLVM alias scope identity must be nonzero");
+        }
+        aliases.push_back(ckc_alias_scope(builder, alias_scopes[index]));
+    }
+    for (size_t index = 0; index < noalias_scope_count; ++index) {
+        if (noalias_scopes[index] == 0) {
+            return invalid(error, "LLVM noalias scope identity must be nonzero");
+        }
+        noaliases.push_back(ckc_alias_scope(builder, noalias_scopes[index]));
+    }
+    if (!aliases.empty()) {
+        instruction->setMetadata(llvm::LLVMContext::MD_alias_scope,
+                                 llvm::MDNode::get(context, aliases));
+    }
+    if (!noaliases.empty()) {
+        instruction->setMetadata(llvm::LLVMContext::MD_noalias,
+                                 llvm::MDNode::get(context, noaliases));
+    }
+    return CKC_LLVM_OK;
+}
+
+extern "C" int32_t ckc_llvm_builder_load_scoped_alias(
+    CkcLlvmBuilder *builder, CkcLlvmType *type, CkcLlvmValue *pointer,
+    const uint32_t *alias_scopes, size_t alias_scope_count,
+    const uint32_t *noalias_scopes, size_t noalias_scope_count,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM scoped-alias load", [&] {
+        if (builder == nullptr || builder->value == nullptr || type == nullptr ||
+            pointer == nullptr || out == nullptr) {
+            return invalid(error, "LLVM scoped-alias load input or output is null");
+        }
+        auto *load = builder->value->CreateLoad(
+            llvm_type(type), llvm_value(pointer), borrowed_string(name));
+        auto status = ckc_set_alias_metadata(
+            builder, load, alias_scopes, alias_scope_count, noalias_scopes,
+            noalias_scope_count, error);
+        if (status != CKC_LLVM_OK) {
+            load->eraseFromParent();
+            return status;
+        }
+        *out = bridge_value(load);
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_builder_store(CkcLlvmBuilder *builder,
                                              CkcLlvmValue *value,
                                              CkcLlvmValue *pointer,
@@ -1625,6 +1781,28 @@ extern "C" int32_t ckc_llvm_builder_store(CkcLlvmBuilder *builder,
             return invalid(error, "LLVM store input is null");
         }
         builder->value->CreateStore(llvm_value(value), llvm_value(pointer));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_store_scoped_alias(
+    CkcLlvmBuilder *builder, CkcLlvmValue *value, CkcLlvmValue *pointer,
+    const uint32_t *alias_scopes, size_t alias_scope_count,
+    const uint32_t *noalias_scopes, size_t noalias_scope_count,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM scoped-alias store", [&] {
+        if (builder == nullptr || builder->value == nullptr || value == nullptr ||
+            pointer == nullptr) {
+            return invalid(error, "LLVM scoped-alias store input is null");
+        }
+        auto *store = builder->value->CreateStore(llvm_value(value), llvm_value(pointer));
+        auto status = ckc_set_alias_metadata(
+            builder, store, alias_scopes, alias_scope_count, noalias_scopes,
+            noalias_scope_count, error);
+        if (status != CKC_LLVM_OK) {
+            store->eraseFromParent();
+            return status;
+        }
         return CKC_LLVM_OK;
     });
 }
@@ -1685,8 +1863,9 @@ extern "C" int32_t ckc_llvm_const_undef(CkcLlvmType *type,
 
 extern "C" int32_t ckc_llvm_builder_binary(
     CkcLlvmBuilder *builder, uint32_t op, CkcLlvmValue *left,
-    CkcLlvmValue *right, CkcLlvmBytes name, CkcLlvmValue **out,
-    CkcLlvmError *error) {
+    CkcLlvmValue *right, uint32_t no_unsigned_wrap,
+    uint32_t no_signed_wrap, CkcLlvmBytes name,
+    CkcLlvmValue **out, CkcLlvmError *error) {
     return guarded(error, "building LLVM binary instruction", [&] {
         if (builder == nullptr || builder->value == nullptr || left == nullptr ||
             right == nullptr || out == nullptr) {
@@ -1706,6 +1885,18 @@ extern "C" int32_t ckc_llvm_builder_binary(
         case CKC_LLVM_FMUL: result = builder->value->CreateFMul(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
         case CKC_LLVM_FDIV: result = builder->value->CreateFDiv(llvm_value(left), llvm_value(right), borrowed_string(name)); break;
         default: return invalid(error, "unknown LLVM binary opcode");
+        }
+        if (no_unsigned_wrap != 0 || no_signed_wrap != 0) {
+            auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(result);
+            if (binary == nullptr) {
+                return invalid(error, "wrap flags require an integer binary instruction");
+            }
+            if (no_unsigned_wrap != 0) {
+                binary->setHasNoUnsignedWrap(true);
+            }
+            if (no_signed_wrap != 0) {
+                binary->setHasNoSignedWrap(true);
+            }
         }
         *out = bridge_value(result);
         return CKC_LLVM_OK;
@@ -1884,6 +2075,24 @@ extern "C" int32_t ckc_llvm_builder_select(
         *out = bridge_value(builder->value->CreateSelect(
             llvm_value(condition), llvm_value(then_value),
             llvm_value(else_value), borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_assume(CkcLlvmBuilder *builder,
+                                             CkcLlvmValue *condition,
+                                             CkcLlvmError *error) {
+    return guarded(error, "building LLVM assume", [&] {
+        auto *ir = builder == nullptr ? nullptr : builder->value.get();
+        auto *value = llvm_value(condition);
+        if (ir == nullptr || value == nullptr || ir->GetInsertBlock() == nullptr ||
+            !value->getType()->isIntegerTy(1)) {
+            return invalid(error,
+                           "LLVM assume requires an active builder and i1 condition");
+        }
+        auto *intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+            ir->GetInsertBlock()->getModule(), llvm::Intrinsic::assume);
+        ir->CreateCall(intrinsic, {value});
         return CKC_LLVM_OK;
     });
 }

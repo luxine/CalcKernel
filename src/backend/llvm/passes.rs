@@ -1,9 +1,9 @@
 use super::{
     error::{NativeError, NativeStage},
+    fact_audit::AuditedNativeModule,
     ffi,
     object::OptimizedNativeModule,
     target::NativeTarget,
-    verify::VerifiedNativeModule,
 };
 
 /// LLVM optimization level paired with the same CK MIR optimization level.
@@ -34,7 +34,7 @@ impl TryFrom<u8> for NativeOptimizationLevel {
     }
 }
 
-impl<'context> VerifiedNativeModule<'context> {
+impl<'context> AuditedNativeModule<'context> {
     /// Runs LLVM's matching default PassBuilder pipeline and verifies again.
     pub fn optimize(
         self,

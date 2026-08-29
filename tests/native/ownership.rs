@@ -8,6 +8,8 @@ fn empty_object(context: &NativeContext, target: &NativeTarget) -> calckernel::N
     let optimized = module
         .verify()
         .expect("verify empty LLVM module")
+        .audit()
+        .expect("audit empty LLVM module")
         .optimize(target, NativeOptimizationLevel::O0)
         .expect("optimize empty LLVM module");
     target.emit_object(optimized).expect("emit verified object")

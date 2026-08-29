@@ -22,6 +22,8 @@ fn native_object(source: &str) -> NativeObject {
         .expect("lower native object")
         .verify()
         .expect("verify native object")
+        .audit()
+        .expect("audit native object facts")
         .optimize(&target, NativeOptimizationLevel::O3)
         .expect("optimize native object");
     target.emit_object(module).expect("emit native object")

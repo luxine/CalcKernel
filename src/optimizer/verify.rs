@@ -9,8 +9,9 @@ use crate::{
 use super::{
     ContractFactAffineExpression, ContractFactAffineTerm, ContractFactPredicate, ContractFactSet,
     FactArena, FactDerivation, FactOrigin, FactPredicate, ProofArena, ProofCertificate, ProofStep,
-    ScalarAnalysisBudget, ScalarAnalysisResult, ScalarClaim, ScalarFailure, ScalarValue,
-    analyze_natural_loops, contract_fact_dominates_at, refine_scalar_comparison, scalar_binary,
+    ScalarAnalysisBudget, ScalarAnalysisResult, ScalarClaim, ScalarFailure, ScalarInterval,
+    ScalarValue, analyze_natural_loops, contract_fact_dominates_at, refine_scalar_comparison,
+    scalar_binary,
 };
 
 /// A deterministic compiler-internal evidence validation error.
@@ -687,8 +688,89 @@ fn scalar_for_value(
             .ok()
             .map(|scalar| scalar.with_failure(claim.failure));
     }
+    if let Some(interval) = contract_interval_for_value(premises, value, type_node) {
+        return ScalarValue::from_interval(type_node, interval).ok();
+    }
     resolve_constant(function, value)
         .and_then(|constant| ScalarValue::constant(type_node, constant).ok())
+}
+
+fn contract_interval_for_value(
+    premises: &[&CheckedStep],
+    value: ValueId,
+    type_node: super::IntegerType,
+) -> Option<ScalarInterval> {
+    let mut lower = BigInt::from(type_node.minimum_i128());
+    let mut upper = BigInt::from(type_node.maximum_i128());
+    let mut constrained = false;
+    for premise in premises {
+        let CheckedStep::Fact(FactPredicate::Contract(ContractFactPredicate::Comparison {
+            operator,
+            left,
+            right,
+        })) = premise
+        else {
+            continue;
+        };
+        let bound = if let (Some(offset), Some(constant)) =
+            (contract_value_offset(left, value), contract_constant(right))
+        {
+            Some((operator.as_str(), constant - offset))
+        } else if let (Some(constant), Some(offset)) =
+            (contract_constant(left), contract_value_offset(right, value))
+        {
+            Some((reverse_comparison(operator)?, constant - offset))
+        } else {
+            None
+        };
+        let Some((operator, bound)) = bound else {
+            continue;
+        };
+        match operator {
+            "<" => upper = upper.min(bound - 1),
+            "<=" => upper = upper.min(bound),
+            ">" => lower = lower.max(bound + 1),
+            ">=" => lower = lower.max(bound),
+            "==" => {
+                lower = lower.max(bound.clone());
+                upper = upper.min(bound);
+            }
+            _ => continue,
+        }
+        constrained = true;
+    }
+    constrained
+        .then(|| ScalarInterval::new(lower, upper).ok())
+        .flatten()
+}
+
+fn contract_value_offset(
+    expression: &ContractFactAffineExpression,
+    value: ValueId,
+) -> Option<BigInt> {
+    let [term] = expression.terms.as_slice() else {
+        return None;
+    };
+    (term.term == ContractFactAffineTerm::Value(value) && term.coefficient == BigInt::from(1))
+        .then(|| expression.constant.clone())
+}
+
+fn contract_constant(expression: &ContractFactAffineExpression) -> Option<BigInt> {
+    expression
+        .terms
+        .is_empty()
+        .then(|| expression.constant.clone())
+}
+
+fn reverse_comparison(operator: &str) -> Option<&'static str> {
+    match operator {
+        "<" => Some(">"),
+        "<=" => Some(">="),
+        ">" => Some("<"),
+        ">=" => Some("<="),
+        "==" => Some("=="),
+        _ => None,
+    }
 }
 
 fn exact_scalar(

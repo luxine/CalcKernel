@@ -1,6 +1,6 @@
 use calckernel::{
-    LLVM_BRIDGE_ABI_VERSION, NativeStage, bridge_info, native_bridge_test_error,
-    native_bridge_test_invalid_input,
+    LLVM_BRIDGE_ABI_VERSION, NATIVE_ABI_VERSION, NativeStage, RUNTIME_ABI_VERSION, bridge_info,
+    native_bridge_test_error, native_bridge_test_invalid_input,
 };
 
 #[test]
@@ -8,6 +8,9 @@ fn bridge_should_report_the_private_abi_version() {
     let info = bridge_info().expect("read linked LLVM bridge metadata");
 
     assert_eq!(info.abi_version, LLVM_BRIDGE_ABI_VERSION);
+    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 2);
+    assert_eq!(NATIVE_ABI_VERSION, 1);
+    assert_eq!(RUNTIME_ABI_VERSION, 1);
 }
 
 #[test]

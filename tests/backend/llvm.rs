@@ -33,6 +33,8 @@ fn structural_llvm(source: &str, opt_level: u8) -> String {
     .expect("structural lowering")
     .verify()
     .expect("initial verification")
+    .audit()
+    .expect("pre-optimization fact audit")
     .optimize(
         &target,
         NativeOptimizationLevel::try_from(opt_level).expect("valid test level"),

@@ -2,7 +2,7 @@ use std::{ptr, ptr::NonNull, slice};
 
 use super::error::{NativeError, NativeStage};
 
-pub const LLVM_BRIDGE_ABI_VERSION: u32 = 1;
+pub const LLVM_BRIDGE_ABI_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
@@ -84,6 +84,18 @@ pub(super) enum BridgeAttributeKind {
     SignExt = 2,
     Sret = 3,
     ByVal = 4,
+    NoAlias = 5,
+    ReadOnly = 6,
+    WriteOnly = 7,
+    Align = 8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub(super) enum BridgeMemoryEffects {
+    None = 1,
+    Read = 2,
+    Write = 3,
 }
 
 #[repr(C)]
@@ -284,6 +296,15 @@ unsafe extern "C" {
         module: *mut CkcLlvmModule,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_module_test_inject_untracked_strengthening(
+        module: *mut CkcLlvmModule,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_has_untracked_strengthening(
+        module: *mut CkcLlvmModule,
+        out: *mut u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_type_void(
         context: *mut CkcLlvmContext,
         out: *mut *mut CkcLlvmType,
@@ -372,6 +393,11 @@ unsafe extern "C" {
         alignment: u32,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_function_set_memory_effects(
+        function: *mut CkcLlvmFunction,
+        effects: u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_function_set_dll_export(
         function: *mut CkcLlvmFunction,
         error: *mut CkcLlvmError,
@@ -402,10 +428,32 @@ unsafe extern "C" {
         out: *mut *mut CkcLlvmValue,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_builder_load_scoped_alias(
+        builder: *mut CkcLlvmBuilder,
+        type_node: *mut CkcLlvmType,
+        pointer: *mut CkcLlvmValue,
+        alias_scopes: *const u32,
+        alias_scope_count: usize,
+        noalias_scopes: *const u32,
+        noalias_scope_count: usize,
+        name: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_builder_store(
         builder: *mut CkcLlvmBuilder,
         value: *mut CkcLlvmValue,
         pointer: *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_store_scoped_alias(
+        builder: *mut CkcLlvmBuilder,
+        value: *mut CkcLlvmValue,
+        pointer: *mut CkcLlvmValue,
+        alias_scopes: *const u32,
+        alias_scope_count: usize,
+        noalias_scopes: *const u32,
+        noalias_scope_count: usize,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_const_int(
@@ -436,6 +484,8 @@ unsafe extern "C" {
         op: u32,
         left: *mut CkcLlvmValue,
         right: *mut CkcLlvmValue,
+        no_unsigned_wrap: u32,
+        no_signed_wrap: u32,
         name: CkcLlvmBytes,
         out: *mut *mut CkcLlvmValue,
         error: *mut CkcLlvmError,
@@ -509,6 +559,11 @@ unsafe extern "C" {
         else_value: *mut CkcLlvmValue,
         name: CkcLlvmBytes,
         out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_assume(
+        builder: *mut CkcLlvmBuilder,
+        condition: *mut CkcLlvmValue,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_builder_call(
@@ -770,6 +825,24 @@ pub(super) fn module_make_invalid_for_test(
     })
 }
 
+pub(super) fn module_test_inject_untracked_strengthening(
+    module: NonNull<CkcLlvmModule>,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_test_inject_untracked_strengthening(module.as_ptr(), error)
+    })
+}
+
+pub(super) fn module_has_untracked_strengthening(
+    module: NonNull<CkcLlvmModule>,
+) -> Result<bool, NativeError> {
+    let mut out = 0_u32;
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_has_untracked_strengthening(module.as_ptr(), &mut out, error)
+    })?;
+    Ok(out != 0)
+}
+
 pub(super) fn type_void(
     context: NonNull<CkcLlvmContext>,
 ) -> Result<NonNull<CkcLlvmType>, NativeError> {
@@ -935,6 +1008,15 @@ pub(super) fn function_add_attribute(
     })
 }
 
+pub(super) fn function_set_memory_effects(
+    function: NonNull<CkcLlvmFunction>,
+    effects: BridgeMemoryEffects,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_set_memory_effects(function.as_ptr(), effects as u32, error)
+    })
+}
+
 pub(super) fn function_set_dll_export(
     function: NonNull<CkcLlvmFunction>,
 ) -> Result<(), NativeError> {
@@ -998,6 +1080,30 @@ pub(super) fn builder_load(
     })
 }
 
+pub(super) fn builder_load_scoped_alias(
+    builder: NonNull<CkcLlvmBuilder>,
+    type_node: NonNull<CkcLlvmType>,
+    pointer: NonNull<CkcLlvmValue>,
+    alias_scopes: &[u32],
+    noalias_scopes: &[u32],
+    name: &str,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_builder_load_scoped_alias(
+            builder.as_ptr(),
+            type_node.as_ptr(),
+            pointer.as_ptr(),
+            alias_scopes.as_ptr(),
+            alias_scopes.len(),
+            noalias_scopes.as_ptr(),
+            noalias_scopes.len(),
+            CkcLlvmBytes::new(name),
+            out,
+            error,
+        )
+    })
+}
+
 pub(super) fn builder_store(
     builder: NonNull<CkcLlvmBuilder>,
     value: NonNull<CkcLlvmValue>,
@@ -1005,6 +1111,27 @@ pub(super) fn builder_store(
 ) -> Result<(), NativeError> {
     status_call(NativeStage::Module, |error| unsafe {
         ckc_llvm_builder_store(builder.as_ptr(), value.as_ptr(), pointer.as_ptr(), error)
+    })
+}
+
+pub(super) fn builder_store_scoped_alias(
+    builder: NonNull<CkcLlvmBuilder>,
+    value: NonNull<CkcLlvmValue>,
+    pointer: NonNull<CkcLlvmValue>,
+    alias_scopes: &[u32],
+    noalias_scopes: &[u32],
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_builder_store_scoped_alias(
+            builder.as_ptr(),
+            value.as_ptr(),
+            pointer.as_ptr(),
+            alias_scopes.as_ptr(),
+            alias_scopes.len(),
+            noalias_scopes.as_ptr(),
+            noalias_scopes.len(),
+            error,
+        )
     })
 }
 
@@ -1048,6 +1175,8 @@ pub(super) fn builder_binary(
     op: BridgeBinaryOp,
     left: NonNull<CkcLlvmValue>,
     right: NonNull<CkcLlvmValue>,
+    no_unsigned_wrap: bool,
+    no_signed_wrap: bool,
     name: &str,
 ) -> Result<NonNull<CkcLlvmValue>, NativeError> {
     handle_call(NativeStage::Module, |out, error| unsafe {
@@ -1056,6 +1185,8 @@ pub(super) fn builder_binary(
             op as u32,
             left.as_ptr(),
             right.as_ptr(),
+            u32::from(no_unsigned_wrap),
+            u32::from(no_signed_wrap),
             CkcLlvmBytes::new(name),
             out,
             error,
@@ -1221,6 +1352,15 @@ pub(super) fn builder_select(
             out,
             error,
         )
+    })
+}
+
+pub(super) fn builder_assume(
+    builder: NonNull<CkcLlvmBuilder>,
+    condition: NonNull<CkcLlvmValue>,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_builder_assume(builder.as_ptr(), condition.as_ptr(), error)
     })
 }
 

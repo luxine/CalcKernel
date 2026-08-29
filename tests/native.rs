@@ -12,6 +12,8 @@ mod cache;
 mod differential;
 #[path = "native/executable.rs"]
 mod executable;
+#[path = "native/fact_audit.rs"]
+mod fact_audit;
 #[path = "native/jit.rs"]
 mod jit;
 #[path = "native/libraries.rs"]

@@ -158,8 +158,63 @@ impl<'module> NativeFunction<'module> {
         )
     }
 
+    pub(super) fn add_param_noalias(self, index: usize) -> Result<(), NativeError> {
+        ffi::function_add_attribute(
+            self.handle,
+            ffi::BridgeAttributeKind::NoAlias,
+            false,
+            index,
+            None,
+            0,
+        )
+    }
+
+    pub(super) fn add_param_readonly(self, index: usize) -> Result<(), NativeError> {
+        ffi::function_add_attribute(
+            self.handle,
+            ffi::BridgeAttributeKind::ReadOnly,
+            false,
+            index,
+            None,
+            0,
+        )
+    }
+
+    pub(super) fn add_param_writeonly(self, index: usize) -> Result<(), NativeError> {
+        ffi::function_add_attribute(
+            self.handle,
+            ffi::BridgeAttributeKind::WriteOnly,
+            false,
+            index,
+            None,
+            0,
+        )
+    }
+
+    pub(super) fn add_param_alignment(
+        self,
+        index: usize,
+        alignment: u32,
+    ) -> Result<(), NativeError> {
+        ffi::function_add_attribute(
+            self.handle,
+            ffi::BridgeAttributeKind::Align,
+            false,
+            index,
+            None,
+            alignment,
+        )
+    }
+
     pub(super) fn set_dll_export(self) -> Result<(), NativeError> {
         ffi::function_set_dll_export(self.handle)
+    }
+
+    pub(super) fn set_memory_effects(
+        self,
+        effects: ffi::BridgeMemoryEffects,
+    ) -> Result<(), NativeError> {
+        ffi::function_set_memory_effects(self.handle, effects)
     }
 }
 
@@ -273,12 +328,47 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
             .map(NativeValue::from_handle)
     }
 
+    pub(super) fn load_scoped_alias(
+        &mut self,
+        type_node: NativeType<'context>,
+        pointer: NativeValue<'module>,
+        alias_scopes: &[u32],
+        noalias_scopes: &[u32],
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_load_scoped_alias(
+            self.handle,
+            type_node.handle(),
+            pointer.handle,
+            alias_scopes,
+            noalias_scopes,
+            name,
+        )
+        .map(NativeValue::from_handle)
+    }
+
     pub(super) fn store(
         &mut self,
         value: NativeValue<'module>,
         pointer: NativeValue<'module>,
     ) -> Result<(), NativeError> {
         ffi::builder_store(self.handle, value.handle, pointer.handle)
+    }
+
+    pub(super) fn store_scoped_alias(
+        &mut self,
+        value: NativeValue<'module>,
+        pointer: NativeValue<'module>,
+        alias_scopes: &[u32],
+        noalias_scopes: &[u32],
+    ) -> Result<(), NativeError> {
+        ffi::builder_store_scoped_alias(
+            self.handle,
+            value.handle,
+            pointer.handle,
+            alias_scopes,
+            noalias_scopes,
+        )
     }
 
     pub(super) fn const_int(
@@ -315,8 +405,28 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
         right: NativeValue<'module>,
         name: &str,
     ) -> Result<NativeValue<'module>, NativeError> {
-        ffi::builder_binary(self.handle, op, left.handle, right.handle, name)
-            .map(NativeValue::from_handle)
+        self.binary_with_flags(op, left, right, false, false, name)
+    }
+
+    pub(super) fn binary_with_flags(
+        &mut self,
+        op: BridgeBinaryOp,
+        left: NativeValue<'module>,
+        right: NativeValue<'module>,
+        no_unsigned_wrap: bool,
+        no_signed_wrap: bool,
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_binary(
+            self.handle,
+            op,
+            left.handle,
+            right.handle,
+            no_unsigned_wrap,
+            no_signed_wrap,
+            name,
+        )
+        .map(NativeValue::from_handle)
     }
 
     pub(super) fn overflow(
@@ -415,6 +525,10 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
             name,
         )
         .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn assume(&mut self, condition: NativeValue<'module>) -> Result<(), NativeError> {
+        ffi::builder_assume(self.handle, condition.handle)
     }
 
     pub(super) fn call(

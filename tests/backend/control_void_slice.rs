@@ -135,6 +135,8 @@ int main(void) {{
         .expect("structural LLVM")
         .verify()
         .expect("verify structural LLVM")
+        .audit()
+        .expect("audit structural LLVM facts")
         .optimize(
             &target,
             NativeOptimizationLevel::try_from(opt_level).expect("optimization level"),

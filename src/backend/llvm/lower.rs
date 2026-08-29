@@ -177,17 +177,20 @@ fn status_abi(options: &NativeLoweringOptions) -> bool {
 
 pub(super) struct TypeRegistry<'context> {
     pub(super) void: NativeType<'context>,
-    i1: NativeType<'context>,
+    pub(super) i1: NativeType<'context>,
     pub(super) i32: NativeType<'context>,
-    i64: NativeType<'context>,
-    f64: NativeType<'context>,
+    pub(super) i64: NativeType<'context>,
+    pub(super) f64: NativeType<'context>,
     pub(super) pointer: NativeType<'context>,
-    slice: NativeType<'context>,
+    pub(super) slice: NativeType<'context>,
     structs: HashMap<String, NativeType<'context>>,
 }
 
 impl<'context> TypeRegistry<'context> {
-    fn new(context: &'context NativeContext, module: &MirModule) -> Result<Self, NativeError> {
+    pub(super) fn new(
+        context: &'context NativeContext,
+        module: &MirModule,
+    ) -> Result<Self, NativeError> {
         let mut registry = Self {
             void: NativeType::void(context)?,
             i1: NativeType::int(context, 1)?,
@@ -274,7 +277,7 @@ fn used_runtime_intrinsics(module: &MirModule) -> Vec<MirRuntimeIntrinsic> {
     result
 }
 
-fn runtime_signature(intrinsic: MirRuntimeIntrinsic) -> (&'static str, Option<MirType>) {
+pub(super) fn runtime_signature(intrinsic: MirRuntimeIntrinsic) -> (&'static str, Option<MirType>) {
     let primitive = |name| Some(MirType::Primitive(name));
     match intrinsic {
         MirRuntimeIntrinsic::PrintI32 => ("__ck_print_i32", primitive(MirPrimitiveTypeName::I32)),
@@ -976,7 +979,10 @@ fn require_function<'module>(
         .ok_or_else(|| lowering_error(format!("unknown MIR function '{name}'")))
 }
 
-fn binary_op(op: MirBinaryOp, type_node: &MirType) -> Result<BridgeBinaryOp, NativeError> {
+pub(super) fn binary_op(
+    op: MirBinaryOp,
+    type_node: &MirType,
+) -> Result<BridgeBinaryOp, NativeError> {
     let float = matches!(type_node, MirType::Primitive(MirPrimitiveTypeName::F64));
     let unsigned = matches!(
         type_node,
@@ -998,7 +1004,7 @@ fn binary_op(op: MirBinaryOp, type_node: &MirType) -> Result<BridgeBinaryOp, Nat
     }
 }
 
-fn unary_op(op: MirUnaryOp, type_node: &MirType) -> BridgeUnaryOp {
+pub(super) fn unary_op(op: MirUnaryOp, type_node: &MirType) -> BridgeUnaryOp {
     match (op, type_node) {
         (MirUnaryOp::Not, _) => BridgeUnaryOp::Not,
         (MirUnaryOp::Neg, MirType::Primitive(MirPrimitiveTypeName::F64)) => BridgeUnaryOp::FNeg,
@@ -1006,7 +1012,7 @@ fn unary_op(op: MirUnaryOp, type_node: &MirType) -> BridgeUnaryOp {
     }
 }
 
-fn compare_op(op: MirCompareOp, type_node: &MirType) -> BridgeCompareOp {
+pub(super) fn compare_op(op: MirCompareOp, type_node: &MirType) -> BridgeCompareOp {
     let float = matches!(type_node, MirType::Primitive(MirPrimitiveTypeName::F64));
     let unsigned = matches!(
         type_node,
@@ -1032,6 +1038,6 @@ fn compare_op(op: MirCompareOp, type_node: &MirType) -> BridgeCompareOp {
     }
 }
 
-fn lowering_error(message: impl Into<String>) -> NativeError {
+pub(super) fn lowering_error(message: impl Into<String>) -> NativeError {
     NativeError::new(NativeStage::Module, LOWERING_ERROR, message.into())
 }

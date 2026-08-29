@@ -429,6 +429,8 @@ fn run_emit_llvm_o3(input: &CaseInput) -> Result<usize, String> {
     .map_err(|error| error.to_string())?
     .verify()
     .map_err(|error| error.to_string())?
+    .audit()
+    .map_err(|error| error.to_string())?
     .optimize(&target, NativeOptimizationLevel::O3)
     .map_err(|error| error.to_string())?
     .to_ir_string()
@@ -593,6 +595,8 @@ fn measure_native_case(
             )
             .map_err(|error| error.to_string())?
             .verify()
+            .map_err(|error| error.to_string())?
+            .audit()
             .map_err(|error| error.to_string())?
             .optimize(&target, NativeOptimizationLevel::O3)
             .map_err(|error| error.to_string())?,

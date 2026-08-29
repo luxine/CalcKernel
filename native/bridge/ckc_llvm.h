@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CKC_LLVM_BRIDGE_ABI_VERSION 1u
+#define CKC_LLVM_BRIDGE_ABI_VERSION 2u
 
 #ifdef __cplusplus
 extern "C" {
@@ -136,8 +136,18 @@ typedef enum CkcLlvmAttributeKind {
     CKC_LLVM_ATTR_ZEROEXT = 1,
     CKC_LLVM_ATTR_SIGNEXT = 2,
     CKC_LLVM_ATTR_SRET = 3,
-    CKC_LLVM_ATTR_BYVAL = 4
+    CKC_LLVM_ATTR_BYVAL = 4,
+    CKC_LLVM_ATTR_NOALIAS = 5,
+    CKC_LLVM_ATTR_READONLY = 6,
+    CKC_LLVM_ATTR_WRITEONLY = 7,
+    CKC_LLVM_ATTR_ALIGN = 8
 } CkcLlvmAttributeKind;
+
+typedef enum CkcLlvmMemoryEffects {
+    CKC_LLVM_MEMORY_NONE = 1,
+    CKC_LLVM_MEMORY_READ = 2,
+    CKC_LLVM_MEMORY_WRITE = 3
+} CkcLlvmMemoryEffects;
 
 typedef enum CkcLlvmArchiveKind {
     CKC_LLVM_ARCHIVE_GNU = 1,
@@ -185,6 +195,10 @@ int32_t ckc_llvm_module_optimize(CkcLlvmModule *module,
                                  CkcLlvmError *error);
 int32_t ckc_llvm_module_make_invalid_for_test(CkcLlvmModule *module,
                                                CkcLlvmError *error);
+int32_t ckc_llvm_module_test_inject_untracked_strengthening(
+    CkcLlvmModule *module, CkcLlvmError *error);
+int32_t ckc_llvm_module_has_untracked_strengthening(
+    CkcLlvmModule *module, uint32_t *out, CkcLlvmError *error);
 
 int32_t ckc_llvm_type_void(CkcLlvmContext *context, CkcLlvmType **out,
                            CkcLlvmError *error);
@@ -235,6 +249,9 @@ int32_t ckc_llvm_function_add_attribute(CkcLlvmFunction *function,
                                          CkcLlvmType *pointee_type,
                                          uint32_t alignment,
                                          CkcLlvmError *error);
+int32_t ckc_llvm_function_set_memory_effects(CkcLlvmFunction *function,
+                                              uint32_t effects,
+                                              CkcLlvmError *error);
 int32_t ckc_llvm_function_set_dll_export(CkcLlvmFunction *function,
                                          CkcLlvmError *error);
 
@@ -251,9 +268,19 @@ int32_t ckc_llvm_builder_alloca(CkcLlvmBuilder *builder, CkcLlvmType *type,
 int32_t ckc_llvm_builder_load(CkcLlvmBuilder *builder, CkcLlvmType *type,
                               CkcLlvmValue *pointer, CkcLlvmBytes name,
                               CkcLlvmValue **out, CkcLlvmError *error);
+int32_t ckc_llvm_builder_load_scoped_alias(
+    CkcLlvmBuilder *builder, CkcLlvmType *type, CkcLlvmValue *pointer,
+    const uint32_t *alias_scopes, size_t alias_scope_count,
+    const uint32_t *noalias_scopes, size_t noalias_scope_count,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error);
 int32_t ckc_llvm_builder_store(CkcLlvmBuilder *builder, CkcLlvmValue *value,
                                CkcLlvmValue *pointer,
                                CkcLlvmError *error);
+int32_t ckc_llvm_builder_store_scoped_alias(
+    CkcLlvmBuilder *builder, CkcLlvmValue *value, CkcLlvmValue *pointer,
+    const uint32_t *alias_scopes, size_t alias_scope_count,
+    const uint32_t *noalias_scopes, size_t noalias_scope_count,
+    CkcLlvmError *error);
 int32_t ckc_llvm_const_int(CkcLlvmType *type, CkcLlvmBytes text,
                            CkcLlvmValue **out, CkcLlvmError *error);
 int32_t ckc_llvm_const_float(CkcLlvmType *type, CkcLlvmBytes text,
@@ -264,7 +291,9 @@ int32_t ckc_llvm_const_undef(CkcLlvmType *type, CkcLlvmValue **out,
                              CkcLlvmError *error);
 int32_t ckc_llvm_builder_binary(CkcLlvmBuilder *builder, uint32_t op,
                                 CkcLlvmValue *left, CkcLlvmValue *right,
-                                CkcLlvmBytes name, CkcLlvmValue **out,
+                                uint32_t no_unsigned_wrap,
+                                uint32_t no_signed_wrap, CkcLlvmBytes name,
+                                CkcLlvmValue **out,
                                 CkcLlvmError *error);
 int32_t ckc_llvm_builder_overflow(CkcLlvmBuilder *builder, uint32_t op,
                                   CkcLlvmValue *left,
@@ -304,6 +333,9 @@ int32_t ckc_llvm_builder_select(CkcLlvmBuilder *builder,
                                 CkcLlvmValue *then_value,
                                 CkcLlvmValue *else_value,
                                 CkcLlvmBytes name, CkcLlvmValue **out,
+                                CkcLlvmError *error);
+int32_t ckc_llvm_builder_assume(CkcLlvmBuilder *builder,
+                                CkcLlvmValue *condition,
                                 CkcLlvmError *error);
 int32_t ckc_llvm_builder_call(CkcLlvmBuilder *builder,
                               CkcLlvmFunction *function,

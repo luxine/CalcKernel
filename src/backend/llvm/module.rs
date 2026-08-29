@@ -3,6 +3,7 @@ use std::{marker::PhantomData, ptr::NonNull, rc::Rc};
 use super::{
     context::NativeContext,
     error::NativeError,
+    fact_audit::NativeFactProperty,
     ffi::{self, CkcLlvmModule},
     target::NativeTarget,
 };
@@ -13,6 +14,7 @@ pub struct NativeModule<'context> {
     handle: NonNull<CkcLlvmModule>,
     context: PhantomData<&'context NativeContext>,
     not_send_or_sync: PhantomData<Rc<()>>,
+    pub(super) fact_properties: Vec<NativeFactProperty>,
 }
 
 impl<'context> NativeModule<'context> {
@@ -25,6 +27,7 @@ impl<'context> NativeModule<'context> {
             handle: ffi::module_create_empty(context.handle())?,
             context: PhantomData,
             not_send_or_sync: PhantomData,
+            fact_properties: Vec::new(),
         })
     }
 
@@ -42,6 +45,10 @@ impl<'context> NativeModule<'context> {
         source_file_name: &str,
     ) -> Result<(), NativeError> {
         ffi::module_configure(self.handle, target.handle(), source_file_name)
+    }
+
+    pub(super) fn register_fact_property(&mut self, property: NativeFactProperty) {
+        self.fact_properties.push(property);
     }
 }
 

@@ -9,9 +9,13 @@ mod entry;
 #[cfg(feature = "native-toolchain")]
 mod error;
 #[cfg(feature = "native-toolchain")]
+mod fact_audit;
+#[cfg(feature = "native-toolchain")]
 pub(super) mod ffi;
 #[cfg(feature = "native-toolchain")]
 mod jit;
+#[cfg(feature = "native-toolchain")]
+mod kir_lower;
 #[cfg(feature = "native-toolchain")]
 mod layout;
 #[cfg(feature = "native-toolchain")]
@@ -35,11 +39,18 @@ pub use context::{NativeContext, NativeToolchain};
 #[cfg(feature = "native-toolchain")]
 pub use error::{NativeError, NativeStage};
 #[cfg(feature = "native-toolchain")]
+pub use fact_audit::{
+    AuditedNativeModule, NativeFactAuditReport, NativeFactProperty, NativeFactSource,
+    NativeStrengtheningKind, test_inject_untracked_strengthening,
+};
+#[cfg(feature = "native-toolchain")]
 pub use ffi::{
     LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, bridge_info, test_error, test_invalid_input,
 };
 #[cfg(feature = "native-toolchain")]
 pub use jit::{NativeJit, NativeJitMemoryAudit, OrcObjectLayer};
+#[cfg(feature = "native-toolchain")]
+pub use kir_lower::lower_native_kir_module;
 #[cfg(feature = "native-toolchain")]
 pub use lower::{
     NativeLoweringOptions, lower_native_executable_module_with_options, lower_native_llvm_module,

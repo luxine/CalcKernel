@@ -16,6 +16,8 @@ fn object_bytes(cpu: NativeCpu) -> Vec<u8> {
         .expect("lower LLVM")
         .verify()
         .expect("verify LLVM")
+        .audit()
+        .expect("audit LLVM facts")
         .optimize(&target, NativeOptimizationLevel::O3)
         .expect("optimize and reverify LLVM");
     target

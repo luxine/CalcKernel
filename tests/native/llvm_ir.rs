@@ -1,7 +1,10 @@
 use calckernel::{
-    BoundsMode, EmitLlvmOptions, NativeContext, NativeLoweringOptions, NativeOptimizationLevel,
-    NativeStage, NativeTarget, OverflowMode, SourceFile, check, lower_native_llvm_module,
-    lower_native_llvm_module_with_options, lower_to_mir, test_invalid_module_verification,
+    BoundsMode, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+    KirOverflowMode, KirSanitizerMode, NativeContext, NativeLoweringOptions,
+    NativeOptimizationLevel, NativeStage, NativeTarget, OverflowMode, SourceFile, build_kir_module,
+    check, lower_native_kir_module, lower_native_llvm_module,
+    lower_native_llvm_module_with_options, lower_to_mir, run_kir_pass_pipeline,
+    test_invalid_module_verification,
 };
 
 fn structural_llvm(source_text: &str) -> String {
@@ -60,6 +63,8 @@ fn optimized_llvm(source_text: &str, level: NativeOptimizationLevel) -> String {
         .expect("structural LLVM lowering")
         .verify()
         .expect("initial verification")
+        .audit()
+        .expect("pre-optimization fact audit")
         .optimize(&target, level)
         .expect("PassBuilder and second verification")
         .to_ir_string()
@@ -326,4 +331,90 @@ fn checked_calls_should_propagate_status_and_void_should_not_gain_result_pointer
     assert!(!text.contains("define i32 @run(i32 %arg0, ptr"), "{text}");
     assert!(text.contains("call i32 @touch(i32"), "{text}");
     assert!(text.contains("icmp ne i32"), "{text}");
+}
+
+#[test]
+fn llvm_kir_lowering_should_consume_explicit_guards_without_reinferring_removed_checks() {
+    let context = NativeContext::new().expect("native context");
+    let target = NativeTarget::host().expect("host target");
+    for (source, level, expected_overflow_intrinsics) in [
+        (
+            "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
+            KirOptimizationLevel::O0,
+            2,
+        ),
+        (
+            "export fn answer() -> i32 { return 20 + 22; }",
+            KirOptimizationLevel::O3,
+            0,
+        ),
+    ] {
+        let checked = check(&SourceFile::new("kir-native.ck", source));
+        assert_eq!(checked.diagnostics, []);
+        let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+        let kir = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::NativeLibrary,
+                overflow_mode: KirOverflowMode::Checked,
+                bounds_mode: KirBoundsMode::Checked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("KIR");
+        let result = run_kir_pass_pipeline(kir, level, None);
+        let text = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+            .expect("KIR LLVM lowering")
+            .verify()
+            .expect("LLVM verify")
+            .to_ir_string()
+            .expect("LLVM print");
+        assert_eq!(
+            text.matches("llvm.sadd.with.overflow.i32").count(),
+            expected_overflow_intrinsics,
+            "{level:?}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn llvm_kir_executable_lowering_should_add_entry_wrapper_and_runtime_calls() {
+    let checked = check(&SourceFile::new(
+        "kir-executable.ck",
+        "fn main() -> i32 { print_i32(42); print_newline(); return 0; }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeExecutable,
+            overflow_mode: KirOverflowMode::Checked,
+            bounds_mode: KirBoundsMode::Checked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let context = NativeContext::new().expect("context");
+    let target = NativeTarget::host().expect("target");
+    let text = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+        .expect("lower executable KIR")
+        .verify()
+        .expect("verify")
+        .to_ir_string()
+        .expect("LLVM IR");
+
+    assert!(
+        text.contains("define internal i32 @__ck_user_main("),
+        "{text}"
+    );
+    assert!(text.contains("define i32 @main()"), "{text}");
+    assert!(text.contains("call void @__ck_print_i32"), "{text}");
+    assert!(text.contains("call void @__ck_print_newline"), "{text}");
+    assert!(
+        text.contains("declare void @__ck_runtime_fail(i32)"),
+        "{text}"
+    );
 }

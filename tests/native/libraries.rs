@@ -19,6 +19,8 @@ fn native_object() -> NativeObject {
                 .expect("lower module")
                 .verify()
                 .expect("verify module")
+                .audit()
+                .expect("audit module facts")
                 .optimize(&target, NativeOptimizationLevel::O3)
                 .expect("optimize module"),
         )
@@ -26,7 +28,7 @@ fn native_object() -> NativeObject {
 }
 
 #[test]
-fn embedded_lld_should_link_and_system_loader_should_call_export_under_empty_path() {
+fn libraries_embedded_lld_should_link_and_system_loader_should_call_export_under_empty_path() {
     let object = native_object();
     let library =
         link_native_dynamic_library(&object, &["answer".to_string()]).expect("in-process LLD link");
@@ -63,7 +65,7 @@ fn embedded_lld_should_link_and_system_loader_should_call_export_under_empty_pat
 }
 
 #[test]
-fn lld_api_should_accept_only_verified_objects_and_checked_export_names() {
+fn libraries_lld_api_should_accept_only_verified_objects_and_checked_export_names() {
     let signature: fn(
         &NativeObject,
         &[String],

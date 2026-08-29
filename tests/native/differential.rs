@@ -1,9 +1,11 @@
 use std::{fs, path::Path, process::Command};
 
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitLlvmOptions, NativeContext, NativeLoweringOptions,
-    NativeOptimizationLevel, NativeTarget, OverflowMode, SourceFile, check, emit_c_module,
-    link_native_dynamic_library, lower_native_llvm_module_with_options, lower_to_mir,
+    BoundsMode, EmitCOptions, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer,
+    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
+    NativeOptimizationLevel, NativeTarget, OverflowMode, SourceFile, build_kir_module, check,
+    emit_c_module, link_native_dynamic_library, lower_native_kir_module, lower_to_mir,
+    run_kir_pass_pipeline,
 };
 
 const SOURCE: &str = r#"
@@ -40,7 +42,7 @@ struct Pair {
 }
 
 #[test]
-fn native_exports_should_differentially_match_pinned_clang_c_libraries() {
+fn differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_through_o3() {
     let Some(clang) = super::support::oracle::clang_oracle_22() else {
         return;
     };
@@ -76,43 +78,68 @@ fn native_exports_should_differentially_match_pinned_clang_c_libraries() {
         fs::write(&c_path, c_source).expect("write C oracle source");
         compile_oracle_library(&clang, &c_path, &oracle_path);
 
-        let context = NativeContext::new().expect("native context");
-        let target = NativeTarget::host().expect("native target");
-        let optimized = lower_native_llvm_module_with_options(
-            &context,
-            &target,
-            &mir,
-            &NativeLoweringOptions {
-                emit: EmitLlvmOptions::default(),
-                overflow_mode,
-                bounds_mode,
-            },
-        )
-        .expect("lower native differential module")
-        .verify()
-        .expect("verify differential module")
-        .optimize(&target, NativeOptimizationLevel::O3)
-        .expect("optimize differential module");
-        let object = target
-            .emit_object(optimized)
-            .expect("emit differential object");
-        let exports = mir
-            .functions
-            .iter()
-            .filter(|function| function.exported)
-            .map(|function| function.name.clone())
-            .collect::<Vec<_>>();
-        let native = link_native_dynamic_library(&object, &exports)
-            .expect("link native differential library");
-        let native_path = root.join(format!("native-{suffix}{}", dynamic_suffix()));
-        fs::write(&native_path, native.as_bytes()).expect("write native differential library");
-
         let oracle = DynamicLibrary::open(&oracle_path);
-        let native = DynamicLibrary::open(&native_path);
-        if checked {
-            unsafe { compare_checked(&oracle, &native) };
-        } else {
-            unsafe { compare_unchecked(&oracle, &native) };
+        for (kir_level, native_level, level_name) in [
+            (KirOptimizationLevel::O0, NativeOptimizationLevel::O0, "o0"),
+            (KirOptimizationLevel::O1, NativeOptimizationLevel::O1, "o1"),
+            (KirOptimizationLevel::O2, NativeOptimizationLevel::O2, "o2"),
+            (KirOptimizationLevel::O3, NativeOptimizationLevel::O3, "o3"),
+        ] {
+            let kir = build_kir_module(
+                &mir,
+                KirBuildConfig {
+                    consumer: KirConsumer::NativeLibrary,
+                    overflow_mode: if checked {
+                        KirOverflowMode::Checked
+                    } else {
+                        KirOverflowMode::Unchecked
+                    },
+                    bounds_mode: if checked {
+                        KirBoundsMode::Checked
+                    } else {
+                        KirBoundsMode::Unchecked
+                    },
+                    sanitizer_mode: KirSanitizerMode::Disabled,
+                },
+            )
+            .expect("build native differential KIR");
+            let result = run_kir_pass_pipeline(kir, kir_level, None);
+            assert!(
+                result.errors.is_empty(),
+                "{kir_level:?}: {:?}",
+                result.errors
+            );
+            let context = NativeContext::new().expect("native context");
+            let target = NativeTarget::host().expect("native target");
+            let optimized =
+                lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+                    .expect("lower native differential KIR")
+                    .verify()
+                    .expect("verify differential module")
+                    .audit()
+                    .expect("audit differential module facts")
+                    .optimize(&target, native_level)
+                    .expect("optimize differential module");
+            let object = target
+                .emit_object(optimized)
+                .expect("emit differential object");
+            let exports = mir
+                .functions
+                .iter()
+                .filter(|function| function.exported)
+                .map(|function| function.name.clone())
+                .collect::<Vec<_>>();
+            let native = link_native_dynamic_library(&object, &exports)
+                .expect("link native differential library");
+            let native_path =
+                root.join(format!("native-{suffix}-{level_name}{}", dynamic_suffix()));
+            fs::write(&native_path, native.as_bytes()).expect("write native differential library");
+            let native = DynamicLibrary::open(&native_path);
+            if checked {
+                unsafe { compare_checked(&oracle, &native) };
+            } else {
+                unsafe { compare_unchecked(&oracle, &native) };
+            }
         }
     }
     fs::remove_dir_all(root).expect("remove differential directory");

@@ -113,6 +113,8 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     .map_err(|error| error.to_string())?
     .verify()
     .map_err(|error| error.to_string())?
+    .audit()
+    .map_err(|error| error.to_string())?
     .optimize(&target, level)
     .map_err(|error| error.to_string())?;
     let object = target
@@ -437,6 +439,8 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
     .map_err(|error| error.to_string())?
     .verify()
     .map_err(|error| error.to_string())?
+    .audit()
+    .map_err(|error| error.to_string())?
     .optimize(&target, level)
     .map_err(|error| error.to_string())?
     .to_ir_string()
@@ -499,6 +503,8 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let optimized = lowered
         .map_err(|error| error.to_string())?
         .verify()
+        .map_err(|error| error.to_string())?
+        .audit()
         .map_err(|error| error.to_string())?
         .optimize(&target, level)
         .map_err(|error| error.to_string())?;
