@@ -1,9 +1,10 @@
 use super::support::compiler::optimized_module;
 use calckernel::{
-    BoundsMode, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
-    KirOverflowMode, KirSanitizerMode, NativeContext, NativeOptimizationLevel, NativeStage,
-    NativeTarget, OverflowMode, SourceFile, build_kir_module, check, lower_native_kir_module,
-    lower_to_mir, run_kir_pass_pipeline, test_invalid_module_verification,
+    BoundsMode, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirFailureKind,
+    KirInstructionKind, KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
+    NativeOptimizationLevel, NativeStage, NativeTarget, OverflowMode, SourceFile, build_kir_module,
+    check, lower_native_kir_module, lower_to_mir, run_kir_pass_pipeline,
+    test_invalid_module_verification,
 };
 
 fn structural_llvm(source_text: &str) -> String {
@@ -386,6 +387,61 @@ fn llvm_kir_lowering_should_consume_explicit_guards_without_reinferring_removed_
             "{level:?}:\n{text}"
         );
     }
+}
+
+#[test]
+fn llvm_o3_canonical_checked_proof_loop_should_not_reintroduce_a_bounds_guard() {
+    const SOURCE: &str = include_str!("../fixtures/performance/native/proof_loop.ck");
+    let checked = check(&SourceFile::new("proof_loop.ck", SOURCE));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Checked,
+            bounds_mode: KirBoundsMode::Checked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("checked proof-loop KIR");
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let bounds_guards = result
+        .artifact
+        .as_ref()
+        .expect("verified proof-loop artifact")
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                KirInstructionKind::Guard {
+                    failure: KirFailureKind::OutOfBounds,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(bounds_guards, 0, "KIR retained a proof-loop bounds guard");
+
+    let context = NativeContext::new().expect("native context");
+    let target = NativeTarget::host().expect("host target");
+    let text = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+        .expect("lower checked proof loop")
+        .verify()
+        .expect("verify checked proof loop")
+        .audit()
+        .expect("audit checked proof-loop facts")
+        .optimize(&target, NativeOptimizationLevel::O3)
+        .expect("optimize checked proof loop")
+        .to_ir_string()
+        .expect("print checked proof loop");
+
+    assert!(!text.contains("ret i32 4"), "{text}");
+    assert!(!text.contains("icmp uge i32"), "{text}");
 }
 
 #[test]

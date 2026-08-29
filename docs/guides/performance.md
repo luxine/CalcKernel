@@ -11,7 +11,8 @@ inputs, warm-up, batching, and measurement statistics.
 For the geometric mean of accepted kernels, Native throughput must be at least
 95% of the C oracle. No individual kernel may regress by more than 10%. Checked
 and unchecked suites are reported and gated separately on controlled x86-64 and
-AArch64 workers, for baseline and native CPU policies.
+AArch64 workers under the portable baseline CPU policy. Native-CPU measurements
+remain available for investigation but are not compared with the frozen baseline.
 
 Relative to the recorded 0.10 compiler, 0.11 runtime may regress at most 3%
 geometrically and 8% for an individual case. A canonical proof-loop checked
@@ -42,6 +43,12 @@ and `build/perf/latest.summary.md`.
 LLVM version, target/CPU/mode, harness/statistics identity, and SHA-256 of every
 measured source. A digest or identity mismatch is a hard failure, not permission
 to silently refresh a baseline.
+
+The frozen 0.10 benchmark did not know the later proof-loop slice ABI. Baseline
+capture therefore applies the checksum-pinned
+`benches/baselines/v0_10_proof_loop_harness.patch` to the measurement harness
+only; the compiler remains the exact pinned 0.10 commit. The patch supplies the
+same deterministic input and call ABI used by the 0.11 harness.
 
 Performance never permits changed diagnostics, evaluation order, modular
 integer or strict floating semantics, checked first-error order, runtime print

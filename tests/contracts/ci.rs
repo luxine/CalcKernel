@@ -33,6 +33,7 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
     for required in [
         "name: CI",
         "workflow_dispatch:",
+        "workflow_call:",
         "pull_request:\n    branches: [main]",
         "push:\n    branches: [main]",
         "contents: read",
@@ -182,4 +183,25 @@ fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
         );
     }
     assert_actions_are_commit_pinned(&action, "native bootstrap");
+}
+
+#[test]
+fn registered_release_workflow_should_dispatch_feature_candidate_ci_without_publishing() {
+    let workflow = read(".github/workflows/native-release.yml");
+
+    for required in [
+        "candidate_ci:",
+        "Run the feature-branch candidate CI without publishing",
+        "if: inputs.candidate_ci == true",
+        "uses: ./.github/workflows/ci.yml",
+        "inputs.candidate_ci != true",
+        "git -C baseline rev-parse HEAD",
+        "git -C baseline apply --check ../benches/baselines/v0_10_proof_loop_harness.patch",
+        "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "registered CI dispatcher must contain {required:?}"
+        );
+    }
 }

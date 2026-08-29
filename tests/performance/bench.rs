@@ -1,5 +1,7 @@
 use std::{fs, process::Command};
 
+use sha2::{Digest, Sha256};
+
 use super::support::oracle::repo_root;
 
 #[test]
@@ -39,6 +41,22 @@ fn benchmark_tree_should_own_final_assets() {
     }
     assert!(repo_root().join("benches/summary-schema.md").is_file());
     assert!(!repo_root().join("bench").exists());
+}
+
+#[test]
+fn v0_10_proof_loop_harness_adapter_should_be_checksum_pinned() {
+    const DIGEST: &str = "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e";
+    let root = repo_root();
+    let patch = fs::read(root.join("benches/baselines/v0_10_proof_loop_harness.patch"))
+        .expect("read v0.10 proof-loop harness adapter");
+    assert_eq!(format!("{:x}", Sha256::digest(&patch)), DIGEST);
+
+    let baseline = fs::read_to_string(root.join("benches/baselines/v0_10_compiler.toml"))
+        .expect("read v0.10 baseline");
+    assert!(
+        baseline.contains(&format!("proof-loop ABI adapter sha256={DIGEST}")),
+        "baseline harness identity must bind the proof-loop adapter"
+    );
 }
 
 #[test]

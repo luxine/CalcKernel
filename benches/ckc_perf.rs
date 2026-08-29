@@ -37,6 +37,11 @@ const NATIVE_RESULTS_PATH: &str = "target/ckc-perf/results.json";
 #[cfg(feature = "native-toolchain")]
 const V0_10_BASELINE_PATH: &str = "benches/baselines/v0_10_compiler.toml";
 #[cfg(feature = "native-toolchain")]
+const V0_10_PROOF_LOOP_HARNESS_PATH: &str = "benches/baselines/v0_10_proof_loop_harness.patch";
+#[cfg(feature = "native-toolchain")]
+const V0_10_PROOF_LOOP_HARNESS_SHA256: &str =
+    "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e";
+#[cfg(feature = "native-toolchain")]
 const SAMPLE_REPETITIONS: usize = 7;
 
 fn main() {
@@ -255,6 +260,13 @@ impl CompilerBaseline {
             .and_then(Path::parent)
             .and_then(Path::parent)
             .ok_or_else(|| format!("baseline path has no repository root: {}", path.display()))?;
+        let harness_patch = repo_root.join(V0_10_PROOF_LOOP_HARNESS_PATH);
+        let harness_patch_digest = sha256_file(&harness_patch)?;
+        if harness_patch_digest != V0_10_PROOF_LOOP_HARNESS_SHA256 {
+            return Err(format!(
+                "v0.10 proof-loop harness digest mismatch: expected {V0_10_PROOF_LOOP_HARNESS_SHA256}, got {harness_patch_digest}"
+            ));
+        }
         let mut source_digests = Vec::new();
         for (name, key, relative_paths) in source_specs {
             let expected = scalar(key)?;
@@ -290,6 +302,10 @@ impl CompilerBaseline {
             || baseline.compiler_identity
                 != "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)"
             || baseline.llvm_version != "22.1.8"
+            || baseline.harness
+                != format!(
+                    "ckc_perf schema 2 + proof-loop ABI adapter sha256={V0_10_PROOF_LOOP_HARNESS_SHA256}; warmup=3; samples=20; repetitions=7; batch=20000000"
+                )
             || baseline.source_digest_count != source_specs.len()
             || baseline.source_digests.len() != source_specs.len()
         {

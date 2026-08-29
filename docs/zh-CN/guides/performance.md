@@ -7,7 +7,8 @@ Native runtime contract 同时比较固定 Clang 22.1.8 C oracle，以及精确 
 strict floating-point、相同 target/CPU policy/mode、固定输入、warm-up、batch 与 statistic。
 
 Native/Clang geometric-mean throughput 至少 95%，单 case 回退不超过 10%；checked 与
-unchecked 在受控 x86-64/AArch64 worker 上分别验收。相对记录的 0.10 compiler，0.11 runtime
+unchecked 在受控 x86-64/AArch64 worker 上以 portable baseline CPU policy 分别验收；
+native-CPU 测量只用于调查，不与冻结 baseline 比较。相对记录的 0.10 compiler，0.11 runtime
 geometric 回退最多 3%、单 case 最多 8%。Canonical proof-loop checked throughput 至少为
 unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite ratio 最多 2x、单 case
 最多 3x。
@@ -25,6 +26,10 @@ General compiler-stage summary 仍写入 `build/perf/latest.summary.json` 与
 `build/perf/latest.summary.md`。
 `benches/baselines/v0_10_compiler.toml` 固定 0.10 commit/compiler/LLVM、target/CPU/mode、
 harness/statistics 与每个 source 的 SHA-256 `sourceDigests`。Identity 或 digest 不符必须失败。
+
+冻结的 0.10 benchmark 尚不知道后续 proof-loop 的 slice ABI，因此基线采集只对测量
+harness 应用 checksum 固定的 `benches/baselines/v0_10_proof_loop_harness.patch`；编译器仍为
+精确固定的 0.10 commit。该补丁提供与 0.11 harness 相同的确定性输入和调用 ABI。
 
 Performance 不允许改变 diagnostic、evaluation order、modular integer/strict floating
 semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated

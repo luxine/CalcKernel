@@ -1,9 +1,10 @@
 use std::{fs, process::Command};
 
 use calckernel::{
-    EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
-    KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module, check, emit_wasm_kir_module,
-    emit_wat_kir_module, import_contract_facts, lower_to_mir, run_kir_pass_pipeline,
+    EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirInstructionKind,
+    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module, check,
+    emit_wasm_kir_module, emit_wat_kir_module, import_contract_facts, lower_to_mir,
+    run_kir_pass_pipeline,
 };
 
 use crate::generated::fixed_seed_kernel_program;
@@ -186,6 +187,37 @@ fn generated_wasm_kernels_should_match_o0_at_o1_through_o3_in_supported_mode() {
             .expect("generated KIR WASM");
         run_wasm(&wasm, &runner);
     }
+}
+
+#[test]
+fn kir_wasm_o3_canonical_proof_loop_should_consume_guard_free_kir() {
+    const SOURCE: &str = include_str!("../fixtures/performance/native/proof_loop.ck");
+    let kir = optimized_kir(SOURCE, KirOptimizationLevel::O3);
+    let guards = kir
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+        .count();
+    assert_eq!(guards, 0, "unchecked proof-loop KIR retained a guard");
+
+    let options = EmitWasmOptions { opt_level: 3 };
+    let wat = emit_wat_kir_module(&kir, options).expect("proof-loop WAT");
+    assert!(!wat.contains("unreachable"), "{wat}");
+    assert!(!wat.contains("CK_ERR_OUT_OF_BOUNDS"), "{wat}");
+    let wasm = emit_wasm_kir_module(&kir, options).expect("proof-loop WASM");
+    run_wasm(
+        &wasm,
+        r#"
+        import fs from "node:fs";
+        const bytes = fs.readFileSync(process.argv[2]);
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        const values = new BigInt64Array(instance.exports.memory.buffer);
+        values.set([3n, 42n, -5n, 11n], 256 / 8);
+        if (instance.exports.kernel(256, 4, 7n) !== 42n) process.exit(1);
+        "#,
+    );
 }
 
 fn run_wasm(wasm: &[u8], runner_source: &str) {

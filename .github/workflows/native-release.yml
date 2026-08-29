@@ -16,6 +16,11 @@ on:
         required: true
         default: false
         type: boolean
+      candidate_ci:
+        description: "Run the feature-branch candidate CI without publishing"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,7 +35,7 @@ env:
 
 jobs:
   verify:
-    if: inputs.capture_v010_baselines != true
+    if: inputs.capture_v010_baselines != true && inputs.candidate_ci != true
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -57,6 +62,10 @@ jobs:
       - run: cargo test --all-features --locked
       - run: cargo build --release --features native-toolchain --locked
       - run: ./target/release/ckc --help
+
+  candidate-ci:
+    if: inputs.candidate_ci == true
+    uses: ./.github/workflows/ci.yml
 
   capture-v010-baselines:
     if: inputs.capture_v010_baselines == true
@@ -88,9 +97,14 @@ jobs:
           profile: oracle
       - name: Add the immutable 0.11 proof corpus to the pinned 0.10 harness
         run: |
+          test "$(git -C baseline rev-parse HEAD)" = df816502876fba41676f9ebc190e4fadd18cd5a5
+          test "$(sha256sum benches/baselines/v0_10_proof_loop_harness.patch | cut -d' ' -f1)" = 316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e
+          git -C baseline apply --check ../benches/baselines/v0_10_proof_loop_harness.patch
+          git -C baseline apply ../benches/baselines/v0_10_proof_loop_harness.patch
           cp benches/fixtures/proof_loop.ck baseline/benches/fixtures/proof_loop.ck
           cp tests/fixtures/performance/native/proof_loop.ck baseline/tests/fixtures/performance/native/proof_loop.ck
           printf 'proof\tbenches/fixtures/proof_loop.ck\n' >> baseline/benches/cases/native-cases.tsv
+          git -C baseline diff --check
       - name: Measure the pinned 0.10 compiler
         working-directory: baseline
         run: cargo bench --features native-toolchain --bench ckc_perf -- --task check --cpu baseline
