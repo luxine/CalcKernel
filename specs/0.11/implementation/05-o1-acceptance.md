@@ -22,3 +22,20 @@
 ## 完成证据
 
 执行时追加 SHA、每类 eliminated/retained guard 数与 mutation 结果。
+
+## 执行记录（2026-08-29）
+
+- 实现提交：`18bcf353cabd7f11734fcc9bcb17763d8eef81ef`
+- O0：2 个 validator-only 用例通过；合法输入 KIR 保持不变，非法输入无 artifact。
+- O1：固定 `cfg-canonicalize -> sccp-range -> check-elimination ->
+  dead-code-elimination -> cleanup` 次序通过，五项 record 均由 verifier 标记为已验证。
+- guard：常量安全溢出与支配的契约 slice 边界各删除 1 个；未知标量相邻例保留 1 个，
+  reason 固定为 `retained: scalar safety is unknown`。
+- mutation：将 `GuardSafety.condition_instruction` 改为不存在的 ID 后，独立 checker 拒绝，
+  output transaction 无 artifact。
+- 有序效果：`print_i32` 在 O1 DCE 后仍存在，cleanup 后 effect order 为 `[0]`。
+- 验收命令：本文件“必须通过”第 1–8 项全部通过；另执行 `cargo test --locked`，
+  默认特性全仓 308 个测试通过。
+- 说明：额外探测的 `cargo test --locked --all-targets` 会执行 benchmark binary；既有
+  `ckc_perf` 的 `emit-llvm-o3` 明确要求 `native-toolchain` feature，因此该非阶段门禁命令
+  未记为通过，原生 feature 验证留在阶段 09。
