@@ -27,12 +27,15 @@ runs:
       env:
         CKC_BOOTSTRAP_TARGET: ${{ inputs.target }}
         CKC_BOOTSTRAP_PROFILE: ${{ inputs.profile }}
+        CKC_BOOTSTRAP_RECIPE_DIGEST: ${{ hashFiles('native/llvm/manifest.toml', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1') }}
       run: |
         if ($env:CKC_BOOTSTRAP_PROFILE -notin @("release", "oracle")) {
           throw "unsupported LLVM bootstrap profile: $env:CKC_BOOTSTRAP_PROFILE"
         }
-        $manifest = Join-Path $env:GITHUB_WORKSPACE "native/llvm/manifest.toml"
-        $digest = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+        $digest = $env:CKC_BOOTSTRAP_RECIPE_DIGEST
+        if ($digest -notmatch '^[0-9a-f]{64}$') {
+          throw "invalid LLVM bootstrap recipe digest: $digest"
+        }
         $identity = "$env:CKC_BOOTSTRAP_TARGET-$($digest.Substring(0, 16))"
         $prefix = Join-Path $env:RUNNER_TEMP "ckc-llvm-prefix-$identity-release"
         $build = Join-Path $env:RUNNER_TEMP "ckc-llvm-build-$identity-release"
@@ -41,7 +44,7 @@ runs:
         $archive = Join-Path $env:RUNNER_TEMP "llvm-project-22.1.8.src.tar.xz"
         $clangName = if ($env:RUNNER_OS -eq "Windows") { "clang.exe" } else { "clang" }
         $clang = Join-Path $oraclePrefix "bin/$clangName"
-        "manifest-digest=$digest" >> $env:GITHUB_OUTPUT
+        "recipe-digest=$digest" >> $env:GITHUB_OUTPUT
         "prefix=$prefix" >> $env:GITHUB_OUTPUT
         "build=$build" >> $env:GITHUB_OUTPUT
         "oracle-prefix=$oraclePrefix" >> $env:GITHUB_OUTPUT
@@ -54,7 +57,7 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ${{ steps.layout.outputs.prefix }}
-        key: ckc-llvm-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-release-${{ steps.layout.outputs.manifest-digest }}
+        key: ckc-llvm-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-release-${{ steps.layout.outputs.recipe-digest }}
 
     - name: Restore manifest-addressed Clang oracle prefix
       id: oracle-cache
@@ -62,7 +65,7 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ${{ steps.layout.outputs.oracle-prefix }}
-        key: ckc-llvm-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-oracle-${{ steps.layout.outputs.manifest-digest }}
+        key: ckc-llvm-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-oracle-${{ steps.layout.outputs.recipe-digest }}
 
     - name: Download pinned LLVM source on Unix
       if: runner.os != 'Windows' && (steps.cache.outputs.cache-hit != 'true' || (inputs.profile == 'oracle' && steps.oracle-cache.outputs.cache-hit != 'true'))
@@ -130,7 +133,8 @@ runs:
             "target = `"$env:CKC_BOOTSTRAP_TARGET`"",
             "profile = `"$Profile`"",
             "source_sha256 = `"922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888`"",
-            "static_only = true"
+            "static_only = true",
+            "LLVMDTLTO"
           )) {
             if (-not $text.Contains($required)) { throw "invalid LLVM bootstrap evidence: $required" }
           }

@@ -145,7 +145,12 @@ while IFS= read -r ckc_library; do
   ckc_llvm_libs+=("$ckc_library")
 done < <("$ckc_llvm_config" --link-static --libnames "${ckc_components[@]}" | tr ' ' '\n' | sed -e 's/^lib//' -e 's/\.a$//' -e '/^$/d')
 ckc_lld_libs=("lld${ckc_lld_driver}" lldCommon)
-ckc_static_libs=("${ckc_lld_libs[@]}" "${ckc_llvm_libs[@]}")
+ckc_dtlto_archive="$ckc_prefix/lib/libLLVMDTLTO.a"
+[[ -f "$ckc_dtlto_archive" ]] || {
+  echo "LLVM 22 static install is missing libLLVMDTLTO.a" >&2
+  exit 1
+}
+ckc_static_libs=("${ckc_lld_libs[@]}" LLVMDTLTO "${ckc_llvm_libs[@]}")
 ckc_system_libs=()
 for ckc_flag in $("$ckc_llvm_config" --link-static --system-libs "${ckc_components[@]}"); do
   case "$ckc_flag" in

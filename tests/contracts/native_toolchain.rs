@@ -120,6 +120,10 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
     let unix = read("scripts/bootstrap-llvm.sh");
     assert!(unix.contains("CMAKE_OSX_DEPLOYMENT_TARGET=11.0"));
     assert!(unix.contains("ckc_components=(core native orcjit nativecodegen lto)"));
+    assert!(
+        unix.contains("ckc_static_libs=(\"${ckc_lld_libs[@]}\" LLVMDTLTO \"${ckc_llvm_libs[@]}\")"),
+        "Unix bootstrap must add LLVM 22 DTLTO after LLD and before its LLVM dependencies"
+    );
     assert!(!unix.contains("--libnames all"));
     for required in [
         "native/runtime/common/runtime.c",
@@ -134,6 +138,12 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
 
     let windows = read("scripts/bootstrap-llvm.ps1");
     assert!(windows.contains("core\", \"native\", \"orcjit\", \"nativecodegen\", \"lto"));
+    assert!(
+        windows.contains(
+            "$staticLibraries = @(\"lldCOFF\", \"lldCommon\", \"LLVMDTLTO\") + $llvmLibraries"
+        ),
+        "Windows bootstrap must add LLVM 22 DTLTO after LLD and before its LLVM dependencies"
+    );
     assert!(!windows.contains("--libnames all"));
     for required in [
         "native/runtime/windows/process.c",

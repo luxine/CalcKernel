@@ -82,7 +82,11 @@ $components = @("core", "native", "orcjit", "nativecodegen", "lto")
 $llvmLibraries = ((& $llvmConfig --link-static --libnames @components) -split "\s+") |
     Where-Object { $_ -ne "" } |
     ForEach-Object { $_ -replace '^lib', '' -replace '\.lib$', '' }
-$staticLibraries = @("lldCOFF", "lldCommon") + $llvmLibraries
+$dtltoArchive = Join-Path $Prefix "lib/LLVMDTLTO.lib"
+if (-not (Test-Path -LiteralPath $dtltoArchive -PathType Leaf)) {
+    throw "LLVM 22 static install is missing LLVMDTLTO.lib"
+}
+$staticLibraries = @("lldCOFF", "lldCommon", "LLVMDTLTO") + $llvmLibraries
 $systemLibraries = ((& $llvmConfig --link-static --system-libs @components) -split "\s+") |
     Where-Object { $_ -ne "" } |
     ForEach-Object { $_ -replace '^[-/]DEFAULTLIB:', '' -replace '\.lib$', '' }

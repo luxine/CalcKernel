@@ -169,6 +169,9 @@ fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
 
     for required in [
         "native/llvm/manifest.toml",
+        "hashFiles('native/llvm/manifest.toml', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1')",
+        "recipe-digest",
+        "ckc-llvm-v3-",
         "llvm-project-22.1.8.src.tar.xz",
         "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888",
         "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
@@ -178,6 +181,7 @@ fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
         "CKC_LLVM_PREFIX",
         "CKC_CLANG_ORACLE",
         "llvm-build.toml",
+        "LLVMDTLTO",
         "llvm-config",
     ] {
         assert!(
