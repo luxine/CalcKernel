@@ -238,6 +238,23 @@ fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds()
             .expect("run rejected performance gate");
         assert!(!output.status.success(), "{label} report must fail");
     }
+
+    let optimizer_median = performance_report(100, 102, true, false, 100, 102, 150)
+        .replace(
+            r#""optimizerComparisons": [{"case":"pricing","kirMedianNs":150,"v010MirMedianNs":100}]"#,
+            r#""optimizerComparisons": [{"case":"a","kirMedianNs":10,"v010MirMedianNs":100},{"case":"b","kirMedianNs":10,"v010MirMedianNs":100},{"case":"c","kirMedianNs":210,"v010MirMedianNs":100},{"case":"d","kirMedianNs":210,"v010MirMedianNs":100},{"case":"e","kirMedianNs":210,"v010MirMedianNs":100},{"case":"f","kirMedianNs":210,"v010MirMedianNs":100}]"#,
+        );
+    let path = temp.join("optimizer-median.json");
+    fs::write(&path, optimizer_median).expect("write optimizer median rejection");
+    let output = Command::new("python3")
+        .arg(&checker)
+        .arg(&path)
+        .output()
+        .expect("run optimizer median rejection");
+    assert!(
+        !output.status.success(),
+        "optimizer suite median above 2x must fail even when its geometric mean passes"
+    );
 }
 
 fn performance_report(

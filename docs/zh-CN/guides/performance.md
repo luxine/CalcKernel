@@ -10,8 +10,8 @@ Native/Clang geometric-mean throughput 至少 95%，单 case 回退不超过 10%
 unchecked 在受控 x86-64/AArch64 worker 上以 portable baseline CPU policy 分别验收；
 native-CPU 测量只用于调查，不与冻结 baseline 比较。相对记录的 0.10 compiler，0.11 runtime
 geometric 回退最多 3%、单 case 最多 8%。Canonical proof-loop checked throughput 至少为
-unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite ratio 最多 2x、单 case
-最多 3x。
+unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite median ratio 最多 2x、
+单 case 最多 3x。
 
 ```sh
 cargo bench --bench ckc_perf

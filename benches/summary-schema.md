@@ -34,8 +34,8 @@ identity, set, or digest mismatch rejects the report.
 requires stable samples, at least 95% Native/Clang geometric-mean throughput,
 at most 10% individual Native/Clang regression, at most 3% geometric and 8%
 individual 0.11/0.10 runtime regression, at least 97% checked/unchecked
-proof-loop throughput, and KIR/0.10-MIR optimizer ratios of at most 2x for the
-suite and 3x individually.
+proof-loop throughput, and a median KIR/0.10-MIR optimizer ratio of at most 2x
+for the suite and 3x individually.
 
 Changing a field, equivalence rule, source, baseline, statistic, or threshold
 requires coordinated review of the harness, checker, guide, tests, and CI. A

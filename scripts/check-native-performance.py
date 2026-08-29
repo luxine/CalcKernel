@@ -122,10 +122,13 @@ def check_optimizer(report: dict[str, object]) -> None:
         if ratio > 3.0:
             fail(f"optimizer/{name} exceeds the 3x individual v0.10 MIR limit")
         ratios.append(ratio)
-    mean = geometric_mean(ratios, "optimizer ratios")
-    if mean > 2.0:
-        fail("KIR optimizer geometric-mean time exceeds 2x pinned v0.10 MIR")
-    print(f"optimizer: v0.10 ratio {mean:.4f}, {len(ratios)} case(s)")
+    suite_median = statistics.median(ratios)
+    if suite_median > 2.0:
+        fail("KIR optimizer suite-median time exceeds 2x pinned v0.10 MIR")
+    print(
+        f"optimizer: v0.10 suite-median ratio {suite_median:.4f}, "
+        f"{len(ratios)} case(s)"
+    )
 
 
 def check(path: pathlib.Path) -> None:
