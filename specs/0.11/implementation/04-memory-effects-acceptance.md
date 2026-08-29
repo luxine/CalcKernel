@@ -21,4 +21,27 @@
 
 ## 完成证据
 
-执行时追加 SHA、SCC/alias/mutation test count 和 CK2016 正反例摘要。
+- 日期：2026-08-29
+- 实现提交：`e3f0658`
+- `cargo test --locked --test ir memory_ -- --nocapture`：8 passed，0 failed/ignored。
+- `cargo test --locked --test optimizer alias_ -- --nocapture`：8 passed，0 failed/ignored。
+- `cargo test --locked --test optimizer effect_ -- --nocapture`：6 passed，0 failed/ignored。
+- `cargo test --locked --test frontend ck2016_ -- --nocapture`：5 passed，0 failed/ignored。
+- `cargo test --locked --test optimizer runtime_print_ -- --nocapture`：3 passed。
+- `cargo fmt --check`、`cargo clippy --all-targets --locked -- -D warnings`、
+  `git diff --check`：全部通过。
+- 补充全仓验证：`cargo test --locked` 共 300 passed，0 failed/ignored；固定 LLVM 环境下
+  `cargo clippy --locked --all-targets --all-features -- -D warnings` 通过。
+- alias 覆盖 root/copy/sub-slice、零长度、确定 sibling byte interval、pairwise
+  `noalias(a,b)` 与第三 root 反例；两根完全分离时生成两条 Memory SSA 版本链，第三根
+  可能别名时按连通分量回退 conservative partition。
+- Memory SSA 覆盖 load/store/call/join/loop；effect-aware call 只更新 parameter-mapped
+  partition，unknown/multi-partition call 保守合并。交换 memory-phi 参数的 mutation 被
+  verifier 以 partition mismatch 拒绝。
+- 共享 SCC solver 覆盖 direct/transitive/recursive 三类 component、参数回映射、未知
+  callee 与 `max_steps=0` 预算 fallback；fallback 精确为 `readwrite all + may_fail +
+  runtime_effect + unsafe_calls`，不读取墙钟。
+- CK2016 正例覆盖精确 read/write/readwrite ceiling、`effects none` 无 externally
+  reachable memory、sub-slice 与 transitive callee 回映射；反例覆盖 underdeclared
+  read/write/readwrite、raw pointer/all。runtime print、may-fail 与 unsafe-call 标志独立
+  保留，不受 memory ceiling 隐藏。
