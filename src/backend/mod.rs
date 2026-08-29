@@ -20,8 +20,8 @@ pub use artifact::{
     link_native_executable,
 };
 pub use c::{
-    BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_module,
-    emit_c_module_with_header, try_emit_c_module,
+    BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_kir_header, emit_c_kir_module,
+    emit_c_kir_module_with_contracts, emit_c_module, emit_c_module_with_header, try_emit_c_module,
 };
 pub use header::{NativeHeaderMode, emit_native_header};
 pub use llvm::{
@@ -44,8 +44,8 @@ pub use native_abi::{
     NativeAbiPassMode, NativeAbiRegister, NativeAbiRegisterClass, NativeAbiTarget, NativeAbiValue,
 };
 pub use wasm::{
-    EmitWasmOptions, emit_wasm_module, emit_wasm_module_with_options, emit_wat_module,
-    emit_wat_module_with_options,
+    EmitWasmOptions, emit_wasm_kir_module, emit_wasm_module, emit_wasm_module_with_options,
+    emit_wat_kir_module, emit_wat_module, emit_wat_module_with_options,
 };
 
 pub(super) fn is_f64_type(type_node: &MirType) -> bool {

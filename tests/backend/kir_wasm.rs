@@ -1,0 +1,174 @@
+use std::{fs, process::Command};
+
+use calckernel::{
+    EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+    KirOverflowMode, KirSanitizerMode, MirPassBoundsMode, MirPassOverflowMode,
+    MirPassTargetBackend, SourceFile, build_kir_module, check, emit_wasm_kir_module,
+    emit_wasm_module_with_options, emit_wat_kir_module, lower_to_mir, run_kir_pass_pipeline,
+};
+
+use crate::support::compiler::optimized_module;
+use crate::support::temp::temp_dir;
+
+fn optimized_kir(source: &str, level: KirOptimizationLevel) -> calckernel::KirModule {
+    let checked = check(&SourceFile::new("kir-wasm.ck", source));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::WebAssembly,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    let result = run_kir_pass_pipeline(kir, level, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result.artifact.expect("artifact")
+}
+
+#[test]
+fn kir_wasm_backend_should_emit_validate_and_run_control_flow() {
+    let kir = optimized_kir(
+        r#"
+        export fn sum(n: i32) -> i32 {
+          let i: i32 = 0; let total: i32 = 0;
+          while i < n { total = total + i; i = i + 1; }
+          return total;
+        }
+        "#,
+        KirOptimizationLevel::O3,
+    );
+    let options = EmitWasmOptions { opt_level: 3 };
+    let wat = emit_wat_kir_module(&kir, options).expect("KIR WAT");
+    let wasm = emit_wasm_kir_module(&kir, options).expect("KIR WASM");
+    assert!(wat.contains("(export \"sum\")"));
+    assert_eq!(&wasm[..8], b"\0asm\x01\0\0\0");
+
+    let temp = temp_dir("kir_wasm_backend");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let wasm_path = temp.join("case.wasm");
+    let runner = temp.join("run.mjs");
+    fs::write(&wasm_path, wasm).expect("write wasm");
+    fs::write(
+        &runner,
+        r#"
+        import fs from "node:fs";
+        const bytes = fs.readFileSync(process.argv[2]);
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        if (instance.exports.sum(5) !== 10) process.exit(1);
+        "#,
+    )
+    .expect("write runner");
+    let output = Command::new("node")
+        .arg(&runner)
+        .arg(&wasm_path)
+        .output()
+        .expect("node");
+    assert!(
+        output.status.success(),
+        "node failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(temp).expect("remove temp dir");
+}
+
+#[test]
+fn kir_wasm_backend_should_reject_checked_kir_without_inventing_an_abi() {
+    let checked = check(&SourceFile::new(
+        "checked.ck",
+        "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
+    ));
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::Inspection,
+            overflow_mode: KirOverflowMode::Checked,
+            bounds_mode: KirBoundsMode::Checked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    let error = emit_wat_kir_module(&kir, EmitWasmOptions::default()).expect_err("reject");
+    assert!(error.contains("only unchecked KIR"));
+}
+
+#[test]
+fn kir_wasm_o0_through_o3_should_match_legacy_supported_mode_matrix() {
+    const SOURCE: &str = r#"
+        struct Pair { x: i32; y: i32; }
+        export fn scalar(a: i32, b: i32) -> i32 { return a * 3 + b; }
+        export fn control(n: i32) -> i32 {
+          let i: i32 = 0; let total: i32 = 0;
+          while i < n { total = total + i; i = i + 1; }
+          return total;
+        }
+        export fn write(out: ptr<i32>, value: i32) -> void { out[0] = value; }
+        export fn slice_total(items: slice<i32>) -> i32 { return items[0] + items[1]; }
+        export fn pair_total(pair: ptr<Pair>) -> i32 { return pair[0].x + pair[0].y; }
+    "#;
+    let runner_source = r#"
+        import fs from "node:fs";
+        const bytes = fs.readFileSync(process.argv[2]);
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        const api = instance.exports;
+        const memory = new Int32Array(api.memory.buffer);
+        const out = 64, items = 80, pair = 96;
+        memory[items / 4] = 20; memory[items / 4 + 1] = 22;
+        memory[pair / 4] = 19; memory[pair / 4 + 1] = 23;
+        if (api.scalar(10, 12) !== 42) process.exit(1);
+        if (api.control(10) !== 45) process.exit(2);
+        api.write(out, 42); if (memory[out / 4] !== 42) process.exit(3);
+        if (api.slice_total(items, 2) !== 42) process.exit(4);
+        if (api.pair_total(pair) !== 42) process.exit(5);
+    "#;
+
+    for (level, kir_level) in [
+        (0, KirOptimizationLevel::O0),
+        (1, KirOptimizationLevel::O1),
+        (2, KirOptimizationLevel::O2),
+        (3, KirOptimizationLevel::O3),
+    ] {
+        let kir = optimized_kir(SOURCE, kir_level);
+        let kir_wasm = emit_wasm_kir_module(&kir, EmitWasmOptions { opt_level: level })
+            .expect("KIR WASM matrix");
+        run_wasm(&kir_wasm, runner_source);
+
+        let legacy = optimized_module(
+            SOURCE,
+            level,
+            MirPassOverflowMode::Unchecked,
+            MirPassBoundsMode::Unchecked,
+            MirPassTargetBackend::Wasm,
+        );
+        let legacy_wasm =
+            emit_wasm_module_with_options(&legacy, EmitWasmOptions { opt_level: level })
+                .expect("legacy WASM matrix");
+        run_wasm(&legacy_wasm, runner_source);
+    }
+}
+
+fn run_wasm(wasm: &[u8], runner_source: &str) {
+    let temp = temp_dir("kir_wasm_matrix");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let wasm_path = temp.join("case.wasm");
+    let runner = temp.join("run.mjs");
+    fs::write(&wasm_path, wasm).expect("write wasm");
+    fs::write(&runner, runner_source).expect("write runner");
+    let output = Command::new("node")
+        .arg(&runner)
+        .arg(&wasm_path)
+        .output()
+        .expect("node");
+    assert!(
+        output.status.success(),
+        "node failed with {output:?}:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(temp).expect("remove temp dir");
+}
