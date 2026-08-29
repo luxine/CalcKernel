@@ -23,6 +23,7 @@ path = "benches/ckc_perf.rs"
 harness = false
 
 [dependencies]
+num-bigint = "0.4"
 sha2 = "0.10"
 thiserror = "2.0"
 wat = "1.0"

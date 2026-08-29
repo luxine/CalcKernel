@@ -41,6 +41,25 @@ fn mir_should_carry_checked_entry_metadata_without_reparsing_names() {
 }
 
 #[test]
+fn mir_should_lower_unsafe_blocks_without_runtime_markers() {
+    let text = lower_and_print(
+        r#"
+        unsafe fn value(n: u32) -> i32
+        contract { requires n > 0; effects none; }
+        { return 7; }
+
+        fn caller(n: u32) -> i32 {
+          unsafe { return value(n); }
+        }
+        "#,
+    );
+
+    assert!(text.contains("call value(n)"), "{text}");
+    assert!(!text.contains("unsafe"), "{text}");
+    assert!(!text.contains("contract"), "{text}");
+}
+
+#[test]
 fn mir_should_lower_all_prints_as_typed_effectful_runtime_calls() {
     let checked = check(&SourceFile::new(
         "test.ck",

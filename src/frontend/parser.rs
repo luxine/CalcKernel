@@ -48,8 +48,35 @@ impl<'source> Parser<'source> {
             return Some(Declaration::Struct(self.parse_struct_declaration()));
         }
 
-        if self.check(TokenKind::Export) || self.check(TokenKind::Fn) {
-            return Some(Declaration::Function(self.parse_function_declaration()));
+        if self.check(TokenKind::Contract) {
+            let token = self.advance();
+            self.error_with_code(
+                &token,
+                DiagnosticCode::Ck2014,
+                "A contract may appear only after an unsafe function signature.",
+            );
+            self.skip_braced_declaration();
+            return None;
+        }
+
+        if self.check(TokenKind::Unsafe) && self.next_is(TokenKind::LeftBrace) {
+            let token = self.advance();
+            self.error_with_code(
+                &token,
+                DiagnosticCode::Ck2014,
+                "An unsafe block may appear only inside a function body.",
+            );
+            self.skip_braced_declaration();
+            return None;
+        }
+
+        if self.check(TokenKind::Export)
+            || self.check(TokenKind::Unsafe)
+            || self.check(TokenKind::Fn)
+        {
+            return Some(Declaration::Function(Box::new(
+                self.parse_function_declaration(),
+            )));
         }
 
         let token = self.current().clone();
@@ -86,13 +113,19 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_function_declaration(&mut self) -> FunctionDeclaration {
-        let start_token = if self.match_token(TokenKind::Export) {
-            self.previous().clone()
-        } else {
-            self.current().clone()
-        };
-        let exported = start_token.kind == TokenKind::Export;
-        self.consume(TokenKind::Fn, "Expected 'fn' after 'export'.");
+        let start_token = self.current().clone();
+        let mut exported = self.match_token(TokenKind::Export);
+        let is_unsafe = self.match_token(TokenKind::Unsafe);
+        if is_unsafe && self.match_token(TokenKind::Export) {
+            exported = true;
+            let export_token = self.previous().clone();
+            self.error_with_code(
+                &export_token,
+                DiagnosticCode::Ck2014,
+                "Function modifiers must appear in '[export] [unsafe] fn' order.",
+            );
+        }
+        self.consume(TokenKind::Fn, "Expected 'fn' after function modifiers.");
         let name = self.parse_identifier("Expected function name.");
         self.consume(TokenKind::LeftParen, "Expected '(' after function name.");
 
@@ -109,15 +142,113 @@ impl<'source> Parser<'source> {
         self.consume(TokenKind::RightParen, "Expected ')' after parameters.");
         self.consume(TokenKind::Arrow, "Expected '->' before return type.");
         let return_type = self.parse_type();
+        let contract = self
+            .match_token(TokenKind::Contract)
+            .then(|| Box::new(self.parse_contract_declaration()));
         let body = self.parse_block_statement();
 
         FunctionDeclaration {
             exported,
+            is_unsafe,
             name,
             params,
             return_type,
+            contract,
             span: self.span_from_positions(self.position_from_token(&start_token), body.span.end),
             body,
+        }
+    }
+
+    fn parse_contract_declaration(&mut self) -> ContractDeclaration {
+        let contract_token = self.previous().clone();
+        self.consume(TokenKind::LeftBrace, "Expected '{' after 'contract'.");
+        let mut requirements = Vec::new();
+        let mut effects = None;
+        while !self.check(TokenKind::RightBrace) && !self.check(TokenKind::Eof) {
+            if self.match_token(TokenKind::Requires) {
+                let requires_token = self.previous().clone();
+                let expression = self.parse_expression(1);
+                let semicolon = self.consume(
+                    TokenKind::Semicolon,
+                    "Expected ';' after contract requirement.",
+                );
+                requirements.push(ContractRequirement {
+                    expression,
+                    span: self.span_between_tokens(&requires_token, &semicolon),
+                });
+                continue;
+            }
+            if self.match_token(TokenKind::Effects) {
+                let effects_token = self.previous().clone();
+                let clause = self.parse_contract_effect_clause(effects_token);
+                if effects.replace(clause).is_some() {
+                    let token = self.previous().clone();
+                    self.error(&token, "A contract can contain only one effects clause.");
+                }
+                continue;
+            }
+            let token = self.current().clone();
+            self.error(&token, "Expected 'requires' or 'effects' in contract.");
+            self.synchronize_contract_clause();
+        }
+        let right_brace = self.consume(TokenKind::RightBrace, "Expected '}' after contract.");
+        ContractDeclaration {
+            requirements,
+            effects,
+            span: self.span_between_tokens(&contract_token, &right_brace),
+        }
+    }
+
+    fn parse_contract_effect_clause(&mut self, effects_token: Token) -> ContractEffectClause {
+        if self.match_token(TokenKind::None) {
+            let semicolon =
+                self.consume(TokenKind::Semicolon, "Expected ';' after effects clause.");
+            return ContractEffectClause {
+                is_none: true,
+                items: Vec::new(),
+                span: self.span_between_tokens(&effects_token, &semicolon),
+            };
+        }
+
+        let mut items = Vec::new();
+        loop {
+            let kind_token = self.consume(
+                TokenKind::Identifier,
+                "Expected read, write, or readwrite in effects clause.",
+            );
+            let kind = match kind_token.text.as_str() {
+                "read" => ContractEffectKind::Read,
+                "write" => ContractEffectKind::Write,
+                "readwrite" => ContractEffectKind::ReadWrite,
+                _ => {
+                    self.error(
+                        &kind_token,
+                        "Expected read, write, or readwrite in effects clause.",
+                    );
+                    ContractEffectKind::ReadWrite
+                }
+            };
+            self.consume(TokenKind::LeftParen, "Expected '(' after effect kind.");
+            let target = self.parse_identifier("Expected slice parameter in effect.");
+            let right_paren =
+                self.consume(TokenKind::RightParen, "Expected ')' after effect target.");
+            items.push(ContractEffectItem {
+                kind,
+                span: self.span_from_positions(
+                    self.position_from_token(&kind_token),
+                    self.end_position_from_token(&right_paren),
+                ),
+                target,
+            });
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
+        }
+        let semicolon = self.consume(TokenKind::Semicolon, "Expected ';' after effects clause.");
+        ContractEffectClause {
+            is_none: false,
+            items,
+            span: self.span_between_tokens(&effects_token, &semicolon),
         }
     }
 
@@ -210,6 +341,15 @@ impl<'source> Parser<'source> {
     fn parse_statement(&mut self) -> Statement {
         if self.check(TokenKind::LeftBrace) {
             return Statement::Block(self.parse_block_statement());
+        }
+        if self.match_token(TokenKind::Unsafe) {
+            let unsafe_token = self.previous().clone();
+            let block = self.parse_block_statement();
+            return Statement::Unsafe(UnsafeStatement {
+                span: self
+                    .span_from_positions(self.position_from_token(&unsafe_token), block.span.end),
+                block,
+            });
         }
         if self.check(TokenKind::Let) {
             return Statement::Let(self.parse_let_statement());
@@ -635,6 +775,12 @@ impl<'source> Parser<'source> {
         self.current().kind == kind
     }
 
+    fn next_is(&self, kind: TokenKind) -> bool {
+        self.tokens
+            .get(self.index + 1)
+            .is_some_and(|token| token.kind == kind)
+    }
+
     fn advance(&mut self) -> Token {
         let token = self.current().clone();
         if !self.check(TokenKind::Eof) {
@@ -656,17 +802,45 @@ impl<'source> Parser<'source> {
     }
 
     fn error(&mut self, token: &Token, message: &str) {
+        self.error_with_code(token, DiagnosticCode::Ck1001, message);
+    }
+
+    fn error_with_code(&mut self, token: &Token, code: DiagnosticCode, message: &str) {
         self.diagnostics.push(Diagnostic::error(
-            DiagnosticCode::Ck1001,
+            code,
             message,
             self.source.file_name.clone(),
             self.span_from_token(token),
         ));
     }
 
+    fn skip_braced_declaration(&mut self) {
+        if !self.match_token(TokenKind::LeftBrace) {
+            return;
+        }
+        let mut depth = 1_usize;
+        while depth > 0 && !self.check(TokenKind::Eof) {
+            let token = self.advance();
+            match token.kind {
+                TokenKind::LeftBrace => depth += 1,
+                TokenKind::RightBrace => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+
     fn synchronize_statement(&mut self) {
         while !self.check(TokenKind::Eof) {
             if self.match_token(TokenKind::Semicolon) || self.check(TokenKind::RightBrace) {
+                return;
+            }
+            self.advance();
+        }
+    }
+
+    fn synchronize_contract_clause(&mut self) {
+        while !self.check(TokenKind::Eof) && !self.check(TokenKind::RightBrace) {
+            if self.match_token(TokenKind::Semicolon) {
                 return;
             }
             self.advance();

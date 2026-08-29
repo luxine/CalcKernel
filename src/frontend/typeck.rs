@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use num_bigint::BigInt;
 
 use super::{
-    AssignmentStatement, BlockStatement, Declaration, Diagnostic, DiagnosticCode, Expression,
-    FunctionDeclaration, FunctionParam, IfStatement, LetStatement, ParseResult, Program,
-    ReturnStatement, SourceFile, SourceSpan, Statement, StructDeclaration, StructField, TypeNode,
-    WhileStatement, parse,
+    AssignmentStatement, BlockStatement, ContractEffectClause, ContractEffectKind, Declaration,
+    Diagnostic, DiagnosticCode, Expression, FunctionDeclaration, FunctionParam, IfStatement,
+    LetStatement, ParseResult, Program, ReturnStatement, SourceFile, SourceSpan, Statement,
+    StructDeclaration, StructField, TypeNode, WhileStatement, parse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,9 +83,70 @@ pub struct FunctionParamInfo {
 pub struct FunctionInfo {
     pub name: String,
     pub exported: bool,
+    pub is_unsafe: bool,
     pub declaration: FunctionDeclaration,
     pub params: Vec<FunctionParamInfo>,
     pub return_type: CalcKernelType,
+    pub contract: Option<CheckedContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedContract {
+    pub predicates: Vec<CheckedContractPredicate>,
+    pub effects: Option<CheckedContractEffectCeiling>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedContractEffectCeiling {
+    pub is_none: bool,
+    pub items: Vec<(String, ContractEffectKind)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedAffineExpression {
+    pub terms: Vec<CheckedAffineTermCoefficient>,
+    pub constant: String,
+    pub type_node: CalcKernelType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CheckedAffineTerm {
+    Parameter(String),
+    SliceLength(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedAffineTermCoefficient {
+    pub term: CheckedAffineTerm,
+    pub coefficient: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedContractPointer {
+    Parameter(String),
+    SliceData(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedContractPredicate {
+    Comparison {
+        operator: String,
+        left: CheckedAffineExpression,
+        right: CheckedAffineExpression,
+    },
+    Conjunction(Vec<CheckedContractPredicate>),
+    MultipleOf {
+        value: CheckedAffineExpression,
+        modulus: String,
+    },
+    NoAlias {
+        left: String,
+        right: String,
+    },
+    Aligned {
+        pointer: CheckedContractPointer,
+        alignment: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +262,9 @@ struct Checker<'source> {
     symbols: SymbolTable,
     expression_types: TypeMap,
     local_types: LetTypeMap,
+    checked_contracts: HashMap<String, CheckedContract>,
     loop_depth: usize,
+    unsafe_depth: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +283,79 @@ struct FlowSummary {
     returns: bool,
     breaks: bool,
     continues: bool,
+}
+
+struct CheckedAffineCandidate {
+    form: NormalizedAffineExpression,
+    type_node: CalcKernelType,
+    is_constant: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NormalizedAffineExpression {
+    terms: BTreeMap<CheckedAffineTerm, BigInt>,
+    constant: BigInt,
+}
+
+impl NormalizedAffineExpression {
+    fn constant(value: BigInt) -> Self {
+        Self {
+            terms: BTreeMap::new(),
+            constant: value,
+        }
+    }
+
+    fn term(term: CheckedAffineTerm) -> Self {
+        Self {
+            terms: BTreeMap::from([(term, BigInt::from(1_u8))]),
+            constant: BigInt::from(0_u8),
+        }
+    }
+
+    fn add_scaled(&mut self, other: Self, scale: &BigInt) {
+        self.constant += other.constant * scale;
+        for (term, coefficient) in other.terms {
+            let updated = self
+                .terms
+                .get(&term)
+                .cloned()
+                .unwrap_or_else(|| BigInt::from(0_u8))
+                + coefficient * scale;
+            if updated == BigInt::from(0_u8) {
+                self.terms.remove(&term);
+            } else {
+                self.terms.insert(term, updated);
+            }
+        }
+    }
+
+    fn scaled(mut self, scale: &BigInt) -> Self {
+        self.constant *= scale;
+        self.terms = self
+            .terms
+            .into_iter()
+            .filter_map(|(term, coefficient)| {
+                let coefficient = coefficient * scale;
+                (coefficient != BigInt::from(0_u8)).then_some((term, coefficient))
+            })
+            .collect();
+        self
+    }
+
+    fn checked(self, type_node: CalcKernelType) -> CheckedAffineExpression {
+        CheckedAffineExpression {
+            terms: self
+                .terms
+                .into_iter()
+                .map(|(term, coefficient)| CheckedAffineTermCoefficient {
+                    term,
+                    coefficient: coefficient.to_string(),
+                })
+                .collect(),
+            constant: self.constant.to_string(),
+            type_node,
+        }
+    }
 }
 
 impl FlowSummary {
@@ -285,7 +423,9 @@ impl<'source> Checker<'source> {
             symbols: SymbolTable::default(),
             expression_types: HashMap::new(),
             local_types: HashMap::new(),
+            checked_contracts: HashMap::new(),
             loop_depth: 0,
+            unsafe_depth: 0,
         }
     }
 
@@ -304,6 +444,7 @@ impl<'source> Checker<'source> {
             self.symbols.clone(),
             self.expression_types.clone(),
             self.local_types.clone(),
+            self.checked_contracts.clone(),
         );
         CheckResult {
             ast: self.program,
@@ -407,6 +548,13 @@ impl<'source> Checker<'source> {
             let return_type =
                 self.resolve_type(&function_decl.return_type, TypeUseContext::FunctionReturn);
             if name == "main" {
+                if function_decl.is_unsafe || function_decl.contract.is_some() {
+                    self.error_with_code(
+                        function_decl.name.span,
+                        DiagnosticCode::Ck2014,
+                        "Program entry 'main' cannot be unsafe or contracted.",
+                    );
+                }
                 if function_decl.exported {
                     self.error_with_code(
                         function_decl.name.span,
@@ -432,6 +580,33 @@ impl<'source> Checker<'source> {
                     );
                 }
             }
+            if name != "main" {
+                if !function_decl.is_unsafe && function_decl.contract.is_some() {
+                    self.error_with_code(
+                        function_decl
+                            .contract
+                            .as_ref()
+                            .map_or(function_decl.name.span, |contract| contract.span),
+                        DiagnosticCode::Ck2014,
+                        "A safe function cannot declare a contract or effects ceiling.",
+                    );
+                }
+                if function_decl.is_unsafe
+                    && function_decl
+                        .contract
+                        .as_ref()
+                        .is_none_or(|contract| contract.requirements.is_empty())
+                {
+                    self.error_with_code(
+                        function_decl
+                            .contract
+                            .as_ref()
+                            .map_or(function_decl.name.span, |contract| contract.span),
+                        DiagnosticCode::Ck2014,
+                        "An unsafe function contract requires at least one 'requires' clause.",
+                    );
+                }
+            }
             if function_decl.exported && matches!(return_type, CalcKernelType::Slice(_)) {
                 self.error_with_code(
                     function_decl.return_type.span(),
@@ -443,7 +618,7 @@ impl<'source> Checker<'source> {
                 name.clone(),
                 FunctionSymbol {
                     name,
-                    declaration: function_decl,
+                    declaration: *function_decl,
                     params,
                     return_type,
                 },
@@ -464,7 +639,7 @@ impl<'source> Checker<'source> {
             else {
                 continue;
             };
-            if function_symbol.declaration != function_decl {
+            if function_symbol.declaration != *function_decl {
                 continue;
             }
             self.check_function_body(&function_decl, &function_symbol);
@@ -492,7 +667,28 @@ impl<'source> Checker<'source> {
             }
         }
 
+        if let Some(contract) = &declaration.contract
+            && declaration.name.name != "main"
+            && declaration.is_unsafe
+            && !contract.requirements.is_empty()
+            && let Some(checked) = self.check_contract(
+                contract,
+                &scope,
+                &declaration
+                    .params
+                    .iter()
+                    .zip(&function_symbol.params)
+                    .filter(|(_, type_node)| matches!(type_node, CalcKernelType::Slice(_)))
+                    .map(|(param, _)| param.name.name.clone())
+                    .collect::<Vec<_>>(),
+            )
+        {
+            self.checked_contracts
+                .insert(declaration.name.name.clone(), checked);
+        }
+
         self.loop_depth = 0;
+        self.unsafe_depth = 0;
         let flow = self.check_block(
             &declaration.body,
             &mut scope,
@@ -505,6 +701,451 @@ impl<'source> Checker<'source> {
                 format!("Missing return in function '{}'.", declaration.name.name),
             );
         }
+    }
+
+    fn check_contract(
+        &mut self,
+        contract: &super::ContractDeclaration,
+        scope: &Scope,
+        slice_params: &[String],
+    ) -> Option<CheckedContract> {
+        let diagnostics_before = self.diagnostics.len();
+        let predicates = contract
+            .requirements
+            .iter()
+            .filter_map(|requirement| self.check_contract_predicate(&requirement.expression, scope))
+            .collect();
+        let effects = contract
+            .effects
+            .as_ref()
+            .and_then(|clause| self.check_contract_effects(clause, scope, slice_params));
+        (self.diagnostics.len() == diagnostics_before).then_some(CheckedContract {
+            predicates,
+            effects,
+        })
+    }
+
+    fn check_contract_predicate(
+        &mut self,
+        expression: &Expression,
+        scope: &Scope,
+    ) -> Option<CheckedContractPredicate> {
+        match expression {
+            Expression::Parenthesized { expression, .. } => {
+                self.check_contract_predicate(expression, scope)
+            }
+            Expression::Binary {
+                operator,
+                left,
+                right,
+                ..
+            } if operator == "&&" => {
+                let left = self.check_contract_predicate(left, scope)?;
+                let right = self.check_contract_predicate(right, scope)?;
+                Some(CheckedContractPredicate::Conjunction(vec![left, right]))
+            }
+            Expression::Binary {
+                operator,
+                left,
+                right,
+                span,
+            } if is_comparison_operator(operator) => {
+                let mut left = self.check_contract_affine(left, scope)?;
+                let mut right = self.check_contract_affine(right, scope)?;
+                if !same_type(&left.type_node, &right.type_node) {
+                    self.contract_error(
+                        *span,
+                        "Contract comparison operands must have the same integer type.",
+                    );
+                    return None;
+                }
+                if matches!(left.type_node, CalcKernelType::IntegerLiteral) {
+                    left.type_node =
+                        materialize_integer_literal(left.type_node, right.type_node.clone());
+                }
+                if matches!(right.type_node, CalcKernelType::IntegerLiteral) {
+                    right.type_node =
+                        materialize_integer_literal(right.type_node, left.type_node.clone());
+                }
+                if matches!(left.type_node, CalcKernelType::IntegerLiteral) {
+                    left.type_node = primitive_i32();
+                    right.type_node = primitive_i32();
+                }
+                Some(CheckedContractPredicate::Comparison {
+                    operator: operator.clone(),
+                    left: left.form.checked(left.type_node),
+                    right: right.form.checked(right.type_node),
+                })
+            }
+            Expression::Call { callee, args, span } => {
+                self.check_contract_builtin(callee, args, *span, scope)
+            }
+            _ => {
+                self.contract_error(
+                    expression.span(),
+                    "Contract requirement must be a comparison, conjunction, or supported predicate.",
+                );
+                None
+            }
+        }
+    }
+
+    fn check_contract_builtin(
+        &mut self,
+        callee: &Expression,
+        args: &[Expression],
+        span: SourceSpan,
+        scope: &Scope,
+    ) -> Option<CheckedContractPredicate> {
+        let Expression::Identifier { name, .. } = callee else {
+            self.contract_error(span, "Unsupported contract predicate.");
+            return None;
+        };
+        match name.as_str() {
+            "multiple_of" => self.check_contract_multiple_of(args, span, scope),
+            "noalias" => self.check_contract_noalias(args, span, scope),
+            "aligned" => self.check_contract_aligned(args, span, scope),
+            _ => {
+                self.contract_error(span, format!("Unsupported contract predicate '{name}'."));
+                None
+            }
+        }
+    }
+
+    fn check_contract_multiple_of(
+        &mut self,
+        args: &[Expression],
+        span: SourceSpan,
+        scope: &Scope,
+    ) -> Option<CheckedContractPredicate> {
+        if args.len() != 2 {
+            self.contract_error(span, "multiple_of requires two arguments.");
+            return None;
+        }
+        let value = self.check_contract_affine(&args[0], scope)?;
+        let Expression::IntegerLiteral { text, .. } = &args[1] else {
+            self.contract_error(
+                args[1].span(),
+                "multiple_of modulus must be a positive integer constant.",
+            );
+            return None;
+        };
+        let Some(modulus) =
+            BigInt::parse_bytes(text.as_bytes(), 10).filter(|value| *value > BigInt::from(0_u8))
+        else {
+            self.contract_error(
+                args[1].span(),
+                "multiple_of modulus must be a positive integer constant.",
+            );
+            return None;
+        };
+        Some(CheckedContractPredicate::MultipleOf {
+            value: value.form.checked(materialize_integer_literal(
+                value.type_node,
+                primitive_i32(),
+            )),
+            modulus: modulus.to_string(),
+        })
+    }
+
+    fn check_contract_noalias(
+        &mut self,
+        args: &[Expression],
+        span: SourceSpan,
+        scope: &Scope,
+    ) -> Option<CheckedContractPredicate> {
+        if args.len() != 2 {
+            self.contract_error(span, "noalias requires two slice parameters.");
+            return None;
+        }
+        let left = self.contract_slice_parameter(&args[0], scope)?;
+        let right = self.contract_slice_parameter(&args[1], scope)?;
+        Some(CheckedContractPredicate::NoAlias { left, right })
+    }
+
+    fn check_contract_aligned(
+        &mut self,
+        args: &[Expression],
+        span: SourceSpan,
+        scope: &Scope,
+    ) -> Option<CheckedContractPredicate> {
+        if args.len() != 2 {
+            self.contract_error(span, "aligned requires a pointer and alignment.");
+            return None;
+        }
+        let pointer = self.contract_pointer(&args[0], scope)?;
+        let Expression::IntegerLiteral { text, .. } = &args[1] else {
+            self.contract_error(
+                args[1].span(),
+                "aligned value must be a power-of-two u32 constant no greater than 2^31.",
+            );
+            return None;
+        };
+        let Some(alignment) = text
+            .parse::<u32>()
+            .ok()
+            .filter(|value| value.is_power_of_two() && *value <= (1_u32 << 31))
+        else {
+            self.contract_error(
+                args[1].span(),
+                "aligned value must be a power-of-two u32 constant no greater than 2^31.",
+            );
+            return None;
+        };
+        Some(CheckedContractPredicate::Aligned { pointer, alignment })
+    }
+
+    fn check_contract_affine(
+        &mut self,
+        expression: &Expression,
+        scope: &Scope,
+    ) -> Option<CheckedAffineCandidate> {
+        match expression {
+            Expression::IntegerLiteral { text, span } => {
+                let Some(value) = BigInt::parse_bytes(text.as_bytes(), 10) else {
+                    self.contract_error(*span, "Invalid contract integer constant.");
+                    return None;
+                };
+                Some(CheckedAffineCandidate {
+                    form: NormalizedAffineExpression::constant(value),
+                    type_node: CalcKernelType::IntegerLiteral,
+                    is_constant: true,
+                })
+            }
+            Expression::Identifier { name, span } => {
+                let Some(symbol) = scope.lookup(name) else {
+                    self.contract_error(*span, format!("Unknown contract parameter '{name}'."));
+                    return None;
+                };
+                if !is_integer_primitive(&symbol.type_node) {
+                    self.contract_error(*span, "Contract affine terms must be integer values.");
+                    return None;
+                }
+                Some(CheckedAffineCandidate {
+                    form: NormalizedAffineExpression::term(CheckedAffineTerm::Parameter(
+                        name.clone(),
+                    )),
+                    type_node: symbol.type_node.clone(),
+                    is_constant: false,
+                })
+            }
+            Expression::Field {
+                object,
+                field,
+                span,
+            } if field.name == "len" => {
+                let Expression::Identifier { name, .. } = object.as_ref() else {
+                    self.contract_error(*span, "Contract slice length must name a parameter.");
+                    return None;
+                };
+                let Some(symbol) = scope.lookup(name) else {
+                    self.contract_error(*span, format!("Unknown contract parameter '{name}'."));
+                    return None;
+                };
+                if !matches!(symbol.type_node, CalcKernelType::Slice(_)) {
+                    self.contract_error(*span, "Contract '.len' requires a slice parameter.");
+                    return None;
+                }
+                Some(CheckedAffineCandidate {
+                    form: NormalizedAffineExpression::term(CheckedAffineTerm::SliceLength(
+                        name.clone(),
+                    )),
+                    type_node: primitive_u32(),
+                    is_constant: false,
+                })
+            }
+            Expression::Unary {
+                operator,
+                operand,
+                span: _,
+            } if operator == "-" => {
+                let operand = self.check_contract_affine(operand, scope)?;
+                Some(CheckedAffineCandidate {
+                    form: operand.form.scaled(&BigInt::from(-1_i8)),
+                    type_node: operand.type_node,
+                    is_constant: operand.is_constant,
+                })
+            }
+            Expression::Binary {
+                operator,
+                left,
+                right,
+                span,
+            } if matches!(operator.as_str(), "+" | "-" | "*") => {
+                let left = self.check_contract_affine(left, scope)?;
+                let right = self.check_contract_affine(right, scope)?;
+                if operator == "*" && !left.is_constant && !right.is_constant {
+                    self.contract_error(
+                        *span,
+                        "Contract multiplication must have an integer constant operand.",
+                    );
+                    return None;
+                }
+                if !same_type(&left.type_node, &right.type_node) {
+                    self.contract_error(
+                        *span,
+                        "Contract affine operands must have the same integer type.",
+                    );
+                    return None;
+                }
+                let type_node = if matches!(left.type_node, CalcKernelType::IntegerLiteral) {
+                    right.type_node.clone()
+                } else {
+                    left.type_node.clone()
+                };
+                let is_constant = left.is_constant && right.is_constant;
+                let form = match operator.as_str() {
+                    "+" => {
+                        let mut form = left.form;
+                        form.add_scaled(right.form, &BigInt::from(1_u8));
+                        form
+                    }
+                    "-" => {
+                        let mut form = left.form;
+                        form.add_scaled(right.form, &BigInt::from(-1_i8));
+                        form
+                    }
+                    "*" if left.is_constant => right.form.scaled(&left.form.constant),
+                    "*" => left.form.scaled(&right.form.constant),
+                    _ => unreachable!("matched affine operator"),
+                };
+                Some(CheckedAffineCandidate {
+                    form,
+                    type_node,
+                    is_constant,
+                })
+            }
+            Expression::Parenthesized { expression, .. } => {
+                self.check_contract_affine(expression, scope)
+            }
+            _ => {
+                self.contract_error(
+                    expression.span(),
+                    "Unsupported or non-affine contract integer expression.",
+                );
+                None
+            }
+        }
+    }
+
+    fn contract_slice_parameter(
+        &mut self,
+        expression: &Expression,
+        scope: &Scope,
+    ) -> Option<String> {
+        let Expression::Identifier { name, span } = expression else {
+            self.contract_error(
+                expression.span(),
+                "noalias requires named slice parameters.",
+            );
+            return None;
+        };
+        if !scope
+            .lookup(name)
+            .is_some_and(|symbol| matches!(symbol.type_node, CalcKernelType::Slice(_)))
+        {
+            self.contract_error(*span, "noalias requires named slice parameters.");
+            return None;
+        }
+        Some(name.clone())
+    }
+
+    fn contract_pointer(
+        &mut self,
+        expression: &Expression,
+        scope: &Scope,
+    ) -> Option<CheckedContractPointer> {
+        match expression {
+            Expression::Identifier { name, span: _ }
+                if scope.lookup(name).is_some_and(|symbol| {
+                    matches!(symbol.type_node, CalcKernelType::Pointer(_))
+                }) =>
+            {
+                Some(CheckedContractPointer::Parameter(name.clone()))
+            }
+            Expression::Field {
+                object,
+                field,
+                span,
+            } if field.name == "data" => {
+                let Expression::Identifier { name, .. } = object.as_ref() else {
+                    self.contract_error(
+                        *span,
+                        "aligned requires a pointer parameter or slice.data.",
+                    );
+                    return None;
+                };
+                if !scope
+                    .lookup(name)
+                    .is_some_and(|symbol| matches!(symbol.type_node, CalcKernelType::Slice(_)))
+                {
+                    self.contract_error(
+                        *span,
+                        "aligned requires a pointer parameter or slice.data.",
+                    );
+                    return None;
+                }
+                Some(CheckedContractPointer::SliceData(name.clone()))
+            }
+            _ => {
+                self.contract_error(
+                    expression.span(),
+                    "aligned requires a pointer parameter or slice.data.",
+                );
+                None
+            }
+        }
+    }
+
+    fn check_contract_effects(
+        &mut self,
+        clause: &ContractEffectClause,
+        scope: &Scope,
+        slice_params: &[String],
+    ) -> Option<CheckedContractEffectCeiling> {
+        let diagnostics_before = self.diagnostics.len();
+        let mut seen = HashSet::new();
+        let mut declared = HashMap::new();
+        for item in &clause.items {
+            let valid_slice = scope
+                .lookup(&item.target.name)
+                .is_some_and(|symbol| matches!(symbol.type_node, CalcKernelType::Slice(_)));
+            if !valid_slice {
+                self.contract_error(
+                    item.target.span,
+                    "Effect target must be a named slice parameter.",
+                );
+                continue;
+            }
+            if !seen.insert(item.target.name.clone()) {
+                self.contract_error(
+                    item.target.span,
+                    "An effect target can appear only once in a ceiling.",
+                );
+                continue;
+            }
+            declared.insert(item.target.name.clone(), item.kind);
+        }
+        let items = slice_params
+            .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    declared
+                        .get(name)
+                        .copied()
+                        .unwrap_or(ContractEffectKind::None),
+                )
+            })
+            .collect();
+        (self.diagnostics.len() == diagnostics_before).then_some(CheckedContractEffectCeiling {
+            is_none: clause.is_none,
+            items,
+        })
+    }
+
+    fn contract_error(&mut self, span: SourceSpan, message: impl Into<String>) {
+        self.error_with_code(span, DiagnosticCode::Ck2015, message);
     }
 
     fn check_block(
@@ -543,6 +1184,12 @@ impl<'source> Checker<'source> {
     ) -> FlowSummary {
         match statement {
             Statement::Block(block) => self.check_block(block, scope, return_type, true),
+            Statement::Unsafe(statement) => {
+                self.unsafe_depth += 1;
+                let flow = self.check_block(&statement.block, scope, return_type, true);
+                self.unsafe_depth -= 1;
+                flow
+            }
             Statement::Let(statement) => {
                 self.check_let_statement(statement, scope);
                 FlowSummary::falls_through()
@@ -1082,6 +1729,17 @@ impl<'source> Checker<'source> {
             return CalcKernelType::Unknown;
         };
 
+        if function_symbol.declaration.is_unsafe && self.unsafe_depth == 0 {
+            self.error_with_code(
+                span,
+                DiagnosticCode::Ck2014,
+                format!(
+                    "Call to unsafe function '{}' requires an explicit unsafe block.",
+                    function_symbol.name
+                ),
+            );
+        }
+
         if args.len() != function_symbol.params.len() {
             self.error(
                 span,
@@ -1496,6 +2154,7 @@ fn create_checked_program(
     symbols: SymbolTable,
     types: TypeMap,
     local_types: LetTypeMap,
+    checked_contracts: HashMap<String, CheckedContract>,
 ) -> CheckedProgram {
     let structs: Vec<StructInfo> = ast
         .declarations
@@ -1516,7 +2175,8 @@ fn create_checked_program(
                 return None;
             };
             let symbol = symbols.functions.get(&function_decl.name.name)?;
-            (symbol.declaration == *function_decl).then(|| to_function_info(symbol))
+            (symbol.declaration == **function_decl)
+                .then(|| to_function_info(symbol, checked_contracts.get(&symbol.name).cloned()))
         })
         .collect();
     let main_declaration_count = ast
@@ -1533,7 +2193,11 @@ fn create_checked_program(
         .then(|| functions.iter().find(|function| function.name == "main"))
         .flatten()
         .and_then(|function| {
-            if function.exported || !function.params.is_empty() {
+            if function.exported
+                || function.is_unsafe
+                || function.declaration.contract.is_some()
+                || !function.params.is_empty()
+            {
                 return None;
             }
             let result = match function.return_type {
@@ -1596,10 +2260,11 @@ fn to_struct_info(symbol: &StructSymbol) -> StructInfo {
     }
 }
 
-fn to_function_info(symbol: &FunctionSymbol) -> FunctionInfo {
+fn to_function_info(symbol: &FunctionSymbol, contract: Option<CheckedContract>) -> FunctionInfo {
     FunctionInfo {
         name: symbol.name.clone(),
         exported: symbol.declaration.exported,
+        is_unsafe: symbol.declaration.is_unsafe,
         declaration: symbol.declaration.clone(),
         params: symbol
             .declaration
@@ -1617,6 +2282,7 @@ fn to_function_info(symbol: &FunctionSymbol) -> FunctionInfo {
             })
             .collect(),
         return_type: symbol.return_type.clone(),
+        contract,
     }
 }
 

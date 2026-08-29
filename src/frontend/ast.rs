@@ -21,7 +21,7 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Declaration {
     Struct(StructDeclaration),
-    Function(FunctionDeclaration),
+    Function(Box<FunctionDeclaration>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,10 +41,47 @@ pub struct StructField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionDeclaration {
     pub exported: bool,
+    pub is_unsafe: bool,
     pub name: IdentifierNode,
     pub params: Vec<FunctionParam>,
     pub return_type: TypeNode,
+    pub contract: Option<Box<ContractDeclaration>>,
     pub body: BlockStatement,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractDeclaration {
+    pub requirements: Vec<ContractRequirement>,
+    pub effects: Option<ContractEffectClause>,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractRequirement {
+    pub expression: Expression,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractEffectKind {
+    None,
+    Read,
+    Write,
+    ReadWrite,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractEffectItem {
+    pub kind: ContractEffectKind,
+    pub target: IdentifierNode,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractEffectClause {
+    pub is_none: bool,
+    pub items: Vec<ContractEffectItem>,
     pub span: SourceSpan,
 }
 
@@ -98,6 +135,7 @@ impl TypeNode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Block(BlockStatement),
+    Unsafe(UnsafeStatement),
     Let(LetStatement),
     Assignment(AssignmentStatement),
     Call(CallStatement),
@@ -114,6 +152,7 @@ impl Statement {
     pub fn span(&self) -> SourceSpan {
         match self {
             Self::Block(statement) => statement.span,
+            Self::Unsafe(statement) => statement.span,
             Self::Let(statement) => statement.span,
             Self::Assignment(statement) => statement.span,
             Self::Call(statement) => statement.span,
@@ -130,6 +169,12 @@ impl Statement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockStatement {
     pub statements: Vec<Statement>,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsafeStatement {
+    pub block: BlockStatement,
     pub span: SourceSpan,
 }
 

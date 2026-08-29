@@ -178,6 +178,7 @@ fn lower_statement(
 ) -> Result<(), MirLowerError> {
     match statement {
         Statement::Block(block) => lower_statements(context, &block.statements),
+        Statement::Unsafe(statement) => lower_statements(context, &statement.block.statements),
         Statement::Let(statement) => lower_let_statement(context, statement),
         Statement::Assignment(statement) => lower_assignment_statement(context, statement),
         Statement::Call(statement) => lower_call_statement(context, &statement.call),

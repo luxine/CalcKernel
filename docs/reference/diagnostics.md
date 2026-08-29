@@ -24,6 +24,9 @@ meaning do not change. Diagnostics use
 | `CK2011` | Type checking | Invalid `void` position or value/empty-return mismatch involving `void`. |
 | `CK2012` | Type checking | Invalid slice element, construction, projection, index/range, assignment/call/return shape, or exported slice return. |
 | `CK2013` | Type checking | Invalid, duplicate, or missing `main` entry for an executable consumer. A valid entry is internal, parameterless, and returns `void` or `i32`. |
+| `CK2014` | Parsing / type checking | Invalid unsafe-function modifier or placement, contract placement, unsafe-block placement, executable-entry boundary, or unsafe call outside an explicit unsafe block. |
+| `CK2015` | Type checking | Invalid, ill-typed, unsupported, or non-decidable closed contract expression, predicate, alignment, or effect target. |
+| `CK2016` | KIR effect checking | A declared external-memory effect ceiling does not cover the inferred direct and transitive effects. |
 
 One source file may produce multiple diagnostics in deterministic source order.
 Exit status is nonzero when any error is reported. Backend/toolchain failures
