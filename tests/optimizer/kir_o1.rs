@@ -71,6 +71,36 @@ fn kir_o0_pipeline_should_reject_invalid_input_without_artifact() {
 }
 
 #[test]
+fn kir_o0_pipeline_should_reject_invalid_contract_facts_without_artifact() {
+    let (_, kir, mut contracts) = build(
+        r#"
+        export unsafe fn bounded(n: u32) -> u32
+        contract { requires n < 8; }
+        { return n; }
+        "#,
+    );
+    contracts
+        .as_mut()
+        .expect("contract facts")
+        .facts_mut()
+        .get_mut(calckernel::FactId::from_index(0))
+        .expect("fact")
+        .generation = 1;
+
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O0, contracts.as_ref());
+
+    assert!(result.artifact.is_none());
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("stale generation 1, expected 0")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
 fn kir_o1_pipeline_should_use_the_exact_verified_pass_order() {
     let (_, kir, contracts) = build("export fn answer() -> i32 { return 20 + 22; }");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());

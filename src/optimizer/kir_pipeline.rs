@@ -99,14 +99,27 @@ pub fn run_kir_pass_pipeline(
         verification_cache: None,
     };
 
-    let input_errors = validate_kir_module(&module).errors;
-    if !input_errors.is_empty() {
-        result.errors = input_errors
+    let input_evidence = validate_kir_optimization_evidence(
+        &module,
+        result.contract_facts.as_ref(),
+        &result.proofs,
+        &result.eliminated_guards,
+        GENERATION,
+    );
+    if !input_evidence.errors.is_empty() {
+        result.errors = input_evidence
+            .errors
             .into_iter()
             .map(|error| error.message)
             .collect();
         return result;
     }
+    result.verification_cache = Some(VerifiedKirState {
+        module: module.clone(),
+        proofs: result.proofs.clone(),
+        eliminated_guards: result.eliminated_guards.clone(),
+        contract_facts: result.contract_facts.clone(),
+    });
 
     if level == KirOptimizationLevel::O0 {
         result.records.push(KirPassRecord {
