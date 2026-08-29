@@ -62,6 +62,32 @@ fn native_toolchain_cargo_profile_should_be_explicit_and_optional() {
 }
 
 #[test]
+fn sanitizer_bridge_build_should_link_the_platform_runtime_explicitly() {
+    let build = read("build.rs");
+    let script = read("scripts/test-sanitized-ownership.sh");
+    for required in [
+        "configure_sanitizer_linkage(target)",
+        "cargo::rustc-link-lib=asan",
+        "cargo::rustc-link-lib=ubsan",
+    ] {
+        assert!(
+            build.contains(required),
+            "sanitized bridge linkage must contain {required:?}"
+        );
+    }
+    for required in [
+        "detect_leaks=1:halt_on_error=1",
+        "sanitized ownership is a Linux-only gate",
+        "$(uname -s)\" == Linux",
+    ] {
+        assert!(
+            script.contains(required),
+            "sanitized ownership runner must contain {required:?}"
+        );
+    }
+}
+
+#[test]
 fn native_toolchain_manifest_should_pin_the_official_llvm_source() {
     let manifest = read("native/llvm/manifest.toml");
 

@@ -84,7 +84,7 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
         "cargo clippy --all-targets --all-features --locked -- -D warnings",
         "cargo test --all-features --locked",
         "bridge ownership under ASan and UBSan",
-        "-fsanitize=address,undefined",
+        "scripts/test-sanitized-ownership.sh",
         "cargo test --all-features --locked --test native artifacts",
         "scripts/audit-native-artifact",
         "scripts/audit-jit-memory",

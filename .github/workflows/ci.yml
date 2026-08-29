@@ -83,12 +83,7 @@ jobs:
       - name: Audit JIT memory permissions
         run: scripts/audit-jit-memory.sh target/release/ckc
       - name: Test bridge ownership under ASan and UBSan
-        env:
-          CXXFLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer
-          RUSTFLAGS: -C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: cargo test --all-features --locked --test native ownership --target-dir target/sanitized
+        run: scripts/test-sanitized-ownership.sh
 
   native-hosts:
     name: native host (${{ matrix.target }})

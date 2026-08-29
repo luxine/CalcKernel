@@ -9,7 +9,7 @@
 3. `cargo test --locked`
 4. `cargo test --all-features --locked`
 5. `cargo build --release --features native-toolchain --locked`
-6. `CXXFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' RUSTFLAGS='-C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined' ASAN_OPTIONS='detect_leaks=1:halt_on_error=1' UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' cargo test --all-features --locked --test native ownership --target-dir target/sanitized`
+6. Linux：`scripts/test-sanitized-ownership.sh`，执行 ASan+UBSan+LSan；Apple 本地只记录 capability unavailable，不替代 Linux CI 的必跑门（当前 Apple Clang 17 runtime 在 macOS 26.6.2 上连最小 C ASan 程序也无法完成初始化）。
 7. `cargo test --locked --test optimizer generated_ -- --nocapture`
 8. `cargo test --locked --test ir mutation_ -- --nocapture`
 9. `cargo test --all-features --locked --test native fact_audit_ -- --nocapture`

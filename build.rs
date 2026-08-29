@@ -36,6 +36,7 @@ const CARGO_PROVENANCE_COMPONENTS: [&str; 26] = [
 
 fn main() {
     println!("cargo::rerun-if-env-changed=CKC_LLVM_PREFIX");
+    println!("cargo::rerun-if-env-changed=CXXFLAGS");
     println!("cargo::rerun-if-changed=native/llvm/manifest.toml");
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.cpp");
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.h");
@@ -252,6 +253,7 @@ fn configure_native_toolchain(target: &str) {
         bridge.flag_if_supported("-fno-rtti");
     }
     bridge.compile("ckc_llvm_bridge");
+    configure_sanitizer_linkage(target);
 
     println!("cargo::rustc-link-search=native={}", lib_dir.display());
     for library in manifest_array(&text, "static_libraries") {
@@ -347,6 +349,30 @@ fn configure_native_toolchain(target: &str) {
             path.display()
         );
         println!("cargo::rustc-env=CKC_RUNTIME_PLATFORM_IMPORT_SHA256={actual_hash}");
+    }
+}
+
+fn configure_sanitizer_linkage(target: &str) {
+    let flags = env::var("CXXFLAGS").unwrap_or_default();
+    let address = flags.contains("-fsanitize=address")
+        || flags
+            .split_whitespace()
+            .any(|flag| flag.starts_with("-fsanitize=") && flag.contains("address"));
+    let undefined = flags.contains("-fsanitize=undefined")
+        || flags
+            .split_whitespace()
+            .any(|flag| flag.starts_with("-fsanitize=") && flag.contains("undefined"));
+    if !address && !undefined {
+        return;
+    }
+
+    if target.contains("unknown-linux-gnu") {
+        if address {
+            println!("cargo::rustc-link-lib=asan");
+        }
+        if undefined {
+            println!("cargo::rustc-link-lib=ubsan");
+        }
     }
 }
 
