@@ -458,7 +458,7 @@ fn optimizer_comparisons(kir_optimize_ns: u64) -> String {
 }
 
 fn performance_samples(primary: u64, alternate: u64) -> String {
-    let mut samples = vec![primary; 20];
+    let mut samples = [primary; 20];
     samples[15..].fill(alternate);
     format!(
         "[{}]",

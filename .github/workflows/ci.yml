@@ -196,8 +196,8 @@ jobs:
       - name: Gate baseline CPU policy
         run: |
           cargo bench --features native-toolchain --bench ckc_perf -- --case proof --task check --cpu baseline
-          python3 scripts/check-native-performance.py target/ckc-perf/results.json
           cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
+          python3 scripts/check-native-performance.py target/ckc-perf/results.json
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -88,11 +88,6 @@ fi
 mkdir -p "$ckc_build_dir/source" "$ckc_build_dir/build"
 tar -xf "$ckc_archive" --strip-components=1 -C "$ckc_build_dir/source"
 
-ckc_parallel_args=()
-if [[ -n "$ckc_jobs" ]]; then
-  ckc_parallel_args=(--parallel "$ckc_jobs")
-fi
-
 cmake -S "$ckc_build_dir/source/llvm" -B "$ckc_build_dir/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$ckc_prefix" \
@@ -114,7 +109,11 @@ cmake -S "$ckc_build_dir/source/llvm" -B "$ckc_build_dir/build" -G Ninja \
   -DLLVM_INCLUDE_EXAMPLES=OFF \
   "${ckc_platform_args[@]}"
 
-cmake --build "$ckc_build_dir/build" "${ckc_parallel_args[@]}"
+if [[ -n "$ckc_jobs" ]]; then
+  cmake --build "$ckc_build_dir/build" --parallel "$ckc_jobs"
+else
+  cmake --build "$ckc_build_dir/build"
+fi
 cmake --install "$ckc_build_dir/build"
 
 ckc_llvm_config="$ckc_prefix/bin/llvm-config"

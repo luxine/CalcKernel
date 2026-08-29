@@ -121,6 +121,12 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
     assert!(unix.contains("CMAKE_OSX_DEPLOYMENT_TARGET=11.0"));
     assert!(unix.contains("ckc_components=(core native orcjit nativecodegen lto)"));
     assert!(
+        unix.contains("if [[ -n \"$ckc_jobs\" ]]; then")
+            && unix.contains("cmake --build \"$ckc_build_dir/build\" --parallel \"$ckc_jobs\"")
+            && !unix.contains("ckc_parallel_args"),
+        "Unix bootstrap must not expand an empty array under macOS Bash 3.2 set -u"
+    );
+    assert!(
         unix.contains("ckc_static_libs=(\"${ckc_lld_libs[@]}\" LLVMDTLTO \"${ckc_llvm_libs[@]}\")"),
         "Unix bootstrap must add LLVM 22 DTLTO after LLD and before its LLVM dependencies"
     );

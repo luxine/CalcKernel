@@ -130,22 +130,37 @@ fn checked_runtime_failures_should_use_exact_messages_and_reserved_statuses() {
 #[cfg(unix)]
 #[test]
 fn closed_standard_output_should_attempt_ckr0005_on_stderr_and_exit_244() {
+    use std::os::unix::process::CommandExt;
+
+    unsafe extern "C" {
+        fn close(file_descriptor: i32) -> i32;
+    }
+
     let bytes = executable_bytes(
         "fn main() -> void { print_i32(42); }",
         OverflowMode::Unchecked,
         BoundsMode::Unchecked,
     );
     let path = write_executable(&bytes, "runtime-stdout-failure");
-    let mut child = Command::new(&path)
+    let mut command = Command::new(&path);
+    command
         .env("PATH", "")
         .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("spawn stdout failure executable");
-    drop(child.stdout.take());
-    let output = child
-        .wait_with_output()
-        .expect("wait stdout failure executable");
+        .stderr(process::Stdio::piped());
+    unsafe {
+        // SAFETY: `pre_exec` runs after the child's stdio descriptors have
+        // been installed and before the CK executable starts. Closing only
+        // descriptor 1 makes the write failure deterministic without racing
+        // the child against a parent-side pipe close.
+        command.pre_exec(|| {
+            if close(1) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    let output = command.output().expect("run stdout failure executable");
     fs::remove_file(path).expect("remove stdout failure executable");
     assert_eq!(output.status.code(), Some(244), "{output:?}");
     assert_eq!(output.stderr, b"CKR0005: standard output write failed\n");

@@ -377,7 +377,15 @@ fn unlink_at(directory: &File, name: &str) -> std::io::Result<()> {
 const fn unix_o_directory() -> i32 {
     0x0010_0000
 }
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const fn unix_o_directory() -> i32 {
+    0x0000_4000
+}
+#[cfg(all(
+    unix,
+    not(target_os = "macos"),
+    not(all(target_os = "linux", target_arch = "aarch64"))
+))]
 const fn unix_o_directory() -> i32 {
     0x0001_0000
 }
@@ -385,7 +393,15 @@ const fn unix_o_directory() -> i32 {
 const fn unix_o_nofollow() -> i32 {
     0x0000_0100
 }
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const fn unix_o_nofollow() -> i32 {
+    0x0000_8000
+}
+#[cfg(all(
+    unix,
+    not(target_os = "macos"),
+    not(all(target_os = "linux", target_arch = "aarch64"))
+))]
 const fn unix_o_nofollow() -> i32 {
     0x0002_0000
 }

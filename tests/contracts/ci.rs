@@ -161,6 +161,17 @@ fn performance_ci_should_select_a_case_from_the_benchmark_manifest() {
             "performance CI selected unknown benchmark case {name:?}"
         );
     }
+
+    let preserve = workflow
+        .find("cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json")
+        .expect("performance CI must preserve its raw report");
+    let gate = workflow
+        .find("python3 scripts/check-native-performance.py target/ckc-perf/results.json")
+        .expect("performance CI must run the strict checker");
+    assert!(
+        preserve < gate,
+        "performance CI must preserve raw evidence before a failing gate"
+    );
 }
 
 #[test]
