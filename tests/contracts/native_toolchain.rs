@@ -144,6 +144,12 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
 
     let windows = read("scripts/bootstrap-llvm.ps1");
     assert!(windows.contains("core\", \"native\", \"orcjit\", \"nativecodegen\", \"lto"));
+    for required in ["-DCMAKE_C_COMPILER=cl.exe", "-DCMAKE_CXX_COMPILER=cl.exe"] {
+        assert!(
+            windows.contains(required),
+            "Windows bootstrap must bind CMake to the MSVC compiler with {required}"
+        );
+    }
     assert!(
         windows.contains(
             "$staticLibraries = @(\"lldCOFF\", \"lldCommon\", \"LLVMDTLTO\") + $llvmLibraries"

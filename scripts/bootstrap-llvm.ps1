@@ -40,6 +40,7 @@ if ($LASTEXITCODE -ne 0) { throw "failed to extract LLVM source" }
 
 $configure = @(
     "-S", (Join-Path $sourceDir "llvm"), "-B", $binaryDir, "-G", "Ninja",
+    "-DCMAKE_C_COMPILER=cl.exe", "-DCMAKE_CXX_COMPILER=cl.exe",
     "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=$Prefix",
     "-DLLVM_ENABLE_PROJECTS=$projects", "-DLLVM_TARGETS_TO_BUILD=$llvmTarget",
     "-DLLVM_ENABLE_ASSERTIONS=ON", "-DBUILD_SHARED_LIBS=OFF",
