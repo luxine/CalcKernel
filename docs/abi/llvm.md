@@ -1,8 +1,8 @@
-# CalcKernel 0.10 Native LLVM and C ABI
+# CalcKernel 0.11 Native LLVM and C ABI
 
 [简体中文](../zh-CN/abi/llvm.md)
 
-CalcKernel 0.10 pins LLVM 22.1.8. Native MIR is lowered structurally through a
+CalcKernel 0.11 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
 checked C++ bridge, verified before and after optimization, emitted as object
 bytes by the host TargetMachine, and linked in process with LLD. `emit-llvm`
 prints this verified module for inspection.
@@ -21,6 +21,13 @@ runtime. `CKC_LLVM_PREFIX` is used only when building the compiler from source.
 
 ## Internal representation
 
+Native accepts only a verified KIR artifact. A pre-LLVM fact audit validates
+the origin, dominance, contract-instance scope, alias completeness, alignment,
+range, effect, and proof dependencies of every attribute or metadata candidate.
+Audit failure stops before bridge invocation. Valid facts may become LLVM
+`noalias`, `readonly`/`writeonly`, alignment, range, alias-scope, loop, or
+vectorization information; the bridge never invents a stronger fact.
+
 CK integers map to equal-width LLVM integers, `f64` to `double`, bool to `i1`,
 pointers to opaque `ptr`, structs to declaration-order LLVM structs, and void
 returns to LLVM `void`. Signedness selects compare, divide, remainder, and
@@ -36,6 +43,11 @@ explicit or natural completion uses `ret void`.
 
 These forms are compiler internals, not the public library ABI. The independent
 0.9 textual LLVM export-shape promise is retired.
+
+The public Native C ABI remains version 1 in 0.11. The private LLVM bridge ABI
+is version 2, the contract-aware runtime ABI is version 2, and native cache and
+code-generation identity use KIR v1. These private identities intentionally
+invalidate incompatible 0.10 objects without changing foreign-call signatures.
 
 ## Native C ABI
 
@@ -79,5 +91,5 @@ RuntimeDyld compatibility path because LLVM 22.1.8 lacks its JITLink backend.
 Both resolve all symbols eagerly and enforce writable-to-executable page
 transitions before calling `main`.
 
-ORC is not a public embeddable API in 0.10. `emit-llvm` is host-only diagnostic
+ORC is not a public embeddable API in 0.11. `emit-llvm` is host-only diagnostic
 output and does not promise a stable external LLVM ABI.

@@ -1,0 +1,27 @@
+schema = 1
+release = "0.11.0"
+
+[[change]]
+id = "unsafe-contracts"
+fixture = "tests/fixtures/compatibility/v0_11/contracts.ck"
+evidence = "tests/frontend/contracts.rs:contract_checker_should_build_typed_affine_and_predicate_metadata"
+
+[[change]]
+id = "kir-inspection"
+fixture = "tests/fixtures/compatibility/v0_11/contracts.ck"
+evidence = "tests/cli/kir_inspection.rs:kir_inspection_should_be_byte_deterministic_and_identify_trusted_evidence"
+
+[[change]]
+id = "contract-sanitizer"
+fixture = "tests/fixtures/compatibility/v0_11/contracts.ck"
+evidence = "tests/native/contract_sanitizer.rs:contract_sanitizer_should_check_internal_unsafe_calls_at_every_optimization_level"
+
+[[change]]
+id = "native-fact-audit"
+fixture = "tests/fixtures/compatibility/v0_11/contracts.ck"
+evidence = "tests/native/fact_audit.rs:fact_audit_should_map_complete_contract_facts_to_parameter_attributes"
+
+[[change]]
+id = "v0-10-source-compatibility"
+fixture = "tests/fixtures/compatibility/v0_10/legacy_export.ck"
+evidence = "tests/contracts/repository.rs:v0_10_compatibility_sources_should_parse_at_the_frozen_boundary"

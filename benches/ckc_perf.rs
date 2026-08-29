@@ -9,19 +9,21 @@ use std::{
 #[cfg(feature = "native-toolchain")]
 use std::process::Command;
 
+#[cfg(feature = "native-toolchain")]
+use sha2::{Digest, Sha256};
+
 use calckernel::{
-    EmitCOptions, EmitWasmOptions, MirModule, MirPassBoundsMode, MirPassContext,
-    MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile,
-    build_mir_optimization_pipeline, check, emit_c_module, emit_wasm_module_with_options,
-    emit_wat_module_with_options, format_diagnostics, lower_to_mir, print_mir_module,
-    run_mir_pass_pipeline,
+    BoundsMode, EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+    KirOverflowMode, KirPassManagerResult, KirSanitizerMode, OverflowMode, SourceFile,
+    build_kir_module, check, emit_c_kir_module_with_contracts, emit_wasm_kir_module,
+    emit_wat_kir_module, format_diagnostics, import_contract_facts, lower_to_mir, print_kir_module,
+    print_mir_module, run_kir_pass_pipeline,
 };
 
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    BoundsMode, EmitLlvmOptions, NativeContext, NativeCpu, NativeLoweringOptions,
-    NativeOptimizationLevel, NativeTarget, link_native_dynamic_library, lower_native_llvm_module,
-    lower_native_llvm_module_with_options,
+    EmitLlvmOptions, NativeContext, NativeCpu, NativeOptimizationLevel, NativeTarget,
+    link_native_dynamic_library, lower_native_kir_module,
 };
 
 const USAGE: &str = "cargo bench --features native-toolchain --bench ckc_perf -- [--quick] [--case <name>] [--task <name>] [--iterations <n>] [--warmup <n>] [--cpu baseline|native] [--out-dir <path>]\n\nDefault outputs: build/perf/latest.summary.json, build/perf/latest.summary.md, and target/ckc-perf/results.json";
@@ -32,6 +34,8 @@ const NATIVE_RUNTIME_FIXTURE_ROOT: &str = "tests/fixtures/performance/native";
 const DEFAULT_OUT_DIR: &str = "build/perf";
 #[cfg(feature = "native-toolchain")]
 const NATIVE_RESULTS_PATH: &str = "target/ckc-perf/results.json";
+#[cfg(feature = "native-toolchain")]
+const V0_10_BASELINE_PATH: &str = "benches/baselines/v0_10_compiler.toml";
 #[cfg(feature = "native-toolchain")]
 const SAMPLE_REPETITIONS: usize = 7;
 
@@ -94,7 +98,8 @@ fn run() -> Result<(), String> {
 
     #[cfg(feature = "native-toolchain")]
     {
-        let runtime = measure_native_runtime(&repo_root, &config)?;
+        let baseline = CompilerBaseline::load(&repo_root.join(V0_10_BASELINE_PATH))?;
+        let runtime = measure_native_runtime(&repo_root, &config, &baseline, &cases)?;
         let runtime_path = repo_root.join(NATIVE_RESULTS_PATH);
         if let Some(parent) = runtime_path.parent() {
             fs::create_dir_all(parent)
@@ -125,6 +130,240 @@ struct Config {
 enum CpuPolicy {
     Baseline,
     Native,
+}
+
+#[cfg(feature = "native-toolchain")]
+#[derive(Debug, Clone)]
+struct CompilerBaseline {
+    commit: String,
+    compiler_identity: String,
+    llvm_version: String,
+    harness: String,
+    statistics: String,
+    source_digest_count: usize,
+    source_digests: Vec<(String, String)>,
+    runtime: Vec<BaselineRuntime>,
+    optimizer: Vec<BaselineOptimizer>,
+}
+
+#[cfg(feature = "native-toolchain")]
+#[derive(Debug, Clone)]
+struct BaselineRuntime {
+    target: String,
+    cpu: String,
+    mode: String,
+    case_name: String,
+    median_ns: u128,
+}
+
+#[cfg(feature = "native-toolchain")]
+#[derive(Debug, Clone)]
+struct BaselineOptimizer {
+    target: String,
+    case_name: String,
+    median_ns: u128,
+}
+
+#[cfg(feature = "native-toolchain")]
+impl CompilerBaseline {
+    fn load(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let scalar = |key: &str| baseline_value(&text, key);
+        let runtime = text
+            .split("[[runtime]]")
+            .skip(1)
+            .map(|block| {
+                let block = baseline_section(block);
+                Ok(BaselineRuntime {
+                    target: baseline_value(block, "target")?,
+                    cpu: baseline_value(block, "cpu")?,
+                    mode: baseline_value(block, "mode")?,
+                    case_name: baseline_value(block, "case")?,
+                    median_ns: baseline_value(block, "median_ns")?
+                        .parse()
+                        .map_err(|error| format!("invalid runtime median_ns: {error}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let optimizer = text
+            .split("[[optimizer]]")
+            .skip(1)
+            .map(|block| {
+                let block = baseline_section(block);
+                Ok(BaselineOptimizer {
+                    target: baseline_value(block, "target")?,
+                    case_name: baseline_value(block, "case")?,
+                    median_ns: baseline_value(block, "median_ns")?
+                        .parse()
+                        .map_err(|error| format!("invalid optimizer median_ns: {error}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let source_specs = [
+            (
+                "branch_mix",
+                "source_digest_branch_mix",
+                &["tests/fixtures/performance/native/branch_mix.ck"][..],
+            ),
+            (
+                "integer_accumulate",
+                "source_digest_integer_accumulate",
+                &["tests/fixtures/performance/native/integer_accumulate.ck"][..],
+            ),
+            (
+                "proof_loop",
+                "source_digest_proof_loop",
+                &[
+                    "tests/fixtures/performance/native/proof_loop.ck",
+                    "benches/fixtures/proof_loop.ck",
+                ][..],
+            ),
+            (
+                "remainder_chain",
+                "source_digest_remainder_chain",
+                &["tests/fixtures/performance/native/remainder_chain.ck"][..],
+            ),
+            (
+                "pricing",
+                "source_digest_pricing",
+                &["benches/fixtures/pricing_helpers.ck"][..],
+            ),
+            (
+                "pricing_soa",
+                "source_digest_pricing_soa",
+                &["benches/fixtures/pricing_soa.ck"][..],
+            ),
+            (
+                "f64_kernels",
+                "source_digest_f64_kernels",
+                &["benches/fixtures/f64_kernels.ck"][..],
+            ),
+            (
+                "example_pricing",
+                "source_digest_example_pricing",
+                &["examples/applications/pricing.ck"][..],
+            ),
+            (
+                "example_dijkstra",
+                "source_digest_example_dijkstra",
+                &["examples/applications/dijkstra.ck"][..],
+            ),
+        ];
+        let repo_root = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .ok_or_else(|| format!("baseline path has no repository root: {}", path.display()))?;
+        let mut source_digests = Vec::new();
+        for (name, key, relative_paths) in source_specs {
+            let expected = scalar(key)?;
+            if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!("v0.10 baseline {key} is not a SHA-256 digest"));
+            }
+            for relative_path in relative_paths {
+                let source_path = repo_root.join(relative_path);
+                let actual = sha256_file(&source_path)?;
+                if actual != expected {
+                    return Err(format!(
+                        "v0.10 baseline digest mismatch for {relative_path}: expected {expected}, got {actual}"
+                    ));
+                }
+            }
+            source_digests.push((name.to_string(), expected));
+        }
+        let baseline = Self {
+            commit: scalar("commit")?,
+            compiler_identity: scalar("compiler_identity")?,
+            llvm_version: scalar("llvm_version")?,
+            harness: scalar("harness")?,
+            statistics: scalar("statistics")?,
+            source_digest_count: text
+                .lines()
+                .filter(|line| line.trim_start().starts_with("source_digest_"))
+                .count(),
+            source_digests,
+            runtime,
+            optimizer,
+        };
+        if baseline.commit != "df816502876fba41676f9ebc190e4fadd18cd5a5"
+            || baseline.compiler_identity
+                != "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)"
+            || baseline.llvm_version != "22.1.8"
+            || baseline.source_digest_count != source_specs.len()
+            || baseline.source_digests.len() != source_specs.len()
+        {
+            return Err("v0.10 baseline identity or source digest set is incomplete".to_string());
+        }
+        Ok(baseline)
+    }
+
+    fn runtime_median(
+        &self,
+        cpu_policy: CpuPolicy,
+        mode: &str,
+        case_name: &str,
+    ) -> Result<u128, String> {
+        let target = host_target_name();
+        let cpu = cpu_policy_name(cpu_policy);
+        self.runtime
+            .iter()
+            .find(|entry| {
+                entry.target == target
+                    && entry.cpu == cpu
+                    && entry.mode == mode
+                    && entry.case_name == case_name
+            })
+            .map(|entry| entry.median_ns)
+            .ok_or_else(|| {
+                format!("v0.10 baseline is missing runtime {target}/{cpu}/{mode}/{case_name}")
+            })
+    }
+
+    fn optimizer_median(&self, case_name: &str) -> Result<u128, String> {
+        let target = host_target_name();
+        self.optimizer
+            .iter()
+            .find(|entry| entry.target == target && entry.case_name == case_name)
+            .map(|entry| entry.median_ns)
+            .ok_or_else(|| format!("v0.10 baseline is missing optimizer {target}/{case_name}"))
+    }
+}
+
+#[cfg(feature = "native-toolchain")]
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+#[cfg(feature = "native-toolchain")]
+fn baseline_section(block: &str) -> &str {
+    block.split("[[").next().unwrap_or(block)
+}
+
+#[cfg(feature = "native-toolchain")]
+fn baseline_value(text: &str, key: &str) -> Result<String, String> {
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| {
+            let value = line.strip_prefix(key)?.strip_prefix(" = ")?.trim();
+            Some(value.trim_matches('"').to_string())
+        })
+        .ok_or_else(|| format!("v0.10 baseline is missing `{key}`"))
+}
+
+#[cfg(feature = "native-toolchain")]
+fn host_target_name() -> String {
+    format!("{}-{}", env::consts::OS, env::consts::ARCH)
+}
+
+#[cfg(feature = "native-toolchain")]
+fn cpu_policy_name(policy: CpuPolicy) -> &'static str {
+    match policy {
+        CpuPolicy::Baseline => "baseline",
+        CpuPolicy::Native => "native",
+    }
 }
 
 impl Config {
@@ -313,9 +552,9 @@ fn benchmark_tasks() -> Vec<Task> {
             run: run_mir_o0,
         },
         Task {
-            name: "mir-o3",
-            stage: "optimizer",
-            run: run_mir_o3,
+            name: "kir-o3",
+            stage: "kir-optimizer",
+            run: run_kir_o3,
         },
         Task {
             name: "emit-c-o3",
@@ -380,47 +619,82 @@ fn run_check(input: &CaseInput) -> Result<usize, String> {
 }
 
 fn run_mir_o0(input: &CaseInput) -> Result<usize, String> {
-    let module = optimized_module(input, 0, MirPassTargetBackend::Mir)?;
+    let checked = checked_program(input)?;
+    let module = lower_to_mir(&checked).map_err(|error| error.to_string())?;
     Ok(print_mir_module(&module).len())
 }
 
-fn run_mir_o3(input: &CaseInput) -> Result<usize, String> {
-    let module = optimized_module(input, 3, MirPassTargetBackend::Mir)?;
-    Ok(print_mir_module(&module).len())
+fn run_kir_o3(input: &CaseInput) -> Result<usize, String> {
+    let (_, result) = compile_kir(
+        input,
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )?;
+    Ok(print_kir_module(verified_artifact(&result)?).len())
 }
 
 fn run_emit_c_o3(input: &CaseInput) -> Result<usize, String> {
-    let module = optimized_module(input, 3, MirPassTargetBackend::C)?;
-    Ok(emit_c_module(
-        &module,
-        EmitCOptions {
-            overflow_mode: OverflowMode::Unchecked,
-            bounds_mode: calckernel::BoundsMode::Unchecked,
-            opt_level: 3,
-        },
-    )
+    let (_, result) = compile_kir(
+        input,
+        3,
+        KirConsumer::C,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )?;
+    Ok(emit_c_kir_module_with_contracts(
+        verified_artifact(&result)?,
+        result.contract_facts.as_ref(),
+    )?
     .len())
 }
 
 fn run_emit_wat_o3(input: &CaseInput) -> Result<usize, String> {
-    let module = optimized_module(input, 3, MirPassTargetBackend::Wasm)?;
-    Ok(emit_wat_module_with_options(&module, EmitWasmOptions { opt_level: 3 }).len())
+    let (_, result) = compile_kir(
+        input,
+        3,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )?;
+    Ok(emit_wat_kir_module(
+        verified_artifact(&result)?,
+        EmitWasmOptions { opt_level: 3 },
+    )?
+    .len())
 }
 
 fn run_emit_wasm_o3(input: &CaseInput) -> Result<usize, String> {
-    let module = optimized_module(input, 3, MirPassTargetBackend::Wasm)?;
-    Ok(emit_wasm_module_with_options(&module, EmitWasmOptions { opt_level: 3 })?.len())
+    let (_, result) = compile_kir(
+        input,
+        3,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )?;
+    Ok(emit_wasm_kir_module(
+        verified_artifact(&result)?,
+        EmitWasmOptions { opt_level: 3 },
+    )?
+    .len())
 }
 
 #[cfg(feature = "native-toolchain")]
 fn run_emit_llvm_o3(input: &CaseInput) -> Result<usize, String> {
-    let module = optimized_module(input, 3, MirPassTargetBackend::Llvm)?;
+    let (_, result) = compile_kir(
+        input,
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )?;
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let target = NativeTarget::host().map_err(|error| error.to_string())?;
-    let text = lower_native_llvm_module(
+    let text = lower_native_kir_module(
         &context,
         &target,
-        &module,
+        &result,
         &EmitLlvmOptions {
             source_file_name: Some(input.path.display().to_string()),
             target_triple: None,
@@ -452,40 +726,117 @@ fn checked_program(input: &CaseInput) -> Result<calckernel::CheckedProgram, Stri
     Ok(checked.checked_program)
 }
 
-fn optimized_module(
+fn compile_kir(
     input: &CaseInput,
     opt_level: u8,
-    target_backend: MirPassTargetBackend,
-) -> Result<MirModule, String> {
+    consumer: KirConsumer,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+) -> Result<(calckernel::CheckedProgram, KirPassManagerResult), String> {
     let checked = checked_program(input)?;
     let mir = lower_to_mir(&checked).map_err(|error| error.to_string())?;
-    let pipeline = build_mir_optimization_pipeline(opt_level);
-    let result = run_mir_pass_pipeline(
-        mir,
-        &pipeline,
-        &MirPassContext {
-            opt_level,
-            overflow_mode: MirPassOverflowMode::Unchecked,
-            bounds_mode: MirPassBoundsMode::Unchecked,
-            target_backend,
-            debug: Default::default(),
+    let kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer,
+            overflow_mode: match overflow_mode {
+                OverflowMode::Unchecked => KirOverflowMode::Unchecked,
+                OverflowMode::Checked => KirOverflowMode::Checked,
+            },
+            bounds_mode: match bounds_mode {
+                BoundsMode::Unchecked => KirBoundsMode::Unchecked,
+                BoundsMode::Checked => KirBoundsMode::Checked,
+            },
+            sanitizer_mode: KirSanitizerMode::Disabled,
         },
-    );
-    if !result.validation_errors.is_empty() {
-        return Err(result
-            .validation_errors
-            .into_iter()
-            .map(|error| error.message)
-            .collect::<Vec<_>>()
-            .join("\n"));
+    )
+    .map_err(|error| error.to_string())?;
+    let contracts = import_contract_facts(&kir, &checked, 0).map_err(|error| error.to_string())?;
+    let level = match opt_level {
+        0 => KirOptimizationLevel::O0,
+        1 => KirOptimizationLevel::O1,
+        2 => KirOptimizationLevel::O2,
+        3 => KirOptimizationLevel::O3,
+        _ => return Err("optimization level is outside 0..=3".to_string()),
+    };
+    let result = run_kir_pass_pipeline(kir, level, Some(&contracts));
+    if !result.errors.is_empty() {
+        return Err(format!(
+            "KIR verification failed: {}",
+            result.errors.join("; ")
+        ));
     }
-    Ok(result.module)
+    verified_artifact(&result)?;
+    Ok((checked, result))
+}
+
+fn verified_artifact(result: &KirPassManagerResult) -> Result<&calckernel::KirModule, String> {
+    result
+        .artifact
+        .as_ref()
+        .ok_or_else(|| "KIR pipeline did not produce a verified artifact".to_string())
+}
+
+#[cfg(feature = "native-toolchain")]
+fn measure_optimizer_comparisons(
+    repo_root: &Path,
+    cases: &[Case],
+    config: &Config,
+    baseline: &CompilerBaseline,
+) -> Result<Vec<OptimizerComparison>, String> {
+    let mut comparisons = Vec::new();
+    for case in cases {
+        let input = CaseInput::load(repo_root, case)?;
+        for _ in 0..config.warmup {
+            black_box(time_kir_optimization(&input)?);
+        }
+        let mut samples = Vec::with_capacity(config.iterations);
+        for _ in 0..config.iterations {
+            samples.push(time_kir_optimization(&input)?);
+        }
+        let median_ns = median(&samples);
+        comparisons.push(OptimizerComparison {
+            case_name: case.name.clone(),
+            kir_median_ns: median_ns,
+            v0_10_mir_median_ns: baseline.optimizer_median(&case.name)?,
+        });
+    }
+    Ok(comparisons)
+}
+
+#[cfg(feature = "native-toolchain")]
+fn time_kir_optimization(input: &CaseInput) -> Result<u128, String> {
+    let checked = checked_program(input)?;
+    let mir = lower_to_mir(&checked).map_err(|error| error.to_string())?;
+    let kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let contracts = import_contract_facts(&kir, &checked, 0).map_err(|error| error.to_string())?;
+    let start = Instant::now();
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
+    let elapsed = start.elapsed().as_nanos().max(1);
+    if !result.errors.is_empty() || result.artifact.is_none() {
+        return Err(format!(
+            "KIR optimization timing failed verification: {}",
+            result.errors.join("; ")
+        ));
+    }
+    Ok(elapsed)
 }
 
 #[cfg(feature = "native-toolchain")]
 fn measure_native_runtime(
     repo_root: &Path,
     config: &Config,
+    baseline: &CompilerBaseline,
+    compiler_cases: &[Case],
 ) -> Result<NativeRuntimeReport, String> {
     let clang = clang_oracle()?;
     let clang_version = clang_version(&clang)?;
@@ -512,7 +863,7 @@ fn measure_native_runtime(
             let mut cases = Vec::new();
             for fixture in &fixtures {
                 cases.push(measure_native_case(
-                    fixture, &root, &clang, checked, config,
+                    fixture, &root, &clang, checked, config, baseline,
                 )?);
             }
             suites.push(NativeRuntimeSuite {
@@ -525,6 +876,8 @@ fn measure_native_runtime(
             clang_version,
             warmup: config.warmup,
             suites,
+            baseline: baseline.clone(),
+            optimizer: measure_optimizer_comparisons(repo_root, compiler_cases, config, baseline)?,
         })
     })();
     let _ = fs::remove_dir_all(&root);
@@ -538,6 +891,7 @@ fn measure_native_case(
     clang: &Path,
     checked: bool,
     config: &Config,
+    baseline: &CompilerBaseline,
 ) -> Result<NativeRuntimeCase, String> {
     let name = fixture
         .file_stem()
@@ -550,12 +904,11 @@ fn measure_native_case(
         })?;
     let source_text = fs::read_to_string(fixture)
         .map_err(|error| format!("failed to read {}: {error}", fixture.display()))?;
-    let source = SourceFile::new(fixture.display().to_string(), source_text);
-    let checked_program = check(&source);
-    if !checked_program.diagnostics.is_empty() {
-        return Err(format_diagnostics(&source, &checked_program.diagnostics));
-    }
-    let mir = lower_to_mir(&checked_program.checked_program).map_err(|error| error.to_string())?;
+    let input = CaseInput {
+        name: name.to_string(),
+        path: fixture.to_path_buf(),
+        source_text,
+    };
     let overflow_mode = if checked {
         OverflowMode::Checked
     } else {
@@ -573,8 +926,20 @@ fn measure_native_case(
         20_000_000
     };
     let seed = 17i64;
+    let proof_values = (name == "proof_loop").then(|| {
+        (0..batch_iterations)
+            .map(|index| index % 4_093 - 2_046)
+            .collect::<Vec<_>>()
+    });
 
     let native_compile_start = Instant::now();
+    let (_, native_kir) = compile_kir(
+        &input,
+        3,
+        KirConsumer::NativeLibrary,
+        overflow_mode,
+        bounds_mode,
+    )?;
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let target = NativeTarget::host_with_cpu(match config.cpu_policy {
         CpuPolicy::Baseline => NativeCpu::Baseline,
@@ -583,23 +948,14 @@ fn measure_native_case(
     .map_err(|error| error.to_string())?;
     let object = target
         .emit_object(
-            lower_native_llvm_module_with_options(
-                &context,
-                &target,
-                &mir,
-                &NativeLoweringOptions {
-                    emit: EmitLlvmOptions::default(),
-                    overflow_mode,
-                    bounds_mode,
-                },
-            )
-            .map_err(|error| error.to_string())?
-            .verify()
-            .map_err(|error| error.to_string())?
-            .audit()
-            .map_err(|error| error.to_string())?
-            .optimize(&target, NativeOptimizationLevel::O3)
-            .map_err(|error| error.to_string())?,
+            lower_native_kir_module(&context, &target, &native_kir, &EmitLlvmOptions::default())
+                .map_err(|error| error.to_string())?
+                .verify()
+                .map_err(|error| error.to_string())?
+                .audit()
+                .map_err(|error| error.to_string())?
+                .optimize(&target, NativeOptimizationLevel::O3)
+                .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
     let native = link_native_dynamic_library(&object, &["kernel".to_string()])
@@ -610,14 +966,11 @@ fn measure_native_case(
         .map_err(|error| format!("failed to write {}: {error}", native_path.display()))?;
 
     let clang_compile_start = Instant::now();
-    let c_source = emit_c_module(
-        &mir,
-        EmitCOptions {
-            overflow_mode,
-            bounds_mode,
-            opt_level: 3,
-        },
-    );
+    let (_, c_kir) = compile_kir(&input, 3, KirConsumer::C, overflow_mode, bounds_mode)?;
+    let c_source = emit_c_kir_module_with_contracts(
+        verified_artifact(&c_kir)?,
+        c_kir.contract_facts.as_ref(),
+    )?;
     let c_path = root.join(format!("{name}-{suffix}.c"));
     let clang_path = root.join(format!("{name}-{suffix}-clang{}", dynamic_suffix()));
     fs::write(&c_path, c_source)
@@ -635,12 +988,28 @@ fn measure_native_case(
 
     let native_cold_start = Instant::now();
     let native_library = DynamicLibrary::open(&native_path)?;
-    let native_result = unsafe { call_kernel(&native_library, checked, batch_iterations, seed)? };
+    let native_result = unsafe {
+        call_kernel(
+            &native_library,
+            checked,
+            batch_iterations,
+            seed,
+            proof_values.as_deref(),
+        )?
+    };
     let native_cold_ns = native_cold_start.elapsed().as_nanos();
 
     let clang_c_cold_start = Instant::now();
     let clang_library = DynamicLibrary::open(&clang_path)?;
-    let clang_result = unsafe { call_kernel(&clang_library, checked, batch_iterations, seed)? };
+    let clang_result = unsafe {
+        call_kernel(
+            &clang_library,
+            checked,
+            batch_iterations,
+            seed,
+            proof_values.as_deref(),
+        )?
+    };
     let clang_c_cold_ns = clang_c_cold_start.elapsed().as_nanos();
     let reference_equivalent = native_result == clang_result;
     if !reference_equivalent {
@@ -650,8 +1019,24 @@ fn measure_native_case(
     }
 
     for _ in 0..config.warmup {
-        black_box(unsafe { call_kernel(&native_library, checked, batch_iterations, seed)? });
-        black_box(unsafe { call_kernel(&clang_library, checked, batch_iterations, seed)? });
+        black_box(unsafe {
+            call_kernel(
+                &native_library,
+                checked,
+                batch_iterations,
+                seed,
+                proof_values.as_deref(),
+            )?
+        });
+        black_box(unsafe {
+            call_kernel(
+                &clang_library,
+                checked,
+                batch_iterations,
+                seed,
+                proof_values.as_deref(),
+            )?
+        });
     }
     let mut native_samples_ns = Vec::with_capacity(config.iterations);
     let mut clang_c_samples_ns = Vec::with_capacity(config.iterations);
@@ -663,6 +1048,7 @@ fn measure_native_case(
                 batch_iterations,
                 seed,
                 native_result,
+                proof_values.as_deref(),
             )?);
             clang_c_samples_ns.push(measure_kernel_sample(
                 &clang_library,
@@ -670,6 +1056,7 @@ fn measure_native_case(
                 batch_iterations,
                 seed,
                 clang_result,
+                proof_values.as_deref(),
             )?);
         } else {
             clang_c_samples_ns.push(measure_kernel_sample(
@@ -678,6 +1065,7 @@ fn measure_native_case(
                 batch_iterations,
                 seed,
                 clang_result,
+                proof_values.as_deref(),
             )?);
             native_samples_ns.push(measure_kernel_sample(
                 &native_library,
@@ -685,6 +1073,7 @@ fn measure_native_case(
                 batch_iterations,
                 seed,
                 native_result,
+                proof_values.as_deref(),
             )?);
         }
     }
@@ -707,6 +1096,12 @@ fn measure_native_case(
         clang_c_artifact_bytes,
         batch_iterations,
         result: native_result,
+        v0_10_median_ns: baseline.runtime_median(
+            config.cpu_policy,
+            if checked { "checked" } else { "unchecked" },
+            name,
+        )?,
+        proof_loop: name == "proof_loop",
     })
 }
 
@@ -717,9 +1112,18 @@ fn measure_kernel_call(
     iterations: i64,
     seed: i64,
     expected: i64,
+    proof_values: Option<&[i64]>,
 ) -> Result<u128, String> {
     let start = Instant::now();
-    let actual = unsafe { call_kernel(library, checked, black_box(iterations), black_box(seed))? };
+    let actual = unsafe {
+        call_kernel(
+            library,
+            checked,
+            black_box(iterations),
+            black_box(seed),
+            proof_values,
+        )?
+    };
     let elapsed = start.elapsed().as_nanos().max(1);
     if black_box(actual) != expected {
         return Err(format!(
@@ -736,11 +1140,17 @@ fn measure_kernel_sample(
     iterations: i64,
     seed: i64,
     expected: i64,
+    proof_values: Option<&[i64]>,
 ) -> Result<u128, String> {
     let mut minimum = u128::MAX;
     for _ in 0..SAMPLE_REPETITIONS {
         minimum = minimum.min(measure_kernel_call(
-            library, checked, iterations, seed, expected,
+            library,
+            checked,
+            iterations,
+            seed,
+            expected,
+            proof_values,
         )?);
     }
     Ok(minimum)
@@ -752,7 +1162,28 @@ unsafe fn call_kernel(
     checked: bool,
     iterations: i64,
     seed: i64,
+    proof_values: Option<&[i64]>,
 ) -> Result<i64, String> {
+    if let Some(values) = proof_values {
+        let len = u32::try_from(values.len())
+            .map_err(|_| "proof-loop input exceeds the CK slice length limit".to_string())?;
+        let data = values.as_ptr().cast_mut();
+        if checked {
+            type Kernel = unsafe extern "C" fn(*mut i64, u32, i64, *mut i64) -> i32;
+            let kernel: Kernel = unsafe { library.symbol("kernel")? };
+            let mut result = 0i64;
+            let status = unsafe { kernel(data, len, seed, &mut result) };
+            if status != 0 {
+                return Err(format!(
+                    "checked proof-loop performance kernel returned status {status}"
+                ));
+            }
+            return Ok(result);
+        }
+        type Kernel = unsafe extern "C" fn(*mut i64, u32, i64) -> i64;
+        let kernel: Kernel = unsafe { library.symbol("kernel")? };
+        return Ok(unsafe { kernel(data, len, seed) });
+    }
     if checked {
         type Kernel = unsafe extern "C" fn(i64, i64, *mut i64) -> i32;
         let kernel: Kernel = unsafe { library.symbol("kernel")? };
@@ -887,6 +1318,8 @@ struct NativeRuntimeReport {
     clang_version: String,
     warmup: usize,
     suites: Vec<NativeRuntimeSuite>,
+    baseline: CompilerBaseline,
+    optimizer: Vec<OptimizerComparison>,
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -912,13 +1345,22 @@ struct NativeRuntimeCase {
     clang_c_artifact_bytes: usize,
     batch_iterations: i64,
     result: i64,
+    v0_10_median_ns: u128,
+    proof_loop: bool,
+}
+
+#[cfg(feature = "native-toolchain")]
+struct OptimizerComparison {
+    case_name: String,
+    kir_median_ns: u128,
+    v0_10_mir_median_ns: u128,
 }
 
 #[cfg(feature = "native-toolchain")]
 impl NativeRuntimeReport {
     fn to_json(&self) -> String {
         let mut output = String::new();
-        output.push_str("{\n  \"schemaVersion\": 2,\n");
+        output.push_str("{\n  \"schemaVersion\": 4,\n");
         output.push_str(&format!(
             "  \"cpuPolicy\": \"{}\",\n",
             match self.cpu_policy {
@@ -927,11 +1369,26 @@ impl NativeRuntimeReport {
             }
         ));
         output.push_str("  \"fastMath\": false,\n");
+        let source_digests = self
+            .baseline
+            .source_digests
+            .iter()
+            .map(|(name, digest)| format!("\"{}\":\"{}\"", json_escape(name), json_escape(digest)))
+            .collect::<Vec<_>>()
+            .join(",");
         output.push_str(&format!(
-            "  \"clangVersion\": \"{}\",\n  \"warmup\": {},\n  \"sampleRepetitions\": {},\n  \"suites\": [\n",
+            "  \"clangVersion\": \"{}\",\n  \"warmup\": {},\n  \"sampleRepetitions\": {},\n  \"baselineV010\": {{ \"commit\": \"{}\", \"compilerIdentity\": \"{}\", \"llvmVersion\": \"{}\", \"target\": \"{}\", \"harness\": \"{}\", \"statistics\": \"{}\", \"sourceDigestCount\": {}, \"sourceDigests\": {{{}}} }},\n  \"suites\": [\n",
             json_escape(&self.clang_version),
             self.warmup,
             SAMPLE_REPETITIONS,
+            json_escape(&self.baseline.commit),
+            json_escape(&self.baseline.compiler_identity),
+            json_escape(&self.baseline.llvm_version),
+            json_escape(&host_target_name()),
+            json_escape(&self.baseline.harness),
+            json_escape(&self.baseline.statistics),
+            self.baseline.source_digest_count,
+            source_digests,
         ));
         for (suite_index, suite) in self.suites.iter().enumerate() {
             output.push_str(&format!(
@@ -951,6 +1408,19 @@ impl NativeRuntimeReport {
             }
             output.push('\n');
         }
+        output.push_str("  ],\n  \"optimizerComparisons\": [\n");
+        for (index, comparison) in self.optimizer.iter().enumerate() {
+            output.push_str(&format!(
+                "    {{ \"case\": \"{}\", \"kirMedianNs\": {}, \"v010MirMedianNs\": {} }}",
+                json_escape(&comparison.case_name),
+                comparison.kir_median_ns,
+                comparison.v0_10_mir_median_ns,
+            ));
+            if index + 1 < self.optimizer.len() {
+                output.push(',');
+            }
+            output.push('\n');
+        }
         output.push_str("  ]\n}\n");
         output
     }
@@ -960,7 +1430,7 @@ impl NativeRuntimeReport {
 impl NativeRuntimeCase {
     fn to_json(&self) -> String {
         format!(
-            "      {{ \"name\": \"{}\", \"referenceEquivalent\": {}, \"nativeCompileNs\": {}, \"clangCCompileNs\": {}, \"nativeColdNs\": {}, \"clangCColdNs\": {}, \"nativeMedianNs\": {}, \"clangCMedianNs\": {}, \"nativeSamplesNs\": {}, \"clangCSamplesNs\": {}, \"peakMemoryBytes\": {}, \"nativeArtifactBytes\": {}, \"clangCArtifactBytes\": {}, \"batchIterations\": {}, \"result\": {} }}",
+            "      {{ \"name\": \"{}\", \"referenceEquivalent\": {}, \"nativeCompileNs\": {}, \"clangCCompileNs\": {}, \"nativeColdNs\": {}, \"clangCColdNs\": {}, \"nativeMedianNs\": {}, \"clangCMedianNs\": {}, \"v010MedianNs\": {}, \"proofLoop\": {}, \"nativeSamplesNs\": {}, \"clangCSamplesNs\": {}, \"peakMemoryBytes\": {}, \"nativeArtifactBytes\": {}, \"clangCArtifactBytes\": {}, \"batchIterations\": {}, \"result\": {} }}",
             json_escape(&self.name),
             self.reference_equivalent,
             self.native_compile_ns,
@@ -969,6 +1439,8 @@ impl NativeRuntimeCase {
             self.clang_c_cold_ns,
             self.native_median_ns,
             self.clang_c_median_ns,
+            self.v0_10_median_ns,
+            self.proof_loop,
             json_u128_array(&self.native_samples_ns),
             json_u128_array(&self.clang_c_samples_ns),
             self.peak_memory_bytes,

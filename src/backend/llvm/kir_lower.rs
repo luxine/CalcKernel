@@ -12,7 +12,9 @@ use super::{
     fact_audit::{NativeFactProperty, NativeFactSource, NativeStrengtheningKind},
     ffi::{BridgeBinaryOp, BridgeCastOp, BridgeCompareOp, BridgeMemoryEffects, BridgeOverflowOp},
     layout::LlvmStructLayout,
-    lower::{TypeRegistry, binary_op, compare_op, lowering_error, runtime_signature, unary_op},
+    lower_shared::{
+        TypeRegistry, binary_op, compare_op, lowering_error, runtime_signature, unary_op,
+    },
     module::NativeModule,
     names::llvm_source_file_name,
     target::NativeTarget,

@@ -1,10 +1,16 @@
-# CalcKernel 0.10 C Source ABI
+# CalcKernel 0.11 C Source ABI
 
 [简体中文](../zh-CN/abi/c.md)
 
 This document defines the C and header produced by `ckc emit-c`. This path is
 source-only: it never compiles or links. Native `ckc build` instead emits LLVM
 objects directly and follows the [Native C ABI](llvm.md).
+
+The C backend consumes verified KIR. It does not reconstruct hidden checks or
+run a separate MIR optimizer. Verified complete pairwise `noalias` and alignment
+facts may appear as portable `restrict`/alignment hints; incomplete or stale
+facts emit no hint. Exported unsafe functions keep the same ABI and their header
+declarations include normalized contract comments.
 
 ## Mapping
 

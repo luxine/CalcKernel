@@ -2,6 +2,22 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.11.0 - 尚未发布
+
+- 新增显式 `unsafe fn` contract，支持 affine range requirement、`multiple_of`、
+  `noalias`、alignment 与 slice memory-effect ceiling；unsafe call 必须位于
+  `unsafe { ... }` statement 中，executable `main` 仍必须为 safe。
+- 新增 deterministic `emit-kir` inspection、verified fact/effect summary、携带证明的
+  guard-elimination explanation，以及输出 `CKR0007` 的 opt-in Native contract sanitizer。
+- 用 C、WebAssembly、Native LLVM 共用的单一 verified KIR pipeline 取代旧 target-neutral
+  MIR optimizer；semantic MIR 与稳定 `emit-mir` 仍负责 source order 和 first-error boundary。
+- 新增 scalar/path、region alias 与 Memory SSA、interprocedural effect、loop、
+  GVN/load-forwarding/dead-store、LICM 及可审计 backend fact。
+- Native C ABI 保持 1；private LLVM bridge 与 runtime ABI 更新为 2，Native cache/codegen
+  identity 使用 KIR v1。
+- 新增 fixed-seed differential/mutation suite、pre-LLVM fact audit，以及相对固定 Clang 和
+  精确 CalcKernel 0.10 的 performance gate。
+
 ## 0.10.0 - 2026-08-27
 
 - 新增无参数 internal `main`、`ckc run` 与 Native executable output。

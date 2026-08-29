@@ -1,34 +1,48 @@
-# CalcKernel 0.10 Optimizer
+# CalcKernel 0.11 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
-本文规范 optimization level 与 preservation requirement，并解释 algorithm。
-`--opt-level 0|1|2|3` / `-O0`–`-O3` 选择所有 backend 共享的 MIR pipeline。
+`--opt-level 0|1|2|3` 与 `-O0`–`-O3` 选择 C、WebAssembly、Native LLVM 共用的单一
+target-neutral KIR pipeline。Semantic MIR 仍是稳定 source-order boundary，但不是第二套
+optimized product path。
 
-- O0：仅 validation。
-- O1：constant folding、copy propagation、dead-code elimination、CFG simplify。
-- O2：加入 small-function inline、local CSE、address CSE 与 cleanup。
-- O3：再加入 loop analysis、loop-invariant code motion、induction hook 与 cleanup。
+## Evidence model
 
-`--print-pass-pipeline` 的稳定 pass name 是 `constant-folding`、
-`copy-propagation`、`dead-code-elimination`、`cfg-simplify`、
-`inline-small-functions`、`local-cse`、`address-cse`、`loop-analysis`、
-`loop-invariant-code-motion`、`induction-simplify`；顺序由所选 pipeline 决定。
-每个 pass 后都 validation MIR。
+KIR 包含 scalar SSA、显式 control/guard、region Memory SSA、ordered failure/print effect、
+effect summary、fact 与 proof certificate。Fact 来自 compiler `Proven` analysis，或来自支配
+unsafe function instance 的 `TrustedContract`。未知、超预算或无法分类只会得到保守状态。
 
-Constant folding 排除 overflowing integer、divide/modulo by zero，以及会改变
-NaN、infinity、signed zero 或 operand order 的 `f64` algebra。Call 与 targetless
-void call 的 side effect 必须保留；CFG pass 保留 valueless return 与最内层
-`break`/`continue` target。
+每次 guard elimination 都携带 `ProofId`。小型 verifier 独立检查当前 CFG、SSA、dominance、
+Memory SSA、effect order 与 contract-instance scope，不让优化 analysis 自己批准结论。
+CFG/inlining/loop 改动必须显式 invalidate 或 remap evidence；stale evidence 是 compiler error。
 
-`slice<T>` descriptor 按 value copy，data 仍 alias。Checked `SliceIndex`/`Subslice`
-guard 与 address calculation 在 C/Native `--bounds checked` context 中可观察；
-除非在 active context 中证明安全，否则不可
-删除，也不可跨可能失败的 call/arithmetic CSE、hoist 或 reorder。
+## Pipeline
 
-Native print call 是 runtime effect。Optimization 只能删除不可达 effect，并在 call、loop、
-inline 后保留可达 effect 的次数与源码顺序。所选 level 同时控制 MIR 和后续 LLVM default
-pipeline，任何 level 都不启用 fast-math。
+- O0：构造并验证 mode-specific KIR，不运行可选 transform。
+- O1：`cfg-canonicalize`、`sccp-range`、proof-carrying `check-elimination`、
+  `dead-code-elimination`、`cleanup`。
+- O2：增加 `effect-aware-inline`、`memory-ssa-refine`、`gvn`、
+  `load-forwarding`、`dead-store-elimination`，然后重跑 range/check cleanup。
+- O3：增加 `natural-loop-analysis`、保守 `licm`、induction analysis、post-loop
+  range/check elimination、DCE 与 cleanup。
 
-`--print-mir-before-opt`、`--print-mir-after-opt`、`--print-pass-pipeline`
-向 stderr 写确定信息且不改变 artifact。
+`emit-kir`、`--print-facts`、`--print-effect-summaries`、
+`--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。
+
+Unchecked integer 保持 modular semantics；checked operation 在证明安全前保留 may-fail
+effect；strict `f64` 不启用 fast-math。`slice<T>` guard 只有在 `--bounds checked` 下的
+index/range 被证明安全时才能删除；
+raw pointer validity 与 `slice(data, len)` 的真实性仍由 caller 负责。
+
+统一 alias service 结合 region origin、symbolic sub-slice interval、access width、`noalias`
+与 alignment。Memory optimization 共用该 query 和 Memory SSA version。Call-graph SCC 的
+effect summary 保留 read/write、runtime print、possible checked failure、unsafe call 与
+conservative `readwrite all`。
+
+Possible checked failure 和 runtime print 是 ordered effect，不能无证明跨越重排。只有经过
+验证的 no-alias/alignment/range/effect fact 才能进入 C/LLVM；Native pre-LLVM fact audit 会
+拒绝 injected 或 stale metadata。
+
+Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
+下比较 Clang、精确 0.10、checked/unchecked proof loop 与 optimizer latency。阈值不能成为
+弱化语义或使用 contract domain 外输入的理由。

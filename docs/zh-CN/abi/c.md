@@ -1,9 +1,14 @@
-# CalcKernel 0.10 C Source ABI
+# CalcKernel 0.11 C Source ABI
 
 [English](../../abi/c.md)
 
 本文档定义 `ckc emit-c` 生成的 C 与 header。该路径为 source-only，永不编译或链接；Native
 `ckc build` 直接生成 LLVM object，并遵守 [Native C ABI](llvm.md)。
+
+C backend 只消费 verified KIR，不重建 hidden check，也不运行独立 MIR optimizer。完整且
+verified 的 pairwise `noalias`/alignment fact 可变成 portable `restrict`/alignment hint；
+incomplete/stale fact 不输出 hint。Exported unsafe function ABI 不变，header declaration 带
+normalized contract comment。
 
 CK 定宽 integer、`f64`、`bool` 分别映射为对应 C fixed-width integer、`double`、`bool`；
 `ptr<T>` 映射为 `T*`；struct 保持 field declaration order；unchecked void return 为 C

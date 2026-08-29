@@ -2,9 +2,10 @@
 
 [English](../../project/roadmap.md)
 
-本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.10 兼容策略](compatibility.md)。
+本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.11 兼容策略](compatibility.md)。
 
-- 在保持 deterministic MIR 与 checked error order 的前提下扩展 optimizer analysis。
+- Source SIMD type、target-specific superword/vector cost model、PGO 与 auto-tuning 只通过
+  独立评审的未来 contract 加入。
 - 强化 target-specific LLVM calling convention 与 data-layout reporting。
 - 只以未来明确 versioned ABI addition 的方式评估 WASM checked bounds/status。
 - 改进 debug/source mapping 与 artifact introspection。

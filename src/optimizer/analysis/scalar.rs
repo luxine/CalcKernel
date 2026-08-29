@@ -490,6 +490,7 @@ pub struct ScalarAnalysisResult {
 }
 
 pub type ScalarEdgeValues = BTreeMap<(BlockId, BlockId), BTreeMap<ValueId, ScalarValue>>;
+type ScalarState = Vec<Option<ScalarValue>>;
 
 impl ScalarAnalysisResult {
     #[must_use]
@@ -538,6 +539,7 @@ pub fn analyze_scalar_function(
 ) -> Result<ScalarAnalysisResult, ScalarDomainError> {
     let budget = ScalarAnalysisBudget::for_function(function, config);
     let value_types = collect_integer_types(function);
+    let incoming_edges = collect_incoming_edges(function);
     let unknown_values = || {
         value_types
             .iter()
@@ -557,14 +559,17 @@ pub fn analyze_scalar_function(
         });
     }
 
-    let mut values = function
-        .params
-        .iter()
-        .filter_map(|param| {
-            IntegerType::from_mir(&param.type_node)
-                .map(|type_node| (param.value, ScalarValue::unknown(type_node)))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let state_len = value_types
+        .keys()
+        .map(|value| value.index() as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut values = vec![None; state_len];
+    for param in &function.params {
+        if let Some(type_node) = IntegerType::from_mir(&param.type_node) {
+            values[param.value.index() as usize] = Some(ScalarValue::unknown(type_node));
+        }
+    }
     let mut edge_values;
     let mut steps = 0_u32;
     let mut iteration = 0_u32;
@@ -577,21 +582,20 @@ pub fn analyze_scalar_function(
                 let Some(type_node) = IntegerType::from_mir(&param.type_node) else {
                     continue;
                 };
-                let incoming = incoming_values(function, block.id, index)
+                let incoming = incoming_values(&incoming_edges, block.id, index)
                     .into_iter()
                     .map(|(predecessor, value)| {
                         refinements
                             .get(&(predecessor, block.id))
                             .and_then(|state| state.get(&value))
-                            .or_else(|| values.get(&value))
+                            .or_else(|| scalar_value(&values, value))
                             .cloned()
                             .unwrap_or_else(|| ScalarValue::unknown(type_node))
                     })
                     .reduce(|left, right| join_scalar(&left, &right))
                     .unwrap_or_else(|| ScalarValue::unknown(type_node));
                 let next = if iteration >= budget.widening_after() {
-                    values
-                        .get(&param.value)
+                    scalar_value(&values, param.value)
                         .map(|old| widen_scalar(old, &incoming))
                         .transpose()?
                         .unwrap_or(incoming)
@@ -620,6 +624,16 @@ pub fn analyze_scalar_function(
                 let Some(type_node) = IntegerType::from_mir(&result.type_node) else {
                     continue;
                 };
+                if !has_scalar_transfer(&instruction.kind) {
+                    if scalar_value(&values, result.value).is_none() {
+                        changed |= update_value(
+                            &mut values,
+                            result.value,
+                            ScalarValue::unknown(type_node),
+                        );
+                    }
+                    continue;
+                }
                 let next = transfer_instruction(&instruction.kind, type_node, &values)?;
                 changed |= update_value(&mut values, result.value, next);
             }
@@ -638,20 +652,19 @@ pub fn analyze_scalar_function(
                 let Some(type_node) = IntegerType::from_mir(&param.type_node) else {
                     continue;
                 };
-                let incoming = incoming_values(function, block.id, index)
+                let incoming = incoming_values(&incoming_edges, block.id, index)
                     .into_iter()
                     .map(|(predecessor, value)| {
                         refinements
                             .get(&(predecessor, block.id))
                             .and_then(|state| state.get(&value))
-                            .or_else(|| values.get(&value))
+                            .or_else(|| scalar_value(&values, value))
                             .cloned()
                             .unwrap_or_else(|| ScalarValue::unknown(type_node))
                     })
                     .reduce(|left, right| join_scalar(&left, &right))
                     .unwrap_or_else(|| ScalarValue::unknown(type_node));
-                let next = values
-                    .get(&param.value)
+                let next = scalar_value(&values, param.value)
                     .map(|old| narrow_scalar(old, &incoming))
                     .transpose()?
                     .unwrap_or(incoming);
@@ -677,17 +690,26 @@ pub fn analyze_scalar_function(
                 let Some(type_node) = IntegerType::from_mir(&result.type_node) else {
                     continue;
                 };
+                if !has_scalar_transfer(&instruction.kind) {
+                    continue;
+                }
                 let next = transfer_instruction(&instruction.kind, type_node, &values)?;
                 update_value(&mut values, result.value, next);
             }
         }
         narrowing_iterations_run += 1;
     }
-    for (value, type_node) in &value_types {
-        values
-            .entry(*value)
-            .or_insert_with(|| ScalarValue::unknown(*type_node));
-    }
+    let values = value_types
+        .iter()
+        .map(|(value, type_node)| {
+            (
+                *value,
+                scalar_value(&values, *value)
+                    .cloned()
+                    .unwrap_or_else(|| ScalarValue::unknown(*type_node)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     Ok(ScalarAnalysisResult {
         function: function.id,
         config,
@@ -1017,27 +1039,41 @@ fn collect_integer_types(function: &KirFunction) -> BTreeMap<ValueId, IntegerTyp
         .collect()
 }
 
+type IncomingEdges = BTreeMap<BlockId, Vec<(BlockId, Vec<ValueId>)>>;
+
+fn collect_incoming_edges(function: &KirFunction) -> IncomingEdges {
+    let mut incoming = IncomingEdges::new();
+    for block in &function.blocks {
+        let edges = match &block.terminator {
+            KirTerminator::Return { .. } => Vec::new(),
+            KirTerminator::Jump { edge } => vec![edge],
+            KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } => vec![then_edge, else_edge],
+        };
+        for edge in edges {
+            incoming
+                .entry(edge.target)
+                .or_default()
+                .push((block.id, edge.args.clone()));
+        }
+    }
+    incoming
+}
+
 fn incoming_values(
-    function: &KirFunction,
+    incoming_edges: &IncomingEdges,
     target: BlockId,
     index: usize,
 ) -> Vec<(BlockId, ValueId)> {
-    function
-        .blocks
-        .iter()
-        .flat_map(|block| {
-            match &block.terminator {
-                KirTerminator::Return { .. } => Vec::new(),
-                KirTerminator::Jump { edge } => vec![edge],
-                KirTerminator::Branch {
-                    then_edge,
-                    else_edge,
-                    ..
-                } => vec![then_edge, else_edge],
-            }
-            .into_iter()
-            .filter(move |edge| edge.target == target)
-            .filter_map(move |edge| edge.args.get(index).copied().map(|value| (block.id, value)))
+    incoming_edges
+        .get(&target)
+        .into_iter()
+        .flatten()
+        .filter_map(|(predecessor, args)| {
+            args.get(index).copied().map(|value| (*predecessor, value))
         })
         .collect()
 }
@@ -1045,7 +1081,7 @@ fn incoming_values(
 fn transfer_instruction(
     instruction: &KirInstructionKind,
     type_node: IntegerType,
-    values: &BTreeMap<ValueId, ScalarValue>,
+    values: &ScalarState,
 ) -> Result<ScalarValue, ScalarDomainError> {
     match instruction {
         KirInstructionKind::ConstInt { value } => value
@@ -1053,7 +1089,8 @@ fn transfer_instruction(
             .map_err(|_| ScalarDomainError::new(format!("invalid KIR integer '{value}'")))
             .and_then(|value| ScalarValue::constant(type_node, value)),
         KirInstructionKind::Copy { value } => Ok(values
-            .get(value)
+            .get(value.index() as usize)
+            .and_then(Option::as_ref)
             .cloned()
             .unwrap_or_else(|| ScalarValue::unknown(type_node))),
         KirInstructionKind::Binary {
@@ -1061,29 +1098,38 @@ fn transfer_instruction(
             left,
             right,
             semantics,
-        } => scalar_binary(
-            *op,
-            *semantics,
-            values.get(left).unwrap_or(&ScalarValue::unknown(type_node)),
-            values
-                .get(right)
-                .unwrap_or(&ScalarValue::unknown(type_node)),
-        ),
+        } => match (scalar_value(values, *left), scalar_value(values, *right)) {
+            (Some(left), Some(right)) => scalar_binary(*op, *semantics, left, right),
+            _ => Ok(ScalarValue::unknown(type_node)),
+        },
         _ => Ok(ScalarValue::unknown(type_node)),
     }
 }
 
-fn update_value(
-    values: &mut BTreeMap<ValueId, ScalarValue>,
-    value: ValueId,
-    next: ScalarValue,
-) -> bool {
-    if values.get(&value) == Some(&next) {
+fn has_scalar_transfer(instruction: &KirInstructionKind) -> bool {
+    matches!(
+        instruction,
+        KirInstructionKind::ConstInt { .. }
+            | KirInstructionKind::Copy { .. }
+            | KirInstructionKind::Binary { .. }
+    )
+}
+
+fn update_value(values: &mut ScalarState, value: ValueId, next: ScalarValue) -> bool {
+    let index = value.index() as usize;
+    if values.get(index).and_then(Option::as_ref) == Some(&next) {
         false
     } else {
-        values.insert(value, next);
+        if index >= values.len() {
+            values.resize(index + 1, None);
+        }
+        values[index] = Some(next);
         true
     }
+}
+
+fn scalar_value(values: &ScalarState, value: ValueId) -> Option<&ScalarValue> {
+    values.get(value.index() as usize).and_then(Option::as_ref)
 }
 
 fn join_scalar(left: &ScalarValue, right: &ScalarValue) -> ScalarValue {
@@ -1101,7 +1147,7 @@ type ComparisonMap = BTreeMap<ValueId, (MirCompareOp, ValueId, ValueId)>;
 
 fn compute_edge_refinements(
     function: &KirFunction,
-    values: &BTreeMap<ValueId, ScalarValue>,
+    values: &ScalarState,
 ) -> Result<ScalarEdgeValues, ScalarDomainError> {
     let comparisons = function
         .blocks
@@ -1130,7 +1176,9 @@ fn compute_edge_refinements(
         let Some((op, left, right)) = comparisons.get(condition) else {
             continue;
         };
-        let (Some(left_value), Some(right_value)) = (values.get(left), values.get(right)) else {
+        let (Some(left_value), Some(right_value)) =
+            (scalar_value(values, *left), scalar_value(values, *right))
+        else {
             continue;
         };
         let (taken, other) = refine_scalar_comparison(*op, left_value, right_value)?;

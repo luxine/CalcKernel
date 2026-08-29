@@ -1,21 +1,25 @@
 use std::{ffi::CString, fs};
 
+use super::support::compiler::optimized_module;
 use calckernel::{
-    EmitLlvmOptions, NativeContext, NativeDynamicLibrary, NativeObject, NativeOptimizationLevel,
-    NativeTarget, SourceFile, check, link_native_dynamic_library, lower_native_llvm_module,
-    lower_to_mir,
+    BoundsMode, EmitLlvmOptions, KirConsumer, NativeContext, NativeDynamicLibrary, NativeObject,
+    NativeOptimizationLevel, NativeTarget, OverflowMode, link_native_dynamic_library,
+    lower_native_kir_module,
 };
 
 fn native_object() -> NativeObject {
-    let source = SourceFile::new("library.ck", "export fn answer() -> i32 { return 42; }");
-    let checked = check(&source);
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower library MIR");
+    let kir = optimized_module(
+        "export fn answer() -> i32 { return 42; }",
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("native target");
     target
         .emit_object(
-            lower_native_llvm_module(&context, &target, &mir, &EmitLlvmOptions::default())
+            lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
                 .expect("lower module")
                 .verify()
                 .expect("verify module")

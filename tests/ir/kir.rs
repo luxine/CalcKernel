@@ -210,7 +210,7 @@ fn kir_builder_should_form_valid_block_parameter_ssa_for_control_flow() {
 }
 
 #[test]
-fn kir_validator_should_reject_undefined_use_and_wrong_block_argument_arity() {
+fn mutation_dominance_and_scalar_phi_arity_should_be_rejected() {
     let module = build(
         r#"
         export fn choose(value: i32, flag: bool) -> i32 {
@@ -491,7 +491,7 @@ fn kir_builder_should_thread_conservative_region_memory_ssa_through_joins() {
 }
 
 #[test]
-fn kir_validator_should_reject_undefined_memory_version() {
+fn mutation_undefined_memory_version_should_be_rejected() {
     let mut module = build(
         r#"
         export fn read(data: ptr<i32>) -> i32 { return data[0]; }
@@ -576,7 +576,7 @@ fn kir_printer_should_expose_region_and_memory_ssa_without_environment_data() {
 }
 
 #[test]
-fn kir_validator_should_reject_removed_required_checked_guard() {
+fn mutation_removed_required_checked_guard_should_be_rejected() {
     let mut module = build(
         "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
         config(),
@@ -597,7 +597,7 @@ fn kir_validator_should_reject_removed_required_checked_guard() {
 }
 
 #[test]
-fn kir_validator_should_reject_later_definition_used_early() {
+fn mutation_later_definition_used_early_should_be_rejected() {
     let mut module = build(
         r#"
         export fn calculate(a: i32, b: i32) -> i32 {
@@ -633,7 +633,7 @@ fn kir_validator_should_reject_later_definition_used_early() {
 }
 
 #[test]
-fn kir_validator_should_reject_invalid_region_partition_and_instruction_types() {
+fn mutation_invalid_region_partition_and_instruction_types_should_be_rejected() {
     let mut invalid_region = build(
         "export fn read(data: ptr<i32>) -> i32 { return data[0]; }",
         KirBuildConfig {
@@ -716,4 +716,37 @@ fn kir_builder_should_preserve_ordered_runtime_and_may_fail_call_effects() {
         panic!("return");
     };
     assert_eq!(effect_order, 1);
+}
+
+#[test]
+fn mutation_ordered_runtime_and_return_effects_should_be_rejected() {
+    let mut module = build(
+        "fn main() -> void { print_newline(); }",
+        KirBuildConfig {
+            consumer: KirConsumer::NativeExecutable,
+            overflow_mode: KirOverflowMode::Unchecked,
+            ..config()
+        },
+    );
+    let block = &mut module
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "main")
+        .expect("main")
+        .blocks[0];
+    let runtime_order = block.instructions[0]
+        .effect
+        .as_ref()
+        .expect("runtime effect")
+        .order;
+    let KirTerminator::Return { effect_order, .. } = &mut block.terminator else {
+        panic!("return")
+    };
+    *effect_order = runtime_order;
+
+    assert!(validate_kir_module(&module).errors.iter().any(|error| {
+        error
+            .message
+            .contains("ordered effect sequence must be strictly increasing")
+    }));
 }

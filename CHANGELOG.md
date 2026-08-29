@@ -2,6 +2,24 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
+## 0.11.0 - Unreleased
+
+- Added explicit `unsafe fn` contracts for affine range requirements,
+  `multiple_of`, `noalias`, alignment, and slice memory-effect ceilings. Unsafe
+  calls require an `unsafe { ... }` statement and executable `main` remains safe.
+- Added deterministic `emit-kir` inspection, verified facts/effect summaries,
+  proof-carrying guard elimination explanations, and opt-in Native contract
+  sanitization with `CKR0007`.
+- Replaced the former target-neutral MIR optimizer with one verified KIR
+  pipeline shared by C, WebAssembly, and Native LLVM. Semantic MIR and stable
+  `emit-mir` output remain the source-order and first-error boundary.
+- Added scalar/path, region alias and Memory SSA, interprocedural effect, loop,
+  GVN/load-forwarding/dead-store, LICM, and evidence-audited backend facts.
+- Kept Native C ABI 1 while advancing the private LLVM bridge and runtime ABI
+  to 2 and using the KIR v1 native cache/code-generation identity.
+- Added fixed-seed differential and mutation suites, pre-LLVM fact audits, and
+  performance gates against both pinned Clang and exact CalcKernel 0.10.
+
 ## 0.10.0 - 2026-08-27
 
 - Added parameterless internal `main`, `ckc run`, and Native executable output.

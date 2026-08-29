@@ -1,14 +1,13 @@
 use std::{fs, process::Command};
 
 use calckernel::{
-    BoundsMode, ContractFactSet, EmitCOptions, KirBoundsMode, KirBuildConfig, KirConsumer,
-    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, MirPassBoundsMode,
-    MirPassOverflowMode, MirPassTargetBackend, OverflowMode, SourceFile, build_kir_module, check,
-    emit_c_kir_header, emit_c_kir_module, emit_c_kir_module_with_contracts, emit_c_module,
-    import_contract_facts, lower_to_mir, run_kir_pass_pipeline,
+    ContractFactSet, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+    KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module, check, emit_c_kir_header,
+    emit_c_kir_module, emit_c_kir_module_with_contracts, import_contract_facts, lower_to_mir,
+    run_kir_pass_pipeline,
 };
 
-use crate::support::compiler::optimized_module;
+use crate::generated::fixed_seed_kernel_program;
 use crate::support::temp::temp_dir;
 
 fn optimized_kir(
@@ -92,42 +91,6 @@ const DIFFERENTIAL_SOURCE: &str = r#"
     }
     export fn pair_total(pair: ptr<Pair>) -> i32 { return pair[0].x + pair[0].y; }
 "#;
-
-fn legacy_c(level: u8, checked: bool) -> String {
-    let overflow_mode = if checked {
-        MirPassOverflowMode::Checked
-    } else {
-        MirPassOverflowMode::Unchecked
-    };
-    let bounds_mode = if checked {
-        MirPassBoundsMode::Checked
-    } else {
-        MirPassBoundsMode::Unchecked
-    };
-    let module = optimized_module(
-        DIFFERENTIAL_SOURCE,
-        level,
-        overflow_mode,
-        bounds_mode,
-        MirPassTargetBackend::C,
-    );
-    emit_c_module(
-        &module,
-        EmitCOptions {
-            overflow_mode: if checked {
-                OverflowMode::Checked
-            } else {
-                OverflowMode::Unchecked
-            },
-            bounds_mode: if checked {
-                BoundsMode::Checked
-            } else {
-                BoundsMode::Unchecked
-            },
-            opt_level: level,
-        },
-    )
-}
 
 fn level(level: u8) -> KirOptimizationLevel {
     match level {
@@ -291,7 +254,7 @@ fn kir_c_layout_should_order_struct_slices_and_disambiguate_generated_names() {
 }
 
 #[test]
-fn kir_c_o0_through_o3_should_match_legacy_supported_mode_matrix() {
+fn kir_c_o0_through_o3_should_cover_supported_mode_matrix() {
     let unchecked_harness = r#"
         int main(void) {
           int32_t out = 0;
@@ -331,8 +294,6 @@ fn kir_c_o0_through_o3_should_match_legacy_supported_mode_matrix() {
             &emit_c_kir_module(&unchecked).expect("unchecked KIR C"),
             unchecked_harness,
         );
-        compile_and_run(&legacy_c(opt_level, false), unchecked_harness);
-
         let checked = optimized_kir(
             DIFFERENTIAL_SOURCE,
             level(opt_level),
@@ -343,7 +304,61 @@ fn kir_c_o0_through_o3_should_match_legacy_supported_mode_matrix() {
             &emit_c_kir_module(&checked).expect("checked KIR C"),
             checked_harness,
         );
-        compile_and_run(&legacy_c(opt_level, true), checked_harness);
+    }
+}
+
+#[test]
+fn generated_c_kernels_should_match_o0_at_o1_through_o3_in_every_supported_mode() {
+    let generated = fixed_seed_kernel_program();
+
+    for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+        for bounds in [KirBoundsMode::Unchecked, KirBoundsMode::Checked] {
+            let checked_abi =
+                overflow == KirOverflowMode::Checked || bounds == KirBoundsMode::Checked;
+            let mut harness = String::from("int main(void) {\n");
+            for (index, case) in generated.cases.iter().enumerate() {
+                let values = case
+                    .values
+                    .iter()
+                    .map(i32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                harness.push_str(&format!("  int32_t values_{index}[8] = {{{values}}};\n"));
+                if checked_abi {
+                    harness.push_str(&format!(
+                        "  int32_t result_{index} = 0; if ({}(values_{index}, 8, {}, {}, &result_{index}) != CK_OK || result_{index} != {}) return {};\n",
+                        case.function,
+                        case.len,
+                        case.bias,
+                        case.expected,
+                        index + 1,
+                    ));
+                } else {
+                    harness.push_str(&format!(
+                        "  if ({}(values_{index}, 8, {}, {}) != {}) return {};\n",
+                        case.function,
+                        case.len,
+                        case.bias,
+                        case.expected,
+                        index + 1,
+                    ));
+                }
+            }
+            harness.push_str("  return 0;\n}\n");
+
+            for level in [
+                KirOptimizationLevel::O0,
+                KirOptimizationLevel::O1,
+                KirOptimizationLevel::O2,
+                KirOptimizationLevel::O3,
+            ] {
+                let (kir, contracts) =
+                    optimized_kir_with_contracts(&generated.source, level, overflow, bounds);
+                let c = emit_c_kir_module_with_contracts(&kir, contracts.as_ref())
+                    .expect("generated KIR C");
+                compile_and_run(&c, &harness);
+            }
+        }
     }
 }
 

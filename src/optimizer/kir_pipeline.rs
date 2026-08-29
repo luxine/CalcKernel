@@ -5,8 +5,6 @@ use super::{
     ProofStep, kir_passes, verify_proof_arena,
 };
 
-type KirSimplePass = fn(&mut KirModule) -> bool;
-
 /// Stable optimization levels for the KIR pass manager.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KirOptimizationLevel {
@@ -70,6 +68,15 @@ pub struct KirPassManagerResult {
     pub explanations: Vec<KirOptimizationExplanation>,
     pub contract_facts: Option<ContractFactSet>,
     pub stats: KirOptimizationStats,
+    verification_cache: Option<VerifiedKirState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifiedKirState {
+    module: KirModule,
+    proofs: ProofArena,
+    eliminated_guards: Vec<KirGuardElimination>,
+    contract_facts: Option<ContractFactSet>,
 }
 
 #[must_use]
@@ -89,6 +96,7 @@ pub fn run_kir_pass_pipeline(
         explanations: Vec::new(),
         contract_facts: contracts.cloned(),
         stats: KirOptimizationStats::default(),
+        verification_cache: None,
     };
 
     let input_errors = validate_kir_module(&module).errors;
@@ -111,16 +119,21 @@ pub fn run_kir_pass_pipeline(
         return result;
     }
 
-    let passes: [(&str, KirSimplePass); 2] = [
-        ("cfg-canonicalize", kir_passes::run_cfg_canonicalize),
-        ("sccp-range", kir_passes::run_sccp_range),
-    ];
-    for (name, pass) in passes {
-        let changed = pass(&mut module);
-        if !record_current_pass(&module, name, changed, &mut result, GENERATION) {
-            result.module = module;
-            return result;
-        }
+    let changed = kir_passes::run_cfg_canonicalize(&mut module);
+    if !record_current_pass(
+        &module,
+        "cfg-canonicalize",
+        changed,
+        &mut result,
+        GENERATION,
+    ) {
+        result.module = module;
+        return result;
+    }
+    let mut scalar_analysis_cache = kir_passes::run_sccp_range(&module);
+    if !record_current_pass(&module, "sccp-range", false, &mut result, GENERATION) {
+        result.module = module;
+        return result;
     }
 
     let changed = kir_passes::run_check_elimination(
@@ -154,6 +167,9 @@ pub fn run_kir_pass_pipeline(
                     &result.eliminated_guards,
                 )
             };
+        if result.stats.inlined_calls != 0 {
+            kir_passes::run_cleanup(&mut module);
+        }
         if !record_current_pass(
             &module,
             "effect-aware-inline",
@@ -221,11 +237,11 @@ pub fn run_kir_pass_pipeline(
             return result;
         }
 
-        let changed = kir_passes::run_sccp_range(&mut module);
+        scalar_analysis_cache = kir_passes::run_sccp_range(&module);
         if !record_current_pass(
             &module,
             "sccp-range-post-inline",
-            changed,
+            false,
             &mut result,
             GENERATION,
         ) {
@@ -254,21 +270,18 @@ pub fn run_kir_pass_pipeline(
     }
 
     if level == KirOptimizationLevel::O3 {
-        result.stats.natural_loops = module
+        let loop_analyses = module
             .functions
             .iter()
-            .map(|function| {
-                u32::try_from(super::analyze_natural_loops(function).loops.len())
-                    .unwrap_or(u32::MAX)
-            })
+            .map(super::analyze_natural_loops)
+            .collect::<Vec<_>>();
+        result.stats.natural_loops = loop_analyses
+            .iter()
+            .map(|analysis| u32::try_from(analysis.loops.len()).unwrap_or(u32::MAX))
             .fold(0_u32, u32::saturating_add);
-        result.stats.induction_variables = module
-            .functions
+        result.stats.induction_variables = loop_analyses
             .iter()
-            .map(|function| {
-                u32::try_from(super::analyze_natural_loops(function).inductions.len())
-                    .unwrap_or(u32::MAX)
-            })
+            .map(|analysis| u32::try_from(analysis.inductions.len()).unwrap_or(u32::MAX))
             .fold(0_u32, u32::saturating_add);
         if !record_current_pass(
             &module,
@@ -286,7 +299,8 @@ pub fn run_kir_pass_pipeline(
             .iter()
             .map(|elimination| elimination.condition_instruction)
             .collect();
-        result.stats.hoisted_instructions = kir_passes::run_licm(&mut module, &protected);
+        result.stats.hoisted_instructions =
+            kir_passes::run_licm(&mut module, &protected, &loop_analyses);
         if !record_current_pass(
             &module,
             "licm",
@@ -307,11 +321,16 @@ pub fn run_kir_pass_pipeline(
             result.module = module;
             return result;
         }
-        let changed = kir_passes::run_sccp_range(&mut module);
+        if scalar_analysis_cache
+            .as_ref()
+            .is_none_or(|cache| !cache.covers(&module))
+        {
+            let _ = kir_passes::run_sccp_range(&module);
+        }
         if !record_current_pass(
             &module,
             "sccp-range-post-loop",
-            changed,
+            false,
             &mut result,
             GENERATION,
         ) {
@@ -371,13 +390,27 @@ fn record_verified_pass(
     module: &KirModule,
     name: &str,
     changed: bool,
-    contracts: Option<&ContractFactSet>,
     result: &mut KirPassManagerResult,
     generation: u32,
 ) -> bool {
+    let cache_hit = !changed
+        && result.verification_cache.as_ref().is_some_and(|cached| {
+            cached.module == *module
+                && cached.proofs == result.proofs
+                && cached.eliminated_guards == result.eliminated_guards
+                && cached.contract_facts == result.contract_facts
+        });
+    if cache_hit {
+        result.records.push(KirPassRecord {
+            name: name.to_string(),
+            changed,
+            verified: true,
+        });
+        return true;
+    }
     let evidence = validate_kir_optimization_evidence(
         module,
-        contracts,
+        result.contract_facts.as_ref(),
         &result.proofs,
         &result.eliminated_guards,
         generation,
@@ -391,6 +424,14 @@ fn record_verified_pass(
     result
         .errors
         .extend(evidence.errors.into_iter().map(|error| error.message));
+    if verified {
+        result.verification_cache = Some(VerifiedKirState {
+            module: module.clone(),
+            proofs: result.proofs.clone(),
+            eliminated_guards: result.eliminated_guards.clone(),
+            contract_facts: result.contract_facts.clone(),
+        });
+    }
     verified
 }
 
@@ -401,15 +442,7 @@ fn record_current_pass(
     result: &mut KirPassManagerResult,
     generation: u32,
 ) -> bool {
-    let contracts = result.contract_facts.clone();
-    record_verified_pass(
-        module,
-        name,
-        changed,
-        contracts.as_ref(),
-        result,
-        generation,
-    )
+    record_verified_pass(module, name, changed, result, generation)
 }
 
 /// Rechecks the rewritten KIR, all fact/proof certificates, and each rewrite-to-proof binding.

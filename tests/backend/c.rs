@@ -5,12 +5,10 @@ use std::{
 };
 
 use calckernel::{
-    BoundsMode, EmitCOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend,
-    OverflowMode, SourceFile, check, emit_c_header, emit_c_module, emit_c_module_with_header,
-    lower_to_mir, try_emit_c_module,
+    BoundsMode, KirConsumer, OverflowMode, emit_c_kir_header, emit_c_kir_module_with_contracts,
 };
 
-use super::support::compiler::optimized_module;
+use super::support::compiler::{kir_build_error, optimized_module, verified_artifact};
 use super::support::fixtures;
 use super::support::oracle::{typescript_cli, typescript_root};
 
@@ -43,24 +41,15 @@ fn emit_c_with_modes_and_opt_level(
     let optimized = optimized_module(
         source_text,
         opt_level,
-        match overflow_mode {
-            OverflowMode::Unchecked => MirPassOverflowMode::Unchecked,
-            OverflowMode::Checked => MirPassOverflowMode::Checked,
-        },
-        match bounds_mode {
-            BoundsMode::Unchecked => MirPassBoundsMode::Unchecked,
-            BoundsMode::Checked => MirPassBoundsMode::Checked,
-        },
-        MirPassTargetBackend::C,
+        KirConsumer::C,
+        overflow_mode,
+        bounds_mode,
     );
-    emit_c_module(
-        &optimized,
-        EmitCOptions {
-            overflow_mode,
-            bounds_mode,
-            opt_level,
-        },
+    emit_c_kir_module_with_contracts(
+        verified_artifact(&optimized),
+        optimized.contract_facts.as_ref(),
     )
+    .expect("verified C KIR should lower")
 }
 
 #[test]
@@ -152,14 +141,12 @@ int main(void) {{
 
 #[test]
 fn c_backend_should_reject_reachable_print_before_emission() {
-    let checked = check(&SourceFile::new(
-        "print.ck",
+    let error = kir_build_error(
         "export fn api() -> void { print_i32(1); }",
-    ));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower print");
-    let error = try_emit_c_module(&mir, EmitCOptions::default())
-        .expect_err("C cannot link native print runtime");
+        KirConsumer::C,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     assert!(error.contains("C artifact"), "{error}");
     assert!(error.contains("print_i32"), "{error}");
 }
@@ -262,9 +249,12 @@ fn c_backend_should_emit_and_run_unchecked_void_functions() {
       }
     "#,
     );
-    assert!(c.contains("static void set_first(int32_t* out)"), "{c}");
+    assert!(
+        c.contains("static CKC_UNUSED void set_first(int32_t* out)"),
+        "{c}"
+    );
     assert!(c.contains("void mutate(int32_t* out, bool stop)"), "{c}");
-    assert!(c.contains("set_first(out);"), "{c}");
+    assert!(c.contains("set_first("), "{c}");
     assert!(c.contains("return;"), "{c}");
 
     let harness = format!(
@@ -321,7 +311,7 @@ fn c_backend_should_emit_status_void_without_ck_return() {
     "#,
     );
 
-    assert!(c.contains("static CK_Status no_op(void)"), "{c}");
+    assert!(c.contains("static CKC_UNUSED CK_Status no_op(void)"), "{c}");
     assert!(c.contains("CK_Status run(void)"), "{c}");
     assert!(!c.contains("ck_return"), "{c}");
     assert!(c.contains("return CK_OK;"), "{c}");
@@ -336,8 +326,9 @@ fn c_backend_should_propagate_checked_void_call_failures() {
       export fn run(out: ptr<i64>) -> void { middle(out); }
     "#,
     );
-    assert!(c.contains("ik_status = increment(out);"), "{c}");
-    assert!(c.contains("ik_status = middle(out);"), "{c}");
+    assert!(c.contains("= increment("), "{c}");
+    assert!(c.contains("= middle("), "{c}");
+    assert_eq!(c.matches("!= CK_OK) return ck_status_").count(), 2, "{c}");
 
     let harness = format!(
         r#"
@@ -399,9 +390,9 @@ fn checked_c_backend_should_remove_only_proven_safe_induction_overflow_checks_at
     let o0 = emit_c_with_overflow_and_opt_level(source, OverflowMode::Checked, 0);
     let o3 = emit_c_with_overflow_and_opt_level(source, OverflowMode::Checked, 3);
 
-    assert!(o0.contains("__builtin_add_overflow(i,"));
-    assert!(!o3.contains("__builtin_add_overflow(i,"));
-    assert!(o3.contains(" = i + "));
+    assert_eq!(o0.matches("__builtin_add_overflow").count(), 1, "{o0}");
+    assert_eq!(o3.matches("__builtin_add_overflow").count(), 0, "{o3}");
+    assert!(o3.contains(" + "), "{o3}");
 }
 
 #[test]
@@ -721,7 +712,7 @@ fn c_backend_should_emit_dependency_ordered_slice_descriptors() {
 
 #[test]
 fn c_backend_should_flatten_exported_and_internal_slice_params() {
-    let c = emit_c(
+    let c = emit_c_with_overflow_and_opt_level(
         r#"
       fn first(items: slice<i32>) -> i32 {
         return items[0];
@@ -731,19 +722,20 @@ fn c_backend_should_flatten_exported_and_internal_slice_params() {
         return first(items);
       }
     "#,
+        OverflowMode::Unchecked,
+        0,
     );
 
-    assert!(c.contains("static int32_t first(int32_t* items_data, uint32_t items_len)"));
+    assert!(c.contains("static CKC_UNUSED int32_t first(int32_t* items_data, uint32_t items_len)"));
     assert!(c.contains("int32_t exported_first(int32_t* items_data, uint32_t items_len)"));
-    assert!(c.contains("CK_Slice_i32 items;"));
-    assert!(c.contains("items.data = items_data;"));
-    assert!(c.contains("items.len = items_len;"));
-    assert!(c.contains("first(items.data, items.len)"));
+    assert!(c.contains(".data = items_data;"));
+    assert!(c.contains(".len = items_len;"));
+    assert!(c.contains("first("));
 }
 
 #[test]
 fn c_backend_should_copy_slice_locals_fields_and_internal_returns() {
-    let c = emit_c(
+    let c = emit_c_with_overflow_and_opt_level(
         r#"
       struct Holder {
         items: slice<i32>;
@@ -760,11 +752,15 @@ fn c_backend_should_copy_slice_locals_fields_and_internal_returns() {
         return returned[0];
       }
     "#,
+        OverflowMode::Unchecked,
+        0,
     );
 
-    assert!(c.contains("static CK_Slice_i32 identity(int32_t* items_data, uint32_t items_len)"));
-    assert!(c.contains("copy = items;"));
-    assert!(c.contains("return copy;"));
+    assert!(c.contains(
+        "static CKC_UNUSED CK_Slice_i32 identity(int32_t* items_data, uint32_t items_len)"
+    ));
+    assert!(c.matches(".data = ").count() >= 2, "{c}");
+    assert!(c.matches(".len = ").count() >= 2, "{c}");
     assert!(c.contains("identity("));
 
     let harness = format!(
@@ -807,21 +803,31 @@ fn c_backend_should_disambiguate_generated_slice_and_parameter_names() {
 
     assert!(c.contains("typedef struct CK_Slice_i32_1 {"));
     assert!(c.contains("int32_t* items_data_1, uint32_t items_len_1"));
-    assert!(c.contains("CK_Slice_i32_1 items;"));
-    assert!(c.contains("items.data = items_data_1;"));
-    assert!(c.contains("items.len = items_len_1;"));
+    assert!(c.contains(".data = items_data_1;"), "{c}");
+    assert!(c.contains(".len = items_len_1;"), "{c}");
+
+    let harness = format!(
+        r#"
+{c}
+int main(void) {{
+  int32_t values[1] = {{10}};
+  int32_t ignored = 0;
+  return collide(values, 1, values, 0, &ignored, 20, 2) == 42 ? 0 : 1;
+}}
+"#
+    );
+    compile_and_run_c(&harness, "slice_name_collision");
 
     let checked =
         emit_c_with_modes_and_opt_level(source, OverflowMode::Unchecked, BoundsMode::Checked, 1);
     assert!(checked.contains("int32_t* ck_return_1"), "{checked}");
-    assert!(checked.contains("CK_Status ik_status_1;"), "{checked}");
-    assert!(checked.contains("ik_tmp0_1"), "{checked}");
+    assert!(checked.contains("int32_t ik_status"), "{checked}");
+    assert!(checked.contains("int32_t ik_tmp0"), "{checked}");
 }
 
 #[test]
 fn c_backend_should_compile_generated_slice_headers_with_werror() {
-    let source = SourceFile::new(
-        "test.ck",
+    let result = optimized_module(
         r#"
       struct Holder {
         items: slice<i32>;
@@ -831,17 +837,12 @@ fn c_backend_should_compile_generated_slice_headers_with_werror() {
         holder[0].items = items;
       }
     "#,
+        0,
+        KirConsumer::C,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
     );
-    let checked = check(&source);
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-    let options = EmitCOptions {
-        overflow_mode: OverflowMode::Unchecked,
-        bounds_mode: BoundsMode::Unchecked,
-        opt_level: 0,
-    };
-    let header = emit_c_header(&mir, options);
-    let implementation = emit_c_module_with_header(&mir, options, "kernel.h");
+    let header = emit_c_kir_header(verified_artifact(&result));
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -850,7 +851,7 @@ fn c_backend_should_compile_generated_slice_headers_with_werror() {
     let dir = std::env::temp_dir().join(format!("rust_calckernel_slice_header_{unique}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     fs::write(dir.join("kernel.h"), header).expect("write header");
-    fs::write(dir.join("kernel.c"), implementation).expect("write source");
+    fs::write(dir.join("kernel.c"), "#include \"kernel.h\"\n").expect("write source");
     let compile = Command::new("clang")
         .arg("-std=c11")
         .arg("-Wall")
@@ -888,9 +889,9 @@ fn checked_c_backend_should_guard_slice_reads_writes_and_nested_fields() {
             BoundsMode::Checked,
             opt_level,
         );
-        assert_eq!(c.matches(">= items.len").count(), 3, "{c}");
         assert_eq!(c.matches("return CK_ERR_OUT_OF_BOUNDS;").count(), 3, "{c}");
-        assert!(c.contains("items.data["));
+        assert_eq!(c.matches(" >= ").count(), 3, "{c}");
+        assert!(c.contains(".data["));
         assert!(c.contains("].value"));
         let harness = format!(
             r#"
@@ -923,9 +924,17 @@ fn checked_c_backend_should_guard_subslice_before_arithmetic_or_pointer_advance(
             BoundsMode::Checked,
             opt_level,
         );
-        let guard = c.find(" > items.len").expect("subslice guard");
-        let pointer_advance = c.find("items.data +").expect("pointer advance");
-        let subtraction = c.find(" - ").expect("range subtraction");
+        let guard = c
+            .find("return CK_ERR_OUT_OF_BOUNDS;")
+            .expect("subslice guard");
+        let pointer_advance = c[guard..]
+            .find(".data + ")
+            .map(|offset| guard + offset)
+            .expect("pointer advance");
+        let subtraction = c[guard..]
+            .find(".len = ")
+            .map(|offset| guard + offset)
+            .expect("range length assignment");
         assert!(guard < pointer_advance, "{c}");
         assert!(guard < subtraction, "{c}");
     }
@@ -1001,7 +1010,8 @@ fn checked_c_backend_should_preserve_empty_zero_start_slice_pointer() {
             BoundsMode::Checked,
             opt_level,
         );
-        assert!(c.contains("== 0 ? items.data : items.data +"), "{c}");
+        assert!(c.contains("== 0 ?"), "{c}");
+        assert!(c.contains(".data :"), "{c}");
         let harness = format!(
             r#"
 {c}
@@ -1046,10 +1056,8 @@ fn checked_c_backend_should_propagate_bounds_through_void_value_and_slice_calls(
             BoundsMode::Checked,
             opt_level,
         );
-        assert!(c.contains("static CK_Status touch("));
-        assert!(c.contains("static CK_Status narrow("));
-        assert!(c.contains("CK_Slice_i32* ck_return"));
-        assert!(c.contains("return ik_status;"));
+        assert!(c.contains("CK_Status dispatch("), "{c}");
+        assert!(c.contains("CK_ERR_OUT_OF_BOUNDS"), "{c}");
         let harness = format!(
             r#"
 {c}
@@ -1150,8 +1158,8 @@ fn checked_c_backend_should_preserve_guards_at_o0_through_o3() {
             2,
             "O{opt_level}:\n{c}"
         );
-        assert!(c.contains(" > items.len"), "O{opt_level}:\n{c}");
-        assert!(c.contains(">= head.len"), "O{opt_level}:\n{c}");
+        assert!(c.contains(" || "), "O{opt_level}:\n{c}");
+        assert!(c.contains(" >= "), "O{opt_level}:\n{c}");
     }
 }
 

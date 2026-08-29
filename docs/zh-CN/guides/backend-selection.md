@@ -19,7 +19,8 @@ deprecated alias，新脚本不应使用。
 | 需求 | 推荐命令 |
 | --- | --- |
 | Syntax/type validation | `ckc check input.ck` |
-| Compiler/debug inspection | `ckc emit-mir input.ck -O0..O3` |
+| Semantic compiler inspection | `ckc emit-mir input.ck` |
+| Optimizer/fact inspection | `ckc emit-kir input.ck -O0..O3 --print-facts` |
 | Portable native source/FFI | `ckc emit-c input.ck --out input.c` |
 | 运行 CK program | `ckc run input.ck` |
 | Standalone executable | `ckc build input.ck --kind executable --out app` |

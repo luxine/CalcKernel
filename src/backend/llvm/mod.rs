@@ -19,7 +19,7 @@ mod kir_lower;
 #[cfg(feature = "native-toolchain")]
 mod layout;
 #[cfg(feature = "native-toolchain")]
-mod lower;
+mod lower_shared;
 #[cfg(feature = "native-toolchain")]
 mod module;
 #[cfg(feature = "native-toolchain")]
@@ -51,11 +51,6 @@ pub use ffi::{
 pub use jit::{NativeJit, NativeJitMemoryAudit, OrcObjectLayer};
 #[cfg(feature = "native-toolchain")]
 pub use kir_lower::lower_native_kir_module;
-#[cfg(feature = "native-toolchain")]
-pub use lower::{
-    NativeLoweringOptions, lower_native_executable_module_with_options, lower_native_llvm_module,
-    lower_native_llvm_module_with_options,
-};
 #[cfg(feature = "native-toolchain")]
 pub use module::NativeModule;
 pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices};

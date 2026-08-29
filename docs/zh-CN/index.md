@@ -1,8 +1,8 @@
-# CalcKernel 0.10.0 文档
+# CalcKernel 0.11.0 文档
 
 [English](../index.md)
 
-这些文档描述当前 0.10.0 产品契约。设计和实施历史由 Git history 保留，不在 release tree 中
+这些文档描述当前 0.11.0 产品契约。设计和实施历史由 Git history 保留，不在 release tree 中
 保留 planning document。
 
 ## 语言与命令
@@ -10,7 +10,7 @@
 - [语言](reference/language.md) — source type、control flow、entry、print 与 memory boundary。
 - [Diagnostic](reference/diagnostics.md) — stable frontend diagnostic identifier。
 - [CLI](reference/cli.md) — command、default、artifact、cache 与 failure。
-- [MIR](reference/mir.md) — textual MIR 与 semantic preservation boundary。
+- [MIR 与 KIR](reference/mir.md) — stable semantic MIR boundary 与 internal verified KIR。
 
 ## ABI
 
@@ -30,7 +30,7 @@
 
 ## Project
 
-- [兼容性](project/compatibility.md) — `0.10.x` 的规范性权威。
+- [兼容性](project/compatibility.md) — `0.11.x` 与 0.10 migration 的规范性权威。
 - [Release](project/release.md) 与 [checklist](project/release-checklist.md)
 - [约定](project/conventions.md)
 - [Roadmap](project/roadmap.md) — 非规范的未来可能性。

@@ -1,12 +1,13 @@
 use std::{fs, path::Path, process::Command};
 
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer,
-    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
-    NativeOptimizationLevel, NativeTarget, OverflowMode, SourceFile, build_kir_module, check,
-    emit_c_module, link_native_dynamic_library, lower_native_kir_module, lower_to_mir,
-    run_kir_pass_pipeline,
+    EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+    KirOverflowMode, KirSanitizerMode, NativeContext, NativeOptimizationLevel, NativeTarget,
+    SourceFile, build_kir_module, check, emit_c_kir_module_with_contracts, import_contract_facts,
+    link_native_dynamic_library, lower_native_kir_module, lower_to_mir, run_kir_pass_pipeline,
 };
+
+use crate::generated::{GeneratedKernelCase, fixed_seed_kernel_program};
 
 const SOURCE: &str = r#"
 struct Pair {
@@ -51,27 +52,35 @@ fn differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_throu
     fs::create_dir(&root).expect("create differential directory");
 
     for checked in [false, true] {
-        let overflow_mode = if checked {
-            OverflowMode::Checked
-        } else {
-            OverflowMode::Unchecked
-        };
-        let bounds_mode = if checked {
-            BoundsMode::Checked
-        } else {
-            BoundsMode::Unchecked
-        };
         let checked_program = check(&SourceFile::new("differential.ck", SOURCE));
         assert_eq!(checked_program.diagnostics, []);
         let mir = lower_to_mir(&checked_program.checked_program).expect("lower differential MIR");
-        let c_source = emit_c_module(
+        let c_kir = build_kir_module(
             &mir,
-            EmitCOptions {
-                overflow_mode,
-                bounds_mode,
-                opt_level: 3,
+            KirBuildConfig {
+                consumer: KirConsumer::C,
+                overflow_mode: if checked {
+                    KirOverflowMode::Checked
+                } else {
+                    KirOverflowMode::Unchecked
+                },
+                bounds_mode: if checked {
+                    KirBoundsMode::Checked
+                } else {
+                    KirBoundsMode::Unchecked
+                },
+                sanitizer_mode: KirSanitizerMode::Disabled,
             },
-        );
+        )
+        .expect("build C oracle KIR");
+        let c_contracts = import_contract_facts(&c_kir, &checked_program.checked_program, 0)
+            .expect("import C oracle facts");
+        let c_result = run_kir_pass_pipeline(c_kir, KirOptimizationLevel::O3, Some(&c_contracts));
+        let c_source = emit_c_kir_module_with_contracts(
+            c_result.artifact.as_ref().expect("verified C oracle KIR"),
+            c_result.contract_facts.as_ref(),
+        )
+        .expect("emit C oracle source");
         let suffix = if checked { "checked" } else { "unchecked" };
         let c_path = root.join(format!("oracle-{suffix}.c"));
         let oracle_path = root.join(format!("oracle-{suffix}{}", dynamic_suffix()));
@@ -143,6 +152,160 @@ fn differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_throu
         }
     }
     fs::remove_dir_all(root).expect("remove differential directory");
+}
+
+#[test]
+fn generated_native_kernels_should_match_o0_at_o1_through_o3_in_every_supported_mode() {
+    let generated = fixed_seed_kernel_program();
+    let checked_program = check(&SourceFile::new(
+        "generated-differential.ck",
+        &generated.source,
+    ));
+    assert_eq!(checked_program.diagnostics, []);
+    let mir = lower_to_mir(&checked_program.checked_program).expect("lower generated MIR");
+    let root = std::env::temp_dir().join(format!(
+        "ckc-native-generated-differential-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir(&root).expect("create generated differential directory");
+
+    for (overflow, overflow_name) in [
+        (KirOverflowMode::Unchecked, "unchecked"),
+        (KirOverflowMode::Checked, "checked"),
+    ] {
+        for (bounds, bounds_name) in [
+            (KirBoundsMode::Unchecked, "unchecked"),
+            (KirBoundsMode::Checked, "checked"),
+        ] {
+            let checked_abi =
+                overflow == KirOverflowMode::Checked || bounds == KirBoundsMode::Checked;
+            let mut o0_observations = None;
+            for (kir_level, native_level, level_name) in [
+                (KirOptimizationLevel::O0, NativeOptimizationLevel::O0, "o0"),
+                (KirOptimizationLevel::O1, NativeOptimizationLevel::O1, "o1"),
+                (KirOptimizationLevel::O2, NativeOptimizationLevel::O2, "o2"),
+                (KirOptimizationLevel::O3, NativeOptimizationLevel::O3, "o3"),
+            ] {
+                let kir = build_kir_module(
+                    &mir,
+                    KirBuildConfig {
+                        consumer: KirConsumer::NativeLibrary,
+                        overflow_mode: overflow,
+                        bounds_mode: bounds,
+                        sanitizer_mode: KirSanitizerMode::Disabled,
+                    },
+                )
+                .expect("build generated native KIR");
+                let contracts = import_contract_facts(&kir, &checked_program.checked_program, 0)
+                    .expect("import generated contract facts");
+                let result = run_kir_pass_pipeline(kir, kir_level, Some(&contracts));
+                assert!(
+                    result.errors.is_empty(),
+                    "{overflow:?}/{bounds:?}/{kir_level:?}: {:?}",
+                    result.errors
+                );
+                let context = NativeContext::new().expect("native context");
+                let target = NativeTarget::host().expect("native target");
+                let optimized = lower_native_kir_module(
+                    &context,
+                    &target,
+                    &result,
+                    &EmitLlvmOptions::default(),
+                )
+                .expect("lower generated native KIR")
+                .verify()
+                .expect("verify generated native module")
+                .audit()
+                .expect("audit generated native facts")
+                .optimize(&target, native_level)
+                .expect("optimize generated native module");
+                let object = target
+                    .emit_object(optimized)
+                    .expect("emit generated native object");
+                let exports = generated
+                    .cases
+                    .iter()
+                    .map(|case| case.function.clone())
+                    .collect::<Vec<_>>();
+                let library = link_native_dynamic_library(&object, &exports)
+                    .expect("link generated native library");
+                let path = root.join(format!(
+                    "generated-{}-{}-{level_name}{}",
+                    overflow_name,
+                    bounds_name,
+                    dynamic_suffix()
+                ));
+                fs::write(&path, library.as_bytes()).expect("write generated native library");
+                let library = DynamicLibrary::open(&path);
+                let observations =
+                    unsafe { observe_generated(&library, &generated.cases, checked_abi) };
+                assert_eq!(
+                    observations,
+                    generated
+                        .cases
+                        .iter()
+                        .map(|case| case.expected)
+                        .collect::<Vec<_>>(),
+                    "{overflow:?}/{bounds:?}/{kir_level:?}"
+                );
+                if let Some(o0) = &o0_observations {
+                    assert_eq!(
+                        &observations, o0,
+                        "{overflow:?}/{bounds:?}: {level_name} diverged from O0"
+                    );
+                } else {
+                    o0_observations = Some(observations);
+                }
+            }
+        }
+    }
+
+    fs::remove_dir_all(root).expect("remove generated differential directory");
+}
+
+unsafe fn observe_generated(
+    library: &DynamicLibrary,
+    cases: &[GeneratedKernelCase],
+    checked_abi: bool,
+) -> Vec<i32> {
+    type Unchecked = unsafe extern "C" fn(*mut i32, u32, u32, i32) -> i32;
+    type Checked = unsafe extern "C" fn(*mut i32, u32, u32, i32, *mut i32) -> i32;
+    cases
+        .iter()
+        .map(|case| {
+            let mut values = case.values;
+            assert!(case.len <= values.len() as u32);
+            if checked_abi {
+                let function: Checked = unsafe { library.symbol(&case.function) };
+                let mut result = 0;
+                assert_eq!(
+                    unsafe {
+                        function(
+                            values.as_mut_ptr(),
+                            values.len() as u32,
+                            case.len,
+                            case.bias,
+                            &mut result,
+                        )
+                    },
+                    0,
+                    "generated contract-domain call must succeed"
+                );
+                result
+            } else {
+                let function: Unchecked = unsafe { library.symbol(&case.function) };
+                unsafe {
+                    function(
+                        values.as_mut_ptr(),
+                        values.len() as u32,
+                        case.len,
+                        case.bias,
+                    )
+                }
+            }
+        })
+        .collect()
 }
 
 fn compile_oracle_library(clang: &Path, source: &Path, output: &Path) {

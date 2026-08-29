@@ -2,12 +2,11 @@ use std::{fs, process::Command};
 
 use calckernel::{
     EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
-    KirOverflowMode, KirSanitizerMode, MirPassBoundsMode, MirPassOverflowMode,
-    MirPassTargetBackend, SourceFile, build_kir_module, check, emit_wasm_kir_module,
-    emit_wasm_module_with_options, emit_wat_kir_module, lower_to_mir, run_kir_pass_pipeline,
+    KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module, check, emit_wasm_kir_module,
+    emit_wat_kir_module, import_contract_facts, lower_to_mir, run_kir_pass_pipeline,
 };
 
-use crate::support::compiler::optimized_module;
+use crate::generated::fixed_seed_kernel_program;
 use crate::support::temp::temp_dir;
 
 fn optimized_kir(source: &str, level: KirOptimizationLevel) -> calckernel::KirModule {
@@ -24,7 +23,13 @@ fn optimized_kir(source: &str, level: KirOptimizationLevel) -> calckernel::KirMo
         },
     )
     .expect("KIR");
-    let result = run_kir_pass_pipeline(kir, level, None);
+    let contracts = checked
+        .checked_program
+        .functions
+        .iter()
+        .any(|function| function.is_unsafe)
+        .then(|| import_contract_facts(&kir, &checked.checked_program, 0).expect("contract facts"));
+    let result = run_kir_pass_pipeline(kir, level, contracts.as_ref());
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     result.artifact.expect("artifact")
 }
@@ -98,7 +103,7 @@ fn kir_wasm_backend_should_reject_checked_kir_without_inventing_an_abi() {
 }
 
 #[test]
-fn kir_wasm_o0_through_o3_should_match_legacy_supported_mode_matrix() {
+fn kir_wasm_o0_through_o3_should_cover_supported_mode_matrix() {
     const SOURCE: &str = r#"
         struct Pair { x: i32; y: i32; }
         export fn scalar(a: i32, b: i32) -> i32 { return a * 3 + b; }
@@ -137,18 +142,49 @@ fn kir_wasm_o0_through_o3_should_match_legacy_supported_mode_matrix() {
         let kir_wasm = emit_wasm_kir_module(&kir, EmitWasmOptions { opt_level: level })
             .expect("KIR WASM matrix");
         run_wasm(&kir_wasm, runner_source);
+    }
+}
 
-        let legacy = optimized_module(
-            SOURCE,
-            level,
-            MirPassOverflowMode::Unchecked,
-            MirPassBoundsMode::Unchecked,
-            MirPassTargetBackend::Wasm,
-        );
-        let legacy_wasm =
-            emit_wasm_module_with_options(&legacy, EmitWasmOptions { opt_level: level })
-                .expect("legacy WASM matrix");
-        run_wasm(&legacy_wasm, runner_source);
+#[test]
+fn generated_wasm_kernels_should_match_o0_at_o1_through_o3_in_supported_mode() {
+    let generated = fixed_seed_kernel_program();
+    let mut runner = String::from(
+        r#"
+        import fs from "node:fs";
+        const bytes = fs.readFileSync(process.argv[2]);
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        const api = instance.exports;
+        const memory = new Int32Array(api.memory.buffer);
+"#,
+    );
+    for (index, case) in generated.cases.iter().enumerate() {
+        let pointer = 256 + index * 64;
+        let values = case
+            .values
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        runner.push_str(&format!(
+            "memory.set([{values}], {pointer} / 4);\nif (api.{}({pointer}, 8, {}, {}) !== {}) process.exit({});\n",
+            case.function,
+            case.len,
+            case.bias,
+            case.expected,
+            index + 1,
+        ));
+    }
+
+    for (level, kir_level) in [
+        (0, KirOptimizationLevel::O0),
+        (1, KirOptimizationLevel::O1),
+        (2, KirOptimizationLevel::O2),
+        (3, KirOptimizationLevel::O3),
+    ] {
+        let kir = optimized_kir(&generated.source, kir_level);
+        let wasm = emit_wasm_kir_module(&kir, EmitWasmOptions { opt_level: level })
+            .expect("generated KIR WASM");
+        run_wasm(&wasm, &runner);
     }
 }
 

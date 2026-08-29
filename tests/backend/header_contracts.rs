@@ -1,13 +1,13 @@
 use calckernel::{
-    BoundsMode, EmitCOptions, NativeHeaderMode, OverflowMode, SourceFile,
-    annotate_unsafe_contracts, check, emit_native_header, lower_to_mir,
+    BoundsMode, KirConsumer, NativeHeaderMode, OverflowMode, SourceFile, annotate_unsafe_contracts,
+    check, emit_native_header,
 };
+
+use super::support::compiler::{optimized_module, verified_artifact};
 
 #[test]
 fn header_unsafe_contract_comments_should_normalize_flattened_slice_fields_without_abi_drift() {
-    let checked = check(&SourceFile::new(
-        "header.ck",
-        r#"
+    let source_text = r#"
         export unsafe fn kernel(x: slice<i32>, y: slice<i32>, n: u32) -> void
         contract {
           requires n + 2 <= x.len;
@@ -17,19 +17,17 @@ fn header_unsafe_contract_comments_should_normalize_flattened_slice_fields_witho
           effects read(x), write(y);
         }
         { return; }
-        "#,
-    ));
+        "#;
+    let checked = check(&SourceFile::new("header.ck", source_text));
     assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower header MIR");
-    let plain = emit_native_header(
-        &mir,
-        EmitCOptions {
-            overflow_mode: OverflowMode::Unchecked,
-            bounds_mode: BoundsMode::Unchecked,
-            opt_level: 3,
-        },
-        NativeHeaderMode::StaticOrObject,
+    let kir = optimized_module(
+        source_text,
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
     );
+    let plain = emit_native_header(verified_artifact(&kir), NativeHeaderMode::StaticOrObject);
     let annotated = annotate_unsafe_contracts(&plain, &checked.checked_program);
 
     for line in [

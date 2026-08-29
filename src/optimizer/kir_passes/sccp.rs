@@ -1,15 +1,34 @@
 use crate::KirModule;
 
-use super::super::{ScalarAnalysisConfig, analyze_scalar_function};
+use super::super::{ScalarAnalysisConfig, ScalarAnalysisResult, analyze_scalar_function};
 
-/// O1 SCCP/range is analysis-only: rewrites consume its checked conclusions later.
-pub(crate) fn run_sccp_range(module: &mut KirModule) -> bool {
-    for function in &module.functions {
-        if analyze_scalar_function(function, ScalarAnalysisConfig::default()).is_err() {
-            // The bounded analysis has a conservative fallback; a malformed KIR is rejected by
-            // the mandatory verifier surrounding this pass.
-            return false;
-        }
+/// Complete scalar results owned by one exact KIR state. The pass manager may
+/// preserve this cache only across transformations whose contract keeps the
+/// CFG, SSA identities, transfer operations, and edge predicates unchanged.
+pub(crate) struct ScalarAnalysisCache {
+    analyses: Vec<ScalarAnalysisResult>,
+}
+
+impl ScalarAnalysisCache {
+    pub(crate) fn covers(&self, module: &KirModule) -> bool {
+        self.analyses.len() == module.functions.len()
+            && self
+                .analyses
+                .iter()
+                .zip(&module.functions)
+                .all(|(analysis, function)| analysis.function() == function.id)
     }
-    false
+}
+
+/// Runs O1 SCCP/range analysis without rewriting KIR. A domain error keeps the
+/// pass conservative and prevents cache reuse; malformed KIR is rejected by
+/// the mandatory verifier surrounding this named pass.
+pub(crate) fn run_sccp_range(module: &KirModule) -> Option<ScalarAnalysisCache> {
+    let analyses = module
+        .functions
+        .iter()
+        .map(|function| analyze_scalar_function(function, ScalarAnalysisConfig::default()))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    Some(ScalarAnalysisCache { analyses })
 }

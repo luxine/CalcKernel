@@ -1,4 +1,4 @@
-# CalcKernel 0.10 Checked C and Native Modes
+# CalcKernel 0.11 Checked C and Native Modes
 
 [简体中文](../zh-CN/abi/modes.md)
 
@@ -37,6 +37,13 @@ diagnostic to stderr and exits 240 through 243. Output failure is 244 and
 abnormal child termination is 245. Libraries return `CK_Status` and do not
 print or translate it to a process exit code.
 
+`--sanitize-contracts` is a separate opt-in Native run/executable debugging
+mode. It checks each unsafe function entry, including recursive entries, before
+the body executes. Failure prints exactly `CKR0007: unsafe contract violation`
+plus LF and exits 246. Ordinary O0–O3 compilation inserts no contract checks;
+sanitization does not make a false trusted precondition defined. Sanitized
+libraries use a private test-only path and are not a public ABI variant.
+
 The stable runtime diagnostics are ASCII/UTF-8 and end in exactly one LF byte:
 
 | ID | Exact message before LF | Process status |
@@ -47,8 +54,9 @@ The stable runtime diagnostics are ASCII/UTF-8 and end in exactly one LF byte:
 | `CKR0004` | `CKR0004: slice index or sub-slice out of bounds` | 243 |
 | `CKR0005` | `CKR0005: standard output write failed` | 244 |
 | `CKR0006` | `CKR0006: native child terminated abnormally` | 245 |
+| `CKR0007` | `CKR0007: unsafe contract violation` | 246 |
 
-Statuses 240–245 are reserved. `CKR0005` is attempted on stderr after stdout
+Statuses 240–246 are reserved. `CKR0005` is attempted on stderr after stdout
 fails, and failure of that write does not change 244. Only the `ckc run` parent
 emits `CKR0006`; a standalone executable retains host signal/exception behavior.
 

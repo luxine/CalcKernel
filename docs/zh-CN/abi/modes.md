@@ -1,4 +1,4 @@
-# CalcKernel 0.10 C 与 Native Checked Mode
+# CalcKernel 0.11 C 与 Native Checked Mode
 
 [English](../../abi/modes.md)
 
@@ -30,6 +30,11 @@ Native `run`/executable entry wrapper 提供有效 result pointer。Status failu
 diagnostic 并退出 240–243，output failure 为 244，abnormal child termination 为 245。Library
 返回 `CK_Status`，不会打印或翻译为 process exit。
 
+`--sanitize-contracts` 是独立 opt-in Native run/executable debug mode，在 body 执行前检查
+每个 unsafe function entry（包括 recursive entry）。失败精确输出
+`CKR0007: unsafe contract violation` 加 LF 并退出 246。普通 O0–O3 不插入 contract check，
+sanitizer 也不会把 false trusted precondition 变成 defined execution。
+
 稳定 runtime diagnostic 使用 ASCII/UTF-8，并以精确一个 LF byte 结束：
 
 | ID | LF 前的精确 message | Process status |
@@ -40,8 +45,9 @@ diagnostic 并退出 240–243，output failure 为 244，abnormal child termina
 | `CKR0004` | `CKR0004: slice index or sub-slice out of bounds` | 243 |
 | `CKR0005` | `CKR0005: standard output write failed` | 244 |
 | `CKR0006` | `CKR0006: native child terminated abnormally` | 245 |
+| `CKR0007` | `CKR0007: unsafe contract violation` | 246 |
 
-240–245 为 reserved。Stdout 失败后会尝试把 `CKR0005` 写入 stderr，该写入再失败也不改变
+240–246 为 reserved。Stdout 失败后会尝试把 `CKR0005` 写入 stderr，该写入再失败也不改变
 244。只有 `ckc run` parent 输出 `CKR0006`；standalone executable 保留 host signal/exception
 behavior。
 

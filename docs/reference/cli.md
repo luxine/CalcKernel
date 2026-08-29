@@ -1,4 +1,4 @@
-# `ckc` 0.10 CLI Reference
+# `ckc` 0.11 CLI Reference
 
 [简体中文](../zh-CN/reference/cli.md)
 
@@ -13,6 +13,7 @@ requested textual output use stdout unless stated otherwise.
 | --- | --- |
 | `ckc check <file>` | Parse and type-check; no artifact. |
 | `ckc emit-mir <file>` | Deterministic MIR on stdout or in `--out`. |
+| `ckc emit-kir <file>` | Deterministic verified internal KIR on stdout or in `--out`. |
 | `ckc emit-c <file> --out <file.c>` | C source and sibling or explicit header; source-only. |
 | `ckc emit-wat <file>` / `emit-wasm` | Textual or binary WebAssembly. |
 | `ckc emit-llvm <file>` | Verified textual LLVM IR for the host triple. |
@@ -41,14 +42,18 @@ no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
 - `--out <file>` and `-o <file>` select output; `--header` selects a C header.
 - `--overflow unchecked|checked` and `--bounds unchecked|checked` default to
   unchecked.
-- `--opt-level 0|1|2|3` and `-O0` through `-O3` select one MIR/LLVM level.
+- `--opt-level 0|1|2|3` and `-O0` through `-O3` select one KIR/LLVM level.
   `run`, `build`, and `build-llvm` default to O3; inspection commands to O0.
 - `--cpu baseline|native` applies to `build`; baseline is the portable default.
   `run` uses the host CPU.
 - `--target <host-triple>` is accepted by Native inspection/build commands only
   when it normalizes to the detected host triple; cross-compilation is rejected.
 - `--no-cache` makes `run` bypass persistent cache reads and writes.
-- MIR pass-printing flags write diagnostics to stderr.
+- `--print-facts`, `--print-effect-summaries`, and `--explain-optimization`
+  write deterministic verified KIR evidence to stderr on inspection-capable commands.
+- `--sanitize-contracts` is accepted only by `run` and
+  `build --kind executable`. It inserts Native debugging checks at every unsafe
+  function entry and reports `CKR0007`; it is never an ordinary optimization mode.
 
 `CKC_LLVM_PREFIX` selects the pinned developer LLVM installation when building
 `ckc` from source. It is a compiler build-time input, not a runtime dependency
@@ -62,7 +67,8 @@ of a release binary.
 | Native dynamic/static/object | accepted | accepted | rejected from exports |
 | C `emit-c` | accepted | accepted | rejected from exports |
 | WASM | rejected | rejected | rejected from exports |
-| `check` / `emit-mir` | recorded, backend-independent | recorded | accepted source model |
+| `check` / `emit-mir` | semantic MIR is mode-neutral | semantic MIR is mode-neutral | accepted source model |
+| `emit-kir` | selected before KIR construction | selected before KIR construction | inspection roots include exports and `main` |
 
 Unsupported combinations are rejected before artifact creation. `emit-llvm`
 uses Native lowering, accepts all four checked combinations, and is an
@@ -78,6 +84,10 @@ unsafe ownership/permissions, a symlink replacement, or an unparseable object
 is a miss, never executable input. The same-user cache remains inside the
 user's trust boundary and is not a security sandbox.
 
+CalcKernel 0.11 uses a KIR v1 code-generation/cache identity. Contract
+sanitization, consumer roots, and mode-specific KIR are part of the key; 0.10
+objects cannot be reused under the 0.11 compiler.
+
 Roots are `$XDG_CACHE_HOME/ckc` or `$HOME/.cache/ckc` on Linux,
 `$HOME/Library/Caches/ckc` on macOS, and
 `%LOCALAPPDATA%\CalcKernel\cache` on Windows. A missing required base disables
@@ -85,4 +95,5 @@ cache for the run. Writes use owner-only same-filesystem staging and atomic
 rename; the default soft limit is 1 GiB with best-effort LRU eviction.
 
 Native checked failures use statuses 240–243; stdout failure uses 244; abnormal
-child termination maps to 245. See [Checked modes](../abi/modes.md).
+child termination maps to 245; contract sanitizer failure uses 246 and exact
+diagnostic `CKR0007: unsafe contract violation`. See [Checked modes](../abi/modes.md).

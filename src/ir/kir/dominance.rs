@@ -25,53 +25,53 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
             sets: BTreeMap::new(),
         };
     };
-    let all = function
+    let ids = function
         .blocks
         .iter()
         .map(|block| block.id)
-        .collect::<BTreeSet<_>>();
-    let mut predecessors = function
-        .blocks
+        .collect::<Vec<_>>();
+    let indices = ids
         .iter()
-        .map(|block| (block.id, BTreeSet::new()))
+        .enumerate()
+        .map(|(index, id)| (*id, index))
         .collect::<BTreeMap<_, _>>();
-    for block in &function.blocks {
+    let entry_index = indices[&entry];
+    let mut predecessors = vec![Vec::new(); ids.len()];
+    for (source, block) in function.blocks.iter().enumerate() {
         for successor in terminator_successors(&block.terminator) {
-            if let Some(incoming) = predecessors.get_mut(&successor) {
-                incoming.insert(block.id);
+            if let Some(target) = indices.get(&successor) {
+                predecessors[*target].push(source);
             }
         }
     }
-    let mut sets = BTreeMap::new();
-    for block in &function.blocks {
-        sets.insert(
-            block.id,
-            if block.id == entry {
-                BTreeSet::from([entry])
-            } else if predecessors.get(&block.id).is_none_or(BTreeSet::is_empty) {
-                BTreeSet::from([block.id])
-            } else {
-                all.clone()
-            },
-        );
+    let mut bits = vec![vec![true; ids.len()]; ids.len()];
+    for index in 0..ids.len() {
+        if index == entry_index || predecessors[index].is_empty() {
+            bits[index].fill(false);
+            bits[index][index] = true;
+        }
     }
     loop {
         let mut changed = false;
-        for block in function.blocks.iter().filter(|block| block.id != entry) {
-            let incoming = predecessors.get(&block.id);
-            let mut next = if incoming.is_none_or(BTreeSet::is_empty) {
-                BTreeSet::new()
+        for index in 0..ids.len() {
+            if index == entry_index {
+                continue;
+            }
+            let mut next = if let Some(first) = predecessors[index].first() {
+                bits[*first].clone()
             } else {
-                incoming
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|predecessor| sets.get(predecessor).cloned())
-                    .reduce(|left, right| left.intersection(&right).copied().collect())
-                    .unwrap_or_default()
+                vec![false; ids.len()]
             };
-            next.insert(block.id);
-            if sets.get(&block.id) != Some(&next) {
-                sets.insert(block.id, next);
+            for predecessor in predecessors[index].iter().skip(1) {
+                for (candidate, dominates_predecessor) in
+                    next.iter_mut().zip(bits[*predecessor].iter())
+                {
+                    *candidate &= *dominates_predecessor;
+                }
+            }
+            next[index] = true;
+            if bits[index] != next {
+                bits[index] = next;
                 changed = true;
             }
         }
@@ -79,6 +79,18 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
             break;
         }
     }
+    let sets = ids
+        .iter()
+        .enumerate()
+        .map(|(block, id)| {
+            let dominators = bits[block]
+                .iter()
+                .enumerate()
+                .filter_map(|(candidate, present)| present.then_some(ids[candidate]))
+                .collect();
+            (*id, dominators)
+        })
+        .collect();
     KirDominators {
         entry: Some(entry),
         sets,

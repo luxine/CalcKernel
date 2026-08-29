@@ -32,6 +32,7 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
 
     for required in [
         "name: CI",
+        "workflow_dispatch:",
         "pull_request:\n    branches: [main]",
         "push:\n    branches: [main]",
         "contents: read",
@@ -90,6 +91,9 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
         "native-hosts:",
         "name: native host (${{ matrix.target }})",
         "cargo test --all-features --locked --test native",
+        "cargo test --all-features --locked --test native fact_audit_ -- --nocapture",
+        "fact-audit-${{ matrix.name }}",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
         "cargo test --all-features --locked --test cli",
         "darwin-arm64",
         "darwin-x64",
@@ -102,8 +106,8 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
         "arch: x86-64",
         "arch: AArch64",
         "profile: oracle",
+        "--case proof",
         "--cpu baseline",
-        "--cpu native",
         "scripts/check-native-performance.py",
     ] {
         assert!(

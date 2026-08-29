@@ -1,8 +1,8 @@
-# CalcKernel 0.10 Native LLVM 与 C ABI
+# CalcKernel 0.11 Native LLVM 与 C ABI
 
 [English](../../abi/llvm.md)
 
-CalcKernel 0.10 固定 LLVM 22.1.8。Native MIR 经 checked C++ bridge 结构化 lowering，在
+CalcKernel 0.11 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
 optimization 前后验证，由 host TargetMachine 生成 object bytes，并在进程内用 LLD 链接。
 `emit-llvm` 输出该 verified module 供 inspection。
 
@@ -13,6 +13,12 @@ ARMv8-A 加 ABI-mandated FP/Advanced SIMD。`--cpu native` 仅为 build opt-in�
 Release binary 内含所需 host code generator、LLD driver 与 ORC layer，运行时不依赖 LLVM、
 LLD、Clang 或 non-system C++ runtime。`CKC_LLVM_PREFIX` 只用于从源码构建 compiler。
 
+Native 只接受 verified KIR artifact。Pre-LLVM fact audit 检查每个 attribute/metadata
+candidate 的 origin、dominance、contract-instance scope、alias completeness、alignment、
+range、effect 与 proof dependency；失败发生在 bridge invocation 前。合法 fact 才可映射到
+LLVM `noalias`、`readonly`/`writeonly`、alignment、range、alias-scope、loop/vectorization
+information，bridge 不会自行加强 fact。
+
 CK integer 映射为同宽 LLVM integer，`f64` 为 `double`，bool 为 `i1`，pointer 为 opaque
 `ptr`，struct 保持 field 顺序，void return 为 LLVM `void`。Natural void function 使用
 `define void`，targetless call 使用 `call void`，完成时使用 `ret void`。Stored `slice<T>` 为
@@ -20,6 +26,10 @@ CK integer 映射为同宽 LLVM integer，`f64` 为 `double`，bool 为 `i1`，p
 不使用 trap。这些是
 compiler internal form，不是 public library ABI；0.9 的独立 textual LLVM export-shape promise
 已退出。
+
+0.11 的 public Native C ABI 保持 version 1；private LLVM bridge ABI 与 contract-aware
+runtime ABI 为 version 2，native cache/codegen identity 使用 KIR v1。这会使 incompatible
+0.10 object 失效，但不改变 foreign-call signature。
 
 Native object/static/dynamic 通过 generated header 暴露唯一 Native C ABI。每个 public source
 function 由 export thunk 包装 internal natural function；thunk 实现 target ABI classification、
@@ -45,4 +55,4 @@ runtime 使用 kernel boundary；Windows 使用 embedded stable process import �
 `ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
 x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定
 RuntimeDyld compatibility path。两者都 eager resolve symbol，并在调用 `main` 前完成 RW-to-RX。
-0.10 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。
+0.11 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。

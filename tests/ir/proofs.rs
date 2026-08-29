@@ -179,7 +179,7 @@ fn proof_checker_should_accept_closed_constant_and_binary_certificate_determinis
 }
 
 #[test]
-fn proof_checker_should_reject_a_fake_producer_instead_of_trusting_its_range() {
+fn mutation_fake_producer_and_proof_id_should_be_rejected() {
     let (_, kir) = build("export fn answer() -> i32 { return 7; }");
     let function = &kir.functions[0];
     let block = &function.blocks[0];
@@ -216,7 +216,7 @@ fn proof_checker_should_reject_a_fake_producer_instead_of_trusting_its_range() {
 }
 
 #[test]
-fn proof_checker_should_reject_stale_fact_origin_and_wrong_contract_instance_mutations() {
+fn mutation_stale_fact_origin_and_wrong_contract_instance_should_be_rejected() {
     let (checked, kir) = build(
         r#"
         export unsafe fn bounded(n: u32) -> u32
@@ -337,7 +337,7 @@ fn proof_checker_should_reject_invalid_loop_invariant_and_budget_identity() {
 }
 
 #[test]
-fn proof_checker_should_reject_a_fact_that_does_not_dominate_its_use() {
+fn mutation_non_dominating_fact_should_be_rejected() {
     let (_, kir) = build(
         r#"
         export fn choose(flag: bool) -> i32 {

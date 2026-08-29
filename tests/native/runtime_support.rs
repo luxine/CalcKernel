@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf, process::Command};
 
+use super::support::compiler::optimized_module;
 use calckernel::{
-    BoundsMode, EmitLlvmOptions, NativeContext, NativeLoweringOptions, NativeOptimizationLevel,
-    NativeTarget, OverflowMode, SourceFile, check, link_native_executable,
-    lower_native_executable_module_with_options, lower_to_mir,
+    BoundsMode, EmitLlvmOptions, KirConsumer, NativeContext, NativeOptimizationLevel, NativeTarget,
+    OverflowMode, link_native_executable, lower_native_kir_module,
 };
 
 pub(super) fn executable_object(
@@ -11,28 +11,23 @@ pub(super) fn executable_object(
     overflow_mode: OverflowMode,
     bounds_mode: BoundsMode,
 ) -> calckernel::NativeObject {
-    let checked = check(&SourceFile::new("runtime.ck", source));
-    assert_eq!(checked.diagnostics, [], "{:#?}", checked.diagnostics);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower runtime MIR");
+    let kir = optimized_module(
+        source,
+        3,
+        KirConsumer::NativeExecutable,
+        overflow_mode,
+        bounds_mode,
+    );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("native target");
-    let module = lower_native_executable_module_with_options(
-        &context,
-        &target,
-        &mir,
-        &NativeLoweringOptions {
-            emit: EmitLlvmOptions::default(),
-            overflow_mode,
-            bounds_mode,
-        },
-    )
-    .expect("lower executable module")
-    .verify()
-    .expect("verify executable module")
-    .audit()
-    .expect("audit executable module facts")
-    .optimize(&target, NativeOptimizationLevel::O3)
-    .expect("optimize executable module");
+    let module = lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
+        .expect("lower executable module")
+        .verify()
+        .expect("verify executable module")
+        .audit()
+        .expect("audit executable module facts")
+        .optimize(&target, NativeOptimizationLevel::O3)
+        .expect("optimize executable module");
     target.emit_object(module).expect("emit executable object")
 }
 

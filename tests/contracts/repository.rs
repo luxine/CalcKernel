@@ -10,11 +10,7 @@ fn read(path: &str) -> String {
 }
 
 #[test]
-fn repository_should_declare_v0_10_everywhere() {
-    let cargo = read("Cargo.toml");
-    let lock = read("Cargo.lock");
-    assert!(cargo.contains("version = \"0.10.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.10.0\""));
+fn repository_should_preserve_v0_10_as_compatibility_history() {
     for path in [
         "README.md",
         "README.zh-CN.md",
@@ -22,6 +18,93 @@ fn repository_should_declare_v0_10_everywhere() {
         "CHANGELOG.zh-CN.md",
     ] {
         assert!(read(path).contains("0.10.0"), "{path} must name 0.10.0");
+    }
+}
+
+#[test]
+fn repository_should_declare_v0_11_everywhere() {
+    let cargo = read("Cargo.toml");
+    let lock = read("Cargo.lock");
+    assert!(cargo.contains("version = \"0.11.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.11.0\""));
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "CHANGELOG.md",
+        "CHANGELOG.zh-CN.md",
+        "docs/index.md",
+        "docs/zh-CN/index.md",
+    ] {
+        assert!(read(path).contains("0.11.0"), "{path} must name 0.11.0");
+    }
+}
+
+#[test]
+fn repository_formal_consumers_should_not_depend_on_the_legacy_mir_optimizer() {
+    for path in ["src/cli/commands.rs", "benches/ckc_perf.rs"] {
+        let text = read(path);
+        for forbidden in [
+            "MirPass",
+            "build_mir_optimization_pipeline",
+            "run_mir_pass_pipeline",
+            "lower_native_llvm_module",
+            "emit_c_module(",
+            "emit_wasm_module_with_options(",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "formal consumer {path} retains legacy dependency {forbidden}"
+            );
+        }
+    }
+    let optimizer = read("src/optimizer/mod.rs");
+    assert!(!optimizer.contains("pub use pipeline::*"));
+    let backend = read("src/backend/mod.rs");
+    for forbidden in [
+        "emit_c_module,",
+        "emit_c_module_with_header",
+        "emit_wasm_module,",
+        "lower_native_llvm_module,",
+    ] {
+        assert!(
+            !backend.contains(forbidden),
+            "public backend surface retains legacy entry {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn v0_11_compatibility_manifest_should_cover_new_contracts_and_executable_evidence() {
+    let manifest = read("tests/fixtures/compatibility/v0_11/manifest.toml");
+    assert!(manifest.contains("release = \"0.11.0\""));
+    for id in [
+        "unsafe-contracts",
+        "kir-inspection",
+        "contract-sanitizer",
+        "native-fact-audit",
+        "v0-10-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.11 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.11 compatibility evidence does not resolve: {evidence}"
+            );
+        }
     }
 }
 

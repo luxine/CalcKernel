@@ -1,27 +1,31 @@
-# CalcKernel 0.10 Performance Guide
+# CalcKernel 0.11 Performance 指南
 
 [English](../../guides/performance.md)
 
-Native runtime contract 将 optimized CK 与同一 source 经 C emitter 后由固定 Clang 22.1.8
-oracle 编译的结果比较。两者使用 O3、strict floating-point、相同 target/CPU policy、checked
-mode、warm-up 与 measurement harness。
+Native runtime contract 同时比较固定 Clang 22.1.8 C oracle，以及精确 commit
+`df816502876fba41676f9ebc190e4fadd18cd5a5` 的 CalcKernel 0.10。所有运行使用 O3、
+strict floating-point、相同 target/CPU policy/mode、固定输入、warm-up、batch 与 statistic。
 
-所有接受 kernel 的 geometric mean 中，Native throughput 不低于 C oracle 的 95%；任何单个
-kernel 的 regression 不得超过 10%。Checked 与 unchecked suite 分别在受控 x86-64/AArch64
-worker 上，对 baseline/native CPU policy 独立报告并 gate。Gate 只比较 runtime；compile
-latency、cold/warm run、memory 与 artifact size 另行报告。
+Native/Clang geometric-mean throughput 至少 95%，单 case 回退不超过 10%；checked 与
+unchecked 在受控 x86-64/AArch64 worker 上分别验收。相对记录的 0.10 compiler，0.11 runtime
+geometric 回退最多 3%、单 case 最多 8%。Canonical proof-loop checked throughput 至少为
+unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite ratio 最多 2x、单 case
+最多 3x。
 
 ```sh
-cargo bench --bench ckc_perf --features native-toolchain
+cargo bench --bench ckc_perf
+cargo bench --features native-toolchain --bench ckc_perf -- \
+  --case proof --task check --cpu baseline
+python3 scripts/check-native-performance.py target/ckc-perf/results.json
 ```
 
-通用 summary 输出为 `build/perf/latest.summary.json` 与 `build/perf/latest.summary.md`；
-严格 Native comparison 输出为 `target/ckc-perf/results.json`。
+严格 report 是 `target/ckc-perf/results.json`；case manifest 位于
+`benches/cases/native-cases.tsv`，schema 位于 `benches/summary-schema.md`。
+General compiler-stage summary 仍写入 `build/perf/latest.summary.json` 与
+`build/perf/latest.summary.md`。
+`benches/baselines/v0_10_compiler.toml` 固定 0.10 commit/compiler/LLVM、target/CPU/mode、
+harness/statistics 与每个 source 的 SHA-256 `sourceDigests`。Identity 或 digest 不符必须失败。
 
-Case 位于 `benches/cases/native-cases.tsv`，source 位于 `benches/fixtures`，machine-readable
-contract 见 `benches/summary-schema.md`。Harness 使用 repeated sample/median、batch kernel，记录
-compiler/OS/architecture identity，并在计时前拒绝 semantic mismatch。
-
-Performance 不得改变 diagnostic、evaluation order、integer/strict float semantics、checked
-first-error order、runtime print order、MIR 或 ABI。Benchmark 或 threshold 变化按 contract
-change 审查。
+Performance 不允许改变 diagnostic、evaluation order、modular integer/strict floating
+semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated
+contract case 只能使用满足声明 domain 的输入；不能为通过候选版本而降低阈值。

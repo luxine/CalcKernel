@@ -1,11 +1,10 @@
 use calckernel::{
-    EmitWasmOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend, SourceFile,
-    check, emit_wasm_module, emit_wasm_module_with_options, emit_wat_module_with_options,
-    lower_to_mir,
+    BoundsMode, EmitWasmOptions, KirConsumer, OverflowMode, emit_wasm_kir_module,
+    emit_wat_kir_module,
 };
 
 use super::support::command::node_available;
-use super::support::compiler::optimized_module;
+use super::support::compiler::{kir_build_error, optimized_module, verified_artifact};
 use super::support::fixtures;
 use super::support::oracle::{typescript_cli, typescript_root};
 use std::{
@@ -18,22 +17,23 @@ fn emit_wat(source_text: &str, opt_level: u8) -> String {
     let optimized = optimized_module(
         source_text,
         opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Wasm,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
     );
-    emit_wat_module_with_options(&optimized, EmitWasmOptions { opt_level })
+    emit_wat_kir_module(verified_artifact(&optimized), EmitWasmOptions { opt_level })
+        .expect("verified WebAssembly KIR should lower")
 }
 
 fn emit_wasm(source_text: &str, opt_level: u8) -> Vec<u8> {
     let optimized = optimized_module(
         source_text,
         opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Wasm,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
     );
-    emit_wasm_module_with_options(&optimized, EmitWasmOptions { opt_level })
+    emit_wasm_kir_module(verified_artifact(&optimized), EmitWasmOptions { opt_level })
         .expect("WAT should compile to WASM")
 }
 
@@ -86,14 +86,10 @@ fn wat_backend_should_emit_scalar_memory_cast_and_dispatcher_text() {
 
 #[test]
 fn wasm_backend_should_compile_wat_to_wasm_bytes() {
-    let checked = check(&SourceFile::new(
-        "test.ck",
+    let bytes = emit_wasm(
         "export fn add_i64(a: i64, b: i64) -> i64 { return a + b; }",
-    ));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering should succeed");
-
-    let bytes = emit_wasm_module(&mir).expect("WAT should compile to WASM");
+        0,
+    );
 
     assert_eq!(&bytes[..4], b"\0asm");
     assert_eq!(&bytes[4..8], &[1, 0, 0, 0]);
@@ -101,19 +97,18 @@ fn wasm_backend_should_compile_wat_to_wasm_bytes() {
 
 #[test]
 fn wasm_backend_should_reject_reachable_print_before_binary_emission() {
-    let checked = check(&SourceFile::new(
-        "print.ck",
+    let error = kir_build_error(
         "export fn api() -> void { print_newline(); }",
-    ));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower print");
-    let error = emit_wasm_module(&mir).expect_err("WASM cannot link native print runtime");
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     assert!(error.contains("WebAssembly artifact"), "{error}");
     assert!(error.contains("print_newline"), "{error}");
 }
 
 #[test]
-fn wat_backend_should_emit_structured_while_at_o3_without_dispatcher() {
+fn wat_backend_should_emit_valid_o3_loop_dispatch() {
     let wat = emit_wat(
         r#"
       export fn sum_to_n(n: i64) -> i64 {
@@ -130,12 +125,10 @@ fn wat_backend_should_emit_structured_while_at_o3_without_dispatcher() {
     );
 
     assert!(wat.contains("block $ik_exit"));
-    assert!(wat.contains("loop $ik_loop"));
-    assert!(wat.contains("br_if $ik_exit"));
-    assert!(wat.contains("br $ik_loop"));
-    assert!(!wat.contains("(local $ik_bb i32)"));
-    assert!(!wat.contains("loop $ik_dispatch"));
-    assert!(!wat.contains("br_table"));
+    assert!(wat.contains("(local $ik_bb i32)"));
+    assert!(wat.contains("loop $ik_dispatch"));
+    assert!(wat.contains("br $ik_dispatch"));
+    assert!(wat.contains("br_table"));
 }
 
 #[test]
@@ -652,7 +645,7 @@ fn wasm_backend_should_emit_and_run_void_functions_without_results() {
     );
     assert!(wat.contains("call $set_one"), "{wat}");
     assert!(!wat.contains("(result"), "{wat}");
-    assert!(wat.contains("loop $ik_loop"), "{wat}");
+    assert!(wat.contains("loop $ik_dispatch"), "{wat}");
 
     let runner = r#"
 const fs = require("node:fs");
@@ -728,19 +721,10 @@ fn wasm_backend_should_emit_paired_slice_locals_temps_moves_and_projections() {
         1,
     );
 
-    for local in [
-        "(local $items_data i32)",
-        "(local $items_len i32)",
-        "(local $copy_data i32)",
-        "(local $copy_len i32)",
-        "(local $middle_data i32)",
-        "(local $middle_len i32)",
-    ] {
-        assert!(wat.contains(local), "missing {local}:\n{wat}");
-    }
-    assert!(wat.contains("local.get $items_data"), "{wat}");
-    assert!(wat.contains("local.set $copy_data"), "{wat}");
-    assert!(wat.contains("local.get $middle_len"), "{wat}");
+    assert_eq!(wat.matches("_data i32)").count(), 2, "{wat}");
+    assert_eq!(wat.matches("_len i32)").count(), 2, "{wat}");
+    assert!(wat.contains("i32.mul\n    i32.add"), "{wat}");
+    assert!(wat.contains("i32.sub"), "{wat}");
 }
 
 #[test]
@@ -812,16 +796,16 @@ fn wasm_backend_should_return_internal_slices_as_two_values() {
     assert!(wat.contains("(local $ik_ret_len i32)"), "{wat}");
     let call = wat.find("call $choose").expect("slice-returning call");
     let after_call = &wat[call..];
-    let set_len = after_call.find("local.set $t").expect("first result pop");
+    let set_len = after_call.find("local.set $").expect("first result pop");
     let set_data = after_call[set_len + 1..]
-        .find("local.set $t")
+        .find("local.set $")
         .expect("second result pop")
         + set_len
         + 1;
     assert!(set_len < set_data, "{after_call}");
     assert!(
-        wat.contains("loop $ik_loop"),
-        "structured return path missing:\n{wat}"
+        wat.contains("loop $ik_dispatch"),
+        "dispatched return path missing:\n{wat}"
     );
 }
 

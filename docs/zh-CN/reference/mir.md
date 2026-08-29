@@ -1,29 +1,26 @@
-# CalcKernel 0.10 MIR
+# CalcKernel 0.11 MIR 与 KIR 边界
 
 [English](../../reference/mir.md)
 
-本文档定义 `ckc emit-mir` 输出的 deterministic textual MIR。MIR 是 C、WebAssembly 与
-Native LLVM lowering 共用的唯一 typed three-address control-flow representation。
+本文档定义 `ckc emit-mir` 输出的 deterministic textual semantic MIR，以及它与 internal KIR
+的边界。MIR 负责 source evaluation order、checked first-error order、runtime print order 与
+backend-independent meaning；所有 C、WebAssembly、Native LLVM artifact 都从 verified KIR
+lowering，不存在 optimized-MIR product path。
 
-`MirModule` 按顺序持有 struct 与 function。Function 记录 name、export flag、entry role、
-parameter、return type、local、block 与 runtime effect reachability。每个 block 有且仅有一个
-return、jump 或 branch terminator。
+`MirModule` 顺序持有 struct/function；function 记录 export、entry、parameter、return、local、
+block 与 runtime effect reachability。每个 block 有一个 return/jump/branch terminator。
+`MirType::Slice`、`MirType::Void`、`MakeSlice`、`SliceIndex`、`Subslice`、使用
+`target: None` 的 void call、使用 `value: None` 的 void return，以及 `break`/`continue` 的
+`MirTerminator::Jump` 都保留 semantic form；不存在 synthetic void value/local。
+Operand 与 range endpoint 只按 source order lowering 一次。
 
-`MirType` 覆盖全部 CK value type，包括 `MirType::Slice` 与 return-only `MirType::Void`。
-Instruction 包括 constant、move、unary/binary/compare、conversion、load/store、call、
-runtime print call、`MakeSlice`、`SliceIndex` 与 `Subslice`。Void call 为 `target: None`，
-void return 为 `value: None`；不存在 synthetic void value/local。`break`/`continue` 分别变成
-到最内层 loop exit/condition 的 `MirTerminator::Jump`。Slice operand 与 endpoint 按源码顺序
-各 lowering 一次。
+七个 Native print builtin 是 explicit runtime effect。MIR 保持所有可达 print 与 possible
+failure 的次数和顺序；consumer root validator 在 KIR 构造前拒绝 artifact 无法承载的 effect。
+Overflow/bounds 不改变 source typing 或 MIR。Library root 是 export，executable root 是
+`main`，`emit-kir` inspection root 是两者并集；mode-specific KIR 显式 materialize 所需 guard。
 
-七个 Native print builtin 成为显式 runtime effect。Optimization 只能删除不可达 effect，
-必须在 call、loop 与 inline 后保持所有可达 print 的次数与源码顺序。Backend root validator
-拒绝所选 artifact 无法承载的 effect。
-
-Overflow/bounds selection 作为 backend context 贯穿 lowering，不改变 source typing。Checked
-Native 与 C 实现相同的 first-error order；MIR optimization 不得改变可能的 checked failure 或
-runtime effect。
-
-Validator 拒绝 unresolved type、void value、非法 slice shape、type-inconsistent operation、
-malformed block/terminator。打印顺序由源码决定，不含 path、time、address 或 hash-map order。
-O0 输出 lowering 后 MIR，O1–O3 使用 deterministic pipeline。`0.10.x` 内 textual format 兼容。
+Textual MIR 不含 path、time、address 或 hash-map order，并在 0.11 line 内保持 semantic/byte
+compatibility；`-O` 不再创建另一份 MIR。KIR 包含 scalar SSA、block parameter、region Memory
+SSA、fact、effect summary 与 Proof certificate，在每个 pass 前后验证，是全部 backend 唯一的
+target-neutral optimized input。`emit-kir` 是 deterministic inspection，但 KIR text 不承诺跨
+版本兼容。

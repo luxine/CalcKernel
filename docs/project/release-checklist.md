@@ -5,16 +5,19 @@
 For a version `X.Y.Z`:
 
 - [ ] `Cargo.toml`, `Cargo.lock`, READMEs, and both changelogs name `X.Y.Z`.
-- [ ] Language, diagnostics, CLI, MIR, ABI, compatibility, and release docs match implementation.
+- [ ] Language, diagnostics, CLI, semantic MIR/KIR boundary, optimizer, ABI, compatibility, and release docs match implementation.
 - [ ] English and Simplified Chinese documentation trees mirror and local links resolve.
 - [ ] `cargo fmt --check`
 - [ ] `cargo clippy --all-targets --all-features --locked -- -D warnings`
 - [ ] `cargo test --all-features --locked` against the checksum-verified LLVM 22.1.8 release prefix and pinned Clang oracle.
 - [ ] `cargo build --release --features native-toolchain --locked`
+- [ ] Generated and mutation suites pass O0–O3 for C, WebAssembly, and Native supported modes.
+- [ ] Pre-LLVM fact audit passes on all six hosts and rejects the mutation corpus.
+- [ ] Contract sanitizer ownership tests pass under ASan/UBSan.
 - [ ] `./target/release/ckc --help`, `--version --verbose`, and `licenses` expose complete identity and notice evidence.
 - [ ] `ckc run` and `ckc build --kind executable` both pass with no external-tool `PATH`.
 - [ ] Generated artifact, release binary dependency, and JIT memory audits pass on every host; hardened macOS uses only the approved allow-JIT entitlement.
-- [ ] Strict checked and unchecked performance gates pass on controlled x86-64 and AArch64 workers for baseline and native CPU policies.
+- [ ] Strict Clang, exact-0.10, proof-loop checked/unchecked, and optimizer-latency gates pass on controlled x86-64 and AArch64 workers for baseline and native CPU policies.
 - [ ] Main-branch CI is green at the exact release commit.
 - [ ] The manual six-platform release preview is green with publishing disabled.
 - [ ] The annotated tag `vX.Y.Z` points to that exact commit and has never existed before.

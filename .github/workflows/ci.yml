@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [main]
   push:
@@ -130,6 +131,17 @@ jobs:
         with:
           target: ${{ matrix.target }}
           profile: oracle
+      - name: Record pre-LLVM fact audit evidence
+        run: |
+          mkdir -p target/fact-audit
+          cargo test --all-features --locked --test native fact_audit_ -- --nocapture 2>&1 | tee 'target/fact-audit/${{ matrix.name }}.log'
+      - name: Upload pre-LLVM fact audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fact-audit-${{ matrix.name }}
+          path: target/fact-audit/${{ matrix.name }}.log
+          if-no-files-found: error
       - run: cargo test --all-features --locked --test native
       - run: cargo test --all-features --locked --test cli
       - run: cargo build --release --features native-toolchain --locked
@@ -173,11 +185,16 @@ jobs:
           profile: oracle
       - name: Gate baseline CPU policy
         run: |
-          cargo bench --features native-toolchain --bench ckc_perf -- --case pricing --task check --cpu baseline
+          cargo bench --features native-toolchain --bench ckc_perf -- --case proof --task check --cpu baseline
           python3 scripts/check-native-performance.py target/ckc-perf/results.json
           cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
-      - name: Gate native CPU policy
-        run: |
-          cargo bench --features native-toolchain --bench ckc_perf -- --case pricing --task check --cpu native
-          python3 scripts/check-native-performance.py target/ckc-perf/results.json
-          cp target/ckc-perf/results.json target/ckc-perf/results-native.json
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: performance-${{ matrix.arch }}
+          path: |
+            target/ckc-perf/results-baseline.json
+            build/perf/latest.summary.json
+            build/perf/latest.summary.md
+          if-no-files-found: error

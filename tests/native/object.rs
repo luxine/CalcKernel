@@ -1,18 +1,20 @@
+use super::support::compiler::optimized_module;
 use calckernel::{
-    EmitLlvmOptions, NativeContext, NativeCpu, NativeOptimizationLevel, NativeTarget, SourceFile,
-    check, lower_native_llvm_module, lower_to_mir,
+    BoundsMode, EmitLlvmOptions, KirConsumer, NativeContext, NativeCpu, NativeOptimizationLevel,
+    NativeTarget, OverflowMode, lower_native_kir_module,
 };
 
 fn object_bytes(cpu: NativeCpu) -> Vec<u8> {
-    let checked = check(&SourceFile::new(
-        "object.ck",
+    let kir = optimized_module(
         "export fn answer() -> i32 { return 42; }",
-    ));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower MIR");
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host_with_cpu(cpu).expect("host target");
-    let optimized = lower_native_llvm_module(&context, &target, &mir, &EmitLlvmOptions::default())
+    let optimized = lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
         .expect("lower LLVM")
         .verify()
         .expect("verify LLVM")

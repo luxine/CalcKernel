@@ -1,4 +1,4 @@
-use calckernel::{BoundsMode, MirPassDebugFlags, OverflowMode};
+use calckernel::{BoundsMode, OverflowMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArtifactKind {
@@ -76,7 +76,6 @@ pub(super) struct ParsedArgs {
     pub(super) print_effect_summaries: bool,
     pub(super) explain_optimization: bool,
     pub(super) sanitize_contracts: bool,
-    pub(super) debug: MirPassDebugFlags,
 }
 
 impl ParsedArgs {
@@ -97,7 +96,6 @@ impl ParsedArgs {
             print_effect_summaries: false,
             explain_optimization: false,
             sanitize_contracts: false,
-            debug: MirPassDebugFlags::default(),
         };
         let mut index = 0;
         while index < args.len() {
@@ -179,18 +177,6 @@ impl ParsedArgs {
                 "--sanitize-contracts" => {
                     require_allowed(command, "--sanitize-contracts")?;
                     parsed.sanitize_contracts = true;
-                }
-                "--print-pass-pipeline" => {
-                    require_allowed(command, "--debug")?;
-                    parsed.debug.print_pass_pipeline = true;
-                }
-                "--print-mir-before-opt" => {
-                    require_allowed(command, "--debug")?;
-                    parsed.debug.print_mir_before_opt = true;
-                }
-                "--print-mir-after-opt" => {
-                    require_allowed(command, "--debug")?;
-                    parsed.debug.print_mir_after_opt = true;
                 }
                 flag if flag.starts_with('-') => return Err(format!("Unknown option: {flag}.")),
                 positional => parsed.positionals.push(positional.to_string()),
@@ -292,10 +278,6 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "run"
         ),
         "--sanitize-contracts" => matches!(command, "run" | "build" | "build-llvm"),
-        "--debug" => matches!(
-            command,
-            "emit-mir" | "emit-c" | "emit-wat" | "emit-wasm" | "emit-llvm" | "build" | "build-llvm"
-        ),
         _ => false,
     };
     if allowed {
@@ -392,11 +374,8 @@ pub(super) fn usage() -> &'static str {
         "  --overflow <unchecked|checked>    Arithmetic overflow handling mode. Default: unchecked.\n",
         "  --bounds <unchecked|checked>      Slice bounds mode. Default: unchecked.\n",
         "  -o <file>                         Alias for --out <file>.\n",
-        "  --opt-level <0|1|2|3>            MIR and LLVM optimization level.\n",
+        "  --opt-level <0|1|2|3>            KIR and backend optimization level.\n",
         "  -O0, -O1, -O2, -O3              Alias for --opt-level.\n",
-        "  --print-pass-pipeline           Print the selected MIR pass pipeline to stderr.\n",
-        "  --print-mir-before-opt          Print MIR before optimization to stderr.\n",
-        "  --print-mir-after-opt           Print MIR after optimization to stderr.\n",
         "  --print-facts                   Print deterministic verified KIR facts to stderr.\n",
         "  --print-effect-summaries        Print deterministic effect summaries to stderr.\n",
         "  --explain-optimization          Explain removed and retained KIR checks to stderr.\n",

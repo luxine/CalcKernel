@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     BlockId, KirArithmeticSemantics, KirInstructionKind, KirModule, KirTerminator, ValueId,
@@ -18,7 +18,7 @@ pub(crate) fn run_gvn(module: &mut KirModule) -> u32 {
             .flat_map(|block| &block.instructions)
             .all(|instruction| instruction.effect.is_none() && instruction.memory.is_none());
         let mut replacements = Vec::new();
-        let mut removed = Vec::new();
+        let mut removed = BTreeSet::new();
         let mut global = BTreeMap::<String, Vec<(BlockId, ValueId)>>::new();
         let mut global_constants = BTreeMap::<String, Vec<(BlockId, ValueId)>>::new();
         for block in &function.blocks {
@@ -61,7 +61,7 @@ pub(crate) fn run_gvn(module: &mut KirModule) -> u32 {
                 });
                 if let Some(existing) = existing {
                     replacements.push((result.value, existing));
-                    removed.push(instruction.id);
+                    removed.insert(instruction.id);
                     rewrites = rewrites.saturating_add(1);
                 } else {
                     table.insert(key.clone(), result.value);
@@ -85,25 +85,34 @@ pub(crate) fn run_gvn(module: &mut KirModule) -> u32 {
 }
 
 fn canonical_block_params(function: &crate::KirFunction) -> BTreeMap<ValueId, ValueId> {
+    let mut incoming = BTreeMap::<BlockId, Vec<Vec<ValueId>>>::new();
+    for predecessor in &function.blocks {
+        let edges = match &predecessor.terminator {
+            KirTerminator::Return { .. } => Vec::new(),
+            KirTerminator::Jump { edge } => vec![edge],
+            KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } => vec![then_edge, else_edge],
+        };
+        for edge in edges {
+            incoming
+                .entry(edge.target)
+                .or_default()
+                .push(edge.args.clone());
+        }
+    }
     let mut canonical = BTreeMap::new();
     loop {
         let before = canonical.len();
         for block in &function.blocks {
             for (index, param) in block.params.iter().enumerate() {
-                let values = function
-                    .blocks
-                    .iter()
-                    .flat_map(|predecessor| match &predecessor.terminator {
-                        KirTerminator::Return { .. } => Vec::new(),
-                        KirTerminator::Jump { edge } => vec![edge],
-                        KirTerminator::Branch {
-                            then_edge,
-                            else_edge,
-                            ..
-                        } => vec![then_edge, else_edge],
-                    })
-                    .filter(|edge| edge.target == block.id)
-                    .filter_map(|edge| edge.args.get(index))
+                let values = incoming
+                    .get(&block.id)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|args| args.get(index))
                     .map(|value| canonical.get(value).copied().unwrap_or(*value))
                     .collect::<Vec<_>>();
                 if let Some(first) = values.first().copied()

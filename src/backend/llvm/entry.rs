@@ -7,7 +7,7 @@ use super::{
     context::NativeContext,
     error::{NativeError, NativeStage},
     ffi::{BridgeBinaryOp, BridgeCompareOp},
-    lower::TypeRegistry,
+    lower_shared::TypeRegistry,
     module::NativeModule,
 };
 

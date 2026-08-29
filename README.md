@@ -2,14 +2,17 @@
 
 [简体中文](README.zh-CN.md)
 
-Rust CalcKernel 0.10.0 ships `native ckc`, a self-contained command-line
+Rust CalcKernel 0.11.0 ships `native ckc`, a self-contained command-line
 compiler for the CK computation-kernel language. Release binaries compile, link,
 and run native CK without an external compiler toolchain. The repository also
 retains inspectable C and WebAssembly source/binary emitters.
 
 ## What ships
 
-- A Rust lexer, parser, type checker, deterministic MIR, and O0–O3 optimizer.
+- A Rust lexer, parser, type checker, deterministic semantic MIR, and one
+  verified fact-driven KIR optimizer shared by every backend.
+- Explicit `unsafe fn` entry contracts for affine ranges, alignment, no-alias,
+  and memory-effect ceilings, with opt-in contract sanitization.
 - `break` / `continue`, return-only `void`, caller-owned `slice<T>`, optional
   checked overflow and slice bounds, and a parameterless `main` entry.
 - `ckc run` with an isolated child, deterministic numeric/boolean printing, and
@@ -29,12 +32,12 @@ effects are rejected from library, C, and WebAssembly roots.
 ## Pipeline
 
 ```text
-.ck -> frontend -> validated MIR -> MIR optimizer
-                              +-> C source/header
-                              +-> WAT/WASM
-                              +-> structural LLVM -> object
-                                                   +-> ORC run
-                                                   +-> in-process LLD -> executable/library
+.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR
+                                      +-> C source/header
+                                      +-> WAT/WASM
+                                      +-> structural LLVM -> object
+                                                               +-> ORC run
+                                                               +-> in-process LLD -> executable/library
 ```
 
 The product path does not invoke Clang, a system linker, or an archiver. A
@@ -46,6 +49,7 @@ test oracle.
 ```sh
 ckc --version --verbose
 ckc check examples/core/scalar.ck
+ckc emit-kir examples/core/scalar.ck --print-facts
 ckc run examples/native/hello.ck
 ckc build examples/native/hello.ck --kind executable --out /tmp/hello
 ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
@@ -105,6 +109,13 @@ cargo build --release --features native-toolchain --locked
 
 Release policy, platform audits, performance gates, archive names, and immutable
 GitHub Release publication are defined in [docs/project/release.md](docs/project/release.md).
+
+CalcKernel 0.11.0 keeps the public Native C ABI at version 1. It changes the
+private LLVM bridge and contract-aware runtime ABI to version 2; cached native
+objects therefore use the KIR v1 code-generation identity and cannot alias 0.10
+cache entries.
+The accepted 0.10.0 source boundary and migration are retained in the
+[compatibility policy](docs/project/compatibility.md).
 
 ## Memory boundary
 

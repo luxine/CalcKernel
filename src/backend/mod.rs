@@ -20,19 +20,18 @@ pub use artifact::{
     link_native_executable,
 };
 pub use c::{
-    BoundsMode, EmitCOptions, OverflowMode, emit_c_header, emit_c_kir_header, emit_c_kir_module,
-    emit_c_kir_module_with_contracts, emit_c_module, emit_c_module_with_header, try_emit_c_module,
+    BoundsMode, EmitCOptions, OverflowMode, emit_c_kir_header, emit_c_kir_module,
+    emit_c_kir_module_with_contracts,
 };
 pub use header::{NativeHeaderMode, annotate_unsafe_contracts, emit_native_header};
 #[cfg(feature = "native-toolchain")]
 pub use llvm::{
     AuditedNativeModule, LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu,
     NativeError, NativeFactAuditReport, NativeFactProperty, NativeFactSource, NativeJit,
-    NativeJitMemoryAudit, NativeLoweringOptions, NativeModule, NativeObject,
-    NativeOptimizationLevel, NativeStage, NativeStrengtheningKind, NativeTarget, NativeToolchain,
-    OptimizedNativeModule, OrcObjectLayer, VerifiedNativeModule, bridge_info,
-    lower_native_executable_module_with_options, lower_native_kir_module, lower_native_llvm_module,
-    lower_native_llvm_module_with_options, test_error as native_bridge_test_error,
+    NativeJitMemoryAudit, NativeModule, NativeObject, NativeOptimizationLevel, NativeStage,
+    NativeStrengtheningKind, NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer,
+    VerifiedNativeModule, bridge_info, lower_native_kir_module,
+    test_error as native_bridge_test_error,
     test_inject_untracked_strengthening as native_fact_audit_test_inject_untracked,
     test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
 };
@@ -45,10 +44,7 @@ pub use native_abi::{
     NativeAbiExtension, NativeAbiFunction, NativeAbiHiddenResult, NativeAbiLayout,
     NativeAbiPassMode, NativeAbiRegister, NativeAbiRegisterClass, NativeAbiTarget, NativeAbiValue,
 };
-pub use wasm::{
-    EmitWasmOptions, emit_wasm_kir_module, emit_wasm_module, emit_wasm_module_with_options,
-    emit_wat_kir_module, emit_wat_module, emit_wat_module_with_options,
-};
+pub use wasm::{EmitWasmOptions, emit_wasm_kir_module, emit_wat_kir_module};
 
 pub(super) fn is_f64_type(type_node: &MirType) -> bool {
     matches!(type_node, MirType::Primitive(MirPrimitiveTypeName::F64))
@@ -59,21 +55,6 @@ pub(super) fn is_unsigned_integer_type(type_node: &MirType) -> bool {
         type_node,
         MirType::Primitive(MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64)
     )
-}
-
-pub(super) fn is_signed_integer_type(type_node: &MirType) -> bool {
-    matches!(
-        type_node,
-        MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::I64)
-    )
-}
-
-pub(super) fn signed_min_constant(type_node: &MirType) -> &'static str {
-    match type_node {
-        MirType::Primitive(MirPrimitiveTypeName::I32) => "INT32_MIN",
-        MirType::Primitive(MirPrimitiveTypeName::I64) => "INT64_MIN",
-        _ => unreachable!("signed minimum requested for non-signed type"),
-    }
 }
 
 pub(super) fn value_type(value: &MirValue) -> &MirType {

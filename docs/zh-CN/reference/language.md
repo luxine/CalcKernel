@@ -1,8 +1,8 @@
-# CalcKernel 0.10 语言参考
+# CalcKernel 0.11 语言参考
 
 [English](../../reference/language.md)
 
-本文档是 CalcKernel 0.10 源语言的规范性契约。CK 是确定性的计算内核语言，源文件扩展名为 `.ck`。
+本文档是 CalcKernel 0.11 源语言的规范性契约。CK 是确定性的计算内核语言，源文件扩展名为 `.ck`。
 
 ## 类型与声明
 
@@ -36,7 +36,7 @@ Native entry/runtime-effect model 预声明并保留下列 compiler builtin：
 
 Argument 按源码顺序各求值一次。Native executable 与 `run` root 可以到达这些调用；
 Native library/object export、C artifact root 或 WebAssembly export 可达的 print 会被拒绝。
-不可达 print 可以被删除。0.10 不提供通用 string 或 byte I/O。
+不可达 print 可以被删除。0.11 不提供通用 string 或 byte I/O。
 
 Value print 不追加 newline；`print_newline` 在所有平台精确输出一个 LF。Integer 使用 base 10，
 无 locale、grouping、leading zero 或 positive sign。Boolean 为 `true`/`false`。Finite f64 在
@@ -74,6 +74,36 @@ Operand、argument、construction operand 与 range endpoint 按源码顺序各�
 Integer arithmetic 默认 unchecked。`--overflow checked` 是 C 与 Native backend mode，
 通过 checked status contract 报告 overflow 和 division/modulo fault，不是源语法。
 
+## Unsafe function 与 trusted contract
+
+新的 optimizer assumption 只能来自至少含一个 `requires` 的 `unsafe fn`。每次 unsafe call
+（包括 recursive 或 unsafe-to-unsafe call）都必须位于显式 `unsafe { ... }` statement 中；
+`main` 必须为 safe，不能携带 contract/effects。
+
+```ck
+export unsafe fn saxpy(x: slice<f64>, y: slice<f64>, n: u32) -> void
+contract {
+  requires n <= x.len && n <= y.len;
+  requires noalias(x, y);
+  requires aligned(x.data, 32);
+  effects read(x), write(y);
+}
+{
+}
+```
+
+0.11 closed contract language 在 mathematical integer 上解释 affine `+`/`-`、乘常数、
+comparison、conjunction、`multiple_of`、`noalias`、`aligned` 与 slice length；不允许 call、
+load/store、disjunction、negation、mutable state、target hint、local assume 或 loop contract。
+可选 effect ceiling 为 `effects none`，或 named slice parameter 上的 `read`、`write`、
+`readwrite` 集合；不完整 ceiling 是 `CK2016`。Runtime print、possible failure、unsafe call 与
+unclassifiable `readwrite all` 始终由编译器推导，不能隐藏。
+
+Caller 必须在每次 entry 满足所有 `requires`；false precondition 令该 execution 在所有
+backend/O0–O3 下立即 undefined，普通编译不插入检查。`--sanitize-contracts` 只是 Native
+run/executable 的 opt-in debug mode，不能把 invalid call 变成 defined。Unsafe 不改变 C ABI，
+exported header 会带 normalized contract comment。
+
 ## Raw pointer 与 slice
 
 Pointer index 接受 `i32`、`u32` 或 compatible integer literal，不做有效性或边界检查。
@@ -91,7 +121,7 @@ C 与 Native 可用 `--bounds checked` 检查 slice index 和 sub-slice。Raw po
 
 ## Diagnostic 与非目标
 
-稳定 frontend code 见 [Diagnostic](diagnostics.md)。0.10 不提供 module/import、dynamic
+稳定 frontend code 见 [Diagnostic](diagnostics.md)。0.11 不提供 module/import、dynamic
 allocation、ownership runtime、exception、async、closure、pointer/slice 之外的 source
 generic、`f32`、SIMD source type、GPU target、program argument、stdin、thread 或公开
 embeddable JIT API。

@@ -6,11 +6,6 @@ use super::super::{collect_temps, is_f64_type, is_unsigned_integer_type, place_t
 use super::{EmitWasmOptions, layout::*, plan::*};
 
 #[must_use]
-pub fn emit_wat_module(module: &MirModule) -> String {
-    emit_wat_module_with_options(module, EmitWasmOptions::default())
-}
-
-#[must_use]
 pub fn emit_wat_module_with_options(module: &MirModule, options: EmitWasmOptions) -> String {
     let layout = WasmStructLayout::new(module);
     let mut out = String::new();

@@ -614,6 +614,10 @@ fn guard_safety_matches(
             right,
             semantics: KirArithmeticSemantics::Checked,
         } => {
+            if allow_loop_reasoning && canonical_induction_increment_is_safe(function, instruction)
+            {
+                return true;
+            }
             let Some(type_node) = instruction
                 .results
                 .first()
@@ -629,8 +633,6 @@ fn guard_safety_matches(
             };
             scalar_binary(*op, KirArithmeticSemantics::Checked, &left, &right)
                 .is_ok_and(|result| result.failure() == ScalarFailure::None)
-                || (allow_loop_reasoning
-                    && canonical_induction_increment_is_safe(function, instruction))
         }
         KirInstructionKind::Unary {
             op: MirUnaryOp::Neg,
@@ -944,18 +946,45 @@ fn canonical_loop_slice_index_is_safe(
                     && loop_info.blocks.binary_search(&use_block.id).is_ok()
                     && loop_taken_edge_dominates(function, loop_info.header, use_block.id)
             })
-            && premises.iter().any(|premise| {
-                matches!(
-                    premise,
-                    CheckedStep::Fact(FactPredicate::Contract(predicate))
-                        if contract_proves_value_at_most_slice_len(
-                            predicate,
-                            induction.bound,
-                            slice,
-                        )
-                )
-            })
+            && (value_is_slice_len_of(function, induction.bound, slice)
+                || premises.iter().any(|premise| {
+                    matches!(
+                        premise,
+                        CheckedStep::Fact(FactPredicate::Contract(predicate))
+                            if contract_proves_value_at_most_slice_len(
+                                predicate,
+                                induction.bound,
+                                slice,
+                            )
+                    )
+                }))
     })
+}
+
+fn value_is_slice_len_of(function: &KirFunction, value: ValueId, slice: ValueId) -> bool {
+    let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == value)
+        })
+    else {
+        return false;
+    };
+    let KirInstructionKind::SliceLen {
+        slice: measured_slice,
+    } = instruction.kind
+    else {
+        return false;
+    };
+    let measured_slice =
+        canonical_function_param(function, measured_slice).unwrap_or(measured_slice);
+    let indexed_slice = canonical_function_param(function, slice).unwrap_or(slice);
+    measured_slice == indexed_slice
 }
 
 fn canonical_function_param(function: &KirFunction, value: ValueId) -> Option<ValueId> {

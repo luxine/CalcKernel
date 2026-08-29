@@ -2,10 +2,6 @@ use crate::*;
 
 use super::{EmitWasmOptions, emit::emit_wat_module_with_options};
 
-pub fn emit_wasm_module(module: &MirModule) -> Result<Vec<u8>, String> {
-    emit_wasm_module_with_options(module, EmitWasmOptions::default())
-}
-
 pub fn emit_wasm_module_with_options(
     module: &MirModule,
     options: EmitWasmOptions,

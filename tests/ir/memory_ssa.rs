@@ -188,7 +188,7 @@ fn memory_ssa_refinement_should_thread_partitions_through_join_and_loop_phis() {
 }
 
 #[test]
-fn memory_ssa_validator_should_reject_wrong_partition_phi_argument() {
+fn mutation_wrong_memory_partition_phi_argument_should_be_rejected() {
     let (checked, mut kir) = build(
         r#"
         export unsafe fn choose(a: slice<i32>, b: slice<i32>, flag: bool) -> i32

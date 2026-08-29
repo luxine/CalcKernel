@@ -4,7 +4,7 @@ use super::{
     builder::{NativeBuilder, NativeFunction, NativeType, NativeValue},
     context::NativeContext,
     error::{NativeError, NativeStage},
-    lower::TypeRegistry,
+    lower_shared::TypeRegistry,
     module::NativeModule,
     target::NativeTarget,
 };

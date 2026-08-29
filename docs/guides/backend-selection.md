@@ -19,7 +19,8 @@ alias for Native dynamic/object output and should not be used by new scripts.
 | Need | Recommended command |
 | --- | --- |
 | Syntax/type validation | `ckc check input.ck` |
-| Compiler/debug inspection | `ckc emit-mir input.ck -O0..O3` |
+| Semantic compiler inspection | `ckc emit-mir input.ck` |
+| Optimizer/fact inspection | `ckc emit-kir input.ck -O0..O3 --print-facts` |
 | Portable native source/FFI | `ckc emit-c input.ck --out input.c` |
 | Run a CK program | `ckc run input.ck` |
 | Standalone executable | `ckc build input.ck --kind executable --out app` |

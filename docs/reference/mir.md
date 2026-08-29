@@ -1,10 +1,12 @@
-# CalcKernel 0.10 MIR
+# CalcKernel 0.11 MIR and KIR Boundary
 
 [简体中文](../zh-CN/reference/mir.md)
 
-This document defines deterministic textual MIR emitted by `ckc emit-mir`.
-MIR is the single typed, three-address control-flow representation consumed by
-C, WebAssembly, and Native LLVM lowering.
+This document defines deterministic textual semantic MIR emitted by
+`ckc emit-mir` and its boundary with internal KIR. MIR owns source evaluation
+order, checked first-error order, runtime-print order, and backend-independent
+meaning. All C, WebAssembly, and Native LLVM artifacts are lowered from verified
+KIR, not from an optimized-MIR product path.
 
 ## Model
 
@@ -31,22 +33,29 @@ Backend root validation rejects effects that the selected artifact cannot host.
 
 ## Checked semantics
 
-Overflow and bounds selections are backend context carried through lowering;
-they do not alter source typing. Checked Native and C lowering implement the
-same first-error ordering. MIR optimization cannot erase, duplicate, or reorder
-an operation in a way that changes a possible checked failure or runtime effect.
+Overflow and bounds selections do not alter source typing or semantic MIR.
+After consumer reachability and capability checks, KIR construction materializes
+exactly the selected guards and ordered effects. Library consumers root exports,
+executables root `main`, and `emit-kir` inspection roots their union.
 
-## Validation, optimization, and printing
+## Validation, KIR, and printing
 
 Validation rejects unresolved types, void values, invalid slice shapes,
 type-inconsistent calls/returns/places, malformed instructions, missing blocks,
 and malformed terminators. All blocks are terminated before backend lowering.
 
-Text output follows source-derived declaration, local, block, instruction,
+Textual MIR follows source-derived declaration, local, block, instruction,
 operand, and terminator order. It contains no path, time, address, or hash-map
-order. O0 prints lowered MIR; O1–O3 apply the documented deterministic pipeline.
-One optimization selection is used by MIR and Native LLVM when building.
+order. `emit-mir` remains semantic and byte-stable for the 0.11 line regardless
+of `-O`; optimization no longer creates a second MIR product path.
 
-The textual format is compatible within `0.10.x`; a breaking grammar or meaning
+KIR uses scalar SSA, explicit block parameters, region Memory SSA, facts,
+interprocedural effect summaries, and Proof certificates. It is built for the
+selected consumer and modes, verified before optimization and after every pass,
+and is the sole target-neutral optimized input to all backends. `emit-kir`
+prints deterministic inspection text and may also print fact/effect/proof
+evidence. KIR is a private compiler format with no cross-version text guarantee.
+
+The semantic MIR textual format is compatible within `0.11.x`; a breaking grammar or meaning
 change requires a later minor release and migration note under the project
 [compatibility policy](../project/compatibility.md).

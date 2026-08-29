@@ -2,5 +2,6 @@
 pricing	benches/fixtures/pricing_helpers.ck
 pricing-soa	benches/fixtures/pricing_soa.ck
 f64-kernels	benches/fixtures/f64_kernels.ck
+proof	benches/fixtures/proof_loop.ck
 example-pricing	examples/applications/pricing.ck
 example-dijkstra	examples/applications/dijkstra.ck

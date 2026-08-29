@@ -59,12 +59,7 @@ fn release_surface_should_not_include_npm_or_javascript_compatibility_layer() {
 }
 
 #[test]
-fn v0_10_release_identity_should_be_consistent_everywhere() {
-    let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
-    let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
-    assert!(cargo.contains("version = \"0.10.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.10.0\""));
-
+fn v0_10_release_identity_should_remain_in_compatibility_history() {
     for path in [
         "README.md",
         "README.zh-CN.md",
@@ -79,12 +74,10 @@ fn v0_10_release_identity_should_be_consistent_everywhere() {
         );
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
-        .arg("--version")
-        .output()
-        .expect("run ckc --version");
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.10.0");
+    let manifest =
+        fs::read_to_string(repo_root().join("tests/fixtures/compatibility/v0_10/manifest.toml"))
+            .expect("read 0.10 compatibility manifest");
+    assert!(manifest.contains("release = \"0.10.0\""));
 
     let workflow = fs::read_to_string(repo_root().join(".github/workflows/native-release.yml"))
         .expect("read release workflow");
@@ -103,9 +96,40 @@ fn v0_10_release_identity_should_be_consistent_everywhere() {
     }
 }
 
+#[test]
+fn v0_11_release_candidate_identity_should_be_consistent_everywhere() {
+    let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
+    let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
+    assert!(cargo.contains("version = \"0.11.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.11.0\""));
+    let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .arg("--version")
+        .output()
+        .expect("run ckc --version");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.11.0");
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "CHANGELOG.md",
+        "CHANGELOG.zh-CN.md",
+    ] {
+        assert!(
+            fs::read_to_string(repo_root().join(path))
+                .unwrap_or_else(|error| panic!("read {path}: {error}"))
+                .contains("0.11.0"),
+            "{path} must identify 0.11.0"
+        );
+    }
+    assert_eq!(calckernel::NATIVE_ABI_VERSION, 1);
+    assert_eq!(calckernel::RUNTIME_ABI_VERSION, 2);
+    #[cfg(feature = "native-toolchain")]
+    assert_eq!(calckernel::LLVM_BRIDGE_ABI_VERSION, 2);
+}
+
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn v0_10_verbose_identity_should_report_frozen_native_abis() {
+fn v0_11_verbose_identity_should_report_frozen_public_and_updated_private_abis() {
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .args(["--version", "--verbose"])
         .output()
@@ -113,7 +137,7 @@ fn v0_10_verbose_identity_should_report_frozen_native_abis() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("verbose version is UTF-8");
     for required in [
-        "ckc 0.10.0",
+        "ckc 0.11.0",
         "Native ABI: 1",
         "Runtime ABI: 2",
         "LLVM: 22.1.8",

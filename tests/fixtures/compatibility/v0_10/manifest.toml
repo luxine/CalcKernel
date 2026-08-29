@@ -29,7 +29,7 @@ evidence = "tests/cli/commands.rs:build_llvm_dynamic_should_be_one_deprecated_al
 [[change]]
 id = "native-checked-status"
 fixture = "tests/fixtures/compatibility/v0_10/native_checked.ck"
-evidence = "tests/native/differential.rs:native_exports_should_differentially_match_pinned_clang_c_libraries"
+evidence = "tests/native/differential.rs:differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_through_o3"
 
 [[change]]
 id = "single-native-c-abi"

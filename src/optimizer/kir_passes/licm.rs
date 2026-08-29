@@ -5,12 +5,15 @@ use crate::{
     KirPlace, KirTerminator, ValueId,
 };
 
-use super::super::analyze_natural_loops;
+use super::super::NaturalLoopAnalysis;
 
-pub(crate) fn run_licm(module: &mut KirModule, protected: &BTreeSet<InstructionId>) -> u32 {
+pub(crate) fn run_licm(
+    module: &mut KirModule,
+    protected: &BTreeSet<InstructionId>,
+    analyses: &[NaturalLoopAnalysis],
+) -> u32 {
     let mut hoisted = 0_u32;
-    for function in &mut module.functions {
-        let analysis = analyze_natural_loops(function);
+    for (function, analysis) in module.functions.iter_mut().zip(analyses) {
         let definitions = value_definitions(function);
         for loop_info in analysis.loops.iter().rev() {
             let loop_blocks = loop_info.blocks.iter().copied().collect::<BTreeSet<_>>();

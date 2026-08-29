@@ -1,4 +1,4 @@
-# 原生 `ckc` 0.10 发布策略
+# 原生 `ckc` 0.11 发布策略
 
 [English](../../project/release.md)
 
@@ -34,6 +34,6 @@ run 验证完整的六个 archive 与六个 checksum；若 Release 已存在则�
 publish job 具有 repository write permission。
 
 Release tag 是 annotated `vMAJOR.MINOR.PATCH`，永不移动。Published Release 或
-asset 不覆盖；若 `v0.10.0` 之后发现缺陷，发布 `v0.10.1` 等新 patch version。0.10.0
+asset 不覆盖；若 `v0.11.0` 之后发现缺陷，发布 `v0.11.1` 等新 patch version。0.11.0
 发布由六个 archive 和对应六个 checksum sidecar 组成，必须 all-or-nothing 发布。
 [发布清单](release-checklist.md)是必须完成的 sign-off record。

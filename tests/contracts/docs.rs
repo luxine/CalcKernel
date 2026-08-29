@@ -92,12 +92,12 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
+fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() {
     let required_by_file = [
         (
             "docs/reference/language.md",
             &[
-                "CalcKernel 0.10",
+                "CalcKernel 0.11",
                 "fn main() -> void",
                 "fn main() -> i32",
                 "print_i32",
@@ -105,6 +105,9 @@ fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
                 "reachable print",
                 "slice(data, len)",
                 "start <= end <= len",
+                "unsafe fn",
+                "noalias",
+                "effects",
             ][..],
         ),
         (
@@ -117,16 +120,20 @@ fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
                 "executable|dynamic|static|object",
                 "CKC_LLVM_PREFIX",
                 "host triple",
+                "emit-kir",
+                "--sanitize-contracts",
             ][..],
         ),
         (
             "docs/reference/mir.md",
             &[
-                "CalcKernel 0.10",
+                "CalcKernel 0.11",
                 "entry",
                 "runtime effect",
                 "print",
                 "checked",
+                "Memory SSA",
+                "Proof",
             ][..],
         ),
         (
@@ -138,6 +145,8 @@ fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
                 "export thunk",
                 "JITLink",
                 "RuntimeDyld",
+                "fact audit",
+                "KIR v1",
             ][..],
         ),
         (
@@ -157,19 +166,20 @@ fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
                 "first error",
                 "CKR0001: integer overflow",
                 "CKR0006: native child terminated abnormally",
+                "CKR0007: unsafe contract violation",
             ][..],
         ),
         (
             "docs/project/compatibility.md",
-            &["0.10.x", "0.9.0", "reserved", "build-llvm", "Native C ABI"][..],
+            &["0.11.x", "0.10.0", "0.9.0", "build-llvm", "Native C ABI"][..],
         ),
         (
             "docs/guides/performance.md",
-            &["95%", "10%", "checked", "unchecked", "Clang 22.1.8"][..],
+            &["95%", "10%", "3%", "8%", "97%", "2x", "3x", "Clang 22.1.8"][..],
         ),
         (
             "docs/project/release.md",
-            &["0.10.0", "native-toolchain", "ckc licenses", "six archives"][..],
+            &["0.11.0", "native-toolchain", "ckc licenses", "six archives"][..],
         ),
     ];
     for (path, required) in required_by_file {
@@ -185,7 +195,7 @@ fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.10.0"), "{path} must identify 0.10.0");
+        assert!(read(path).contains("0.11.0"), "{path} must identify 0.11.0");
     }
 
     let language = read("docs/reference/language.md");
@@ -220,7 +230,7 @@ fn v0_10_docs_should_freeze_language_cli_mir_abi_runtime_and_distribution() {
 }
 
 #[test]
-fn v0_10_docs_should_define_canonical_slice_and_mode_contracts() {
+fn v0_11_docs_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
         "C and Native support optional `--bounds checked` guards for slice indexing and"
@@ -489,12 +499,19 @@ fn benchmark_schema_should_document_general_and_native_gate_outputs() {
     let schema = read("benches/summary-schema.md");
     for required in [
         "schemaVersion: 1",
-        "schemaVersion: 2",
+        "schemaVersion: 4",
         "target/ckc-perf/results.json",
         "checked",
         "unchecked",
         "95%",
         "10%",
+        "3%",
+        "8%",
+        "97%",
+        "2x",
+        "3x",
+        "baselineV010",
+        "sourceDigests",
         "scripts/check-native-performance.py",
     ] {
         assert!(

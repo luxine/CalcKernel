@@ -36,7 +36,3 @@ pub(super) fn sanitize_c_identifier(name: &str) -> String {
         })
         .collect()
 }
-
-pub(super) fn escape_c_include_path(path: &str) -> String {
-    path.replace('\\', "\\\\").replace('"', "\\\"")
-}

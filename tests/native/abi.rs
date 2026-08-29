@@ -1,12 +1,12 @@
 use std::{fs, process::Command};
 
+use super::support::compiler::{optimized_module, verified_artifact};
 use calckernel::{
-    BoundsMode, EmitCOptions, EmitLlvmOptions, MirFunction, MirParam,
+    BoundsMode, EmitLlvmOptions, KirConsumer, MirFunction, MirParam,
     MirPrimitiveTypeName as Primitive, MirStruct, MirStructField, MirType, NativeAbiArgumentRole,
     NativeAbiClassifier, NativeAbiExtension, NativeAbiPassMode, NativeAbiRegister,
     NativeAbiRegisterClass as RegisterClass, NativeAbiTarget, NativeContext, NativeHeaderMode,
-    NativeLoweringOptions, NativeTarget, OverflowMode, SourceFile, check, emit_c_header,
-    emit_native_header, lower_native_llvm_module_with_options, lower_to_mir,
+    NativeTarget, OverflowMode, emit_c_kir_header, emit_native_header, lower_native_kir_module,
 };
 
 fn primitive(name: Primitive) -> MirType {
@@ -429,41 +429,38 @@ fn definition<'ir>(ir: &'ir str, symbol: &str) -> &'ir str {
         .unwrap_or_else(|| panic!("missing Clang definition for {symbol}:\n{ir}"))
 }
 
-fn export_fixture_mir() -> calckernel::MirModule {
-    let source = include_str!("../fixtures/native/abi/export_shapes.ck");
-    let checked = check(&SourceFile::new("export_shapes.ck", source));
-    assert_eq!(checked.diagnostics, []);
-    lower_to_mir(&checked.checked_program).expect("lower ABI fixture")
+fn export_fixture_kir(
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+) -> calckernel::KirPassManagerResult {
+    optimized_module(
+        include_str!("../fixtures/native/abi/export_shapes.ck"),
+        0,
+        KirConsumer::NativeLibrary,
+        overflow_mode,
+        bounds_mode,
+    )
 }
 
 fn native_abi_ir(overflow_mode: OverflowMode, bounds_mode: BoundsMode) -> String {
-    let mir = export_fixture_mir();
+    let kir = export_fixture_kir(overflow_mode, bounds_mode);
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("native target");
-    lower_native_llvm_module_with_options(
-        &context,
-        &target,
-        &mir,
-        &NativeLoweringOptions {
-            emit: EmitLlvmOptions::default(),
-            overflow_mode,
-            bounds_mode,
-        },
-    )
-    .expect("lower native ABI thunks")
-    .verify()
-    .expect("verify native ABI thunks")
-    .to_ir_string()
-    .expect("print native ABI thunks")
+    lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
+        .expect("lower native ABI thunks")
+        .verify()
+        .expect("verify native ABI thunks")
+        .to_ir_string()
+        .expect("print native ABI thunks")
 }
 
 #[test]
 fn native_header_should_share_c_types_and_select_artifact_export_mode() {
-    let mir = export_fixture_mir();
-    let options = EmitCOptions::default();
-    let c_header = emit_c_header(&mir, options);
-    let dynamic = emit_native_header(&mir, options, NativeHeaderMode::Dynamic);
-    let static_header = emit_native_header(&mir, options, NativeHeaderMode::StaticOrObject);
+    let kir = export_fixture_kir(OverflowMode::Unchecked, BoundsMode::Unchecked);
+    let artifact = verified_artifact(&kir);
+    let c_header = emit_c_kir_header(artifact);
+    let dynamic = emit_native_header(artifact, NativeHeaderMode::Dynamic);
+    let static_header = emit_native_header(artifact, NativeHeaderMode::StaticOrObject);
     for declaration in [
         "typedef struct Small",
         "typedef struct Big",
@@ -492,8 +489,10 @@ fn generated_native_header_should_compile_as_strict_c11_with_pinned_clang() {
     fs::write(
         &header,
         emit_native_header(
-            &export_fixture_mir(),
-            EmitCOptions::default(),
+            verified_artifact(&export_fixture_kir(
+                OverflowMode::Unchecked,
+                BoundsMode::Unchecked,
+            )),
             NativeHeaderMode::Dynamic,
         ),
     )

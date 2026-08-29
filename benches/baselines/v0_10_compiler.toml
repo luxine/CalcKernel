@@ -1,0 +1,103 @@
+schema_version = 1
+commit = "df816502876fba41676f9ebc190e4fadd18cd5a5"
+compiler_identity = "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)"
+llvm_version = "22.1.8"
+harness = "ckc_perf schema 2; warmup=3; samples=20; repetitions=7; batch=20000000"
+statistics = "minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8"
+
+# Source digests make the baseline input corpus immutable and independently auditable.
+source_digest_branch_mix = "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8"
+source_digest_integer_accumulate = "4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39"
+source_digest_proof_loop = "ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d"
+source_digest_remainder_chain = "87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e"
+source_digest_pricing = "be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416"
+source_digest_pricing_soa = "5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad"
+source_digest_f64_kernels = "58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be"
+source_digest_example_pricing = "aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a"
+source_digest_example_dijkstra = "490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96"
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "branch_mix"
+median_ns = 7274208
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "integer_accumulate"
+median_ns = 8487750
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "proof_loop"
+median_ns = 4528917
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "remainder_chain"
+median_ns = 49007042
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "branch_mix"
+median_ns = 7575416
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "integer_accumulate"
+median_ns = 9884959
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "proof_loop"
+median_ns = 4539041
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "remainder_chain"
+median_ns = 53533959
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "pricing"
+median_ns = 146292
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "pricing-soa"
+median_ns = 109584
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "f64-kernels"
+median_ns = 260583
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "proof"
+median_ns = 66041
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "example-pricing"
+median_ns = 108625
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "example-dijkstra"
+median_ns = 518666

@@ -5,16 +5,19 @@
 对版本 `X.Y.Z`：
 
 - [ ] `Cargo.toml`、`Cargo.lock`、README 与双语 changelog 都声明 `X.Y.Z`。
-- [ ] Language、diagnostic、CLI、MIR、ABI、compatibility、release docs 与实现一致。
+- [ ] Language、diagnostic、CLI、semantic MIR/KIR boundary、optimizer、ABI、compatibility、release docs 与实现一致。
 - [ ] 英文/简体中文文档树镜像，所有 local link 可解析。
 - [ ] `cargo fmt --check`
 - [ ] `cargo clippy --all-targets --all-features --locked -- -D warnings`
 - [ ] 使用 checksum-verified LLVM 22.1.8 release prefix 与 pinned Clang oracle 执行 `cargo test --all-features --locked`。
 - [ ] `cargo build --release --features native-toolchain --locked`
+- [ ] Generated/mutation suite 在 C、WebAssembly、Native 支持的 O0–O3 mode 下通过。
+- [ ] 六 host pre-LLVM fact audit 通过并拒绝 mutation corpus。
+- [ ] Contract sanitizer ownership test 在 ASan/UBSan 下通过。
 - [ ] `./target/release/ckc --help`、`--version --verbose` 与 `licenses` 暴露完整 identity/notice evidence。
 - [ ] `ckc run` 与 `ckc build --kind executable` 均在 external-tool `PATH` 为空时通过。
 - [ ] 每个 host 的 generated artifact、release binary dependency 与 JIT memory audit 通过；hardened macOS 只使用允许的 allow-JIT entitlement。
-- [ ] Controlled x86-64/AArch64 worker 上的 checked/unchecked、baseline/native CPU performance gate 均通过。
+- [ ] Controlled x86-64/AArch64 worker 上的 Clang、精确 0.10、proof-loop checked/unchecked 与 optimizer-latency gate 均通过。
 - [ ] 精确 release commit 的 main CI 为 green。
 - [ ] publish=false 的六平台 preview 为 green。
 - [ ] Annotated `vX.Y.Z` 指向精确 commit 且从未存在。

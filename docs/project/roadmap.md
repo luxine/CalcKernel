@@ -3,10 +3,10 @@
 [简体中文](../zh-CN/project/roadmap.md)
 
 This document is non-normative and lists only undelivered possibilities. It does
-not override the [0.10 compatibility policy](compatibility.md).
+not override the [0.11 compatibility policy](compatibility.md).
 
-- Broaden optimizer analyses while retaining deterministic MIR and checked-mode
-  error order.
+- Add source SIMD types, target-specific superword/vector cost models, PGO, and
+  auto-tuning only through separately reviewed future contracts.
 - Harden target-specific LLVM calling conventions and data-layout reporting.
 - Evaluate checked bounds/status support for WASM only as a future, explicitly
   versioned ABI addition.

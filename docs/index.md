@@ -1,8 +1,8 @@
-# CalcKernel 0.10.0 Documentation
+# CalcKernel 0.11.0 Documentation
 
 [简体中文](zh-CN/index.md)
 
-These documents describe the current 0.10.0 product contract. Git history,
+These documents describe the current 0.11.0 product contract. Git history,
 rather than release-tree planning documents, records design and implementation
 history.
 
@@ -11,7 +11,7 @@ history.
 - [Language](reference/language.md) — source types, control flow, entry, print, and memory boundary.
 - [Diagnostics](reference/diagnostics.md) — stable frontend diagnostic identifiers.
 - [CLI](reference/cli.md) — commands, defaults, artifacts, cache, and failures.
-- [MIR](reference/mir.md) — textual MIR and semantic preservation boundary.
+- [MIR and KIR](reference/mir.md) — stable semantic MIR boundary and internal verified KIR.
 
 ## ABI
 
@@ -31,7 +31,7 @@ history.
 
 ## Project
 
-- [Compatibility](project/compatibility.md) — normative authority for `0.10.x`.
+- [Compatibility](project/compatibility.md) — normative authority for `0.11.x` and 0.10 migration.
 - [Release](project/release.md) and [checklist](project/release-checklist.md)
 - [Conventions](project/conventions.md)
 - [Roadmap](project/roadmap.md) — non-normative future possibilities.

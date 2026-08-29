@@ -213,7 +213,9 @@ fn validate_function(
         .map(|block| (block.id, block))
         .collect::<BTreeMap<_, _>>();
     let dominators = compute_kir_dominators(function);
+    let mut effect_orders = BTreeSet::new();
     for block in &function.blocks {
+        let mut previous_effect_order = None;
         for (index, instruction) in block.instructions.iter().enumerate() {
             for used in instruction_uses(instruction) {
                 validate_use(
@@ -228,6 +230,19 @@ fn validate_function(
                 );
             }
             validate_instruction_structure(function, block, index, &types, errors);
+            if let Some(effect) = &instruction.effect {
+                if previous_effect_order.is_some_and(|previous| effect.order <= previous)
+                    || !effect_orders.insert(effect.order)
+                {
+                    errors.push(error(
+                        "ordered effect sequence must be strictly increasing and unique",
+                        Some(function.id),
+                        Some(block.id),
+                        Some(instruction.id),
+                    ));
+                }
+                previous_effect_order = Some(effect.order);
+            }
             if let Some(memory) = &instruction.memory {
                 validate_memory_use(
                     function,
@@ -306,6 +321,17 @@ fn validate_function(
                     ));
                 }
             }
+        }
+        if let KirTerminator::Return { effect_order, .. } = &block.terminator
+            && (previous_effect_order.is_some_and(|previous| *effect_order <= previous)
+                || !effect_orders.insert(*effect_order))
+        {
+            errors.push(error(
+                "ordered effect sequence must be strictly increasing and unique",
+                Some(function.id),
+                Some(block.id),
+                None,
+            ));
         }
     }
 }

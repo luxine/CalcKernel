@@ -1,22 +1,30 @@
+use super::support::compiler::optimized_module;
 use calckernel::{
     BoundsMode, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
-    KirOverflowMode, KirSanitizerMode, NativeContext, NativeLoweringOptions,
-    NativeOptimizationLevel, NativeStage, NativeTarget, OverflowMode, SourceFile, build_kir_module,
-    check, lower_native_kir_module, lower_native_llvm_module,
-    lower_native_llvm_module_with_options, lower_to_mir, run_kir_pass_pipeline,
-    test_invalid_module_verification,
+    KirOverflowMode, KirSanitizerMode, NativeContext, NativeOptimizationLevel, NativeStage,
+    NativeTarget, OverflowMode, SourceFile, build_kir_module, check, lower_native_kir_module,
+    lower_to_mir, run_kir_pass_pipeline, test_invalid_module_verification,
 };
 
 fn structural_llvm(source_text: &str) -> String {
-    let checked = check(&SourceFile::new("fixture.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower MIR");
+    let consumer = if source_text.contains("fn main()") {
+        KirConsumer::NativeExecutable
+    } else {
+        KirConsumer::NativeLibrary
+    };
+    let kir = optimized_module(
+        source_text,
+        0,
+        consumer,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("host target");
-    let module = lower_native_llvm_module(
+    let module = lower_native_kir_module(
         &context,
         &target,
-        &mir,
+        &kir,
         &EmitLlvmOptions {
             source_file_name: Some("fixture.ck".to_string()),
             target_triple: None,
@@ -31,35 +39,34 @@ fn structural_llvm(source_text: &str) -> String {
 }
 
 fn checked_llvm(source_text: &str, overflow: OverflowMode, bounds: BoundsMode) -> String {
-    let checked = check(&SourceFile::new("checked.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower MIR");
+    let kir = optimized_module(source_text, 0, KirConsumer::NativeLibrary, overflow, bounds);
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("host target");
-    lower_native_llvm_module_with_options(
-        &context,
-        &target,
-        &mir,
-        &NativeLoweringOptions {
-            emit: EmitLlvmOptions::default(),
-            overflow_mode: overflow,
-            bounds_mode: bounds,
-        },
-    )
-    .expect("checked structural LLVM lowering")
-    .verify()
-    .expect("verify checked structural module")
-    .to_ir_string()
-    .expect("print checked structural module")
+    lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
+        .expect("checked structural LLVM lowering")
+        .verify()
+        .expect("verify checked structural module")
+        .to_ir_string()
+        .expect("print checked structural module")
 }
 
 fn optimized_llvm(source_text: &str, level: NativeOptimizationLevel) -> String {
-    let checked = check(&SourceFile::new("fixture.ck", source_text));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower MIR");
+    let opt_level = match level {
+        NativeOptimizationLevel::O0 => 0,
+        NativeOptimizationLevel::O1 => 1,
+        NativeOptimizationLevel::O2 => 2,
+        NativeOptimizationLevel::O3 => 3,
+    };
+    let kir = optimized_module(
+        source_text,
+        opt_level,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("host target");
-    lower_native_llvm_module(&context, &target, &mir, &EmitLlvmOptions::default())
+    lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
         .expect("structural LLVM lowering")
         .verify()
         .expect("initial verification")
@@ -146,6 +153,10 @@ fn structural_llvm_should_lower_struct_pointer_slice_index_and_subslice() {
         let first: i64 = values[start];
         holder[0].values = values[start..end];
         return holder[0].values;
+      }
+      export fn use_cut(holder: ptr<Holder>, start: u32, end: u32) -> i64 {
+        let part: slice<i64> = cut(holder, start, end);
+        return part[0];
       }
     "#,
     );
@@ -296,7 +307,7 @@ fn checked_overflow_should_guard_division_and_modulo_without_traps() {
 #[test]
 fn checked_bounds_should_validate_subslice_before_pointer_advance() {
     let text = checked_llvm(
-        "fn cut(items: slice<i64>, start: u32, end: u32) -> slice<i64> { return items[start..end]; }",
+        "fn cut(items: slice<i64>, start: u32, end: u32) -> slice<i64> { return items[start..end]; } export fn first(items: slice<i64>, start: u32, end: u32) -> i64 { let part: slice<i64> = cut(items, start, end); return part[0]; }",
         OverflowMode::Unchecked,
         BoundsMode::Checked,
     );

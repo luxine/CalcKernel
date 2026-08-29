@@ -34,3 +34,6 @@ mod runtime;
 mod runtime_support;
 #[path = "support/mod.rs"]
 mod support;
+
+#[path = "support/generated.rs"]
+mod generated;

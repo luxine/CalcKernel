@@ -3,8 +3,8 @@
 use std::{fs, process::Command};
 
 use calckernel::{
-    EmitLlvmOptions, MirPassBoundsMode, MirPassOverflowMode, MirPassTargetBackend, NativeContext,
-    NativeOptimizationLevel, NativeTarget, lower_native_llvm_module,
+    BoundsMode, EmitLlvmOptions, KirConsumer, NativeContext, NativeOptimizationLevel, NativeTarget,
+    OverflowMode, lower_native_kir_module,
 };
 
 use super::support::{
@@ -12,19 +12,19 @@ use super::support::{
 };
 
 fn structural_llvm(source: &str, opt_level: u8) -> String {
-    let mir = optimized_module(
+    let kir = optimized_module(
         source,
         opt_level,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Llvm,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
     );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("host target");
-    lower_native_llvm_module(
+    lower_native_kir_module(
         &context,
         &target,
-        &mir,
+        &kir,
         &EmitLlvmOptions {
             source_file_name: Some("test.ck".to_string()),
             target_triple: None,
@@ -146,19 +146,19 @@ fn llvm_structural_backend_should_cover_void_slice_index_and_subslice() {
 
 #[test]
 fn llvm_structural_backend_should_reject_non_host_target_before_construction() {
-    let mir = optimized_module(
+    let kir = optimized_module(
         "export fn answer() -> i32 { return 42; }",
         0,
-        MirPassOverflowMode::Unchecked,
-        MirPassBoundsMode::Unchecked,
-        MirPassTargetBackend::Llvm,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
     );
     let context = NativeContext::new().expect("context");
     let target = NativeTarget::host().expect("target");
-    let error = lower_native_llvm_module(
+    let error = lower_native_kir_module(
         &context,
         &target,
-        &mir,
+        &kir,
         &EmitLlvmOptions {
             source_file_name: None,
             target_triple: Some("wasm32-unknown-unknown".to_string()),

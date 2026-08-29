@@ -4,21 +4,26 @@ use std::{
 };
 
 use calckernel::{
-    EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeObject,
-    NativeOptimizationLevel, NativePlatform, NativeTarget, SourceFile, check,
-    create_native_static_archive, link_native_dynamic_library, lower_native_llvm_module,
-    lower_to_mir,
+    BoundsMode, EmitLlvmOptions, KirConsumer, NativeArtifactKind, NativeArtifactPaths,
+    NativeContext, NativeObject, NativeOptimizationLevel, NativePlatform, NativeTarget,
+    OverflowMode, create_native_static_archive, link_native_dynamic_library,
+    lower_native_kir_module,
 };
 
 use super::runtime_support::executable_bytes;
+use super::support::compiler::optimized_module;
 
 fn native_object(source: &str) -> NativeObject {
-    let checked = check(&SourceFile::new("artifact.ck", source));
-    assert_eq!(checked.diagnostics, []);
-    let mir = lower_to_mir(&checked.checked_program).expect("lower artifact MIR");
+    let kir = optimized_module(
+        source,
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
     let context = NativeContext::new().expect("native context");
     let target = NativeTarget::host().expect("native target");
-    let module = lower_native_llvm_module(&context, &target, &mir, &EmitLlvmOptions::default())
+    let module = lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
         .expect("lower native object")
         .verify()
         .expect("verify native object")

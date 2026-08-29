@@ -148,16 +148,25 @@ impl KirCFunctionLayout {
 
 #[must_use]
 pub fn emit_c_kir_header(module: &KirModule) -> String {
+    emit_c_kir_header_with_mode(module, true)
+}
+
+pub(in crate::backend) fn emit_c_kir_header_with_mode(module: &KirModule, dynamic: bool) -> String {
     let layout = KirCModuleLayout::new(module);
     let mut out = String::from(
         "#pragma once\n\n#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n",
     );
+    if dynamic {
+        out.push_str("#if defined(_WIN32) || defined(__CYGWIN__)\n#ifdef CK_BUILD_DLL\n#define CK_API __declspec(dllexport)\n#else\n#define CK_API __declspec(dllimport)\n#endif\n#else\n#define CK_API __attribute__((visibility(\"default\")))\n#endif\n\n");
+    } else {
+        out.push_str("#if defined(_WIN32) || defined(__CYGWIN__)\n#define CK_API\n#else\n#define CK_API __attribute__((visibility(\"default\")))\n#endif\n\n");
+    }
     emit_status_declarations(&mut out, status_abi(module));
     emit_type_declarations(&mut out, module, &layout);
     out.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     for function in module.functions.iter().filter(|function| function.exported) {
         out.push_str(&format!(
-            "\n{};\n",
+            "\nCK_API {};\n",
             signature(function, status_abi(module), &BTreeSet::new(), &layout)
         ));
     }
@@ -332,7 +341,11 @@ fn signature(
     restrict_params: &BTreeSet<ValueId>,
     module_layout: &KirCModuleLayout,
 ) -> String {
-    let prefix = if function.exported { "" } else { "static " };
+    let prefix = if function.exported {
+        ""
+    } else {
+        "static CKC_UNUSED "
+    };
     let function_layout = module_layout.function(function);
     let mut params = Vec::new();
     for param in &function.params {
@@ -414,10 +427,15 @@ fn emit_function(
         .collect::<BTreeSet<_>>();
     for (value, type_node) in &types {
         out.push_str(&format!(
-            "  {} {} CKC_UNUSED;\n",
+            "  {} {} CKC_UNUSED = {{0}};\n",
             module_layout.type_name(type_node),
             function_layout.value(*value)
         ));
+    }
+    if status {
+        for status_name in function_layout.call_status.values() {
+            out.push_str(&format!("  CK_Status {status_name} CKC_UNUSED;\n"));
+        }
     }
     if status && function.return_type != MirType::Void {
         out.push_str(&format!(
@@ -848,6 +866,9 @@ fn check_expression(
         KirCheckConditionKind::SliceOutOfBounds => {
             format!("{} >= {}.len", value(1), value(0))
         }
+        KirCheckConditionKind::InvalidSubslice if args[1] == args[2] => {
+            format!("{} > {}.len", value(2), value(0))
+        }
         KirCheckConditionKind::InvalidSubslice => format!(
             "{} > {} || {} > {}.len",
             value(1),
@@ -882,11 +903,7 @@ fn call_lines(
         }
         let status_name = &function_layout.call_status[&instruction.id];
         vec![
-            format!(
-                "CK_Status {status_name} = {}({});",
-                callee.name,
-                arguments.join(", ")
-            ),
+            format!("{status_name} = {}({});", callee.name, arguments.join(", ")),
             format!("if ({status_name} != CK_OK) return {status_name};"),
         ]
     } else {

@@ -359,7 +359,11 @@ fn executable_without_entry_should_fail_before_creating_output() {
         os(&base),
     ]);
     assert_eq!(output.code, Some(1));
-    assert!(output.stderr.contains("requires fn main()"));
+    assert!(
+        output.stderr.contains("requires fn main()"),
+        "{}",
+        output.stderr
+    );
     assert!(!base.exists());
 }
 
