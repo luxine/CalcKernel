@@ -70,6 +70,10 @@ pub enum ProofStep {
         transfer: InstructionId,
         claim: ScalarClaim,
     },
+    GuardSafety {
+        condition_instruction: InstructionId,
+        premises: Vec<ProofStepId>,
+    },
 }
 
 impl ProofStep {
@@ -80,6 +84,7 @@ impl ProofStep {
             }
             Self::BinaryTransfer { left, right, .. }
             | Self::BranchRefinement { left, right, .. } => vec![*left, *right],
+            Self::GuardSafety { premises, .. } => premises.clone(),
         }
     }
 }
@@ -251,6 +256,18 @@ fn print_step(step: &ProofStep) -> String {
             phi.index(),
             transfer.index(),
             print_claim(claim)
+        ),
+        ProofStep::GuardSafety {
+            condition_instruction,
+            premises,
+        } => format!(
+            "guard-safety i{} [{}]",
+            condition_instruction.index(),
+            premises
+                .iter()
+                .map(|premise| format!("step{}", premise.index()))
+                .collect::<Vec<_>>()
+                .join(",")
         ),
     }
 }

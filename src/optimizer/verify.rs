@@ -1,15 +1,16 @@
 use num_bigint::BigInt;
 
 use crate::{
-    FactId, InstructionId, KirFunction, KirInstruction, KirInstructionKind, KirModule,
-    KirTerminator, ProofId, ValueId, compute_kir_dominators,
+    FactId, InstructionId, KirArithmeticSemantics, KirCheckConditionKind, KirFunction,
+    KirInstruction, KirInstructionKind, KirModule, KirTerminator, MirBinaryOp, MirUnaryOp, ProofId,
+    ValueId, compute_kir_dominators,
 };
 
 use super::{
-    ContractFactSet, FactArena, FactDerivation, FactOrigin, FactPredicate, ProofArena,
-    ProofCertificate, ProofStep, ScalarAnalysisBudget, ScalarAnalysisResult, ScalarClaim,
-    ScalarFailure, ScalarValue, contract_fact_dominates_at, refine_scalar_comparison,
-    scalar_binary,
+    ContractFactAffineExpression, ContractFactAffineTerm, ContractFactPredicate, ContractFactSet,
+    FactArena, FactDerivation, FactOrigin, FactPredicate, ProofArena, ProofCertificate, ProofStep,
+    ScalarAnalysisBudget, ScalarAnalysisResult, ScalarClaim, ScalarFailure, ScalarValue,
+    contract_fact_dominates_at, refine_scalar_comparison, scalar_binary,
 };
 
 /// A deterministic compiler-internal evidence validation error.
@@ -288,7 +289,8 @@ fn verify_proven_fact(
 #[derive(Debug, Clone)]
 enum CheckedStep {
     Scalar(ScalarClaim),
-    Fact,
+    Fact(FactPredicate),
+    GuardSafety,
 }
 
 fn verify_certificate(
@@ -371,7 +373,7 @@ fn check_step(
                 FactPredicate::ValueInterval { value, interval } => Ok(CheckedStep::Scalar(
                     ScalarClaim::new(*value, interval.clone(), ScalarFailure::None),
                 )),
-                FactPredicate::Contract(_) => Ok(CheckedStep::Fact),
+                FactPredicate::Contract(_) => Ok(CheckedStep::Fact(fact_value.predicate.clone())),
             }
         }
         ProofStep::Constant { instruction, claim } => {
@@ -435,6 +437,25 @@ fn check_step(
                 return Err(prefix("loop invariant is not closed under its transfer"));
             }
             Ok(CheckedStep::Scalar(claim.clone()))
+        }
+        ProofStep::GuardSafety {
+            condition_instruction,
+            premises,
+        } => {
+            let premises = premises
+                .iter()
+                .map(|premise| {
+                    checked
+                        .get(premise.index() as usize)
+                        .ok_or_else(|| prefix("guard-safety premise is missing"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if !guard_safety_matches(function, *condition_instruction, &premises) {
+                return Err(prefix(
+                    "guard-safety claim does not follow from local KIR and premises",
+                ));
+            }
+            Ok(CheckedStep::GuardSafety)
         }
     }
 }
@@ -511,9 +532,228 @@ fn checked_scalar<'a>(
 ) -> Result<&'a ScalarClaim, String> {
     match checked.get(index as usize) {
         Some(CheckedStep::Scalar(claim)) => Ok(claim),
-        Some(CheckedStep::Fact) => Err(prefix("step dependency is not a scalar claim")),
+        Some(CheckedStep::Fact(_) | CheckedStep::GuardSafety) => {
+            Err(prefix("step dependency is not a scalar claim"))
+        }
         None => Err(prefix("step dependency is missing")),
     }
+}
+
+fn guard_safety_matches(
+    function: &KirFunction,
+    condition_instruction: InstructionId,
+    premises: &[&CheckedStep],
+) -> bool {
+    let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.id == condition_instruction)
+    else {
+        return false;
+    };
+    match &instruction.kind {
+        KirInstructionKind::Binary {
+            op: op @ (MirBinaryOp::Add | MirBinaryOp::Sub | MirBinaryOp::Mul),
+            left,
+            right,
+            semantics: KirArithmeticSemantics::Checked,
+        } => {
+            let Some(type_node) = instruction
+                .results
+                .first()
+                .and_then(|result| super::IntegerType::from_mir(&result.type_node))
+            else {
+                return false;
+            };
+            let (Some(left), Some(right)) = (
+                scalar_for_value(function, premises, *left, type_node),
+                scalar_for_value(function, premises, *right, type_node),
+            ) else {
+                return false;
+            };
+            scalar_binary(*op, KirArithmeticSemantics::Checked, &left, &right)
+                .is_ok_and(|result| result.failure() == ScalarFailure::None)
+        }
+        KirInstructionKind::Unary {
+            op: MirUnaryOp::Neg,
+            operand,
+            semantics: KirArithmeticSemantics::Checked,
+        } => {
+            let Some(type_node) = instruction
+                .results
+                .first()
+                .and_then(|result| super::IntegerType::from_mir(&result.type_node))
+            else {
+                return false;
+            };
+            scalar_for_value(function, premises, *operand, type_node).is_some_and(|operand| {
+                type_node.is_signed()
+                    && operand.interval().lower() > &BigInt::from(type_node.minimum_i128())
+            })
+        }
+        KirInstructionKind::CheckCondition { kind, args } => match kind {
+            KirCheckConditionKind::ArithmeticOverflow => false,
+            KirCheckConditionKind::DivisionByZero => args
+                .first()
+                .and_then(|value| exact_scalar(function, premises, *value))
+                .is_some_and(|value| value != BigInt::from(0)),
+            KirCheckConditionKind::SignedDivisionOverflow => {
+                signed_division_is_safe(function, premises, args)
+            }
+            KirCheckConditionKind::SliceOutOfBounds => {
+                slice_index_is_safe(function, premises, args)
+            }
+            KirCheckConditionKind::InvalidSubslice => subslice_is_safe(function, premises, args),
+        },
+        _ => false,
+    }
+}
+
+fn scalar_for_value(
+    function: &KirFunction,
+    premises: &[&CheckedStep],
+    value: ValueId,
+    type_node: super::IntegerType,
+) -> Option<ScalarValue> {
+    if let Some(claim) = premises.iter().find_map(|premise| match premise {
+        CheckedStep::Scalar(claim) if claim.value == value => Some(claim),
+        _ => None,
+    }) {
+        return ScalarValue::from_interval(type_node, claim.interval.clone())
+            .ok()
+            .map(|scalar| scalar.with_failure(claim.failure));
+    }
+    resolve_constant(function, value)
+        .and_then(|constant| ScalarValue::constant(type_node, constant).ok())
+}
+
+fn exact_scalar(
+    function: &KirFunction,
+    premises: &[&CheckedStep],
+    value: ValueId,
+) -> Option<BigInt> {
+    resolve_constant(function, value).or_else(|| {
+        premises.iter().find_map(|premise| match premise {
+            CheckedStep::Scalar(claim)
+                if claim.value == value && claim.interval.lower() == claim.interval.upper() =>
+            {
+                Some(claim.interval.lower().clone())
+            }
+            _ => None,
+        })
+    })
+}
+
+fn signed_division_is_safe(
+    function: &KirFunction,
+    premises: &[&CheckedStep],
+    args: &[ValueId],
+) -> bool {
+    let [left, right] = args else {
+        return false;
+    };
+    let (Some(type_node), Some(left), Some(right)) = (
+        value_integer_type(function, *left),
+        exact_scalar(function, premises, *left),
+        exact_scalar(function, premises, *right),
+    ) else {
+        return false;
+    };
+    if !type_node.is_signed() {
+        return false;
+    }
+    left != BigInt::from(type_node.minimum_i128()) || right != BigInt::from(-1)
+}
+
+fn slice_index_is_safe(
+    function: &KirFunction,
+    premises: &[&CheckedStep],
+    args: &[ValueId],
+) -> bool {
+    let [slice, index] = args else {
+        return false;
+    };
+    if let (Some(index), Some(len)) = (
+        exact_scalar(function, premises, *index),
+        resolve_slice_len(function, premises, *slice),
+    ) {
+        return index >= BigInt::from(0) && index < len;
+    }
+    premises.iter().any(|premise| {
+        matches!(
+            premise,
+            CheckedStep::Fact(FactPredicate::Contract(predicate))
+                if contract_proves_value_below_slice_len(predicate, *index, *slice)
+        )
+    })
+}
+
+fn subslice_is_safe(function: &KirFunction, premises: &[&CheckedStep], args: &[ValueId]) -> bool {
+    let [slice, start, end] = args else {
+        return false;
+    };
+    let (Some(start), Some(end), Some(len)) = (
+        exact_scalar(function, premises, *start),
+        exact_scalar(function, premises, *end),
+        resolve_slice_len(function, premises, *slice),
+    ) else {
+        return false;
+    };
+    start >= BigInt::from(0) && start <= end && end <= len
+}
+
+fn resolve_slice_len(
+    function: &KirFunction,
+    premises: &[&CheckedStep],
+    slice: ValueId,
+) -> Option<BigInt> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| {
+            (instruction.results.first().map(|result| result.value) == Some(slice)).then_some(
+                match instruction.kind {
+                    KirInstructionKind::MakeSlice { len, .. } => {
+                        exact_scalar(function, premises, len)
+                    }
+                    _ => None,
+                },
+            )
+        })
+        .flatten()
+}
+
+fn contract_proves_value_below_slice_len(
+    predicate: &ContractFactPredicate,
+    value: ValueId,
+    slice: ValueId,
+) -> bool {
+    let ContractFactPredicate::Comparison {
+        operator,
+        left,
+        right,
+    } = predicate
+    else {
+        return false;
+    };
+    (operator == "<"
+        && affine_is_single_term(left, ContractFactAffineTerm::Value(value))
+        && affine_is_single_term(right, ContractFactAffineTerm::SliceLength(slice)))
+        || (operator == ">"
+            && affine_is_single_term(left, ContractFactAffineTerm::SliceLength(slice))
+            && affine_is_single_term(right, ContractFactAffineTerm::Value(value)))
+}
+
+fn affine_is_single_term(
+    expression: &ContractFactAffineExpression,
+    expected: ContractFactAffineTerm,
+) -> bool {
+    expression.constant == BigInt::from(0)
+        && expression.terms.len() == 1
+        && expression.terms[0].term == expected
+        && expression.terms[0].coefficient == BigInt::from(1)
 }
 
 fn constant_matches_claim(instruction: &KirInstruction, claim: &ScalarClaim) -> bool {
