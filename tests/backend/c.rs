@@ -464,7 +464,7 @@ fn c_backend_should_preserve_typescript_oracle_abi_for_official_examples() {
     let examples = fixtures::ORACLE_EXAMPLES
         .iter()
         .map(|fixture| fixture.oracle)
-        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .chain(std::iter::once(fixtures::F64_EDGES.oracle))
         .collect::<Vec<_>>();
 
     for (index, example) in examples.iter().enumerate() {

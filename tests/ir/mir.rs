@@ -899,7 +899,7 @@ fn mir_validator_should_reject_void_or_direct_slice_elements_and_exported_return
 }
 
 #[test]
-fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_levels() {
+fn mir_cli_should_keep_typescript_o0_semantic_bytes_at_every_opt_level() {
     let Some(ts_cli) = typescript_cli() else {
         return;
     };
@@ -907,27 +907,29 @@ fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_level
         .iter()
         .chain(fixtures::BENCHMARK_FIXTURES)
         .map(|fixture| fixture.oracle)
-        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .chain(std::iter::once(fixtures::F64_EDGES.oracle))
         .collect::<Vec<_>>();
 
-    for opt_level in 0..=3 {
-        let opt_flag = format!("-O{opt_level}");
-        for &example in &examples {
-            let source = typescript_root().join(example);
+    for &example in &examples {
+        let source = typescript_root().join(example);
+        let ts_output = Command::new("node")
+            .arg(&ts_cli)
+            .arg("emit-mir")
+            .arg("-O0")
+            .arg(&source)
+            .output()
+            .expect("run TypeScript semantic emit-mir");
+        assert!(
+            ts_output.status.success(),
+            "{example} TypeScript -O0 stderr:\n{}",
+            String::from_utf8_lossy(&ts_output.stderr)
+        );
+        let expected_stdout = String::from_utf8(ts_output.stdout).expect("TS MIR should be UTF-8");
+        let expected_stderr =
+            String::from_utf8(ts_output.stderr).expect("TS stderr should be UTF-8");
 
-            let ts_output = Command::new("node")
-                .arg(&ts_cli)
-                .arg("emit-mir")
-                .arg(&opt_flag)
-                .arg(&source)
-                .output()
-                .expect("run TypeScript emit-mir");
-            assert!(
-                ts_output.status.success(),
-                "{example} {opt_flag} TS stderr:\n{}",
-                String::from_utf8_lossy(&ts_output.stderr)
-            );
-
+        for opt_level in 0..=3 {
+            let opt_flag = format!("-O{opt_level}");
             let rust_output = Command::new(env!("CARGO_BIN_EXE_ckc"))
                 .arg("emit-mir")
                 .arg(&opt_flag)
@@ -942,12 +944,12 @@ fn mir_cli_should_match_typescript_oracle_for_official_examples_across_opt_level
 
             assert_eq!(
                 String::from_utf8(rust_output.stdout).expect("Rust MIR should be UTF-8"),
-                String::from_utf8(ts_output.stdout).expect("TS MIR should be UTF-8"),
-                "{example} {opt_flag}"
+                expected_stdout,
+                "{example} {opt_flag} semantic MIR"
             );
             assert_eq!(
                 String::from_utf8(rust_output.stderr).expect("Rust stderr should be UTF-8"),
-                String::from_utf8(ts_output.stderr).expect("TS stderr should be UTF-8"),
+                expected_stderr,
                 "{example} {opt_flag} stderr"
             );
         }

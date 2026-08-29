@@ -50,16 +50,14 @@ fn llvm_structural_backend_should_verify_all_representative_fixtures_at_o0_throu
     for fixture in fixtures::ORACLE_EXAMPLES
         .iter()
         .chain(fixtures::BENCHMARK_FIXTURES)
+        .map(|fixture| fixture.local)
+        .chain(std::iter::once(fixtures::F64_EDGES.local))
     {
-        let source = fs::read_to_string(root.join(fixture.local)).expect(fixture.local);
+        let source = fs::read_to_string(root.join(fixture)).expect(fixture);
         for level in 0..=3 {
             let text = structural_llvm(&source, level);
-            assert!(
-                text.contains("target datalayout"),
-                "{} O{level}",
-                fixture.local
-            );
-            assert!(text.contains("target triple"), "{} O{level}", fixture.local);
+            assert!(text.contains("target datalayout"), "{fixture} O{level}");
+            assert!(text.contains("target triple"), "{fixture} O{level}");
         }
     }
 }

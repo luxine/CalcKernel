@@ -25,7 +25,7 @@ fn typescript_oracle_fixtures_should_be_covered_by_rust_backend_tests() {
         report
             .generated_output_fixtures
             .iter()
-            .any(|fixture| fixture == "tests/fixtures/f64_edges.ck"),
+            .any(|fixture| fixture == fixtures::F64_EDGES.oracle),
         "f64 edge fixture should be part of cross-backend generated output coverage"
     );
 }
@@ -71,12 +71,12 @@ fn audit_typescript_oracle_fixture_coverage(
     let mapped = fixtures::ORACLE_EXAMPLES
         .iter()
         .chain(fixtures::BENCHMARK_FIXTURES)
+        .chain(std::iter::once(&fixtures::F64_EDGES))
         .copied()
         .collect::<Vec<_>>();
     let expected = mapped
         .iter()
         .map(|fixture| fixture.oracle.to_owned())
-        .chain(std::iter::once("tests/fixtures/f64_edges.ck".to_owned()))
         .collect::<BTreeSet<_>>();
     let discovered = fixtures.iter().cloned().collect::<BTreeSet<_>>();
     for missing in expected.difference(&discovered) {
@@ -131,11 +131,7 @@ fn audit_typescript_oracle_fixture_coverage(
         let absolute = repo_root().join(path);
         match fs::read_to_string(&absolute) {
             Ok(text) => {
-                for required in [
-                    "use super::support::fixtures;",
-                    "fixtures::",
-                    "tests/fixtures/f64_edges.ck",
-                ] {
+                for required in ["fixtures::", "fixtures::F64_EDGES"] {
                     if !text.contains(required) {
                         failures.push(format!(
                             "{label} backend oracle coverage must use {required:?}"

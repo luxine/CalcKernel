@@ -155,7 +155,7 @@ fn wat_backend_should_preserve_typescript_oracle_export_abi_for_official_example
         .iter()
         .chain(fixtures::BENCHMARK_FIXTURES)
         .map(|fixture| fixture.oracle)
-        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .chain(std::iter::once(fixtures::F64_EDGES.oracle))
         .collect::<Vec<_>>();
 
     for example in examples {
@@ -200,7 +200,7 @@ fn wasm_cli_should_emit_valid_deterministic_bytes_for_official_examples() {
         .iter()
         .chain(fixtures::BENCHMARK_FIXTURES)
         .map(|fixture| fixture.oracle)
-        .chain(std::iter::once("tests/fixtures/f64_edges.ck"))
+        .chain(std::iter::once(fixtures::F64_EDGES.oracle))
         .collect::<Vec<_>>();
 
     for (index, example) in examples.iter().enumerate() {
@@ -387,7 +387,7 @@ fn wasm_cli_should_match_typescript_oracle_for_f64_edge_fixture_runtime_behavior
     fs::create_dir_all(&dir).expect("create temp dir");
     let runner = dir.join("run_wasm_case.mjs");
     fs::write(&runner, wasm_runtime_runner()).expect("write WASM runtime runner");
-    let source_path = typescript_root().join("tests/fixtures/f64_edges.ck");
+    let source_path = typescript_root().join(fixtures::F64_EDGES.oracle);
     let ts_wasm = dir.join("f64_edges.ts.wasm");
     let rust_wasm = dir.join("f64_edges.rust.wasm");
 

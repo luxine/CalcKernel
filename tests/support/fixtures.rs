@@ -114,6 +114,10 @@ pub const BENCH_F64_KERNELS: Fixture = Fixture {
     local: "benches/fixtures/f64_kernels.ck",
     oracle: "bench/perf/fixtures/f64_kernels.ck",
 };
+pub const F64_EDGES: Fixture = Fixture {
+    local: "tests/fixtures/performance/f64_edges.ck",
+    oracle: "tests/fixtures/f64_edges.ck",
+};
 
 pub const ORACLE_EXAMPLES: &[Fixture] = &[
     CORE_SCALAR,
@@ -148,4 +152,5 @@ pub const LOCAL_ONLY_EXAMPLES: &[&str] = &[
     "examples/core/control_flow.ck",
     "examples/core/void.ck",
     "examples/core/slices.ck",
+    "examples/native/hello.ck",
 ];
