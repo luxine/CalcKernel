@@ -101,3 +101,175 @@ median_ns = 108625
 target = "macos-aarch64"
 case = "example-dijkstra"
 median_ns = 518666
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "branch_mix"
+median_ns = 16692559
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "integer_accumulate"
+median_ns = 17070617
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "proof_loop"
+median_ns = 7300126
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "remainder_chain"
+median_ns = 58921452
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "branch_mix"
+median_ns = 19280205
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "integer_accumulate"
+median_ns = 24120198
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "proof_loop"
+median_ns = 7473812
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "remainder_chain"
+median_ns = 64814292
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "pricing"
+median_ns = 164038
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "pricing-soa"
+median_ns = 132600
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "f64-kernels"
+median_ns = 310325
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "example-pricing"
+median_ns = 129808
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "example-dijkstra"
+median_ns = 703886
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "proof"
+median_ns = 78172
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "branch_mix"
+median_ns = 17815317
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "integer_accumulate"
+median_ns = 23000767
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "proof_loop"
+median_ns = 15531804
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "remainder_chain"
+median_ns = 87470085
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "branch_mix"
+median_ns = 18414753
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "integer_accumulate"
+median_ns = 27021068
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "proof_loop"
+median_ns = 15655936
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "remainder_chain"
+median_ns = 80957339
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "pricing"
+median_ns = 197290
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "pricing-soa"
+median_ns = 157136
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "f64-kernels"
+median_ns = 361990
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "example-pricing"
+median_ns = 158859
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "example-dijkstra"
+median_ns = 832254
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "proof"
+median_ns = 94447
