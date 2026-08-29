@@ -32,3 +32,32 @@ export CKC_CLANG_ORACLE=/Users/lynn/code/Rust_CalcKernel/.worktrees/native-toolc
 ## 完成证据
 
 执行时追加 SHA、LLVM identity、host triple、audit property/mutation 数与 differential matrix。
+
+## 执行记录（2026-08-29）
+
+- 实现提交：`ac69fb7e119f1033b56b27eca54c36869796b74e`。
+- Native KIR lowering 直接消费 evidence-verified KIR；scalar、control、slice、checked
+  ordered guards、runtime calls、C ABI thunks 与 executable entry wrapper 均不经过 MIR optimizer，
+  也不重新推断已经从 KIR 删除的检查。
+- private bridge ABI 为 `2`；Native ABI 与 Runtime ABI 继续为 `1`。桥接 LLVM identity 为
+  `22.1.8`，manifest SHA-256 为
+  `2e00d1c91a268879cd262a15d7120edc5d10a3af8086742ca574ff5f3e8bdbc8`；host
+  target 为 `aarch64-apple-darwin`，code generator 为 `AArch64`，ORC layer 为
+  `JITLink`。
+- CK-owned whitelist 覆盖 range/`llvm.assume`、alignment、`nuw`/`nsw`、parameter
+  readonly/writeonly、function memory effects、parameter noalias 与 access-scoped
+  `alias.scope`/`noalias` metadata；每个记录均携带 `FactId` 或 `ProofId`。完整双根正例的
+  audit property 数为 `10`；注入的 `1` 个真实未登记 `noalias` mutation 在 LLVM
+  optimization 前被拒绝。
+- noalias 负例覆盖第三根、checked 非 void 隐藏结果指针、slice 返回与未内联调用边界；
+  均无 parameter noalias。部分 pair 仍只在对应根的真实 load/store 上生成 scoped
+  metadata。
+- differential matrix 为 overflow/bounds 同步的 unchecked 与 checked 两组乘 O0、O1、
+  O2、O3，共 `8` 格；每格将 Native KIR 动态库与 pinned Clang C oracle 比较 scalar、
+  control、void/pointer mutation、struct、slice、checked 首错和除零行为，全部一致。
+- 回归计数：fact audit `6/6`、LLVM filter `17/17`、ABI filter `5/5`、differential
+  `1/1`（内部 8 格）、object `5/5`、libraries `3/3`、executable `3/3`、JIT
+  `8/8`。
+- Rust 工具链：`rustc 1.90.0 (1159e78c4 2025-09-14)`、Rust LLVM `20.1.8`、
+  `cargo 1.90.0 (840b83a10 2025-07-30)`。
+- 本文件“必须通过”第 1–11 项全部以 exit status `0` 通过。
