@@ -1,5 +1,6 @@
 #include "ckc_llvm.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <exception>

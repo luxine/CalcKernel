@@ -55,11 +55,15 @@ static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
 static_assert(sizeof(int32_t) == 4, "bridge requires 32-bit int32_t");
 static_assert(sizeof(CkcLlvmOwnedBytes) >= sizeof(void *) + sizeof(size_t),
               "owned byte descriptor layout is incomplete");
+static_assert(sizeof(CkcLlvmFactAuditCounts) == 10 * sizeof(uint64_t),
+              "fact audit count layout is incomplete");
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
 _Static_assert(sizeof(int32_t) == 4, "bridge requires 32-bit int32_t");
 _Static_assert(sizeof(CkcLlvmOwnedBytes) >= sizeof(void *) + sizeof(size_t),
                "owned byte descriptor layout is incomplete");
+_Static_assert(sizeof(CkcLlvmFactAuditCounts) == 10 * sizeof(uint64_t),
+               "fact audit count layout is incomplete");
 #endif
 
 typedef struct CkcLlvmContext CkcLlvmContext;
