@@ -228,6 +228,70 @@ fn release_toolchain_should_static_link_non_system_cpp_runtimes() {
 }
 
 #[test]
+fn windows_static_prefix_should_explicitly_disable_the_separate_c_api_dll() {
+    assert!(
+        read("native/llvm/manifest.toml").contains("build_llvm_c_dylib = false"),
+        "the pinned static build manifest must also freeze the C API DLL option"
+    );
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let configure = bootstrap
+        .split_once("$configure = @(")
+        .unwrap()
+        .1
+        .split_once("& cmake @configure")
+        .unwrap()
+        .0;
+    assert!(
+        configure.contains("\"-DLLVM_BUILD_LLVM_C_DYLIB=OFF\""),
+        "MSVC defaults LLVM_BUILD_LLVM_C_DYLIB to ON independently of LLVM_BUILD_LLVM_DYLIB"
+    );
+}
+
+#[test]
+fn windows_static_prefix_should_reject_dlls_in_both_install_directories() {
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    // Execute the real post-install guard without requiring MSVC on the test host.
+    let marker = "if ($installedVersion -ne $llvmVersion) { throw \"installed llvm-config version mismatch\" }";
+    let guard = bootstrap
+        .split_once(marker)
+        .unwrap()
+        .1
+        .split_once("$clang = Join-Path $Prefix \"bin/clang.exe\"")
+        .unwrap()
+        .0;
+    let root = super::support::temp::temp_dir("ckc-bootstrap-static-layout");
+    for directory in ["bin", "lib"] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    let script =
+        format!("$ErrorActionPreference = 'Stop'\n$Prefix = $env:CKC_TEST_PREFIX\n{guard}");
+    let run = || {
+        Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-Command", &script])
+            .env("CKC_TEST_PREFIX", &root)
+            .output()
+            .expect("execute actual installation guard")
+    };
+    assert!(
+        run().status.success(),
+        "a DLL-free installation should pass the static guard"
+    );
+    for directory in ["bin", "lib"] {
+        let dll = root.join(directory).join("LLVM-C.dll");
+        fs::write(&dll, b"synthetic DLL marker, never loaded").unwrap();
+        let output = run();
+        assert!(
+            !output.status.success(),
+            "actual post-install guard must reject {directory}/LLVM-C.dll"
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("shared LLVM library"));
+        fs::remove_file(dll).unwrap();
+        assert!(run().status.success());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn native_runtime_should_be_source_owned_hashed_and_auditable() {
     for path in [
         "native/runtime/include/ckc_runtime.h",

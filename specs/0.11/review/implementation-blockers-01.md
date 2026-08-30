@@ -973,7 +973,7 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   自审未发现宏越界到非 Windows 路径或测试替代真实 SDK 的情况；I21 仍待两架构
   Windows 以最终 SHA 完成真实构建与 Native 验收，不把本机模拟当作远程通过。
 
-## I22：Windows static prefix 含默认开启的 LLVM-C.dll（已复诊，待修复验收）
+## I22：Windows static prefix 含默认开启的 LLVM-C.dll（本地修复通过，真实 Windows 待验）
 
 - 新 run `33302144688` / `ae7a130` 的 Windows x64 job `99232169083` 恢复旧 v3
   cache 后，在 `validate-llvm-prefix.ps1:68` 以 `shared LLVM library in static prefix:
@@ -990,10 +990,35 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   配置添加显式 OFF 的 red regression；随后仅加入
   `-DLLVM_BUILD_LLVM_C_DYLIB=OFF`，让安装后 guard 同时检查 bin/lib。扩充独立 cache
   verifier 的 DLL 注入反例，确认仍拒绝污染。禁止事后删除 DLL 来伪造验证通过。
+  同步固定 native build manifest 的 `build_llvm_c_dylib=false`；非 MSVC 原默认已为 OFF，
+  不更改 Unix 构建路径或 LLVM 版本。
 - 两个 bootstrap recipe 仍参与既有全量 cache identity，因此修复自然生成新缓存键；
   不复用不合格 Windows prefix，不修改/删除旧缓存，不缩减源校验或 static/CRT/ABI 门。
   默认/all-feature/Clippy 与真实两架构 Windows、同一最终 SHA 全十 job 必须重新通过。
   该项修复既有静态工具链契约，不改变语言、ABI、性能门槛或源 baseline；行内自审无设计阻断。
+
+### I22 实现与行内复审
+
+- 在计划提交 `41f11a7` 后观察真实 red：原配置没有独立 C API DLL 的 OFF 参数，
+  原安装后 guard 接受 bin 中的 DLL。随后 manifest 字段的单独 regression 也先失败；
+  修复后两个安装测试和原独立 cache verifier 的 bin/lib DLL 注入反例均通过。
+  两份 red 日志摘要分别为
+  `a694723a8f46551e69acf414f3f1010ea81584dfa2fc65b148d8b6ecca9e3740`、
+  `056a2876405ffcfebd71eaa882d067f6be6328dfea132ddefec91a29835fe2ed`；
+  针对性 green 日志为 `33cb838462f617df70c7143afd91c8d6f0bd856632debed1f5911c8e314ea035`。
+- 默认 470、全特性 593（Native 94）、release 单元 53、release IR 58 全通过，
+  0 failed / 0 ignored；all-target/all-feature Clippy、fmt、diff 检查通过。
+  default / all-feature / release 日志摘要分别为
+  `0858ec657f02367a01229a3ee4383b727005a4602d50a1dd224a1ae96f6dc3af`、
+  `1cf438720d29bdb33a0cd60018baa2125ec1cb5636cf0775553c89417e0f59cf`、
+  `c6b597fca783fb20c63647194a46a8ef8d35be157f95efcacee62800bf697272`。
+- 自审确认仅显式关闭 MSVC 独立 DLL 构建、补齐安装布局断言及 manifest；没有删除
+  已安装文件、放松 cache verifier、改变 LLVM 版本/ABI/门槛。新测试执行实际安装 guard，
+  但不声称模拟目录替代真实 MSVC 构建。bootstrap/manifest 属于原缓存 identity，所有
+  host 的新键须重新构建并验证，不绕过新键来复用旧 prefix。
+- 同轮 ARM Windows job `99232168996` 也在 cache validation 的同一 DLL 上失败；日志
+  摘要为 `fcc795342a98b44eee4581ca19d7650192fc1886203eb805544537fbe295e543`。
+  I21 与 I22 仍必须由下一次完整矩阵的真实 Windows 编译和测试签收。
 
 ## 修订边界（全部阻断，持续有效）
 

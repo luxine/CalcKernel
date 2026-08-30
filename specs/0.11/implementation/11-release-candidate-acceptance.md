@@ -43,7 +43,8 @@ I20 补充实现必须满足 `11-ssa-phi-pruning-plan.md`，以下尚待执行�
 ## 远程必须通过
 
 上述 phi 清理本地证据见 review 的“I20 无根标量 phi 实现验证”和 `930f18d` 首次门禁；
-I20 本地已通过，远程与 I14/I19 尚未签收。
+I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 门禁，
+但包含 Windows 修复的同一最终 SHA 全矩阵仍待签收。
 
 - feature branch 上显式 `workflow_dispatch` 的 quality、native-integration、六个
   native-host、x86-64/AArch64 performance jobs 全绿。
@@ -95,7 +96,31 @@ I20 本地已通过，远程与 I14/I19 尚未签收。
   `358498e77d56c8244c5b25d0dd112c165bab767efdb8c08964c0b35be0626a9e`、
   `c418bd73b730217b4568965dd9ed8abf85fe93c905f32351ca4456c2122db4a9`。
   完整实际库随报告归档；固定 0.10 bundle 的源码/recipe/组件清单 identity 与前述
-  preparation 相同。没有重跑择优；I14/I19 远程结果与新增 I22 仍待完整 CI 验收。
+  preparation 相同。没有重跑择优；最终 SHA 完整 CI 验收仍待完成。
+
+### 首次 schema-6 远程矩阵（`ae7a130`，未整体通过）
+
+- run `33302144688`：quality `99232168962`、native integration `99232168888`、
+  Linux ARM `99232168986` / x64 `99232169015`、Darwin ARM `99232169047` /
+  x64 `99232169032`、performance ARM `99232168961` / x86-64 `99232169033`
+  均 success。Linux ownership sanitizer 与实际 Darwin 签名/JIT audit 在本轮通过。
+  Windows ARM `99232168996` / x64 `99232169083` 均被 I22 的不合格静态缓存挡住，
+  因此该 run 的结论仍为 failure；不能将八项成功记作阶段完成。
+- ARM unchecked Clang / replay ratio `0.9983 / 1.0011`，checked
+  `0.9995 / 1.0010`，raw proof `1.0001`，optimizer suite `1.3587`。
+  x86-64 分别为 `1.0506 / 0.9996`、`1.0021 / 1.0096`、`0.9929`、`1.5072`。
+  两架构所有 individual gates 也通过；没有调整数值门槛或改成 optional。
+- 完整 performance artifacts（含固定编译器、32 个实际计时库、报告及准备/检查日志）
+  已保留。x86-64 artifact `9729344974` zip 摘要为
+  `1f6c755c13862b5a64be4538c2041c57d4bdc7a84b81080fe4d4557a9ac087fa`；
+  ARM artifact `9729336729` 为
+  `4d4d8e077885adfac7838ef057b32b9cf72dbdc89427e923dbe5656d655ab9b1`。
+  原始 job 日志摘要分别为
+  `31a246644c1bf6338126d5a45fc52508170eb744a76cb21eed77ba72e7bd88b5`、
+  `28876d04cb69f1489d3e92d33f7b7b6b74d36b35049d9ec6042f01e2086e146f`。
+- I22 新配方及测试本地复验为 default 470 / all-feature 593 / release lib 53 /
+  release IR 58，Clippy/fmt/diff 均通过；详细 red/green 与自审见 review 的 I22。
+  下一轮必须在同一最终 SHA 重跑全部十个 required jobs，不拼接不同 SHA 的成功项。
 
 追加本地命令结果、远程 workflow run URL/commit、六 host job IDs、两架构 performance 摘
 要与最终阶段 SHA。

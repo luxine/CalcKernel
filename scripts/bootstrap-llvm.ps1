@@ -118,6 +118,7 @@ $configure = @(
     "-DLLVM_ENABLE_PROJECTS=$projects", "-DLLVM_TARGETS_TO_BUILD=$llvmTarget",
     "-DLLVM_ENABLE_ASSERTIONS=ON", "-DBUILD_SHARED_LIBS=OFF",
     "-DLLVM_BUILD_LLVM_DYLIB=OFF", "-DLLVM_LINK_LLVM_DYLIB=OFF",
+    "-DLLVM_BUILD_LLVM_C_DYLIB=OFF",
     "-DLLVM_ENABLE_RTTI=OFF", "-DLLVM_ENABLE_EH=OFF",
     "-DLLVM_ENABLE_ZLIB=OFF", "-DLLVM_ENABLE_ZSTD=OFF",
     "-DLLVM_ENABLE_LIBXML2=OFF", "-DLLVM_ENABLE_TERMINFO=OFF",
@@ -159,8 +160,10 @@ if (-not (Test-Path -LiteralPath $llvmConfig -PathType Leaf)) {
 }
 $installedVersion = (& $llvmConfig --version).Trim()
 if ($installedVersion -ne $llvmVersion) { throw "installed llvm-config version mismatch" }
-if (Get-ChildItem -LiteralPath (Join-Path $Prefix "lib") -Filter "LLVM*.dll" -File) {
-    throw "release prefix contains a shared LLVM library"
+foreach ($directory in @("bin", "lib")) {
+    if (Get-ChildItem -LiteralPath (Join-Path $Prefix $directory) -Filter "LLVM*.dll" -File) {
+        throw "release prefix contains a shared LLVM library"
+    }
 }
 $clang = Join-Path $Prefix "bin/clang.exe"
 if ($Profile -eq "release" -and (Test-Path -LiteralPath $clang)) {

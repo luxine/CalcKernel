@@ -17,6 +17,7 @@ build_type = "Release"
 assertions = true
 build_shared_libs = false
 build_llvm_dylib = false
+build_llvm_c_dylib = false
 link_llvm_dylib = false
 enable_rtti = false
 enable_eh = false

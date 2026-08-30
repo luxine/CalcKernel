@@ -437,6 +437,21 @@ fn native_prefix_validation_should_check_object_hashes_before_caching() {
         "{}",
         String::from_utf8_lossy(&windows.stderr)
     );
+    for directory in ["bin", "lib"] {
+        let dll = root.join(directory).join("LLVM-C.dll");
+        fs::write(&dll, b"synthetic LLVM DLL marker, never loaded").expect("inject DLL");
+        let shared = run("aarch64-pc-windows-msvc");
+        assert!(
+            !shared.status.success(),
+            "cache verifier must reject {directory}/LLVM-C.dll"
+        );
+        assert!(
+            String::from_utf8_lossy(&shared.stderr)
+                .contains("shared LLVM library in static prefix")
+        );
+        fs::remove_file(dll).expect("remove owned test marker");
+        assert!(run("aarch64-pc-windows-msvc").status.success());
+    }
     fs::write(root.join("share/ckc/runtime/kernel32.lib"), b"tampered").expect("corrupt import");
     let import = run("aarch64-pc-windows-msvc");
     assert!(!import.status.success());
