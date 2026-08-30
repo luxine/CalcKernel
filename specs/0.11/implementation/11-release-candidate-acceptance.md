@@ -93,6 +93,16 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 
 ## 完成证据
 
+### I24 preservation 回归迁移（2026-08-30，本地通过）
+
+- 计划提交 `c5652e0` 之后恢复原阶段 02 测试过滤器，实际 3 passed / 0 failed /
+  0 ignored；全部 O0–O3 的控制流、打印顺序及 checked-bounds slice 调用/返回均覆盖。
+  slice 的 data/len 经实际生成 C 调用校验，不以旧 MIR 文本或空测试代替。
+- 完整 default 473 / all-feature 601（Native 99）、两种 Clippy、fmt/diff、docs 16
+  项均通过；原始日志摘要与行内对照复审见 review 的 I24。
+- 本轮无生产实现、benchmark、checker、阈值或 workflow 变更。保留下面 `99ffb34`
+  首次性能原件；最终候选仍须通过同一 SHA 的全部十项 CI，不拼接历史成功项。
+
 ### I23 首次完整本机性能门（`99ffb34`，2026-08-30）
 
 - 被测提交为 `99ffb34d6c58402a155bb4401c033513ca819462`，工作区干净；

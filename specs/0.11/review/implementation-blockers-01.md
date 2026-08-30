@@ -1071,7 +1071,7 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `cd3a8a27f34c0e4f796287ba51b619ee0ed22c114cac5879606d983dfaac35a2`。
 - 这不是阶段 11 签收；仍需该实现提交的首次性能及新同 SHA 六 host/十项 CI。
 
-## I24：阶段 02 的三项 legacy preservation 回归未迁移（已复诊，待补测试）
+## I24：阶段 02 的三项 legacy preservation 回归未迁移（本地修复通过）
 
 - 对当前 default/all-feature/release 完整日志逐项映射阶段 01–10 的测试命令，只有
   阶段 02 的 `optimizer_should_preserve` 匹配 0 项。实际运行原命令确认 0 passed /
@@ -1092,6 +1092,33 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   旧优化路径。无需生产实现改动；若新测试暴露真实实现错误，先另行复诊再修复。
 - 同步阶段 02 记录测试入口重新接通；阶段 11 同 SHA 全矩阵与总验收仍是必需条件，
   本项不改变原性能报告、数值门槛、语言/ABI 或 final acceptance 顺序。
+
+### I24 实现与行内复审
+
+- 计划提交 `c5652e0` 先于新增测试。原过滤器现在实际执行三项，0 failed / 0 ignored；
+  日志 SHA-256 为
+  `66bccd6880f982d7e54cd19b56d1b233b4db8ea9cbc8183ad25c1aa31066e6f6`。
+- 逐条对照 `9427203` 的原三个测试：保留相同控制流输入、三个 typed print intrinsic
+  和全部四个优化级别；使用已有 verified KIR helper，不重建旧 MIR optimizer。
+  slice 的内部参数/返回类型仍被检查，O0/O1 要求定义保留；O2/O3 允许合法 inline，
+  但实际 C harness 对每一级验证长度 0/1/4 及 null+0，返回 data/len 必须完全保持。
+- 本轮只修改 `tests/optimizer.rs` 和新增的测试模块。与生产实现 `99ffb34` 比较，
+  src/native/scripts/workflow/benches/Cargo 输入均未变化；不增加 release 依赖。
+  C harness 复用仓库既有开发 Clang 调用方式，每次使用唯一 ignored target 子目录。
+- 完整 default 473 / all-feature 601（其中 Native 99）均 0 failed / 0 ignored；
+  default/all-feature Clippy、fmt、diff 检查通过，contracts driver 的 docs 16 项通过。
+  default / all-feature 日志 SHA-256 分别为
+  `ff3b0f5b4e32029bc3cccdd964ab6c12676214bc93cd9d54ee460312bd3f5533`、
+  `2702545bf86ae3e5c678736d13b0999ce85c77916cf495dc509ae9f1f40e7d95`；
+  两个 Clippy 日志为
+  `e666c549efaa8beb959cf6122a4964b1ec3d617f1f3952b71d2d0ef8600ce2a8`、
+  `17534c054d0782419494d5109b227e77724bb20a762df127ba870fffa9a3d749`。
+- 单独文档命令最初误用不存在的 `--test docs` driver，Cargo 明确拒绝，原错误日志保留；
+  改用仓库既有 `--test contracts docs::` 后实际 16 passed，不改任何测试或文档门槛。
+  正确命令日志 SHA-256 为
+  `316ce70b005b6123b956c7683e2c26ce5a13f385a50ef8d3f26eaec12b3e3d2d`。
+- 复审未发现此测试迁移的新阻断项。此结论只关闭本地 I24 覆盖缺口，不替代尚未完成的
+  同一候选 SHA 全十项 CI、阶段 11 与总验收。
 
 ## 修订边界（全部阻断，持续有效）
 

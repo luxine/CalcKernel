@@ -21,9 +21,15 @@
 
 ## 完成证据
 
-阶段 11 切换后的 I24 复诊见 `../review/implementation-blockers-01.md`：原第 3 条
-命令在旧 MIR tests 删除后匹配 0 项，当前尚未重新签收。必须将原三个 preservation
-断言组迁到 verified KIR，并恢复该命令的 3 项实际测试；不能以 exit 0 的空运行代签。
+阶段 11 切换后的 I24 复诊与修复见 `../review/implementation-blockers-01.md`：原第 3
+条命令在旧 MIR tests 删除后匹配 0 项；现已将原三个 preservation 断言组迁到 verified
+KIR。2026-08-30 在计划提交 `c5652e0` 之后执行原命令，实际 3 passed / 0 failed /
+0 ignored；每项均覆盖 O0–O3，slice 另经 checked-bounds C 实际调用验证 data/len。
+本轮测试日志 SHA-256 为
+`66bccd6880f982d7e54cd19b56d1b233b4db8ea9cbc8183ad25c1aa31066e6f6`。
+完整 default 473 / all-feature 601、两种 Clippy、fmt/diff 与 docs 16 项均通过。
+这接通了原验收入口，不把 exit 0 的空运行作为通过证据；阶段 11 的同 SHA 全矩阵和
+总验收仍须分别完成。以下保留阶段 02 最初提交的历史证据。
 
 - 日期：2026-08-29
 - 实现提交：`9427203`

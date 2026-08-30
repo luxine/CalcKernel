@@ -1,6 +1,9 @@
 #[path = "optimizer/scalar.rs"]
 mod scalar;
 
+#[path = "optimizer/preservation.rs"]
+mod preservation;
+
 #[path = "support/mod.rs"]
 mod support;
 
