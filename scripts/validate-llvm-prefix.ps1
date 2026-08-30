@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Prefix,
     [Parameter(Mandatory = $true)][string]$Target,
-    [Parameter(Mandatory = $true)][ValidateSet("release", "oracle")][string]$Profile
+    [Parameter(Mandatory = $true)][Alias("Profile")][ValidateSet("release", "oracle")][string]$CkcProfile
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -41,7 +41,7 @@ function Assert-Hash([string]$Path, [string]$Expected, [string]$Subject) {
 if ((Read-Value "schema") -cne "1") { throw "unsupported LLVM manifest schema" }
 if ((Read-String "version") -cne "22.1.8") { throw "unexpected LLVM manifest version" }
 if ((Read-String "target") -cne $Target) { throw "LLVM manifest target mismatch" }
-if ((Read-String "profile") -cne $Profile) { throw "LLVM manifest profile mismatch" }
+if ((Read-String "profile") -cne $CkcProfile) { throw "LLVM manifest profile mismatch" }
 if ((Read-String "source_sha256") -cne "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888") {
     throw "LLVM source archive hash mismatch"
 }
@@ -86,10 +86,10 @@ if ($isMsvc) {
 }
 $clangName = if ($isMsvc) { "clang.exe" } else { "clang" }
 $clang = Join-Path $Prefix "bin/$clangName"
-if ($Profile -eq "release" -and (Test-Path -LiteralPath $clang)) { throw "release prefix contains Clang" }
-if ($Profile -eq "oracle") {
+if ($CkcProfile -eq "release" -and (Test-Path -LiteralPath $clang)) { throw "release prefix contains Clang" }
+if ($CkcProfile -eq "oracle") {
     if (-not (Test-Path -LiteralPath $clang -PathType Leaf)) { throw "missing Clang oracle" }
     $clangVersion = & $clang --version
     if ($LASTEXITCODE -ne 0 -or "$clangVersion" -notmatch '\bclang version 22\.1\.8\b') { throw "unexpected Clang oracle version" }
 }
-Write-Output "LLVM prefix verified: $Target / $Profile"
+Write-Output "LLVM prefix verified: $Target / $CkcProfile"
