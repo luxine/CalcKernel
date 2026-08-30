@@ -404,11 +404,16 @@ not replace executable well-typed backend tests or authorize malformed artifact 
   reduction is allowed. Inspect exact pass records and successful independent verification.
 - [x] Re-run read-only phi counts and record reductions; output KIR may legitimately
   change now, so replace byte-identity evidence with structural and executable equivalence.
-- [ ] Commit code and evidence on the feature worktree; run the unchanged complete native
+- [x] Commit code and evidence on the feature worktree; run the unchanged complete native
   benchmark/checker once at the new SHA without this task's concurrent builds. Preserve
   the first report whether passing or failing. Do not claim I20 closed before its gates pass.
 
 ## Self-review / scope check
+
+Executed at `930f18d102266424bcc08256f8ea0c129c926dd0`: the first unchanged complete
+benchmark and checker both exit 0. Dijkstra is `789625 / 350000 ns = 2.2561x`,
+suite-median optimizer ratio `1.1114`; all runtime gates pass. See the I20 gate
+record in the implementation review. This closes local I20, not the final remote matrix.
 
 - No O0, builder, public ABI, language syntax, Memory SSA or new named loop pass change.
 - No instruction removal in this helper; existing DCE remains responsible for dead pure

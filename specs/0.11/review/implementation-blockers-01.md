@@ -784,6 +784,22 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   41。因此本批不再宣称 KIR 字节相同，而以结构校验和完整 C/WASM/Native 差分证明
   语义保持。自审未发现未保护引用或证据失效缺口；所有性能阈值和原失败仍保留。
 
+### I20 `930f18d` 首次原始完整门禁（本地关闭，远程待最终 SHA）
+
+- 原命令 `cargo +1.90.0 bench --features native-toolchain --bench ckc_perf -- --task check --cpu baseline`
+  和未修改的 checker 均 exit 0。Dijkstra `789625 / 350000 ns = 2.2561x`；其余
+  pricing `127792 / 83334`、pricing-soa `70458 / 68583`、f64-kernels
+  `174417 / 162375`、proof `46375 / 40375`、example-pricing `62833 / 66709`，
+  suite-median ratio `1.1114`，全部在原 2x/3x 门槛内。
+- unchecked Native/Clang geo `0.9990`、V0.10 ratio `1.0019`；checked
+  `1.0072` / `0.9912`；proof throughput `0.9993`，individual gates 全通过。
+  这是该代码 SHA 的首次完整测试，没有重跑挑选结果；测量期间本任务无其他编译/测试，
+  未声称整台共享主机在全时段独占。I14/I19 原始远程失败仍独立保留。
+- report / benchmark / checker 日志 SHA-256：
+  `c175c70fca8b0edfb6276341c083ab444b3ed855a527bd2dcc47caab718ef71d`、
+  `c263c4b99414fd8859cba8ef486449dcdffd500039423ece8b245ed48d0e5cc1`、
+  `500e3da3309f33fd121113e27f8656817d900f478cdd5d7c07c6eb16eef2cd87`。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median
