@@ -31,7 +31,7 @@ A pass's `changed = false` declaration alone never authorizes reuse.
   `check-elimination`, `dead-code-elimination`, and `cleanup`.
 - O2 adds `effect-aware-inline`, `memory-ssa-refine`, `gvn`,
   `load-forwarding`, `dead-store-elimination`, then reruns range/check cleanup.
-- O3 adds `natural-loop-analysis`, conservative `licm`, induction analysis,
+- O3 adds `natural-loop-analysis`, conservative `licm`, `induction-simplify`,
   post-loop range/check elimination, DCE, and cleanup.
 
 Integer constant propagation also runs in guard-free functions. It rewrites
@@ -107,6 +107,19 @@ it no greater. This rule needs no inferred recurrence or constant loop start.
 Slice identity follows real SSA inputs, not slot names. All graph walks terminate
 with visited sets; ambiguous inputs retain the guard. Actual loop-invariant
 certificates still require the separate entry/transfer checks above.
+
+Induction simplification coalesces equal integer loop-carried values. A closed
+equality certificate lists the simultaneous SSA equalities and exact producers;
+the independent checker validates all incoming phi edges, copies, constants and
+matching add/sub transfers with the same overflow semantics. Different initial
+values or an unmatched latch prevent the rewrite. The pass replaces redundant
+block parameters with same-ValueId copies and removes their incoming scalar
+arguments; Memory SSA, calls, stores and guards keep their order and identity.
+Unused modular recurrences can then disappear, while checked failures still need
+their own guard proof. Live phi certificates are protected. Certificates, rewrite
+bindings and fresh instruction IDs are checked before any mutation. Candidate
+search has a fixed per-function KIR-size budget; exhaustion discards that function's
+pending rewrites and increments `induction_budget_fallbacks` deterministically.
 
 KIR inspection uses `emit-kir`, `--print-facts`,
 `--print-effect-summaries`, and `--explain-optimization`. Output is

@@ -160,6 +160,95 @@ fn loop_induction_should_check_every_latch_and_intervening_assignment() {
 }
 
 #[test]
+fn loop_induction_simplify_should_remove_a_redundant_recurrence() {
+    let source = "export fn count(n: u32) -> u32 { let i: u32 = 0; let j: u32 = 0; while i < n { i = i + 1; j = j + 1; } return j; }";
+    for (level, expected_adds) in [(KirOptimizationLevel::O2, 2), (KirOptimizationLevel::O3, 1)] {
+        let (kir, contracts) =
+            build_with_modes(source, KirOverflowMode::Unchecked, KirBoundsMode::Unchecked);
+        let result = run_kir_pass_pipeline(kir, level, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let artifact = result.artifact.expect("verified artifact");
+        let additions = artifact.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(|instruction| {
+                matches!(
+                    instruction.kind,
+                    KirInstructionKind::Binary {
+                        op: calckernel::MirBinaryOp::Add,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            additions,
+            expected_adds,
+            "{level:?}: {}",
+            print_kir_module(&artifact)
+        );
+        if level == KirOptimizationLevel::O3 {
+            assert!(
+                result
+                    .records
+                    .iter()
+                    .any(|record| record.name == "induction-simplify" && record.changed)
+            );
+        }
+    }
+}
+
+#[test]
+fn loop_induction_simplify_should_cover_widths_directions_and_multiple_latches() {
+    for integer in ["i32", "u32", "i64", "u64"] {
+        for (comparison, body) in [
+            ("i < n", "i = i + 2; j = j + 2;"),
+            ("i > n", "i = i - 2; j = j - 2;"),
+            (
+                "i < n",
+                "if choose { i = i + 1; j = j + 1; continue; } i = i + 2; j = j + 2;",
+            ),
+        ] {
+            let source = format!(
+                "export fn count(start: {integer}, n: {integer}, choose: bool) -> {integer} {{ let i: {integer} = start; let j: {integer} = start; while {comparison} {{ {body} }} return j; }}"
+            );
+            for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+                let (kir, contracts) = build(&source, overflow);
+                let result =
+                    run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, contracts.as_ref());
+                assert!(
+                    result.errors.is_empty(),
+                    "{source}/{overflow:?}: {:?}",
+                    result.errors
+                );
+                assert!(
+                    result.stats.induction_simplifications > 0,
+                    "{source}/{overflow:?}: {}",
+                    print_kir_module(result.artifact.as_ref().expect("artifact"))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn loop_induction_simplify_should_reject_different_entries_and_any_unmatched_latch() {
+    for source in [
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; let j: u32 = 1; while i < n { i = i + 1; j = j + 1; } return j; }",
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; let j: u32 = 0; while i < n { i = i + 1; j = j + 2; } return j; }",
+        "export fn count(n: u32, choose: bool) -> u32 { let i: u32 = 0; let j: u32 = 0; while i < n { if choose { i = i + 1; continue; } i = i + 1; j = j + 1; } return j; }",
+    ] {
+        for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+            let (kir, contracts) = build(source, overflow);
+            let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, contracts.as_ref());
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert_eq!(result.stats.induction_simplifications, 0, "{source}");
+        }
+    }
+}
+
+#[test]
 fn loop_licm_should_hoist_only_modular_pure_invariants() {
     let (kir, contracts) = build(
         r#"

@@ -765,3 +765,70 @@ fn kir_c_loop_guard_rules_should_preserve_integer_limits_and_first_failure() {
         }
     }
 }
+
+#[test]
+fn kir_c_induction_simplification_should_preserve_wrap_break_and_first_error() {
+    let source = r#"
+        export fn counters(start: u32, stop: u32) -> u32 {
+          let i: u32 = start; let j: u32 = start;
+          while i < stop { i = i + 1; j = j + 1; }
+          return j;
+        }
+        export fn descend(start: i64, stop: i64) -> i64 {
+          let i: i64 = start; let j: i64 = start;
+          while i > stop { i = i - 1; j = j - 1; }
+          return j;
+        }
+        export fn mid_break(start: u32, stop: u32, choose: bool) -> u32 {
+          let i: u32 = start; let j: u32 = start;
+          while i < stop { i = i + 1; if choose { break; } j = j + 1; }
+          return j;
+        }
+        export fn ordered(out: ptr<u32>, start: u32, stop: u32) -> u32 {
+          let i: u32 = start; let j: u32 = start;
+          while i < stop {
+            out[0] = 1; i = i + 2; out[0] = 2; j = j + 2; out[0] = 3;
+            if i == 0 { break; }
+          }
+          return j;
+        }
+        export fn different(n: u32) -> u32 {
+          let i: u32 = 0; let j: u32 = 1;
+          while i < n { i = i + 1; j = j + 1; }
+          return j;
+        }
+    "#;
+    for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+        for bounds in [KirBoundsMode::Unchecked, KirBoundsMode::Checked] {
+            let checked_abi =
+                overflow == KirOverflowMode::Checked || bounds == KirBoundsMode::Checked;
+            let mut harness = String::from("int main(void) { uint32_t out = 0;\n");
+            if checked_abi {
+                harness.push_str("  uint32_t result = 99; int64_t signed_result = 99;\n");
+                harness.push_str("  if (counters(UINT32_MAX - 1, UINT32_MAX, &result) != CK_OK || result != UINT32_MAX) return 1; if (counters(7, 0, &result) != CK_OK || result != 7) return 2;\n");
+                harness.push_str("  if (descend(INT64_MIN + 1, INT64_MIN, &signed_result) != CK_OK || signed_result != INT64_MIN) return 3;\n");
+                harness.push_str("  if (mid_break(3, 5, true, &result) != CK_OK || result != 3) return 4; if (mid_break(3, 5, false, &result) != CK_OK || result != 5) return 5;\n");
+                harness.push_str(
+                    "  if (different(3, &result) != CK_OK || result != 4) return 6; result = 99;\n",
+                );
+                if overflow == KirOverflowMode::Checked {
+                    harness.push_str("  if (ordered(&out, UINT32_MAX - 1, UINT32_MAX, &result) != CK_ERR_OVERFLOW || out != 1 || result != 99) return 7;\n");
+                } else {
+                    harness.push_str("  if (ordered(&out, UINT32_MAX - 1, UINT32_MAX, &result) != CK_OK || out != 3 || result != 0) return 8;\n");
+                }
+                harness.push_str("  if (ordered(&out, 0, 2, &result) != CK_OK || out != 3 || result != 2) return 9;\n");
+            } else {
+                harness.push_str("  if (counters(UINT32_MAX - 1, UINT32_MAX) != UINT32_MAX || counters(7, 0) != 7) return 1;\n");
+                harness
+                    .push_str("  if (descend(INT64_MIN + 1, INT64_MIN) != INT64_MIN) return 2;\n");
+                harness.push_str("  if (mid_break(3, 5, true) != 3 || mid_break(3, 5, false) != 5 || different(3) != 4) return 3;\n");
+                harness.push_str("  if (ordered(&out, UINT32_MAX - 1, UINT32_MAX) != 0 || out != 3 || ordered(&out, 0, 2) != 2 || out != 3) return 4;\n");
+            }
+            harness.push_str("  return 0;\n}\n");
+            for optimization in 0..=3 {
+                let kir = optimized_kir(source, level(optimization), overflow, bounds);
+                compile_and_run(&emit_c_kir_module(&kir).expect("induction C"), &harness);
+            }
+        }
+    }
+}

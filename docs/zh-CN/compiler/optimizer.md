@@ -82,6 +82,15 @@ guard 检查器不调用循环分析。局部 strict-bound 规则核验真实整
 不使用 slot 名。图遍历通过 visited set 保证终止，输入不明确时保留 guard。真正的
 循环不变量证书仍必须通过上述独立入口/transfer 检查。
 
+归纳简化合并等值的整数循环携带值。闭合等值证书列出同时成立的 SSA 等式与准确的
+producer；独立检查器核验所有 phi 输入边、Copy、常量，以及溢出语义相同的对应
+add/sub transfer。初值不同或任一回边不匹配时不改写。pass 将冗余 block parameter
+替换成保留原 ValueId 的 Copy，并移除相应输入标量参数；Memory SSA、调用、写入和
+guard 的顺序及身份不变。未使用的 modular 递推随后可删除，checked 失败仍须单独
+的 guard 证明。存活 phi 证书的依赖受到保护。证书、改写绑定及新指令 ID 均在修改前
+核验。候选搜索使用由 KIR 大小决定的固定单函数预算；耗尽时丢弃该函数未提交的
+改写，并确定性增加 `induction_budget_fallbacks` 计数。
+
 `emit-kir`、`--print-facts`、`--print-effect-summaries`、
 `--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。
 

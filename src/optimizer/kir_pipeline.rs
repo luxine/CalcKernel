@@ -55,6 +55,8 @@ pub struct KirOptimizationStats {
     pub natural_loops: u32,
     pub induction_variables: u32,
     pub hoisted_instructions: u32,
+    pub induction_simplifications: u32,
+    pub induction_budget_fallbacks: u32,
 }
 
 /// Transactional output. `artifact` is absent whenever any verification failed.
@@ -370,10 +372,24 @@ pub fn run_kir_pass_pipeline(
             result.module = module;
             return result;
         }
+        let simplified = match kir_passes::run_induction_simplification(
+            &mut module,
+            &result.proofs,
+            &loop_analyses,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                result.errors.push(error);
+                result.module = module;
+                return result;
+            }
+        };
+        result.stats.induction_simplifications = simplified.simplified;
+        result.stats.induction_budget_fallbacks = simplified.exhausted_functions.len() as u32;
         if !record_current_pass(
             &module,
             "induction-simplify",
-            false,
+            simplified.simplified != 0,
             &mut result,
             GENERATION,
         ) {

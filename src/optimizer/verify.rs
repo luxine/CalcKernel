@@ -339,6 +339,7 @@ enum CheckedStep {
     Fact(FactPredicate, ScalarProofScope),
     Boolean(ValueId, bool, ScalarProofScope),
     GuardSafety,
+    InductionEquality,
 }
 
 #[derive(Debug, Clone)]
@@ -713,6 +714,22 @@ fn check_step(
                 ScalarProofScope::Block(*header),
             ))
         }
+        ProofStep::InductionEquality {
+            header,
+            left,
+            right,
+            pairs,
+            definitions,
+        } => {
+            if proof.use_site.block != *header
+                || !induction_equality_matches(function, *header, *left, *right, pairs, definitions)
+            {
+                return Err(prefix(
+                    "induction equality is not closed over every entry and transfer",
+                ));
+            }
+            Ok(CheckedStep::InductionEquality)
+        }
         ProofStep::GuardSafety {
             condition_instruction,
             premises,
@@ -823,9 +840,12 @@ fn checked_scalar<'a>(
 ) -> Result<&'a ScalarClaim, String> {
     match checked.get(index as usize) {
         Some(CheckedStep::Scalar(claim, _)) => Ok(claim),
-        Some(CheckedStep::Fact(..) | CheckedStep::Boolean(..) | CheckedStep::GuardSafety) => {
-            Err(prefix("step dependency is not a scalar claim"))
-        }
+        Some(
+            CheckedStep::Fact(..)
+            | CheckedStep::Boolean(..)
+            | CheckedStep::GuardSafety
+            | CheckedStep::InductionEquality,
+        ) => Err(prefix("step dependency is not a scalar claim")),
         None => Err(prefix("step dependency is missing")),
     }
 }
@@ -1858,6 +1878,160 @@ fn loop_invariant_matches(
             && next.interval().lower() >= claim.interval.lower()
             && next.interval().upper() <= claim.interval.upper()
     })
+}
+
+fn induction_equality_matches(
+    function: &KirFunction,
+    header: crate::BlockId,
+    left: ValueId,
+    right: ValueId,
+    pairs: &[(ValueId, ValueId)],
+    definitions: &[InstructionId],
+) -> bool {
+    let Some(block) = function.blocks.iter().find(|block| block.id == header) else {
+        return false;
+    };
+    if left >= right
+        || !block.params.iter().any(|param| param.value == left)
+        || !block.params.iter().any(|param| param.value == right)
+        || pairs.binary_search(&(left, right)).is_err()
+        || pairs.windows(2).any(|pair| pair[0] >= pair[1])
+        || pairs.len()
+            > ScalarAnalysisBudget::for_function(function, super::ScalarAnalysisConfig::default())
+                .max_steps() as usize
+    {
+        return false;
+    }
+    let dominators = compute_kir_dominators(function);
+    let incoming = predecessor_edges(function, header);
+    if !incoming
+        .iter()
+        .any(|(predecessor, _)| dominators.dominates(header, *predecessor))
+        || !incoming
+            .iter()
+            .any(|(predecessor, _)| !dominators.dominates(header, *predecessor))
+    {
+        return false;
+    }
+    let equivalent =
+        |a: ValueId, b: ValueId| a == b || pairs.binary_search(&(a.min(b), a.max(b))).is_ok();
+    let mut expected_definitions = std::collections::BTreeSet::new();
+    for &(left, right) in pairs {
+        let Some(ty) = value_integer_type(function, left) else {
+            return false;
+        };
+        if left >= right || value_integer_type(function, right) != Some(ty) {
+            return false;
+        }
+        let instruction = |value| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find(|instruction| {
+                    instruction
+                        .results
+                        .first()
+                        .is_some_and(|result| result.value == value)
+                })
+        };
+        let a = instruction(left);
+        let b = instruction(right);
+        expected_definitions.extend(a.iter().chain(b.iter()).map(|instruction| instruction.id));
+        if let Some(KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = a
+        {
+            if !equivalent(*value, right) {
+                return false;
+            }
+            continue;
+        }
+        if let Some(KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = b
+        {
+            if !equivalent(left, *value) {
+                return false;
+            }
+            continue;
+        }
+        let parameter = |value| {
+            function.blocks.iter().find_map(|block| {
+                block
+                    .params
+                    .iter()
+                    .position(|param| param.value == value)
+                    .map(|index| (block.id, index))
+            })
+        };
+        if let (Some((a_block, a_index)), Some((b_block, b_index))) =
+            (parameter(left), parameter(right))
+        {
+            if a_block != b_block {
+                return false;
+            }
+            let edges = predecessor_edges(function, a_block);
+            if edges.is_empty()
+                || edges.iter().any(|(_, edge)| {
+                    match (edge.args.get(a_index), edge.args.get(b_index)) {
+                        (Some(a), Some(b)) => !equivalent(*a, *b),
+                        _ => true,
+                    }
+                })
+            {
+                return false;
+            }
+            continue;
+        }
+        let (Some(a), Some(b)) = (a, b) else {
+            return false;
+        };
+        if a.memory.is_some() || b.memory.is_some() || a.effect.is_some() || b.effect.is_some() {
+            return false;
+        }
+        match (&a.kind, &b.kind) {
+            (
+                KirInstructionKind::ConstInt { value: a },
+                KirInstructionKind::ConstInt { value: b },
+            ) => {
+                let (Ok(a), Ok(b)) = (a.parse::<BigInt>(), b.parse::<BigInt>()) else {
+                    return false;
+                };
+                if a != b || ScalarValue::constant(ty, a).is_err() {
+                    return false;
+                }
+            }
+            (
+                KirInstructionKind::Binary {
+                    op: a_op,
+                    left: a_left,
+                    right: a_right,
+                    semantics: a_semantics,
+                },
+                KirInstructionKind::Binary {
+                    op: b_op,
+                    left: b_left,
+                    right: b_right,
+                    semantics: b_semantics,
+                },
+            ) => {
+                if !matches!(a_op, MirBinaryOp::Add | MirBinaryOp::Sub)
+                    || a_op != b_op
+                    || a_semantics != b_semantics
+                    || *a_semantics == KirArithmeticSemantics::StrictFloat
+                    || !equivalent(*a_left, *b_left)
+                    || !equivalent(*a_right, *b_right)
+                {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    expected_definitions.into_iter().collect::<Vec<_>>() == definitions
 }
 
 fn predecessor_edges(

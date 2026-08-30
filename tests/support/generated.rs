@@ -73,6 +73,60 @@ contract {{ requires len <= items.len; effects read(items); }}
         });
     }
 
+    for index in 3..6 {
+        let skip = next_in(&mut state, 1, 2);
+        let stop = next_in(&mut state, 4, 5);
+        let len = 6;
+        let bias = next_in(&mut state, 3, 17) as i32;
+        let mut values = [0; 8];
+        for value in &mut values {
+            *value = next_in(&mut state, 1, 19) as i32;
+        }
+        let function = format!("generated_induction_kernel_{index}");
+        source.push_str(&format!(
+            r#"
+export unsafe fn {function}(items: slice<i32>, len: u32, bias: i32) -> i32
+contract {{ requires len <= items.len; effects read(items); }}
+{{
+  let i: u32 = 0; let mirror: u32 = 0; let total: i32 = bias;
+  while i < len {{
+    if i == {skip} {{ i = i + 1; mirror = mirror + 1; continue; }}
+    let inner: u32 = 0; let shadow: u32 = 0;
+    while inner < 2 {{
+      total = total + items[mirror] + items[shadow];
+      inner = inner + 1; shadow = shadow + 1;
+    }}
+    if i == {stop} {{ break; }}
+    i = i + 1; mirror = mirror + 1;
+  }}
+  return total;
+}}
+"#
+        ));
+        let mut expected = bias;
+        let mut i = 0;
+        while i < len {
+            if i == skip {
+                i += 1;
+                continue;
+            }
+            for inner in 0..2 {
+                expected += values[i as usize] + values[inner];
+            }
+            if i == stop {
+                break;
+            }
+            i += 1;
+        }
+        cases.push(GeneratedKernelCase {
+            function,
+            values,
+            len,
+            bias,
+            expected,
+        });
+    }
+
     GeneratedKernelProgram { source, cases }
 }
 
@@ -88,11 +142,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_kernel_fixture_should_include_nested_equal_inductions() {
+        let generated = fixed_seed_kernel_program();
+        assert!(generated.source.contains("let mirror: u32 = 0;"));
+        assert!(generated.source.contains("let shadow: u32 = 0;"));
+        assert_eq!(generated.cases.len(), 6);
+    }
+
+    #[test]
     fn generated_kernel_fixture_should_be_byte_deterministic_and_contract_valid() {
         let first = fixed_seed_kernel_program();
         let second = fixed_seed_kernel_program();
         assert_eq!(first, second);
-        assert_eq!(first.cases.len(), 3);
+        assert_eq!(first.cases.len(), 6);
         assert!(first.source.contains("requires len <= items.len"));
         assert!(
             first

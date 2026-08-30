@@ -111,6 +111,14 @@ pub enum ProofStep {
         transfer: InstructionId,
         claim: ScalarClaim,
     },
+    /// Simultaneous equality invariant, closed over every entry and transfer.
+    InductionEquality {
+        header: BlockId,
+        left: ValueId,
+        right: ValueId,
+        pairs: Vec<(ValueId, ValueId)>,
+        definitions: Vec<InstructionId>,
+    },
     GuardSafety {
         condition_instruction: InstructionId,
         premises: Vec<ProofStepId>,
@@ -124,7 +132,8 @@ impl ProofStep {
             Self::TypeBounds { .. }
             | Self::FactLeaf { .. }
             | Self::Constant { .. }
-            | Self::LoopInvariant { .. } => Vec::new(),
+            | Self::LoopInvariant { .. }
+            | Self::InductionEquality { .. } => Vec::new(),
             Self::CopyTransfer { input, .. } => vec![*input],
             Self::PhiJoin { inputs, .. }
             | Self::BooleanTransfer { inputs, .. }
@@ -212,7 +221,8 @@ impl ProofCertificate {
                 ProofStep::TypeBounds { .. }
                 | ProofStep::FactLeaf { .. }
                 | ProofStep::Constant { .. }
-                | ProofStep::LoopInvariant { .. } => {}
+                | ProofStep::LoopInvariant { .. }
+                | ProofStep::InductionEquality { .. } => {}
             }
             steps.push(step);
         }
@@ -259,38 +269,51 @@ impl ProofArena {
         self.proofs
             .iter()
             .flat_map(|proof| &proof.steps)
-            .filter_map(|step| match step {
+            .flat_map(|step| match step {
                 ProofStep::Constant { instruction, .. }
                 | ProofStep::BinaryTransfer { instruction, .. }
                 | ProofStep::CopyTransfer { instruction, .. }
                 | ProofStep::IntegerComparison { instruction, .. }
-                | ProofStep::BooleanTransfer { instruction, .. } => Some(*instruction),
-                ProofStep::BranchRefinement { comparison, .. } => Some(*comparison),
-                ProofStep::LoopInvariant { transfer, .. } => Some(*transfer),
+                | ProofStep::BooleanTransfer { instruction, .. } => {
+                    std::slice::from_ref(instruction)
+                }
+                ProofStep::BranchRefinement { comparison, .. } => std::slice::from_ref(comparison),
+                ProofStep::LoopInvariant { transfer, .. } => std::slice::from_ref(transfer),
+                ProofStep::InductionEquality { definitions, .. } => definitions.as_slice(),
                 ProofStep::GuardSafety {
                     condition_instruction,
                     ..
-                } => Some(*condition_instruction),
+                } => std::slice::from_ref(condition_instruction),
                 ProofStep::TypeBounds { .. }
                 | ProofStep::FactLeaf { .. }
                 | ProofStep::ContractRange { .. }
                 | ProofStep::PhiJoin { .. }
-                | ProofStep::BooleanPhiJoin { .. } => None,
+                | ProofStep::BooleanPhiJoin { .. } => &[],
             })
+            .copied()
             .collect()
     }
 
     pub(crate) fn block_parameter_dependencies(&self) -> BTreeSet<ValueId> {
-        self.proofs
-            .iter()
-            .flat_map(|proof| &proof.steps)
-            .filter_map(|step| match step {
-                ProofStep::PhiJoin { claim, .. } => Some(claim.value),
-                ProofStep::BooleanPhiJoin { value, .. } => Some(*value),
-                ProofStep::LoopInvariant { phi, .. } => Some(*phi),
-                _ => None,
-            })
-            .collect()
+        let mut values = BTreeSet::new();
+        for step in self.proofs.iter().flat_map(|proof| &proof.steps) {
+            match step {
+                ProofStep::PhiJoin { claim, .. } => {
+                    values.insert(claim.value);
+                }
+                ProofStep::BooleanPhiJoin { value, .. } => {
+                    values.insert(*value);
+                }
+                ProofStep::LoopInvariant { phi, .. } => {
+                    values.insert(*phi);
+                }
+                ProofStep::InductionEquality { pairs, .. } => {
+                    values.extend(pairs.iter().flat_map(|(left, right)| [*left, *right]))
+                }
+                _ => {}
+            }
+        }
+        values
     }
 
     pub fn try_insert(
@@ -497,6 +520,28 @@ fn print_step(step: &ProofStep) -> String {
             phi.index(),
             transfer.index(),
             print_claim(claim)
+        ),
+        ProofStep::InductionEquality {
+            header,
+            left,
+            right,
+            pairs,
+            definitions,
+        } => format!(
+            "induction-equality b{} v{}=v{} [{}] definitions=[{}]",
+            header.index(),
+            left.index(),
+            right.index(),
+            pairs
+                .iter()
+                .map(|(left, right)| format!("v{}=v{}", left.index(), right.index()))
+                .collect::<Vec<_>>()
+                .join(","),
+            definitions
+                .iter()
+                .map(|id| format!("i{}", id.index()))
+                .collect::<Vec<_>>()
+                .join(","),
         ),
         ProofStep::GuardSafety {
             condition_instruction,

@@ -513,6 +513,26 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 此节不签收 actual induction-simplify、irreducible/budget 或阶段 07 全部任务；
   I14/I19/I20 性能失败仍打开。完整本轮验证证据见阶段 07 acceptance 的局部复验记录。
 
+### I18 第八部分：真正的携证归纳简化（阶段 07 尚待完整复验）
+
+- 实际 red：相同初值、相同步长的 i/j 计数器在 O3 仍有两条 modular Add，命名
+  `induction-simplify` 没有任何改写。现通过闭合 `InductionEquality` 证书合并
+  loop-carried phi，原测试 O2=`2` / O3=`1`，pass record 确实 `changed=true`。
+- proposer 构造等式依赖；checker 不调用 proposer 或循环优化分析，而逐项核验
+  同类型、真实 producer、所有入口/回边与相同 arithmetic semantics 的 transfer。
+  证书丢失 transfer pair/producer、初值或操作改变时拒绝；错误 replacement/ID 耗尽
+  均在任何修改前失败，不产生部分结果。保留原 ValueId 的 Copy 与参数重接避免改写
+  契约身份，受已有 phi 证书依赖的参数不删除。
+- 新增四种整数宽度 × 两种 overflow mode × 升序/降序/多 latch 的正例，以及不同
+  初值、不同步长、单一 continue 路径漏更新的反例。100 个固定预算配置覆盖从
+  无候选到部分 proposal 后耗尽，耗尽的函数必须逐字节未改；不使用 wall clock。
+- C 对照覆盖 O0–O3 × 四种 mode：整数极值/模回绕、两次更新中间 break、checked
+  首错、此前写入与失败结果槽。原三个 fixed-seed kernel 保持不变，追加三个包含
+  嵌套等值计数器、break/continue 和实际 slice 访问的 kernel，沿用相同 seed，交由
+  原 C/WASM/Native 对照执行器运行；没有替换或削弱原语料。
+- 本节修复的是 actual induction-simplify 缺口。自然循环分析的 irreducible fallback、
+  完整分析预算与阶段 07 全任务仍需验收；I14/I19/I20 和全部最终 CI 门槛仍打开。
+
 ## I20：布尔/checked 传播后的 optimizer latency 门槛失败（未关闭）
 
 - 阶段 05 本批代码通过功能与证书验收后的首次原 performance gate 返回 exit 1：

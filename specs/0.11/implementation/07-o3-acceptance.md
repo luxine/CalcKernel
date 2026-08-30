@@ -1,7 +1,7 @@
 # 阶段 07 验收：O3
 
-当前复审状态：I18 发现命名 `induction-simplify` pass 没有实际 transform，本阶段对应
-验收重新打开。不得仅以 pass-order 测试替代改写正例/反例；见
+当前复审状态：I18 发现的 `induction-simplify` 空实现已有实际改写与局部复验证据，
+但 irreducible/fixed-budget 及完整阶段验收仍打开。不得仅以 pass-order 测试替代改写正例/反例；见
 `../review/implementation-blockers-01.md`。
 
 ## 必须通过
@@ -91,3 +91,27 @@
 - 本节关闭 guard checker 独立性及上述局部正确性缺口；actual induction-simplify、
   irreducible/fixed-budget 和完整阶段 07 仍待验收。没有重跑或放宽 I14/I19/I20 性能门槛，
   总验收清单未代签，main 未修改。
+
+## I18 实际归纳简化的局部复验（2026-08-30，尚非阶段通过）
+
+- 本节对应 `optimizer(stage-07): coalesce certified equivalent inductions`，parent 为
+  `ece5d129dcd8d4246881a03ead5f6a5ad3d563f4`，实现及反例见 I18 第八部分。
+- 实际 red：两个相同初值、相同递推的计数器在 O3 仍各保留一个 Add。现 O2 为 2 个、
+  O3 为 1 个，且 `induction-simplify.changed=true`；不是更名或空 pass 记录。
+- 独立等值证书核验所有入口/回边与准确 producer；参数改为保留 ValueId 的 Copy，
+  输入标量边同步删除，Memory SSA 和 ordered effect 不变。四种整数宽度、双方向、
+  checked/modular、多 latch 正例与不同初值/步长/漏更新反例均通过。
+- 6 个 debug/release 单元测试覆盖缺失 transfer/definition、错误初值/回边、错误改写目标、
+  InstructionId 耗尽、存活证书依赖与预算 0–99 的整函数原子回退。
+- 固定 seed `0xC0DE_CAFE_5EED_0110` 原三个程序不变，新增三个嵌套循环、重复计数器、
+  break/continue 程序，独立 Rust 参考结果参与 C/WASM/Native 的跨级别/模式对照。
+  另有 C 执行测试覆盖整数极值、零次迭代、break 处值差异及 checked 首错前后的写入。
+- 顺序全量默认/全特性测试为 429/551 项通过；release `--lib induction_` 为 6/6。
+  all-feature Clippy、fmt、diff check 通过。Rust 1.90.0 / AArch64 macOS /
+  LLVM+Clang 22.1.8，overlay identity 与前节一致。
+- 默认、全特性、release induction 日志 SHA-256 依次为
+  `0ee8b370c42fad0f7673c6d650fabffdcacbf0e3dd3eaea11a1bbff2af9b3075`、
+  `8ab4b9a6c597a96dce2c88d6d609526550c8f4a502385eafb85ebc55f74f7db1`、
+  `b3dc0233360d844ed2289f38d61dbe9920d304d126e365ee537124fd01fd1201`。
+- 不可约循环识别、loop-analysis 固定预算及其消费者回退仍需继续实现验收。本节不关闭
+  阶段 07 或 I14/I19/I20；无性能复测或门槛变更，main 未修改。
