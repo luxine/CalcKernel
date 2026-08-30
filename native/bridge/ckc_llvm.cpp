@@ -71,8 +71,19 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #elif defined(CKC_LLD_COFF)
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+// Keep SDK declarations, but not macros that shadow standard functions or
+// LLVM's typed COFF enums. Also handle min/max from a prior SDK include.
+#undef min
+#undef max
+#undef IMAGE_FILE_DLL
+#undef IMAGE_FILE_EXECUTABLE_IMAGE
 #endif
 
 struct CkcJitMemoryAuditState {

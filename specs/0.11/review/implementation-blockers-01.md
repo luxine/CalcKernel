@@ -848,6 +848,22 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   同一最终 SHA 的真实 SDK/MSVC 构建。该修复属于既有阶段 11 host build 契约，
   不修改语言、ABI、平台支持范围或门槛；自审无设计阻断。
 
+### I21 本地实现与复审（真实 Windows CI 待验）
+
+- 文档提交 `800172c` 后新增真实 bridge translation-unit regression，先观察到与
+  MSVC 日志逐项相同的七处宏展开错误；修复 Windows include 边界后，两种宏输入均通过。
+  只定义 `NOMINMAX` 并清除四个冲突宏，不修改 SDK 声明、枚举值、导出表或 ABI。
+  red / green 日志 SHA-256 为
+  `b7fb73c865af66b7901b05df6c92f6a82c08d774a02bf76c91db873b47e64f68` /
+  `c5cceb545398bfbafc610b75f1eecee6af2e12cc8e8efcbea2d78353c84b2276`。
+- 默认 459、全特性 582（Native 94）、release 单元 53、release IR 58、all-feature
+  all-target Clippy、fmt/diff 均通过。default / all-feature / release 日志 SHA-256：
+  `ff44c58ace5005e27a60064eb96ec99444aacbf77c6a118561aa7fc5e7149c0d`、
+  `d69e85972d983c071a8d662f47345a1476042e61d1566c358e0c255c7dc6c59a`、
+  `1241024e5185384b48b656155af8ea6958ce743e36635e9bcdfb6617e478d2c1`。
+  自审未发现宏越界到非 Windows 路径或测试替代真实 SDK 的情况；I21 仍待两架构
+  Windows 以最终 SHA 完成真实构建与 Native 验收，不把本机模拟当作远程通过。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

@@ -45,3 +45,37 @@ fn bridge_should_return_typed_invalid_input_instead_of_unwinding() {
     assert_eq!(error.code, 1);
     assert!(error.message.contains("output is null"), "{error}");
 }
+
+#[cfg(unix)]
+#[test]
+fn bridge_should_isolate_windows_sdk_macros_from_llvm_and_std_names() {
+    use std::{path::PathBuf, process::Command};
+
+    let root = super::support::oracle::repo_root();
+    let prefix = PathBuf::from(std::env::var_os("CKC_LLVM_PREFIX").expect("LLVM prefix"));
+    for preexisting_minmax in [false, true] {
+        // Compile the actual bridge's COFF branch against the real LLVM headers.
+        // Only Windows macros/process declarations are simulated; the two real
+        // Windows jobs remain responsible for SDK, MSVC, linking and ABI checks.
+        let mut command = Command::new("c++");
+        command.args(["-std=c++20", "-fsyntax-only", "-DCKC_LLD_COFF"]);
+        if preexisting_minmax {
+            command.arg("-DCKC_TEST_PREEXISTING_MINMAX");
+        }
+        let output = command
+            .arg("-I")
+            .arg(root.join("tests/fixtures/native/windows-header"))
+            .arg("-I")
+            .arg(prefix.join("include"))
+            .arg("-I")
+            .arg(root.join("native/bridge"))
+            .arg(root.join("native/bridge/ckc_llvm.cpp"))
+            .output()
+            .expect("compile COFF bridge macro-surface regression");
+        assert!(
+            output.status.success(),
+            "preexisting_minmax={preexisting_minmax}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
