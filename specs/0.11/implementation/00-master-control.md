@@ -94,7 +94,12 @@ I14/I19 的真实协议反例按 `11-runtime-replay-plan.md` 修订：固定 V0.
 
 阶段 11 的 I23 既有 Unix run 中断漏洞按 `11-interrupt-handoff-plan.md` 执行：
 真实 SIGINT red/green、单原子 pending 交接、隔离有界测试、同 SHA 全矩阵；不改变
-语言/ABI 或性能门槛，不取消仍在构建合格 Windows prefix 的旧 workflow。
+语言/ABI 或性能门槛，不因 Darwin 问题取消旧 Windows 构建。后续 I25 已证明旧
+Windows CRT 不合格，不能再把其 cache save 当作静态内容验收。
+
+阶段 11 的 I25 全链静态 CRT/COFF 依赖修复按 `11-windows-static-link-plan.md`
+先提交计划后执行。用实际 compile commands 与 archive directives 证明静态身份，
+补齐 COFF closure 并统一 Rust flags；新 recipe 重建，不兼容动态 CRT 或降低原门槛。
 
 计划与规范修订先单独提交。之后每阶段提交信息使用
 `optimizer(stage-N): <imperative outcome>`。每个 acceptance 文档底部在执行时追加：

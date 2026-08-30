@@ -30,6 +30,17 @@
 19. Windows bootstrap 显式关闭 LLVM C API DLL，实际安装后 guard 与 cache verifier
     都拒绝 bin/lib 的 LLVM DLL 注入；新配方按原完整缓存身份重建，禁止删 DLL 掩盖问题。
 
+## I25 补充验收（未签收）
+
+I25 另按 `11-windows-static-link-plan.md` 执行，未签收：
+
+- [ ] LLVM/LLD、bridge、Rust 的实际 Windows CRT 均静态 release；compile commands
+  与真实 COFF directives 双检查，dynamic/debug/mixed/损坏输入全部拒绝。
+- [ ] COFF 的 LibDriver/WindowsManifest/DTLTO 闭包完整；配置覆盖成动态 Rust CRT
+  必须在 bridge 编译前拒绝；两架构实际 MSVC 链接、Native/CLI 与发布依赖审计通过。
+- [ ] 新 recipe cache 验证后保存，旧不合格 Windows cache 不复用；同一新 SHA 的
+  完整本地门、首次性能与全部十项 required CI 通过，不拼接不同 SHA 的结果。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：

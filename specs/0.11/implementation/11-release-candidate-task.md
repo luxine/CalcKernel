@@ -99,6 +99,11 @@ I24 补齐切换时遗漏的三项 legacy preservation 回归，保留阶段 02 
 在 verified KIR 的 O0–O3 路径断言控制流、typed print 顺序和 checked-bounds slice
 调用/返回。原命令必须实际运行 3 项测试；详细测试限定计划见 review，不恢复旧优化路径。
 
+I25 按 `11-windows-static-link-plan.md` 修复真实 Windows 全链 CRT 不一致及 COFF
+closure 缺失。先保存 CMake 未使用旧参数、LNK2038 与六个 LNK2019 的原日志，再以
+实际 COFF archive red/green 校验 producer/cache 两个边界。Rust debug/test/release
+统一静态 CRT；旧 Windows cache 不合格，新键完整重建，仍须同 SHA 全十项 CI。
+
 1. 先写 repository scan、version/ABI/compat manifest red tests，再完成全仓切换与版本。
 2. 先写 generated/mutation corpus 的故障注入，再实现 harness，固定 seed/schema。
 3. 先用 synthetic report 证明四类 performance threshold 会分别拒绝，再跑真实测量。

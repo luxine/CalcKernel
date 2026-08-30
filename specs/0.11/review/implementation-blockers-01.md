@@ -1120,6 +1120,26 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 复审未发现此测试迁移的新阻断项。此结论只关闭本地 I24 覆盖缺口，不替代尚未完成的
   同一候选 SHA 全十项 CI、阶段 11 与总验收。
 
+## I25：Windows LLVM/bridge/Rust CRT 不一致且 COFF closure 缺失（已复诊，待修复）
+
+- `33302635528/99233477598` 的 bootstrap 在 13:25Z 完成，但随后 fact-audit 的 Cargo
+  链接失败，测试尚未运行。完整 job log 的 SHA-256 为
+  `e9788ec1be76ba5a448fac6e01df8224c0f27d76a7ccf6390355ecc2a398d729`；上传原日志为
+  `fee21273c39395f6b0dc3d3a3c4ee15c0fc0917b08fdb51e11578b73558bbc68`。
+- 两个 CMake configure 都明确警告 `LLVM_USE_CRT_RELEASE` 未使用。LLVM archives
+  的 `MD_DynamicRelease` 与 bridge `MT_StaticRelease` 发生 LNK2038，大量动态/静态
+  C++ runtime 重复符号；Rust 同次链接也默认 msvcrt。pinned LLVM 22 文档要求
+  `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`，原字符串治理断言没有验证实际行为。
+- 六个独立 LNK2019 来自 COFF driver 的 LibDriver/WindowsManifest。核对 pinned
+  COFF/Common CMakeLists 并用真实 llvm-config 比较依赖集合，额外项仅为已有 DTLTO
+  和缺失的 LibDriver/WindowsManifest；不是 CRT 错误的级联误报。
+- 旧 verifier 允许这些 cache 入库，不能把“静态 archive 文件存在/没有 LLVM DLL”
+  等同于“静态 CRT 内容”。本项将用实际 CMake commands、真正 COFF directives、
+  Rust target-feature 和最终发布依赖审计闭环；旧缓存保留为证据但不得复用。
+- 详细 red/green、文件边界、双语契约、同 SHA 全矩阵见
+  `../implementation/11-windows-static-link-plan.md`。计划先提交，完全行内；没有
+  `/NODEFAULTLIB`/强制链接/动态 CRT fallback，没有改变语言/ABI 或任何数值验收门槛。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
