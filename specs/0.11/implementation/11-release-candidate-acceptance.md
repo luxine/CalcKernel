@@ -27,6 +27,8 @@
 17. `cargo test --release --locked --lib verifier_cache_ -- --nocapture`
 18. Unix Native 的真实 bridge COFF 分支 macro-header syntax regression 两种输入均通过；
     两架构 Windows 的真实 SDK/MSVC 编译另由必跑 host job 验收，禁止以 stub 代替。
+19. Windows bootstrap 显式关闭 LLVM C API DLL，实际安装后 guard 与 cache verifier
+    都拒绝 bin/lib 的 LLVM DLL 注入；新配方按原完整缓存身份重建，禁止删 DLL 掩盖问题。
 
 ## I20 补充本地验收
 
@@ -79,6 +81,21 @@ I20 本地已通过，远程与 I14/I19 尚未签收。
 - `git status --short` 只包含预期提交前变更；无 target/build/Ai_repository/LLVM prefix。
 
 ## 完成证据
+
+### 同进程 replay 首次完整本机门禁（`ae7a130`，2026-08-30）
+
+- `cargo +1.90.0 bench --features native-toolchain --bench ckc_perf -- --task check
+  --cpu baseline` 与 schema-6 checker 均 exit 0；warmup=3、samples=20、minimum-of-7、
+  batch=20000000，四 runtime kernels 与六 optimizer cases 全部保留。
+- unchecked Clang throughput geo `0.9994` / actual replay V0.10 ratio `1.0004`；checked
+  `0.9975` / `1.0001`；raw proof throughput `1.0010`；optimizer suite median `1.1285`，
+  全部 individual gates 通过。测量期间本任务没有其他编译/测试，不声称共享主机独占。
+- 首次 report / benchmark / checker 摘要分别为
+  `4f8b037c8c38066837782fb180dec5f0bac0f20dc6f854ed5f03fa0d57e0ef3b`、
+  `358498e77d56c8244c5b25d0dd112c165bab767efdb8c08964c0b35be0626a9e`、
+  `c418bd73b730217b4568965dd9ed8abf85fe93c905f32351ca4456c2122db4a9`。
+  完整实际库随报告归档；固定 0.10 bundle 的源码/recipe/组件清单 identity 与前述
+  preparation 相同。没有重跑择优；I14/I19 远程结果与新增 I22 仍待完整 CI 验收。
 
 追加本地命令结果、远程 workflow run URL/commit、六 host job IDs、两架构 performance 摘
 要与最终阶段 SHA。

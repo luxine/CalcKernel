@@ -86,6 +86,11 @@ I21 按 review 中已复现的 SDK 宏冲突执行：先为真实 bridge COFF �
 macro-header syntax regression，再隔离 Windows include 宏，保留 SDK ABI 与 LLVM
 枚举；必须另行通过两架构 Windows 实际 SDK/MSVC 构建，不能以模拟 header 替代。
 
+I22 按 review 中已复诊的 Windows C API DLL 默认值执行：先复现 bootstrap 的 bin
+目录漏检与缺少 `LLVM_BUILD_LLVM_C_DYLIB=OFF`，再修正 Windows 配置及 bin/lib 安装
+断言。独立 cache verifier 对真实 DLL 注入保持拒绝，沿用全部 recipe 的缓存身份；
+不得删除 DLL、复用不合格旧 prefix 或降低静态依赖检查来通过门禁。
+
 1. 先写 repository scan、version/ABI/compat manifest red tests，再完成全仓切换与版本。
 2. 先写 generated/mutation corpus 的故障注入，再实现 harness，固定 seed/schema。
 3. 先用 synthetic report 证明四类 performance threshold 会分别拒绝，再跑真实测量。

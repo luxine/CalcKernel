@@ -973,6 +973,28 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   自审未发现宏越界到非 Windows 路径或测试替代真实 SDK 的情况；I21 仍待两架构
   Windows 以最终 SHA 完成真实构建与 Native 验收，不把本机模拟当作远程通过。
 
+## I22：Windows static prefix 含默认开启的 LLVM-C.dll（已复诊，待修复验收）
+
+- 新 run `33302144688` / `ae7a130` 的 Windows x64 job `99232169083` 恢复旧 v3
+  cache 后，在 `validate-llvm-prefix.ps1:68` 以 `shared LLVM library in static prefix:
+  LLVM-C.dll` 失败，尚未进入 bridge 编译。完整原日志 SHA-256 为
+  `5e461c4ae76dd03709030d6594915966c572d8ea1d2349fae39f034ef9e99650`。
+- 复诊固定 LLVM 22.1.8 源码：`llvm/CMakeLists.txt:894` 在 MSVC 下默认
+  `LLVM_BUILD_LLVM_C_DYLIB=ON`；`llvm/tools/llvm-shlib/CMakeLists.txt:148–205` 的
+  独立分支构建 `LLVM-C SHARED`。仅设置 `BUILD_SHARED_LIBS=OFF`、
+  `LLVM_BUILD_LLVM_DYLIB=OFF`、`LLVM_LINK_LLVM_DYLIB=OFF` 不会关闭这个 C API DLL。
+- `bootstrap-llvm.ps1` 安装后的旧断言只遍历 `lib/LLVM*.dll`，漏掉 Windows 的
+  `bin/LLVM-C.dll`。旧 `c91c2c0` 尚无独立 cache verifier，因此这份有问题的 prefix
+  得以保存；当前 verifier 检查 bin/lib 后拒绝它是正确行为，不是待放宽的误报。
+- 修复计划：先对实际 bootstrap guard 做 bin/lib 模拟布局行为测试，并对 CMake
+  配置添加显式 OFF 的 red regression；随后仅加入
+  `-DLLVM_BUILD_LLVM_C_DYLIB=OFF`，让安装后 guard 同时检查 bin/lib。扩充独立 cache
+  verifier 的 DLL 注入反例，确认仍拒绝污染。禁止事后删除 DLL 来伪造验证通过。
+- 两个 bootstrap recipe 仍参与既有全量 cache identity，因此修复自然生成新缓存键；
+  不复用不合格 Windows prefix，不修改/删除旧缓存，不缩减源校验或 static/CRT/ABI 门。
+  默认/all-feature/Clippy 与真实两架构 Windows、同一最终 SHA 全十 job 必须重新通过。
+  该项修复既有静态工具链契约，不改变语言、ABI、性能门槛或源 baseline；行内自审无设计阻断。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

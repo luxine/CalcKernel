@@ -178,7 +178,7 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
 - [x] Run default/all-feature tests sequentially, release library/IR mutation tests,
   all-target/all-feature Clippy, fmt and diff checks. Real Windows SDK CI remains
   separate from local macro simulation. Do not run builds while timing performance.
-- [ ] Commit implementation and run the first complete native performance gate on
+- [x] Commit implementation and run the first complete native performance gate on
   that SHA. Retain all raw measurements even on failure; do not reroll for green.
 - [ ] Dispatch the unchanged ten-job matrix on the final candidate after prior cold
   Windows bootstrap has completed/saved its cache. All required jobs must be green
