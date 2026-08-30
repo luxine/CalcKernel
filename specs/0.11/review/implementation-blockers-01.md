@@ -228,6 +228,10 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - I09 的 wrapper 没有必要性证据，待本次单变量 code-model 修订在 Intel 验证后，撤销
   wrapper 及错误的 entry 注释/规范。最终不得保留“LC_MAIN 是 raw kernel entry”的
   说法，也不得通过修改段为 RWX 或放宽 dyld/audit 解决故障。
+- 同 SHA 的 Intel 重跑 job `99196059470` 已实际通过 fact audit 7/7、完整 Native
+  92/92（含原 SIGBUS 的两类 sanitizer 与 O0 differential）、CLI 21/21；Small 修订的
+  单变量执行证据成立。I09 wrapper 与错误规范已在 `f43a5f4` 撤销，完整矩阵仍待验证。
+  该 job 的后续独立签名审计失败见 I15，不能把整个 job 记为成功。
 - 诊断 run 已保留 7 个成功 job 与 Intel crash artifact；收集完成后取消该 run 中重复
   的 Windows 冷构建，原 run `33277614781` 的两个 Windows 构建继续，不把被取消 job
   计作验收通过。
@@ -273,6 +277,22 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - Intel job `99195017518` 同轮另因 GitHub artifact CreateArtifact 连续五次 timeout
   在完整 Native suite 之前失败；保存原日志后仅重跑该 job 的同一 SHA，用于 I12 单变量
   验证。上传故障不构成 Small code model 修复成功的证据。
+
+## I15：Intel Cargo 产物未自动签名，CI/release 缺少显式签名步骤
+
+- Intel job `99196059470` 的 Native/CLI/release build 全部通过，随后
+  `audit-ckc-release.sh` 原样拒绝 `code object is not signed at all`。完整 log SHA-256
+  `1fa5b20cc68377f13cad2aac89663186c6b2bbdc91c554e02c501adfdcc6da14`。现有 macOS
+  ARM linker 自动 ad-hoc 签名不能被当作所有 Darwin host 的契约。
+- 检查发现 CI 与 release artifact workflow 都没有显式签名实际 compiler；JIT audit
+  只签名临时副本，不能满足前面的严格 compiler signature audit，也不能保证打包原件。
+- 先增加覆盖两个 workflow 的顺序回归并观察失败；本机移除一个临时 compiler 副本的
+  签名后，原 audit 稳定以同一 `not signed` 错误退出 1。修订在两个 workflow 的正确
+  位置添加现有 policy 的 `codesign --force --sign - --options runtime --entitlements`，
+  目标是实际 compiler。未改 audit，未添加 entitlement，未引入证书或 notarization。
+- 对同一 unsigned 副本使用该签名命令后，compiler audit 与 hardened JIT audit 都 exit 0；
+  两 workflow 的 source-order regression 转绿。Intel hardened JIT 仍必须在修订后的
+  完整 CI 中实际验证，不以本机结果替代。
 
 ## 修订边界（全部阻断，持续有效）
 

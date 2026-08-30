@@ -17,6 +17,7 @@
 - [ ] `./target/release/ckc --help`、`--version --verbose` 与 `licenses` 暴露完整 identity/notice evidence。
 - [ ] `ckc run` 与 `ckc build --kind executable` 均在 external-tool `PATH` 为空时通过。
 - [ ] 每个 host 的 generated artifact、release binary dependency 与 JIT memory audit 通过；hardened macOS 只使用允许的 allow-JIT entitlement，并按 capability 选择 per-thread MAP_JIT 或页级 W^X，绝不接受 RWX。
+- [ ] 实际打包的 Darwin compiler 在严格签名校验前已显式 ad-hoc 签名，启用 hardened runtime，且只含唯一 allow-JIT entitlement。
 - [ ] Controlled x86-64/AArch64 worker 上以 portable baseline CPU policy 执行的 Clang、精确 0.10、proof-loop checked/unchecked 与 optimizer-latency gate 均通过；native-CPU 测量只用于调查。
 - [ ] 精确 release commit 的 main CI 为 green。
 - [ ] publish=false 的六平台 preview 为 green。

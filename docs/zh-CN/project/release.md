@@ -17,6 +17,11 @@ Clang oracle prefix；发行构建使用排除 Clang 的
 target-minimal `release` profile，并始终执行 `cargo build --release --features
 native-toolchain --locked`。
 
+macOS CI host 与 release artifact job 都必须在严格签名审计前，给实际 compiler 显式添加
+ad-hoc hardened-runtime 签名，且只使用仓库唯一 allow-JIT entitlement。打包的是这个已签名
+compiler，不能只验证带签名的临时副本。此步骤不是 Developer ID 签名或 notarization，
+不需要签名凭据。
+
 打包前，每个 host 都记录 `ckc --version --verbose` 与 `ckc licenses`，实际执行
 `ckc run` 和 `ckc build --kind executable` 生成的 standalone executable，并运行
 generated-artifact、compiler dependency 与 JIT memory-permission audit。Linux 与

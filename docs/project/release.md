@@ -21,6 +21,12 @@ Distribution builds use the target-minimal `release` profile, which
 excludes Clang, and always run `cargo build --release --features
 native-toolchain --locked`.
 
+Both macOS CI hosts and release artifact jobs explicitly ad-hoc sign the actual
+compiler with hardened runtime and the repository's sole allow-JIT entitlement
+before strict signature audits. The signed compiler is the one packaged; testing
+only a signed temporary copy is insufficient. This is not Developer ID signing
+or notarization, and no signing credentials are required.
+
 Before packaging, each host records `ckc --version --verbose` and `ckc licenses`,
 exercises both `ckc run` and a standalone executable produced by
 `ckc build --kind executable`, and runs the generated-artifact, compiler

@@ -326,6 +326,38 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
 }
 
 #[test]
+fn darwin_ci_and_release_should_sign_the_actual_compiler_before_auditing() {
+    for path in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/native-release.yml",
+    ] {
+        let workflow = fs::read_to_string(repo_root().join(path)).expect("read workflow");
+        let signing = workflow
+            .find("codesign --force --sign - --options runtime")
+            .unwrap_or_else(|| panic!("{path} must explicitly sign the Darwin compiler"));
+        let audit = workflow
+            .find("scripts/audit-ckc-release.sh")
+            .expect("compiler audit");
+        assert!(
+            signing < audit,
+            "Darwin signing must precede strict signature verification"
+        );
+        assert!(workflow.contains(
+            "--entitlements native/macos/ckc-jit.entitlements.plist '${{ matrix.executable }}'"
+        ));
+        let signing_step = workflow[..signing]
+            .rsplit("- name:")
+            .next()
+            .expect("signing step");
+        assert!(signing_step.contains("if: runner.os == 'macOS'"));
+    }
+    let audit =
+        fs::read_to_string(repo_root().join("scripts/audit-ckc-release.sh")).expect("read audit");
+    assert!(audit.contains("codesign --verify --strict --verbose=2"));
+    assert!(!audit.contains("codesign --verify --strict --verbose=2 \"$ckc_candidate\" ||"));
+}
+
+#[test]
 fn repository_should_not_keep_javascript_helper_scripts() {
     let scripts_dir = repo_root().join("scripts");
     if !scripts_dir.exists() {

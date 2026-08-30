@@ -171,6 +171,11 @@ jobs:
         env:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --features native-toolchain --locked
+      - name: Sign the actual Darwin compiler before release audits
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - --options runtime \
+            --entitlements native/macos/ckc-jit.entitlements.plist '${{ matrix.executable }}'
       - name: Audit release compiler dependencies on Unix
         if: runner.os != 'Windows'
         run: scripts/audit-ckc-release.sh '${{ matrix.executable }}'

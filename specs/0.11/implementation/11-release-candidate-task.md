@@ -51,6 +51,9 @@
   当成动态依赖，也不能删除版本/provenance 检查。Darwin hardened entitlement audit 必须用
   documented XML extraction 和 canonical plist 等值验证唯一 `allow-jit` policy，不能解析随
   macOS 版本变化的人类可读输出。
+- Darwin 的 CI/release job 必须显式为实际 compiler 添加 ad-hoc hardened 签名及唯一
+  allow-JIT entitlement，再执行严格签名审计；不能假设 linker 在 Intel 上自动签名，
+  也不能仅验证临时签名副本却打包未签名原件。
 
 ## 版本、ABI 与文档
 
