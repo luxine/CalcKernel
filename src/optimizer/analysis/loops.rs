@@ -325,12 +325,11 @@ fn detect_inductions(
                 step: step.clone(),
                 bound,
                 comparison,
-                // On the loop-taken edge, `i < bound` and a unit step imply
-                // `i + 1 <= bound`. Both operands have the induction type, so
-                // its bound cannot exceed that type's maximum. This proves the
-                // increment safe for signed and unsigned integers alike.
-                wrap_safe_for_strict_bound: comparison == MirCompareOp::Lt
-                    && step == BigInt::from(1),
+                // A strict same-type bound leaves room for one step towards
+                // it, including descending steps near the integer minimum.
+                wrap_safe_for_strict_bound: (comparison == MirCompareOp::Lt
+                    && step == BigInt::from(1))
+                    || (comparison == MirCompareOp::Gt && step == BigInt::from(-1)),
             })
         })
         .collect()

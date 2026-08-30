@@ -90,12 +90,26 @@ certificates. Unrelated dead instructions are not retained as proof dependencies
 The separate full scalar product-domain analysis remains demand-driven by
 safety-check consumers; guard-free functions do not build unused range results.
 
+LICM resolves loop-invariant operands through all phi/Copy inputs. Each transient
+source-identity claim is independently checked before rewriting an operand;
+mixed incoming values are not invariant. This permits actual invariant integer
+expressions, not only constants, to move. Moved instructions keep their ValueIds
+and dependency order. Live proof producers, memory operations, calls, print,
+checked arithmetic and strict floating arithmetic stay in place. Integer division
+and remainder are never speculated: an unchecked operation can still trap on a
+path that originally executed zero iterations. LICM search has a fixed per-function
+KIR budget; exhaustion restores that function's pre-pass state and reports the
+conservative reason. No partial operand rewrite or movement survives that fallback.
+
 Induction discovery checks every entry and latch, requiring the same initial value
 and recurrence on all incoming paths. Transparent values and invariant bounds are
 traced through real SSA arguments and copies, never inferred from source variable
 names. Mixed steps and intervening assignments remain conservative. A scalar loop
 invariant certificate must name the transfer result actually passed on every
 backedge, not an unused operation with convenient arithmetic.
+Strict same-type bounds mark ascending `+1` and descending `-1` recurrences
+wrap-safe on their taken edge; non-strict bounds and larger steps do not inherit
+that claim.
 
 The guard checker does not call loop analysis. Its local strict-bound rule checks
 the actual integer comparison, all SSA forwarding inputs, and the specific taken

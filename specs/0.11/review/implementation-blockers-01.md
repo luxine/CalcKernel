@@ -553,6 +553,28 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 本节不替代剩余阶段 07 的 LICM/完整语义自审，也不覆盖 I14/I19/I20 的性能失败。
   规范、语料、性能阈值和必需 CI job 均未调整。
 
+### I18 第十部分：LICM 的真实不变表达式与提前执行边界
+
+- 实际 red：原 LICM 正例只要求 `hoisted_instructions > 0`，常量移动即满足，但
+  `a * b` 仍在循环内。加强测试直接定位 Mul 后失败。根因是前端保留了 a/b 的循环
+  phi 转发，而 LICM 把这些操作数都视为变化值。
+- 现沿全部真实 SSA phi/Copy 输入寻找同一外部来源，并在改写操作数前由 verify 模块
+  独立核验来源身份与类型。不信任 slot 名或分析自己的结论；声明在不可变 pre-state
+  上消费，不跨改写复用，不提升为 trusted contract。保留 ValueId、Memory SSA 和
+  存活证明 producer，移动顺序保持数据依赖而非按 instruction ID 排序。
+- 原除法/WASM 零迭代测试先通过；加入上述真实不变识别后，旧 modular 分类把 Div
+  也提升，测试实际出现 WASM divide-by-zero trap。提交前收紧到确实可提前执行的
+  整数 add/sub/mul 等纯运算，Div/Mod 保守留在原位。不是放宽 unchecked 语义或忽略 trap。
+- 新增独立来源检查器的错误来源/变异回边拒绝、受保护 producer、逆序 ID/块存储的
+  依赖顺序、固定预算耗尽的整函数恢复测试。别名 load/store、递归 call、print 和
+  strict float 均有实际指令位置断言；C 执行覆盖 O0–O3 × 四种模式的零次迭代、
+  checked 首错、此前写入和结果槽，WASM 覆盖零次迭代及 break 绕过除法/取模。
+- 归纳事实新增四种宽度 × 两模式 × 八类方向/步长/严格边界组合（64 组）。实际 red
+  是降序 strict `-1` 未报告逐点 wrap-safe；补齐同类型最小值方向的对称规则。
+  此事实不自行授权删除 guard，guard checker 的独立局部规则保持不变。
+- 一项测试源码误用了保留字 `effects` 作为函数名，已改成 `effectful`；没有更改语言
+  关键字或前端解析规则。性能 I14/I19/I20 与完整最终 CI 仍独立打开。
+
 ## I20：布尔/checked 传播后的 optimizer latency 门槛失败（未关闭）
 
 - 阶段 05 本批代码通过功能与证书验收后的首次原 performance gate 返回 exit 1：

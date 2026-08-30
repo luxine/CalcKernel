@@ -1423,6 +1423,41 @@ fn forwarding_leaves(
     Some(leaves)
 }
 
+/// Independently checks a transient SSA-identity claim before a pure instruction
+/// is relocated. Every phi input and Copy must reach the claimed source; this
+/// does not trust a loop analysis result or source-language slot names.
+pub(crate) fn verify_ssa_forwarding(
+    function: &KirFunction,
+    value: ValueId,
+    source: ValueId,
+) -> bool {
+    let type_of = |value| {
+        function
+            .params
+            .iter()
+            .map(|param| (param.value, &param.type_node))
+            .chain(function.blocks.iter().flat_map(|block| {
+                block
+                    .params
+                    .iter()
+                    .map(|param| (param.value, &param.type_node))
+            }))
+            .chain(function.blocks.iter().flat_map(|block| {
+                block.instructions.iter().flat_map(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .map(|result| (result.value, &result.type_node))
+                })
+            }))
+            .find_map(|(candidate, ty)| (candidate == value).then_some(ty))
+    };
+    type_of(value).is_some()
+        && type_of(value) == type_of(source)
+        && forwarding_leaves(function, value, Some(source))
+            .is_some_and(|leaves| leaves.len() == 1 && leaves.contains(&source))
+}
+
 fn affine_is_single_term(
     expression: &ContractFactAffineExpression,
     expected: ContractFactAffineTerm,

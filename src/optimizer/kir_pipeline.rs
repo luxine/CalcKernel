@@ -386,8 +386,22 @@ pub fn run_kir_pass_pipeline(
         }
 
         let protected = result.proofs.instruction_dependencies();
-        result.stats.hoisted_instructions =
-            kir_passes::run_licm(&mut module, &protected, &loop_analyses);
+        let licm = match kir_passes::run_licm(&mut module, &protected, &loop_analyses) {
+            Ok(result) => result,
+            Err(error) => {
+                result.errors.push(error);
+                result.module = module;
+                return result;
+            }
+        };
+        result.stats.hoisted_instructions = licm.hoisted;
+        for function in licm.exhausted_functions {
+            result.analysis_fallbacks.push(KirAnalysisFallback {
+                function,
+                pass: "licm".to_string(),
+                reason: "fixed-kir-budget-exhausted".to_string(),
+            });
+        }
         if !record_current_pass(
             &module,
             "licm",

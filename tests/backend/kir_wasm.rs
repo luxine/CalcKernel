@@ -104,6 +104,43 @@ fn kir_wasm_backend_should_reject_checked_kir_without_inventing_an_abi() {
 }
 
 #[test]
+fn kir_wasm_licm_should_not_introduce_traps_on_zero_trip_or_break_paths() {
+    let source = r#"
+        export fn divide(a: i32, d: i32, n: u32) -> i32 {
+          let i: u32 = 0; let total: i32 = 0;
+          while i < n { total = total + a / d; i = i + 1; }
+          return total;
+        }
+        export fn remainder(a: i32, d: i32, n: u32) -> i32 {
+          let i: u32 = 0; let total: i32 = 0;
+          while i < n { if d == 0 { break; } total = total + a % d; i = i + 1; }
+          return total;
+        }
+    "#;
+    let runner = r#"
+        import fs from "node:fs";
+        const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]), {});
+        const api = instance.exports;
+        if (api.divide(1, 0, 0) !== 0) process.exit(1);
+        if (api.divide(-2147483648, -1, 0) !== 0) process.exit(2);
+        if (api.remainder(1, 0, 0) !== 0) process.exit(3);
+        if (api.remainder(1, 0, 1) !== 0) process.exit(4);
+        if (api.divide(12, 3, 2) !== 8) process.exit(5);
+        if (api.remainder(13, 3, 2) !== 2) process.exit(6);
+    "#;
+    for (level, kir_level) in [
+        (0, KirOptimizationLevel::O0),
+        (1, KirOptimizationLevel::O1),
+        (2, KirOptimizationLevel::O2),
+        (3, KirOptimizationLevel::O3),
+    ] {
+        let kir = optimized_kir(source, kir_level);
+        let wasm = emit_wasm_kir_module(&kir, EmitWasmOptions { opt_level: level }).expect("WASM");
+        run_wasm(&wasm, runner);
+    }
+}
+
+#[test]
 fn kir_wasm_o0_through_o3_should_cover_supported_mode_matrix() {
     const SOURCE: &str = r#"
         struct Pair { x: i32; y: i32; }

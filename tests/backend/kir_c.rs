@@ -407,6 +407,40 @@ fn kir_c_range_proofs_should_preserve_boundaries_and_failure_result_slots() {
 }
 
 #[test]
+fn kir_c_licm_should_preserve_zero_trip_checked_first_error_and_prior_writes() {
+    let source = r#"
+        export fn calculate(out: ptr<i32>, a: i32, b: i32, n: u32) -> i32 {
+          let i: u32 = 0; let total: i32 = 0;
+          while i < n { out[0] = 1; let scale: i32 = a * b; out[0] = 2; total = total + scale; i = i + 1; }
+          return total;
+        }
+    "#;
+    for optimization in 0..=3 {
+        for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+            for bounds in [KirBoundsMode::Unchecked, KirBoundsMode::Checked] {
+                let module = optimized_kir(source, level(optimization), overflow, bounds);
+                let c = emit_c_kir_module(&module).expect("LICM C");
+                let mut harness = String::from("int main(void) { int32_t out = 7;\n");
+                if overflow == KirOverflowMode::Checked || bounds == KirBoundsMode::Checked {
+                    harness.push_str("int32_t result = 99; if (calculate(&out, INT32_MAX, 2, 0, &result) != CK_OK || result != 0 || out != 7) return 1;\n");
+                    harness.push_str("result = 99; if (calculate(&out, 6, 7, 3, &result) != CK_OK || result != 126 || out != 2) return 2;\n");
+                    harness.push_str("out = 7; result = 99;\n");
+                    if overflow == KirOverflowMode::Checked {
+                        harness.push_str("if (calculate(&out, INT32_MAX, 2, 1, &result) != CK_ERR_OVERFLOW || out != 1 || result != 99) return 3;\n");
+                    } else {
+                        harness.push_str("if (calculate(&out, INT32_MAX, 2, 1, &result) != CK_OK || out != 2 || result != -2) return 3;\n");
+                    }
+                } else {
+                    harness.push_str("if (calculate(&out, INT32_MAX, 2, 0) != 0 || out != 7) return 1;\nif (calculate(&out, 6, 7, 3) != 126 || out != 2) return 2;\nout = 7; if (calculate(&out, INT32_MAX, 2, 1) != -2 || out != 2) return 3;\n");
+                }
+                harness.push_str("return 0; }\n");
+                compile_and_run(&c, &harness);
+            }
+        }
+    }
+}
+
+#[test]
 fn kir_c_unchecked_backend_should_compile_scalar_control_struct_and_memory() {
     let kir = optimized_kir(
         r#"

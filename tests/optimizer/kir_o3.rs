@@ -159,6 +159,38 @@ fn loop_induction_should_check_every_latch_and_intervening_assignment() {
     }
 }
 
+#[test]
+fn loop_induction_facts_should_cover_all_widths_directions_and_wrap_neighbors() {
+    for ty in ["i32", "u32", "i64", "u64"] {
+        for (condition, update, step, safe) in [
+            ("i < n", "i + 1", "1", true),
+            ("n > i", "i + 1", "1", true),
+            ("i > n", "i - 1", "-1", true),
+            ("n < i", "i - 1", "-1", true),
+            ("i < n", "i + 2", "2", false),
+            ("i > n", "i - 2", "-2", false),
+            ("i <= n", "i + 1", "1", false),
+            ("i >= n", "i - 1", "-1", false),
+        ] {
+            for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+                let source = format!(
+                    "export fn count(n: {ty}) -> {ty} {{ let i: {ty} = 10; while {condition} {{ i = {update}; }} return i; }}"
+                );
+                let (module, _) = build(&source, overflow);
+                let analysis = analyze_natural_loops(&module.functions[0]);
+                assert_eq!(analysis.inductions.len(), 1, "{source}");
+                let induction = &analysis.inductions[0];
+                assert_eq!(induction.start.to_string(), "10");
+                assert_eq!(induction.step.to_string(), step);
+                assert_eq!(
+                    induction.wrap_safe_for_strict_bound, safe,
+                    "{ty}: {condition}, {update}, {overflow:?}"
+                );
+            }
+        }
+    }
+}
+
 fn loop_graph(successors: &[&[usize]]) -> calckernel::KirModule {
     let (mut module, _) = build_with_modes(
         "export fn graph(flag: bool) -> u32 { return 0; }",
@@ -456,6 +488,134 @@ fn loop_licm_should_hoist_only_modular_pure_invariants() {
     assert!(result.stats.natural_loops >= 1);
     assert!(result.stats.induction_variables >= 1);
     assert!(result.stats.hoisted_instructions >= 1);
+    let function = &result.artifact.as_ref().expect("artifact").functions[0];
+    let analysis = analyze_natural_loops(function);
+    let multiply = function
+        .blocks
+        .iter()
+        .find(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    KirInstructionKind::Binary {
+                        op: calckernel::MirBinaryOp::Mul,
+                        ..
+                    }
+                )
+            })
+        })
+        .expect("invariant multiply");
+    assert!(
+        analysis
+            .loops
+            .iter()
+            .all(|info| !info.blocks.contains(&multiply.id)),
+        "the invariant multiply, not only its constants, must move:\n{}",
+        print_kir_module(result.artifact.as_ref().expect("artifact"))
+    );
+}
+
+#[test]
+fn loop_licm_should_not_speculate_integer_division_or_remainder() {
+    for ty in ["i32", "u32", "i64", "u64"] {
+        for op in ["/", "%"] {
+            for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+                let source = format!(
+                    "export fn maybe(a: {ty}, d: {ty}, n: u32) -> {ty} {{ let i: u32 = 0; let total: {ty} = 0; while i < n {{ total = total + a {op} d; i = i + 1; }} return total; }}"
+                );
+                let (module, contracts) = build(&source, overflow);
+                let result =
+                    run_kir_pass_pipeline(module, KirOptimizationLevel::O3, contracts.as_ref());
+                assert!(result.errors.is_empty(), "{:?}", result.errors);
+                let function = &result.artifact.as_ref().expect("artifact").functions[0];
+                let analysis = analyze_natural_loops(function);
+                let divisions = function
+                    .blocks
+                    .iter()
+                    .filter(|block| {
+                        block.instructions.iter().any(|instruction| {
+                            matches!(
+                                instruction.kind,
+                                KirInstructionKind::Binary {
+                                    op: calckernel::MirBinaryOp::Div | calckernel::MirBinaryOp::Mod,
+                                    ..
+                                }
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(divisions.len(), 1);
+                assert!(
+                    analysis
+                        .loops
+                        .iter()
+                        .any(|info| info.blocks.contains(&divisions[0].id)),
+                    "division must not execute on a zero-trip path: {ty} {op} {overflow:?}\n{}",
+                    print_kir_module(result.artifact.as_ref().expect("artifact"))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn loop_licm_should_keep_alias_memory_recursive_calls_and_strict_float_in_the_loop() {
+    let source = r#"
+        fn recurse(n: u32) -> u32 { if n == 0 { return 0; } return recurse(n - 1); }
+        export fn effectful(out: ptr<u32>, input: ptr<u32>, a: u32, n: u32) -> u32 {
+          let i: u32 = 0; let total: u32 = 0;
+          while i < n { print_u32(i); out[0] = a; total = total + recurse(input[0]); i = i + 1; }
+          return total;
+        }
+        export fn floats(a: f64, b: f64, n: u32) -> f64 {
+          let i: u32 = 0; let total: f64 = 0.0;
+          while i < n { total = total + a * b; i = i + 1; }
+          return total;
+        }
+    "#;
+    for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+        let (module, contracts) = build(source, overflow);
+        let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let mut kinds = std::collections::BTreeSet::new();
+        for function in result
+            .artifact
+            .as_ref()
+            .expect("artifact")
+            .functions
+            .iter()
+            .filter(|function| function.name != "recurse")
+        {
+            let analysis = analyze_natural_loops(function);
+            for block in &function.blocks {
+                for instruction in &block.instructions {
+                    let kind = match instruction.kind {
+                        KirInstructionKind::Load { .. } => "load",
+                        KirInstructionKind::Store { .. } => "store",
+                        KirInstructionKind::Call { .. } => "call",
+                        KirInstructionKind::RuntimeCall { .. } => "print",
+                        KirInstructionKind::Binary {
+                            semantics: calckernel::KirArithmeticSemantics::StrictFloat,
+                            ..
+                        } => "strict-float",
+                        _ => continue,
+                    };
+                    kinds.insert(kind);
+                    assert!(
+                        analysis
+                            .loops
+                            .iter()
+                            .any(|info| info.blocks.contains(&block.id)),
+                        "{kind} escaped its loop"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            kinds,
+            std::collections::BTreeSet::from(["load", "store", "call", "print", "strict-float"])
+        );
+    }
 }
 
 #[test]

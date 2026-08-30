@@ -8,7 +8,7 @@ propagation/check-elimination。只做规范列出的标量循环工作。
 ## 仓库落点
 
 - `src/optimizer/analysis/loops.rs`。
-- `src/optimizer/passes/{licm.rs,induction.rs}`。
+- `src/optimizer/kir_passes/{licm.rs,induction.rs}` 与独立检查器 `src/optimizer/verify.rs`。
 - `tests/optimizer/kir_o3.rs` 与 canonical checked-loop fixtures。
 
 ## TDD 顺序
