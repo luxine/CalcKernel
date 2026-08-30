@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
     BlockId, FunctionId, InstructionId, KirArithmeticSemantics, KirInstructionKind, KirModule,
@@ -30,6 +30,121 @@ pub(super) struct ScalarProposals {
     pub proofs: ProofArena,
     pub values: BTreeMap<FunctionId, (ProofId, BTreeMap<ValueId, ProofStepId>)>,
     rewrites: Vec<ConstantRewrite>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ScalarWorkItem {
+    Phi { block: usize, index: usize },
+    Instruction { block: usize, index: usize },
+}
+
+struct ScalarWorklist {
+    queue: VecDeque<ScalarWorkItem>,
+    queued: BTreeSet<ScalarWorkItem>,
+    users: BTreeMap<ValueId, Vec<ScalarWorkItem>>,
+}
+
+impl ScalarWorklist {
+    fn new(function: &crate::KirFunction) -> Self {
+        let mut worklist = Self {
+            queue: VecDeque::new(),
+            queued: BTreeSet::new(),
+            users: BTreeMap::new(),
+        };
+        let block_indices = function
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (block.id, index))
+            .collect::<BTreeMap<_, _>>();
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            for index in 0..block.params.len() {
+                worklist.enqueue(ScalarWorkItem::Phi {
+                    block: block_index,
+                    index,
+                });
+            }
+            for (index, instruction) in block.instructions.iter().enumerate() {
+                let item = ScalarWorkItem::Instruction {
+                    block: block_index,
+                    index,
+                };
+                worklist.enqueue(item);
+                for value in super::dce::instruction_uses(instruction) {
+                    worklist.users.entry(value).or_default().push(item);
+                }
+            }
+            let edges = match &block.terminator {
+                KirTerminator::Return { .. } => Vec::new(),
+                KirTerminator::Jump { edge } => vec![edge],
+                KirTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                } => vec![then_edge, else_edge],
+            };
+            let comparison = match block.terminator {
+                KirTerminator::Branch { condition, .. } => block
+                    .instructions
+                    .iter()
+                    .find(|instruction| {
+                        instruction
+                            .results
+                            .first()
+                            .is_some_and(|result| result.value == condition)
+                    })
+                    .and_then(|instruction| match instruction.kind {
+                        KirInstructionKind::Compare { left, right, .. } => Some((left, right)),
+                        _ => None,
+                    }),
+                _ => None,
+            };
+            for edge in edges {
+                let Some(&target) = block_indices.get(&edge.target) else {
+                    continue;
+                };
+                for (index, &value) in edge.args.iter().enumerate() {
+                    let item = ScalarWorkItem::Phi {
+                        block: target,
+                        index,
+                    };
+                    worklist.users.entry(value).or_default().push(item);
+                    if let Some((left, right)) = comparison
+                        && (value == left || value == right)
+                    {
+                        // A phi's range also depends on its incoming path condition,
+                        // including comparison operands that are not phi arguments.
+                        for bound in [left, right] {
+                            worklist.users.entry(bound).or_default().push(item);
+                        }
+                    }
+                }
+            }
+        }
+        worklist
+    }
+
+    fn enqueue(&mut self, item: ScalarWorkItem) {
+        if self.queued.insert(item) {
+            self.queue.push_back(item);
+        }
+    }
+
+    fn pop(&mut self) -> Option<ScalarWorkItem> {
+        let item = self.queue.pop_front()?;
+        self.queued.remove(&item);
+        Some(item)
+    }
+
+    fn value_changed(&mut self, value: ValueId) {
+        if let Some(users) = self.users.get(&value) {
+            for &item in users {
+                if self.queued.insert(item) {
+                    self.queue.push_back(item);
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn run_integer_constant_folding(
@@ -148,17 +263,17 @@ fn propose_with_contracts(
                     .push((block.id, taken, edge));
             }
         }
-        loop {
-            let before = steps.len();
-            for block in &function.blocks {
-                for (index, param) in block.params.iter().enumerate() {
-                    let Some(next) = remaining.checked_sub(1) else {
-                        continue 'functions;
-                    };
-                    remaining = next;
-                    if values.contains_key(&param.value)
-                        || IntegerType::from_mir(&param.type_node).is_none()
-                    {
+        let mut worklist = ScalarWorklist::new(function);
+        while let Some(item) = worklist.pop() {
+            let Some(next) = remaining.checked_sub(1) else {
+                continue 'functions;
+            };
+            remaining = next;
+            match item {
+                ScalarWorkItem::Phi { block, index } => {
+                    let block = &function.blocks[block];
+                    let param = &block.params[index];
+                    if IntegerType::from_mir(&param.type_node).is_none() {
                         continue;
                     }
                     let Some(edges) = incoming.get(&block.id) else {
@@ -176,6 +291,7 @@ fn propose_with_contracts(
                     let Some(mut inputs) = inputs else {
                         continue;
                     };
+                    let start = steps.len();
                     for ((predecessor, taken, edge), input) in edges.iter().zip(&mut inputs) {
                         if let Some(taken) = taken {
                             refine_edge_input(
@@ -208,6 +324,13 @@ fn propose_with_contracts(
                             .map_err(|error| error.to_string())?,
                     )
                     .map_err(|error| error.to_string())?;
+                    if values
+                        .get(&param.value)
+                        .is_some_and(|(old, _)| old == &value)
+                    {
+                        steps.truncate(start);
+                        continue;
+                    }
                     let step = ProofStepId::from_index(
                         u32::try_from(steps.len())
                             .map_err(|_| "SCCP proof exceeds u32 identity space")?,
@@ -222,16 +345,14 @@ fn propose_with_contracts(
                         ),
                     });
                     values.insert(param.value, (value, step));
+                    worklist.value_changed(param.value);
                 }
-                for instruction in &block.instructions {
-                    let Some(next) = remaining.checked_sub(1) else {
-                        continue 'functions;
-                    };
-                    remaining = next;
+                ScalarWorkItem::Instruction { block, index } => {
+                    let instruction = &function.blocks[block].instructions[index];
                     let [result] = instruction.results.as_slice() else {
                         continue;
                     };
-                    if values.contains_key(&result.value) || booleans.contains(&result.value) {
+                    if booleans.contains(&result.value) {
                         continue;
                     }
                     if instruction.effect.is_some() || instruction.memory.is_some() {
@@ -241,6 +362,7 @@ fn propose_with_contracts(
                         u32::try_from(steps.len())
                             .map_err(|_| "SCCP proof exceeds u32 identity space")?,
                     );
+                    let pending_start = pending.len();
                     if let KirInstructionKind::Compare { op, left, right } = instruction.kind {
                         let (Some((left, left_step)), Some((right, right_step))) =
                             (values.get(&left), values.get(&right))
@@ -355,11 +477,17 @@ fn propose_with_contracts(
                         }
                         _ => continue,
                     };
+                    if values
+                        .get(&result.value)
+                        .is_some_and(|(old, _)| old == &value)
+                    {
+                        steps.truncate(step.index() as usize);
+                        pending.truncate(pending_start);
+                        continue;
+                    }
                     values.insert(result.value, (value, step));
+                    worklist.value_changed(result.value);
                 }
-            }
-            if steps.len() == before {
-                break;
             }
         }
         if steps.is_empty() {
@@ -621,6 +749,54 @@ mod tests {
     }
 
     #[test]
+    fn constant_rewrite_sparse_worklist_should_handle_reverse_block_order_with_linear_budget() {
+        let expression = std::iter::repeat_n("1", 40).collect::<Vec<_>>().join(" + ");
+        let mut module = module_from_source(&format!(
+            "export fn chain() -> i32 {{ return {expression}; }}"
+        ));
+        let function = &mut module.functions[0];
+        let original = function.blocks.remove(0);
+        let count = original.instructions.len();
+        for (index, instruction) in original.instructions.into_iter().enumerate() {
+            function.blocks.push(crate::KirBlock {
+                id: BlockId::from_index(index as u32),
+                label: format!("chain_{index}"),
+                params: Vec::new(),
+                memory_params: Vec::new(),
+                instructions: vec![instruction],
+                terminator: if index + 1 == count {
+                    original.terminator.clone()
+                } else {
+                    KirTerminator::Jump {
+                        edge: crate::KirEdge {
+                            target: BlockId::from_index(index as u32 + 1),
+                            args: Vec::new(),
+                            memory_args: Vec::new(),
+                        },
+                    }
+                },
+            });
+        }
+        function.blocks[1..].reverse();
+        let validation = crate::validate_kir_module(&module);
+        assert!(validation.errors.is_empty(), "{validation:?}");
+        let (proofs, rewrites) = propose_with_config(
+            &module,
+            ScalarAnalysisConfig::with_max_steps(count as u32 * 3),
+        )
+        .expect("bounded sparse proposal");
+
+        assert_eq!(
+            rewrites.len(),
+            39,
+            "only dependent users should be revisited"
+        );
+        assert!(verify_and_apply(&mut module, &proofs, &rewrites).expect("verified rewrite"));
+        assert!(module.functions[0].blocks[1].instructions.iter().any(|instruction|
+            matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "40")));
+    }
+
+    #[test]
     fn constant_rewrite_should_reject_wrong_replacement_without_partial_mutation() {
         let mut module = module();
         let before = module.clone();
@@ -756,6 +932,55 @@ mod tests {
         module_from_source(
             "export fn bounded(n: u32) -> bool { if n < 8 { return n < 16; } return n < 8; }",
         )
+    }
+
+    #[test]
+    fn constant_rewrite_sparse_worklist_should_revisit_phi_when_branch_bounds_arrive() {
+        let mut module = range_module();
+        move_entry_branch_after_successors(&mut module);
+        let (proofs, rewrites) = propose(&module).expect("proposal");
+        assert_eq!(rewrites.len(), 2, "both path-local comparisons must fold");
+        assert!(verify_and_apply(&mut module, &proofs, &rewrites).expect("valid scoped proofs"));
+    }
+
+    #[test]
+    fn constant_rewrite_sparse_worklist_should_propagate_late_refinement_into_arithmetic() {
+        for (bound, expected) in [(1, 1), (8, 0)] {
+            let mut module = module_from_source(&format!(
+                "export fn bounded(n: u32) -> u32 {{ if n < {bound} {{ return n + 7; }} return n; }}"
+            ));
+            move_entry_branch_after_successors(&mut module);
+            let (proofs, rewrites) = propose(&module).expect("proposal");
+            assert_eq!(rewrites.len(), expected, "bound {bound}");
+            let (repeated, _) = propose(&module).expect("deterministic proposal");
+            assert_eq!(proofs, repeated);
+            assert_eq!(
+                verify_and_apply(&mut module, &proofs, &rewrites).expect("verified"),
+                expected != 0
+            );
+            if bound == 1 {
+                assert!(module.functions[0].blocks[1].instructions.iter().any(|instruction|
+                    matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "7")));
+            }
+        }
+    }
+
+    fn move_entry_branch_after_successors(module: &mut KirModule) {
+        let function = &mut module.functions[0];
+        let mut branch = function.blocks[0].clone();
+        branch.id = BlockId::from_index(function.blocks.len() as u32);
+        branch.label = "late_layout_branch".to_string();
+        function.blocks[0].instructions.clear();
+        function.blocks[0].terminator = KirTerminator::Jump {
+            edge: crate::KirEdge {
+                target: branch.id,
+                args: Vec::new(),
+                memory_args: Vec::new(),
+            },
+        };
+        function.blocks.push(branch);
+        let validation = crate::validate_kir_module(module);
+        assert!(validation.errors.is_empty(), "{validation:?}");
     }
 
     fn verify_ranges(module: &KirModule, proofs: &ProofArena) -> crate::EvidenceValidationResult {

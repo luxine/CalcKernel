@@ -406,6 +406,39 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   修复仅使该 literal 不产生 scalar claim、保留全部原始 operation/guard，不重新解释
   字面量或改变前端规则；green 严格比较 O1 artifact 与 O0 artifact 完全相同。
 
+### I18 第三部分：SSA-use 稀疏范围工作队列（阶段仍未关闭）
+
+- 以真实合法 KIR 的 79 个单指令块构造反向布局常量链，固定 `3 * instruction_count`
+  预算。旧全函数扫描耗尽预算，0/39 项改写；稀疏工作队列实际完成全部 39 项，且独立
+  checker 通过、返回值实际改为常量 40。没有增大默认预算或依赖墙钟时间。
+- 第二个 red 将比较所在块放在后继之后，但保持 CFG/dominance 完全合法。原实现首次
+  访问 phi 时缺少比较的另一操作数，记录宽范围后不再更新，两个路径局部比较都未折叠。
+  修复把比较的两侧操作数纳入相应 phi 的使用依赖；后到范围唤醒 phi 和下游消费者。
+- 范围不变不再传播，也不留下新重复证书步骤；范围变化保留闭合、按先后引用的推导。
+  新增算术传播与相邻非恒定范围对照、重复运行证书一致性断言，原全函数预算撤回、
+  作用域故障注入及 O2/O3 证书保留测试仍执行。队列只改变求值调度，不自证优化结论。
+- 这只关闭 sparse evaluation 缺口，不表示完整 SCCP 已验收：条件边剪枝、phi 本体改写、
+  CFG 证据失效/重建、checked 下游传播核查以及阶段 07 实际归纳变量简化仍待完成。
+
+## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
+
+- I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median
+  `4663458 ns`，checked `4904542 ns`，吞吐比 `0.9508447 < 0.97`。原始 20 项样本与
+  schema-5 report 已保留，不能仅以其他门槛通过覆盖该失败，也不能重跑直到偶然转绿。
+- 用 `git archive a46717ccf4254f291cfdbdadecf88ed31547c652` 的独立源码重新构建 parent
+  compiler，并用相同 LLVM 22.1.8 manifest、baseline CPU、O3 和 safety mode 生成
+  proof-loop objects。每个模式的 parent/candidate 对象逐字节相同：checked SHA-256
+  `faf2d36e3cc47dc241b8511f86c6c9c6125580348677f4ef8cde512e2c76ea80`；unchecked
+  `b0f06b7a1fa6169d9927be0e13c7fd3faa27d247f593378c3f0b32ffc5034ff4`。这排除了本批
+  SSA 调度改动导致该 kernel 机器码变化，不能据此宣布性能门槛通过。
+- 同轮 Clang proof medians 为 `4663417 / 4906750 ns`，跨模式吞吐同样降至 `0.9504085`。
+  harness 先跑完整 unchecked suite 再跑 checked suite，两次 proof 之间还测量其他 kernel。
+  复诊时观察到系统 XprotectService、mediaanalysisd 与编辑器占用多核 CPU。跨时段机器
+  状态是有证据支持的候选解释，尚不能把具体调度/温度原因当作已确定事实。
+- 未终止任何用户或系统进程，未修改 benchmark 的样本数、执行顺序、阈值、语料或固定
+  baseline。保留这项失败，继续诊断并等待正式稳定环境证据；I14 的远程 x86 基线问题仍
+  独立打开。最终仍必须在同一最终 SHA 通过全部原门槛。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

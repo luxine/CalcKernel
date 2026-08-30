@@ -105,3 +105,28 @@
 - 自审范围为 scalar producer/checker、证书 DAG 投影、guard transaction、后续 scalar/GVN/
   LICM/DCE preservation、对应正反例。阶段 05 的 sparse worklist、条件边剪枝、phi 本体
   改写与 CFG 相关的证据失效/重建尚未完成；阶段 07/I14/远程同 SHA 总验收仍保持打开。
+
+## I18 稀疏工作队列的局部复验（2026-08-30，阶段仍未完整通过）
+
+- 本节对应 `optimizer(stage-05): propagate scalar ranges with a sparse worklist`，parent
+  为 `a46717ccf4254f291cfdbdadecf88ed31547c652`。
+- 两项实际 red：反向块布局在固定线性预算下为 0/39 项改写；后置比较定义的合法 CFG
+  未触发两个路径比较改写。相应 green 为 39/39 和 2/2，全部闭合证书经独立核验再应用。
+- 新稀疏回归 3/3，含后到范围的算术消费者、相邻非恒定范围与证书确定性；原预算撤回、
+  certificate mutation、checked/floating/effect 与跨阶段 preservation 测试未减少。
+- 顺序全量执行 `cargo +1.90.0 test --locked`（376 项）和
+  `cargo +1.90.0 test --locked --all-features`（497 项，Native 92/CLI 21），均 exit 0。
+  `cargo +1.90.0 test --release --locked --lib` 为 19/19；all-feature Clippy、fmt 与
+  diff check 全部 exit 0。日志 SHA-256 分别为
+  `3b9b5ecaffd793c2ab6c8904a69f73aa124f3eaa86d3f7d902a581d4299366d4`、
+  `16de00ce70d6e938333b864f2bbdfba26512d4cabcf88d11e53d901b484b137e`、
+  `5e86847f53ca9ff70986861b023fbe7ca687bbeaf2e0ccfee85e480f0a802eab`。
+- 行内自审核查使用关系完整性、队列去重、范围变化的消费者唤醒、未改变范围时的临时
+  proof 截断与固定预算原子撤回，未发现本批改动的新阻断项。条件边剪枝、phi 本体改写、
+  CFG 证据失效/重建及阶段 07 仍未验收，不把工作队列等同于完整 SCCP。
+- 本批首次原 performance gate **exit 1**：checked proof throughput `0.9508447 < 0.97`，
+  不能记为通过。Clang mean 为 unchecked `1.0007` / checked `0.9994`；V0.10 ratio 为
+  `1.0002` / `0.9990`；optimizer median `1.2176`，individual 均通过。失败 report
+  SHA-256 为 `3d7aaef31a7d022ff016b343cf0132cc28c2ffa33e82e8eea80fc14025cb759b`，
+  benchmark log 为 `2a5c1fa3c5b07b06f16488c616490468db756d98f62a26c04678868c971e1e71`。
+  已保留原始样本；详见 I19，同 SHA 全门槛仍待正式通过，不用对象一致性替代性能验收。

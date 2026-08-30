@@ -81,7 +81,7 @@ fn collect_used_values(module: &KirModule) -> BTreeSet<ValueId> {
     used
 }
 
-fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
+pub(super) fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
     match &instruction.kind {
         KirInstructionKind::Undef { .. }
         | KirInstructionKind::ConstInt { .. }

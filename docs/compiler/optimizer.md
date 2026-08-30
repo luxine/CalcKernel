@@ -42,6 +42,13 @@ pre-rewrite KIR before changing any instruction. Exhausting the deterministic
 per-function budget discards that function's pending proposals. This transform
 does not remove checked operations or guards and does not fold strict floats.
 
+Scalar propagation uses a deterministic SSA-use worklist. A changed range queues
+only its consumers, including block parameters that depend on a comparison edge's
+other operand. Later path refinements update already-visited joins and their
+consumers; unchanged ranges do not trigger another round. Every queued evaluation
+consumes the same fixed per-function budget, and exhaustion discards all pending
+proofs and rewrites for that function.
+
 Integer ranges also flow from entry contracts and individual comparison edges
 through all-input block-parameter joins. The proof checker validates each
 premise at its actual definition or incoming edge; branch-local evidence cannot
