@@ -299,6 +299,76 @@ fn windows_static_crt_policy_should_cover_bootstrap_cache_and_cargo() {
 }
 
 #[test]
+fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runtime() {
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    for required in [
+        "native/runtime/windows/jit_image_base.c",
+        "runtime_jit_support",
+        "runtime_jit_support_sha256",
+        "x86_64-pc-windows-msvc",
+    ] {
+        assert!(
+            bootstrap.contains(required),
+            "Windows bootstrap must bind x64 JIT image-base support with {required:?}"
+        );
+    }
+
+    let verifier = read("scripts/validate-llvm-prefix.ps1");
+    for required in [
+        "runtime_jit_support",
+        "runtime_jit_support_sha256",
+        "jit_image_base.obj",
+    ] {
+        assert!(
+            verifier.contains(required),
+            "cache verification must bind JIT support with {required:?}"
+        );
+    }
+
+    let build = read("build.rs");
+    for required in [
+        "runtime_jit_support",
+        "runtime_jit_support_sha256",
+        "CKC_RUNTIME_JIT_SUPPORT",
+    ] {
+        assert!(
+            build.contains(required),
+            "native build must verify JIT support with {required:?}"
+        );
+    }
+
+    let runtime = read("src/backend/native_runtime.rs");
+    assert!(runtime.contains("embedded_jit_objects"));
+    assert!(runtime.contains("CKC_RUNTIME_JIT_SUPPORT"));
+    assert!(
+        runtime.contains("embedded_runtime_objects"),
+        "the five artifact runtime objects remain a separate closed set"
+    );
+
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    assert!(
+        bridge
+            .matches("arguments.emplace_back(\"/out:\" + *output_path)")
+            .count()
+            >= 2,
+        "both COFF LLD entry points must use /out:<path>"
+    );
+    assert!(
+        bridge.contains("runtime_object_count != 6"),
+        "COFF x64 JIT must fail closed unless it receives anchor + five runtime objects"
+    );
+
+    let anchor = read("native/runtime/windows/jit_image_base.c");
+    assert!(anchor.contains("__ImageBase"));
+    for forbidden in ["main(", "malloc(", "printf(", "GetModuleHandle"] {
+        assert!(
+            !anchor.contains(forbidden),
+            "JIT image-base support must not grow a runtime surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn windows_static_crt_should_validate_actual_compile_commands() {
     let root = super::support::temp::temp_dir("ckc-crt-commands");
     fs::create_dir_all(&root).unwrap();

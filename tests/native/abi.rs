@@ -540,8 +540,17 @@ fn native_llvm_should_hide_internal_signatures_behind_host_c_abi_thunks() {
 #[test]
 fn checked_native_thunks_should_return_status_and_keep_result_pointer_explicit() {
     let text = native_abi_ir(OverflowMode::Checked, BoundsMode::Checked);
-    assert!(text.contains("define i32 @echo_big("), "{text}");
-    assert!(!text.contains("define void @echo_big("), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("define ") && line.contains(" i32 @echo_big(")),
+        "{text}"
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|line| line.starts_with("define ") && line.contains(" void @echo_big(")),
+        "{text}"
+    );
     assert!(!text.contains("sret(%struct.Big)"), "{text}");
     assert!(text.contains("@__ck_impl_echo_big(%struct.Big"), "{text}");
 }

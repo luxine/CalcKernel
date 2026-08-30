@@ -5,7 +5,7 @@ use super::{
     ffi::{self, CkcLlvmJit},
     object::NativeObject,
 };
-use crate::backend::native_runtime::embedded_runtime_objects;
+use crate::backend::native_runtime::embedded_jit_objects;
 
 /// ORC object-linking layer selected for the current release target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +90,7 @@ impl NativeJit {
             ));
         }
         self.executed = true;
-        ffi::jit_execute(self.handle, object.as_bytes(), &embedded_runtime_objects())
+        ffi::jit_execute(self.handle, object.as_bytes(), &embedded_jit_objects())
     }
 
     /// Returns internal evidence recorded by the JIT memory manager.

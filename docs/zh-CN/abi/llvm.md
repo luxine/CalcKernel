@@ -73,6 +73,12 @@ Runtime failure 经 embedded platform exit helper 终止。
 `ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
 x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定
 RuntimeDyld compatibility path。两者都 eager resolve symbol，并在调用 `main` 前完成 RW-to-RX。
+COFF x86-64 JITLink 继续禁用任意 process-symbol lookup。五个 embedded CK runtime object
+仅在 JIT execution 中与一个独立散列、纯数据的 `__ImageBase` anchor 组合；anchor 与固定
+object set 位于同一个 512 MiB JIT reservation，使 MSVC `.pdata` 的 image-relative
+relocation 保持可表示。该 support object 只属于 `run` 内部，不会传给 LLD 的 object、
+static、dynamic 或 executable artifact，也不增加公开 CK symbol 或运行依赖。CK program
+object 若定义 PE/COFF 保留名 `__ImageBase`，会在执行前被拒绝。
 Darwin ORC 按 runtime capability 在两条互斥 W^X 机制中选择：支持 per-thread JIT write
 protection 时使用 `MAP_JIT`，在线程级 writable/non-executable 与 readable/executable 间
 切换；能力不可用（包括 Darwin x86-64 和受限 virtual host）时，先预留普通 RW/NX pages，

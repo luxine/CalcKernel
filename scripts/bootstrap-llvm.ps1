@@ -220,6 +220,16 @@ foreach ($item in $runtimeSources) {
 $runtimeHashes = $runtimeObjects | ForEach-Object {
     (Get-FileHash -LiteralPath (Join-Path $runtimeDir $_) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
+$runtimeJitSupport = $null
+$runtimeJitSupportHash = $null
+if ($Target -ceq "x86_64-pc-windows-msvc") {
+    $runtimeJitSupport = "jit_image_base.obj"
+    $runtimeJitSupportSource = Join-Path $repoRoot "native/runtime/windows/jit_image_base.c"
+    $runtimeJitSupportPath = Join-Path $runtimeDir $runtimeJitSupport
+    & cl.exe /nologo /c /TC /O2 /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/Fo$runtimeJitSupportPath" $runtimeJitSupportSource
+    if ($LASTEXITCODE -ne 0) { throw "native JIT support compilation failed: $runtimeJitSupportSource" }
+    $runtimeJitSupportHash = (Get-FileHash -LiteralPath $runtimeJitSupportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+}
 $runtimeImport = "kernel32.lib"
 $runtimeImportPath = Join-Path $runtimeDir $runtimeImport
 $llvmLib = Join-Path $Prefix "bin/llvm-lib.exe"
@@ -254,7 +264,13 @@ $manifest = @(
     "runtime_sha256 = $(Format-TomlArray $runtimeHashes)",
     "runtime_platform_import = `"$runtimeImport`"",
     "runtime_platform_import_sha256 = `"$runtimeImportHash`""
-) -join "`n"
-Set-Content -LiteralPath (Join-Path $manifestDir "llvm-build.toml") -Value $manifest -Encoding utf8NoBOM
+)
+if ($null -ne $runtimeJitSupport) {
+    $manifest += @(
+        "runtime_jit_support = `"$runtimeJitSupport`"",
+        "runtime_jit_support_sha256 = `"$runtimeJitSupportHash`""
+    )
+}
+Set-Content -LiteralPath (Join-Path $manifestDir "llvm-build.toml") -Value ($manifest -join "`n") -Encoding utf8NoBOM
 
 if ($Profile -eq "oracle") { Write-Output $clang } else { Write-Output $Prefix }

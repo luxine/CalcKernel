@@ -214,11 +214,23 @@ fn windows_static_prefix_should_reject_dynamic_crt_despite_a_static_manifest() {
         .unwrap();
     }
     let hash = format!("{:x}", Sha256::digest(b"runtime hash fixture"));
+    let jit_support = if target == "x86_64-pc-windows-msvc" {
+        fs::write(
+            root.join("share/ckc/runtime/jit_image_base.obj"),
+            b"runtime hash fixture",
+        )
+        .unwrap();
+        format!(
+            "runtime_jit_support = \"jit_image_base.obj\"\nruntime_jit_support_sha256 = \"{hash}\"\n"
+        )
+    } else {
+        String::new()
+    };
     let names = objects.map(|name| format!("\"{name}\"")).join(", ");
     let hashes = vec![format!("\"{hash}\""); 5].join(", ");
     let libraries = libraries.map(|name| format!("\"{name}\"")).join(", ");
     let manifest = format!(
-        "schema = 1\nversion = \"22.1.8\"\ntarget = \"{target}\"\nprofile = \"release\"\nsource_sha256 = \"922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888\"\nstatic_only = true\nmsvc_runtime_library = \"MultiThreaded\"\nstatic_libraries = [{libraries}]\nruntime_objects = [{names}]\nruntime_sha256 = [{hashes}]\nruntime_platform_import = \"kernel32.lib\"\nruntime_platform_import_sha256 = \"{hash}\"\n"
+        "schema = 1\nversion = \"22.1.8\"\ntarget = \"{target}\"\nprofile = \"release\"\nsource_sha256 = \"922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888\"\nstatic_only = true\nmsvc_runtime_library = \"MultiThreaded\"\nstatic_libraries = [{libraries}]\nruntime_objects = [{names}]\nruntime_sha256 = [{hashes}]\nruntime_platform_import = \"kernel32.lib\"\nruntime_platform_import_sha256 = \"{hash}\"\n{jit_support}"
     );
     let path = root.join("share/ckc/llvm-build.toml");
     fs::write(&path, &manifest).unwrap();

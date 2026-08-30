@@ -444,7 +444,7 @@ fn native_prefix_validation_should_check_object_hashes_before_caching() {
             .replace("static_libraries = [\"LLVMDTLTO\"]", "static_libraries = [\"lldCOFF\", \"lldCommon\", \"LLVMDTLTO\", \"LLVMLibDriver\", \"LLVMWindowsManifest\"]")
             .replace(".o\"", ".obj\"")
     );
-    fs::write(root.join("share/ckc/llvm-build.toml"), windows_manifest)
+    fs::write(root.join("share/ckc/llvm-build.toml"), &windows_manifest)
         .expect("write MSVC manifest");
     let windows = run("aarch64-pc-windows-msvc");
     assert!(
@@ -467,6 +467,37 @@ fn native_prefix_validation_should_check_object_hashes_before_caching() {
         fs::remove_file(dll).expect("remove owned test marker");
         assert!(run("aarch64-pc-windows-msvc").status.success());
     }
+    let jit_support_path = root.join("share/ckc/runtime/jit_image_base.obj");
+    fs::write(&jit_support_path, b"jit image base support").expect("write JIT support double");
+    let jit_support_hash = format!("{:x}", Sha256::digest(b"jit image base support"));
+    let x64_manifest = format!(
+        "{}runtime_jit_support = \"jit_image_base.obj\"\nruntime_jit_support_sha256 = \"{jit_support_hash}\"\n",
+        windows_manifest.replace("aarch64-pc-windows-msvc", "x86_64-pc-windows-msvc")
+    );
+    fs::write(root.join("share/ckc/llvm-build.toml"), &x64_manifest)
+        .expect("write x64 MSVC manifest");
+    assert!(run("x86_64-pc-windows-msvc").status.success());
+    fs::write(&jit_support_path, b"tampered").expect("corrupt JIT support");
+    let corrupt_jit = run("x86_64-pc-windows-msvc");
+    assert!(!corrupt_jit.status.success());
+    assert!(
+        String::from_utf8_lossy(&corrupt_jit.stderr).contains("runtime JIT support hash mismatch")
+    );
+    fs::write(&jit_support_path, b"jit image base support").expect("restore JIT support");
+    fs::write(
+        root.join("share/ckc/llvm-build.toml"),
+        x64_manifest.replace("runtime_jit_support =", "runtime_jit_support_missing ="),
+    )
+    .expect("remove x64 JIT support field");
+    assert!(!run("x86_64-pc-windows-msvc").status.success());
+    fs::write(
+        root.join("share/ckc/llvm-build.toml"),
+        x64_manifest.replace("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"),
+    )
+    .expect("inject x64 JIT support into ARM manifest");
+    assert!(!run("aarch64-pc-windows-msvc").status.success());
+    fs::write(root.join("share/ckc/llvm-build.toml"), &windows_manifest)
+        .expect("restore ARM MSVC manifest");
     fs::write(root.join("share/ckc/runtime/kernel32.lib"), b"tampered").expect("corrupt import");
     let import = run("aarch64-pc-windows-msvc");
     assert!(!import.status.success());

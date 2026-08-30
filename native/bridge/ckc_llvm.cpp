@@ -2617,8 +2617,12 @@ extern "C" int32_t ckc_lld_link_shared(
             }
         }
 #endif
+#if defined(CKC_LLD_COFF)
+        arguments.emplace_back("/out:" + *output_path);
+#else
         arguments.emplace_back("-o");
         arguments.emplace_back(*output_path);
+#endif
         arguments.emplace_back(*object_path);
 
         std::vector<const char *> raw_arguments;
@@ -2742,8 +2746,12 @@ extern "C" int32_t ckc_lld_link_executable(
         arguments.emplace_back("-e");
         arguments.emplace_back("_start");
 #endif
+#if defined(CKC_LLD_COFF)
+        arguments.emplace_back("/out:" + *output_path);
+#else
         arguments.emplace_back("-o");
         arguments.emplace_back(*output_path);
+#endif
         arguments.insert(arguments.end(), object_paths.begin(), object_paths.end());
 #if defined(CKC_LLD_DARWIN) || defined(CKC_LLD_COFF)
         arguments.emplace_back(*platform_input);
@@ -2902,8 +2910,14 @@ extern "C" int32_t ckc_llvm_jit_execute(
     const CkcLlvmBytes *runtime_objects, size_t runtime_object_count,
     int32_t *exit_status, CkcLlvmError *error) {
     clear_error(error);
+#if defined(CKC_LLD_COFF) && \
+    (defined(_M_X64) || defined(__x86_64__))
+    if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
+        runtime_objects == nullptr || runtime_object_count != 6) {
+#else
     if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
         runtime_objects == nullptr || runtime_object_count != 5) {
+#endif
         return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                          "LLVM JIT execution input is invalid");
     }
@@ -2921,7 +2935,12 @@ extern "C" int32_t ckc_llvm_jit_execute(
         for (size_t index = 0; index < runtime_object_count; ++index) {
             auto buffer = validated_object_buffer(
                 runtime_objects[index],
-                "ckc-runtime-" + std::to_string(index) + ".o", arch);
+                index == 0 && runtime_object_count == 6
+                    ? "ckc-jit-image-base.o"
+                    : "ckc-runtime-" +
+                          std::to_string(index - (runtime_object_count == 6)) +
+                          ".o",
+                arch);
             if (!buffer) {
                 return set_llvm_error(error, buffer.takeError());
             }
@@ -2929,6 +2948,20 @@ extern "C" int32_t ckc_llvm_jit_execute(
             if (!symbols) {
                 return set_llvm_error(error, symbols.takeError());
             }
+#if defined(CKC_LLD_COFF) && \
+    (defined(_M_X64) || defined(__x86_64__))
+            const bool defines_image_base =
+                std::find(symbols->begin(), symbols->end(), "__ImageBase") !=
+                symbols->end();
+            if (index == 0 && !defines_image_base) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "invalid COFF x64 JIT image-base anchor");
+            }
+            if (index != 0 && defines_image_base) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "runtime object defines reserved __ImageBase");
+            }
+#endif
             linker_symbols.insert(symbols->begin(), symbols->end());
             buffers.push_back(std::move(*buffer));
         }
@@ -2941,6 +2974,14 @@ extern "C" int32_t ckc_llvm_jit_execute(
         if (!program_symbols) {
             return set_llvm_error(error, program_symbols.takeError());
         }
+#if defined(CKC_LLD_COFF) && \
+    (defined(_M_X64) || defined(__x86_64__))
+        if (std::find(program_symbols->begin(), program_symbols->end(),
+                      "__ImageBase") != program_symbols->end()) {
+            return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                             "program object defines reserved __ImageBase");
+        }
+#endif
         linker_symbols.insert(program_symbols->begin(),
                               program_symbols->end());
         buffers.push_back(std::move(*program));

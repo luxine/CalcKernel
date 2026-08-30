@@ -339,8 +339,17 @@ fn checked_calls_should_propagate_status_and_void_should_not_gain_result_pointer
         text.contains("define internal i32 @touch(i32 %value)"),
         "{text}"
     );
-    assert!(text.contains("define i32 @run(i32"), "{text}");
-    assert!(!text.contains("define i32 @run(i32 %arg0, ptr"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("define ") && line.contains(" i32 @run(i32")),
+        "{text}"
+    );
+    assert!(
+        !text.lines().any(|line| {
+            line.starts_with("define ") && line.contains(" i32 @run(i32 %arg0, ptr")
+        }),
+        "{text}"
+    );
     assert!(text.contains("call i32 @touch(i32"), "{text}");
     assert!(text.contains("icmp ne i32"), "{text}");
 }

@@ -113,6 +113,15 @@ RuntimeDyld compatibility path because LLVM 22.1.8 lacks its JITLink backend.
 Both resolve all symbols eagerly and enforce writable-to-executable page
 transitions before calling `main`.
 
+COFF x86-64 JITLink keeps arbitrary process-symbol lookup disabled. Its five
+embedded CK runtime objects are joined only for JIT execution by a separately
+hashed, data-only `__ImageBase` anchor. The anchor and the fixed object set are
+allocated in the same 512 MiB JIT reservation so MSVC `.pdata` image-relative
+relocations remain representable. This support object is internal to `run`: it
+is not passed to LLD for object, static, dynamic, or executable artifacts and
+does not add a public CK symbol or runtime dependency. A CK program object that
+defines the PE/COFF-reserved `__ImageBase` name is rejected before execution.
+
 On Darwin, ORC selects one of two mutually exclusive W^X mechanisms from the
 runtime capability. Where per-thread JIT write protection is supported, code
 uses `MAP_JIT` and toggles the thread between writable/non-executable and

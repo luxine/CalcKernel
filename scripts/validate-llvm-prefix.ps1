@@ -33,6 +33,10 @@ function Read-Strings([string]$Key) {
         $item
     }
 }
+function Has-Key([string]$Key) {
+    $pattern = '^' + [regex]::Escape($Key) + '\s*='
+    return @($manifestLines | Where-Object { $_ -cmatch $pattern }).Count -ne 0
+}
 function Assert-Hash([string]$Path, [string]$Expected, [string]$Subject) {
     if ($Expected -cnotmatch '^[0-9a-f]{64}$') { throw "invalid $Subject hash" }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
@@ -95,6 +99,14 @@ if ($isMsvc) {
     $import = Read-String "runtime_platform_import"
     if ($import -cnotmatch '^[A-Za-z0-9_-]+\.lib$') { throw "invalid runtime platform import name" }
     Assert-Hash (Join-Path $Prefix "share/ckc/runtime/$import") (Read-String "runtime_platform_import_sha256") "runtime import"
+}
+$isCoffX64 = $Target -ceq "x86_64-pc-windows-msvc"
+if ($isCoffX64) {
+    $jitSupport = Read-String "runtime_jit_support"
+    if ($jitSupport -cne "jit_image_base.obj") { throw "invalid runtime JIT support name" }
+    Assert-Hash (Join-Path $Prefix "share/ckc/runtime/$jitSupport") (Read-String "runtime_jit_support_sha256") "runtime JIT support"
+} elseif ((Has-Key "runtime_jit_support") -or (Has-Key "runtime_jit_support_sha256")) {
+    throw "runtime JIT support is only valid for x86_64-pc-windows-msvc"
 }
 $clangName = if ($isMsvc) { "clang.exe" } else { "clang" }
 $clang = Join-Path $Prefix "bin/$clangName"

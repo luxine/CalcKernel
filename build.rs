@@ -372,6 +372,42 @@ fn configure_native_toolchain(target: &str) {
         );
         println!("cargo::rustc-env=CKC_RUNTIME_PLATFORM_IMPORT_SHA256={actual_hash}");
     }
+    if target == "x86_64-pc-windows-msvc" {
+        let name = manifest_scalar(&text, "runtime_jit_support")
+            .expect("native Windows x64 manifest is missing runtime_jit_support");
+        assert_eq!(
+            name, "jit_image_base.obj",
+            "invalid native Windows x64 JIT support name"
+        );
+        let expected_hash = manifest_scalar(&text, "runtime_jit_support_sha256")
+            .expect("native Windows x64 manifest is missing runtime_jit_support_sha256");
+        let path = runtime_dir.join(name);
+        let bytes = fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read native Windows x64 JIT support {}: {error}",
+                path.display()
+            )
+        });
+        let actual_hash = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            actual_hash,
+            expected_hash,
+            "native Windows x64 JIT support hash mismatch for {}",
+            path.display()
+        );
+        println!("cargo::rerun-if-changed={}", path.display());
+        println!(
+            "cargo::rustc-env=CKC_RUNTIME_JIT_SUPPORT={}",
+            path.display()
+        );
+        println!("cargo::rustc-env=CKC_RUNTIME_JIT_SUPPORT_SHA256={actual_hash}");
+    } else {
+        assert!(
+            manifest_scalar(&text, "runtime_jit_support").is_none()
+                && manifest_scalar(&text, "runtime_jit_support_sha256").is_none(),
+            "native JIT support is only valid for x86_64-pc-windows-msvc"
+        );
+    }
 }
 
 fn configure_sanitizer_linkage(target: &str) {
