@@ -91,6 +91,10 @@ I22 按 review 中已复诊的 Windows C API DLL 默认值执行：先复现 boo
 断言。独立 cache verifier 对真实 DLL 注入保持拒绝，沿用全部 recipe 的缓存身份；
 不得删除 DLL、复用不合格旧 prefix 或降低静态依赖检查来通过门禁。
 
+I23 按 `11-interrupt-handoff-plan.md` 修复 Unix run 的 SIGINT 登记竞态；先用真实
+生产模块和隔离进程复现丢失，再实现单原子 pending 交接。原 public test 仍只发一次
+SIGINT 并严格要求 245/CKR0006，增加有限失败期限和自有进程清理，不以延时掩盖问题。
+
 1. 先写 repository scan、version/ABI/compat manifest red tests，再完成全仓切换与版本。
 2. 先写 generated/mutation corpus 的故障注入，再实现 harness，固定 seed/schema。
 3. 先用 synthetic report 证明四类 performance threshold 会分别拒绝，再跑真实测量。

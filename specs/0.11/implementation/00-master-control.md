@@ -92,6 +92,10 @@ I14/I19 的真实协议反例按 `11-runtime-replay-plan.md` 修订：固定 V0.
 已有的 pre-proof CFG canonicalization 内清理无根的标量 phi 参数，保留全部操作数、
 元数据和契约引用。它不重排阶段、不改变 O0/Memory SSA/效果顺序，也不调整性能门槛。
 
+阶段 11 的 I23 既有 Unix run 中断漏洞按 `11-interrupt-handoff-plan.md` 执行：
+真实 SIGINT red/green、单原子 pending 交接、隔离有界测试、同 SHA 全矩阵；不改变
+语言/ABI 或性能门槛，不取消仍在构建合格 Windows prefix 的旧 workflow。
+
 计划与规范修订先单独提交。之后每阶段提交信息使用
 `optimizer(stage-N): <imperative outcome>`。每个 acceptance 文档底部在执行时追加：
 

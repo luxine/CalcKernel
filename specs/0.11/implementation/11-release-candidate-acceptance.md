@@ -30,6 +30,16 @@
 19. Windows bootstrap 显式关闭 LLVM C API DLL，实际安装后 guard 与 cache verifier
     都拒绝 bin/lib 的 LLVM DLL 注入；新配方按原完整缓存身份重建，禁止删 DLL 掩盖问题。
 
+## I23 补充验收（未签收）
+
+按 `11-interrupt-handoff-plan.md` 执行：
+
+- [ ] 原生产 Unix handler 的隔离 before-arm 与重复 pending regression 先 red 后 green；
+  after-arm、guard 重装对照通过；使用真实 SIGINT 与真实自有 child。
+- [ ] public parent 仍只收到一次 SIGINT，精确输出 245/CKR0006；超时明确失败并清理
+  自身进程 group，不能无限等待、不准 sleep/retry 掩盖竞态。
+- [ ] 新实现通过完整本地、首次性能门与同一最终 SHA 全十项 CI；Windows 行为不变。
+
 ## I20 补充本地验收
 
 I20 补充实现必须满足 `11-ssa-phi-pruning-plan.md`，以下尚待执行签收：
@@ -82,6 +92,53 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 - `git status --short` 只包含预期提交前变更；无 target/build/Ai_repository/LLVM prefix。
 
 ## 完成证据
+
+### I22 提交首次完整本机门禁（`5895242`，2026-08-30）
+
+- 被测提交为 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`。原完整 benchmark
+  `--task check --cpu baseline` 与 schema-6 checker 均 exit 0；保持四 runtime kernels、
+  六 optimizer cases、3 warm-up、20 samples、minimum-of-7 与 batch=20000000。
+- unchecked Clang throughput geo / actual replay V0.10 ratio 为 `0.9991 / 1.0010`，
+  checked 为 `0.9924 / 1.0077`，raw proof throughput 为 `1.0008`，optimizer suite
+  median ratio 为 `1.5586`；全部 individual gates 通过。没有重跑择优，测量期间
+  本任务未并行编译/测试，不声称共享主机独占。
+- 原始 report / benchmark / checker SHA-256 分别为
+  `03d255c655262c3a6e21550455c2dfe688b9b82c7414678b2b422d96dd492e00`、
+  `601a37dee1f973c0febe6928198bdacf54256db8f359306b48537ee6b9c4ad20`、
+  `146e390d8305b0c797f7e5735a091816f44de2a33eba6bd8dc37021593cb1f66`。
+  实际计时库随报告归档；固定 0.10 独立 bundle 与历史 baseline 均未改变。
+
+### I22 提交远程矩阵（`5895242`，仍未整体签收）
+
+- [run 33302635528](https://github.com/luxine/Rust_CalcKernel/actions/runs/33302635528)
+  针对同一 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`，当前已核实 7/10 必需项
+  success：quality `99233477544`、native integration `99233477391`、Linux ARM
+  `99233477579` / x64 `99233477538`、Darwin ARM `99233477589`、performance ARM
+  `99233477492` / x86-64 `99233477564`。Darwin x64 `99233477608`、Windows x64
+  `99233477598` / ARM `99233477647` 尚在构建；不能据此关闭 I21/I22、阶段 11 或总验收。
+- Native integration 的全特性测试 592 项、artifact fixture 5 项、Linux ownership
+  ASan/UBSan/LSan 8 项均通过，0 failed/ignored；Linux 分支实际启用
+  `detect_leaks=1:halt_on_error=1`。fmt、all-feature Clippy、release build、native
+  artifact 与 JIT audit 均通过。原始 job log SHA-256 为
+  `aa15158d74717d546fa63941fcb2d8355cf779ff47c8f2b0854f57a7b074708d`。
+- 三个已完成 host 均通过 pre-LLVM fact audit 7 项和 CLI 22 项；Linux 两架构各
+  Native 93 项、Darwin ARM 94 项，均 0 failed/ignored。差一项来自 Darwin 专属
+  Mach-O absolute-text-relocation 回归，不是跳过测试。compiler/native artifact/JIT
+  audits 均通过，包括实际 Darwin compiler 的严格签名审计。
+- ARM unchecked Clang / replay ratio `1.0025 / 0.9960`，checked
+  `1.0002 / 0.9993`，raw proof `0.9920`，optimizer suite `1.3843`；x86-64 分别为
+  `1.0505 / 1.0002`、`1.0050 / 1.0004`、`0.9946`、`1.5194`。两平台所有 individual
+  gates 均通过；原语料、统计协议和数值门槛保持不变。
+- ARM artifact `9730738249` zip / report SHA-256 为
+  `151c1fd94973748040024c5bc45cc3c088416cd87f33ff9ba37147489e5e2733` /
+  `8260d31dce9fd358171c03b9cd1d863de062a699308b1ef33f47ae3e66c229a8`；
+  x86-64 artifact `9731341770` 为
+  `95971f8bb0e91f38abf897869385680f4c8da71ad0b8129d4acef7e4c88b6e29` /
+  `db686aed88e1180ce46c0242228666c7b84005e1230d7f0a95d17b7e2c878f24`。
+  两份下载归档另行核对固定编译器、32 个实际库的字节数/摘要，以及全部采样顺序和
+  median；这只是传输完整性检查，实际平台验收来自上述原生 CI，不冒充本机重测。
+- 原 `ae7a130` 的失败及部分成功继续保留在下文，不能与本轮结果拼接。全部十项完成
+  后仍须逐阶段总审、提交最终证据，并确认最终交付 SHA 的完整 CI。
 
 ### 同进程 replay 首次完整本机门禁（`ae7a130`，2026-08-30）
 

@@ -1020,6 +1020,23 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   摘要为 `fcc795342a98b44eee4581ca19d7650192fc1886203eb805544537fbe295e543`。
   I21 与 I22 仍必须由下一次完整矩阵的真实 Windows 编译和测试签收。
 
+## I23：Unix run 登记子进程前丢失 SIGINT（已复诊，待实现）
+
+- 当前 `33302635528/99233477608` 的 Native suite 卡在 public interrupt forwarding test；
+  live UI 明确报告该 test 超过 60 秒。原 test 观察 OS child 存在即向 parent 发送一次
+  SIGINT，随后无限 wait；不能把这个停滞误认为 LLVM 冷构建。
+- 对 `5895242` 的原 Unix 模块做隔离真实信号复现：install/spawn/SIGINT/set_child
+  顺序使 child 存活超过 2 秒，受控清理后 exit 1；install/spawn/set_child/SIGINT 则
+  signal=2 退出。red SHA 为
+  `179ada2373e1b547ca2f284247e4f047e7caa97e4a3f38bff0442d27a3808e41`。
+- 根因是 handler 安装早于 PID 登记，原 `CHILD == 0` 分支直接丢弃中断；OS child
+  可见不保证父进程已完成登记。复现确认产品漏洞，远端归因仍是与现象相符的推断，
+  没有声称已读取远端进程栈。
+- 按 `../implementation/11-interrupt-handoff-plan.md` 先提交计划，再以真实源模块和
+  隔离进程做 red/green：一个原子表示 unarmed/pending/PID，登记负责交接 pending。
+  给原 public test 增加明确失败期限及自身进程清理，不重发中断、不忽略测试。
+  保留 245/CKR0006、Windows 行为、性能原门槛和同 SHA 十项 CI。行内自审无设计阻断。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
