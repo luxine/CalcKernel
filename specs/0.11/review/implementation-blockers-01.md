@@ -673,6 +673,51 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `b27f0bec4c3c231c5c9f447b59dea058558a100f95564bf11b4efe50b71050b1`。
   这些是功能/校验保持证据，不是原性能门槛通过证据。
 
+### I20 后续结构化查询诊断（仍未关闭）
+
+- `7309cfc` 的首次完整原门禁仍返回 exit 1：Dijkstra KIR `1279166 ns` /
+  固定 V0.10 MIR `350000 ns`，约 `3.6548x`，其余五个 optimizer case 通过。
+  unchecked Native/Clang geo `1.0024`、V0.10 ratio `0.9985`；checked 为
+  `1.0006` / `0.9978`；proof throughput `0.9949`。report / benchmark log /
+  checker log 的 SHA-256 依次为
+  `dcef25f6de244f0df499b719bd17e31eb8d2639383bf628145e683d2436e4fe3`、
+  `ce7a566deb082f395e09e5dc9a911670a5412961be9804187f3e2ca5849f4ba5`、
+  `ba4b9bd6b2857f200d7f2bdde9ab80b3d1522ccf330efdd9731007f6c3ec11e9`。
+  前后进程快照不能证明整个测量窗口独占；未以此关闭 I14/I19。
+- 隔离目录的同源码普通/ThinLTO ABBA 诊断，每轮 10,000 次，分别为
+  `12.447123916` / `12.321859959` / `12.320796875` / `12.831959916 s`，全部
+  rewrite 统计相同。该驱动包含 clone/drop，非正式门禁；未改变 Cargo release
+  配置，也不以约 2–3% 的差异声称解决超标。
+- `7309cfc` 的后续 CPU 采样 SHA-256 为
+  `679d1d5f29bcc43ec703f4b737990d8341066cefeb208aee3884f5e1a5770d76`，用于继续
+  检查 GVN 格式化、归纳查询与结构校验的实际工作量，不改变语义/验证边界。
+- GVN 使用借用类型/常量文本的结构化表达式键，避免整条指令克隆与 Debug 字符串
+  构造。类型、精确常量拼写、操作符、操作数顺序和 arithmetic semantics 全部参与
+  identity；checked arithmetic 仍不作为候选。lookup-only HashMap 从不通过遍历选择
+  producer，原 block/instruction/definition 顺序、支配与 effect 边界均保留。
+  新测试双向比对旧字符串键的等价类，覆盖全部候选操作符、三种 arithmetic semantics、
+  极大 ValueId、循环单步 remap、pointer/slice/struct/primitive 类型和不同常量拼写。
+  最初测试使用不存在的 cast variant，已修正为实际 I32ToF64/U32ToF64，再观察仅缺少
+  expression-key 实现的预期 red，未修改语言 cast 契约。
+- 归纳分析将每个 ValueId 的类型/参数/指令信息合并为一项查询，保留原线性查询对照
+  测试、双 branch arm、全部候选及预算扣减。两项之后、尚未修改结构校验表时的
+  ABBA 10,000 次诊断为旧 `12.868490917` / 新 `12.326551208` /
+  新 `12.207627375` / 旧 `12.591068333 s`；全部 rewrite 统计不变，不能作为门禁。
+- 每次 structural verification 重新从真实函数建立本地 SSA definition/type 表，
+  仅当编号跨度不超过定义数四倍时使用连续存储；稀疏、极大编号及后续范围外插入
+  回到精确 HashMap 查询，不按最大 ID 无界分配。重复定义仍保留原 definition 与最后
+  记录的 type，确保后续诊断不变。新测试与旧双 HashMap 逐步比较完整查询结果，覆盖
+  空表、连续/稀疏编号、u32 极值、跨函数冲突、重复定义、缺失值与后续插入。
+- 每次 pass 的完整状态比较、structural verifier、proof checker 和 rewrite binding
+  规则均未改变。默认 451 项、全特性 573 项（Native 93）、release 单元 46 项、
+  release IR 58 项、all-feature Clippy、fmt/diff 全部通过，Dijkstra Inspection KIR
+  仍为 SHA-256 `3f49f6f77153df15c85ebc3e85318047c9b91e2d9ce65dcac40aca925fbf56f0`。
+  default/all-feature/release 日志 SHA-256 依次为
+  `3f1de8418d882b25a497a68895da9aa6dfc54d613a7552cf81c62329efdc4e38`、
+  `8cda6a7ebdf98eb74ec2d8a8735d2257a6ba04f894751b724958f60b209cc47c`、
+  `c5fde4b2f39b8e61b74963057c44011bceb27f0ce7daee3ca6bec80dc3481cfa`。
+  本批功能验证不签收 I14/I19/I20；原始失败和所有性能阈值继续有效。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median

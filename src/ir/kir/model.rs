@@ -243,7 +243,7 @@ pub enum KirInstructionKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KirArithmeticSemantics {
     Modular,
     Checked,

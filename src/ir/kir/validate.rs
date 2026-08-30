@@ -4,7 +4,7 @@ use crate::{MirBinaryOp, MirType, MirUnaryOp};
 
 use super::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueDefinition {
     FunctionParam,
     BlockParam(BlockId),
@@ -16,6 +16,85 @@ enum MemoryDefinition {
     Initial,
     BlockParam(BlockId),
     Instruction(BlockId, usize),
+}
+
+#[derive(Clone, Copy)]
+struct ValueRecord<'a> {
+    definition: Option<ValueDefinition>,
+    type_node: &'a MirType,
+}
+
+/// Validation-local queries, rebuilt from the actual function on every check.
+/// Dense storage is bounded by definition count, never by an untrusted max ID.
+/// Sparse identities and any later inserts use the same exact lookup semantics.
+struct ValueTable<'a> {
+    base: u32,
+    dense: Vec<Option<ValueRecord<'a>>>,
+    sparse: HashMap<ValueId, ValueRecord<'a>>,
+}
+
+impl<'a> ValueTable<'a> {
+    fn new(mut ids: impl Iterator<Item = ValueId>, capacity: usize) -> Self {
+        let (base, size) = ids.next().map_or((0, 0), |first| {
+            let (min, max) = ids.fold((first.index(), first.index()), |(min, max), id| {
+                (min.min(id.index()), max.max(id.index()))
+            });
+            let span = u64::from(max) - u64::from(min) + 1;
+            let size = usize::try_from(span)
+                .ok()
+                .filter(|span| *span <= capacity.saturating_mul(4))
+                .unwrap_or(0);
+            (min, size)
+        });
+        Self {
+            base,
+            dense: vec![None; size],
+            sparse: HashMap::with_capacity(if size == 0 { capacity } else { 0 }),
+        }
+    }
+
+    fn dense_index(&self, value: ValueId) -> Option<usize> {
+        value
+            .index()
+            .checked_sub(self.base)
+            .map(|offset| offset as usize)
+            .filter(|index| *index < self.dense.len())
+    }
+
+    fn get(&self, value: ValueId) -> Option<&ValueRecord<'a>> {
+        self.dense_index(value)
+            .and_then(|index| self.dense[index].as_ref())
+            .or_else(|| self.sparse.get(&value))
+    }
+
+    fn definition(&self, value: ValueId) -> Option<ValueDefinition> {
+        self.get(value).and_then(|record| record.definition)
+    }
+
+    fn type_of(&self, value: ValueId) -> Option<&'a MirType> {
+        self.get(value).map(|record| record.type_node)
+    }
+
+    fn record(
+        &mut self,
+        value: ValueId,
+        type_node: &'a MirType,
+        definition: Option<ValueDefinition>,
+    ) -> Option<ValueDefinition> {
+        let empty = ValueRecord {
+            definition: None,
+            type_node,
+        };
+        let record = if let Some(index) = self.dense_index(value) {
+            self.dense[index].get_or_insert(empty)
+        } else {
+            self.sparse.entry(value).or_insert(empty)
+        };
+        // Legacy validation retains the first definition after a module-wide ID
+        // collision, but still records the last type for subsequent diagnostics.
+        record.type_node = type_node;
+        definition.and_then(|definition| record.definition.replace(definition))
+    }
 }
 
 #[must_use]
@@ -151,8 +230,19 @@ fn validate_function(
                         .count()
             })
             .sum::<usize>();
-    let mut definitions = HashMap::with_capacity(value_capacity);
-    let mut types = HashMap::with_capacity(value_capacity);
+    let value_ids =
+        function
+            .params
+            .iter()
+            .map(|param| param.value)
+            .chain(function.blocks.iter().flat_map(|block| {
+                block.params.iter().map(|param| param.value).chain(
+                    block.instructions.iter().flat_map(|instruction| {
+                        instruction.results.iter().map(|result| result.value)
+                    }),
+                )
+            }));
+    let mut values = ValueTable::new(value_ids, value_capacity);
     let mut memory_definitions = HashMap::with_capacity(memory_capacity);
     let mut memory_regions = HashMap::with_capacity(memory_capacity);
     let mut function_region_ids = HashSet::with_capacity(function.regions.len());
@@ -217,8 +307,7 @@ fn validate_function(
             None,
             None,
             module_value_ids,
-            &mut definitions,
-            &mut types,
+            &mut values,
             errors,
         );
     }
@@ -240,8 +329,7 @@ fn validate_function(
                 Some(block.id),
                 None,
                 module_value_ids,
-                &mut definitions,
-                &mut types,
+                &mut values,
                 errors,
             );
         }
@@ -276,8 +364,7 @@ fn validate_function(
                     Some(block.id),
                     Some(instruction.id),
                     module_value_ids,
-                    &mut definitions,
-                    &mut types,
+                    &mut values,
                     errors,
                 );
             }
@@ -322,12 +409,12 @@ fn validate_function(
                     index,
                     used,
                     Some(instruction.id),
-                    &definitions,
+                    &values,
                     &dominators,
                     errors,
                 );
             });
-            validate_instruction_structure(function, block, index, &types, errors);
+            validate_instruction_structure(function, block, index, &values, errors);
             if let Some(effect) = &instruction.effect {
                 if previous_effect_order.is_some_and(|previous| effect.order <= previous)
                     || !effect_orders.insert(effect.order)
@@ -370,7 +457,7 @@ fn validate_function(
                 terminator_index,
                 used,
                 None,
-                &definitions,
+                &values,
                 &dominators,
                 errors,
             );
@@ -381,7 +468,7 @@ fn validate_function(
                 block.id,
                 edge,
                 &blocks,
-                &types,
+                &values,
                 &memory_regions,
                 errors,
             );
@@ -438,13 +525,13 @@ fn validate_instruction_structure(
     function: &KirFunction,
     block: &KirBlock,
     index: usize,
-    types: &HashMap<ValueId, &MirType>,
+    values: &ValueTable<'_>,
     errors: &mut Vec<KirValidationError>,
 ) {
     let instruction = &block.instructions[index];
     if let KirInstructionKind::Binary { left, right, .. } = instruction.kind {
         let result_type = instruction.results.first().map(|result| &result.type_node);
-        if types.get(&left).copied() != result_type || types.get(&right).copied() != result_type {
+        if values.type_of(left) != result_type || values.type_of(right) != result_type {
             errors.push(error(
                 "binary operands and value result must have one type",
                 Some(function.id),
@@ -515,7 +602,7 @@ fn validate_instruction_structure(
                 Some(instruction.id),
             ));
         }
-        if !types.get(&condition).is_some_and(|type_node| {
+        if !values.type_of(condition).is_some_and(|type_node| {
             matches!(
                 type_node,
                 MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
@@ -561,11 +648,12 @@ fn define_value<'a>(
     block: Option<BlockId>,
     instruction: Option<InstructionId>,
     module_value_ids: &mut HashSet<ValueId>,
-    definitions: &mut HashMap<ValueId, ValueDefinition>,
-    types: &mut HashMap<ValueId, &'a MirType>,
+    values: &mut ValueTable<'a>,
     errors: &mut Vec<KirValidationError>,
 ) {
-    if !module_value_ids.insert(value) || definitions.insert(value, definition).is_some() {
+    let fresh = module_value_ids.insert(value);
+    let previous = values.record(value, type_node, fresh.then_some(definition));
+    if !fresh || previous.is_some() {
         errors.push(error(
             "duplicate value definition",
             Some(function.id),
@@ -573,7 +661,6 @@ fn define_value<'a>(
             instruction,
         ));
     }
-    types.insert(value, type_node);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -583,11 +670,11 @@ fn validate_use(
     use_index: usize,
     value: ValueId,
     instruction: Option<InstructionId>,
-    definitions: &HashMap<ValueId, ValueDefinition>,
+    values: &ValueTable<'_>,
     dominators: &KirDominators,
     errors: &mut Vec<KirValidationError>,
 ) {
-    let Some(definition) = definitions.get(&value) else {
+    let Some(definition) = values.definition(value) else {
         errors.push(error(
             format!("value v{} is not defined", value.index()),
             Some(function.id),
@@ -598,12 +685,12 @@ fn validate_use(
     };
     let dominates = match definition {
         ValueDefinition::FunctionParam => true,
-        ValueDefinition::BlockParam(def_block) => dominators.dominates(*def_block, use_block),
+        ValueDefinition::BlockParam(def_block) => dominators.dominates(def_block, use_block),
         ValueDefinition::Instruction(def_block, def_index) => {
-            if *def_block == use_block {
-                *def_index < use_index
+            if def_block == use_block {
+                def_index < use_index
             } else {
-                dominators.dominates(*def_block, use_block)
+                dominators.dominates(def_block, use_block)
             }
         }
     };
@@ -669,7 +756,7 @@ fn validate_edge(
     source: BlockId,
     edge: &KirEdge,
     blocks: &HashMap<BlockId, &KirBlock>,
-    types: &HashMap<ValueId, &MirType>,
+    values: &ValueTable<'_>,
     memory_regions: &HashMap<MemoryVersionId, MemoryRegionId>,
     errors: &mut Vec<KirValidationError>,
 ) {
@@ -713,7 +800,7 @@ fn validate_edge(
         ));
     }
     for (argument, param) in edge.args.iter().zip(&target.params) {
-        if let Some(argument_type) = types.get(argument).copied()
+        if let Some(argument_type) = values.type_of(*argument)
             && argument_type != &param.type_node
         {
             errors.push(error(
@@ -884,6 +971,65 @@ fn error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn value_table_should_match_legacy_queries_without_sparse_id_allocation() {
+        let types = [
+            MirType::Void,
+            MirType::Primitive(crate::MirPrimitiveTypeName::I32),
+        ];
+        for ids in [
+            vec![],
+            vec![0, 1, 2, 3],
+            vec![u32::MAX - 2, u32::MAX - 1, u32::MAX],
+            vec![0, u32::MAX],
+        ] {
+            let mut table =
+                ValueTable::new(ids.iter().copied().map(ValueId::from_index), ids.len());
+            assert!(table.dense.len() <= ids.len().saturating_mul(4));
+            if ids == [0, u32::MAX] {
+                assert!(
+                    table.dense.is_empty(),
+                    "a sparse identity must not size a dense allocation"
+                );
+            }
+            let mut old_definitions = HashMap::new();
+            let mut old_types = HashMap::new();
+            // Simulate a collision with a value already defined in another function.
+            let mut module_ids = HashSet::from([ValueId::from_index(1)]);
+            for round in 0..3 {
+                for &id in ids.iter().chain(&[1, 8, u32::MAX]) {
+                    let value = ValueId::from_index(id);
+                    let definition = match round {
+                        0 => ValueDefinition::FunctionParam,
+                        1 => ValueDefinition::BlockParam(BlockId::from_index(7)),
+                        _ => ValueDefinition::Instruction(BlockId::from_index(9), 3),
+                    };
+                    let fresh = module_ids.insert(value);
+                    let previous = if fresh {
+                        old_definitions.insert(value, definition)
+                    } else {
+                        None
+                    };
+                    old_types.insert(value, &types[round % types.len()]);
+                    let actual = table.record(
+                        value,
+                        &types[round % types.len()],
+                        fresh.then_some(definition),
+                    );
+                    assert_eq!(actual, previous);
+                    for probe in ids.iter().copied().chain([0, 1, 7, 8, 9, u32::MAX]) {
+                        let probe = ValueId::from_index(probe);
+                        assert_eq!(table.type_of(probe), old_types.get(&probe).copied());
+                        assert_eq!(
+                            table.definition(probe),
+                            old_definitions.get(&probe).copied()
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn operand_visitor_should_match_legacy_collection_for_every_instruction_and_place() {

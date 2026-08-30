@@ -32,10 +32,15 @@ struct Replacement {
 #[derive(Default)]
 struct InductionIndex<'a> {
     blocks: BTreeMap<BlockId, &'a crate::KirBlock>,
-    parameters: BTreeMap<ValueId, (BlockId, usize)>,
-    instructions: BTreeMap<ValueId, &'a KirInstruction>,
-    integer_types: BTreeMap<ValueId, IntegerType>,
+    values: BTreeMap<ValueId, ValueQueries<'a>>,
     incoming: BTreeMap<BlockId, Vec<&'a crate::KirEdge>>,
+}
+
+#[derive(Default)]
+struct ValueQueries<'a> {
+    parameter: Option<(BlockId, usize)>,
+    instruction: Option<&'a KirInstruction>,
+    integer_type: Option<IntegerType>,
 }
 
 impl<'a> InductionIndex<'a> {
@@ -43,22 +48,24 @@ impl<'a> InductionIndex<'a> {
         let mut index = Self::default();
         for param in &function.params {
             if let Some(ty) = IntegerType::from_mir(&param.type_node) {
-                index.integer_types.insert(param.value, ty);
+                index.values.entry(param.value).or_default().integer_type = Some(ty);
             }
         }
         for block in &function.blocks {
             index.blocks.insert(block.id, block);
             for (position, param) in block.params.iter().enumerate() {
-                index.parameters.insert(param.value, (block.id, position));
+                let value = index.values.entry(param.value).or_default();
+                value.parameter = Some((block.id, position));
                 if let Some(ty) = IntegerType::from_mir(&param.type_node) {
-                    index.integer_types.insert(param.value, ty);
+                    value.integer_type = Some(ty);
                 }
             }
             for instruction in &block.instructions {
                 if let Some(result) = instruction.results.first() {
-                    index.instructions.insert(result.value, instruction);
+                    let value = index.values.entry(result.value).or_default();
+                    value.instruction = Some(instruction);
                     if let Some(ty) = IntegerType::from_mir(&result.type_node) {
-                        index.integer_types.insert(result.value, ty);
+                        value.integer_type = Some(ty);
                     }
                 }
             }
@@ -132,8 +139,11 @@ fn run_with_config(
                             continue;
                         }
                         if let (Some((source_block, _)), Some((block, _))) = (
-                            queries.parameters.get(&source).copied(),
-                            queries.parameters.get(&value).copied(),
+                            queries
+                                .values
+                                .get(&source)
+                                .and_then(|value| value.parameter),
+                            queries.values.get(&value).and_then(|value| value.parameter),
                         ) && source_block == block
                         {
                             pending.insert(value, (block, source, certificate_index));
@@ -199,14 +209,18 @@ fn propose_equality(
             continue;
         }
         *remaining = remaining.checked_sub(1).ok_or(())?;
-        let Some(ty) = queries.integer_types.get(&a).copied() else {
+        let (Some(a_query), Some(b_query)) = (queries.values.get(&a), queries.values.get(&b))
+        else {
             return Ok(None);
         };
-        if queries.integer_types.get(&b).copied() != Some(ty) {
+        let Some(ty) = a_query.integer_type else {
+            return Ok(None);
+        };
+        if b_query.integer_type != Some(ty) {
             return Ok(None);
         }
-        let a_instruction = queries.instructions.get(&a).copied();
-        let b_instruction = queries.instructions.get(&b).copied();
+        let a_instruction = a_query.instruction;
+        let b_instruction = b_query.instruction;
         definitions.extend(
             a_instruction
                 .iter()
@@ -229,10 +243,9 @@ fn propose_equality(
             pending.push((a, *value));
             continue;
         }
-        if let (Some((a_block, a_index)), Some((b_block, b_index))) = (
-            queries.parameters.get(&a).copied(),
-            queries.parameters.get(&b).copied(),
-        ) {
+        if let (Some((a_block, a_index)), Some((b_block, b_index))) =
+            (a_query.parameter, b_query.parameter)
+        {
             if a_block != b_block {
                 return Ok(None);
             }
@@ -620,15 +633,21 @@ mod tests {
             .chain(std::iter::once(ValueId::from_index(u32::MAX)));
         for value in values {
             assert_eq!(
-                queries.parameters.get(&value).copied(),
+                queries.values.get(&value).and_then(|value| value.parameter),
                 parameter(function, value)
             );
             assert_eq!(
-                queries.instructions.get(&value).copied(),
+                queries
+                    .values
+                    .get(&value)
+                    .and_then(|value| value.instruction),
                 defining_instruction(function, value)
             );
             assert_eq!(
-                queries.integer_types.get(&value).copied(),
+                queries
+                    .values
+                    .get(&value)
+                    .and_then(|value| value.integer_type),
                 integer_type(function, value)
             );
         }
