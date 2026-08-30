@@ -1186,6 +1186,12 @@ extern "C" int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
             return invalid(error, "unknown LLVM CPU policy");
         }
         builder->setRelocationModel(llvm::Reloc::PIC_);
+        if (builder->getTargetTriple().isOSBinFormatMachO()) {
+            // JIT defaults to Large on x86-64, whose Mach-O calls still use
+            // absolute text relocations even with PIC. The same object must
+            // also be loadable by dyld without writing its executable pages.
+            builder->setCodeModel(llvm::CodeModel::Small);
+        }
         auto target_machine = builder->createTargetMachine();
         if (!target_machine) {
             return set_llvm_error(error, target_machine.takeError());

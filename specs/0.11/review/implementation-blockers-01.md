@@ -202,7 +202,37 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   输入纳入 digest，并在 prefix 自身验证成功后立即保存；restore-only action 不会在 job 结束时
   重复 post-save。下游测试仍是 required gate，缓存成功不等于 candidate 成功，也不降低任何验收门槛。
 
-## 修订边界
+## I12：Darwin 复用 JIT 默认 Large code model 产生只读 text fixup
+
+- 诊断 run `33287902589`、SHA `c1e1322cb0e1aa67f6cf8ff6e381fcec05ce87da`、Intel
+  job `99194245341` 的 serial/parallel LLDB 都在 dyld `applyFixupsGeneric` 的写指令
+  停住；serial 调用链为 differential O0 library 的 `dlopen`。Standalone sanitizer 的
+  DiagnosticReports 同样记录 `KERN_PROTECTION_FAILURE`，目标位于 RX `__TEXT`，在
+  dyld prepare 阶段、用户 `main` 执行之前。它不是 C ABI stack、sanitizer predicate
+  或并发调度问题。
+- `lldb-serial.log` SHA-256 `45d1677a0e1b1261d5868e8146df357622a094226c60a193fde7c627422b551e`；
+  parallel `b9aed9a6a8dee047a8cc1b80b943c30e9fdee708120d6e5e4b5f29e905f868ba`；
+  一个 standalone crash report `6421421c4e9f0e78f4add8e999b9f3a239c56f3d423739d0b7ecc5b846e9850e`。
+- 固定 LLVM `22.1.8` 的 `JITTargetMachineBuilder.cpp` 调用 target constructor 时传
+  `JIT=true`；`X86TargetMachine.cpp::getEffectiveX86CodeModel` 因此默认 Large；
+  `X86Subtarget.cpp` 明确只有 ELF 有真正的 Large PIC，其他格式使用绝对引用。CK 仅
+  设置 PIC，遗漏 code model，却把同一 object 用于 Mach-O AOT 与 ORC。
+- 同一 scalar sanitizer IR 用固定 X86 `llc` 对照：Large+PIC 的 `__TEXT,__text` 有三条
+  `UNSIGNED / pcrel=False / quad` relocation，Small+PIC 则全部是
+  `BRANCH / pcrel=True / long`。这解释 Intel dyld 的写保护失败，也说明此前 Rosetta
+  以及默认 Small 的离线 `llc` 不能复现该错误配置。
+- 先以 repository contract 观察缺少显式 Small 的预期失败，再给 Mach-O target 设置
+  Small；其他平台保持原 code model。补充真实 Mach-O object test，在 O0 保留 internal
+  call 并检查 executable `__text` relocation，禁止 absolute pointer fixup；既有完整
+  O0–O3 differential、standalone、sanitizer、ORC tests 仍必须通过。
+- I09 的 wrapper 没有必要性证据，待本次单变量 code-model 修订在 Intel 验证后，撤销
+  wrapper 及错误的 entry 注释/规范。最终不得保留“LC_MAIN 是 raw kernel entry”的
+  说法，也不得通过修改段为 RWX 或放宽 dyld/audit 解决故障。
+- 诊断 run 已保留 7 个成功 job 与 Intel crash artifact；收集完成后取消该 run 中重复
+  的 Windows 冷构建，原 run `33277614781` 的两个 Windows 构建继续，不把被取消 job
+  计作验收通过。
+
+## 修订边界（全部阻断）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
 - 不跳过任何 Native/JIT/cache/run test，不把失败 job 改成 optional，不降低性能门槛。

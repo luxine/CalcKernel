@@ -72,3 +72,18 @@
   `676755f73d5bb698caa09f8f8af314db1a347909999d9d5fa79d38a5b33c3ca3`；同轮
   runtime report SHA-256：`fb10e7f360b98f09639c2a400cc3a5d5b909c29c7d07e0bf7efca3bff81d307f`。
   原始文件仅保留在 baseline worktree 的 ignored `target/ckc-perf/`。
+
+### 本机 performance gate（`d266f68`，2026-08-30）
+
+- 使用 runtime hash 自洽的临时 LLVM prefix 与 pinned Clang，在上述基线冻结后执行本文件
+  第 10、11 项，二者均返回 `0`；Rust 显式使用 `cargo +1.90.0`。
+- unchecked Native/Clang throughput geo `1.0005`，对 V0.10 的配对归一化耗时 geo
+  `1.0003`；checked 分别 `1.0074`、`0.9911`；每组均 4 cases，individual gate 全通过。
+- proof-loop checked/unchecked throughput `0.9973`；6 个 optimizer cases 的
+  V0.10 suite-median ratio `0.7908`，individual gate 全通过。
+- 原始 schema-5 report SHA-256：
+  `bcbf384f4dc765e33c2984a5d07271246af428770166c0078264fd058894bc97`；summary JSON
+  `278fa39cf9d607169a4e43e983e59ee77a2d45c410d179b9a6c05664e7769383`，summary Markdown
+  `a313b0ad0c0494fab44d2b193a678228f11fef75ac82129f1d4b439a7ce8ca3f`。
+- 固定 V0.10 worktree 的三份 adapter 修改及两份临时 fixture 已恢复，working tree clean；
+  adapter 原件仍在本分支 `benches/baselines/*.patch`，原始报告未删除。

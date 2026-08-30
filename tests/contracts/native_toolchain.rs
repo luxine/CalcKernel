@@ -325,6 +325,23 @@ fn write_executable(path: &Path, source: &str) {
         .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
 }
 
+#[test]
+fn darwin_target_should_override_the_jit_large_code_model_for_shared_objects() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let creation = bridge
+        .split("extern \"C\" int32_t ckc_llvm_target_create_host(")
+        .nth(1)
+        .expect("host target constructor")
+        .split("auto target_machine = builder->createTargetMachine();")
+        .next()
+        .expect("target configuration precedes creation");
+    assert!(creation.contains("builder->setRelocationModel(llvm::Reloc::PIC_)"));
+    assert!(
+        creation.contains("builder->setCodeModel(llvm::CodeModel::Small)"),
+        "Mach-O needs an explicit small code model: JIT Large + PIC emits absolute text fixups"
+    );
+}
+
 #[cfg(unix)]
 fn mocked_elf_audit_root() -> (PathBuf, PathBuf) {
     let root = super::support::temp::temp_dir("ckc-elf-audit-contract");
