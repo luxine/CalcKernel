@@ -12,12 +12,7 @@ pub(crate) fn run_cfg_canonicalize(
     contracts: Option<&ContractFactSet>,
 ) -> bool {
     let mut changed = false;
-    let protected = contracts
-        .into_iter()
-        .flat_map(|set| set.instances())
-        .flat_map(|instance| &instance.bindings)
-        .map(|binding| binding.value)
-        .collect::<BTreeSet<_>>();
+    let protected = super::phi_prune::protected_contract_values(contracts);
     for function in &mut module.functions {
         let constants = function
             .blocks
@@ -137,6 +132,7 @@ pub(crate) fn run_cfg_canonicalize(
                 changed = true;
             }
         }
+        changed |= super::phi_prune::remove_dead_block_parameters(function, &protected);
     }
     changed
 }

@@ -49,7 +49,7 @@ mutation; the unchanged enclosing verifier still rejects malformed KIR.
 
 **Files:** modify `tests/optimizer/kir_o1.rs` using its existing build helpers.
 
-- [ ] Add the following regression and run it before implementation:
+- [x] Add the following regression and run it before implementation:
 
 ```rust
 #[test]
@@ -81,7 +81,7 @@ forwarded around the same loop; do not weaken the assertion or alter the public 
 **Files:** create `src/optimizer/kir_passes/phi_prune.rs`; register private
 `mod phi_prune;` in `src/optimizer/kir_passes/mod.rs`; integrate in `cfg.rs`.
 
-- [ ] Implement the following transform; existing `dce::instruction_uses` remains
+- [x] Implement the following transform; existing `dce::instruction_uses` remains
   the operand source, avoiding a second instruction-effect classification:
 
 ```rust
@@ -167,7 +167,7 @@ pub(super) fn remove_dead_block_parameters(
 }
 ```
 
-- [ ] Add `protected_contract_values` in the same module; its exact closed-enum
+- [x] Add `protected_contract_values` in the same module; its exact closed-enum
   traversal is as follows:
 
 ```rust
@@ -207,7 +207,7 @@ pub(super) fn protected_contract_values(contracts: Option<&ContractFactSet>) -> 
 }
 ```
 
-- [ ] In `run_cfg_canonicalize`, replace the binding-only `protected` construction
+- [x] In `run_cfg_canonicalize`, replace the binding-only `protected` construction
   with `super::phi_prune::protected_contract_values(contracts)`; after the existing
   final same-edge branch fold for each function, add:
 
@@ -215,17 +215,17 @@ pub(super) fn protected_contract_values(contracts: Option<&ContractFactSet>) -> 
 changed |= super::phi_prune::remove_dead_block_parameters(function, &protected);
 ```
 
-- [ ] In `run_pre_guard_sccp` update its termination explanation: every further CFG
+- [x] In `run_pre_guard_sccp` update its termination explanation: every further CFG
   round removes a branch, block, **or scalar block parameter**; no stage in that
   pre-guard loop adds such parameters. Keep all verifier calls and refresh logic.
-- [ ] Run the Task 1 regression, all `--lib`, `--test ir`, and `--test optimizer` tests.
+- [x] Run the Task 1 regression, all `--lib`, `--test ir`, and `--test optimizer` tests.
   Expect the new behavior to pass with no changed exact pass-order assertions.
 
 ## Task 3: Adversarial preservation and total validation
 
 **Files:** unit tests in `phi_prune.rs`; existing backend/optimizer/CLI acceptance suites.
 
-- [ ] Before broad acceptance, add these helper-level mutation tests. They preserve
+- [x] Before broad acceptance, add these helper-level mutation tests. They preserve
   every instruction and memory/effect field, rather than merely checking a count:
 
 ```rust
@@ -388,17 +388,21 @@ mod tests {
 ```
 
 These tests refine the existing mutation and determinism gates rather than replacing them.
+The existing empty-branch forwarding fixture carries an unused `flag` phi after folding.
+Update its exact expectation to one live `n` phi/argument and its matching return, while
+explicitly retaining both public parameters and the original complete memory transfer.
+The old two-argument assertion encoded the redundant representation, not a safety contract.
 The synthetic parallel-edge and metadata variants exercise helper invariants; they do
 not replace executable well-typed backend tests or authorize malformed artifact emission.
 
-- [ ] Run default and all-feature tests **sequentially**. Native runs use the existing
+- [x] Run default and all-feature tests **sequentially**. Native runs use the existing
   pinned LLVM prefix, Clang oracle, and configured TypeScript root; do not share a target
   directory with a simultaneous default build. Run release `--lib`, release `--test ir`,
   all-feature/all-target Clippy with `-D warnings`, `cargo fmt --check`, `git diff --check`.
-- [ ] Re-run all generated C/WASM/Native mode matrices, checked first-error/print/strict-FP
+- [x] Re-run all generated C/WASM/Native mode matrices, checked first-error/print/strict-FP
   and proof-cache fault tests (already included in the above suites). No ignore or corpus
   reduction is allowed. Inspect exact pass records and successful independent verification.
-- [ ] Re-run read-only phi counts and record reductions; output KIR may legitimately
+- [x] Re-run read-only phi counts and record reductions; output KIR may legitimately
   change now, so replace byte-identity evidence with structural and executable equivalence.
 - [ ] Commit code and evidence on the feature worktree; run the unchanged complete native
   benchmark/checker once at the new SHA without this task's concurrent builds. Preserve

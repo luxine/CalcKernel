@@ -568,8 +568,8 @@ fn run_pre_guard_sccp(
         }
         changed = true;
         refresh_pre_guard_cfg(module, contracts)?;
-        // Every further round removes a branch or a block, bounding rounds by
-        // the original CFG size. Scalar analysis keeps its own fixed KIR budget.
+        // Every further round removes a branch, block or scalar block parameter;
+        // no pre-guard stage adds any. Scalar analysis keeps its fixed KIR budget.
     }
 }
 

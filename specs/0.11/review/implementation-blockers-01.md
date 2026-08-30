@@ -763,6 +763,27 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   指令/Memory SSA，详见 `../implementation/11-ssa-phi-pruning-plan.md`。该补充计划
   自审无逻辑阻断，先单独提交，再 TDD 实现；不改变任何性能或最终 CI 门槛。
 
+### I20 无根标量 phi 实现验证（性能待验）
+
+- 计划提交 `6869b3a` 后先执行新回归，得到预期 red：O1 仍有 3 个 `unused` 参数，
+  期望为 0。实现只在 pre-proof CFG 阶段标记真实 ValueId 依赖，过滤 dead block
+  parameters 与对应的所有 edge args；指令、公开参数和 Memory SSA 原样保留。
+- 单元测试覆盖无根环/幂等、双 branch arm、block 存储顺序、元数据/契约根及全部
+  fact predicate、错误目标/arity 的原子 no-op。旧 empty-branch 测试的冗余 `flag`
+  内部参数断言已按补充计划改为精确 `n` phi/return，增加公开双参数不变断言，
+  完整 Memory SSA 传递断言保持；并非取消活跃参数或效果检查。
+- 默认 459 项、全特性 581 项（Native 93）、release 单元 53 项、release IR 58 项、
+  all-feature/all-target Clippy `-D warnings`、fmt/diff 全通过。命令均为 Rust 1.90.0，
+  全特性使用既有 pinned LLVM/Clang 22.1.8 和 TypeScript oracle，默认/全特性串行。
+  default / all-feature / release 日志 SHA-256：
+  `7a7c8f2eda1cef2673bb81dbf6020aa8631ed8f9181be1098848a65f7539c637`、
+  `f9bb49a8036bbaf0a0b824f1881bcde4462d971b897dd7d9f12757c68c23d318`、
+  `a532f0d2d5d131d001d4de651a02e21462052a5675fc30d47e35490046d8bac4`。
+- 同一只读诊断中 Dijkstra O3 phi 从 436 减至 195，无保守死 phi；`should_relax`
+  从 16 减至 6。原有 DCE 因无用传参消失进一步清理纯指令，Dijkstra 指令从 51 减至
+  41。因此本批不再宣称 KIR 字节相同，而以结构校验和完整 C/WASM/Native 差分证明
+  语义保持。自审未发现未保护引用或证据失效缺口；所有性能阈值和原失败仍保留。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median

@@ -10,6 +10,7 @@ mod inline;
 mod licm;
 mod load_forward;
 mod memory;
+mod phi_prune;
 mod rewrite;
 mod sccp;
 

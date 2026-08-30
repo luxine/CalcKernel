@@ -46,6 +46,29 @@ fn build_with_overflow(
 }
 
 #[test]
+fn kir_o1_cfg_should_prune_dead_phi_cycles_without_changing_o0() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn count(n: u32) -> u32 { let unused: u32 = 42; let i: u32 = 0; while i < n { i = i + 1; } return i; }",
+        KirOverflowMode::Unchecked,
+    );
+    let unused = |module: &calckernel::KirModule| {
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.blocks)
+            .flat_map(|block| &block.params)
+            .filter(|param| param.slot == "unused")
+            .count()
+    };
+    assert!(unused(&kir) > 0);
+    let o0 = run_kir_pass_pipeline(kir.clone(), KirOptimizationLevel::O0, contracts.as_ref());
+    assert_eq!(o0.module, kir);
+    let o1 = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(o1.errors.is_empty(), "{:?}", o1.errors);
+    assert_eq!(unused(o1.artifact.as_ref().expect("verified artifact")), 0);
+}
+
+#[test]
 fn kir_o0_pipeline_should_validate_without_optional_rewrite() {
     let (_, kir, contracts) = build("export fn add(a: i32, b: i32) -> i32 { return a + b; }");
     let before = print_kir_module(&kir);
@@ -779,13 +802,14 @@ fn kir_o1_cfg_should_forward_empty_blocks_with_scalar_and_memory_arguments() {
     };
     let target = &module.functions[0].blocks[1];
     assert_eq!(edge.target, target.id);
-    assert_eq!(
-        edge.args,
-        module.functions[0]
-            .params
-            .iter()
-            .map(|param| param.value)
-            .collect::<Vec<_>>()
+    // Folding the identical branches makes the internal flag phi dead, but
+    // neither the public signature nor the live scalar/memory transfer changes.
+    assert_eq!(module.functions[0].params.len(), 2);
+    assert_eq!(target.params.len(), 1);
+    assert_eq!(target.params[0].slot, "n");
+    assert_eq!(edge.args, [module.functions[0].params[1].value]);
+    assert!(
+        matches!(target.terminator, calckernel::KirTerminator::Return { value: Some(value), .. } if value == target.params[0].value)
     );
     assert_eq!(
         edge.memory_args,
