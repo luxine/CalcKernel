@@ -21,6 +21,8 @@
 15. `./target/release/ckc licenses`
 16. `git diff --check`
 17. `cargo test --release --locked --lib verifier_cache_ -- --nocapture`
+18. Unix Native 的真实 bridge COFF 分支 macro-header syntax regression 两种输入均通过；
+    两架构 Windows 的真实 SDK/MSVC 编译另由必跑 host job 验收，禁止以 stub 代替。
 
 ## I20 补充本地验收
 

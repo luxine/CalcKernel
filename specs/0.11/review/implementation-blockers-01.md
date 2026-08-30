@@ -831,6 +831,23 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `e85cfab4b541fd412e2a888a11982aee4146ac520ee5c2dd1a54a3dd267eeba6`。该 artifact 中的
   机器码对照只覆盖 integer kernel，不能据此声称 proof-loop 机器码已排除差异。
 
+## I21：Windows SDK 宏污染 LLVM bridge（实现修复待验）
+
+- run `33288920505` 的 x64 Windows job `99196977330` 在 release/oracle prefix 均
+  完成后，MSVC 14.51 编译 bridge 报 C2589。原日志 SHA-256 为
+  `eecbbfc177045033fab0261ccf6d7aa8e23e1d261af11e7fd590e1748c96d4b3`。
+- 逐项对应源码：`windows.h` 的 `min/max` 扩展破坏 `std::min/max`；
+  `IMAGE_FILE_DLL`、`IMAGE_FILE_EXECUTABLE_IMAGE` 宏扩展破坏同名 LLVM COFF 枚举。
+  用仅模拟这些 SDK 宏和三个 process-symbol 声明的 header，宿主 C++ 编译器对真实
+  `ckc_llvm.cpp` 的 COFF 分支重现相同七处语法错误。这是宏污染复现，不代替 Windows ABI 验收。
+- 修复计划：先把上述真实 translation-unit 复现加入 Unix Native regression，分别
+  覆盖正常 `NOMINMAX` 和模拟既有 min/max 宏；再只在 Windows include 边界定义
+  `NOMINMAX`、清除 min/max 和两个冲突的 COFF 宏。保留真正的 Windows SDK 函数声明、
+  LLVM typed enum、所有链接/ABI/W^X 检查；不改 compiler flags 或常量值绕开检查。
+- 回归先 red 后 green，随后完整本地 default/all-feature/release/Clippy 验证与六 host
+  同一最终 SHA 的真实 SDK/MSVC 构建。该修复属于既有阶段 11 host build 契约，
+  不修改语言、ABI、平台支持范围或门槛；自审无设计阻断。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
