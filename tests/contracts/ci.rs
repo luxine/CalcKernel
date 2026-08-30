@@ -47,6 +47,7 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
         "cargo fmt --check",
         "cargo clippy --all-targets --locked -- -D warnings",
         "cargo test --locked",
+        "cargo test --release --locked --lib verifier_cache_",
         "cargo build --release --locked",
         "./target/release/ckc emit-c",
         "./target/release/ckc emit-wasm",

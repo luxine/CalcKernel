@@ -1,5 +1,9 @@
 # 阶段 05 验收：O0/O1
 
+当前复审状态：I17 release 验证缓存已完成本机复验；I18 发现实际 SCCP propagation 缺口，
+本阶段验收重新打开，以下历史记录不构成当前完整通过。见
+`../review/implementation-blockers-01.md`。
+
 ## 必须通过
 
 1. `cargo test --locked --test optimizer kir_o0_ -- --nocapture`
@@ -10,6 +14,7 @@
 6. `cargo fmt --check`
 7. `cargo clippy --all-targets --locked -- -D warnings`
 8. `git diff --check`
+9. `cargo test --release --locked --lib verifier_cache_ -- --nocapture`
 
 ## 结构断言
 
@@ -18,6 +23,8 @@
 - 正例 guard 带有效 ProofId 消失；每个近邻反例保留并有确定 reason。
 - checked 首错、print 和 may-fail mutation 全部拒绝非法 reorder/delete。
 - 任一 invalid certificate 使 compilation failure，且 output transaction 未提交。
+- Debug/release 均拒绝错误的 no-change 声明：即使 pass 声称未改动，IR、proof、guard
+  rewrite 或 contract fact 的故障注入仍触发独立核验失败。
 
 ## 完成证据
 

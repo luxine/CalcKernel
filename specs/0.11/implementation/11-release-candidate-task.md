@@ -19,6 +19,8 @@
   contract cases 只生成满足 declared domain 的输入。
 - 扩充 KIR mutation corpus：dominance、scalar/memory phi、partition、stale fact、ProofId、
   ordered failure/print、fact audit。
+- 在 release profile 直接执行 pass-preservation 故障注入；验证缓存必须核对完整状态，
+  不可把 release 的内部 change 标记当成可信证据。相关回归加入无需 LLVM 的 quality job。
 - 增加 canonical proof-loop corpus，同时结构检查 KIR/C/WASM/LLVM hot loop guard。
 - 新增 `benches/baselines/v0_10_compiler.toml`，固定 commit
   `df816502876fba41676f9ebc190e4fadd18cd5a5`、source digest、compiler identity、LLVM、

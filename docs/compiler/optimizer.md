@@ -20,6 +20,10 @@ effect order, and contract-instance scope without asking the optimizing analysis
 to approve its own result. CFG, inlining, or loop changes explicitly invalidate
 or remap affected evidence. Invalid or stale evidence is a compiler error.
 
+Verification-cache reuse compares the complete KIR, proofs, guard-rewrite records,
+and contract facts with the last verified state in both debug and release builds.
+A pass's `changed = false` declaration alone never authorizes reuse.
+
 ## Pipelines
 
 - O0 constructs and verifies mode-specific KIR and runs no optional transform.

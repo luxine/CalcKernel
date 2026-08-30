@@ -1,5 +1,9 @@
 # 阶段 07 验收：O3
 
+当前复审状态：I18 发现命名 `induction-simplify` pass 没有实际 transform，本阶段对应
+验收重新打开。不得仅以 pass-order 测试替代改写正例/反例；见
+`../review/implementation-blockers-01.md`。
+
 ## 必须通过
 
 1. `cargo test --locked --test optimizer kir_o3_ -- --nocapture`

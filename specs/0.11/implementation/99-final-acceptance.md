@@ -18,6 +18,8 @@
 - [ ] Fact origin/scope、closed certificate 与 independent checker 通过错误 producer mutation。
 - [ ] scalar/alias/effect/loop analysis 超预算保守且确定。
 - [ ] O0/O1/O2/O3 exact pipeline 与 verifier-after-every-pass 成立。
+- [ ] Release 验证缓存独立核对完整状态；错误的 no-change 声明不能放过 IR、proof、
+      guard rewrite 或 contract fact mutation。
 - [ ] unsafe inline/recursive contract instances 不逃逸。
 - [ ] C/WASM/Native 全部消费 verified KIR；无正式双优化路径。
 

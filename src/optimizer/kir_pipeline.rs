@@ -74,13 +74,9 @@ pub struct KirPassManagerResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VerifiedKirState {
-    #[cfg(debug_assertions)]
     module: KirModule,
-    #[cfg(debug_assertions)]
     proofs: ProofArena,
-    #[cfg(debug_assertions)]
     eliminated_guards: Vec<KirGuardElimination>,
-    #[cfg(debug_assertions)]
     contract_facts: Option<ContractFactSet>,
 }
 
@@ -127,13 +123,9 @@ pub fn run_kir_pass_pipeline(
         return result;
     }
     result.verification_cache = Some(VerifiedKirState {
-        #[cfg(debug_assertions)]
         module: module.clone(),
-        #[cfg(debug_assertions)]
         proofs: result.proofs.clone(),
-        #[cfg(debug_assertions)]
         eliminated_guards: result.eliminated_guards.clone(),
-        #[cfg(debug_assertions)]
         contract_facts: result.contract_facts.clone(),
     });
 
@@ -435,20 +427,14 @@ fn record_verified_pass(
     result: &mut KirPassManagerResult,
     generation: u32,
 ) -> bool {
+    // A pass's preservation declaration is untrusted in every build profile.
+    // Reuse evidence only after independently checking the entire verified state.
     let cache_hit = !changed
         && result.verification_cache.as_ref().is_some_and(|cached| {
-            #[cfg(debug_assertions)]
-            {
-                cached.module == *module
-                    && cached.proofs == result.proofs
-                    && cached.eliminated_guards == result.eliminated_guards
-                    && cached.contract_facts == result.contract_facts
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                let _ = cached;
-                true
-            }
+            cached.module == *module
+                && cached.proofs == result.proofs
+                && cached.eliminated_guards == result.eliminated_guards
+                && cached.contract_facts == result.contract_facts
         });
     if cache_hit {
         result.records.push(KirPassRecord {
@@ -476,13 +462,9 @@ fn record_verified_pass(
         .extend(evidence.errors.into_iter().map(|error| error.message));
     if verified {
         result.verification_cache = Some(VerifiedKirState {
-            #[cfg(debug_assertions)]
             module: module.clone(),
-            #[cfg(debug_assertions)]
             proofs: result.proofs.clone(),
-            #[cfg(debug_assertions)]
             eliminated_guards: result.eliminated_guards.clone(),
-            #[cfg(debug_assertions)]
             contract_facts: result.contract_facts.clone(),
         });
     }
@@ -578,5 +560,111 @@ fn rewrite_error(message: &str, proof: Option<ProofId>) -> EvidenceValidationErr
         fact: None,
         proof,
         step: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        FactId, KirBoundsMode, KirBuildConfig, KirConsumer, KirInstructionKind, KirOverflowMode,
+        KirSanitizerMode, SourceFile, ValueId, build_kir_module, check, import_contract_facts,
+        lower_to_mir,
+    };
+
+    fn verified_result() -> KirPassManagerResult {
+        let checked = check(&SourceFile::new(
+            "verification-cache.ck",
+            "export unsafe fn answer(n: u32) -> u32 contract { requires n < 8; } { return n + 1; }",
+        ));
+        assert!(checked.diagnostics.is_empty());
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let kir = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::Inspection,
+                overflow_mode: KirOverflowMode::Checked,
+                bounds_mode: KirBoundsMode::Checked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid KIR");
+        let contracts =
+            import_contract_facts(&kir, &checked.checked_program, 0).expect("valid contract facts");
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, Some(&contracts));
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.eliminated_guards.len(), 1);
+        result
+    }
+
+    fn rejects_false_preservation(mut result: KirPassManagerResult) {
+        let module = result.module.clone();
+        assert!(
+            !record_current_pass(&module, "fault-injected-pass", false, &mut result, 0),
+            "a pass's false no-change claim must not bypass evidence validation"
+        );
+        assert!(!result.errors.is_empty());
+        assert!(!result.records.last().expect("failed pass record").verified);
+    }
+
+    #[test]
+    fn verifier_cache_should_reject_unreported_ir_mutation() {
+        let mut result = verified_result();
+        let binary = result.module.functions[0].blocks[0]
+            .instructions
+            .iter_mut()
+            .find(|instruction| matches!(instruction.kind, KirInstructionKind::Binary { .. }))
+            .expect("arithmetic instruction");
+        let KirInstructionKind::Binary { left, .. } = &mut binary.kind else {
+            unreachable!();
+        };
+        *left = ValueId::from_index(u32::MAX);
+        rejects_false_preservation(result);
+    }
+
+    #[test]
+    fn verifier_cache_should_reject_unreported_proof_mutation() {
+        let mut result = verified_result();
+        result
+            .proofs
+            .get_mut(ProofId::from_index(0))
+            .expect("proof")
+            .generation = 1;
+        rejects_false_preservation(result);
+    }
+
+    #[test]
+    fn verifier_cache_should_reject_unreported_rewrite_mutation() {
+        let mut result = verified_result();
+        result.eliminated_guards[0].proof = None;
+        rejects_false_preservation(result);
+    }
+
+    #[test]
+    fn verifier_cache_should_reject_unreported_contract_mutation() {
+        let mut result = verified_result();
+        result
+            .contract_facts
+            .as_mut()
+            .expect("contracts")
+            .facts_mut()
+            .get_mut(FactId::from_index(0))
+            .expect("fact")
+            .generation = 1;
+        rejects_false_preservation(result);
+    }
+
+    #[test]
+    fn verifier_cache_should_accept_identical_verified_state() {
+        let mut result = verified_result();
+        let module = result.module.clone();
+        assert!(record_current_pass(
+            &module,
+            "unchanged-pass",
+            false,
+            &mut result,
+            0
+        ));
+        assert!(result.errors.is_empty());
     }
 }

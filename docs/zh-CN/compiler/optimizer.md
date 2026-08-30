@@ -16,6 +16,10 @@ unsafe function instance 的 `TrustedContract`。未知、超预算或无法分�
 Memory SSA、effect order 与 contract-instance scope，不让优化 analysis 自己批准结论。
 CFG/inlining/loop 改动必须显式 invalidate 或 remap evidence；stale evidence 是 compiler error。
 
+Debug 与 release 构建复用 verification cache 前，都将完整 KIR、proof、guard rewrite
+record 与 contract fact 和上一已验证状态逐项比较。仅有 pass 的 `changed = false` 声明
+不能授权复用验证结果。
+
 ## Pipeline
 
 - O0：构造并验证 mode-specific KIR，不运行可选 transform。

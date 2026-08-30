@@ -57,6 +57,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      - name: Reject false pass preservation in the release verifier
+        run: cargo test --release --locked --lib verifier_cache_
       - run: cargo build --release --locked
       - run: ./target/release/ckc --help
       - run: ./target/release/ckc check examples/core/scalar.ck

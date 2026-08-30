@@ -105,6 +105,8 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   contract，避免深拷贝。结构验证器只把不参与迭代输出的 lookup/set 从树结构换为预分配
   hash 结构，错误遍历顺序和诊断保持由 module 顺序决定。输入失败仍返回原 module，artifact
   transaction 边界未改变。
+  **复诊撤销：release 只信任 change declaration 的部分违反冻结的 proof-preservation
+  约束，已在 I17 通过故障注入证实并撤销；I05 的其余性能修复不受此结论影响。**
 - 修复后 debug/release optimizer suite 均为 49/49，全特性测试和 all-feature Clippy 通过。
   高负载本机的非规范 quick 复诊中六项 KIR/V0.10 比率分别为 0.85x、0.63x、0.56x、
   0.71x、0.53x、1.78x；`example-dijkstra` 为 923,917/518,666 ns。该结果只证明修复数量级，
@@ -318,6 +320,49 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   验证后的临时 release overlay manifest SHA-256 为
   `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
 
+## I17：release 验证缓存把未核验的 pass-preservation 声明当作事实
+
+- 总验收逐项复查 `9429896` 时发现，I05 引入的 `VerifiedKirState` 只在 debug 保存完整
+  KIR/proof/elimination/contract 快照；release 在 `changed=false` 时直接接受 cache hit。
+  这与规范“analysis output 与 pass-preservation claim 未验证前均不可信”冲突，不是允许
+  为编译耗时门槛作出的折中。
+- TDD 在同一真实 pass manager 上注入四种未报告变更：不存在的 SSA operand、stale
+  ProofCertificate、丢失 guard ProofId、stale trusted contract fact。旧实现的
+  `cargo +1.90.0 test --release --locked --lib verifier_cache_ -- --nocapture`
+  为 1 pass/4 fail（exit 101），四者均错误接受；debug 为 5/5。相同状态的正例始终通过。
+- 修复在所有 build profile 保存并逐字段比较完整已验证状态，只有状态完全相同才复用
+  既有证明；不匹配即运行原独立 verifier。没有修改证明规则、忽略 mutation 或信任 pass
+  的布尔值。修复后 debug/release 均为 5/5（exit 0）。
+- 新 CI contract 先因缺少 release 命令而失败，随后 quality job 增加该命令，契约转绿。
+  双语 optimizer 文档和阶段 05/11/总验收补充同一约束。原 2x/3x optimizer latency 门槛
+  保持不变，修复后的完整性能和远程矩阵仍须验收，不能引用 I05 的旧性能结果替代。
+- 本轮本机 fmt、all-feature Clippy、默认 345 项/全特性 466 项测试、release build、
+  compiler/artifact/JIT audit 全部通过；release 故障注入 5/5。最初全仓测试因本地内部
+  checkpoint 目录触发既有 repository layout gate 失败；记录移至仓库外后重跑全套，未
+  修改、忽略或放宽该 gate。
+- 完整本机 performance 原门槛通过：unchecked Clang mean `0.9966`、V0.10 ratio
+  `1.0043`；checked 为 `0.9917`、`1.0067`；proof ratio `1.0364`；optimizer
+  suite-median ratio `1.0294`。六项 individual 全通过，Dijkstra 为
+  `745916 / 350000 ns`。这证明无需用 release 免检来满足本机 latency 门槛，远程仍待验证。
+- 默认/全特性日志 SHA-256：
+  `70c88f5314dc8e2b79c367c9b341c248522821d8f3bd26e64c8657157046d8da`、
+  `0d45a11b22d3b61789847991b406a96624ed6982f76bf0fe04ceb428c3a14044`；
+  schema-5 performance report：
+  `68633dece0da43328bfaa376e1ccb465d059db6516f85172771314191988328b`。
+
+## I18：O1 propagation 与 O3 induction simplification 的实现验收缺口（未解决）
+
+- 总验收复查发现 `run_sccp_range` 只生成 `ScalarAnalysisResult`，结果除了计数没有
+  被改写消费者读取；O1 无 guard 的函数甚至不执行分析。`induction-simplify` 直接
+  `record_current_pass(..., false, ...)`，没有对应 transform。仅验证 pass 名称顺序不足
+  以证明阶段 05/07 要求的实际优化已经实现。
+- 可复现 O1 反例：`let a: i32 = 20; let b: i32 = 22; if a + b == 42 { return a + b; }
+  return 0;`。`emit-kir -O1` 仍含两个 `Add.modular`、一个 `Eq` 和两分支，没有实际常量
+  传播。LLVM 后续可能优化这一程序，不能替代设计要求的 target-neutral KIR pass。
+- 重新打开阶段 05/07 相应验收，按原设计增加实际 rewrite 的正例/近邻反例并执行 TDD；
+  不删除规范中的 SCCP 或 induction simplification，不把空 pass 改名后视作完成。
+  在补齐前，前十阶段的历史通过记录不能证明整个候选已满足设计。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
@@ -330,7 +375,7 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 待修复后的全量本地与六 host 证据完成后追加。复审重点是 Windows archive/CRT identity、
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
 是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source、release
-no-change cache 是否只复用准确的 pass change declaration、guard-free demand skip 是否会
+no-change cache 是否独立核对完整状态而非信任 pass change declaration、guard-free demand skip 是否会
 漏掉安全消费者、Darwin object 是否没有 absolute text fixup、dyld C-ABI entry/exit 是否
 正确、runtime cache 是否可能命中旧 source、Windows checkout 是否保持 provenance
 字节，以及是否有测试被跳过。

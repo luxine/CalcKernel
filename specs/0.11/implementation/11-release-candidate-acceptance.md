@@ -20,6 +20,7 @@
 14. `./target/release/ckc --version --verbose`
 15. `./target/release/ckc licenses`
 16. `git diff --check`
+17. `cargo test --release --locked --lib verifier_cache_ -- --nocapture`
 
 ## 远程必须通过
 
