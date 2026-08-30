@@ -13,6 +13,37 @@ pub(crate) struct LicmResult {
     pub exhausted_functions: Vec<FunctionId>,
 }
 
+/// Proposal-only queries, rebuilt before each loop so an earlier loop's
+/// relocated/remapped instructions cannot leave stale Copy operands behind.
+#[derive(Default)]
+struct ForwardingIndex<'a> {
+    parameters: BTreeMap<ValueId, (BlockId, usize)>,
+    copies: BTreeMap<ValueId, ValueId>,
+    incoming: BTreeMap<BlockId, Vec<&'a crate::KirEdge>>,
+}
+
+impl<'a> ForwardingIndex<'a> {
+    fn new(function: &'a crate::KirFunction) -> Self {
+        let mut queries = Self::default();
+        for block in &function.blocks {
+            for (index, param) in block.params.iter().enumerate() {
+                queries.parameters.insert(param.value, (block.id, index));
+            }
+            for instruction in &block.instructions {
+                if let KirInstructionKind::Copy { value } = instruction.kind
+                    && let Some(result) = instruction.results.first()
+                {
+                    queries.copies.insert(result.value, value);
+                }
+            }
+            for edge in edges(&block.terminator) {
+                queries.incoming.entry(edge.target).or_default().push(edge);
+            }
+        }
+        queries
+    }
+}
+
 pub(crate) fn run_licm(
     module: &mut KirModule,
     protected: &BTreeSet<InstructionId>,
@@ -49,12 +80,15 @@ fn run_with_config(
                 .blocks
                 .iter()
                 .filter(|block| !loop_blocks.contains(&block.id))
-                .filter(|block| successor_ids(&block.terminator).contains(&loop_info.header))
+                .filter(|block| {
+                    edges(&block.terminator).any(|edge| edge.target == loop_info.header)
+                })
                 .map(|block| block.id)
                 .collect::<Vec<_>>();
             let [preheader] = preheaders.as_slice() else {
                 continue;
             };
+            let queries = ForwardingIndex::new(function);
             let mut invariant_values = BTreeSet::new();
             let mut moved = Vec::<(BlockId, KirInstruction)>::new();
             let mut moved_ids = BTreeSet::new();
@@ -89,7 +123,7 @@ fn run_with_config(
                                 *source
                             } else {
                                 let source = match forwarded_origin(
-                                    function,
+                                    &queries,
                                     value,
                                     &loop_blocks,
                                     &definitions,
@@ -173,6 +207,46 @@ fn defined_outside(
 }
 
 fn forwarded_origin(
+    queries: &ForwardingIndex<'_>,
+    value: ValueId,
+    loop_blocks: &BTreeSet<BlockId>,
+    definitions: &BTreeMap<ValueId, Option<BlockId>>,
+    remaining: &mut u32,
+) -> Result<Option<ValueId>, ()> {
+    let mut pending = vec![value];
+    let mut visited = BTreeSet::new();
+    let mut origin = None;
+    while let Some(value) = pending.pop() {
+        if !visited.insert(value) {
+            continue;
+        }
+        *remaining = remaining.checked_sub(1).ok_or(())?;
+        if defined_outside(definitions, loop_blocks, value) {
+            if origin.is_some_and(|origin| origin != value) {
+                return Ok(None);
+            }
+            origin = Some(value);
+        } else if let Some(&(block, index)) = queries.parameters.get(&value) {
+            let Some(incoming) = queries.incoming.get(&block) else {
+                return Ok(None);
+            };
+            for edge in incoming {
+                let Some(value) = edge.args.get(index) else {
+                    return Ok(None);
+                };
+                pending.push(*value);
+            }
+        } else if let Some(&operand) = queries.copies.get(&value) {
+            pending.push(operand);
+        } else {
+            return Ok(None);
+        }
+    }
+    Ok(origin)
+}
+
+#[cfg(test)]
+fn linear_forwarded_origin(
     function: &crate::KirFunction,
     value: ValueId,
     loop_blocks: &BTreeSet<BlockId>,
@@ -291,16 +365,17 @@ fn value_definitions(function: &crate::KirFunction) -> BTreeMap<ValueId, Option<
         .collect()
 }
 
-fn successor_ids(terminator: &KirTerminator) -> Vec<BlockId> {
-    match terminator {
-        KirTerminator::Return { .. } => Vec::new(),
-        KirTerminator::Jump { edge } => vec![edge.target],
+fn edges(terminator: &KirTerminator) -> impl Iterator<Item = &crate::KirEdge> {
+    let edges = match terminator {
+        KirTerminator::Return { .. } => [None, None],
+        KirTerminator::Jump { edge } => [Some(edge), None],
         KirTerminator::Branch {
             then_edge,
             else_edge,
             ..
-        } => vec![then_edge.target, else_edge.target],
-    }
+        } => [Some(then_edge), Some(else_edge)],
+    };
+    edges.into_iter().flatten()
 }
 
 fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
@@ -401,6 +476,106 @@ mod tests {
                     .map(|instruction| (block.id, instruction.id))
             })
             .expect("multiply")
+    }
+
+    #[test]
+    fn licm_forwarding_should_consider_both_arms_to_the_same_header() {
+        let mut module = fixture();
+        let info = analyses(&module).remove(0);
+        let function = &mut module.functions[0];
+        let header = function
+            .blocks
+            .iter()
+            .find(|block| block.id == info.loops[0].header)
+            .expect("header");
+        let position = header
+            .params
+            .iter()
+            .position(|param| param.slot == "a")
+            .expect("a");
+        let value = header.params[position].value;
+        let KirTerminator::Branch { condition, .. } = header.terminator else {
+            panic!("condition")
+        };
+        let other = function.params[1].value;
+        for block in &mut function.blocks {
+            if info.loops[0].latches.contains(&block.id) {
+                let KirTerminator::Jump { edge } = &block.terminator else {
+                    panic!("latch")
+                };
+                let mut else_edge = edge.clone();
+                else_edge.args[position] = other;
+                block.terminator = KirTerminator::Branch {
+                    condition,
+                    then_edge: edge.clone(),
+                    else_edge,
+                };
+            }
+        }
+        assert!(crate::validate_kir_module(&module).errors.is_empty());
+        let function = &module.functions[0];
+        let blocks = info.loops[0].blocks.iter().copied().collect();
+        let definitions = value_definitions(function);
+        let mut remaining = u32::MAX;
+        assert_eq!(
+            forwarded_origin(
+                &ForwardingIndex::new(function),
+                value,
+                &blocks,
+                &definitions,
+                &mut remaining
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            forwarded_origin(
+                &ForwardingIndex::new(function),
+                value,
+                &blocks,
+                &definitions,
+                &mut 0
+            ),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn licm_forwarding_index_should_preserve_linear_results_and_budget() {
+        let module = fixture();
+        let function = &module.functions[0];
+        let info = analyses(&module).remove(0);
+        let definitions = value_definitions(function);
+        let queries = ForwardingIndex::new(function);
+        for loop_info in &info.loops {
+            let blocks = loop_info.blocks.iter().copied().collect();
+            for value in definitions
+                .keys()
+                .copied()
+                .chain(std::iter::once(ValueId::from_index(u32::MAX)))
+            {
+                for limit in 0..100 {
+                    let mut indexed_budget = limit;
+                    let mut linear_budget = limit;
+                    assert_eq!(
+                        forwarded_origin(
+                            &queries,
+                            value,
+                            &blocks,
+                            &definitions,
+                            &mut indexed_budget
+                        ),
+                        linear_forwarded_origin(
+                            function,
+                            value,
+                            &blocks,
+                            &definitions,
+                            &mut linear_budget
+                        )
+                    );
+                    assert_eq!(indexed_budget, linear_budget);
+                }
+            }
+        }
     }
 
     #[test]

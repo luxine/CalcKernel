@@ -315,6 +315,12 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 对同一 unsigned 副本使用该签名命令后，compiler audit 与 hardened JIT audit 都 exit 0；
   两 workflow 的 source-order regression 转绿。Intel hardened JIT 仍必须在修订后的
   完整 CI 中实际验证，不以本机结果替代。
+- 仍在运行旧 `c91c2c0` 的 run `33288920505` / Intel job `99196977382` 后续完成：
+  fact audit 7/7、Native 92/92、CLI 21/21 与 release build 均通过，仍因实际 compiler
+  `code object is not signed at all` 失败。其完整 log SHA-256 为
+  `f5cc267a3ee2c888d0f762fac1aa96a14faa1675eec038157b91964dbe8ff020`。
+  这是修复 `02c4978` 之前的相同反例，不是已修复分支的新失败；也不能视为最终
+  签名/hardened 审计通过，必须在最终完整矩阵中重新验证。
 
 ## I16：prefix 保存前的验证尚未执行对象哈希，且 release 保存晚于 oracle build
 
@@ -612,6 +618,42 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   fmt、diff 检查通过。顺序执行的 default/all-feature 日志 SHA-256 分别为
   `471f146811b4e5574ac110b50de4325c84c55ac4aa60eafa0dadbb869985db24`、
   `7aae4b1d621a0588025975c823a230c105c16fbfd34a71a7a5f9c759756908d5`。
+- `48c8b12` 的首次完整原门禁仍返回 exit 1：Dijkstra KIR `1707917 ns` /
+  V0.10 MIR `350000 ns`，约 `4.8798x`。unchecked Native/Clang geo `0.9974`、V0.10
+  ratio `1.0035`；checked 为 `0.9992` / `0.9991`；proof throughput `1.0215`。
+  report / benchmark log / checker log 的 SHA-256 依次为
+  `cd38406ff6f000aaf45b10f736205bd6b8571b908a8f286c7503c68de2052818`、
+  `7ead6f3c0343eaf42ab61e269b208e94714075183807608e69e022cffd38ad95`、
+  `b7510b1667981e40d4ed8f6b6a0bf36b3e64d30f5fe3702902a725d3ebf45038`。
+- 本任务没有并行构建，但运行中检查发现另一仓库的 release rustc 正在同机占用
+  CPU。未干预该进程，保留原报告并注明非独占环境，不以该次时间量化代码回退，
+  也不以同次 runtime 通过关闭 I19。后续继续针对已有采样中的实际工作量优化。
+
+### I20 后续重复遍历收敛（仍未关闭）
+
+- LICM 对每个 loop 的不可变 pre-state 建立参数/Copy/输入边查询，跨 loop 重建，
+  不缓存已经改写的 Copy 来源。原线性实现保留为测试对照，对全部 fixture 定义与
+  缺失 ValueId、100 个预算逐项比对返回值和剩余预算。新增实际同 target 双 branch
+  arm 的不同输入反例在重构前后均保守拒绝。原整体预算回退、producer 保护、
+  零迭代和依赖顺序规则均不变。
+- 独立 checker 仍自行扫描真实 SSA 边，只消除每个 predecessor 的临时 Vec；没有
+  复用优化侧查询或已验证来源来跳过证明规则。release proof mutation 9 项通过。
+- GVN 将既有的有序 substitution 先复合，再单次遍历函数的使用点及 region 元数据；
+  不改变候选、支配判断、受保护 producer 或改写顺序语义。4,096 组三次替换包含
+  重复来源、恒等、连锁、交换和极大 ValueId，结果与原逐次遍历完全相同。测试最初
+  误用不存在的 `KirBuildConfig::default`，改为显式 checked 配置，没有更改构建契约。
+- 两步之后的 Dijkstra KIR 仍与前述基准逐字节一致，NativeLibrary pipeline 的全部
+  rewrite 统计也不变。LICM 后与 GVN 后的 20,000 次诊断总耗时分别为
+  `32.157167959 s` / `26.715015416 s`；由于非独占机器状态和诊断边界不同，不作为
+  门禁或单变量收益结论。相应 CPU 采样 SHA-256 为
+  `93aa6122aab2ed9c52287f09b0283e44f3af550c9eb2e229dfd3e7674e59d461`、
+  `4053c788a7ac7b51388628139f3f24945e0db4451b77431cae4f6febe41db502`。
+- 默认 447 项、全特性 569 项（Native 93 项）、release 单元 42 项与全特性 Clippy、
+  fmt、diff 全部通过。default/all-feature/release 日志 SHA-256 依次为
+  `2425d978eb6b0baa95109c3e91f2de1e5edb1d67b35bc224c623e1613a794594`、
+  `1b3a3daaa4408eea619647bf40eb02f8fe05155f7fd33a714273ccf102f986e4`、
+  `291d53de4288fa16ca0aa4153394af042b87cc644eec37045cb5afbe82c2753a`。
+  本批尚未取得新的完整性能验收，原 I14/I19/I20 继续打开。
 
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 

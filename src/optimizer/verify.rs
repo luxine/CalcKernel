@@ -2078,15 +2078,16 @@ fn predecessor_edges(
         .iter()
         .flat_map(|block| {
             match &block.terminator {
-                KirTerminator::Return { .. } => Vec::new(),
-                KirTerminator::Jump { edge } => vec![edge],
+                KirTerminator::Return { .. } => [None, None],
+                KirTerminator::Jump { edge } => [Some(edge), None],
                 KirTerminator::Branch {
                     then_edge,
                     else_edge,
                     ..
-                } => vec![then_edge, else_edge],
+                } => [Some(then_edge), Some(else_edge)],
             }
             .into_iter()
+            .flatten()
             .filter(move |edge| edge.target == target)
             .map(move |edge| (block.id, edge))
         })

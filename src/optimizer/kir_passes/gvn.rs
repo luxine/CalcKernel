@@ -5,7 +5,7 @@ use crate::{
     compute_kir_dominators,
 };
 
-use super::rewrite::{remap_instruction_values, replace_value_uses};
+use super::rewrite::{remap_instruction_values, replace_value_uses_batch};
 
 pub(crate) fn run_gvn(module: &mut KirModule, protected: &BTreeSet<crate::InstructionId>) -> u32 {
     let mut rewrites = 0_u32;
@@ -74,9 +74,7 @@ pub(crate) fn run_gvn(module: &mut KirModule, protected: &BTreeSet<crate::Instru
                 }
             }
         }
-        for (old, new) in replacements {
-            replace_value_uses(function, old, new);
-        }
+        replace_value_uses_batch(function, &replacements);
         for block in &mut function.blocks {
             block
                 .instructions
