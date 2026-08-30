@@ -21,6 +21,31 @@ suites, a proof-loop comparison, optimizer timing, `baselineV010`, and a verifie
 `runtimeReplay` identity with compiler/bundle/recipe/artifact hashes and the exact
 eight-channel rotating sampling schedule.
 
+`candidateVersion` is `0.11.0`; `samplingProtocol` is
+`rotating-eight-channel-v1`. `channelNames`, in index order, is
+`candidateNativeUnchecked`, `candidateNativeChecked`, `currentClangUnchecked`,
+`currentClangChecked`, `replayNativeUnchecked`, `replayNativeChecked`,
+`replayClangUnchecked`, `replayClangChecked`. Each case's `warmupOrder` has three
+rows and `sampleOrder` twenty rows; row `r` is `[(r + i) % 8 for i in 0..8]`.
+The report records the executed schedule, not a duration-dependent ordering.
+
+`runtimeReplay` contains `metadata` (the twelve exact string fields from the
+version-1 `replay.tsv` bundle), `manifestSha256`, and eight `artifacts` records.
+Each record has `case`, `mode`, fixed-basename `file`, positive integer `bytes`,
+and lowercase `sha256`. The checker independently binds the recipe, four adapters,
+frozen manifest and installed LLVM component manifest, and hashes the actual
+`ckc-v010` compiler and eight files selected by `CKC_V010_RUNTIME_BUNDLE`.
+`CKC_LLVM_PREFIX` must identify the same pinned installation used to prepare/run.
+Hashes provide integrity, not authentication of an arbitrary untrusted bundle;
+the fixed-checkout preparation log supplies the auditable source provenance.
+
+`evidenceDirectory` is the report-relative `measurement-<pid>-<timestamp>`
+directory. `measuredArtifacts` contains exactly 24 records with the above artifact
+fields plus `channel` (`candidateNative`, `currentClang` or `replayClang`). These
+are the actual measured libraries, retained even if the gate fails; the eight
+V0.10 Native libraries remain in the replay bundle. Escaping paths, symlinked
+files, empty artifacts, duplicates and size/digest mismatches are rejected.
+
 Every runtime case records semantic equivalence, compile/cold-run duration,
 repeated Native and Clang sample arrays and medians, frozen V0.10 Native and
 Clang medians (`v010MedianNs` and `v010ClangMedianNs`) as unchanged historical
@@ -29,6 +54,13 @@ artifact size/hashes, batch iterations, and validated result. Both versions and
 safety modes are sampled in the same process on identical inputs. Checked and unchecked suites use the
 same exact four-case runtime corpus. `optimizerComparisons` uses the exact six
 entries from `benches/cases/native-cases.tsv`; omitting a case is a hard failure.
+
+The replay timing fields are `replayNativeSamplesNs`, `replayClangSamplesNs`,
+`replayNativeMedianNs` and `replayClangMedianNs`. All four stream arrays per mode
+must contain twenty finite positive timings with the declared upper median.
+The fixed batch is `20000000`; checked/unchecked `result` values must agree.
+The checker also matches `v010MirMedianNs` against the frozen optimizer entry,
+not a caller-provided denominator. Unknown historical schema versions cannot pass.
 
 `baselineV010` must identify commit
 `df816502876fba41676f9ebc190e4fadd18cd5a5`, compiler `calckernel 0.10.0`, LLVM,

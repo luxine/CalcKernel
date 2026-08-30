@@ -470,20 +470,31 @@ fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassi
     assert!(workflow.contains("performance_diagnostics:"));
     assert!(performance.contains("inputs.performance_diagnostics == true"));
     assert!(performance.contains("if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)"));
-    assert!(performance.contains("path: target/performance-v010-diagnostic"));
-    assert!(performance.contains("ref: df816502876fba41676f9ebc190e4fadd18cd5a5"));
+    assert!(performance.contains("fetch-depth: 0"));
+    assert!(performance.contains("CKC_V010_RUNTIME_BUNDLE:"));
+    let prepare = performance
+        .find("python3 scripts/prepare-performance-replay.py")
+        .expect("prepare fixed compiler before timing");
+    let timing = performance
+        .find("cargo bench --features native-toolchain")
+        .unwrap();
+    assert!(prepare < timing);
+    assert!(performance.contains("target/performance-runtime-replay/ckc-v010"));
+    assert!(performance.contains("target/performance-runtime-replay/replay.tsv"));
+    assert!(performance.contains("target/performance-runtime-replay/preparation.log"));
+    assert!(performance.contains("target/performance-runtime-replay/*.so"));
+    assert!(performance.contains("target/ckc-perf/"));
+    assert!(!performance.contains("performance-v010-diagnostic"));
     assert!(performance.contains("bash scripts/diagnose-native-performance.sh"));
     assert!(!performance.contains("continue-on-error: true"));
     let script = read("scripts/diagnose-native-performance.sh");
     for required in [
-        "df816502876fba41676f9ebc190e4fadd18cd5a5",
         "lscpu --json",
         "sha256sum",
-        "cargo bench --features native-toolchain --bench ckc_perf -- --task check --cpu baseline",
-        "v0_10_proof_loop_harness.patch",
-        "v0_10_mir_optimizer_harness.patch",
-        "v0_10_linux_cpp_runtime_harness.patch",
-        "v0_10_clang_cpu_harness.patch",
+        "CKC_V010_RUNTIME_BUNDLE",
+        "measuredArtifacts",
+        "runtimeReplay",
+        "objdump",
     ] {
         assert!(
             script.contains(required),
@@ -494,4 +505,16 @@ fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassi
         !script.contains("check-native-performance.py"),
         "diagnostics must not replace the required gate"
     );
+    for forbidden in [
+        "cargo bench",
+        "cargo build",
+        "git apply",
+        "objcopy",
+        "--dump-section",
+    ] {
+        assert!(
+            !script.contains(forbidden),
+            "diagnostic must inspect the actual measured files: {forbidden}"
+        );
+    }
 }

@@ -356,6 +356,54 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `f7d8c863e0b145832beb429902dd02ea89f34f57a6147d16e54babbcdb946561`。
   自审范围为准备/完整性边界；Task 2–5 的采样、schema-6 reader、CI 与最终验收仍待执行。
 
+### Replay Task 2–4：同进程采样、schema-6 reader 与 CI 接入（完整门禁待验）
+
+- 纯调度测试先观察固定顺序不能满足第 2 轮轮转，再观察空执行器不能记录调用/传播错误，
+  实现后通过位置均衡、精确 3/20 轮执行顺序、各流样本归属、warm/timed 任意调用报错
+  立即停止测试。调度不读任何耗时；所有通道共享每 kernel 的输入、seed 和结果 oracle。
+- harness 在预热前准备两模式与两份独立冻结 Clang C 编译产物，加载实际固定 0.10
+  libraries。每次 cold/warm/timed 调用均校验 status/result。优化器计时函数、固定历史
+  数值、语料和全部 95%/10%、3%/8%、raw 97%、2x/3x 阈值均未修改。
+- schema-6 reader 对实际 TSV/compiler/library 字节重新校验，报告必须给出八流样本和
+  精确顺序。九项 Python 测试逐项注入真实 I14 数字、独立 geometric/individual 回退、
+  原全部负门禁、错误历史/MIR 分母、篡改 bundle 与 report 身份、NaN/Inf、缺样本、
+  重复键、库缺失/变更/symlink 和路径逃逸；所有预期均通过。原 Rust checker 测试入口
+  改为调用该套测试，未删除或放宽旧门槛，去除了只接受合成历史 baseline 的测试耦合。
+- 两个 CI performance job 使用完整 Git 历史，在计时前准备独立固定 compiler，上传
+  首次报告、原始日志、compiler、manifest 和 32 份实际库。诊断只检查这些库，不再
+  另行编译/计时另一份 baseline，也不导出可能为空的 `.text`。CI source-order 先 red
+  后 green；现有十个 CI contract tests 全通过，矩阵仍为原十个 required jobs。
+- 使用当前 recipe 重新独立准备 bundle，manifest SHA-256 为
+  `fe3293d402083be979f5b9f48992d03b498046006ec7245f3e8819afe997baed`，preparation log 为
+  `015b1d90cadee83c23bb39f641340bbf9ac157d84f7bc452e6484aa46e7a2204`。
+  一次实际 quick 功能运行完成四 kernel × 八通道调用，真实 compiler/32 库的 reader
+  完整性核对和诊断脚本均通过；其 report SHA-256 为
+  `ff735664872bd4e7d960dd7139bce9ad333da96eff73a1e51f06a4d5a520eace`，benchmark log 为
+  `54f356b6f02fe8508116a97a80ae300a52017e5a0723fc7e6524bae4b26eea9e`。
+- 严格 gate 对该 quick report 按预期 exit 1：warmup 1 不满足固定 3。完整性日志
+  `47bf0b7bb9432f6636a6ec5d50018f33185eb3a3223faf0a5083a6c229726e23`；预期拒绝日志
+  `0b54b4d9b6c52980afa4c77cc06ca89c56fbb717484a96b759b6ec4e9ab8b957`。这不是性能验收，
+  未用 quick 值修订 baseline 或签收 I14/I19。首次完整 gate 必须在提交后执行。
+- 定向 performance 17 项（内含 Python checker 9 项、preparation 4 项）、Native bench
+  compile、定向 Clippy 均通过。复审确认报告只按实际 replay 样本归一化、不以库字节
+  相同替代吞吐门禁、hash 不冒充不可信编译器签名；后续完整本地/同 SHA CI 仍不可省略。
+
+### Replay Task 5 本地完整功能验证（正式性能/远程待验）
+
+- 默认 468、全特性 591（Native 94）、release 单元 53、release IR 58、all-target/all-feature
+  Clippy、fmt/diff 全通过。三个日志 SHA-256 为
+  `1642755afd851c6be33d658a7d2cb1d3b6db4f325c48811a13a0a7d48ddf6330`、
+  `9824de3c8cbfc3101fadee93c9b194c2fb50c1838ff6ad8615dee73281c317b3`、
+  `4aab7e07bce26e3ff8c5a258f4eb58c9ecadf452cadb964fac60a96c00b41524`。
+- release Native compiler 构建、generated differential 3、IR mutation 10、pre-LLVM
+  fact audit 7、release verifier-cache 5、真实 Native artifact audit 与 hardened JIT
+  audit 全通过。实际 compiler 为 `ckc 0.11.0`、Native ABI 1、Runtime ABI 2、LLVM
+  22.1.8，安装组件摘要与 replay 相同。licenses 命令 exit 0；审计日志摘要为
+  `1442d2edbca71b3d155d8f0fd5c3a31e2add816003ccdd66127e4c1c0d30f00f`。
+- 本机 sanitizer 脚本只确认已记录的 Darwin capability unavailable，没有运行或通过
+  ASan/UBSan/LSan；Linux native-integration 的所有 sanitizer 门仍必须通过。
+  这组功能/身份验证不等于新协议的性能验收，I14/I19/I21 的远程判定保持打开。
+
 ## I15：Intel Cargo 产物未自动签名，CI/release 缺少显式签名步骤
 
 - Intel job `99196059470` 的 Native/CLI/release build 全部通过，随后

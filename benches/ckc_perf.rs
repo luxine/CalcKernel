@@ -12,6 +12,9 @@ use std::process::Command;
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "native-toolchain")]
+mod runtime_replay;
+
 use calckernel::{
     BoundsMode, EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
     KirOverflowMode, KirPassManagerResult, KirSanitizerMode, OverflowMode, SourceFile,
@@ -939,60 +942,87 @@ fn measure_native_runtime(
 ) -> Result<NativeRuntimeReport, String> {
     let clang = clang_oracle()?;
     let clang_version = clang_version(&clang)?;
-    let fixture_root = repo_root.join(NATIVE_RUNTIME_FIXTURE_ROOT);
-    let mut fixtures = fs::read_dir(&fixture_root)
-        .map_err(|error| format!("failed to read {}: {error}", fixture_root.display()))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to enumerate native performance fixtures: {error}"))?;
-    fixtures.retain(|path| path.extension().and_then(|value| value.to_str()) == Some("ck"));
-    fixtures.sort();
-    if fixtures.len() < 3 {
-        return Err(
-            "native runtime performance suite requires at least three CK kernels".to_string(),
-        );
-    }
-
-    let root = runtime_temp_dir()?;
-    fs::create_dir(&root)
-        .map_err(|error| format!("failed to create {}: {error}", root.display()))?;
-    let result = (|| {
-        let mut suites = Vec::new();
-        for checked in [false, true] {
-            let mut cases = Vec::new();
-            for fixture in &fixtures {
-                cases.push(measure_native_case(
-                    repo_root, fixture, &root, &clang, checked, config, baseline,
-                )?);
-            }
-            suites.push(NativeRuntimeSuite {
-                mode: if checked { "checked" } else { "unchecked" },
-                cases,
-            });
+    let bundle = env::var_os("CKC_V010_RUNTIME_BUNDLE")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "set CKC_V010_RUNTIME_BUNDLE after running scripts/prepare-performance-replay.py"
+                .to_string()
+        })?;
+    let recipe = runtime_replay::recipe_digest(repo_root)?;
+    let adapters = runtime_replay::adapter_set_digest(repo_root)?;
+    let target = host_target_name();
+    let expected = runtime_replay::ExpectedReplay {
+        target: &target,
+        cpu: match config.cpu_policy {
+            CpuPolicy::Baseline => "baseline",
+            CpuPolicy::Native => "native",
+        },
+        recipe_sha256: &recipe,
+        adapter_set_sha256: &adapters,
+        llvm_component_sha256: env!("CKC_LLVM_MANIFEST_SHA256"),
+    };
+    // Validate the entire independently prepared bundle before opening any library.
+    let replay = runtime_replay::load_replay(&bundle, &expected)?;
+    let root = runtime_evidence_dir(repo_root)?;
+    let evidence_directory = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "invalid evidence directory name".to_string())?
+        .to_string();
+    let mut suites = [
+        NativeRuntimeSuite {
+            mode: "unchecked",
+            cases: Vec::new(),
+        },
+        NativeRuntimeSuite {
+            mode: "checked",
+            cases: Vec::new(),
+        },
+    ];
+    let mut measured_artifacts = Vec::new();
+    for name in runtime_replay::RUNTIME_CASES {
+        let fixture = repo_root
+            .join(NATIVE_RUNTIME_FIXTURE_ROOT)
+            .join(format!("{name}.ck"));
+        let measured = measure_native_case(
+            repo_root, &fixture, &root, &clang, config, baseline, &replay,
+        )?;
+        for (mode, (case, artifacts)) in measured.into_iter().enumerate() {
+            suites[mode].cases.push(case);
+            measured_artifacts.extend(artifacts);
         }
-        Ok(NativeRuntimeReport {
-            cpu_policy: config.cpu_policy,
-            clang_version,
-            warmup: config.warmup,
-            suites,
-            baseline: baseline.clone(),
-            optimizer: measure_optimizer_comparisons(repo_root, compiler_cases, config, baseline)?,
-        })
-    })();
-    let _ = fs::remove_dir_all(&root);
-    result
+    }
+    // Evidence is retained on every path. Detect modifications during measurement too.
+    for artifact in &measured_artifacts {
+        artifact.verify(&root)?;
+    }
+    if runtime_replay::load_replay(&bundle, &expected)?.manifest_sha256 != replay.manifest_sha256 {
+        return Err("replay manifest changed during measurement".into());
+    }
+    Ok(NativeRuntimeReport {
+        cpu_policy: config.cpu_policy,
+        clang_version,
+        warmup: config.warmup,
+        suites: suites.into(),
+        baseline: baseline.clone(),
+        replay,
+        evidence_directory,
+        measured_artifacts,
+        optimizer: measure_optimizer_comparisons(repo_root, compiler_cases, config, baseline)?,
+    })
 }
 
 #[cfg(feature = "native-toolchain")]
+#[allow(clippy::too_many_arguments)]
 fn measure_native_case(
     repo_root: &Path,
     fixture: &Path,
     root: &Path,
     clang: &Path,
-    checked: bool,
     config: &Config,
     baseline: &CompilerBaseline,
-) -> Result<NativeRuntimeCase, String> {
+    replay: &runtime_replay::RuntimeReplay,
+) -> Result<[(NativeRuntimeCase, Vec<MeasuredArtifact>); 2], String> {
     let name = fixture
         .file_stem()
         .and_then(|value| value.to_str())
@@ -1002,13 +1032,157 @@ fn measure_native_case(
                 fixture.display()
             )
         })?;
-    let source_text = fs::read_to_string(fixture)
-        .map_err(|error| format!("failed to read {}: {error}", fixture.display()))?;
     let input = CaseInput {
         name: name.to_string(),
         path: fixture.to_path_buf(),
-        source_text,
+        source_text: fs::read_to_string(fixture)
+            .map_err(|error| format!("failed to read {}: {error}", fixture.display()))?,
     };
+    let batch_iterations = if config.iterations <= 5 {
+        200_000
+    } else {
+        20_000_000
+    };
+    let seed = 17i64;
+    // One immutable allocation is shared by every version/mode/calibration channel.
+    let proof_values = (name == "proof_loop").then(|| {
+        (0..batch_iterations)
+            .map(|index| index % 4_093 - 2_046)
+            .collect::<Vec<_>>()
+    });
+    let prepared = [
+        prepare_native_case(repo_root, &input, root, clang, false, config)?,
+        prepare_native_case(repo_root, &input, root, clang, true, config)?,
+    ];
+    let mut libraries = Vec::with_capacity(8);
+    let mut cold_ns = [0; 8];
+    let mut results = [0; 8];
+    for channel in 0..8 {
+        let mode = channel % 2;
+        let path = match channel / 2 {
+            0 => &prepared[mode].native_path,
+            1 => &prepared[mode].clang_path,
+            2 => {
+                &replay
+                    .artifacts
+                    .iter()
+                    .find(|artifact| {
+                        artifact.case == name && artifact.mode == ["unchecked", "checked"][mode]
+                    })
+                    .ok_or_else(|| "verified replay case disappeared".to_string())?
+                    .path
+            }
+            _ => &prepared[mode].replay_clang_path,
+        };
+        let start = Instant::now();
+        let library = DynamicLibrary::open(path)?;
+        results[channel] = unsafe {
+            // SAFETY: All eight libraries use the pinned fixture and the selected C ABI.
+            call_kernel(
+                &library,
+                mode == 1,
+                batch_iterations,
+                seed,
+                proof_values.as_deref(),
+            )?
+        };
+        cold_ns[channel] = start.elapsed().as_nanos();
+        libraries.push(library);
+    }
+    // Channel 2 is the independently compiled, frozen unchecked Clang oracle.
+    let reference = results[2];
+    for (channel, actual) in results.into_iter().enumerate() {
+        if actual != reference {
+            return Err(format!(
+                "{name}/channel-{channel} result mismatch: {actual} != {reference}"
+            ));
+        }
+    }
+    let sampled =
+        runtime_replay::sample_channels(config.warmup, config.iterations, |channel, warmup| {
+            if warmup {
+                measure_kernel_call(
+                    &libraries[channel],
+                    channel % 2 == 1,
+                    batch_iterations,
+                    seed,
+                    reference,
+                    proof_values.as_deref(),
+                )
+            } else {
+                measure_kernel_sample(
+                    &libraries[channel],
+                    channel % 2 == 1,
+                    batch_iterations,
+                    seed,
+                    reference,
+                    proof_values.as_deref(),
+                )
+            }
+        })?;
+    let mut output = Vec::with_capacity(2);
+    for (mode, prepared) in prepared.into_iter().enumerate() {
+        let native_samples_ns = sampled.channels[mode].clone();
+        let clang_c_samples_ns = sampled.channels[mode + 2].clone();
+        let replay_native_samples_ns = sampled.channels[mode + 4].clone();
+        let replay_clang_samples_ns = sampled.channels[mode + 6].clone();
+        let (v0_10_median_ns, v0_10_clang_median_ns) =
+            baseline.runtime_medians(config.cpu_policy, ["unchecked", "checked"][mode], name)?;
+        output.push((
+            NativeRuntimeCase {
+                name: name.to_string(),
+                reference_equivalent: true,
+                native_compile_ns: prepared.native_compile_ns,
+                clang_c_compile_ns: prepared.clang_c_compile_ns,
+                native_cold_ns: cold_ns[mode],
+                clang_c_cold_ns: cold_ns[mode + 2],
+                native_median_ns: median(&native_samples_ns),
+                clang_c_median_ns: median(&clang_c_samples_ns),
+                replay_native_median_ns: median(&replay_native_samples_ns),
+                replay_clang_median_ns: median(&replay_clang_samples_ns),
+                native_samples_ns,
+                clang_c_samples_ns,
+                replay_native_samples_ns,
+                replay_clang_samples_ns,
+                warmup_order: sampled.warmup_order.clone(),
+                sample_order: sampled.sample_order.clone(),
+                peak_memory_bytes: peak_memory_bytes(),
+                native_artifact_bytes: prepared.artifacts[0].bytes,
+                clang_c_artifact_bytes: prepared.artifacts[1].bytes,
+                batch_iterations,
+                result: reference,
+                v0_10_median_ns,
+                v0_10_clang_median_ns,
+                proof_loop: name == "proof_loop",
+            },
+            prepared.artifacts,
+        ));
+    }
+    output
+        .try_into()
+        .map_err(|_| "both runtime modes must be measured".into())
+}
+
+#[cfg(feature = "native-toolchain")]
+struct PreparedNativeCase {
+    native_path: PathBuf,
+    clang_path: PathBuf,
+    replay_clang_path: PathBuf,
+    native_compile_ns: u128,
+    clang_c_compile_ns: u128,
+    artifacts: Vec<MeasuredArtifact>,
+}
+
+#[cfg(feature = "native-toolchain")]
+fn prepare_native_case(
+    repo_root: &Path,
+    input: &CaseInput,
+    root: &Path,
+    clang: &Path,
+    checked: bool,
+    config: &Config,
+) -> Result<PreparedNativeCase, String> {
+    let name = &input.name;
     let overflow_mode = if checked {
         OverflowMode::Checked
     } else {
@@ -1020,21 +1194,9 @@ fn measure_native_case(
         BoundsMode::Unchecked
     };
     let suffix = if checked { "checked" } else { "unchecked" };
-    let batch_iterations = if config.iterations <= 5 {
-        200_000
-    } else {
-        20_000_000
-    };
-    let seed = 17i64;
-    let proof_values = (name == "proof_loop").then(|| {
-        (0..batch_iterations)
-            .map(|index| index % 4_093 - 2_046)
-            .collect::<Vec<_>>()
-    });
-
     let native_compile_start = Instant::now();
     let (_, native_kir) = compile_kir(
-        &input,
+        input,
         3,
         KirConsumer::NativeLibrary,
         overflow_mode,
@@ -1064,142 +1226,31 @@ fn measure_native_case(
     let native_path = root.join(format!("{name}-{suffix}-native{}", dynamic_suffix()));
     fs::write(&native_path, native.as_bytes())
         .map_err(|error| format!("failed to write {}: {error}", native_path.display()))?;
-
-    let clang_compile_start = Instant::now();
     let c_path = repo_root.join(format!(
         "benches/baselines/v0_10_c_oracle/{name}-{suffix}.c"
     ));
     let clang_path = root.join(format!("{name}-{suffix}-clang{}", dynamic_suffix()));
+    let clang_compile_start = Instant::now();
     compile_strict_clang_library(clang, &c_path, &clang_path, config.cpu_policy)?;
     let clang_c_compile_ns = clang_compile_start.elapsed().as_nanos();
-
-    let native_artifact_bytes = native.as_bytes().len();
-    let clang_c_artifact_bytes = usize::try_from(
-        fs::metadata(&clang_path)
-            .map_err(|error| format!("failed to inspect {}: {error}", clang_path.display()))?
-            .len(),
-    )
-    .map_err(|_| "Clang artifact length exceeds usize".to_string())?;
-
-    let native_cold_start = Instant::now();
-    let native_library = DynamicLibrary::open(&native_path)?;
-    let native_result = unsafe {
-        call_kernel(
-            &native_library,
-            checked,
-            batch_iterations,
-            seed,
-            proof_values.as_deref(),
-        )?
-    };
-    let native_cold_ns = native_cold_start.elapsed().as_nanos();
-
-    let clang_c_cold_start = Instant::now();
-    let clang_library = DynamicLibrary::open(&clang_path)?;
-    let clang_result = unsafe {
-        call_kernel(
-            &clang_library,
-            checked,
-            batch_iterations,
-            seed,
-            proof_values.as_deref(),
-        )?
-    };
-    let clang_c_cold_ns = clang_c_cold_start.elapsed().as_nanos();
-    let reference_equivalent = native_result == clang_result;
-    if !reference_equivalent {
-        return Err(format!(
-            "{name}/{suffix} result mismatch: native={native_result}, clang={clang_result}"
-        ));
-    }
-
-    for _ in 0..config.warmup {
-        black_box(unsafe {
-            call_kernel(
-                &native_library,
-                checked,
-                batch_iterations,
-                seed,
-                proof_values.as_deref(),
-            )?
-        });
-        black_box(unsafe {
-            call_kernel(
-                &clang_library,
-                checked,
-                batch_iterations,
-                seed,
-                proof_values.as_deref(),
-            )?
-        });
-    }
-    let mut native_samples_ns = Vec::with_capacity(config.iterations);
-    let mut clang_c_samples_ns = Vec::with_capacity(config.iterations);
-    for index in 0..config.iterations {
-        if index % 2 == 0 {
-            native_samples_ns.push(measure_kernel_sample(
-                &native_library,
-                checked,
-                batch_iterations,
-                seed,
-                native_result,
-                proof_values.as_deref(),
-            )?);
-            clang_c_samples_ns.push(measure_kernel_sample(
-                &clang_library,
-                checked,
-                batch_iterations,
-                seed,
-                clang_result,
-                proof_values.as_deref(),
-            )?);
-        } else {
-            clang_c_samples_ns.push(measure_kernel_sample(
-                &clang_library,
-                checked,
-                batch_iterations,
-                seed,
-                clang_result,
-                proof_values.as_deref(),
-            )?);
-            native_samples_ns.push(measure_kernel_sample(
-                &native_library,
-                checked,
-                batch_iterations,
-                seed,
-                native_result,
-                proof_values.as_deref(),
-            )?);
-        }
-    }
-    let native_median_ns = median(&native_samples_ns);
-    let clang_c_median_ns = median(&clang_c_samples_ns);
-
-    let (v0_10_median_ns, v0_10_clang_median_ns) = baseline.runtime_medians(
-        config.cpu_policy,
-        if checked { "checked" } else { "unchecked" },
-        name,
-    )?;
-
-    Ok(NativeRuntimeCase {
-        name: name.to_string(),
-        reference_equivalent,
+    // Compile a separate calibration copy; never ask the candidate to emit C.
+    let replay_clang_path = root.join(format!("{name}-{suffix}-replay-clang{}", dynamic_suffix()));
+    compile_strict_clang_library(clang, &c_path, &replay_clang_path, config.cpu_policy)?;
+    let artifacts = [
+        ("candidateNative", &native_path),
+        ("currentClang", &clang_path),
+        ("replayClang", &replay_clang_path),
+    ]
+    .into_iter()
+    .map(|(channel, path)| MeasuredArtifact::new(name, suffix, channel, path))
+    .collect::<Result<Vec<_>, _>>()?;
+    Ok(PreparedNativeCase {
+        native_path,
+        clang_path,
+        replay_clang_path,
         native_compile_ns,
         clang_c_compile_ns,
-        native_cold_ns,
-        clang_c_cold_ns,
-        native_samples_ns,
-        clang_c_samples_ns,
-        native_median_ns,
-        clang_c_median_ns,
-        peak_memory_bytes: peak_memory_bytes(),
-        native_artifact_bytes,
-        clang_c_artifact_bytes,
-        batch_iterations,
-        result: native_result,
-        v0_10_median_ns,
-        v0_10_clang_median_ns,
-        proof_loop: name == "proof_loop",
+        artifacts,
     })
 }
 
@@ -1402,12 +1453,16 @@ fn clang_version(clang: &Path) -> Result<String, String> {
 }
 
 #[cfg(feature = "native-toolchain")]
-fn runtime_temp_dir() -> Result<PathBuf, String> {
+fn runtime_evidence_dir(repo_root: &Path) -> Result<PathBuf, String> {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("system clock error: {error}"))?
         .as_nanos();
-    Ok(env::temp_dir().join(format!("ckc-native-perf-{}-{unique}", process::id())))
+    let parent = repo_root.join("target/ckc-perf");
+    fs::create_dir_all(&parent).map_err(|error| format!("create evidence parent: {error}"))?;
+    let root = parent.join(format!("measurement-{}-{unique}", process::id()));
+    fs::create_dir(&root).map_err(|error| format!("create fresh evidence directory: {error}"))?;
+    Ok(root)
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -1436,6 +1491,67 @@ struct NativeRuntimeReport {
     suites: Vec<NativeRuntimeSuite>,
     baseline: CompilerBaseline,
     optimizer: Vec<OptimizerComparison>,
+    replay: runtime_replay::RuntimeReplay,
+    evidence_directory: String,
+    measured_artifacts: Vec<MeasuredArtifact>,
+}
+
+#[cfg(feature = "native-toolchain")]
+struct MeasuredArtifact {
+    case: String,
+    mode: String,
+    channel: String,
+    file: String,
+    bytes: u64,
+    sha256: String,
+}
+
+#[cfg(feature = "native-toolchain")]
+impl MeasuredArtifact {
+    fn new(case: &str, mode: &str, channel: &str, path: &Path) -> Result<Self, String> {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("inspect measured artifact: {error}"))?;
+        if !metadata.file_type().is_file() || metadata.len() == 0 {
+            return Err("measured artifact must be a nonempty regular file".into());
+        }
+        Ok(Self {
+            case: case.into(),
+            mode: mode.into(),
+            channel: channel.into(),
+            file: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| "invalid artifact basename".to_string())?
+                .into(),
+            bytes: metadata.len(),
+            sha256: runtime_replay::sha256_file(path)?,
+        })
+    }
+
+    fn verify(&self, root: &Path) -> Result<(), String> {
+        let actual = Self::new(
+            &self.case,
+            &self.mode,
+            &self.channel,
+            &root.join(&self.file),
+        )?;
+        if actual.bytes != self.bytes || actual.sha256 != self.sha256 {
+            return Err(format!("measured artifact changed: {}", self.file));
+        }
+        Ok(())
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            r#"{{"case":"{}","mode":"{}","channel":"{}","file":"{}","bytes":{},"sha256":"{}"}}"#,
+            json_escape(&self.case),
+            json_escape(&self.mode),
+            json_escape(&self.channel),
+            json_escape(&self.file),
+            self.bytes,
+            self.sha256
+        )
+    }
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -1456,9 +1572,15 @@ struct NativeRuntimeCase {
     clang_c_samples_ns: Vec<u128>,
     native_median_ns: u128,
     clang_c_median_ns: u128,
+    replay_native_samples_ns: Vec<u128>,
+    replay_clang_samples_ns: Vec<u128>,
+    replay_native_median_ns: u128,
+    replay_clang_median_ns: u128,
+    warmup_order: Vec<[usize; 8]>,
+    sample_order: Vec<[usize; 8]>,
     peak_memory_bytes: u64,
-    native_artifact_bytes: usize,
-    clang_c_artifact_bytes: usize,
+    native_artifact_bytes: u64,
+    clang_c_artifact_bytes: u64,
     batch_iterations: i64,
     result: i64,
     v0_10_median_ns: u128,
@@ -1477,7 +1599,46 @@ struct OptimizerComparison {
 impl NativeRuntimeReport {
     fn to_json(&self) -> String {
         let mut output = String::new();
-        output.push_str("{\n  \"schemaVersion\": 5,\n");
+        output.push_str("{\n  \"schemaVersion\": 6,\n");
+        output.push_str(&format!(
+            "  \"candidateVersion\": \"{}\",\n",
+            env!("CARGO_PKG_VERSION")
+        ));
+        output.push_str("  \"samplingProtocol\": \"rotating-eight-channel-v1\",\n");
+        output.push_str("  \"channelNames\": [\"candidateNativeUnchecked\",\"candidateNativeChecked\",\"currentClangUnchecked\",\"currentClangChecked\",\"replayNativeUnchecked\",\"replayNativeChecked\",\"replayClangUnchecked\",\"replayClangChecked\"],\n");
+        let replay_metadata = self
+            .replay
+            .metadata
+            .iter()
+            .map(|(key, value)| format!("\"{}\":\"{}\"", json_escape(key), json_escape(value)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let replay_artifacts = self
+            .replay
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                format!(
+                    r#"{{"case":"{}","mode":"{}","file":"{}","bytes":{},"sha256":"{}"}}"#,
+                    json_escape(&artifact.case),
+                    json_escape(&artifact.mode),
+                    json_escape(&artifact.path.file_name().unwrap().to_string_lossy()),
+                    artifact.bytes,
+                    artifact.sha256
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        output.push_str(&format!("  \"runtimeReplay\": {{\"metadata\": {{{replay_metadata}}}, \"manifestSha256\": \"{}\", \"artifacts\": [{replay_artifacts}]}},\n", self.replay.manifest_sha256));
+        output.push_str(&format!(
+            "  \"evidenceDirectory\": \"{}\",\n  \"measuredArtifacts\": [{}],\n",
+            json_escape(&self.evidence_directory),
+            self.measured_artifacts
+                .iter()
+                .map(MeasuredArtifact::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
         output.push_str(&format!(
             "  \"cpuPolicy\": \"{}\",\n",
             match self.cpu_policy {
@@ -1546,7 +1707,7 @@ impl NativeRuntimeReport {
 #[cfg(feature = "native-toolchain")]
 impl NativeRuntimeCase {
     fn to_json(&self) -> String {
-        format!(
+        let mut output = format!(
             "      {{ \"name\": \"{}\", \"referenceEquivalent\": {}, \"nativeCompileNs\": {}, \"clangCCompileNs\": {}, \"nativeColdNs\": {}, \"clangCColdNs\": {}, \"nativeMedianNs\": {}, \"clangCMedianNs\": {}, \"v010MedianNs\": {}, \"v010ClangMedianNs\": {}, \"proofLoop\": {}, \"nativeSamplesNs\": {}, \"clangCSamplesNs\": {}, \"peakMemoryBytes\": {}, \"nativeArtifactBytes\": {}, \"clangCArtifactBytes\": {}, \"batchIterations\": {}, \"result\": {} }}",
             json_escape(&self.name),
             self.reference_equivalent,
@@ -1566,8 +1727,35 @@ impl NativeRuntimeCase {
             self.clang_c_artifact_bytes,
             self.batch_iterations,
             self.result,
-        )
+        );
+        output.truncate(output.trim_end().len() - 1);
+        output.push_str(&format!(", \"replayNativeMedianNs\": {}, \"replayClangMedianNs\": {}, \"replayNativeSamplesNs\": {}, \"replayClangSamplesNs\": {}, \"warmupOrder\": {}, \"sampleOrder\": {} }}",
+            self.replay_native_median_ns, self.replay_clang_median_ns,
+            json_u128_array(&self.replay_native_samples_ns), json_u128_array(&self.replay_clang_samples_ns),
+            json_sampling_order(&self.warmup_order), json_sampling_order(&self.sample_order)));
+        output
     }
+}
+
+#[cfg(feature = "native-toolchain")]
+fn json_sampling_order(rounds: &[[usize; 8]]) -> String {
+    format!(
+        "[{}]",
+        rounds
+            .iter()
+            .map(|round| {
+                format!(
+                    "[{}]",
+                    round
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 #[cfg(feature = "native-toolchain")]

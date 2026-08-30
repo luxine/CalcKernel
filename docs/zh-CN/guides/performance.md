@@ -9,7 +9,7 @@ strict floating-point、相同 target/CPU policy/mode、固定输入、warm-up�
 Native/Clang geometric-mean throughput 至少 95%，单 case 回退不超过 10%；checked 与
 unchecked 在 x86-64/AArch64 worker 上以 portable baseline CPU policy 分别验收。每次运行
 都由同一 Clang 22.1.8 编译精确 0.10 compiler 生成且摘要固定的 C oracle；native-CPU 测量
-只用于调查，不与冻结 baseline 比较。相对精确固定的 0.10 compiler，门禁比较
+不属于这个 baseline 重放协议，不能用于 release 对比。相对精确固定的 0.10 compiler，门禁比较
 `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)`，geometric 回退最多 3%、
 单 case 最多 8%。四个计时项在同一 worker 的同一进程中采样，使用独立构建的固定
 0.10 Native libraries 和同一冻结 0.10 C oracle。仅靠 Clang 归一化不能消除任意 CPU
@@ -21,6 +21,7 @@ ratio 最多 2x、单 case 最多 3x。
 
 ```sh
 cargo bench --bench ckc_perf
+# 先将 CKC_LLVM_PREFIX 和 CKC_CLANG_ORACLE 指向固定 LLVM/Clang 安装。
 python3 scripts/prepare-performance-replay.py --out target/ckc-perf/v010-replay
 export CKC_V010_RUNTIME_BUNDLE="$PWD/target/ckc-perf/v010-replay"
 cargo bench --features native-toolchain --bench ckc_perf -- \
@@ -32,6 +33,14 @@ python3 scripts/check-native-performance.py target/ckc-perf/results.json
 baseline worktree。只应用下述四份固定 adapter，校验源码/工具链身份并记录实际编译器
 与八份 library 的摘要。同一准备/重放 recipe 可以复用完整 bundle；recipe 改变时选择
 新的输出目录。缺少或被修改的重放证据必须报错。
+开发流程需要 Python 3.11+、包含固定 commit 的 Git 历史、Rust 1.90.0 与固定的
+LLVM/Clang 22.1.8 安装。CI 获取完整历史后再准备本地 clone。Checker 同样要求设置
+`CKC_LLVM_PREFIX`，用于核对已安装组件 manifest 的摘要。
+
+Report 必须与相对它定位的 `target/ckc-perf/measurement-<pid>-<timestamp>` 目录一起
+保留，同时保留选定 replay bundle 的 `ckc-v010`、八份 library、`replay.tsv` 与
+`preparation.log`。候选两种模式与两份 Clang 对照库均在测量前后核对摘要；精确调度
+顺序与每模式四组样本全部记录。只移动 report 会丢失验收所需证据。
 
 严格 schema-6 report 是 `target/ckc-perf/results.json`；case manifest 位于
 `benches/cases/native-cases.tsv`，schema 位于 `benches/summary-schema.md`。

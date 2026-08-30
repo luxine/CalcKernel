@@ -13,8 +13,8 @@ For the geometric mean of accepted kernels, Native throughput must be at least
 and unchecked suites are reported and gated separately on x86-64 and AArch64
 workers under the portable baseline CPU policy. Each run compiles the
 digest-pinned C oracle emitted by the exact 0.10 compiler with the same Clang
-22.1.8 process used to calibrate the candidate. Native-CPU measurements remain
-available for investigation but are not compared with the frozen baseline.
+22.1.8 process used to calibrate the candidate. Native-CPU policy is not part of
+this baseline replay protocol and cannot satisfy the release comparison.
 
 Relative to the exact pinned 0.10 compiler, the gate compares
 `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` and permits at
@@ -35,6 +35,7 @@ Run the contract harness with:
 
 ```sh
 cargo bench --bench ckc_perf
+# Set CKC_LLVM_PREFIX and CKC_CLANG_ORACLE to the pinned LLVM/Clang installation.
 python3 scripts/prepare-performance-replay.py --out target/ckc-perf/v010-replay
 export CKC_V010_RUNTIME_BUNDLE="$PWD/target/ckc-perf/v010-replay"
 cargo bench --features native-toolchain --bench ckc_perf -- \
@@ -48,6 +49,16 @@ applies only the four frozen adapters below, validates source/toolchain identity
 and hashes the actual compiler and eight libraries. Reuse an intact bundle only
 with the same preparation/replay recipe; choose a new output directory when that
 recipe changes. Missing or modified replay evidence is a hard error.
+The development workflow requires Python 3.11+, Git history containing the fixed
+commit, Rust 1.90.0, and the pinned LLVM/Clang 22.1.8 installation. CI fetches full
+history before preparing the local clone. The checker also requires
+`CKC_LLVM_PREFIX` to verify the installed component-manifest digest.
+
+Retain the report-relative `target/ckc-perf/measurement-<pid>-<timestamp>` directory
+alongside the report, plus the selected replay bundle's `ckc-v010`, eight libraries,
+`replay.tsv` and `preparation.log`. Both candidate modes and the two Clang copies
+are hashed before/after measurement. The exact schedule and all four sample arrays
+per mode are recorded; moving a report alone loses required evidence.
 
 The strict schema-6 result is `target/ckc-perf/results.json`. Cases
 live in `benches/cases/native-cases.tsv`, sources under `benches/fixtures`, and

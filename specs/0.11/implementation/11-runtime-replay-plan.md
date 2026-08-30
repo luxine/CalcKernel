@@ -99,28 +99,28 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
 **Files:** `benches/ckc_perf.rs`, `benches/runtime_replay.rs`,
 `tests/performance/bench.rs` and a focused sampling test module.
 
-- [ ] Add a pure scheduler test before implementation. There are eight channels:
+- [x] Add a pure scheduler test before implementation. There are eight channels:
   candidate Native unchecked/checked, current Clang unchecked/checked, V0.10 Native
   unchecked/checked, and replay Clang unchecked/checked. For round `r`, visit channel
   `(r + offset) % 8` for offsets 0 through 7. Assert each appears once per round and
   each occupies each position either two or three times across twenty rounds.
   The schedule is deterministic and never depends on measured durations.
-- [ ] Split existing case preparation from measurement. Prepare both modes and all
+- [x] Split existing case preparation from measurement. Prepare both modes and all
   libraries before warm-up; the two Clang copies independently compile the same
   digest-pinned V0.10 C source with the unchanged strict Clang command/CPU flags.
   Candidate code must not produce either C calibration source or V0.10 Native code.
-- [ ] Build the existing deterministic inputs once per kernel and share those same
+- [x] Build the existing deterministic inputs once per kernel and share those same
   inputs across all eight channels. Preserve the checked status/out-slot and slice
   ABIs, seed 17, batch length and proof values. Verify all results against the frozen
   C oracle before measurement and on every timed call; nonzero status is failure.
-- [ ] Warm all channels three times using the fixed schedule, then execute twenty
+- [x] Warm all channels three times using the fixed schedule, then execute twenty
   scheduled rounds. Keep the original seven-call minimum for each channel/sample.
   Record all eight sample arrays, schedule identity and exact round order. This
   removes whole-suite mode separation; it does not prove the host is exclusive.
-- [ ] Keep the existing six-case optimizer timing code, frozen MIR medians, counts
+- [x] Keep the existing six-case optimizer timing code, frozen MIR medians, counts
   and preparation/timer boundary unchanged. Preserve existing compile/cold/memory/
   artifact-size quantities as separate measurements, not runtime denominators.
-- [ ] Preserve the actual measured libraries and their hashes in an ignored evidence
+- [x] Preserve the actual measured libraries and their hashes in an ignored evidence
   directory referenced safely by the report. This replaces the diagnostic's empty
   `.text` extraction as primary code evidence: whole files are always nonempty.
   Disassembly may still be diagnostic; never infer equality from an empty section.
@@ -130,27 +130,27 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
 **Files:** `scripts/check-native-performance.py`, `benches/summary-schema.md`,
 `tests/performance/bench.rs`, related test fixtures.
 
-- [ ] Keep `baselineV010` and existing `v010MedianNs`/`v010ClangMedianNs` as immutable
+- [x] Keep `baselineV010` and existing `v010MedianNs`/`v010ClangMedianNs` as immutable
   historical provenance, still checked against the unchanged schema-2 manifest.
   Add actual replay Native/Clang sample arrays and upper medians per runtime case.
   Add bundle/compiler/recipe identity and exact artifact digests, plus the fixed
   sampling protocol and complete schedule. Increment only native report schema to 6;
   general compiler summary remains schema 1 and frozen baseline stays schema 2.
-- [ ] The checker verifies replay bundle identity/files against report metadata,
+- [x] The checker verifies replay bundle identity/files against report metadata,
   recomputes all four stream medians per mode, and rejects unstable/missing/duplicate
   arrays. Candidate/Clang still uses candidate streams. The V0.10 gate now uses
   `(candidateNative / currentClang) / (replayV010Native / replayClang)`.
   Raw proof throughput still uses candidate unchecked/checked medians only.
-- [ ] Add the actual I14 numerical counterexample as a synthetic regression:
+- [x] Add the actual I14 numerical counterexample as a synthetic regression:
   candidate and replay V0.10 identical on the new worker must not be called a
   regression because of the historical Native/Clang ratio. Independently inject
   >3% geometric and >8% individual actual replay regressions and require rejection.
-- [ ] Retain every existing negative gate (95%, 10%, 97%, 2x, 3x, identity, corpus,
+- [x] Retain every existing negative gate (95%, 10%, 97%, 2x, 3x, identity, corpus,
   stability, source and frozen-history tampering). Add forged replay medians/sample
   counts, changed hashes, wrong protocol/order, wrong baseline compiler, candidate
   substituted for baseline, non-finite timings, and missing replay/artifact evidence. No unchecked or
   uncalibrated fallback path may return a passing report.
-- [ ] A changed artifact after preparation must be detected by both loader and
+- [x] A changed artifact after preparation must be detected by both loader and
   checker. Missing dev tooling/preparation must produce an actionable hard error,
   not silent use of historical numbers. Small `--quick` runs remain investigative
   and cannot pass the strict twenty-sample checker.
@@ -161,21 +161,21 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
 `docs/guides/performance.md`, master/stage-11/final acceptance, `.github/workflows/ci.yml`,
 `scripts/diagnose-native-performance.sh`, CI and documentation contract tests.
 
-- [ ] Both existing performance jobs prepare the pinned compiler bundle before the
+- [x] Both existing performance jobs prepare the pinned compiler bundle before the
   original full benchmark/checker step; no job becomes optional. Upload the preparation
   provenance, exact bundle, actual measured libraries and first report on success/failure.
   Preparation failures remain job failures. Do not relabel old failed runs as passing.
-- [ ] Preserve failure diagnostics, but avoid rebuilding another different baseline
+- [x] Preserve failure diagnostics, but avoid rebuilding another different baseline
   or exporting an empty `.text` as evidence. Use the already-measured, hashed complete
   artifacts; require nonempty executable sections if producing section-only diagnostics.
-- [ ] Update source-order CI tests and Python/checker invocation tests, keeping the
+- [x] Update source-order CI tests and Python/checker invocation tests, keeping the
   quality/native-integration/six-host/two-performance matrix and cache policy unchanged.
 
 ## Task 5: Validation and first-run evidence
 
-- [ ] Run targeted negative tests and actual preparation; verify the actual baseline
+- [x] Run targeted negative tests and actual preparation; verify the actual baseline
   compiler is 0.10.0 and the candidate 0.11.0, with unchanged source/adapter identities.
-- [ ] Run default/all-feature tests sequentially, release library/IR mutation tests,
+- [x] Run default/all-feature tests sequentially, release library/IR mutation tests,
   all-target/all-feature Clippy, fmt and diff checks. Real Windows SDK CI remains
   separate from local macro simulation. Do not run builds while timing performance.
 - [ ] Commit implementation and run the first complete native performance gate on

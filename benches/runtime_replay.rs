@@ -18,6 +18,44 @@ pub const RUNTIME_CASES: [&str; 4] = [
     "remainder_chain",
 ];
 
+pub fn sampling_round(round: usize) -> [usize; 8] {
+    std::array::from_fn(|offset| (round % 8 + offset) % 8)
+}
+
+#[derive(Debug)]
+pub struct RuntimeSamples {
+    pub warmup_order: Vec<[usize; 8]>,
+    pub sample_order: Vec<[usize; 8]>,
+    pub channels: [Vec<u128>; 8],
+}
+
+pub fn sample_channels<E>(
+    warmup: usize,
+    iterations: usize,
+    mut call: impl FnMut(usize, bool) -> Result<u128, E>,
+) -> Result<RuntimeSamples, E> {
+    let mut result = RuntimeSamples {
+        warmup_order: Vec::new(),
+        sample_order: Vec::new(),
+        channels: std::array::from_fn(|_| Vec::with_capacity(iterations)),
+    };
+    for round in 0..warmup {
+        let order = sampling_round(round);
+        for channel in order {
+            call(channel, true)?;
+        }
+        result.warmup_order.push(order);
+    }
+    for round in 0..iterations {
+        let order = sampling_round(round);
+        for channel in order {
+            result.channels[channel].push(call(channel, false)?);
+        }
+        result.sample_order.push(order);
+    }
+    Ok(result)
+}
+
 #[derive(Debug)]
 pub struct ReplayArtifact {
     pub case: String,

@@ -16,6 +16,30 @@ struct Bundle {
 }
 
 #[test]
+fn replay_sampling_should_rotate_every_channel_once_and_balance_positions() {
+    let mut positions = [[0; 8]; 8];
+    for round in 0..20 {
+        let order = replay_api::sampling_round(round);
+        assert_eq!(order, std::array::from_fn(|offset| (round + offset) % 8));
+        let mut sorted = order;
+        sorted.sort();
+        assert_eq!(sorted, [0, 1, 2, 3, 4, 5, 6, 7]);
+        for (position, channel) in order.into_iter().enumerate() {
+            positions[channel][position] += 1;
+        }
+        assert_eq!(replay_api::sampling_round(round + 8), order);
+    }
+    assert!(
+        positions
+            .into_iter()
+            .flatten()
+            .all(|count| matches!(count, 2 | 3))
+    );
+    // An arbitrary investigation round must not overflow the schedule arithmetic.
+    assert_eq!(replay_api::sampling_round(usize::MAX)[0], usize::MAX % 8);
+}
+
+#[test]
 fn replay_preparation_should_validate_pinned_sources_and_actual_compiler_output() {
     let output = std::process::Command::new("python3")
         .arg(super::support::oracle::repo_root().join("tests/performance/runtime_replay_test.py"))
@@ -27,6 +51,58 @@ fn replay_preparation_should_validate_pinned_sources_and_actual_compiler_output(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn replay_sampling_should_execute_and_record_the_exact_warmup_and_sample_order() {
+    let mut calls = Vec::new();
+    let samples = replay_api::sample_channels(3, 20, |channel, warmup| {
+        calls.push((channel, warmup));
+        Ok::<_, ()>(calls.len() as u128)
+    })
+    .unwrap();
+    let expected_warmup = (0..3).map(replay_api::sampling_round).collect::<Vec<_>>();
+    let expected_samples = (0..20).map(replay_api::sampling_round).collect::<Vec<_>>();
+    assert_eq!(samples.warmup_order, expected_warmup);
+    assert_eq!(samples.sample_order, expected_samples);
+    let expected_calls = expected_warmup
+        .iter()
+        .flatten()
+        .map(|&channel| (channel, true))
+        .chain(
+            expected_samples
+                .iter()
+                .flatten()
+                .map(|&channel| (channel, false)),
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(calls, expected_calls);
+    for channel in 0..8 {
+        let expected_values = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &call)| (call == (channel, false)).then_some((index + 1) as u128))
+            .collect::<Vec<_>>();
+        assert_eq!(samples.channels[channel], expected_values);
+        assert_eq!(samples.channels[channel].len(), 20);
+    }
+}
+
+#[test]
+fn replay_sampling_should_stop_immediately_on_any_warmup_or_timed_error() {
+    for failing_call in [1, 24, 25, 184] {
+        let mut calls = 0;
+        let result = replay_api::sample_channels(3, 20, |_, _| {
+            calls += 1;
+            if calls == failing_call {
+                Err("result/status mismatch")
+            } else {
+                Ok(1)
+            }
+        });
+        assert_eq!(result.unwrap_err(), "result/status mismatch");
+        assert_eq!(calls, failing_call);
+    }
 }
 
 impl Bundle {
