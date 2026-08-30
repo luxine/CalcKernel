@@ -95,6 +95,10 @@ I23 按 `11-interrupt-handoff-plan.md` 修复 Unix run 的 SIGINT 登记竞态�
 生产模块和隔离进程复现丢失，再实现单原子 pending 交接。原 public test 仍只发一次
 SIGINT 并严格要求 245/CKR0006，增加有限失败期限和自有进程清理，不以延时掩盖问题。
 
+I24 补齐切换时遗漏的三项 legacy preservation 回归，保留阶段 02 原测试过滤器，
+在 verified KIR 的 O0–O3 路径断言控制流、typed print 顺序和 checked-bounds slice
+调用/返回。原命令必须实际运行 3 项测试；详细测试限定计划见 review，不恢复旧优化路径。
+
 1. 先写 repository scan、version/ABI/compat manifest red tests，再完成全仓切换与版本。
 2. 先写 generated/mutation corpus 的故障注入，再实现 harness，固定 seed/schema。
 3. 先用 synthetic report 证明四类 performance threshold 会分别拒绝，再跑真实测量。

@@ -93,6 +93,26 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 
 ## 完成证据
 
+### I23 首次完整本机性能门（`99ffb34`，2026-08-30）
+
+- 被测提交为 `99ffb34d6c58402a155bb4401c033513ca819462`，工作区干净；
+  `cargo +1.90.0 bench --features native-toolchain --bench ckc_perf -- --task check --cpu baseline`
+  exit 0。四 runtime kernels、六 optimizer cases、全部既定采样参数不变，未重新计时。
+- 同一份首次报告在原始目录及完整归档目录均通过原 schema-6 checker，exit 0；
+  unchecked Clang throughput geo / actual replay V0.10 ratio 为 `0.9995 / 1.0006`，
+  checked 为 `0.9969 / 0.9990`，raw proof throughput 为 `0.9997`，optimizer suite
+  median ratio 为 `1.1630`；全部 individual gates、产物/编译器摘要与采样顺序检查通过。
+- report / benchmark / successful checker SHA-256 分别为
+  `7feb314cb279204c6eb4bb0a67e82719762434818849a0e13eddeb56b5abc3e0`、
+  `a172490cf9e38eb52bdad6986eb1197c331f887b58083472ca588b13505e8469`、
+  `6934479b9ac06c2e7c2a84ab43ced593f673b4726bc55605313500ea59fa478b`。
+  原始位置与归档报告逐字节相同；24 个本轮实际计时产物及固定 bundle 的 8 个产物均校验。
+- 最初只复制报告、未复制相对 `measurement-*` 目录的归档校验失败；随后单独校验命令
+  遗漏 `CKC_LLVM_PREFIX` 也被拒绝。两份操作失败日志原样保留。补齐产物原件及相同的
+  pinned 环境后，对同一报告重做只读校验通过；没有改报告、checker、采样参数或重跑计时。
+- 测量期间本任务没有其他编译/测试；共享主机的其他应用不受本任务控制，不声明独占。
+  全矩阵仍待这个实现的真实平台证据，不将 `5895242` 的部分 CI 通过拼接为本提交验收。
+
 ### I22 提交首次完整本机门禁（`5895242`，2026-08-30）
 
 - 被测提交为 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`。原完整 benchmark

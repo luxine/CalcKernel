@@ -116,7 +116,7 @@ if child > 0 {
 
 - [x] 执行阶段 11 原 default/all-feature/Clippy/fmt/release、generated/mutation/fact-audit、
   artifact/JIT 检查；保留 0 failed/ignored 和确切工具链身份。
-- [ ] 提交已验证实现与本地证据，再以该确切 SHA 做第一次完整 schema-6 性能门及 checker，
+- [x] 提交已验证实现与本地证据，再以该确切 SHA 做第一次完整 schema-6 性能门及 checker，
   保留首次原件、全部门槛不变；性能证据在后续验收记录中追加，不伪称提交能引用自身摘要。
 - [ ] 等待原两个 Windows cold oracle 构建保存合格缓存，不因这个
   Darwin 问题取消整个旧 workflow。推送 feature branch，显式触发新 SHA 完整 10 jobs。

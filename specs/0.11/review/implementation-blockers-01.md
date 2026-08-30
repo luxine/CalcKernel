@@ -1071,6 +1071,28 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `cd3a8a27f34c0e4f796287ba51b619ee0ed22c114cac5879606d983dfaac35a2`。
 - 这不是阶段 11 签收；仍需该实现提交的首次性能及新同 SHA 六 host/十项 CI。
 
+## I24：阶段 02 的三项 legacy preservation 回归未迁移（已复诊，待补测试）
+
+- 对当前 default/all-feature/release 完整日志逐项映射阶段 01–10 的测试命令，只有
+  阶段 02 的 `optimizer_should_preserve` 匹配 0 项。实际运行原命令确认 0 passed /
+  100 filtered out，不能当作三项验收成功；原日志 SHA-256 为
+  `858bc97c0684f19e0952ccc09232b7da25759a1330fcd3132bd42cc6a5c742a2`。
+- `9427203:tests/optimizer/passes.rs` 的原三项分别检查 O0–O3 break/continue CFG、
+  PrintI32/PrintBool/PrintNewline 的数量与顺序、checked-bounds slice 内部调用和返回。
+  阶段 11 删除旧 MIR optimizer 时没有把这三个完整断言组一起迁到当前测试 driver；
+  现有零散测试覆盖相关行为，但不能替代这个明确的全级别回归入口。
+- 修复计划（测试限定）：先提交本项复诊；新增 `tests/optimizer/preservation.rs` 并在
+  `tests/optimizer.rs` 注册，复用 `support::compiler::optimized_module` 的 verified
+  KIR 路径，保留三个 `optimizer_should_preserve_*` 名称及所有四个优化级别。
+  控制流验证导出/return/有效 KIR；打印直接比较 typed runtime intrinsic 与 effect order；
+  slice 保留类型检查，并在 checked bounds 下用 C 后端实际验证返回的 data/len，
+  覆盖空和非空长度。允许设计规定的合法 inline，不把旧 MIR 的文本形式强加给 KIR。
+- 执行原验收命令并严格要求 3 passed / 0 failed / 0 ignored，再执行完整
+  default/all-feature、Clippy、fmt/diff 与文档回归。不得改成空过滤器、忽略测试或恢复
+  旧优化路径。无需生产实现改动；若新测试暴露真实实现错误，先另行复诊再修复。
+- 同步阶段 02 记录测试入口重新接通；阶段 11 同 SHA 全矩阵与总验收仍是必需条件，
+  本项不改变原性能报告、数值门槛、语言/ABI 或 final acceptance 顺序。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

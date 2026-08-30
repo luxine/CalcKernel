@@ -21,6 +21,10 @@
 
 ## 完成证据
 
+阶段 11 切换后的 I24 复诊见 `../review/implementation-blockers-01.md`：原第 3 条
+命令在旧 MIR tests 删除后匹配 0 项，当前尚未重新签收。必须将原三个 preservation
+断言组迁到 verified KIR，并恢复该命令的 3 项实际测试；不能以 exit 0 的空运行代签。
+
 - 日期：2026-08-29
 - 实现提交：`9427203`
 - `cargo test --locked --test ir kir_ -- --nocapture`：18 passed，0 failed，0 ignored。
