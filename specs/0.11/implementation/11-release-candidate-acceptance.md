@@ -56,3 +56,19 @@
 
 首轮候选 CI 的真实阻断、原始 job 与不降门槛的修订边界见
 `../review/implementation-blockers-01.md`；必须在修复后的完整 matrix 全绿后补写复审结论。
+
+### 本机固定 V0.10 optimizer 基线补采（2026-08-30，尚非阶段通过）
+
+- 固定 `df816502876fba41676f9ebc190e4fadd18cd5a5`，仅使用摘要固定的 benchmark
+  adapters，Rust `1.90.0`、LLVM/Clang `22.1.8`、AArch64 macOS baseline CPU；执行
+  `cargo +1.90.0 bench --features native-toolchain --bench ckc_perf -- --task check --cpu baseline`
+  返回 `0`。测量期间本机先前占用多核的其他项目任务已退出，未修改其他项目或进程。
+- 原 macOS 六个 optimizer 字段尚为 frontend-inclusive 计时，现改为与两 Linux runner
+  相同的 fixed MIR-pass timer；冻结在运行当前候选的本机 performance gate 之前，不用
+  候选结果反向选择 baseline。八项已正确采集的 Native/Clang runtime baseline 保持不变。
+- MIR-only upper median ns：pricing `83334`、pricing-soa `68583`、f64-kernels
+  `162375`、proof `40375`、example-pricing `66709`、example-dijkstra `350000`。
+- 原始 `v0-10-mir-optimizer.tsv` SHA-256：
+  `676755f73d5bb698caa09f8f8af314db1a347909999d9d5fa79d38a5b33c3ca3`；同轮
+  runtime report SHA-256：`fb10e7f360b98f09639c2a400cc3a5d5b909c29c7d07e0bf7efca3bff81d307f`。
+  原始文件仅保留在 baseline worktree 的 ignored `target/ckc-perf/`。
