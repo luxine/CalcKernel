@@ -73,6 +73,11 @@ Runtime failure 经 embedded platform exit helper 终止。
 `ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
 x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定
 RuntimeDyld compatibility path。两者都 eager resolve symbol，并在调用 `main` 前完成 RW-to-RX。
+COFF AArch64 compatibility layer 保留 CK 的 audited section memory manager，同时恢复
+LLVM 22.1.8 LLJIT 标准 COFF responsibility contract：将 RuntimeDyld object flags 与
+materialization responsibility 对齐，并自动认领 weak/COMDAT 等额外 object symbols。
+该行为仅限既有 compatibility path，不开放 process-symbol search，也不把 RuntimeDyld
+扩展为 CK 的通用后端。
 COFF x86-64 JITLink 继续禁用任意 process-symbol lookup。五个 embedded CK runtime object
 仅在 JIT execution 中与一个独立散列、纯数据的 `__ImageBase` anchor 组合；anchor 与固定
 object set 位于同一个 512 MiB JIT reservation，使 MSVC `.pdata` 的 image-relative

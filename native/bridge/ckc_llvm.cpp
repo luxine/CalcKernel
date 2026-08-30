@@ -2850,9 +2850,15 @@ extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
                         return std::make_unique<
                             CkcAuditedSectionMemoryManager>(memory_audit);
                     };
+                    auto object_layer = std::make_unique<
+                        llvm::orc::RTDyldObjectLinkingLayer>(
+                        session, std::move(memory_manager));
+                    object_layer->setOverrideObjectFlagsWithResponsibilityFlags(
+                        true);
+                    object_layer->setAutoClaimResponsibilityForObjectSymbols(
+                        true);
                     return std::unique_ptr<llvm::orc::ObjectLayer>(
-                        std::make_unique<llvm::orc::RTDyldObjectLinkingLayer>(
-                            session, std::move(memory_manager)));
+                        std::move(object_layer));
                 });
         } else {
             builder.setObjectLinkingLayerCreator(

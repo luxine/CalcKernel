@@ -248,13 +248,13 @@ COFF `/out:` 和 Windows `dllexport` 修复覆盖；ARM64 cache/run/JIT 子进�
 `../review/implementation-blockers-01.md`，随后才允许修改
 `tests/contracts/native_toolchain.rs`、`native/bridge/ckc_llvm.cpp` 和双语 LLVM ABI 文档。
 
-- [ ] 先提交 I27 复诊、真实远程证据和本计划；`git diff --check` 与 docs 16 通过，
+- [x] 先提交 I27 复诊、真实远程证据和本计划；`git diff --check` 与 docs 16 通过，
   生产实现不得混入该提交。
-- [ ] red contract 必须在 ARM64 COFF creator 的同一局部同时证明 audited memory manager、
+- [x] red contract 必须在 ARM64 COFF creator 的同一局部同时证明 audited memory manager、
   object-flags override 与 object-symbol auto-claim；仅在注释或无关分支出现字符串不能通过。
-- [ ] 实现先构造有类型的 `RTDyldObjectLinkingLayer`，对该实例设置上述两个官方 COFF
+- [x] 实现先构造有类型的 `RTDyldObjectLinkingLayer`，对该实例设置上述两个官方 COFF
   选项后再上转型返回 `ObjectLayer`。x64 JITLink 与所有 Unix creator 不得改变。
-- [ ] 同步英中 LLVM ABI 当前文档，说明这是官方 COFF responsibility contract 的恢复，
+- [x] 同步英中 LLVM ABI 当前文档，说明这是官方 COFF responsibility contract 的恢复，
   不把 RuntimeDyld 描述成新的通用后端或降低 JIT 隔离保证。
 
 ### 6.3 验证与远程闭环

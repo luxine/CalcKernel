@@ -135,6 +135,11 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
   的 ARM64 cache/run/JIT 路径暴露 I27 的 ORC incorrect-flags 断言；计划与修订边界见
   `11-windows-static-link-plan.md` Task 6。故 `38ad10c` 的本地通过不能签收远程、阶段 11
   或总验收，必须先修 I27，再由一个新 SHA 重跑全部十项。
+- I27 docs-first 提交 `cdbe498` 后，contract 在旧实现真实 red；最小 bridge 修复与英中 ABI
+  更新已通过 default 477 / all-feature 608（Native 102）、release lib 53 / IR 58、全部独立
+  generated/mutation/fact/cache/docs 门、两种 Clippy、fmt/diff、release build 与三项发布审计。
+  一次漏传冻结 Clang oracle 的 all-feature 调用被三项 COFF fixture 正确拒绝，补齐后从头
+  完整通过。性能及修复 SHA 的十项 CI 仍待执行，本条不是阶段签收。
 
 ### I25 Windows 静态链接（2026-08-30，本地通过，远程未签收）
 

@@ -1264,6 +1264,25 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   签收。旧 run 的八项 success、x64/ARM64 失败与后续结果不得拼接；I27/I26/I25/阶段 11
   当前都保持未通过。
 
+### I27 本地实现与行内复审（性能/远程待验）
+
+- docs-first 提交 `cdbe498` 只含复诊、证据和计划，提交前 docs 16 / diff 通过。随后新增
+  contract 在旧 bridge 上实际 1 failed / 0 passed，首个缺项为 typed `object_layer`；
+  修复后 default 与 native-feature targeted 均为 1 passed。contract 先剥离行注释和空白，
+  再把检查限制在 ARM64 COFF 分支及返回顺序内，注释或其他 creator 不能制造假阳性。
+- bridge 只把原 bare constructor 拆成同一 `RTDyldObjectLinkingLayer` 实例，依次设置
+  responsibility-flags override 和 object-symbol auto-claim 后上转型返回；audited allocator、
+  ARM64 条件、x64/Unix else 分支和 process-symbol setup 均未改变。用实际 pinned prefix
+  编译通过，不是只做文本测试。
+- 本地 default 477 / all-feature 608（Native 102）、release lib 53 / IR 58、generated 3 /
+  mutation 10 / fact audit 7 / verifier-cache 5 / docs 16 全部通过。首次 all-feature 漏传
+  `CKC_CLANG_ORACLE` 时三项真实 COFF fixture 明确失败，补回冻结 oracle 后完整重跑通过，
+  没有改成 skip。
+- 两种 Clippy、fmt/diff、release Native build、Apple 的 Linux-only sanitizer capability
+  记录、artifact/compiler/JIT audits、version/licenses 和 prefix manifest 验证均通过。
+  英中 ABI 同步说明该设置只恢复官方 compatibility contract。原 schema-6 性能及同 SHA
+  十项 CI 尚未执行，故 I27 仍未签收。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

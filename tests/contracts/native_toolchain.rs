@@ -369,6 +369,57 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
 }
 
 #[test]
+fn coff_arm64_rtdyld_should_preserve_official_orc_symbol_responsibility_contract() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let arm64_coff_creator = bridge
+        .split_once("if (use_coff_aarch64_rtdyld) {")
+        .expect("COFF ARM64 RuntimeDyld branch")
+        .1
+        .split_once("        } else {")
+        .expect("COFF ARM64 RuntimeDyld branch end")
+        .0;
+    let code_only = arm64_coff_creator
+        .lines()
+        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+        .collect::<String>();
+    let compact = code_only
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+
+    for required in [
+        "CkcAuditedSectionMemoryManager",
+        "autoobject_layer=",
+        "std::make_unique<llvm::orc::RTDyldObjectLinkingLayer>",
+        "object_layer->setOverrideObjectFlagsWithResponsibilityFlags(true);",
+        "object_layer->setAutoClaimResponsibilityForObjectSymbols(true);",
+        "std::unique_ptr<llvm::orc::ObjectLayer>(std::move(object_layer))",
+    ] {
+        assert!(
+            compact.contains(required),
+            "COFF ARM64 audited RuntimeDyld creator must preserve {required:?}"
+        );
+    }
+
+    let typed_layer = compact
+        .find("autoobject_layer=")
+        .expect("typed RuntimeDyld layer");
+    let override_flags = compact
+        .find("object_layer->setOverrideObjectFlagsWithResponsibilityFlags(true);")
+        .expect("COFF responsibility flag override");
+    let auto_claim = compact
+        .find("object_layer->setAutoClaimResponsibilityForObjectSymbols(true);")
+        .expect("COFF object-symbol auto-claim");
+    let returned_layer = compact
+        .find("std::unique_ptr<llvm::orc::ObjectLayer>(std::move(object_layer))")
+        .expect("configured RuntimeDyld layer return");
+    assert!(
+        typed_layer < override_flags && override_flags < auto_claim && auto_claim < returned_layer,
+        "the two COFF responsibility settings must configure the audited layer before it is returned"
+    );
+}
+
+#[test]
 fn windows_static_crt_should_validate_actual_compile_commands() {
     let root = super::support::temp::temp_dir("ckc-crt-commands");
     fs::create_dir_all(&root).unwrap();

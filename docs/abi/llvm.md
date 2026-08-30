@@ -113,6 +113,13 @@ RuntimeDyld compatibility path because LLVM 22.1.8 lacks its JITLink backend.
 Both resolve all symbols eagerly and enforce writable-to-executable page
 transitions before calling `main`.
 
+The COFF AArch64 compatibility layer retains CK's audited section memory
+manager and restores LLVM 22.1.8 LLJIT's standard COFF responsibility contract:
+RuntimeDyld object flags are reconciled with the materialization responsibility,
+and additional object symbols such as weak/COMDAT entries are automatically
+claimed. This is confined to the existing compatibility path; it does not
+enable process-symbol search or turn RuntimeDyld into a general CK backend.
+
 COFF x86-64 JITLink keeps arbitrary process-symbol lookup disabled. Its five
 embedded CK runtime objects are joined only for JIT execution by a separately
 hashed, data-only `__ImageBase` anchor. The anchor and the fixed object set are
