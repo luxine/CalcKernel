@@ -305,6 +305,170 @@ fn kir_o1_sccp_should_not_choose_only_one_phi_input() {
 }
 
 #[test]
+fn kir_o1_sccp_should_use_dominating_contract_ranges() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export unsafe fn bounded(n: u32) -> bool contract { requires n < 8; } { return n < 8; }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    let module = result.artifact.as_ref().expect("verified artifact");
+    assert!(
+        module.functions[0].blocks[0]
+            .instructions
+            .iter()
+            .any(|instruction| matches!(
+                instruction.kind,
+                KirInstructionKind::ConstBool { value: true }
+            )),
+        "entry contract must drive a real comparison rewrite:\n{}",
+        print_kir_module(module)
+    );
+}
+
+#[test]
+fn kir_o1_sccp_should_refine_each_branch_without_exporting_its_range() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn bounded(n: u32) -> bool { if n < 8 { return n < 16; } return n < 8; }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    let module = result.artifact.as_ref().expect("verified artifact");
+    let instructions = module.functions[0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Compare { .. }))
+            .count(),
+        1,
+        "only the entry comparison is unknown:\n{}",
+        print_kir_module(module)
+    );
+    for expected in [true, false] {
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| matches!(instruction.kind,
+            KirInstructionKind::ConstBool { value } if value == expected))
+        );
+    }
+}
+
+#[test]
+fn kir_o1_sccp_should_keep_out_of_domain_literal_analysis_conservative() {
+    for (ty, magnitude) in [("i32", "2147483648"), ("i64", "9223372036854775808")] {
+        let (_, kir, contracts) = build(&format!(
+            "export fn literal() -> {ty} {{ return -{magnitude}; }}"
+        ));
+        let before =
+            run_kir_pass_pipeline(kir.clone(), KirOptimizationLevel::O0, contracts.as_ref());
+        assert!(before.artifact.is_some(), "O0 accepts this semantic KIR");
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{ty}: {:?}", result.errors);
+        assert_eq!(
+            result.artifact, before.artifact,
+            "range analysis must not reinterpret the literal or remove its checked negation"
+        );
+    }
+}
+
+#[test]
+fn guard_path_range_should_remove_only_the_dominated_overflow_check() {
+    let (_, kir, contracts) =
+        build("export fn bounded(n: u32) -> u32 { if n < 8 { return n + 1; } return n + 1; }");
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    let module = result.artifact.as_ref().expect("verified artifact");
+    assert_eq!(
+        result.eliminated_guards.len(),
+        1,
+        "only the taken edge proves overflow safety"
+    );
+    assert_eq!(
+        module.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        validate_kir_optimization_evidence(
+            module,
+            result.contract_facts.as_ref(),
+            &result.proofs,
+            &result.eliminated_guards,
+            0
+        )
+        .errors
+        .is_empty()
+    );
+}
+
+#[test]
+fn guard_path_range_should_preserve_certificates_through_o2_and_o3() {
+    for level in [KirOptimizationLevel::O2, KirOptimizationLevel::O3] {
+        let (_, kir, contracts) = build(
+            "export fn bounded(n: u32) -> u32 { if n < 8 { let dead: u32 = 99; return n + 8; } return n + 8; }",
+        );
+        let result = run_kir_pass_pipeline(kir, level, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{level:?}: {:?}", result.errors);
+        assert_eq!(result.eliminated_guards.len(), 1);
+        let artifact = result.artifact.as_ref().expect("verified artifact");
+        assert!(!artifact.functions[0].blocks.iter().flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "99")),
+            "irrelevant constants must not be retained by a range proof");
+    }
+}
+
+#[test]
+fn guard_path_range_should_prove_nonzero_divisors_but_retain_zero_neighbor() {
+    let (_, kir, contracts) =
+        build("export fn divide(n: u32) -> u32 { if n > 0 { return 40 / n; } return 40 / n; }");
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result.eliminated_guards.len(),
+        1,
+        "the nonzero range must discharge exactly one division guard"
+    );
+}
+
+#[test]
+fn guard_contract_range_should_prove_division_and_keep_signed_overflow_neighbor() {
+    for (range, removed) in [("n > 0", 2), ("n < 0", 1)] {
+        let source = format!(
+            "export unsafe fn divide(a: i32, n: i32) -> i32 contract {{ requires {range}; }} {{ return a / n; }}"
+        );
+        let (_, kir, contracts) = build(&source);
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{range}: {:?}", result.errors);
+        assert_eq!(
+            result.eliminated_guards.len(),
+            removed,
+            "{range}: -1 is the signed-overflow neighbor"
+        );
+    }
+}
+
+#[test]
+fn guard_path_range_should_prove_a_slice_index_but_keep_the_boundary_neighbor() {
+    let (_, kir, contracts) = build(
+        "export fn get(data: ptr<i32>, n: u32) -> i32 { if n < 8 { let items: slice<i32> = slice(data, 8); return items[n]; } let items: slice<i32> = slice(data, 8); return items[n]; }",
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result.eliminated_guards.len(),
+        1,
+        "only indices in [0, 7] fit the eight-element slice"
+    );
+}
+
+#[test]
 fn kir_o1_sccp_should_not_fold_away_checked_overflow_or_strict_float() {
     for source in [
         "export fn fails() -> i32 { print_i32(7); return 2147483647 + 1; }",

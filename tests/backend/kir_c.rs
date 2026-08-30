@@ -163,6 +163,69 @@ fn kir_c_constant_propagation_should_preserve_results_and_checked_wrap_at_every_
 }
 
 #[test]
+fn kir_c_range_proofs_should_preserve_boundaries_and_failure_result_slots() {
+    let source = r#"
+        export fn bounded(n: u32) -> u32 {
+          if n < 8 { return n + 8; }
+          return n + 8;
+        }
+        export fn divide(n: u32) -> u32 {
+          if n > 0 { return 40 / n; }
+          return 40 / n;
+        }
+        export unsafe fn positive(a: i32, n: i32) -> i32
+        contract { requires n > 0; }
+        { return a / n; }
+        export unsafe fn negative(a: i32, n: i32) -> i32
+        contract { requires n < 0; }
+        { return a / n; }
+        export fn get(data: ptr<i32>, n: u32) -> i32 {
+          if n < 8 { let items: slice<i32> = slice(data, 8); return items[n]; }
+          let items: slice<i32> = slice(data, 8); return items[n];
+        }
+    "#;
+    for optimization_level in 0..=3 {
+        let (kir, contracts) = optimized_kir_with_contracts(
+            source,
+            level(optimization_level),
+            KirOverflowMode::Checked,
+            KirBoundsMode::Checked,
+        );
+        let c = emit_c_kir_module_with_contracts(&kir, contracts.as_ref()).expect("range C");
+        compile_and_run(
+            &c,
+            r#"
+            int main(void) {
+              uint32_t u = 99;
+              int32_t i = 99;
+              int32_t data[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+              for (uint32_t n = 0; n < 32; ++n) {
+                if (bounded(n, &u) != CK_OK || u != n + 8) return 1;
+              }
+              u = 99;
+              if (bounded(UINT32_MAX, &u) != CK_ERR_OVERFLOW || u != 99) return 2;
+              for (uint32_t n = 1; n < 32; ++n) {
+                if (divide(n, &u) != CK_OK || u != 40 / n) return 3;
+              }
+              u = 99;
+              if (divide(0, &u) != CK_ERR_DIV_BY_ZERO || u != 99) return 4;
+              if (positive(INT32_MIN, 1, &i) != CK_OK || i != INT32_MIN) return 5;
+              if (negative(INT32_MIN, -2, &i) != CK_OK || i != INT32_MIN / -2) return 6;
+              i = 99;
+              if (negative(INT32_MIN, -1, &i) != CK_ERR_OVERFLOW || i != 99) return 7;
+              for (uint32_t n = 0; n < 8; ++n) {
+                if (get(data, n, &i) != CK_OK || i != (int32_t)n) return 8;
+              }
+              i = 99;
+              if (get(data, 8, &i) != CK_ERR_OUT_OF_BOUNDS || i != 99) return 9;
+              return 0;
+            }
+        "#,
+        );
+    }
+}
+
+#[test]
 fn kir_c_unchecked_backend_should_compile_scalar_control_struct_and_memory() {
     let kir = optimized_kir(
         r#"

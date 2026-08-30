@@ -42,6 +42,16 @@ pre-rewrite KIR before changing any instruction. Exhausting the deterministic
 per-function budget discards that function's pending proposals. This transform
 does not remove checked operations or guards and does not fold strict floats.
 
+Integer ranges also flow from entry contracts and individual comparison edges
+through all-input block-parameter joins. The proof checker validates each
+premise at its actual definition or incoming edge; branch-local evidence cannot
+escape to the predecessor or the other arm, even when both arms share a target.
+Check elimination consumes projected, independently checked range certificates
+for overflow, nonzero divisors, signed division overflow, and fixed-length slice
+indices. Unknown safety retains the guard; malformed evidence fails compilation.
+Later scalar folding, GVN, LICM, and DCE preserve instructions referenced by live
+certificates. Unrelated dead instructions are not retained as proof dependencies.
+
 The separate full scalar product-domain analysis remains demand-driven by
 safety-check consumers; guard-free functions do not build unused range results.
 

@@ -151,7 +151,11 @@ pub fn run_kir_pass_pipeline(
         result.module = module;
         return result;
     }
-    let changed = match kir_passes::run_integer_constant_folding(&mut module) {
+    let changed = match kir_passes::run_integer_constant_folding(
+        &mut module,
+        result.contract_facts.as_ref(),
+        &result.proofs.instruction_dependencies(),
+    ) {
         Ok(changed) => changed,
         Err(error) => {
             result.errors.push(error);
@@ -166,7 +170,7 @@ pub fn run_kir_pass_pipeline(
         return result;
     }
 
-    let changed = kir_passes::run_check_elimination(
+    let changed = match kir_passes::run_check_elimination(
         &mut module,
         result.contract_facts.as_ref(),
         &mut result.proofs,
@@ -174,7 +178,14 @@ pub fn run_kir_pass_pipeline(
         &mut result.explanations,
         GENERATION,
         false,
-    );
+    ) {
+        Ok(changed) => changed,
+        Err(error) => {
+            result.errors.push(error);
+            result.module = module;
+            return result;
+        }
+    };
     if !record_current_pass(
         &module,
         "check-elimination",
@@ -231,7 +242,8 @@ pub fn run_kir_pass_pipeline(
             return result;
         }
 
-        result.stats.gvn_rewrites = kir_passes::run_gvn(&mut module);
+        result.stats.gvn_rewrites =
+            kir_passes::run_gvn(&mut module, &result.proofs.instruction_dependencies());
         if !record_current_pass(
             &module,
             "gvn",
@@ -267,7 +279,11 @@ pub fn run_kir_pass_pipeline(
             return result;
         }
 
-        let changed = match kir_passes::run_integer_constant_folding(&mut module) {
+        let changed = match kir_passes::run_integer_constant_folding(
+            &mut module,
+            result.contract_facts.as_ref(),
+            &result.proofs.instruction_dependencies(),
+        ) {
             Ok(changed) => changed,
             Err(error) => {
                 result.errors.push(error);
@@ -287,7 +303,7 @@ pub fn run_kir_pass_pipeline(
             result.module = module;
             return result;
         }
-        let changed = kir_passes::run_check_elimination(
+        let changed = match kir_passes::run_check_elimination(
             &mut module,
             result.contract_facts.as_ref(),
             &mut result.proofs,
@@ -295,7 +311,14 @@ pub fn run_kir_pass_pipeline(
             &mut result.explanations,
             GENERATION,
             true,
-        );
+        ) {
+            Ok(changed) => changed,
+            Err(error) => {
+                result.errors.push(error);
+                result.module = module;
+                return result;
+            }
+        };
         if !record_current_pass(
             &module,
             "check-elimination-post-inline",
@@ -333,11 +356,7 @@ pub fn run_kir_pass_pipeline(
             return result;
         }
 
-        let protected = result
-            .eliminated_guards
-            .iter()
-            .map(|elimination| elimination.condition_instruction)
-            .collect();
+        let protected = result.proofs.instruction_dependencies();
         result.stats.hoisted_instructions =
             kir_passes::run_licm(&mut module, &protected, &loop_analyses);
         if !record_current_pass(
@@ -360,7 +379,11 @@ pub fn run_kir_pass_pipeline(
             result.module = module;
             return result;
         }
-        let changed = match kir_passes::run_integer_constant_folding(&mut module) {
+        let changed = match kir_passes::run_integer_constant_folding(
+            &mut module,
+            result.contract_facts.as_ref(),
+            &result.proofs.instruction_dependencies(),
+        ) {
             Ok(changed) => changed,
             Err(error) => {
                 result.errors.push(error);
@@ -386,7 +409,7 @@ pub fn run_kir_pass_pipeline(
             result.module = module;
             return result;
         }
-        let changed = kir_passes::run_check_elimination(
+        let changed = match kir_passes::run_check_elimination(
             &mut module,
             result.contract_facts.as_ref(),
             &mut result.proofs,
@@ -394,7 +417,14 @@ pub fn run_kir_pass_pipeline(
             &mut result.explanations,
             GENERATION,
             true,
-        );
+        ) {
+            Ok(changed) => changed,
+            Err(error) => {
+                result.errors.push(error);
+                result.module = module;
+                return result;
+            }
+        };
         if !record_current_pass(
             &module,
             "check-elimination-post-loop",
@@ -407,11 +437,7 @@ pub fn run_kir_pass_pipeline(
         }
     }
 
-    let protected = result
-        .eliminated_guards
-        .iter()
-        .map(|elimination| elimination.condition_instruction)
-        .collect();
+    let protected = result.proofs.instruction_dependencies();
     let changed = kir_passes::run_dead_code_elimination(&mut module, &protected);
     if !record_current_pass(
         &module,

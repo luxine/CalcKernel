@@ -7,7 +7,7 @@ use crate::{
 
 use super::rewrite::{remap_instruction_values, replace_value_uses};
 
-pub(crate) fn run_gvn(module: &mut KirModule) -> u32 {
+pub(crate) fn run_gvn(module: &mut KirModule, protected: &BTreeSet<crate::InstructionId>) -> u32 {
     let mut rewrites = 0_u32;
     for function in &mut module.functions {
         let dominators = compute_kir_dominators(function);
@@ -59,7 +59,9 @@ pub(crate) fn run_gvn(module: &mut KirModule) -> u32 {
                         })
                     })?
                 });
-                if let Some(existing) = existing {
+                if let Some(existing) = existing
+                    && !protected.contains(&instruction.id)
+                {
                     replacements.push((result.value, existing));
                     removed.insert(instruction.id);
                     rewrites = rewrites.saturating_add(1);

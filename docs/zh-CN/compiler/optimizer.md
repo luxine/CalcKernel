@@ -35,6 +35,13 @@ record 与 contract fact 和上一已验证状态逐项比较。仅有 pass 的 
 KIR 检查闭合推导及精确替换值，全部通过后才修改指令。超出确定性的单函数预算时，丢弃
 该函数尚未提交的全部提案。该变换不删除 checked operation 或 guard，也不折叠 strict float。
 
+整数范围也从入口契约和比较的各条分支边传播，并在 block parameter 处合并所有输入。
+证明检查器在真实定义位置或输入边核验每项前提；分支局部证据不能逃逸到前驱或另一条
+分支，即使两条分支指向同一目标块。检查消除使用仅保留所需依赖且经过独立核验的范围
+证书，证明溢出、非零除数、有符号除法溢出和定长 slice 索引安全。安全性未知时保留
+guard，证据格式或推导失效则编译失败。后续常量折叠、GVN、LICM 和 DCE 保留仍被有效
+证书引用的指令；无关死指令不会因证明依赖而被保留。
+
 另行运行的完整 scalar product-domain analysis 仍按 safety-check consumer 的需求执行；
 无 guard 的函数不会构造无人消费的 range result。
 

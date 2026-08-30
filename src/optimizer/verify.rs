@@ -336,10 +336,22 @@ fn verify_proven_fact(
 
 #[derive(Debug, Clone)]
 enum CheckedStep {
-    Scalar(ScalarClaim),
-    Fact(FactPredicate),
+    Scalar(ScalarClaim, ScalarProofScope),
+    Fact(FactPredicate, ScalarProofScope),
     Boolean,
     GuardSafety,
+}
+
+#[derive(Debug, Clone)]
+enum ScalarProofScope {
+    Everywhere,
+    Block(crate::BlockId),
+    Blocks(Vec<crate::BlockId>),
+    Edge {
+        predecessor: crate::BlockId,
+        target: crate::BlockId,
+        taken: bool,
+    },
 }
 
 fn verify_certificate(
@@ -403,6 +415,52 @@ fn check_step(
 ) -> Result<CheckedStep, String> {
     let prefix = |suffix: &str| format!("proof{} step{} {suffix}", proof.id.index(), checked.len());
     match step {
+        ProofStep::TypeBounds { claim } => {
+            let Some(ty) = value_integer_type(function, claim.value) else {
+                return Err(prefix("type-bound value is not a KIR integer"));
+            };
+            if claim.interval != *ScalarValue::unknown(ty).interval()
+                || claim.failure != ScalarFailure::None
+            {
+                return Err(prefix("type-bound claim is not the complete integer range"));
+            }
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Everywhere,
+            ))
+        }
+        ProofStep::ContractRange {
+            block,
+            premises,
+            claim,
+        } => {
+            let Some(ty) = value_integer_type(function, claim.value) else {
+                return Err(prefix("contract-range value is not a KIR integer"));
+            };
+            let premises = premises
+                .iter()
+                .map(|step| {
+                    checked
+                        .get(step.index() as usize)
+                        .ok_or_else(|| prefix("contract-range premise is missing"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if !premises
+                .iter()
+                .all(|step| step_scope_allows_block(step, function, *block))
+                || claim.failure != ScalarFailure::None
+                || contract_interval_for_value(&premises, claim.value, ty).as_ref()
+                    != Some(&claim.interval)
+            {
+                return Err(prefix(
+                    "contract range is not justified at its declared block",
+                ));
+            }
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Block(*block),
+            ))
+        }
         ProofStep::FactLeaf { fact } => {
             let Some(fact_value) = facts.get(*fact) else {
                 return Err(prefix(&format!("names missing fact{}", fact.index())));
@@ -421,18 +479,25 @@ fn check_step(
             match &fact_value.predicate {
                 FactPredicate::ValueInterval { value, interval } => Ok(CheckedStep::Scalar(
                     ScalarClaim::new(*value, interval.clone(), ScalarFailure::None),
+                    fact_scalar_scope(function, &fact_value.scope),
                 )),
-                FactPredicate::Contract(_) => Ok(CheckedStep::Fact(fact_value.predicate.clone())),
+                FactPredicate::Contract(_) => Ok(CheckedStep::Fact(
+                    fact_value.predicate.clone(),
+                    fact_scalar_scope(function, &fact_value.scope),
+                )),
             }
         }
         ProofStep::Constant { instruction, claim } => {
-            let Some((owner, _, instruction)) = find_instruction(module, *instruction) else {
+            let Some((owner, block, instruction)) = find_instruction(module, *instruction) else {
                 return Err(prefix("constant instruction is missing"));
             };
             if owner.id != function.id || !constant_matches_claim(instruction, claim) {
                 return Err(prefix("constant claim does not match KIR instruction"));
             }
-            Ok(CheckedStep::Scalar(claim.clone()))
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Block(block.id),
+            ))
         }
         ProofStep::BinaryTransfer {
             instruction,
@@ -440,38 +505,57 @@ fn check_step(
             right,
             claim,
         } => {
-            let left = checked_scalar(checked, left.index(), &prefix)?;
-            let right = checked_scalar(checked, right.index(), &prefix)?;
-            let Some((owner, _, instruction)) = find_instruction(module, *instruction) else {
+            let Some((owner, block, instruction)) = find_instruction(module, *instruction) else {
                 return Err(prefix("binary instruction is missing"));
             };
+            let left = checked_scalar_at(checked, *left, function, block.id, &prefix)?;
+            let right = checked_scalar_at(checked, *right, function, block.id, &prefix)?;
             if owner.id != function.id || !binary_transfer_matches(instruction, left, right, claim)
             {
                 return Err(prefix("binary claim does not match local transfer"));
             }
-            Ok(CheckedStep::Scalar(claim.clone()))
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Block(block.id),
+            ))
         }
         ProofStep::CopyTransfer {
             instruction,
             input,
             claim,
         } => {
-            let input = checked_scalar(checked, input.index(), &prefix)?;
-            let Some((owner, _, instruction)) = find_instruction(module, *instruction) else {
+            let Some((owner, block, instruction)) = find_instruction(module, *instruction) else {
                 return Err(prefix("copy instruction is missing"));
             };
+            let input = checked_scalar_at(checked, *input, function, block.id, &prefix)?;
             if owner.id != function.id
                 || !copy_transfer_matches(function, instruction, input, claim)
             {
                 return Err(prefix("copy claim does not match local transfer"));
             }
-            Ok(CheckedStep::Scalar(claim.clone()))
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Block(block.id),
+            ))
         }
         ProofStep::PhiJoin {
             block,
             inputs,
             claim,
         } => {
+            let edges = predecessor_edges(function, *block);
+            if edges.len() != inputs.len()
+                || edges
+                    .iter()
+                    .zip(inputs)
+                    .any(|((predecessor, edge), input)| {
+                        checked.get(input.index() as usize).is_none_or(|step| {
+                            !step_scope_allows_edge(step, function, *predecessor, edge)
+                        })
+                    })
+            {
+                return Err(prefix("phi input scope does not cover every incoming edge"));
+            }
             let inputs = inputs
                 .iter()
                 .map(|step| checked_scalar(checked, step.index(), &prefix))
@@ -479,7 +563,10 @@ fn check_step(
             if !phi_join_matches(function, *block, &inputs, claim) {
                 return Err(prefix("phi claim does not cover every incoming edge"));
             }
-            Ok(CheckedStep::Scalar(claim.clone()))
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Block(*block),
+            ))
         }
         ProofStep::IntegerComparison {
             instruction,
@@ -488,11 +575,11 @@ fn check_step(
             value,
             result,
         } => {
-            let left = checked_scalar(checked, left.index(), &prefix)?;
-            let right = checked_scalar(checked, right.index(), &prefix)?;
-            let Some((owner, _, instruction)) = find_instruction(module, *instruction) else {
+            let Some((owner, block, instruction)) = find_instruction(module, *instruction) else {
                 return Err(prefix("comparison instruction is missing"));
             };
+            let left = checked_scalar_at(checked, *left, function, block.id, &prefix)?;
+            let right = checked_scalar_at(checked, *right, function, block.id, &prefix)?;
             if owner.id != function.id
                 || !integer_comparison_matches(function, instruction, left, right, *value, *result)
             {
@@ -511,8 +598,8 @@ fn check_step(
             taken,
             claim,
         } => {
-            let left = checked_scalar(checked, left.index(), &prefix)?;
-            let right = checked_scalar(checked, right.index(), &prefix)?;
+            let left = checked_scalar_at(checked, *left, function, *predecessor, &prefix)?;
+            let right = checked_scalar_at(checked, *right, function, *predecessor, &prefix)?;
             if !branch_refinement_matches(
                 function,
                 *predecessor,
@@ -525,7 +612,14 @@ fn check_step(
             ) {
                 return Err(prefix("branch refinement is invalid"));
             }
-            Ok(CheckedStep::Scalar(claim.clone()))
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Edge {
+                    predecessor: *predecessor,
+                    target: *target,
+                    taken: *taken,
+                },
+            ))
         }
         ProofStep::LoopInvariant {
             header,
@@ -536,7 +630,10 @@ fn check_step(
             if !loop_invariant_matches(function, *header, *phi, *transfer, claim) {
                 return Err(prefix("loop invariant is not closed under its transfer"));
             }
-            Ok(CheckedStep::Scalar(claim.clone()))
+            Ok(CheckedStep::Scalar(
+                claim.clone(),
+                ScalarProofScope::Block(*header),
+            ))
         }
         ProofStep::GuardSafety {
             condition_instruction,
@@ -551,6 +648,16 @@ fn check_step(
                         .ok_or_else(|| prefix("guard-safety premise is missing"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let Some((owner, block, _)) = find_instruction(module, *condition_instruction) else {
+                return Err(prefix("guard-safety instruction is missing"));
+            };
+            if owner.id != function.id
+                || !premises
+                    .iter()
+                    .all(|step| step_scope_allows_block(step, function, block.id))
+            {
+                return Err(prefix("guard-safety premise is outside its proven scope"));
+            }
             if !guard_safety_matches(
                 function,
                 *condition_instruction,
@@ -637,12 +744,90 @@ fn checked_scalar<'a>(
     prefix: &impl Fn(&str) -> String,
 ) -> Result<&'a ScalarClaim, String> {
     match checked.get(index as usize) {
-        Some(CheckedStep::Scalar(claim)) => Ok(claim),
-        Some(CheckedStep::Fact(_) | CheckedStep::Boolean | CheckedStep::GuardSafety) => {
+        Some(CheckedStep::Scalar(claim, _)) => Ok(claim),
+        Some(CheckedStep::Fact(..) | CheckedStep::Boolean | CheckedStep::GuardSafety) => {
             Err(prefix("step dependency is not a scalar claim"))
         }
         None => Err(prefix("step dependency is missing")),
     }
+}
+
+fn checked_scalar_at<'a>(
+    checked: &'a [CheckedStep],
+    step: super::ProofStepId,
+    function: &KirFunction,
+    block: crate::BlockId,
+    prefix: &impl Fn(&str) -> String,
+) -> Result<&'a ScalarClaim, String> {
+    if checked
+        .get(step.index() as usize)
+        .is_none_or(|step| !step_scope_allows_block(step, function, block))
+    {
+        return Err(prefix("scalar premise is outside its proven scope"));
+    }
+    checked_scalar(checked, step.index(), prefix)
+}
+
+fn fact_scalar_scope(function: &KirFunction, scope: &super::FactScope) -> ScalarProofScope {
+    match scope {
+        super::FactScope::Block { block, .. } => ScalarProofScope::Block(*block),
+        super::FactScope::InlineClone { blocks, .. } => ScalarProofScope::Blocks(blocks.clone()),
+        super::FactScope::FunctionEntry(_) | super::FactScope::CalleeInstance { .. } => {
+            function.blocks.first().map_or_else(
+                || ScalarProofScope::Blocks(Vec::new()),
+                |block| ScalarProofScope::Block(block.id),
+            )
+        }
+    }
+}
+
+fn step_scope_allows_block(
+    step: &CheckedStep,
+    function: &KirFunction,
+    block: crate::BlockId,
+) -> bool {
+    let (CheckedStep::Scalar(_, scope) | CheckedStep::Fact(_, scope)) = step else {
+        return false;
+    };
+    match scope {
+        ScalarProofScope::Everywhere => true,
+        ScalarProofScope::Block(scope) => compute_kir_dominators(function).dominates(*scope, block),
+        ScalarProofScope::Blocks(blocks) => blocks.contains(&block),
+        ScalarProofScope::Edge { .. } => false,
+    }
+}
+
+fn step_scope_allows_edge(
+    step: &CheckedStep,
+    function: &KirFunction,
+    predecessor: crate::BlockId,
+    edge: &crate::KirEdge,
+) -> bool {
+    if let CheckedStep::Scalar(
+        _,
+        ScalarProofScope::Edge {
+            predecessor: scope_predecessor,
+            target,
+            taken,
+        },
+    ) = step
+    {
+        let Some(block) = function.blocks.iter().find(|block| block.id == predecessor) else {
+            return false;
+        };
+        let KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &block.terminator
+        else {
+            return false;
+        };
+        return *scope_predecessor == predecessor
+            && *target == edge.target
+            && std::ptr::eq(edge, if *taken { then_edge } else { else_edge });
+    }
+    step_scope_allows_block(step, function, predecessor)
 }
 
 fn guard_safety_matches(
@@ -707,8 +892,7 @@ fn guard_safety_matches(
             KirCheckConditionKind::ArithmeticOverflow => false,
             KirCheckConditionKind::DivisionByZero => args
                 .first()
-                .and_then(|value| exact_scalar(function, premises, *value))
-                .is_some_and(|value| value != BigInt::from(0)),
+                .is_some_and(|value| scalar_excludes(function, premises, *value, 0)),
             KirCheckConditionKind::SignedDivisionOverflow => {
                 signed_division_is_safe(function, premises, args)
             }
@@ -735,7 +919,7 @@ fn scalar_for_value(
     type_node: super::IntegerType,
 ) -> Option<ScalarValue> {
     if let Some(claim) = premises.iter().find_map(|premise| match premise {
-        CheckedStep::Scalar(claim) if claim.value == value => Some(claim),
+        CheckedStep::Scalar(claim, _) if claim.value == value => Some(claim),
         _ => None,
     }) {
         return ScalarValue::from_interval(type_node, claim.interval.clone())
@@ -754,77 +938,14 @@ fn contract_interval_for_value(
     value: ValueId,
     type_node: super::IntegerType,
 ) -> Option<ScalarInterval> {
-    let mut lower = BigInt::from(type_node.minimum_i128());
-    let mut upper = BigInt::from(type_node.maximum_i128());
-    let mut constrained = false;
-    for premise in premises {
-        let CheckedStep::Fact(FactPredicate::Contract(ContractFactPredicate::Comparison {
-            operator,
-            left,
-            right,
-        })) = premise
-        else {
-            continue;
-        };
-        let bound = if let (Some(offset), Some(constant)) =
-            (contract_value_offset(left, value), contract_constant(right))
-        {
-            Some((operator.as_str(), constant - offset))
-        } else if let (Some(constant), Some(offset)) =
-            (contract_constant(left), contract_value_offset(right, value))
-        {
-            Some((reverse_comparison(operator)?, constant - offset))
-        } else {
-            None
-        };
-        let Some((operator, bound)) = bound else {
-            continue;
-        };
-        match operator {
-            "<" => upper = upper.min(bound - 1),
-            "<=" => upper = upper.min(bound),
-            ">" => lower = lower.max(bound + 1),
-            ">=" => lower = lower.max(bound),
-            "==" => {
-                lower = lower.max(bound.clone());
-                upper = upper.min(bound);
-            }
-            _ => continue,
-        }
-        constrained = true;
-    }
-    constrained
-        .then(|| ScalarInterval::new(lower, upper).ok())
-        .flatten()
-}
-
-fn contract_value_offset(
-    expression: &ContractFactAffineExpression,
-    value: ValueId,
-) -> Option<BigInt> {
-    let [term] = expression.terms.as_slice() else {
-        return None;
-    };
-    (term.term == ContractFactAffineTerm::Value(value) && term.coefficient == BigInt::from(1))
-        .then(|| expression.constant.clone())
-}
-
-fn contract_constant(expression: &ContractFactAffineExpression) -> Option<BigInt> {
-    expression
-        .terms
-        .is_empty()
-        .then(|| expression.constant.clone())
-}
-
-fn reverse_comparison(operator: &str) -> Option<&'static str> {
-    match operator {
-        "<" => Some(">"),
-        "<=" => Some(">="),
-        ">" => Some("<"),
-        ">=" => Some("<="),
-        "==" => Some("=="),
-        _ => None,
-    }
+    super::contract_scalar_interval(
+        premises.iter().filter_map(|step| match step {
+            CheckedStep::Fact(FactPredicate::Contract(predicate), _) => Some(predicate),
+            _ => None,
+        }),
+        value,
+        type_node,
+    )
 }
 
 fn exact_scalar(
@@ -834,7 +955,7 @@ fn exact_scalar(
 ) -> Option<BigInt> {
     resolve_constant(function, value).or_else(|| {
         premises.iter().find_map(|premise| match premise {
-            CheckedStep::Scalar(claim)
+            CheckedStep::Scalar(claim, _)
                 if claim.value == value && claim.interval.lower() == claim.interval.upper() =>
             {
                 Some(claim.interval.lower().clone())
@@ -852,17 +973,29 @@ fn signed_division_is_safe(
     let [left, right] = args else {
         return false;
     };
-    let (Some(type_node), Some(left), Some(right)) = (
-        value_integer_type(function, *left),
-        exact_scalar(function, premises, *left),
-        exact_scalar(function, premises, *right),
-    ) else {
+    let Some(type_node) = value_integer_type(function, *left) else {
         return false;
     };
     if !type_node.is_signed() {
         return false;
     }
-    left != BigInt::from(type_node.minimum_i128()) || right != BigInt::from(-1)
+    scalar_excludes(function, premises, *left, type_node.minimum_i128())
+        || scalar_excludes(function, premises, *right, -1)
+}
+
+fn scalar_excludes(
+    function: &KirFunction,
+    premises: &[&CheckedStep],
+    value: ValueId,
+    excluded: i128,
+) -> bool {
+    value_integer_type(function, value)
+        .and_then(|ty| scalar_for_value(function, premises, value, ty))
+        .is_some_and(|value| {
+            let excluded = BigInt::from(excluded);
+            value.failure() == ScalarFailure::None
+                && (value.interval().upper() < &excluded || value.interval().lower() > &excluded)
+        })
 }
 
 fn slice_index_is_safe(
@@ -874,15 +1007,18 @@ fn slice_index_is_safe(
         return false;
     };
     if let (Some(index), Some(len)) = (
-        exact_scalar(function, premises, *index),
+        value_integer_type(function, *index)
+            .and_then(|ty| scalar_for_value(function, premises, *index, ty)),
         resolve_slice_len(function, premises, *slice),
     ) {
-        return index >= BigInt::from(0) && index < len;
+        return index.failure() == ScalarFailure::None
+            && index.interval().lower() >= &BigInt::from(0)
+            && index.interval().upper() < &len;
     }
     premises.iter().any(|premise| {
         matches!(
             premise,
-            CheckedStep::Fact(FactPredicate::Contract(predicate))
+            CheckedStep::Fact(FactPredicate::Contract(predicate), _)
                 if contract_proves_value_below_slice_len(predicate, *index, *slice)
         )
     })
@@ -1002,7 +1138,7 @@ fn canonical_loop_slice_index_is_safe(
                 || premises.iter().any(|premise| {
                     matches!(
                         premise,
-                        CheckedStep::Fact(FactPredicate::Contract(predicate))
+                        CheckedStep::Fact(FactPredicate::Contract(predicate), _)
                             if contract_proves_value_at_most_slice_len(
                                 predicate,
                                 induction.bound,
@@ -1387,6 +1523,12 @@ fn branch_refinement_matches(
     taken: bool,
     claim: &ScalarClaim,
 ) -> bool {
+    if left.failure != ScalarFailure::None
+        || right.failure != ScalarFailure::None
+        || claim.failure != ScalarFailure::None
+    {
+        return false;
+    }
     let Some(block) = function.blocks.iter().find(|block| block.id == predecessor) else {
         return false;
     };

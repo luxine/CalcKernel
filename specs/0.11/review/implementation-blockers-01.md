@@ -379,6 +379,33 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 这不是完整 SCCP 验收：路径/契约范围驱动传播、条件边剪枝和 phi 本体替换仍需实现并
   复核证据失效；O3 induction simplification 也仍未完成。阶段 05/07 保持重新打开状态。
 
+### I18 第二部分：范围证书与检查消费者（阶段仍未关闭）
+
+- 入口 contract range 与比较边 refinement 通过每条输入边的 PhiJoin 驱动实际整数
+  comparison 改写和安全检查消除。TypeBounds 只能声明真实整数类型的完整范围；
+  ContractRange 必须由支配其使用位置的原始规范化契约推导，不能凭 analysis result
+  自证。纯数学区间运算共用 helper，但 scope/provenance 与 SSA binding 独立核验。
+- 每个 proof step 带 checker 内部推导出的作用域。分支证据只能绑定确切 predecessor/
+  target/taken edge；两条指向同一块的分支边仍逐条区分。Binary/Copy/comparison 在
+  实际定义块核验前提，PhiJoin 逐边核验，GuardSafety 在被删 guard 的 condition 定义
+  处核验。缩窄 TypeBounds、伪造 ContractRange、分支证据倒灌前驱、同 target 两臂
+  混用的故障注入均拒绝。
+- 溢出、除零、有符号除法溢出、定长 slice 索引的范围正例先观察未删除 guard 的 red，
+  再加入闭合证书消费。近邻保留可能失败的检查：另一分支、零除数、`MIN / -1`、
+  `index == len`。可执行 C 对照遍历 O0–O3，检查边界数值、错误码及失败时结果槽不变。
+- 跨阶段 red 暴露 GVN 删除新范围证书引用的重复常量。修复为从 live certificates
+  提取完整指令依赖，供后续 scalar folding/GVN/LICM/DCE 保留；每份 guard 证书只投影
+  所需依赖 DAG，另用未使用的常量验证不保留无关死代码。任何非法证书都返回编译错误，
+  不再把非 GuardSafety-root 的验证失败当作普通 unknown。
+- 原完整 SCCP 与阶段 07 的未完成项不变：真正的 sparse worklist、条件边剪枝、phi
+  本体改写及对应失效/重建、实际 O3 induction simplification。不能以本批范围消费者
+  或历史 pass-order 测试替代这几项验收。
+- 最小有符号字面量探测发现兼容回归：既有 semantic KIR 将 `-2147483648` 表示为
+  positive-magnitude literal 加 checked negation；新常量分析把范围域无法表示该 literal
+  的情况升级成编译错误。i32/i64 最小写法的 red 确认 O0 有产物而 O1 错误退出。
+  修复仅使该 literal 不产生 scalar claim、保留全部原始 operation/guard，不重新解释
+  字面量或改变前端规则；green 严格比较 O1 artifact 与 O0 artifact 完全相同。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

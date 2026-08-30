@@ -1,4 +1,8 @@
-use std::{error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{BlockId, FactId, InstructionId, ProofId, ValueId};
 
@@ -42,6 +46,14 @@ impl ScalarClaim {
 /// Closed proof language accepted by the independent checker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofStep {
+    TypeBounds {
+        claim: ScalarClaim,
+    },
+    ContractRange {
+        block: BlockId,
+        premises: Vec<ProofStepId>,
+        claim: ScalarClaim,
+    },
     FactLeaf {
         fact: FactId,
     },
@@ -97,15 +109,18 @@ pub enum ProofStep {
 impl ProofStep {
     fn dependencies(&self) -> Vec<ProofStepId> {
         match self {
-            Self::FactLeaf { .. } | Self::Constant { .. } | Self::LoopInvariant { .. } => {
-                Vec::new()
-            }
+            Self::TypeBounds { .. }
+            | Self::FactLeaf { .. }
+            | Self::Constant { .. }
+            | Self::LoopInvariant { .. } => Vec::new(),
             Self::CopyTransfer { input, .. } => vec![*input],
             Self::PhiJoin { inputs, .. } => inputs.clone(),
             Self::BinaryTransfer { left, right, .. }
             | Self::IntegerComparison { left, right, .. }
             | Self::BranchRefinement { left, right, .. } => vec![*left, *right],
-            Self::GuardSafety { premises, .. } => premises.clone(),
+            Self::GuardSafety { premises, .. } | Self::ContractRange { premises, .. } => {
+                premises.clone()
+            }
         }
     }
 }
@@ -118,6 +133,71 @@ pub struct ProofCertificate {
     pub use_site: FactUseSite,
     pub steps: Vec<ProofStep>,
     pub root: ProofStepId,
+}
+
+impl ProofCertificate {
+    /// Keep only the closed dependency DAG of these roots, in original order.
+    pub(crate) fn project_steps(
+        &self,
+        roots: &[ProofStepId],
+    ) -> Result<(Vec<ProofStep>, Vec<ProofStepId>), ProofArenaError> {
+        let mut needed = BTreeSet::new();
+        let mut work = roots.to_vec();
+        while let Some(id) = work.pop() {
+            if !needed.insert(id) {
+                continue;
+            }
+            let step = self
+                .steps
+                .get(id.index() as usize)
+                .ok_or_else(|| ProofArenaError::new("projected proof step is missing"))?;
+            for dependency in step.dependencies() {
+                if dependency >= id {
+                    return Err(ProofArenaError::new(
+                        "projected proof dependency is not earlier",
+                    ));
+                }
+                work.push(dependency);
+            }
+        }
+        let mapping = needed
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                u32::try_from(index)
+                    .map(|index| (*id, ProofStepId::from_index(index)))
+                    .map_err(|_| ProofArenaError::new("projected proof exceeds u32 identity space"))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let mut steps = Vec::with_capacity(needed.len());
+        for id in needed {
+            let mut step = self.steps[id.index() as usize].clone();
+            match &mut step {
+                ProofStep::CopyTransfer { input, .. } => *input = mapping[input],
+                ProofStep::BinaryTransfer { left, right, .. }
+                | ProofStep::IntegerComparison { left, right, .. }
+                | ProofStep::BranchRefinement { left, right, .. } => {
+                    *left = mapping[left];
+                    *right = mapping[right];
+                }
+                ProofStep::PhiJoin {
+                    inputs: premises, ..
+                }
+                | ProofStep::ContractRange { premises, .. }
+                | ProofStep::GuardSafety { premises, .. } => {
+                    for premise in premises {
+                        *premise = mapping[premise];
+                    }
+                }
+                ProofStep::TypeBounds { .. }
+                | ProofStep::FactLeaf { .. }
+                | ProofStep::Constant { .. }
+                | ProofStep::LoopInvariant { .. } => {}
+            }
+            steps.push(step);
+        }
+        Ok((steps, roots.iter().map(|root| mapping[root]).collect()))
+    }
 }
 
 /// Append-only proof storage with stable identity order.
@@ -153,6 +233,29 @@ impl ProofArena {
 
     pub fn get_mut(&mut self, id: ProofId) -> Option<&mut ProofCertificate> {
         self.proofs.get_mut(id.index() as usize)
+    }
+
+    pub(crate) fn instruction_dependencies(&self) -> BTreeSet<InstructionId> {
+        self.proofs
+            .iter()
+            .flat_map(|proof| &proof.steps)
+            .filter_map(|step| match step {
+                ProofStep::Constant { instruction, .. }
+                | ProofStep::BinaryTransfer { instruction, .. }
+                | ProofStep::CopyTransfer { instruction, .. }
+                | ProofStep::IntegerComparison { instruction, .. } => Some(*instruction),
+                ProofStep::BranchRefinement { comparison, .. } => Some(*comparison),
+                ProofStep::LoopInvariant { transfer, .. } => Some(*transfer),
+                ProofStep::GuardSafety {
+                    condition_instruction,
+                    ..
+                } => Some(*condition_instruction),
+                ProofStep::TypeBounds { .. }
+                | ProofStep::FactLeaf { .. }
+                | ProofStep::ContractRange { .. }
+                | ProofStep::PhiJoin { .. } => None,
+            })
+            .collect()
     }
 
     pub fn try_insert(
@@ -232,6 +335,21 @@ pub fn print_proof_arena(arena: &ProofArena) -> String {
 
 fn print_step(step: &ProofStep) -> String {
     match step {
+        ProofStep::TypeBounds { claim } => format!("type-bounds {}", print_claim(claim)),
+        ProofStep::ContractRange {
+            block,
+            premises,
+            claim,
+        } => format!(
+            "contract-range b{} [{}] {}",
+            block.index(),
+            premises
+                .iter()
+                .map(|step| format!("step{}", step.index()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            print_claim(claim)
+        ),
         ProofStep::FactLeaf { fact } => format!("fact fact{}", fact.index()),
         ProofStep::Constant { instruction, claim } => {
             format!("constant i{} {}", instruction.index(), print_claim(claim))

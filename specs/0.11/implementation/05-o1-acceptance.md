@@ -74,3 +74,34 @@
 - 自审确认这一事务不移动 effect、不删除 guard、不使用 branch/contract 局部事实作为
   无条件常量。仍需完成路径/契约范围传播、条件边与 phi 本体改写、证据失效的后续验收；
   不以本节替代阶段 05 的最终完整签收。
+
+## I18 范围证书与检查消费者的局部复验（2026-08-30，阶段仍未完整通过）
+
+- 本节对应 `optimizer(stage-05): consume scoped range certificates for guard elimination`，
+  parent 为 `ac6b29de94d6c566626ee670ebf272887f381e34`。
+- 新增路径/入口契约驱动的真实 comparison rewrite；支配范围证明溢出、非零除数、
+  有符号除法和定长 slice 索引安全。范围不能证明的另一分支、零、`MIN / -1`、
+  `index == len` 均保留检查。每个新增优化正例先观察 guard/compare 未消除的 red。
+- `cargo +1.90.0 test --locked --test optimizer kir_o1_sccp_ -- --nocapture`：10/10；
+  同 target 的 `guard_`：11/11。`cargo +1.90.0 test --locked --lib`：16/16，
+  包括 4 个新 scope/type/contract 故障注入、原 7 个事务测试和 5 个 release-cache 测试。
+- O2 重复常量 GVN 的 red 复现 `constant instruction is missing`；按 live proof DAG
+  保护后续变换依赖，O2/O3 复验通过。未使用常量仍由 DCE 删除，不靠保留全图通过验证。
+- 新 C 可执行对照在 O0–O3 全部通过，覆盖 `n + 8`、除零、`MIN / -1`、slice 第 7/8 项、
+  status code 和失败时结果槽不变。i32/i64 边界字面量另以 O1 artifact 严格等于 O0
+  验证分析域错误的保守处理，不改写原始 checked negation。
+- 顺序执行 `cargo +1.90.0 test --locked` 与
+  `cargo +1.90.0 test --all-features --locked`：373/494 项全部通过（Native 92、CLI 21）。
+  日志 SHA-256 分别为
+  `38916e26f6130db30f03e4fc53d55f9b14818ab75d2ac707b9bec26b68c4f9bd`、
+  `debe09497860414a354e68aab3cb9d6663dd507291a058dcc8f31c9c3f899fd5`。
+- 最终 fmt、all-feature Clippy、diff check、release library 16/16 均 exit 0。
+  Rust 1.90.0 / LLVM+Clang 22.1.8 / AArch64 macOS baseline CPU 的完整原 performance
+  gate exit 0：unchecked Clang mean `0.9970` / V0.10 ratio `1.0039`，checked
+  `0.9954` / `1.0030`，proof throughput `0.9985`，optimizer suite-median `1.0617`；
+  所有 individual gate 通过，没有调整门槛、语料或 baseline。最终 schema-5 report
+  SHA-256 为 `a377ee72396780dd73460b4c3151f98422bb1a8e5a5cfbe49ac0e022080ce288`，
+  performance log 为 `09aafea0c8c99831364a719674da2a416fbb64f968a0527192957ec7768a990a`。
+- 自审范围为 scalar producer/checker、证书 DAG 投影、guard transaction、后续 scalar/GVN/
+  LICM/DCE preservation、对应正反例。阶段 05 的 sparse worklist、条件边剪枝、phi 本体
+  改写与 CFG 相关的证据失效/重建尚未完成；阶段 07/I14/远程同 SHA 总验收仍保持打开。
