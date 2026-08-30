@@ -1,8 +1,7 @@
 # 阶段 07 验收：O3
 
-当前复审状态：I18 发现的 `induction-simplify` 空实现已有实际改写与局部复验证据，
-irreducible/fixed-budget 也已有实现与局部复验；剩余 LICM 与完整阶段验收仍打开。
-不得仅以 pass-order 测试替代改写正例/反例；见
+当前复审状态：I18 对应的阶段 07 功能缺口已修复并通过完整复验，最新证据见文末。
+本阶段通过不替代 I14/I19/I20 性能门槛或同一最终 SHA 的完整 CI；见
 `../review/implementation-blockers-01.md`。
 
 ## 必须通过
@@ -135,3 +134,41 @@ irreducible/fixed-budget 也已有实现与局部复验；剩余 LICM 与完整�
   `72bc3514b1fd6c25db236095e7b3ccdbe872682283022a604e7cee6eb371f0b2`。
 - 剩余阶段 07 的 LICM/完整任务自审与 I14/I19/I20 性能、同一最终 SHA 全 CI 门槛仍打开。
   本节没有性能复测、规范或门槛调整，main 未修改。
+
+## I18 完整阶段复验与自审通过（2026-08-30）
+
+- 实现 SHA：`31e367a2a53912b26939ac64fb989a8a8b7b9f0a`。本节替代上文所有“尚非阶段
+  通过”状态，不抹去原反例或先前局部验收的范围。相关修复为 I18 第六至第十部分。
+- task 1：17 项 exact O3 pass order 均 verified；nested/multiple-latch/break/continue、
+  自回边及不可约内循环测试通过。不可约/固定预算回退均产生完整 unknown 结果和稳定原因。
+- task 2：四宽度 × 两种 overflow mode × 八类方向/步长/严格比较共 64 组归纳事实；
+  同初值/全部回边、wrap-risk、零次迭代、契约限定 slice bound 的正例和近邻通过。
+  既有 widening/narrowing 固定预算、闭合 LoopInvariant 与独立 guard checker 的
+  entry/transfer、taken-edge 和 SSA identity 测试全绿。
+- task 3：LICM 正例直接断言 Mul 在循环外，不只统计常量；临时 SSA 来源声明由独立
+  checker 核验。别名内存、递归 call、print、checked arithmetic、strict float、
+  Div/Mod 保持在原控制流。C/WASM 执行对照验证零次迭代、break 绕过、checked 首错、
+  之前写入与输出槽；逆序 ID/块存储、存活 producer 和整个函数预算恢复测试通过。
+- task 4：等值归纳递推实际 Add 数 O2=`2` / O3=`1`，独立证书覆盖全部输入，
+  同 ValueId 参数改写与 scalar-edge 修复原子完成；Memory SSA/guard 身份保持。
+  归纳单元测试 6 项、LICM 单元测试 3 项，其中至少 8 个独立负例输入覆盖缺少
+  transfer/producer、错误初值/步长/目标/来源、回边变异及 ID 耗尽；IR proof filter 9 项。
+- task 5：canonical fixture bounds guard 为 O1=`1`、O2=`0`、O3=`0`。无契约、错误
+  index/slice、非严格边界和过大步长的近邻保留必要检查及 conservative explanation。
+- task 6：seed `0xC0DE_CAFE_5EED_0110` 的 6 个 generated kernel 在原 C/WASM/Native
+  执行器做 O0–O3 supported-mode differential，原三个程序保留；附加 nested/equal-IV/
+  break/continue 程序和显式 checked-first-error 执行测试通过。
+- 本文件“必须通过”第 1–8 项全部重新执行并通过：optimizer 的 `kir_o3_`/`loop_`/
+  `generated_loop_`/`guard_` 过滤器分别为 1/21/1/13 项，IR `proof_` 为 9 项；
+  fmt、default Clippy 与 diff check 均 exit 0。额外 all-feature Clippy 通过。
+- 顺序默认/全特性全仓测试为 443/565 项通过（Native 93、全特性 CLI 22），release
+  `--lib licm_` 为 3/3。环境：Rust 1.90.0 / AArch64 macOS / LLVM+Clang 22.1.8，
+  overlay manifest `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
+- 默认、全特性、release LICM 日志 SHA-256 依次为
+  `e1fd50ecfa4548d265d0b721d99a035b5c5a88af3bc074468b329220170343c7`、
+  `2573ca696f80b011adb6bdd3264e5c0699637366604cc954009ba84de1191690`、
+  `a35a0a4375977c008c637788829636ff229f8be6d65ea67ac0d6ec1a821a4e34`。
+- 自审结论：命名 pass 有实际语义 transform；独立验证与改写绑定闭合；失败/effect/
+  Memory SSA 和 strict-f64 边界未放宽；未引入 SIMD/unroll/versioning/specialization。
+  阶段 07 功能验收通过。I14/I19/I20 原性能失败、阶段 11 与总验收仍打开；没有将
+  功能测试替代性能结果，没有移动 main，也没有签署尚未通过的最终清单。
