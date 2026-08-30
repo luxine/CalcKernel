@@ -253,6 +253,27 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   Clippy、默认/全特性完整 tests、release build、compiler/artifact/JIT audit 全部 exit 0。
   这只构成本机证据，Windows runner 仍须实际验收。
 
+## I14：x86 跨 runner 配对时延出现非共模变化，待同机复诊
+
+- Run `33288190232`、SHA `4a2969d`、performance x86 job `99195017517` 被原门禁
+  拒绝：unchecked `integer_accumulate` 的归一化 V0.10 ratio 超过 1.08。原始 artifact
+  ID `9725146781`、zip SHA-256
+  `ce84607e4f27dfe4b162be17f180c70ccca8b2c17b6b05322128991f0a10d071` 已保存。
+- 本轮 Native/Clang median 为 `24770394/24764265` ns，固定 V0.10 为
+  `23000767/27975716` ns；此前通过的候选 `6892182` 为 `23008527/27983810` ns。
+  两轮候选间 Linux 生效的编译路径、语料、Clang 参数没有变化，唯一 target-machine
+  变更受 Mach-O 条件限制。但缺少 CPU identity 和本轮同 worker V0.10 结果，尚不能
+  排除环境差异或声明为代码修复，尤其不能只重跑直到通过。
+- 先新增失败 CI contract，再添加原 gate 失败后的同 worker 诊断：记录 `lscpu`，
+  checkout 精确 V0.10 commit，只应用四份已有摘要固定 adapters，复跑完整 V0.10
+  runtime/optimizer harness，保留原始结果及两版 integer kernel executable `.text`。
+  原 gate、冻结数值、3%/8% 与其他阈值完全不变；诊断不能覆盖 required job 失败。
+  本轮使用默认关闭的显式 dispatch input 强制采集同样的诊断，以免把“下一轮偶然通过”
+  当作解释；后续常规运行仍在失败时自动采集。
+- Intel job `99195017518` 同轮另因 GitHub artifact CreateArtifact 连续五次 timeout
+  在完整 Native suite 之前失败；保存原日志后仅重跑该 job 的同一 SHA，用于 I12 单变量
+  验证。上传故障不构成 Small code model 修复成功的证据。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

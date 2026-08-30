@@ -55,3 +55,8 @@ flag 仍只用于调查，不会被 release gate 接受。
 Performance 不允许改变 diagnostic、evaluation order、modular integer/strict floating
 semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated
 contract case 只能使用满足声明 domain 的输入；不能为通过候选版本而降低阈值。
+
+CI 性能门禁失败时，额外诊断记录 CPU identity，在同一 worker 上应用四份摘要固定
+adapters 重测精确固定的 0.10 compiler，并保留标量 kernel 的机器码供对照。也可以用
+workflow-dispatch 的 `performance_diagnostics` 显式开启同样的诊断，无需等待再次失败。
+诊断产物不替代原门禁，不授权刷新冻结基线；原 required job 的失败状态保持不变。

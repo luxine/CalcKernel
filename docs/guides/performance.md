@@ -83,3 +83,11 @@ integer or strict floating semantics, checked first-error order, runtime print
 order, semantic MIR, ABI, or contract domain. Generated contract cases contain
 only inputs satisfying the declared domain. A benchmark, baseline, or threshold
 change requires review as a contract change.
+
+When the CI performance gate fails, failure-only diagnostics retain CPU identity,
+remeasure the exact pinned 0.10 compiler on the same worker using the four
+checksum-pinned adapters, and preserve scalar kernel machine code for comparison.
+The same diagnostics can be requested explicitly with the workflow-dispatch
+`performance_diagnostics` input to investigate without waiting for another failure.
+These artifacts do not replace the original gate or authorize refreshing the
+frozen baseline; an original required-job failure remains failed.

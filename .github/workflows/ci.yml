@@ -3,6 +3,12 @@ name: CI
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      performance_diagnostics:
+        description: "Record same-worker pinned v0.10 diagnostics without changing performance gates"
+        type: boolean
+        required: false
+        default: false
   pull_request:
     branches: [main]
   push:
@@ -211,10 +217,21 @@ jobs:
           target: ${{ matrix.target }}
           profile: oracle
       - name: Gate baseline CPU policy
+        id: performance-gate
         run: |
           cargo bench --features native-toolchain --bench ckc_perf -- --case proof --task check --cpu baseline
           cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
           python3 scripts/check-native-performance.py target/ckc-perf/results.json
+      - name: Checkout pinned compiler for same-worker failure diagnosis
+        if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: df816502876fba41676f9ebc190e4fadd18cd5a5
+          path: target/performance-v010-diagnostic
+      - name: Diagnose performance on the same worker without replacing the failed gate
+        if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
+        timeout-minutes: 20
+        run: bash scripts/diagnose-native-performance.sh
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -224,4 +241,5 @@ jobs:
             target/ckc-perf/results-baseline.json
             build/perf/latest.summary.json
             build/perf/latest.summary.md
+            target/performance-diagnostics
           if-no-files-found: error

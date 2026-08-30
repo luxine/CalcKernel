@@ -333,3 +333,40 @@ fn registered_release_workflow_should_dispatch_feature_candidate_ci_without_publ
         );
     }
 }
+
+#[test]
+fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassing_the_gate() {
+    let workflow = read(".github/workflows/ci.yml");
+    let performance = workflow
+        .split("  performance:")
+        .nth(1)
+        .expect("performance job");
+    assert!(performance.contains("id: performance-gate"));
+    assert!(workflow.contains("performance_diagnostics:"));
+    assert!(performance.contains("inputs.performance_diagnostics == true"));
+    assert!(performance.contains("if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)"));
+    assert!(performance.contains("path: target/performance-v010-diagnostic"));
+    assert!(performance.contains("ref: df816502876fba41676f9ebc190e4fadd18cd5a5"));
+    assert!(performance.contains("bash scripts/diagnose-native-performance.sh"));
+    assert!(!performance.contains("continue-on-error: true"));
+    let script = read("scripts/diagnose-native-performance.sh");
+    for required in [
+        "df816502876fba41676f9ebc190e4fadd18cd5a5",
+        "lscpu --json",
+        "sha256sum",
+        "cargo bench --features native-toolchain --bench ckc_perf -- --task check --cpu baseline",
+        "v0_10_proof_loop_harness.patch",
+        "v0_10_mir_optimizer_harness.patch",
+        "v0_10_linux_cpp_runtime_harness.patch",
+        "v0_10_clang_cpu_harness.patch",
+    ] {
+        assert!(
+            script.contains(required),
+            "performance diagnostics must contain {required}"
+        );
+    }
+    assert!(
+        !script.contains("check-native-performance.py"),
+        "diagnostics must not replace the required gate"
+    );
+}
