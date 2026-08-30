@@ -158,35 +158,38 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `disable-library-validation`、`unsigned-executable-memory` 或其他豁免。本机真实 hardened
   JIT audit 在修订后通过；macOS 15 仍须由下一轮同提交 job 复验。
 
-## I09：Darwin x86-64 把 C-ABI `main` 直接当作 process entry
+## I09：Darwin x86-64 SIGBUS 的 entry 假设已被否定，阻断仍未解决
 
 - Run `33267646660` 最后完成的 macOS x86-64 job `99140467067` 运行于 macOS 15.7.9；
   bootstrap、pre-LLVM fact audit 及其 artifact 均成功。I02 修订后，首轮曾失败的全部 cache/run
   cases 已转绿，但完整 Native suite 仍在需要执行 standalone Mach-O 的 scalar sanitizer cases
   出现失败，测试进程最终以 SIGBUS 终止；这不是 I08 entitlement audit，因为失败发生在
   release build/audit 之前。
-- 复诊定位到 embedded Darwin LLD 的 `-e _main`。本机 Apple `ld(1)` 对 `-e` 的平台契约明确
-  说明默认 entry 是 CRT `start`，该 glue 负责 setup 并调用 `main`；旧实现却把 LLVM 按正常
-  C function ABI 生成的 `_main` 暴露为 raw process entry。简单无调用入口可能偶然工作，但
-  real Intel Darwin 上包含 call/spill 的 sanitizer/printing 路径不再拥有可靠的 x86-64 stack
-  phase，因而可 SIGBUS。AArch64 或 Rosetta 成功不能证明该 x86 process boundary 合法。
-- TDD 先要求 runtime-owned `__ck_start`、x86-64 stack normalization、两架构 call-to-main /
-  platform-exit，以及 LLD 不再接受 `_main` 为 entry，旧实现稳定失败。修订把 stub 放入既有
-  Darwin `platform.o`：x86-64 先把 process stack 向下规范化到 16 bytes 再 `callq _main`，
-  AArch64 保持 ABI-aligned `bl _main`，两者随后调用 `__ck_platform_exit` 且不返回。这样不增加
-  runtime object/ABI 数量，JIT 仍直接以 C ABI 调用 `main`，只修复 standalone process boundary。
-- 两架构 platform source 均以 release 的 strict freestanding flags 编译通过，symbol table
-  精确包含 Mach-O symbol `___ck_start`、undefined `_main` 与 platform exit。另从 pinned
-  LLVM 22.1.8 source 构建原生 X86 `llc`，把失败类 sanitizer fixture 的同一 LLVM IR 生成为
-  x86-64 Mach-O object；其 `_main` 含 stack frame 与两个 call。经 pinned LLVM 22.1.8
-  `ld64.lld` 链接后，`LC_MAIN` entry offset 精确指向 `___ck_start`。Raw `_main` 与新 stub
-  在 Rosetta 下都返回 0，进一步证明 emulator 结果不能替代 real Intel 验收。本机以重算 object
-  hash 的临时 prefix 运行完整 Native suite 为 91/91；真实 Intel 结论仍必须由下一轮同提交
-  host job 给出。
+- `6892182` 曾根据旧 `ld(1)` 的 CRT entry 说明提出 stack-entry 假设，并增加
+  `__ck_start` wrapper；本机 91/91 与 Rosetta 均通过，但这些证据不能证明假设成立。
+- Run `33277614781`、同 SHA 的 Intel job `99167002488` 再次在同两项 scalar sanitizer
+  test 失败，Native test 进程仍以 SIGBUS 退出。Bootstrap、cache save、fact audit 7/7
+  成功，因此 entry wrapper 没有解决阻断，不能列为已确认修复。
+- 进一步核对 [Apple dyld4 源码](https://github.com/apple-oss-distributions/dyld/blob/main/dyld/dyldMain.cpp)：
+  `LC_MAIN` 被转换为 `MainFunc` 并以普通 C ABI 调用，返回后由 libSystem exit；只有旧
+  `LC_UNIXTHREAD` 分支走 `gotoAppStart`。先前把现代 `LC_MAIN` 等同于 raw kernel stack
+  entry 的解释错误，现明确撤回。Wrapper 的必要性、相关注释/契约必须在真实 crash
+  backtrace 确认根因后重新审查，不能把仅断言 wrapper 存在的测试当作 bug regression。
+
+## I11：Native 进程崩溃使 libtest 缓冲中的失败详情丢失
+
+- 上述 Intel log 只有两个 `FAILED` 名称和父进程 SIGBUS；没有 assertion detail 或 native
+  backtrace，无法区分 standalone child failure 与随后父进程中的 JIT/dylib/LLVM failure。
+- 先增加两个失败的 CI contract tests，再保留原并行 required suite，只增加 `--nocapture`
+  与 `RUST_BACKTRACE=1`。仅该 step 失败且 host 为 Darwin 时，额外用 LLDB 串行/并行回放
+  同一完整 suite，保存 crash stack、命令结果与匹配的 DiagnosticReports。诊断可失败，
+  但原 required step 失败永远保留，诊断结果不能替代验收结果。
+- Runtime/LLVM 输入在此诊断轮保持 `6892182` 不变，复用精确 identity 的已验证 prefix，
+  以便先收集原故障的真实 stack；不是通过 cache 忽略新 runtime source。
 
 ## I10：LLVM prefix cache 未绑定 runtime 输入且只在整 job 成功后保存
 
-- I09 必须重编 Darwin `platform.o`，但旧 cache digest 只包含 LLVM manifest 与两个 bootstrap
+- I09 的试验重编了 Darwin `platform.o`，但旧 cache digest 只包含 LLVM manifest 与两个 bootstrap
   script；`native/runtime/**` 完全不参与 identity。命中旧 prefix 会让新 compiler 静默嵌入旧
   runtime object，manifest 内 object hash 仍自洽，现有 validation 无法知道 repository source
   已变化。这是供应链正确性缺口，不能靠再改一次 bootstrap script 人工撞 key。

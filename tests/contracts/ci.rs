@@ -152,6 +152,61 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
 }
 
 #[test]
+fn native_host_ci_should_preserve_parallel_failures_before_darwin_diagnostics() {
+    let workflow = read(".github/workflows/ci.yml");
+    let suite = workflow
+        .split("      - name: Run required native suite\n")
+        .nth(1)
+        .expect("native hosts must name the required suite")
+        .split("      - name:")
+        .next()
+        .expect("required native suite step");
+    assert!(suite.contains("id: native-suite"));
+    assert!(suite.contains("RUST_BACKTRACE: 1"));
+    assert!(suite.contains("cargo test --all-features --locked --test native -- --nocapture"));
+    assert!(!suite.contains("continue-on-error"));
+    assert!(!suite.contains("--test-threads"));
+
+    let diagnostic = workflow
+        .split("      - name: Diagnose failed Darwin native suite\n")
+        .nth(1)
+        .expect("failed Darwin suites need crash diagnostics")
+        .split("      - name:")
+        .next()
+        .expect("Darwin diagnostic step");
+    assert!(diagnostic.contains(
+        "if: failure() && runner.os == 'macOS' && steps.native-suite.outcome == 'failure'"
+    ));
+    assert!(diagnostic.contains("timeout-minutes: 15"));
+    assert!(
+        diagnostic.contains("bash scripts/diagnose-native-darwin.sh target/native-diagnostics")
+    );
+    assert!(workflow.contains("name: native-diagnostics-${{ matrix.name }}"));
+    assert!(workflow.contains("path: target/native-diagnostics"));
+}
+
+#[test]
+fn darwin_crash_diagnostics_should_capture_serial_and_parallel_backtraces() {
+    let script = read("scripts/diagnose-native-darwin.sh");
+    for required in [
+        "--message-format=json",
+        ".target.name == \"native\"",
+        "--one-line-on-crash 'thread backtrace all'",
+        "settings set target.disable-aslr false",
+        "--test-threads=1 --nocapture",
+        "replay parallel --nocapture",
+        "DiagnosticReports",
+        "native-*.ips",
+        "program-*.ips",
+    ] {
+        assert!(
+            script.contains(required),
+            "crash diagnostics must include {required:?}"
+        );
+    }
+}
+
+#[test]
 fn performance_ci_should_select_a_case_from_the_benchmark_manifest() {
     let workflow = read(".github/workflows/ci.yml");
     let cases = read("benches/cases/native-cases.tsv");

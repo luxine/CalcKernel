@@ -139,7 +139,23 @@ jobs:
           name: fact-audit-${{ matrix.name }}
           path: target/fact-audit/${{ matrix.name }}.log
           if-no-files-found: error
-      - run: cargo test --all-features --locked --test native
+      - name: Run required native suite
+        id: native-suite
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --all-features --locked --test native -- --nocapture
+      - name: Diagnose failed Darwin native suite
+        if: failure() && runner.os == 'macOS' && steps.native-suite.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: bash scripts/diagnose-native-darwin.sh target/native-diagnostics
+      - name: Upload Darwin native crash diagnostics
+        if: always() && runner.os == 'macOS' && steps.native-suite.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-diagnostics-${{ matrix.name }}
+          path: target/native-diagnostics
+          if-no-files-found: error
       - run: cargo test --all-features --locked --test cli
       - name: Build release compiler on Unix
         if: runner.os != 'Windows'
