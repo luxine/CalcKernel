@@ -34,7 +34,7 @@
 - [x] 自审交接状态图、测试隔离与超时清理，确认不改变产品契约。
 - [x] 运行 `git diff --check` 与 `cargo +1.90.0 test --locked --test contracts docs::`；
   文档契约 16 passed / 0 failed / 0 ignored。
-- [ ] 仅提交上述文档，之后才改源码。
+- [x] 仅提交上述文档，之后才改源码；计划提交为 `cd11dda`。
 
 ## Task 1：真实生产模块的确定性 red
 
@@ -43,12 +43,12 @@
 - Modify `src/cli/run.rs`：Unix 模块换成 `#[path = "run/interrupt_unix.rs"] mod interrupt;`。
 - Modify `tests/native/run.rs`：用 path 引入同一私有源文件，不复制 handler。
 
-- [ ] 添加隔离进程回归：当前 Native test executable 以 `--exact` 运行自身的目标测试；
+- [x] 添加隔离进程回归：当前 Native test executable 以 `--exact` 运行自身的目标测试；
   仅在该子测试进程安装 handler，使用真实 SIGINT 和真实自有 sleep child。标准 raise
   定向当前线程，避免测试 harness 的其他线程先后调度影响 before-arm 判定。
-- [ ] 每个隔离 worker 放入自有 process group；RAII 在异常/超时时仅终止该 group 并回收
+- [x] 每个隔离 worker 放入自有 process group；RAII 在异常/超时时仅终止该 group 并回收
   自有进程。sleep handle 也以 RAII kill/wait，正常完成的子进程不能泄漏。
-- [ ] 覆盖登记前、登记后、登记前两次 SIGINT、pending guard 丢弃后重新安装无信号四种。
+- [x] 覆盖登记前、登记后、登记前两次 SIGINT、pending guard 丢弃后重新安装无信号四种。
   核心 before-arm 期望如下（不是 mock）：
 
 ```rust
@@ -62,7 +62,7 @@ assert_eq!(bounded_child_status(&mut child).signal(), Some(2));
   after-arm 将 raise 放在 set_child 后；重复 case 调两次 raise，仍要求 SIGINT 终止；
   drop case 在 spawn 前 raise/drop，再安装新 guard、登记 child，确认未被旧 pending
   终止后才发新的 SIGINT，并要求 signal=2。
-- [ ] 执行 `cargo +1.90.0 test --all-features --locked --test native interrupt_handoff -- --nocapture`；
+- [x] 执行 `cargo +1.90.0 test --all-features --locked --test native interrupt_handoff -- --nocapture`；
   观察 before-arm/重复 case 因 SIGINT 丢失失败，after-arm/guard-reset 对照通过。保留 red
   原始日志与摘要。不得让回归无限等待或影响 test runner 的 signal handler。
 
@@ -70,8 +70,8 @@ assert_eq!(bounded_child_status(&mut child).signal(), Some(2));
 
 **Files:** `src/cli/run/interrupt_unix.rs`。
 
-- [ ] 定义 `PENDING: i32 = -1`。install/drop 保持清空状态和恢复原 handler。
-- [ ] 登记采用一个 swap，只有看到 pending 才转发缓存的 SIGINT：
+- [x] 定义 `PENDING: i32 = -1`。install/drop 保持清空状态和恢复原 handler。
+- [x] 登记采用一个 swap，只有看到 pending 才转发缓存的 SIGINT：
 
 ```rust
 if CHILD.swap(child, Ordering::AcqRel) == PENDING {
@@ -79,7 +79,7 @@ if CHILD.swap(child, Ordering::AcqRel) == PENDING {
 }
 ```
 
-- [ ] handler 原子交接逻辑如下；只对正 PID 调用 async-signal-safe kill：
+- [x] handler 原子交接逻辑如下；只对正 PID 调用 async-signal-safe kill：
 
 ```rust
 let child = match CHILD.compare_exchange(0, PENDING, Ordering::AcqRel, Ordering::Acquire) {
@@ -93,31 +93,32 @@ if child > 0 {
 
   CAS 成功表示登记线程将负责待处理信号；若登记先赢则 CAS 返回正 PID，由 handler 转发。
   已 pending 时保持 pending；不自旋、不等另一个线程，不创建“检查后覆盖”的新丢失窗口。
-- [ ] 同一 targeted regression 必须全绿；原完整 public run 中断测试仍要求 code=245、
+- [x] 同一 targeted regression 必须全绿；原完整 public run 中断测试仍要求 code=245、
   无 parent signal、stdout 空、stderr 精确 CKR0006。
-- [ ] 行内检查 signal handler 只使用 lock-free 原子及 kill，不增加分配/锁/日志；
+- [x] 行内检查 signal handler 只使用 lock-free 原子及 kill，不增加分配/锁/日志；
   pending 不跨 guard 泄漏，Windows 模块字节不变。
 
 ## Task 3：给现有 public integration 增加失败上界
 
 **Files:** `tests/native/run.rs`。
 
-- [ ] 将 public parent 放入独立 process group，使用同一 RAII owner；保留现有“child 已存在”
+- [x] 将 public parent 放入独立 process group，使用同一 RAII owner；保留现有“child 已存在”
   条件和只发送一次 SIGINT，不增加固定等待、重新发送或 mock。
-- [ ] spawn 等待和中断后退出等待都有独立 10 秒期限；超时明确 panic，owner kill/reap
+- [x] spawn 等待和中断后退出等待都有独立 10 秒期限；超时明确 panic，owner kill/reap
   测试私有 group。读取 stdout/stderr 前回收遗留 descendants，避免继承 pipe 再次卡住。
-- [ ] 使用仍存活的隔离 worker 验证 timeout cleanup 的反例：到期必须失败且不泄漏 child；
+- [x] 使用仍存活的隔离 worker 验证 timeout cleanup 的反例：到期必须失败且不泄漏 child；
   此项只验证测试设施，不能替代产品行为回归。
-- [ ] 再跑整个 `cargo +1.90.0 test --all-features --locked --test native run:: -- --nocapture`。
+- [x] 再跑整个 `cargo +1.90.0 test --all-features --locked --test native run:: -- --nocapture`。
 
 ## Task 4：完整验收与提交
 
 **Files:** review、本计划、阶段 11 acceptance；正式双语文档只在产品契约文字确需澄清时同步改。
 
-- [ ] 执行阶段 11 原 default/all-feature/Clippy/fmt/release、generated/mutation/fact-audit、
+- [x] 执行阶段 11 原 default/all-feature/Clippy/fmt/release、generated/mutation/fact-audit、
   artifact/JIT 检查；保留 0 failed/ignored 和确切工具链身份。
-- [ ] 新实现 SHA 做第一次完整 schema-6 性能门及 checker，保留首次原件、全部门槛不变。
-- [ ] 提交实现与本地证据。等待原两个 Windows cold oracle 构建保存合格缓存，不因这个
+- [ ] 提交已验证实现与本地证据，再以该确切 SHA 做第一次完整 schema-6 性能门及 checker，
+  保留首次原件、全部门槛不变；性能证据在后续验收记录中追加，不伪称提交能引用自身摘要。
+- [ ] 等待原两个 Windows cold oracle 构建保存合格缓存，不因这个
   Darwin 问题取消整个旧 workflow。推送 feature branch，显式触发新 SHA 完整 10 jobs。
 - [ ] 所有 required jobs 在同一最终 SHA 通过才关闭 I23/I21/I22 和阶段 11；随后才做
   `99-final-acceptance.md`。旧 589 部分证据保留，不和新 SHA 拼成全绿。

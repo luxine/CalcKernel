@@ -34,9 +34,9 @@
 
 按 `11-interrupt-handoff-plan.md` 执行：
 
-- [ ] 原生产 Unix handler 的隔离 before-arm 与重复 pending regression 先 red 后 green；
+- [x] 原生产 Unix handler 的隔离 before-arm 与重复 pending regression 先 red 后 green；
   after-arm、guard 重装对照通过；使用真实 SIGINT 与真实自有 child。
-- [ ] public parent 仍只收到一次 SIGINT，精确输出 245/CKR0006；超时明确失败并清理
+- [x] public parent 仍只收到一次 SIGINT，精确输出 245/CKR0006；超时明确失败并清理
   自身进程 group，不能无限等待、不准 sleep/retry 掩盖竞态。
 - [ ] 新实现通过完整本地、首次性能门与同一最终 SHA 全十项 CI；Windows 行为不变。
 
@@ -114,8 +114,9 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
   针对同一 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`，当前已核实 7/10 必需项
   success：quality `99233477544`、native integration `99233477391`、Linux ARM
   `99233477579` / x64 `99233477538`、Darwin ARM `99233477589`、performance ARM
-  `99233477492` / x86-64 `99233477564`。Darwin x64 `99233477608`、Windows x64
-  `99233477598` / ARM `99233477647` 尚在构建；不能据此关闭 I21/I22、阶段 11 或总验收。
+  `99233477492` / x86-64 `99233477564`。Darwin x64 `99233477608` 已完成 bootstrap，
+  但 Native suite 暴露 I23 中断测试卡住；Windows x64 `99233477598` / ARM
+  `99233477647` 尚在构建。不能据此关闭 I21/I22/I23、阶段 11 或总验收。
 - Native integration 的全特性测试 592 项、artifact fixture 5 项、Linux ownership
   ASan/UBSan/LSan 8 项均通过，0 failed/ignored；Linux 分支实际启用
   `detect_leaks=1:halt_on_error=1`。fmt、all-feature Clippy、release build、native

@@ -1020,7 +1020,7 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   摘要为 `fcc795342a98b44eee4581ca19d7650192fc1886203eb805544537fbe295e543`。
   I21 与 I22 仍必须由下一次完整矩阵的真实 Windows 编译和测试签收。
 
-## I23：Unix run 登记子进程前丢失 SIGINT（已复诊，待实现）
+## I23：Unix run 登记子进程前丢失 SIGINT（针对性修复通过，全量待验）
 
 - 当前 `33302635528/99233477608` 的 Native suite 卡在 public interrupt forwarding test；
   live UI 明确报告该 test 超过 60 秒。原 test 观察 OS child 存在即向 parent 发送一次
@@ -1036,6 +1036,40 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   隔离进程做 red/green：一个原子表示 unarmed/pending/PID，登记负责交接 pending。
   给原 public test 增加明确失败期限及自身进程清理，不重发中断、不忽略测试。
   保留 245/CKR0006、Windows 行为、性能原门槛和同 SHA 十项 CI。行内自审无设计阻断。
+
+### I23 针对性实现与行内复审
+
+- 先提交 `cd11dda` 计划，再原样分离 Unix 模块，让 Native regression 与 CLI 编译
+  同一份生产源文件。四个真实信号测试各运行于独立进程，不修改主 test runner 的 handler。
+  首次 red 为两个登记前 case 失败、两个对照通过；red 摘要
+  `9af162906596be60f55410f7af1bbcd9776b17ad44fc7486769a8f7e5a7189f7`。
+- 最小实现只将 `0/pending/PID` 编码在既有 AtomicI32：handler CAS 未登记值到 pending，
+  登记 swap 若收到 pending 则转发。四个 targeted case 全通过；green 摘要
+  `d0eb141100af2e4d6688f0d14498b1f61329c641d3a8b4ec54befbc096391012`。
+- 完整 `run::` 10 项通过，0 failed/ignored，包含原单次 SIGINT/245/CKR0006、stdio、
+  checked failure、private protocol 与 JIT audit。新 timeout 反例同时证明超时返回错误、
+  自有 child 不再存活且已经回收。该次日志摘要
+  `2623ebd11be1044c59dbecf300a50dd36b2922f595d85f8275a17feabf9ca4b5`。
+- 复审两种原子先后次序：handler 先成功则登记负责转发；登记先完成则 handler 得到正
+  PID 后转发；已有 pending 不覆盖为 0。没有锁、分配、自旋、生产测试开关或第二个
+  pending 原子。Windows 模块未变。原 public test 仍观察 child 存在后只发一次 SIGINT，
+  不增加延时重试；期限只将无限等待变为明确失败并回收测试专属 group。
+- 完整本地 default 470、all-feature 598（Native 99）、release lib 53 / IR 58、
+  generated 3、mutation 10、fact audit 7、release verifier-cache 5 与 docs 16 均通过，
+  0 failed/ignored；all-target/all-feature Clippy、fmt、release build、artifact/JIT audits
+  和 version/licenses 通过。Native ABI=1、Runtime ABI=2、LLVM=22.1.8，manifest 仍为
+  `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
+- default / all-feature / Clippy 日志摘要分别为
+  `f0f6409be2b19ac74d0a11527d7d2145a7e5e0702ff2a3612e5bb110ff749213`、
+  `a849635bf570f641c6f2fa4536557aa4fedf121067e25d96a3fe3fd0b5d7e462`、
+  `737935c4043b91f19c0c0ffa380c1a7a5ecb841ffc8aabab8f086d348aa165f3`；
+  release lib / IR 摘要为
+  `6615ab13b90d9598fb349eeda7c0d80478c60da0e49417ece15ecb6de6677046`、
+  `c181b4e2c5e7e85df14835aa9bbd55929759424d544d5fdf005254fad03c278d`。
+  artifact / JIT audit 摘要为
+  `8bb2cdecd74783759124358c0a904aebfe6e89eac627e88d5e6009722ec1dc06`、
+  `cd3a8a27f34c0e4f796287ba51b619ee0ed22c114cac5879606d983dfaac35a2`。
+- 这不是阶段 11 签收；仍需该实现提交的首次性能及新同 SHA 六 host/十项 CI。
 
 ## 修订边界（全部阻断，持续有效）
 
