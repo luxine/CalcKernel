@@ -315,7 +315,7 @@ fn validate_function(
     for block in &function.blocks {
         let mut previous_effect_order = None;
         for (index, instruction) in block.instructions.iter().enumerate() {
-            for used in instruction_uses(instruction) {
+            visit_instruction_uses(instruction, |used| {
                 validate_use(
                     function,
                     block.id,
@@ -326,7 +326,7 @@ fn validate_function(
                     &dominators,
                     errors,
                 );
-            }
+            });
             validate_instruction_structure(function, block, index, &types, errors);
             if let Some(effect) = &instruction.effect {
                 if previous_effect_order.is_some_and(|previous| effect.order <= previous)
@@ -438,13 +438,13 @@ fn validate_instruction_structure(
     function: &KirFunction,
     block: &KirBlock,
     index: usize,
-    types: &HashMap<ValueId, MirType>,
+    types: &HashMap<ValueId, &MirType>,
     errors: &mut Vec<KirValidationError>,
 ) {
     let instruction = &block.instructions[index];
     if let KirInstructionKind::Binary { left, right, .. } = instruction.kind {
         let result_type = instruction.results.first().map(|result| &result.type_node);
-        if types.get(&left) != result_type || types.get(&right) != result_type {
+        if types.get(&left).copied() != result_type || types.get(&right).copied() != result_type {
             errors.push(error(
                 "binary operands and value result must have one type",
                 Some(function.id),
@@ -553,16 +553,16 @@ fn define_memory(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn define_value(
+fn define_value<'a>(
     function: &KirFunction,
     value: ValueId,
-    type_node: &MirType,
+    type_node: &'a MirType,
     definition: ValueDefinition,
     block: Option<BlockId>,
     instruction: Option<InstructionId>,
     module_value_ids: &mut HashSet<ValueId>,
     definitions: &mut HashMap<ValueId, ValueDefinition>,
-    types: &mut HashMap<ValueId, MirType>,
+    types: &mut HashMap<ValueId, &'a MirType>,
     errors: &mut Vec<KirValidationError>,
 ) {
     if !module_value_ids.insert(value) || definitions.insert(value, definition).is_some() {
@@ -573,7 +573,7 @@ fn define_value(
             instruction,
         ));
     }
-    types.insert(value, type_node.clone());
+    types.insert(value, type_node);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -669,7 +669,7 @@ fn validate_edge(
     source: BlockId,
     edge: &KirEdge,
     blocks: &HashMap<BlockId, &KirBlock>,
-    types: &HashMap<ValueId, MirType>,
+    types: &HashMap<ValueId, &MirType>,
     memory_regions: &HashMap<MemoryVersionId, MemoryRegionId>,
     errors: &mut Vec<KirValidationError>,
 ) {
@@ -713,7 +713,7 @@ fn validate_edge(
         ));
     }
     for (argument, param) in edge.args.iter().zip(&target.params) {
-        if let Some(argument_type) = types.get(argument)
+        if let Some(argument_type) = types.get(argument).copied()
             && argument_type != &param.type_node
         {
             errors.push(error(
@@ -740,6 +740,64 @@ fn validate_edge(
     }
 }
 
+fn visit_instruction_uses(instruction: &KirInstruction, mut visit: impl FnMut(ValueId)) {
+    match &instruction.kind {
+        KirInstructionKind::Undef { .. }
+        | KirInstructionKind::ConstInt { .. }
+        | KirInstructionKind::ConstFloat { .. }
+        | KirInstructionKind::ConstBool { .. } => {}
+        KirInstructionKind::Copy { value } | KirInstructionKind::Cast { value, .. } => {
+            visit(*value)
+        }
+        KirInstructionKind::Binary { left, right, .. }
+        | KirInstructionKind::Compare { left, right, .. } => {
+            visit(*left);
+            visit(*right);
+        }
+        KirInstructionKind::Unary { operand, .. } => visit(*operand),
+        KirInstructionKind::CheckCondition { args, .. }
+        | KirInstructionKind::Call { args, .. }
+        | KirInstructionKind::RuntimeCall { args, .. } => args.iter().copied().for_each(visit),
+        KirInstructionKind::Guard { condition, .. } => visit(*condition),
+        KirInstructionKind::Address { place } | KirInstructionKind::Load { place } => {
+            visit_place_uses(place, &mut visit);
+        }
+        KirInstructionKind::Store { place, value } => {
+            visit_place_uses(place, &mut visit);
+            visit(*value);
+        }
+        KirInstructionKind::MakeSlice { data, len } => {
+            visit(*data);
+            visit(*len);
+        }
+        KirInstructionKind::SliceData { slice } | KirInstructionKind::SliceLen { slice } => {
+            visit(*slice)
+        }
+        KirInstructionKind::Subslice { slice, start, end } => {
+            visit(*slice);
+            visit(*start);
+            visit(*end);
+        }
+    }
+}
+
+fn visit_place_uses(place: &KirPlace, visit: &mut impl FnMut(ValueId)) {
+    match place {
+        KirPlace::Value { value, .. } => visit(*value),
+        KirPlace::Deref { pointer, .. } => visit(*pointer),
+        KirPlace::Index { base, index, .. } => {
+            visit_place_uses(base, visit);
+            visit(*index);
+        }
+        KirPlace::SliceIndex { slice, index, .. } => {
+            visit(*slice);
+            visit(*index);
+        }
+        KirPlace::Field { base, .. } => visit_place_uses(base, visit),
+    }
+}
+
+#[cfg(test)]
 fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
     match &instruction.kind {
         KirInstructionKind::Undef { .. }
@@ -770,6 +828,7 @@ fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
     }
 }
 
+#[cfg(test)]
 fn place_uses(place: &KirPlace) -> Vec<ValueId> {
     match place {
         KirPlace::Value { value, .. } => vec![*value],
@@ -784,28 +843,28 @@ fn place_uses(place: &KirPlace) -> Vec<ValueId> {
     }
 }
 
-fn terminator_uses(terminator: &KirTerminator) -> Vec<ValueId> {
-    let mut values = match terminator {
-        KirTerminator::Return { value, .. } => value.iter().copied().collect(),
-        KirTerminator::Jump { .. } => Vec::new(),
-        KirTerminator::Branch { condition, .. } => vec![*condition],
+fn terminator_uses(terminator: &KirTerminator) -> impl Iterator<Item = ValueId> {
+    let value = match terminator {
+        KirTerminator::Return { value, .. } => *value,
+        KirTerminator::Jump { .. } => None,
+        KirTerminator::Branch { condition, .. } => Some(*condition),
     };
-    for edge in terminator_edges(terminator) {
-        values.extend(edge.args.iter().copied());
-    }
-    values
+    value
+        .into_iter()
+        .chain(terminator_edges(terminator).flat_map(|edge| edge.args.iter().copied()))
 }
 
-fn terminator_edges(terminator: &KirTerminator) -> Vec<&KirEdge> {
-    match terminator {
-        KirTerminator::Return { .. } => Vec::new(),
-        KirTerminator::Jump { edge } => vec![edge],
+fn terminator_edges(terminator: &KirTerminator) -> impl Iterator<Item = &KirEdge> {
+    let edges = match terminator {
+        KirTerminator::Return { .. } => [None, None],
+        KirTerminator::Jump { edge } => [Some(edge), None],
         KirTerminator::Branch {
             then_edge,
             else_edge,
             ..
-        } => vec![then_edge, else_edge],
-    }
+        } => [Some(then_edge), Some(else_edge)],
+    };
+    edges.into_iter().flatten()
 }
 
 fn error(
@@ -819,5 +878,182 @@ fn error(
         function,
         block,
         instruction,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operand_visitor_should_match_legacy_collection_for_every_instruction_and_place() {
+        let a = ValueId::from_index(1);
+        let b = ValueId::from_index(7);
+        let c = ValueId::from_index(u32::MAX);
+        let region = MemoryRegionId::from_index(0);
+        let ty = MirType::Primitive(crate::MirPrimitiveTypeName::I32);
+        let leaf = KirPlace::Value {
+            value: a,
+            type_node: ty.clone(),
+            region,
+        };
+        let indexed = KirPlace::Index {
+            base: Box::new(leaf.clone()),
+            index: b,
+            type_node: ty.clone(),
+            region,
+        };
+        let places = [
+            leaf,
+            KirPlace::Deref {
+                pointer: c,
+                type_node: ty.clone(),
+                region,
+            },
+            indexed.clone(),
+            KirPlace::SliceIndex {
+                slice: a,
+                index: b,
+                type_node: ty.clone(),
+                region,
+            },
+            KirPlace::Field {
+                base: Box::new(indexed),
+                field_name: "x".into(),
+                type_node: ty.clone(),
+                region,
+            },
+        ];
+        let mut kinds = vec![
+            KirInstructionKind::Undef { slot: "x".into() },
+            KirInstructionKind::ConstInt { value: "1".into() },
+            KirInstructionKind::ConstFloat {
+                value: "1.5".into(),
+            },
+            KirInstructionKind::ConstBool { value: true },
+            KirInstructionKind::Copy { value: a },
+            KirInstructionKind::Binary {
+                op: MirBinaryOp::Add,
+                left: a,
+                right: b,
+                semantics: KirArithmeticSemantics::Modular,
+            },
+            KirInstructionKind::Unary {
+                op: MirUnaryOp::Neg,
+                operand: c,
+                semantics: KirArithmeticSemantics::Checked,
+            },
+            KirInstructionKind::Compare {
+                op: crate::MirCompareOp::Lt,
+                left: a,
+                right: b,
+            },
+            KirInstructionKind::Cast {
+                op: crate::MirCastOp::I32ToF64,
+                value: a,
+            },
+            KirInstructionKind::CheckCondition {
+                kind: KirCheckConditionKind::InvalidSubslice,
+                args: vec![a, b, c, a],
+            },
+            KirInstructionKind::Guard {
+                condition: b,
+                failure: KirFailureKind::OutOfBounds,
+            },
+            KirInstructionKind::MakeSlice { data: a, len: b },
+            KirInstructionKind::SliceData { slice: a },
+            KirInstructionKind::SliceLen { slice: c },
+            KirInstructionKind::Subslice {
+                slice: a,
+                start: b,
+                end: c,
+            },
+            KirInstructionKind::Call {
+                function_name: "callee".into(),
+                args: vec![a, b, c, a],
+            },
+            KirInstructionKind::RuntimeCall {
+                intrinsic: crate::MirRuntimeIntrinsic::PrintI32,
+                args: vec![a],
+            },
+            KirInstructionKind::RuntimeCall {
+                intrinsic: crate::MirRuntimeIntrinsic::PrintNewline,
+                args: vec![],
+            },
+        ];
+        for place in places {
+            kinds.push(KirInstructionKind::Address {
+                place: Box::new(place.clone()),
+            });
+            kinds.push(KirInstructionKind::Load {
+                place: Box::new(place.clone()),
+            });
+            kinds.push(KirInstructionKind::Store {
+                place: Box::new(place),
+                value: c,
+            });
+        }
+        for kind in kinds {
+            let instruction = KirInstruction {
+                id: InstructionId::from_index(0),
+                results: vec![],
+                kind,
+                memory: None,
+                effect: None,
+            };
+            let mut actual = Vec::new();
+            visit_instruction_uses(&instruction, |value| actual.push(value));
+            assert_eq!(
+                actual,
+                instruction_uses(&instruction),
+                "{:?}",
+                instruction.kind
+            );
+        }
+    }
+
+    #[test]
+    fn terminator_visitors_should_preserve_order_and_parallel_edges() {
+        let a = ValueId::from_index(1);
+        let b = ValueId::from_index(7);
+        let edge = KirEdge {
+            target: BlockId::from_index(4),
+            args: vec![a, b, a],
+            memory_args: vec![],
+        };
+        let cases = [
+            (
+                KirTerminator::Return {
+                    value: None,
+                    memory: vec![],
+                    effect_order: 0,
+                },
+                vec![],
+                0,
+            ),
+            (
+                KirTerminator::Return {
+                    value: Some(a),
+                    memory: vec![],
+                    effect_order: 0,
+                },
+                vec![a],
+                0,
+            ),
+            (KirTerminator::Jump { edge: edge.clone() }, vec![a, b, a], 1),
+            (
+                KirTerminator::Branch {
+                    condition: b,
+                    then_edge: edge.clone(),
+                    else_edge: edge,
+                },
+                vec![b, a, b, a, a, b, a],
+                2,
+            ),
+        ];
+        for (terminator, expected, count) in cases {
+            assert_eq!(terminator_uses(&terminator).collect::<Vec<_>>(), expected);
+            assert_eq!(terminator_edges(&terminator).count(), count);
+        }
     }
 }

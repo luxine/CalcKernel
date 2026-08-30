@@ -655,6 +655,24 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `291d53de4288fa16ca0aa4153394af042b87cc644eec37045cb5afbe82c2753a`。
   本批尚未取得新的完整性能验收，原 I14/I19/I20 继续打开。
 
+### I20 结构校验临时分配收敛（仍未关闭）
+
+- 结构校验器只读借用每个 SSA 定义的 MirType，不再为每次验证克隆 pointer/slice/
+  struct 类型；定义唯一性、类型等值、所有错误消息与遍历顺序保持不变。操作数使用
+  直接 visitor，terminator 及其输入边使用借用 iterator，避免每条指令、place 和边
+  列表的短生命周期 Vec。每个 pass 的完整状态比较、structural verifier 与 proof
+  checker 仍执行原规则；没有缓存分析结论或跳过任何校验项。
+- 新增单元逐项覆盖全部 instruction/place variant，与原收集器比较完整有序 ValueId
+  列表；terminator 测试覆盖空/有值 return、jump、两个相同 target/相同参数的 branch
+  arm，重复值和两条边都不得去重。release IR 全部 58 项及缓存故障注入 5 项通过。
+- 默认 449 项、全特性 571 项（Native 93 项）、release 单元 44 项与全特性 Clippy、
+  fmt/diff 全部通过。Dijkstra KIR 仍与前述基准逐字节相同。default/all-feature/release
+  日志 SHA-256 分别为
+  `a91292163a75fb550a2d3d9d42d850a28b9a5f6ca1337be17e9dd55819d7027a`、
+  `4f49289858166cd8edaa81abadd8225b15493d5198a6fb64513b65d53ea12060`、
+  `b27f0bec4c3c231c5c9f447b59dea058558a100f95564bf11b4efe50b71050b1`。
+  这些是功能/校验保持证据，不是原性能门槛通过证据。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median
