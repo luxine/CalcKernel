@@ -34,9 +34,16 @@ A pass's `changed = false` declaration alone never authorizes reuse.
 - O3 adds `natural-loop-analysis`, conservative `licm`, induction analysis,
   post-loop range/check elimination, DCE, and cleanup.
 
-Scalar range analysis is demand-driven per function. A guard-free function has
-no safety-check consumer, so the named pass and its verifier record remain in
-the pipeline without constructing an unused product-domain result.
+Integer constant propagation also runs in guard-free functions. It rewrites
+modular arithmetic, integer copies and comparisons, including consumers of
+constant block parameters whose every incoming edge agrees. Each transaction
+checks closed derivations and the exact replacement values against immutable
+pre-rewrite KIR before changing any instruction. Exhausting the deterministic
+per-function budget discards that function's pending proposals. This transform
+does not remove checked operations or guards and does not fold strict floats.
+
+The separate full scalar product-domain analysis remains demand-driven by
+safety-check consumers; guard-free functions do not build unused range results.
 
 KIR inspection uses `emit-kir`, `--print-facts`,
 `--print-effect-summaries`, and `--explain-optimization`. Output is

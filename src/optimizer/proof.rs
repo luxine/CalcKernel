@@ -55,6 +55,23 @@ pub enum ProofStep {
         right: ProofStepId,
         claim: ScalarClaim,
     },
+    CopyTransfer {
+        instruction: InstructionId,
+        input: ProofStepId,
+        claim: ScalarClaim,
+    },
+    PhiJoin {
+        block: BlockId,
+        inputs: Vec<ProofStepId>,
+        claim: ScalarClaim,
+    },
+    IntegerComparison {
+        instruction: InstructionId,
+        left: ProofStepId,
+        right: ProofStepId,
+        value: ValueId,
+        result: bool,
+    },
     BranchRefinement {
         predecessor: BlockId,
         target: BlockId,
@@ -83,7 +100,10 @@ impl ProofStep {
             Self::FactLeaf { .. } | Self::Constant { .. } | Self::LoopInvariant { .. } => {
                 Vec::new()
             }
+            Self::CopyTransfer { input, .. } => vec![*input],
+            Self::PhiJoin { inputs, .. } => inputs.clone(),
             Self::BinaryTransfer { left, right, .. }
+            | Self::IntegerComparison { left, right, .. }
             | Self::BranchRefinement { left, right, .. } => vec![*left, *right],
             Self::GuardSafety { premises, .. } => premises.clone(),
         }
@@ -227,6 +247,43 @@ fn print_step(step: &ProofStep) -> String {
             left.index(),
             right.index(),
             print_claim(claim)
+        ),
+        ProofStep::CopyTransfer {
+            instruction,
+            input,
+            claim,
+        } => format!(
+            "copy i{} step{} {}",
+            instruction.index(),
+            input.index(),
+            print_claim(claim)
+        ),
+        ProofStep::PhiJoin {
+            block,
+            inputs,
+            claim,
+        } => format!(
+            "phi b{} [{}] {}",
+            block.index(),
+            inputs
+                .iter()
+                .map(|step| format!("step{}", step.index()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            print_claim(claim)
+        ),
+        ProofStep::IntegerComparison {
+            instruction,
+            left,
+            right,
+            value,
+            result,
+        } => format!(
+            "integer-compare i{} step{} step{} v{}={result}",
+            instruction.index(),
+            left.index(),
+            right.index(),
+            value.index()
         ),
         ProofStep::BranchRefinement {
             predecessor,

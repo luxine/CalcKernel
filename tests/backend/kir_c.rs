@@ -103,6 +103,66 @@ fn level(level: u8) -> KirOptimizationLevel {
 }
 
 #[test]
+fn kir_c_constant_propagation_should_preserve_results_and_checked_wrap_at_every_level() {
+    let source = r#"
+        export fn same(flag: bool) -> i32 {
+          let x: i32 = 0;
+          if flag { x = 42; } else { x = 42; }
+          return x + 1;
+        }
+        export fn different(flag: bool) -> i32 {
+          let x: i32 = 0;
+          if flag { x = 42; } else { x = 41; }
+          return x + 1;
+        }
+        export fn compared() -> bool { return (20 + 22) >= 42; }
+        export fn wrapped() -> u32 { return 4294967295 + 1; }
+    "#;
+    for optimization_level in 0..=3 {
+        for checked in [false, true] {
+            let kir = optimized_kir(
+                source,
+                level(optimization_level),
+                if checked {
+                    KirOverflowMode::Checked
+                } else {
+                    KirOverflowMode::Unchecked
+                },
+                KirBoundsMode::Unchecked,
+            );
+            let c = emit_c_kir_module(&kir).expect("constant propagation C");
+            let harness = if checked {
+                r#"
+                int main(void) {
+                  int32_t value = 0;
+                  uint32_t wrapped_value = 7;
+                  bool comparison = false;
+                  if (same(false, &value) != CK_OK || value != 43) return 1;
+                  if (same(true, &value) != CK_OK || value != 43) return 2;
+                  if (different(false, &value) != CK_OK || value != 42) return 3;
+                  if (different(true, &value) != CK_OK || value != 43) return 4;
+                  if (compared(&comparison) != CK_OK || !comparison) return 5;
+                  if (wrapped(&wrapped_value) != CK_ERR_OVERFLOW || wrapped_value != 7) return 6;
+                  return 0;
+                }
+                "#
+            } else {
+                r#"
+                int main(void) {
+                  if (same(false) != 43 || same(true) != 43) return 1;
+                  if (different(false) != 42 || different(true) != 43) return 2;
+                  if (!compared()) return 3;
+                  if (wrapped() != 0) return 4;
+                  return 0;
+                }
+                "#
+            };
+            compile_and_run(&c, harness);
+        }
+    }
+}
+
+#[test]
 fn kir_c_unchecked_backend_should_compile_scalar_control_struct_and_memory() {
     let kir = optimized_kir(
         r#"

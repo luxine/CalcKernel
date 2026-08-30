@@ -338,6 +338,7 @@ fn verify_proven_fact(
 enum CheckedStep {
     Scalar(ScalarClaim),
     Fact(FactPredicate),
+    Boolean,
     GuardSafety,
 }
 
@@ -449,6 +450,57 @@ fn check_step(
                 return Err(prefix("binary claim does not match local transfer"));
             }
             Ok(CheckedStep::Scalar(claim.clone()))
+        }
+        ProofStep::CopyTransfer {
+            instruction,
+            input,
+            claim,
+        } => {
+            let input = checked_scalar(checked, input.index(), &prefix)?;
+            let Some((owner, _, instruction)) = find_instruction(module, *instruction) else {
+                return Err(prefix("copy instruction is missing"));
+            };
+            if owner.id != function.id
+                || !copy_transfer_matches(function, instruction, input, claim)
+            {
+                return Err(prefix("copy claim does not match local transfer"));
+            }
+            Ok(CheckedStep::Scalar(claim.clone()))
+        }
+        ProofStep::PhiJoin {
+            block,
+            inputs,
+            claim,
+        } => {
+            let inputs = inputs
+                .iter()
+                .map(|step| checked_scalar(checked, step.index(), &prefix))
+                .collect::<Result<Vec<_>, _>>()?;
+            if !phi_join_matches(function, *block, &inputs, claim) {
+                return Err(prefix("phi claim does not cover every incoming edge"));
+            }
+            Ok(CheckedStep::Scalar(claim.clone()))
+        }
+        ProofStep::IntegerComparison {
+            instruction,
+            left,
+            right,
+            value,
+            result,
+        } => {
+            let left = checked_scalar(checked, left.index(), &prefix)?;
+            let right = checked_scalar(checked, right.index(), &prefix)?;
+            let Some((owner, _, instruction)) = find_instruction(module, *instruction) else {
+                return Err(prefix("comparison instruction is missing"));
+            };
+            if owner.id != function.id
+                || !integer_comparison_matches(function, instruction, left, right, *value, *result)
+            {
+                return Err(prefix(
+                    "integer comparison claim does not match local transfer",
+                ));
+            }
+            Ok(CheckedStep::Boolean)
         }
         ProofStep::BranchRefinement {
             predecessor,
@@ -586,7 +638,7 @@ fn checked_scalar<'a>(
 ) -> Result<&'a ScalarClaim, String> {
     match checked.get(index as usize) {
         Some(CheckedStep::Scalar(claim)) => Ok(claim),
-        Some(CheckedStep::Fact(_) | CheckedStep::GuardSafety) => {
+        Some(CheckedStep::Fact(_) | CheckedStep::Boolean | CheckedStep::GuardSafety) => {
             Err(prefix("step dependency is not a scalar claim"))
         }
         None => Err(prefix("step dependency is missing")),
@@ -1167,6 +1219,122 @@ fn binary_transfer_matches(
     scalar_binary(op, semantics, &left, &right).is_ok_and(|result| {
         claim.interval == *result.interval() && claim.failure == result.failure()
     })
+}
+
+fn copy_transfer_matches(
+    function: &KirFunction,
+    instruction: &KirInstruction,
+    input: &ScalarClaim,
+    claim: &ScalarClaim,
+) -> bool {
+    let KirInstructionKind::Copy { value } = instruction.kind else {
+        return false;
+    };
+    let [result] = instruction.results.as_slice() else {
+        return false;
+    };
+    let Some(ty) = super::IntegerType::from_mir(&result.type_node) else {
+        return false;
+    };
+    value == input.value
+        && value_integer_type(function, value) == Some(ty)
+        && result.value == claim.value
+        && claim.interval == input.interval
+        && claim.failure == input.failure
+}
+
+fn phi_join_matches(
+    function: &KirFunction,
+    block: crate::BlockId,
+    inputs: &[&ScalarClaim],
+    claim: &ScalarClaim,
+) -> bool {
+    let Some(block) = function
+        .blocks
+        .iter()
+        .find(|candidate| candidate.id == block)
+    else {
+        return false;
+    };
+    let Some(index) = block
+        .params
+        .iter()
+        .position(|param| param.value == claim.value)
+    else {
+        return false;
+    };
+    let Some(ty) = super::IntegerType::from_mir(&block.params[index].type_node) else {
+        return false;
+    };
+    let edges = predecessor_edges(function, block.id);
+    if edges.is_empty() || edges.len() != inputs.len() || claim.failure != ScalarFailure::None {
+        return false;
+    }
+    let mut lower = None;
+    let mut upper = None;
+    for ((_, edge), input) in edges.iter().zip(inputs) {
+        if edge.args.get(index) != Some(&input.value)
+            || value_integer_type(function, input.value) != Some(ty)
+            || input.failure != ScalarFailure::None
+        {
+            return false;
+        }
+        lower = Some(lower.map_or_else(
+            || input.interval.lower().clone(),
+            |value: BigInt| value.min(input.interval.lower().clone()),
+        ));
+        upper = Some(upper.map_or_else(
+            || input.interval.upper().clone(),
+            |value: BigInt| value.max(input.interval.upper().clone()),
+        ));
+    }
+    lower.as_ref() == Some(claim.interval.lower()) && upper.as_ref() == Some(claim.interval.upper())
+}
+
+fn integer_comparison_matches(
+    function: &KirFunction,
+    instruction: &KirInstruction,
+    left: &ScalarClaim,
+    right: &ScalarClaim,
+    value: ValueId,
+    expected: bool,
+) -> bool {
+    let KirInstructionKind::Compare {
+        op,
+        left: left_id,
+        right: right_id,
+    } = instruction.kind
+    else {
+        return false;
+    };
+    let [result] = instruction.results.as_slice() else {
+        return false;
+    };
+    let Some(ty) = value_integer_type(function, left_id) else {
+        return false;
+    };
+    if result.value != value
+        || result.type_node != crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+        || left.value != left_id
+        || right.value != right_id
+        || value_integer_type(function, right_id) != Some(ty)
+        || left.failure != ScalarFailure::None
+        || right.failure != ScalarFailure::None
+    {
+        return false;
+    }
+    let (Ok(left), Ok(right)) = (
+        ScalarValue::from_interval(ty, left.interval.clone()),
+        ScalarValue::from_interval(ty, right.interval.clone()),
+    ) else {
+        return false;
+    };
+    let expected = if expected {
+        super::BoolLattice::AlwaysTrue
+    } else {
+        super::BoolLattice::AlwaysFalse
+    };
+    super::scalar_compare(op, &left, &right).is_ok_and(|result| result == expected)
 }
 
 fn binary_fact_matches(

@@ -1,6 +1,7 @@
 mod cfg;
 mod check_elimination;
 mod cleanup;
+mod constant_fold;
 mod dce;
 mod dse;
 mod gvn;
@@ -14,6 +15,7 @@ mod sccp;
 pub(crate) use cfg::run_cfg_canonicalize;
 pub(crate) use check_elimination::run_check_elimination;
 pub(crate) use cleanup::run_cleanup;
+pub(crate) use constant_fold::run_integer_constant_folding;
 pub(crate) use dce::run_dead_code_elimination;
 pub(crate) use dse::run_dead_store_elimination;
 pub(crate) use gvn::run_gvn;

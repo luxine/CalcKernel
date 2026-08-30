@@ -30,8 +30,13 @@ record 与 contract fact 和上一已验证状态逐项比较。仅有 pass 的 
 - O3：增加 `natural-loop-analysis`、保守 `licm`、induction analysis、post-loop
   range/check elimination、DCE 与 cleanup。
 
-Scalar range analysis 按函数按需执行。无 guard 的函数没有 safety-check consumer，因此命名
-pass 与 verifier record 仍保留在 pipeline 中，但不会构造无人消费的 product-domain result。
+整数常量传播也处理无 guard 的函数，实际改写 modular arithmetic、整数 Copy 和比较，
+包括所有输入边均为同一常量的 block parameter 的消费者。每次事务先针对不可变的改写前
+KIR 检查闭合推导及精确替换值，全部通过后才修改指令。超出确定性的单函数预算时，丢弃
+该函数尚未提交的全部提案。该变换不删除 checked operation 或 guard，也不折叠 strict float。
+
+另行运行的完整 scalar product-domain analysis 仍按 safety-check consumer 的需求执行；
+无 guard 的函数不会构造无人消费的 range result。
 
 `emit-kir`、`--print-facts`、`--print-effect-summaries`、
 `--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。

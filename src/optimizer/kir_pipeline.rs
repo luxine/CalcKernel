@@ -151,9 +151,17 @@ pub fn run_kir_pass_pipeline(
         result.module = module;
         return result;
     }
+    let changed = match kir_passes::run_integer_constant_folding(&mut module) {
+        Ok(changed) => changed,
+        Err(error) => {
+            result.errors.push(error);
+            result.module = module;
+            return result;
+        }
+    };
     let mut scalar_analysis_cache = kir_passes::run_sccp_range(&module);
     add_scalar_analysis_stats(&mut result.stats, scalar_analysis_cache.as_ref());
-    if !record_current_pass(&module, "sccp-range", false, &mut result, GENERATION) {
+    if !record_current_pass(&module, "sccp-range", changed, &mut result, GENERATION) {
         result.module = module;
         return result;
     }
@@ -259,12 +267,20 @@ pub fn run_kir_pass_pipeline(
             return result;
         }
 
+        let changed = match kir_passes::run_integer_constant_folding(&mut module) {
+            Ok(changed) => changed,
+            Err(error) => {
+                result.errors.push(error);
+                result.module = module;
+                return result;
+            }
+        };
         scalar_analysis_cache = kir_passes::run_sccp_range(&module);
         add_scalar_analysis_stats(&mut result.stats, scalar_analysis_cache.as_ref());
         if !record_current_pass(
             &module,
             "sccp-range-post-inline",
-            false,
+            changed,
             &mut result,
             GENERATION,
         ) {
@@ -344,9 +360,18 @@ pub fn run_kir_pass_pipeline(
             result.module = module;
             return result;
         }
-        if scalar_analysis_cache
-            .as_ref()
-            .is_none_or(|cache| !cache.covers(&module))
+        let changed = match kir_passes::run_integer_constant_folding(&mut module) {
+            Ok(changed) => changed,
+            Err(error) => {
+                result.errors.push(error);
+                result.module = module;
+                return result;
+            }
+        };
+        if changed
+            || scalar_analysis_cache
+                .as_ref()
+                .is_none_or(|cache| !cache.covers(&module))
         {
             let loop_scalar_analysis = kir_passes::run_sccp_range(&module);
             add_scalar_analysis_stats(&mut result.stats, loop_scalar_analysis.as_ref());
@@ -354,7 +379,7 @@ pub fn run_kir_pass_pipeline(
         if !record_current_pass(
             &module,
             "sccp-range-post-loop",
-            false,
+            changed,
             &mut result,
             GENERATION,
         ) {

@@ -363,6 +363,22 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   不删除规范中的 SCCP 或 induction simplification，不把空 pass 改名后视作完成。
   在补齐前，前十阶段的历史通过记录不能证明整个候选已满足设计。
 
+### I18 第一部分：已实现的常量传播事务（阶段仍未关闭）
+
+- 新增真实 KIR 改写：modular 整数链、整数 Copy/比较、每条输入边均相同的常量 phi
+  的消费者；没有用 LLVM 优化结果代替 KIR 断言。每个新增正例均先观察保留原操作的
+  预期失败，再实现对应变换。
+- 闭合证明增加 CopyTransfer、IntegerComparison、PhiJoin。独立 checker 检查实际
+  SSA operand、整数类型、完整 predecessor edge 集合、精确结论和 rewrite binding；
+  全部提案验证成功后才写回。错误替换值、伪造标量/比较结论、过期操作/Copy 与缺失 phi
+  输入边均拒绝，且 KIR 保持原样。证明仅用于该改写前快照的事务，不冒充改写后的有效事实。
+- 传播使用原有固定 KIR-size 预算；超预算丢弃该函数整个尚未提交提案。预算 0/1/4 的
+  原实现均会提交提案，新增 red test 先证实缺失约束，再加入保守撤回。
+- 四种整数位宽的 wrap、不同 phi 输入、循环入口/回边不同值、checked overflow/print
+  顺序与 strict-f64 保守性都保持验证。没有删除 checked guard 或扩展浮点优化范围。
+- 这不是完整 SCCP 验收：路径/契约范围驱动传播、条件边剪枝和 phi 本体替换仍需实现并
+  复核证据失效；O3 induction simplification 也仍未完成。阶段 05/07 保持重新打开状态。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

@@ -12,6 +12,17 @@ fn build(
     calckernel::KirModule,
     Option<ContractFactSet>,
 ) {
+    build_with_overflow(source_text, KirOverflowMode::Checked)
+}
+
+fn build_with_overflow(
+    source_text: &str,
+    overflow_mode: KirOverflowMode,
+) -> (
+    calckernel::CheckedProgram,
+    calckernel::KirModule,
+    Option<ContractFactSet>,
+) {
     let checked = check(&SourceFile::new("o1.ck", source_text));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("MIR");
@@ -19,7 +30,7 @@ fn build(
         &mir,
         KirBuildConfig {
             consumer: KirConsumer::Inspection,
-            overflow_mode: KirOverflowMode::Checked,
+            overflow_mode,
             bounds_mode: KirBoundsMode::Checked,
             sanitizer_mode: KirSanitizerMode::Disabled,
         },
@@ -121,6 +132,213 @@ fn kir_o1_pipeline_should_use_the_exact_verified_pass_order() {
         ]
     );
     assert!(result.records.iter().all(|record| record.verified));
+}
+
+#[test]
+fn kir_o1_sccp_should_fold_modular_integer_chains() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn answer() -> i32 { return (20 + 22) * 2; }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    let module = result.artifact.as_ref().expect("verified artifact");
+    let instructions = &module.functions[0].blocks[0].instructions;
+
+    assert!(
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction.kind, KirInstructionKind::Binary { .. })),
+        "SCCP must actually rewrite constant arithmetic:\n{}",
+        print_kir_module(module)
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(&instruction.kind,
+        KirInstructionKind::ConstInt { value } if value == "84"))
+    );
+    assert!(
+        result
+            .records
+            .iter()
+            .any(|record| record.name == "sccp-range" && record.changed && record.verified)
+    );
+}
+
+#[test]
+fn kir_o1_sccp_should_respect_wrapping_at_all_integer_widths() {
+    for (ty, maximum, expected) in [
+        ("i32", "2147483647", "-2147483648"),
+        ("u32", "4294967295", "0"),
+        ("i64", "9223372036854775807", "-9223372036854775808"),
+        ("u64", "18446744073709551615", "0"),
+    ] {
+        let source = format!("export fn wrapped() -> {ty} {{ return {maximum} + 1; }}");
+        let (_, kir, contracts) = build_with_overflow(&source, KirOverflowMode::Unchecked);
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        let module = result.artifact.as_ref().expect("verified artifact");
+        assert!(
+            module.functions[0].blocks[0]
+                .instructions
+                .iter()
+                .any(|instruction| matches!(
+                    &instruction.kind, KirInstructionKind::ConstInt { value } if value == expected
+                )),
+            "{ty} must fold with CK modular semantics:\n{}",
+            print_kir_module(module)
+        );
+    }
+}
+
+#[test]
+fn kir_o1_sccp_should_fold_integer_comparisons() {
+    for (expression, expected) in [
+        ("(20 + 22) == 42", true),
+        ("(20 + 22) != 42", false),
+        ("(20 + 22) < 43", true),
+        ("(20 + 22) <= 41", false),
+        ("(20 + 22) > 42", false),
+        ("(20 + 22) >= 42", true),
+    ] {
+        let (_, kir, contracts) = build_with_overflow(
+            &format!("export fn compare() -> bool {{ return {expression}; }}"),
+            KirOverflowMode::Unchecked,
+        );
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        let module = result.artifact.as_ref().expect("verified artifact");
+        let instructions = &module.functions[0].blocks[0].instructions;
+        assert!(
+            !instructions
+                .iter()
+                .any(|instruction| matches!(instruction.kind, KirInstructionKind::Compare { .. })),
+            "comparison must propagate in KIR:\n{}",
+            print_kir_module(module)
+        );
+        assert!(instructions.iter().any(|instruction|
+            matches!(instruction.kind, KirInstructionKind::ConstBool { value } if value == expected)));
+    }
+}
+
+#[test]
+fn kir_o1_sccp_should_propagate_through_integer_copy() {
+    let (_, mut kir, contracts) = build_with_overflow(
+        "export fn answer() -> i32 { return (20 + 22) * 2; }",
+        KirOverflowMode::Unchecked,
+    );
+    let instructions = &mut kir.functions[0].blocks[0].instructions;
+    let twenty = instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            KirInstructionKind::ConstInt { value } if value == "20" => {
+                Some(instruction.results[0].value)
+            }
+            _ => None,
+        })
+        .expect("20");
+    instructions
+        .iter_mut()
+        .find(|instruction| {
+            matches!(&instruction.kind,
+        KirInstructionKind::ConstInt { value } if value == "2")
+        })
+        .expect("2")
+        .kind = KirInstructionKind::Copy { value: twenty };
+
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    let module = result.artifact.as_ref().expect("verified artifact");
+    assert!(module.functions[0].blocks[0].instructions.iter().any(|instruction|
+        matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "840")),
+        "copy must propagate into multiply:\n{}", print_kir_module(module));
+}
+
+#[test]
+fn kir_o1_sccp_should_propagate_a_constant_phi() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn phi(flag: bool) -> i32 { let x: i32 = 0; if flag { x = 42; } else { x = 42; } return x + 1; }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    let module = result.artifact.as_ref().expect("verified artifact");
+    assert!(
+        module.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(&instruction.kind,
+            KirInstructionKind::ConstInt { value } if value == "43")),
+        "all incoming phi values are 42:\n{}",
+        print_kir_module(module)
+    );
+}
+
+#[test]
+fn kir_o1_sccp_should_not_choose_only_one_phi_input() {
+    for source in [
+        "export fn phi(flag: bool) -> i32 { let x: i32 = 0; if flag { x = 42; } else { x = 41; } return x + 1; }",
+        "export fn phi(n: u32) -> i32 { let x: i32 = 42; let i: u32 = 0; while i < n { x = x + 1; i = i + 1; } return x + 1; }",
+    ] {
+        let (_, kir, contracts) = build_with_overflow(source, KirOverflowMode::Unchecked);
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        let module = result.artifact.as_ref().expect("verified artifact");
+        let returned = module.functions[0]
+            .blocks
+            .iter()
+            .find_map(|block| match block.terminator {
+                calckernel::KirTerminator::Return { value, .. } => value,
+                _ => None,
+            })
+            .expect("returned value");
+        assert!(
+            module.functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| instruction
+                    .results
+                    .first()
+                    .is_some_and(|result| result.value == returned)
+                    && matches!(instruction.kind, KirInstructionKind::Binary { .. })),
+            "different incoming values must remain dynamic:\n{}",
+            print_kir_module(module)
+        );
+    }
+}
+
+#[test]
+fn kir_o1_sccp_should_not_fold_away_checked_overflow_or_strict_float() {
+    for source in [
+        "export fn fails() -> i32 { print_i32(7); return 2147483647 + 1; }",
+        "export fn strict(x: f64) -> f64 { return x + 0.0; }",
+    ] {
+        let (_, kir, contracts) = build(source);
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        let module = result.artifact.as_ref().expect("verified artifact");
+        assert!(
+            module.functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(instruction.kind, KirInstructionKind::Binary { .. }))
+        );
+        if source.contains("print_i32") {
+            let ordered = module.functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter(|instruction| instruction.effect.is_some())
+                .collect::<Vec<_>>();
+            assert!(matches!(
+                ordered[0].kind,
+                KirInstructionKind::RuntimeCall { .. }
+            ));
+            assert!(
+                ordered.iter().any(|instruction| matches!(
+                    instruction.kind,
+                    KirInstructionKind::Guard { .. }
+                ))
+            );
+        }
+    }
 }
 
 #[test]
