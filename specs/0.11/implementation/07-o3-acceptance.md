@@ -65,3 +65,29 @@
   `2c7b76eecf4ad4f60cf5bdbe2647e593173b8b269f02b685962f04aab9abd5ac`。
 - 本节只验收上述输入绑定修复。实际 induction simplification、guard loop checker 的
   独立性、irreducible/budget 及完整阶段任务仍打开；也未重跑或代签 I14/I19/I20 性能门槛。
+
+## I18 独立 guard 证明的局部复验（2026-08-30，尚非阶段通过）
+
+- 本节对应 `optimizer(stage-07): independently validate strict-bound guard proofs`，parent
+  为 `3b25f690bdcfa1b33b26c39c5f1fc812c4ad50ed`；反例、复诊与修复见 I18 第七部分。
+- 三项实际 red 已转 green：禁止 checker 调用 optimizing loop analysis；仅重命名 slot
+  不改变合法 slice 证明；false/true 两条边都进入循环体时拒绝伪安全证明。最后一项
+  变异后的 KIR 仍通过 structural verifier，确实需要独立证据检查。
+- 真实路径的 `i < bound`、同类型极值与实际 slice identity 组成局部 guard 前提，不
+  再以重新运行归纳分析自证。原 canonical bounds 正例仍为 O1=`1`、O2=`0`、O3=`0`；
+  非严格比较、步长 2、中间重赋值和错误 slice 的近邻保留必要检查。
+- 默认 optimizer 87 项通过，其中四种整数宽度 × 两个级别 × 六类 strict-bound 情形
+  共 48 个组合；错误 slice 同名 KIR 在 O2/O3 均保持保守。C 执行对照覆盖 O0–O3 ×
+  四种 safety mode 的极值、零次迭代、checked 首错、此前写入与失败后输出槽完整性。
+- 顺序执行 `cargo +1.90.0 test --locked` 与
+  `cargo +1.90.0 test --locked --all-features`：417/538 项全部通过（Native 92、CLI 21）。
+  `cargo +1.90.0 test --release --locked --test ir proof_ -- --nocapture`：9/9 通过。
+  default/all-feature Clippy、fmt、diff check 全通过。环境继续使用 Rust 1.90.0 /
+  AArch64 macOS / LLVM+Clang 22.1.8，与阶段 05 同一固定 overlay identity。
+- 默认、全特性、release proof 日志 SHA-256 依次为
+  `b985e40d9dde4dff1dfe4ba34ce0f5db1041554708c08be8ba411839941fdbc8`、
+  `d557fe27d786fc4ce7e412af10e9d0e3cf6a3bc23f0c155479538d78b9f04112`、
+  `c782061fc60416b9a7f290689d3feef3a7acd59e54e94f47bba958e4c822672d`。
+- 本节关闭 guard checker 独立性及上述局部正确性缺口；actual induction-simplify、
+  irreducible/fixed-budget 和完整阶段 07 仍待验收。没有重跑或放宽 I14/I19/I20 性能门槛，
+  总验收清单未代签，main 未修改。

@@ -97,6 +97,17 @@ names. Mixed steps and intervening assignments remain conservative. A scalar loo
 invariant certificate must name the transfer result actually passed on every
 backedge, not an unused operation with convenient arithmetic.
 
+The guard checker does not call loop analysis. Its local strict-bound rule checks
+the actual integer comparison, all SSA forwarding inputs, and the specific taken
+edge: deleting that edge must make the guarded use unreachable. Merely dominating
+the use with the edge's target block is insufficient. The pointwise facts
+`i < bound` and the integer type prove `i + 1` safe; a u32 index is in bounds only
+when that same bound is the indexed slice's length or a dominating contract proves
+it no greater. This rule needs no inferred recurrence or constant loop start.
+Slice identity follows real SSA inputs, not slot names. All graph walks terminate
+with visited sets; ambiguous inputs retain the guard. Actual loop-invariant
+certificates still require the separate entry/transfer checks above.
+
 KIR inspection uses `emit-kir`, `--print-facts`,
 `--print-effect-summaries`, and `--explain-optimization`. Output is
 deterministic and distinguishes trusted from proven evidence.

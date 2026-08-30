@@ -335,6 +335,146 @@ fn proof_loop_invariant_should_require_the_claimed_transfer_on_every_backedge() 
 }
 
 #[test]
+fn proof_loop_guard_should_use_ssa_identity_not_source_slot_names() {
+    let (checked, mut kir) = build(
+        "export unsafe fn sum(items: slice<i32>, len: u32) -> i32 contract { requires len <= items.len; effects read(items); } { let i: u32 = 0; let total: i32 = 0; while i < len { total = total + items[i]; i = i + 1; } return total; }",
+    );
+    let contracts = import_contract_facts(&kir, &checked, 0).expect("contract import");
+    let function = &kir.functions[0];
+    let (block, condition) = function
+        .blocks
+        .iter()
+        .find_map(|block| {
+            block
+                .instructions
+                .iter()
+                .find(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        KirInstructionKind::CheckCondition {
+                            kind: calckernel::KirCheckConditionKind::SliceOutOfBounds,
+                            ..
+                        }
+                    )
+                })
+                .map(|condition| (block.id, condition.id))
+        })
+        .expect("bounds condition");
+    let mut steps = contracts
+        .facts()
+        .facts()
+        .iter()
+        .map(|fact| ProofStep::FactLeaf { fact: fact.id })
+        .collect::<Vec<_>>();
+    let root = ProofStepId::from_index(steps.len() as u32);
+    steps.push(ProofStep::GuardSafety {
+        condition_instruction: condition,
+        premises: (0..root.index()).map(ProofStepId::from_index).collect(),
+        allow_loop_reasoning: true,
+    });
+    let mut proofs = ProofArena::new(0);
+    proofs
+        .try_insert(
+            FactUseSite {
+                function: function.id,
+                block,
+                instruction: Some(condition),
+                contract_instance: None,
+            },
+            steps,
+            root,
+        )
+        .expect("closed certificate");
+    assert_eq!(
+        verify_proof_arena(&kir, contracts.facts(), Some(&contracts), &proofs, 0).errors,
+        []
+    );
+    for param in kir.functions[0]
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.params)
+    {
+        param.slot = format!("anonymous_{}", param.value.index());
+    }
+    assert_eq!(calckernel::validate_kir_module(&kir).errors, []);
+    assert_eq!(
+        verify_proof_arena(&kir, contracts.facts(), Some(&contracts), &proofs, 0).errors,
+        [],
+        "renaming source slots must not invalidate actual SSA identity"
+    );
+}
+
+#[test]
+fn proof_loop_guard_should_require_the_taken_edge_not_only_its_target() {
+    let (_, mut kir) = build(
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; while i < n { i = i + 1; } return i; }",
+    );
+    let function = &kir.functions[0];
+    let (block, condition) = function
+        .blocks
+        .iter()
+        .find_map(|block| {
+            block
+                .instructions
+                .iter()
+                .find(|instruction| matches!(instruction.kind, KirInstructionKind::Binary { .. }))
+                .map(|instruction| (block.id, instruction.id))
+        })
+        .expect("checked increment");
+    let mut proofs = ProofArena::new(0);
+    proofs
+        .try_insert(
+            FactUseSite {
+                function: function.id,
+                block,
+                instruction: Some(condition),
+                contract_instance: None,
+            },
+            vec![ProofStep::GuardSafety {
+                condition_instruction: condition,
+                premises: vec![],
+                allow_loop_reasoning: true,
+            }],
+            ProofStepId::from_index(0),
+        )
+        .expect("closed certificate");
+    assert_eq!(
+        verify_proof_arena(&kir, &FactArena::new(0), None, &proofs, 0).errors,
+        []
+    );
+    let header = kir.functions[0]
+        .blocks
+        .iter_mut()
+        .find(|block| matches!(block.terminator, calckernel::KirTerminator::Branch { .. }))
+        .expect("header");
+    let calckernel::KirTerminator::Branch {
+        then_edge,
+        else_edge,
+        ..
+    } = &mut header.terminator
+    else {
+        unreachable!()
+    };
+    *else_edge = then_edge.clone();
+    assert_eq!(calckernel::validate_kir_module(&kir).errors, []);
+    assert!(
+        !verify_proof_arena(&kir, &FactArena::new(0), None, &proofs, 0)
+            .errors
+            .is_empty(),
+        "the false edge also enters the body, so i < n is not established"
+    );
+}
+
+#[test]
+fn proof_checker_should_not_call_the_optimizing_loop_analysis() {
+    let checker = include_str!("../../src/optimizer/verify.rs");
+    assert!(
+        !checker.contains("analyze_natural_loops"),
+        "proof checking must be independent of optimizing loop analysis"
+    );
+}
+
+#[test]
 fn proof_checker_should_reject_invalid_loop_invariant_and_budget_identity() {
     let (_, kir) = build(
         r#"

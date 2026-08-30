@@ -335,6 +335,92 @@ fn signed_unit_induction_increment_should_be_proven_safe_at_o3() {
 }
 
 #[test]
+fn guard_loop_strict_bound_should_prove_only_the_current_integer_value() {
+    for integer in ["i32", "u32", "i64", "u64"] {
+        for (condition, body, expected_guards) in [
+            ("i < bound", "i = i + 1;", 0),
+            ("bound > i", "i = 1 + i;", 0),
+            ("i <= bound", "i = i + 1;", 1),
+            ("i < bound", "i = i + 2;", 1),
+            ("i < bound", "i = bound; i = i + 1;", 1),
+            ("i < bound", "if choose { i = other; } i = i + 1;", 1),
+        ] {
+            let source = format!(
+                "export fn count(start: {integer}, bound: {integer}, other: {integer}, choose: bool) -> {integer} {{ let i: {integer} = start; while {condition} {{ {body} }} return i; }}"
+            );
+            for level in [KirOptimizationLevel::O2, KirOptimizationLevel::O3] {
+                let (kir, contracts) = build(&source, KirOverflowMode::Checked);
+                let result = run_kir_pass_pipeline(kir, level, contracts.as_ref());
+                assert!(
+                    result.errors.is_empty(),
+                    "{integer}/{level:?}: {:?}",
+                    result.errors
+                );
+                let artifact = result.artifact.expect("verified artifact");
+                let guards = artifact.functions[0]
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .filter(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            KirInstructionKind::Guard {
+                                failure: KirFailureKind::Overflow,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                assert_eq!(
+                    guards,
+                    expected_guards,
+                    "{source}\n{level:?}\n{}",
+                    print_kir_module(&artifact)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn guard_loop_slice_identity_should_follow_all_edges_not_matching_slot_names() {
+    let source = "export unsafe fn sum(items: slice<i32>, other: slice<i32>, len: u32) -> i32 contract { requires len <= items.len; effects read(other); } { let i: u32 = 0; let total: i32 = 0; while i < len { total = total + other[i]; i = i + 1; } return total; }";
+    for level in [KirOptimizationLevel::O2, KirOptimizationLevel::O3] {
+        let (mut kir, contracts) = build(source, KirOverflowMode::Checked);
+        for param in kir.functions[0]
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.params)
+        {
+            param.slot = if param.slot == "other" {
+                "items".to_string()
+            } else {
+                format!("anonymous_{}", param.value.index())
+            };
+        }
+        assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+        let result = run_kir_pass_pipeline(kir, level, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let artifact = result.artifact.expect("verified artifact");
+        assert!(
+            artifact.functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(
+                    instruction.kind,
+                    KirInstructionKind::Guard {
+                        failure: KirFailureKind::OutOfBounds,
+                        ..
+                    }
+                )),
+            "a contract for items cannot justify indexing other:\n{}",
+            print_kir_module(&artifact)
+        );
+    }
+}
+
+#[test]
 fn loop_canonical_slice_neighbor_without_contract_should_retain_guard() {
     let (kir, contracts) = build(
         r#"

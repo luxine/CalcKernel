@@ -74,6 +74,14 @@ guard，证据格式或推导失效则编译失败。后续常量折叠、GVN、
 时保持保守。标量循环不变量证书必须指明每条回边实际传递的 transfer 结果，不能借用
 一个算术上合适但未参与回传的 operation。
 
+guard 检查器不调用循环分析。局部 strict-bound 规则核验真实整数比较、全部 SSA 转发
+输入及具体 taken edge：删除该边后，guard 所在位置必须不可达。仅有该边的目标块
+支配使用位置并不足够。`i < bound` 与整数类型可逐点证明 `i + 1` 安全；u32 索引只有
+在同一 bound 是所访问 slice 的长度，或支配契约证明 bound 不大于该长度时才证明
+不越界。此规则不需要推断递推关系或常量循环初值。slice 身份沿真实 SSA 输入确认，
+不使用 slot 名。图遍历通过 visited set 保证终止，输入不明确时保留 guard。真正的
+循环不变量证书仍必须通过上述独立入口/transfer 检查。
+
 `emit-kir`、`--print-facts`、`--print-effect-summaries`、
 `--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。
 

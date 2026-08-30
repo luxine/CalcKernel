@@ -10,8 +10,7 @@ use super::{
     ContractFactAffineExpression, ContractFactAffineTerm, ContractFactPredicate, ContractFactSet,
     FactArena, FactDerivation, FactOrigin, FactPredicate, ProofArena, ProofCertificate, ProofStep,
     ScalarAnalysisBudget, ScalarAnalysisResult, ScalarClaim, ScalarFailure, ScalarInterval,
-    ScalarValue, analyze_natural_loops, contract_fact_dominates_at, refine_scalar_comparison,
-    scalar_binary,
+    ScalarValue, contract_fact_dominates_at, refine_scalar_comparison, scalar_binary,
 };
 
 /// A deterministic compiler-internal evidence validation error.
@@ -933,8 +932,7 @@ fn guard_safety_matches(
             right,
             semantics: KirArithmeticSemantics::Checked,
         } => {
-            if allow_loop_reasoning && canonical_induction_increment_is_safe(function, instruction)
-            {
+            if allow_loop_reasoning && strict_bound_increment_is_safe(function, instruction) {
                 return true;
             }
             let Some(type_node) = instruction
@@ -981,7 +979,7 @@ fn guard_safety_matches(
             KirCheckConditionKind::SliceOutOfBounds => {
                 slice_index_is_safe(function, premises, args)
                     || (allow_loop_reasoning
-                        && canonical_loop_slice_index_is_safe(
+                        && strict_bound_slice_index_is_safe(
                             function,
                             instruction.id,
                             premises,
@@ -1184,7 +1182,7 @@ fn contract_proves_value_at_most_slice_len(
             && affine_is_single_term(right, ContractFactAffineTerm::Value(value)))
 }
 
-fn canonical_loop_slice_index_is_safe(
+fn strict_bound_slice_index_is_safe(
     function: &KirFunction,
     condition_instruction: InstructionId,
     premises: &[&CheckedStep],
@@ -1193,42 +1191,23 @@ fn canonical_loop_slice_index_is_safe(
     let [slice, index] = args else {
         return false;
     };
-    let Some(use_block) = function.blocks.iter().find(|block| {
-        block
-            .instructions
-            .iter()
-            .any(|instruction| instruction.id == condition_instruction)
-    }) else {
+    if value_integer_type(function, *index) != Some(super::IntegerType::U32) {
         return false;
-    };
-    let canonical = canonical_block_param_values(function);
-    let index = canonical.get(index).copied().unwrap_or(*index);
-    let slice = canonical_function_param(function, *slice).unwrap_or(*slice);
-    let analysis = analyze_natural_loops(function);
-    analysis.inductions.iter().any(|induction| {
-        induction.value == index
-            && induction.start >= BigInt::from(0)
-            && induction.step == BigInt::from(1)
-            && induction.comparison == crate::MirCompareOp::Lt
-            && induction.wrap_safe_for_strict_bound
-            && analysis.loops.iter().any(|loop_info| {
-                loop_info.header == induction.header
-                    && loop_info.blocks.binary_search(&use_block.id).is_ok()
-                    && loop_taken_edge_dominates(function, loop_info.header, use_block.id)
-            })
-            && (value_is_slice_len_of(function, induction.bound, slice)
+    }
+    let slice = forwarding_origin(function, *slice).unwrap_or(*slice);
+    strict_upper_bounds(function, condition_instruction, *index)
+        .into_iter()
+        .any(|bound| {
+            let bound = forwarding_origin(function, bound).unwrap_or(bound);
+            value_is_slice_len_of(function, bound, slice)
                 || premises.iter().any(|premise| {
                     matches!(
                         premise,
                         CheckedStep::Fact(FactPredicate::Contract(predicate), _)
-                            if contract_proves_value_at_most_slice_len(
-                                predicate,
-                                induction.bound,
-                                slice,
-                            )
+                            if contract_proves_value_at_most_slice_len(predicate, bound, slice)
                     )
-                }))
-    })
+                })
+        })
 }
 
 fn value_is_slice_len_of(function: &KirFunction, value: ValueId, slice: ValueId) -> bool {
@@ -1251,32 +1230,13 @@ fn value_is_slice_len_of(function: &KirFunction, value: ValueId, slice: ValueId)
     else {
         return false;
     };
-    let measured_slice =
-        canonical_function_param(function, measured_slice).unwrap_or(measured_slice);
-    let indexed_slice = canonical_function_param(function, slice).unwrap_or(slice);
-    measured_slice == indexed_slice
+    forwarded_from(function, measured_slice, slice)
+        || forwarded_from(function, slice, measured_slice)
+        || forwarding_origin(function, measured_slice)
+            .is_some_and(|origin| forwarding_origin(function, slice) == Some(origin))
 }
 
-fn canonical_function_param(function: &KirFunction, value: ValueId) -> Option<ValueId> {
-    if function.params.iter().any(|param| param.value == value) {
-        return Some(value);
-    }
-    let block_param = function
-        .blocks
-        .iter()
-        .flat_map(|block| &block.params)
-        .find(|param| param.value == value)?;
-    function
-        .params
-        .iter()
-        .find(|param| param.name == block_param.slot && param.type_node == block_param.type_node)
-        .map(|param| param.value)
-}
-
-fn canonical_induction_increment_is_safe(
-    function: &KirFunction,
-    instruction: &KirInstruction,
-) -> bool {
+fn strict_bound_increment_is_safe(function: &KirFunction, instruction: &KirInstruction) -> bool {
     let KirInstructionKind::Binary {
         op: crate::MirBinaryOp::Add,
         left,
@@ -1286,79 +1246,161 @@ fn canonical_induction_increment_is_safe(
     else {
         return false;
     };
-    let canonical = canonical_block_param_values(function);
-    let left = canonical.get(&left).copied().unwrap_or(left);
-    let right = canonical.get(&right).copied().unwrap_or(right);
-    let (induction_value, step) = if resolve_constant(function, right) == Some(BigInt::from(1)) {
-        (left, right)
-    } else if resolve_constant(function, left) == Some(BigInt::from(1)) {
-        (right, left)
+    let left_origin = forwarding_origin(function, left).unwrap_or(left);
+    let right_origin = forwarding_origin(function, right).unwrap_or(right);
+    let value = if resolve_constant(function, right_origin) == Some(BigInt::from(1)) {
+        left
+    } else if resolve_constant(function, left_origin) == Some(BigInt::from(1)) {
+        right
     } else {
         return false;
     };
-    if resolve_constant(function, step) != Some(BigInt::from(1)) {
-        return false;
-    }
+    // This is a pointwise rule, not an inferred induction invariant: on a
+    // dominating i < bound edge, i + 1 <= bound <= the integer type's maximum.
+    !strict_upper_bounds(function, instruction.id, value).is_empty()
+}
+
+fn strict_upper_bounds(
+    function: &KirFunction,
+    instruction: InstructionId,
+    value: ValueId,
+) -> Vec<ValueId> {
     let Some(use_block) = function.blocks.iter().find(|block| {
         block
             .instructions
             .iter()
-            .any(|candidate| candidate.id == instruction.id)
+            .any(|candidate| candidate.id == instruction)
     }) else {
-        return false;
+        return Vec::new();
     };
-    let analysis = analyze_natural_loops(function);
-    analysis.inductions.iter().any(|induction| {
-        induction.value == induction_value
-            && induction.step == BigInt::from(1)
-            && induction.wrap_safe_for_strict_bound
-            && analysis.loops.iter().any(|loop_info| {
-                loop_info.header == induction.header
-                    && loop_info.blocks.binary_search(&use_block.id).is_ok()
-                    && loop_taken_edge_dominates(function, loop_info.header, use_block.id)
-            })
-    })
+    function
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            let KirTerminator::Branch { condition, .. } = block.terminator else {
+                return None;
+            };
+            let comparison = block.instructions.iter().find(|instruction| {
+                instruction.results.first().map(|result| result.value) == Some(condition)
+            })?;
+            let KirInstructionKind::Compare { op, left, right } = comparison.kind else {
+                return None;
+            };
+            let (tested, bound) = match op {
+                crate::MirCompareOp::Lt => (left, right),
+                crate::MirCompareOp::Gt => (right, left),
+                _ => return None,
+            };
+            let type_node = value_integer_type(function, value)?;
+            (value_integer_type(function, tested) == Some(type_node)
+                && value_integer_type(function, bound) == Some(type_node)
+                && forwarded_from(function, value, tested)
+                && taken_edge_dominates(function, block.id, use_block.id))
+            .then_some(bound)
+        })
+        .collect()
 }
 
-fn loop_taken_edge_dominates(
+fn taken_edge_dominates(
     function: &KirFunction,
-    header: crate::BlockId,
+    branch: crate::BlockId,
     use_block: crate::BlockId,
 ) -> bool {
-    let Some(header) = function.blocks.iter().find(|block| block.id == header) else {
+    let Some(entry) = function.blocks.first() else {
         return false;
     };
-    let KirTerminator::Branch { then_edge, .. } = &header.terminator else {
-        return false;
-    };
-    compute_kir_dominators(function).dominates(then_edge.target, use_block)
-}
-
-fn canonical_block_param_values(
-    function: &KirFunction,
-) -> std::collections::BTreeMap<ValueId, ValueId> {
-    let mut canonical = std::collections::BTreeMap::new();
-    loop {
-        let before = canonical.len();
-        for block in &function.blocks {
-            for (index, param) in block.params.iter().enumerate() {
-                let values = predecessor_edges(function, block.id)
-                    .into_iter()
-                    .filter_map(|(_, edge)| edge.args.get(index))
-                    .map(|value| canonical.get(value).copied().unwrap_or(*value))
-                    .collect::<Vec<_>>();
-                if let Some(first) = values.first().copied()
-                    && values.iter().all(|value| *value == first)
-                {
-                    canonical.insert(param.value, first);
+    // Remove this particular edge, not its target block. The other branch may
+    // have the same target or reach the use through a different predecessor.
+    let mut pending = vec![entry.id];
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if id == use_block {
+            return false;
+        }
+        if !visited.insert(id) {
+            continue;
+        }
+        let Some(block) = function.blocks.iter().find(|block| block.id == id) else {
+            return false;
+        };
+        match &block.terminator {
+            KirTerminator::Return { .. } => {}
+            KirTerminator::Jump { edge } => pending.push(edge.target),
+            KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } => {
+                if id != branch {
+                    pending.push(then_edge.target);
                 }
+                pending.push(else_edge.target);
             }
         }
-        if canonical.len() == before {
-            break;
+    }
+    visited.contains(&branch)
+}
+
+fn forwarded_from(function: &KirFunction, value: ValueId, origin: ValueId) -> bool {
+    forwarding_leaves(function, value, Some(origin))
+        .is_some_and(|leaves| leaves == std::collections::BTreeSet::from([origin]))
+}
+
+fn forwarding_origin(function: &KirFunction, value: ValueId) -> Option<ValueId> {
+    let leaves = forwarding_leaves(function, value, None)?;
+    (leaves.len() == 1)
+        .then(|| leaves.first().copied())
+        .flatten()
+}
+
+fn forwarding_leaves(
+    function: &KirFunction,
+    value: ValueId,
+    stop_at: Option<ValueId>,
+) -> Option<std::collections::BTreeSet<ValueId>> {
+    let mut pending = vec![value];
+    let mut visited = std::collections::BTreeSet::new();
+    let mut leaves = std::collections::BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if !visited.insert(value) {
+            continue;
+        }
+        if Some(value) == stop_at {
+            leaves.insert(value);
+        } else if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            let incoming = predecessor_edges(function, block);
+            if incoming.is_empty() {
+                return None;
+            }
+            for (_, edge) in incoming {
+                pending.push(*edge.args.get(index)?);
+            }
+        } else if let Some(operand) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| {
+                if instruction.results.first().map(|result| result.value) != Some(value) {
+                    return None;
+                }
+                match instruction.kind {
+                    KirInstructionKind::Copy { value } => Some(value),
+                    _ => None,
+                }
+            })
+        {
+            pending.push(operand);
+        } else {
+            leaves.insert(value);
         }
     }
-    canonical
+    Some(leaves)
 }
 
 fn affine_is_single_term(

@@ -696,3 +696,72 @@ fn kir_c_canonical_checked_loop_should_preserve_kir_guard_elimination() {
         );
     }
 }
+
+#[test]
+fn kir_c_loop_guard_rules_should_preserve_integer_limits_and_first_failure() {
+    let source = r#"
+        export fn up_i32(start: i32, stop: i32) -> i32 {
+          let i: i32 = start; while i < stop { i = i + 1; } return i;
+        }
+        export fn up_u32(start: u32, stop: u32) -> u32 {
+          let i: u32 = start; while stop > i { i = 1 + i; } return i;
+        }
+        export fn up_i64(start: i64, stop: i64) -> i64 {
+          let i: i64 = start; while i < stop { i = i + 1; } return i;
+        }
+        export fn up_u64(start: u64, stop: u64) -> u64 {
+          let i: u64 = start; while i < stop { i = i + 1; } return i;
+        }
+        export fn overshoot(out: ptr<u32>, stop: u32) -> u32 {
+          let i: u32 = 4294967294;
+          while i < stop { out[0] = 7; i = i + 2; out[0] = 9; break; }
+          return i;
+        }
+        export fn shifted(items: slice<i32>, start: u32) -> i32 {
+          let i: u32 = start;
+          while i < items.len { i = i + 1; return items[i]; }
+          return 7;
+        }
+    "#;
+    for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+        for bounds in [KirBoundsMode::Unchecked, KirBoundsMode::Checked] {
+            let checked_abi =
+                overflow == KirOverflowMode::Checked || bounds == KirBoundsMode::Checked;
+            let mut harness = String::from("int main(void) {\n");
+            for (function, ty, limit) in [
+                ("up_i32", "int32_t", "INT32_MAX"),
+                ("up_u32", "uint32_t", "UINT32_MAX"),
+                ("up_i64", "int64_t", "INT64_MAX"),
+                ("up_u64", "uint64_t", "UINT64_MAX"),
+            ] {
+                if checked_abi {
+                    harness.push_str(&format!("  {{ {ty} result = 0; if ({function}({limit} - 1, {limit}, &result) != CK_OK || result != {limit}) return 1; if ({function}({limit}, {limit}, &result) != CK_OK || result != {limit}) return 2; if ({function}(3, 0, &result) != CK_OK || result != 3) return 3; }}\n"));
+                } else {
+                    harness.push_str(&format!("  if ({function}({limit} - 1, {limit}) != {limit} || {function}({limit}, {limit}) != {limit} || {function}(3, 0) != 3) return 4;\n"));
+                }
+            }
+            harness.push_str("  uint32_t out = 0; int32_t data[2] = {11, 42};\n");
+            if checked_abi {
+                harness.push_str("  uint32_t result = 99; int32_t loaded = 99;\n");
+                if overflow == KirOverflowMode::Checked {
+                    harness.push_str("  if (overshoot(&out, UINT32_MAX, &result) != CK_ERR_OVERFLOW || out != 7 || result != 99) return 5;\n");
+                } else {
+                    harness.push_str("  if (overshoot(&out, UINT32_MAX, &result) != CK_OK || out != 9 || result != 0) return 6;\n");
+                }
+                if bounds == KirBoundsMode::Checked {
+                    harness.push_str("  if (shifted(data, 1, 0, &loaded) != CK_ERR_OUT_OF_BOUNDS || loaded != 99) return 7;\n");
+                }
+                harness.push_str(
+                    "  if (shifted(data, 2, 0, &loaded) != CK_OK || loaded != 42) return 8;\n",
+                );
+            } else {
+                harness.push_str("  if (overshoot(&out, UINT32_MAX) != 0 || out != 9) return 9; if (shifted(data, 2, 0) != 42) return 10;\n");
+            }
+            harness.push_str("  return 0;\n}\n");
+            for optimization in 0..=3 {
+                let kir = optimized_kir(source, level(optimization), overflow, bounds);
+                compile_and_run(&emit_c_kir_module(&kir).expect("loop guard C"), &harness);
+            }
+        }
+    }
+}

@@ -491,6 +491,28 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   loop certificate 不调用优化分析的独立验证、irreducible/fixed-budget 等原阶段 07
   要求；不得用本批局部修复签收阶段 07。
 
+### I18 第七部分：独立 guard 检查器与分支边支配反例（阶段 07 仍打开）
+
+- 恢复后复诊确认 guard checker 调用 `analyze_natural_loops`，违反已批准的独立检查器
+  约束。新增架构回归实际失败；实现改为局部 strict-bound 前提检查，不再调用该分析。
+- 实际 red：把合法 u32 循环 header 的 false edge 改成与 true edge 相同，结构 verifier
+  仍通过，但旧 checker 接受 `i + 1` 安全证书。此时循环体也在 `i >= n` 时执行，旧
+  “then target 支配使用”并不代表 taken edge 支配。现删除具体 taken edge 后执行
+  reachability 检查，必须无法到达使用位置；该反例拒绝，原正确 CFG 接受。
+- 实际 red：只重命名 canonical slice loop 的 block parameter slot，不改变任何 SSA
+  输入，合法证书却失效。旧代码以源名匹配函数参数；现沿所有真实 phi/Copy 输入核验
+  identity，循环转发使用 visited set，模糊输入保守保留。另加不同 slice 故意使用相同
+  slot 名的有效 KIR 近邻，不能借用原 slice 的契约消除检查。
+- `i < bound` 的当前路径事实直接证明同类型 `i + 1 <= bound <= MAX`，u32 索引非负，
+  再结合同一 slice 长度/契约证明 bounds；此处不声称循环不变量，因此不需要让
+  optimizing induction analysis 自证。真正 `LoopInvariant` 形式继续检查全部
+  entry/backedge transfer。本修复不改规范和门槛，不删除原 canonical loop 正例。
+- 新增四种整数宽度 × O2/O3 的严格/非严格比较、两种加法方向、步长 2、重赋值、
+  不同 phi 输入的近邻；C 执行对照覆盖 O0–O3 × 四种 safety mode 的整数极值、零次
+  迭代、checked 首错、此前写入与失败后输出槽不变。
+- 此节不签收 actual induction-simplify、irreducible/budget 或阶段 07 全部任务；
+  I14/I19/I20 性能失败仍打开。完整本轮验证证据见阶段 07 acceptance 的局部复验记录。
+
 ## I20：布尔/checked 传播后的 optimizer latency 门槛失败（未关闭）
 
 - 阶段 05 本批代码通过功能与证书验收后的首次原 performance gate 返回 exit 1：
