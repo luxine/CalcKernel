@@ -718,6 +718,33 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `c5fde4b2f39b8e61b74963057c44011bceb27f0ce7daee3ca6bec80dc3481cfa`。
   本批功能验证不签收 I14/I19/I20；原始失败和所有性能阈值继续有效。
 
+### I20 phi 查询借用与自支配检查（仍未关闭）
+
+- `9774f07` 首次原始完整门禁仍失败：Dijkstra KIR `1078458 ns` / V0.10 MIR
+  `350000 ns`，约 `3.0813x`，高于固定上限 `1050000 ns`。其他五个 optimizer
+  case 通过；unchecked Native/Clang geo `0.9998`、V0.10 ratio `1.0010`；checked
+  为 `0.9983` / `1.0000`；proof throughput `0.9979`。未重跑相同版本挑选结果。
+  report / benchmark log / checker log SHA-256 依次为
+  `9f3798aa8f97bc40589ff91c470fbd204557a7ae7bd759778df6d1c394af8787`、
+  `64e3aa66870f53da74831c68d53d4ca5125424e80c26b7ff5dcc18236f3e8a4a`、
+  `40e29c83308065894bfcd06e8683e4d6dcc0bcfdc0336326ca977ead64def1b3`。
+- GVN phi 查询借用原输入边的参数 slice，并流式比较，避免临时边 Vec、参数 clone
+  与每次合流收集。保留双 branch arm、输入顺序、单步 canonical 映射和原收敛条件；
+  测试逐项对照原收集实现，含 Dijkstra、循环/continue、同目标两个边、不同或缺失
+  输入的保守查询行为。测试在重构前后均通过，没有改变 SSA 合法性检查。
+- scalar/memory block parameter 在自己的实际 use block 自支配，直接应用该恒等关系，
+  跨块仍查询完整 dominator 集。新测试对照完整 dominance，包含不可达块、自身、
+  可达不同块和未定义来源；重构前后结果相同。未改变定义唯一性、instruction 使用
+  顺序或 independent proof checker。
+- 默认 453 项、全特性 575 项（Native 93）、release 单元 48 项、release IR 58 项与
+  all-feature Clippy、fmt/diff 全部通过。Dijkstra KIR 与前述 baseline 逐字节一致，
+  SHA-256 仍为 `3f49f6f77153df15c85ebc3e85318047c9b91e2d9ce65dcac40aca925fbf56f0`。
+  default/all-feature/release 日志 SHA-256 依次为
+  `f53bb944931f565182d237968276706651cbb1093b3721c3aa45b9b93c143cee`、
+  `55d2046303340301294f2f33476e8d3eb979340ddf8e038580fe8818713d6977`、
+  `4a7ca3a544e94e1f8c4368d87b2ca92c1c57c81b1bc0be5eca9b98f84a13cdfe`。
+  本批不修改性能协议、语料、统计方式或门槛，I14/I19/I20 仍须后续正式验收。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median

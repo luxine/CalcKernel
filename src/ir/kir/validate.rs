@@ -685,7 +685,9 @@ fn validate_use(
     };
     let dominates = match definition {
         ValueDefinition::FunctionParam => true,
-        ValueDefinition::BlockParam(def_block) => dominators.dominates(def_block, use_block),
+        ValueDefinition::BlockParam(def_block) => {
+            def_block == use_block || dominators.dominates(def_block, use_block)
+        }
         ValueDefinition::Instruction(def_block, def_index) => {
             if def_block == use_block {
                 def_index < use_index
@@ -729,7 +731,9 @@ fn validate_memory_use(
     };
     let dominates = match definition {
         MemoryDefinition::Initial => true,
-        MemoryDefinition::BlockParam(def_block) => dominators.dominates(*def_block, use_block),
+        MemoryDefinition::BlockParam(def_block) => {
+            *def_block == use_block || dominators.dominates(*def_block, use_block)
+        }
         MemoryDefinition::Instruction(def_block, def_index) => {
             if *def_block == use_block {
                 *def_index < use_index
@@ -971,6 +975,84 @@ fn error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_parameter_uses_should_match_full_dominance_including_unreachable_blocks() {
+        let blocks = [0, 2, 3].map(BlockId::from_index);
+        let function = KirFunction {
+            id: FunctionId::from_index(0),
+            name: "dominance".into(),
+            exported: false,
+            params: vec![],
+            return_type: MirType::Void,
+            regions: vec![],
+            initial_memory: vec![],
+            blocks: blocks
+                .iter()
+                .map(|&id| KirBlock {
+                    id,
+                    label: id.index().to_string(),
+                    params: vec![],
+                    memory_params: vec![],
+                    instructions: vec![],
+                    terminator: if id == blocks[0] {
+                        KirTerminator::Jump {
+                            edge: KirEdge {
+                                target: blocks[1],
+                                args: vec![],
+                                memory_args: vec![],
+                            },
+                        }
+                    } else {
+                        KirTerminator::Return {
+                            value: None,
+                            memory: vec![],
+                            effect_order: id.index(),
+                        }
+                    },
+                })
+                .collect(),
+        };
+        let dominators = compute_kir_dominators(&function);
+        let value = ValueId::from_index(0);
+        let memory = MemoryVersionId::from_index(0);
+        for definition in blocks.into_iter().chain([BlockId::from_index(u32::MAX)]) {
+            let mut values = ValueTable::new(std::iter::once(value), 1);
+            values.record(
+                value,
+                &MirType::Void,
+                Some(ValueDefinition::BlockParam(definition)),
+            );
+            let memories = HashMap::from([(memory, MemoryDefinition::BlockParam(definition))]);
+            for used in blocks {
+                let expected = dominators.dominates(definition, used);
+                let mut errors = Vec::new();
+                validate_use(
+                    &function,
+                    used,
+                    0,
+                    value,
+                    None,
+                    &values,
+                    &dominators,
+                    &mut errors,
+                );
+                assert_eq!(errors.is_empty(), expected);
+                errors.clear();
+                validate_memory_use(
+                    &function,
+                    used,
+                    0,
+                    memory,
+                    None,
+                    &memories,
+                    &dominators,
+                    &mut errors,
+                );
+                assert_eq!(errors.is_empty(), expected);
+            }
+        }
+    }
 
     #[test]
     fn value_table_should_match_legacy_queries_without_sparse_id_allocation() {

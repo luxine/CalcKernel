@@ -149,22 +149,19 @@ pub(crate) fn run_gvn(module: &mut KirModule, protected: &BTreeSet<crate::Instru
 }
 
 fn canonical_block_params(function: &crate::KirFunction) -> BTreeMap<ValueId, ValueId> {
-    let mut incoming = BTreeMap::<BlockId, Vec<Vec<ValueId>>>::new();
+    let mut incoming = BTreeMap::<BlockId, Vec<&[ValueId]>>::new();
     for predecessor in &function.blocks {
         let edges = match &predecessor.terminator {
-            KirTerminator::Return { .. } => Vec::new(),
-            KirTerminator::Jump { edge } => vec![edge],
+            KirTerminator::Return { .. } => [None, None],
+            KirTerminator::Jump { edge } => [Some(edge), None],
             KirTerminator::Branch {
                 then_edge,
                 else_edge,
                 ..
-            } => vec![then_edge, else_edge],
+            } => [Some(then_edge), Some(else_edge)],
         };
-        for edge in edges {
-            incoming
-                .entry(edge.target)
-                .or_default()
-                .push(edge.args.clone());
+        for edge in edges.into_iter().flatten() {
+            incoming.entry(edge.target).or_default().push(&edge.args);
         }
     }
     let mut canonical = BTreeMap::new();
@@ -172,15 +169,14 @@ fn canonical_block_params(function: &crate::KirFunction) -> BTreeMap<ValueId, Va
         let before = canonical.len();
         for block in &function.blocks {
             for (index, param) in block.params.iter().enumerate() {
-                let values = incoming
+                let mut values = incoming
                     .get(&block.id)
                     .into_iter()
                     .flatten()
                     .filter_map(|args| args.get(index))
-                    .map(|value| canonical.get(value).copied().unwrap_or(*value))
-                    .collect::<Vec<_>>();
-                if let Some(first) = values.first().copied()
-                    && values.iter().all(|value| *value == first)
+                    .map(|value| canonical.get(value).copied().unwrap_or(*value));
+                if let Some(first) = values.next()
+                    && values.all(|value| value == first)
                 {
                     canonical.insert(param.value, first);
                 }
@@ -229,6 +225,102 @@ mod tests {
         InstructionId, KirInstruction, KirResult, MirBinaryOp, MirCastOp, MirCompareOp,
         MirPrimitiveTypeName, MirType, MirUnaryOp,
     };
+
+    fn legacy_canonical_block_params(function: &crate::KirFunction) -> BTreeMap<ValueId, ValueId> {
+        let mut incoming = BTreeMap::<BlockId, Vec<Vec<ValueId>>>::new();
+        for predecessor in &function.blocks {
+            let edges = match &predecessor.terminator {
+                KirTerminator::Return { .. } => Vec::new(),
+                KirTerminator::Jump { edge } => vec![edge],
+                KirTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                } => vec![then_edge, else_edge],
+            };
+            for edge in edges {
+                incoming
+                    .entry(edge.target)
+                    .or_default()
+                    .push(edge.args.clone());
+            }
+        }
+        let mut canonical = BTreeMap::new();
+        loop {
+            let before = canonical.len();
+            for block in &function.blocks {
+                for (index, param) in block.params.iter().enumerate() {
+                    let values = incoming
+                        .get(&block.id)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|args| args.get(index))
+                        .map(|value| canonical.get(value).copied().unwrap_or(*value))
+                        .collect::<Vec<_>>();
+                    if let Some(first) = values.first().copied()
+                        && values.iter().all(|value| *value == first)
+                    {
+                        canonical.insert(param.value, first);
+                    }
+                }
+            }
+            if canonical.len() == before {
+                break;
+            }
+        }
+        canonical
+    }
+
+    #[test]
+    fn borrowed_phi_queries_should_match_legacy_parallel_edges_and_cycles() {
+        for source in [
+            include_str!("../../../examples/applications/dijkstra.ck"),
+            "export fn sum(n: u32) -> u32 { let i: u32 = 0; let result: u32 = 0; while i < n { if i == 2 { i = i + 1; continue; } result = result + i; i = i + 1; } return result; }",
+        ] {
+            let checked = crate::check(&crate::SourceFile::new("gvn-queries.ck", source));
+            assert!(checked.diagnostics.is_empty());
+            let mir = crate::lower_to_mir(&checked.checked_program).expect("MIR");
+            let module = crate::build_kir_module(
+                &mir,
+                crate::KirBuildConfig {
+                    consumer: crate::KirConsumer::Inspection,
+                    overflow_mode: crate::KirOverflowMode::Unchecked,
+                    bounds_mode: crate::KirBoundsMode::Unchecked,
+                    sanitizer_mode: crate::KirSanitizerMode::Disabled,
+                },
+            )
+            .expect("KIR");
+            for function in &module.functions {
+                for variant in 0..4 {
+                    let mut function = function.clone();
+                    if variant != 0 {
+                        for block in &mut function.blocks {
+                            if let KirTerminator::Branch {
+                                then_edge,
+                                else_edge,
+                                ..
+                            } = &mut block.terminator
+                            {
+                                *else_edge = then_edge.clone();
+                                if variant == 2 {
+                                    if let Some(value) = else_edge.args.first_mut() {
+                                        *value = ValueId::from_index(u32::MAX);
+                                    }
+                                } else if variant == 3 {
+                                    else_edge.args.pop();
+                                }
+                            }
+                        }
+                    }
+                    assert_eq!(
+                        canonical_block_params(&function),
+                        legacy_canonical_block_params(&function),
+                        "variant {variant}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn borrowed_expression_keys_preserve_legacy_identity() {
