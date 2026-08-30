@@ -50,7 +50,8 @@
 - [ ] 执行实际 PowerShell guard 的 compile_commands fixture：接受所有 C/C++ 都是
   `/MT`；拒绝 `/MD`、debug CRT、混合、缺失参数、空编译数据库；不把路径中的文字当参数。
 - [ ] Native 测试必须使用配置的 pinned Clang（未配置则明确失败，不 skip）和真实
-  llvm-ar/llvm-readobj，构造 x64 与 ARM64 的真正 COFF archives。接受 release static，
+  llvm-ar/llvm-readobj，构造当前 host 架构的真正 COFF archives（六 host 矩阵合起来覆盖
+  x64 与 ARM64；pinned prefix 按设计只编译一个 host backend）。接受 release static，
   拒绝 dynamic、debug、static+dynamic 混合、空/损坏 archive、缺少工具及失败退出码。
   同时覆盖 RuntimeLibrary mismatch 和 DEFAULTLIB 两种实际 directive。
 - [ ] 原 default verifier 的 bytes/hash/path fixture 仍然 LLVM-independent：其 Windows
@@ -106,6 +107,11 @@
   01–11/99 总验收，最终证据提交再过同 SHA 完整 CI，不合并 main。
 
 ## 行内计划自审
+
+测试准备阶段修订：第一次真实 Clang fixture 在 ARM host 请求 x64，被 host-only LLVM
+拒绝；该错误日志保留，不算 CRT 行为 red。测试按本机已编译 backend 生成同架构 COFF，
+不扩大 LLVM build targets、不换未固定的 Clang。两架构覆盖仍由完整必跑矩阵证明，
+实际两 Windows MSVC 链接门不变。这修正了测试计划与既有 host-only 契约的冲突。
 
 这是工具链实现缺陷，不是静态/零运行依赖契约反例。配置命令与 archive bytes 分开检查，
 避免继续信任被忽略的声明；Rust target feature 解决下游同样的 CRT 分叉。真正 COFF

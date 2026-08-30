@@ -1139,6 +1139,9 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 详细 red/green、文件边界、双语契约、同 SHA 全矩阵见
   `../implementation/11-windows-static-link-plan.md`。计划先提交，完全行内；没有
   `/NODEFAULTLIB`/强制链接/动态 CRT fallback，没有改变语言/ABI 或任何数值验收门槛。
+- 测试准备首次在 ARM-only pinned Clang 请求 x64 COFF 被明确拒绝，不计为行为 red；
+  原计划因此修正为每个 host 使用自身已编译 backend、完整矩阵共同覆盖两架构，
+  保留 host-only 编译器与实际两 Windows MSVC 验收，不改 LLVM targets 或测试门槛。
 
 ## 修订边界（全部阻断，持续有效）
 
