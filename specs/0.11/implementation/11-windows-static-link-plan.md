@@ -103,10 +103,19 @@
   Cargo 覆盖诊断及 Unix 不变性。新真实阻断先记录再修，不扩大优化设计。
 - [ ] 提交验证后的实现与本地证据；以确切新 SHA 做首次完整 schema-6 性能门，保留
   原件和全部原阈值。检查 replay bundle identity，真实输入改变则重新准备，不能复用失配。
+  实现已提交为 `d424270`。首次报告因外部负载下的多通道采样失稳失败，完整保留；
+  先复诊并记录条件后，在同 SHA/同协议下唯一一次 qualification 通过原 checker。
+  详见阶段 11 acceptance 的失败与复验证据；未把失败原件改写成通过。
 - [ ] 原 Windows ARM job 仍在旧 recipe 构建时可继续本地修复，不把它当成已通过，也不
   声称最终会得到合格 CRT cache。保存其终态与日志；新正确 recipe 运行完整十项 CI。
   已知不合格 recipe 不再值得等待复用；新 dispatch 若按既有 concurrency 取消旧运行，
   如实保留 cancelled，不能写成自然完成或测试成功。
+  实际旧运行已终止为 cancelled：七项 success、Windows x64 failure、Windows ARM
+  与 Darwin x64 cancelled；取消后的完整日志摘要记录在阶段 11 acceptance。
+  新 `33316188869` 绑定 `d424270`；quality、AArch64 performance、Linux ARM host、
+  Darwin ARM host、Linux x64 host、native integration、x86-64 performance 已通过，
+  Darwin x64 也已通过；其余两架构 Windows 尚在构建或验收；
+  此清单项仍待新完整 CI 的实际结果，不能因已保存旧日志而提前关闭。
 - [ ] 同一最终 SHA 的全部十项 required jobs 通过后才签收 I25/阶段 11；随后执行
   01–11/99 总验收，最终证据提交再过同 SHA 完整 CI，不合并 main。
 
@@ -127,3 +136,75 @@ generated 3 / mutation 10 / fact audit 7 / verifier-cache 5 / docs 16 全部通�
 两种 Clippy、fmt/diff、Native release build、actual compiler 签名/依赖、artifact/JIT audit
 和 Unix prefix verifier 通过。真实 COFF 新测试为 3 项；细节与日志摘要见 review 的 I25。
 本地通过不是两架构 MSVC 验收，最终十项 CI 与首次新 SHA 性能仍待签收。
+
+## Task 5：真实 Windows Native execution 闭包（I26）
+
+候选 run `33316188869` 的 x64 job `99269971157` 已证明 bootstrap、实际 `/MT`
+compile commands、安装后 archive 检查、oracle profile 和 pre-LLVM fact audit 能完成；但
+`Run required native suite` 为 62 passed / 30 failed。完整日志 SHA-256 为
+`2315bc4d21c60ea36ff12085864733a3879085102db34bdfc5086602ff89f0ba`，fact-audit
+artifact 原文件 SHA-256 为
+`27c2a74b0ed7af65bfea3706d849ac3bf01725a1e5f6ebe2ce8a8ecf289d780b`。这使 I25
+继续保持未签收；已经通过的八项不能与后续 SHA 拼接。
+
+### 5.1 复诊与不变量
+
+- COFF driver 实际选择正确，但 shared/executable 的公共尾部仍统一追加 Unix `-o`；
+  `lld-link` 明确警告忽略它并把输出路径当输入文件。Windows 必须使用单参数
+  `/out:<path>`，Darwin/ELF 的 `-o <path>` 保持不变。
+- COFF x64 JITLink 为 MSVC C runtime object 的 `.pdata`/image-relative relocation
+  生成外部 `__ImageBase`；当前禁用任意 process-symbol 搜索且没有内部定义，故所有 JIT
+  消费路径以 `Symbols not found: [ __ImageBase ]` 失败。不得开放整进程符号、切回
+  RuntimeDyld、删除 `.pdata` 或放宽 JIT audit。
+- 两个 IR 测试把 `define i32` 当成跨平台文本；Windows 正确的 external definition 为
+  `define dllexport i32`。修复断言只接受 `define` 行中可选平台 export storage class，仍需
+  精确返回类型/参数与 internal implementation，不能删测试。
+- CK 用户产物仍只链接五个原 runtime objects；PE/COFF LLD 自己拥有最终 image base。
+  额外对象只属于 x86-64 Windows JIT 内部支持面，不进入 static/shared/executable
+  artifact，也不改变 Runtime ABI、Native ABI、语言语义或公开符号表。
+
+### 5.2 计划先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/native_toolchain.rs`、`tests/native/abi.rs`、`tests/native/llvm_ir.rs`、
+`native/runtime/windows/jit_image_base.c`、`scripts/bootstrap-llvm.ps1`、
+`scripts/validate-llvm-prefix.ps1`、`build.rs`、`src/backend/native_runtime.rs`、
+`src/backend/llvm/{ffi,jit}.rs`、`native/bridge/ckc_llvm.cpp` 及双语 LLVM ABI 文档。
+
+- [ ] 先提交本计划及现有失败证据，提交前通过 diff/docs 16；不得把生产修复混入计划提交。
+- [ ] red 先锁定 COFF `/out:` 分支、x64-only JIT support manifest/hash/cache 校验、五个
+  artifact runtime objects 与内部 JIT support 分离、FFI 对支持对象数量 fail-closed，以及
+  Windows `dllexport` IR 行。编译错误、缺少本机 Windows SDK 或 source-string 假阳性不算 red。
+- [ ] 新 `jit_image_base.c` 只定义 JIT 私有 anchor 的 COFF `__ImageBase`，无函数、CRT
+  调用、默认库或公开 CK entry。bootstrap 只为 `x86_64-pc-windows-msvc` 编译/安装/散列；
+  build.rs 和 cache verifier 校验精确文件、hash、target 与路径，ARM64 和 Unix 拒绝伪字段。
+- [ ] JIT x64 在同一 `MapperJITLinkMemoryManager`/JITDylib 中先加入已验证 anchor，再加入
+  五个 runtime objects 与 program object；512 MiB reservation hard bound 足以容纳该固定
+  七对象闭包并保持 32-bit image-relative relocation 可表示。不得把 anchor 传给 LLD
+  artifact link，也不得给 generated CK code 开放额外 host symbol。
+- [ ] COFF shared/executable driver 使用 `/out:<path>`；ELF/Mach-O 命令逐字保持原形式。
+  export allowlist、`/nodefaultlib`、`/noentry`/entry、import library 和输出格式验证均保留。
+
+### 5.3 验证与远程闭环
+
+- [ ] 本地 targeted、default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、
+  generated/mutation/fact-audit/cache/docs、artifact/JIT/version/licenses 与原 schema-6
+  性能门全部通过；不得降低计数、阈值或把 Windows-only 门标成 skip 成功。
+- [ ] 保存 `33316188869` Windows ARM64 的自然终态和完整日志；该 run 已有 x64 failure，
+  无论 ARM 结果如何都不能签收或 rerun 成新代码证据。
+- [ ] 以修复提交的新 SHA 重新执行全部十项 required CI；Windows x64/ARM64 都须通过
+  bootstrap、fact audit、完整 Native/CLI、release static build、compiler dependency、
+  artifact/JIT audit，且日志无 `unknown argument '-o'`、`__ImageBase`、LNK2038/2005/2019。
+  同 SHA 完整通过后才关闭 I26/I25/阶段 11，再执行 01–11/99 总验收和最终 docs-only
+  SHA 的完整十项 CI。
+
+## Task 5 行内对抗性自审
+
+anchor 不是伪造 PE 或开放 process search：它给 JITLink 的 image-relative relocation 一个
+与固定对象集同 reservation 的内部基准；该对象不被 AOT LLD 消费。将其限定为 COFF x64
+也避免与 LLVM 22.1.8 的 ARM64 RuntimeDyld 路径重复定义。manifest、cache 和 build.rs
+必须共同绑定其 bytes，避免缓存中缺失/串架构。最终正确性仍由两个真实 MSVC host 的完整
+Native/JIT/artifact 门证明；本地 source contract 不能替代远程执行。此修订保留 JITLink、
+W^X、五个公开 runtime objects、静态 CRT、无默认库和所有原始验收门，因此没有通过任务而
+降低设计标准。

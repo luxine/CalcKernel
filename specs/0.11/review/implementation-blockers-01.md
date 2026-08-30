@@ -1183,7 +1183,58 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 当前本地 Native ABI=1、Runtime ABI=2、LLVM=22.1.8、Unix manifest SHA 仍为
   `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
   本地新测试只证明本机 backend 生成的 COFF 内容检查；不能冒充实际 MSVC 全链链接。
-  新提交首次完整性能、两架构 Windows 和同 SHA 十项 CI 尚待完成，阶段 11 不签收。
+  后续 `d424270` 的首次性能失败、非代码环境复诊与唯一一次同 SHA qualification
+  通过记录在 `../implementation/11-release-candidate-acceptance.md`，两轮原件均保留。
+  两架构 Windows 和同 SHA 十项 CI 尚待完成，阶段 11 不签收。
+- 新 `33316188869` dispatch 后，旧运行按既有 concurrency 终止为 cancelled：
+  七项通过、Windows x64 失败、Windows ARM 与 Darwin x64 取消。已下载两项取消后
+  完整日志，SHA-256 分别为 `a5b52581de28ae978edb42c1527ded549676777e071df2cdd3a91658db3bf4fd`
+  与 `5b7e2ad5a3a0067e5620609c1e51f6db00f985ecd019c834357bc225abdf894c`。
+  ARM 两次 configure 同样忽略旧 CRT 选项，在 oracle build 时被取消，没有 Native
+  通过证据。新 x64 bootstrap 已采用 `452e16daafeb9644` recipe 前缀；这只证明开始
+  正确配方的冷构建，不能代替后续 guard、链接和全部验收结果。
+- 随后从新运行的实时原生日志核实，两架构 release profile 的实际编译命令 guard
+  通过：x64 2478 个、ARM64 2471 个 C/C++ 文件全部 `/MT`。原始日志行链接见阶段 11
+  acceptance；archive directives、oracle profile、真实 MSVC 链接及 suite 仍待完成。
+- 同一 `d424270` 运行现有 8/10 必跑项通过：quality、双架构 performance、native integration、Linux
+  ARM/x64 host、Darwin ARM host。AArch64 原 checker 的四组汇总为 `0.9996/1.0016`、`1.0001/0.9999`、
+  `0.9997`、`1.3497`；下载原件 24 个 measurement 加 8 个 replay 文件全部与报告
+  bytes/SHA-256 一致。Linux ARM 的 fact audit 7、Native 101、CLI 22 及三个发布审计
+  全通过。Darwin ARM 的 fact audit 7、Native 102、CLI 22、hardened 签名及三项
+  发布审计也通过，新 cache 两键保存成功。并发同键 cache warning 由 performance
+  job 成功保存相同 release/oracle key 闭环；不是跳过验证。Linux x64 的 fact audit
+  7、Native 101、CLI 22、三个发布审计及两条 cache save 同样通过。x86-64 性能
+  四组汇总为 `1.0516/0.9983`、`1.0184/1.0078`、`0.9944`、`1.5132`，32 个
+  实际文件与报告相符；integration 605 项、artifact fixture 5 项和 sanitizer 8 项
+  均通过。Darwin x64 的 Native 102 项含全部 I23 handoff/public SIGINT 回归，CLI、
+  签名及三个发布审计也通过。其余两架构 Windows 未终态，不能
+  签收 I25 或阶段 11。
+
+## I26：Windows x64 首次进入 Native suite 后暴露 COFF 输出与 JIT image-base 缺口
+
+- 新 run `33316188869`、SHA
+  `d4242700489e632cd3ef2d2d9c88610b683f1fbf` 的 Windows x64 job
+  `99269971157` 完成新 recipe 的 release/oracle bootstrap、pre-LLVM fact audit 及
+  artifact 上传，随后 `Run required native suite` 为 62 passed / 30 failed。完整日志
+  SHA-256 为
+  `2315bc4d21c60ea36ff12085864733a3879085102db34bdfc5086602ff89f0ba`；上传
+  artifact ID `9737051325`，zip / 原 fact-audit 文件 SHA-256 分别为
+  `bee37c361e63f616374a215f95a008e321d1e33756e0a10e40e2d2d4b90aab8f` /
+  `27c2a74b0ed7af65bfea3706d849ac3bf01725a1e5f6ebe2ce8a8ecf289d780b`。
+- 十个 artifact/shared/executable/sanitizer/differential 失败都由同一命令构造错误触发：
+  COFF driver 已是 `lld-link`，公共尾部却传 `-o <output>`；driver 忽略 `-o` 后尝试把
+  output 当输入。修复必须是 COFF `/out:<output>`，不能接受 warning、预创建空输出或换外部 linker。
+- cache/run/JIT 的级联失败都收敛为 `Symbols not found: [ __ImageBase ]`。固定 MSVC
+  runtime C objects 带 x64 `.pdata` image-relative relocation；CK 的自定义 JITLink
+  layer没有 COFFPlatform header，且正确地禁止任意 process-symbol generator。修复使用
+  manifest/hash/cache 绑定的 x64-only JIT anchor，并保持 anchor、五 runtime objects 与
+  program object 在同一固定 reservation/JITDylib；不开放 host symbol、不切回
+  RuntimeDyld、不删除 unwind sections。
+- `checked_native_thunks...` 与 `checked_calls...` 不是 ABI 产物错误：日志中的 definitions
+  正确带 `dllexport`，旧断言只匹配 `define i32`。修订后仍验证 definition 行、i32 status、
+  result pointer/void 规则及 internal implementation，不把测试移除或按 Windows skip。
+- 详细 docs-first/TDD/远程计划见 `../implementation/11-windows-static-link-plan.md`
+  Task 5。当前 I26/I25/阶段 11 均未签收；同 run 的八项 success 与后续提交不得聚合。
 
 ## 修订边界（全部阻断，持续有效）
 

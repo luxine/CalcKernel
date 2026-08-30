@@ -118,7 +118,104 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
   `1b25ae4bb075f7b1f7c8cd2eb2417611861f2240d6e57bcf3f93eabe7fffa696`。
   当前 Unix manifest 仍为 `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`；
   新 recipe 不复用旧不合格 Windows cache。原 run 33302635528 的部分绿灯不计新 SHA。
-- 当前没有签收两架构 MSVC、首次新 SHA 性能或完整十项 CI，以上未勾选项仍然有效。
+- 当时尚未签收性能与远程 CI；后续性能复诊/复验见下一项，两架构 MSVC 与完整
+  十项 CI 仍未签收。
+
+### I25 首次性能失败与同 SHA 环境复验（2026-08-30）
+
+- 实现提交 `d4242700489e632cd3ef2d2d9c88610b683f1fbf` 的第一次完整 schema-6
+  测量成功产出原始数据，但 checker 拒绝 unchecked/integer_accumulate 的 Clang
+  样本稳定性；不是通过。原报告 SHA-256 为
+  `8a9d24fcc5ecf743775b523e42f0a18c5b2be5e25a75df9ac9b12773739b8506`，
+  原 checker 日志为 `de6d163d3f5c8c6d14b6e4b62ed85762a232a5d71c4af56fe371768298ed1d3d`。
+- 复诊确认八个 candidate Native 完整库的摘要与已通过的 `99ffb34` 全部相同，固定
+  0.10 replay compiler/bundle、Clang、冻结 C source 与 benchmark/checker 均未变。
+  多个独立 integer 通道同时从约 8.7/10ms 跳到 15.2/17.5ms；不是仅候选发生变化。
+  失败后 CPU 观测达约 91% busy，后续还看到外部 Rust 构建占用约 15 核。以上支持
+  非代码环境干扰，但不是逐样本调度/core migration 的直接证据，未改任何测量代码。
+- 先记录唯一一次同 SHA qualification 的条件，再只读等待：连续三个当前 CPU 样本
+  idle >=70%、未观测到高负载编译/索引任务。失败的 preflight 不启动 benchmark。
+  实际启动前样本为 71.26%/71.94%/78.90%，保持全部原参数、样本、门槛与实际产物
+  校验；期间使用轻量 iostat 留证，没有停止其他任务，也没有筛选或删除样本。
+- 该唯一追加运行的 benchmark/checker 均 exit 0，原完整 gate 全通过：unchecked
+  Clang geo=0.9985、配对 0.10 ratio=1.0022；checked 为 0.9964/1.0071；原始 proof
+  throughput=1.0007；optimizer suite-median ratio=1.1289，全部 individual gate 通过。
+  报告 SHA-256 为 `24f655af9613d024bbf3af235ee9722a568c597e1cfecb28aed0b060e2577a57`，
+  checker 为 `dad8e28e8f42003ecfbd7036a6f01c0fa004ad0e35f750a76987a402ab808a60`。
+- iostat 表明复验期间负载仍有变化（最低 19% idle），不能宣称全程无外部负载；
+  判定来自原 checker 对全部原样数据的验收。首个失败报告、两轮实际产物、preflight、
+  全程 telemetry 与诊断均保留。没有第三次计时，没有降低稳定性或其他数值门槛。
+- 新候选 CI `33316188869` 已按上述确切 `d424270` SHA 触发，`publish=false`；
+  14:17Z quality 已通过。16:00Z AArch64 performance、16:05Z Linux ARM host
+  也已通过；16:15Z Darwin ARM host、16:35Z Linux x64 host 通过，当前为同 SHA
+  5/10；16:44Z native integration 与 x86-64 performance 通过，当前为 7/10；
+  17:17Z Darwin x64 host 通过，当前为 8/10；其余两架构 Windows 仍使用
+  新完整 recipe 构建或验收。Windows
+  两架构的实际 bootstrap 路径包含新 recipe 前缀 `452e16daafeb9644`。随后从实时
+  日志确认 release profile 的 compile-commands guard 通过：x64 共 2478 个、ARM64
+  共 2471 个 C/C++ 文件全部使用 `/MT`，分别见 [x64 实际记录](https://github.com/luxine/Rust_CalcKernel/actions/runs/33316188869/job/99269971157#step:4:295)
+  与 [ARM64 实际记录](https://github.com/luxine/Rust_CalcKernel/actions/runs/33316188869/job/99269971150#step:4:293)。
+  这不替代安装后 archive CRT、oracle profile、完整链接或 host suite；同 SHA 十项
+  required jobs、两架构 MSVC 和总验收仍未签收。
+- AArch64 performance 的原 schema-6 checker 通过：unchecked Clang / 0.10 ratio
+  为 `0.9996 / 1.0016`，checked 为 `1.0001 / 0.9999`，raw proof 为 `0.9997`，
+  optimizer suite-median 为 `1.3497`，全部 individual gate 通过。下载归档包含 24 个
+  本次 measurement 产物与 8 个实际 replay 产物；逐文件 bytes/SHA-256 对报告复核为
+  32/32 相符。完整 job log SHA-256 为
+  `46b6911af3a98e90dd88ef72e77e31d1f9342af76f68d3f4a9f75c8424e9c594`。
+- Linux ARM host 的 pre-LLVM fact audit 7 项、Native 101 项、CLI 22 项均通过，
+  release compiler dependency、native artifact 与 JIT memory audit 通过；完整日志
+  SHA-256 为 `e0ed7115fe078d549b9b07627d83dcd4d78005b622aa60986373a25faad69cc2`。
+  该 job 的 release/oracle cache save 因同键被另一任务占用而警告；同一运行的
+  AArch64 performance 已分别成功保存完全相同的两条 `452e16daafeb9644...` key，
+  不是未验证 prefix 或旧键 fallback。两份 artifact 及日志已完整保存；全部 artifact
+  checksum 清单继续随新增完成项更新。
+- Darwin ARM host 的 fact audit 7 项、Native 102 项、CLI 22 项通过；实际 release
+  compiler 先以 hardened runtime ad-hoc 签名，再通过严格 dependency audit；native
+  artifact 和 JIT memory audit 通过，release/oracle 两个新 recipe cache key 均成功
+  保存。完整 job log / fact-audit artifact SHA-256 分别为
+  `b306bd4ac11f29051c6069f0a6ae74ab8c683a5bda0dc1b9aef4fb52f5706d7f` /
+  `35667d9e6fe446f5a3cf38aa93bdc2d240ab2dcba075814ecfc272a1ae943549`。
+  当时全部已下载 artifact checksum 清单随后随新增完成项更新。
+- Linux x64 host 的 fact audit 7 项、Native 101 项、CLI 22 项及 release compiler
+  dependency、native artifact、JIT memory audit 全通过；release/oracle 两个新 recipe
+  cache key 均成功保存。完整 job log / fact-audit artifact SHA-256 分别为
+  `4a34020d7f7e718869fe8ff989a3e3a4a69287c78dfba32b03f665717640465b` /
+  `8ef444103d991eb8357e185f0f02d87c5fdafc614b212c872194d2e9f44f9714`。
+  当时全部已下载 artifact checksum 清单随后随新增完成项更新。
+- native integration 的完整 all-feature 测试合计 605 项通过，额外 artifact fixture
+  5 项、Linux ASan+UBSan+LSan ownership 8 项通过，0 failed/ignored；release build、
+  native artifact 与 JIT memory audit 通过。并发 cache warning 由已完成 Linux x64
+  host 成功保存完全相同的 release/oracle keys 闭环。完整日志 SHA-256 为
+  `bca12b20db3afb4237a7595aded968e006b7a5e4c38d3ca6c5da69743b5d2511`。
+- x86-64 performance 的原 schema-6 checker 通过：unchecked Clang / 0.10 ratio
+  `1.0516 / 0.9983`，checked `1.0184 / 1.0078`，raw proof `0.9944`，optimizer
+  suite-median `1.5132`，全部 individual gate 通过。下载归档的 24 个 measurement
+  与 8 个 replay 产物逐文件 bytes/SHA-256 为 32/32 相符；report / 完整 job log
+  SHA-256 分别为 `4706ef0a31521c544eb997ac05be9119b736c97939957b50cf34f98610ea6c9e` /
+  `1ca7eb3d936deeed46a9602b4e16c8cf91ad5467a9b9506d83aab7130986b39e`。
+  当时全部已下载 artifact checksum 清单随后随新增完成项更新。
+- Darwin x64 host 的 fact audit 7 项、Native 102 项、CLI 22 项及 hardened 签名、
+  dependency、artifact、JIT audit 全通过。I23 的 before/after child registration、
+  repeated pending、guard 重装、超时清理与 public SIGINT/245/CKR0006 回归均在 Native
+  suite 内通过，不再复现旧运行卡住。release/oracle 新 recipe cache keys 均保存成功。
+  完整 job log / fact-audit artifact SHA-256 分别为
+  `41b992b64bb106ebb9f55d078b8e96b1a46b34899b0e8c65737455f87f86de35` /
+  `de16e8d8b9d1db5c8c4718d7deb5573324b679da1d219c2efa3499fabc950660`。
+  当前全部已下载 artifact checksum 清单 SHA-256 为
+  `8d0e87c272f5f4cc4a5e1702b37bd8a6104e015dace7b217c8b40c08c6617a68`。
+- Windows x64 job `99269971157` 随后完成 bootstrap、fact audit 与 artifact 上传，但
+  Native suite 以 62 passed / 30 failed 终止，故本 run 已确定不能签收。完整日志
+  SHA-256 为
+  `2315bc4d21c60ea36ff12085864733a3879085102db34bdfc5086602ff89f0ba`；fact-audit
+  artifact ID `9737051325`，zip / 原文件摘要分别为
+  `bee37c361e63f616374a215f95a008e321d1e33756e0a10e40e2d2d4b90aab8f` /
+  `27c2a74b0ed7af65bfea3706d849ac3bf01725a1e5f6ebe2ce8a8ecf289d780b`。
+  复诊得到 I26 三项根因：COFF LLD 错用 Unix `-o`、x64 JITLink 缺内部
+  `__ImageBase` anchor、两条 IR 测试未接受正确的 Windows `dllexport`。修订计划已写入
+  `11-windows-static-link-plan.md` Task 5；在计划提交、TDD 修复、新 SHA 全十项 CI 前，
+  I26/I25/阶段 11 与本文件总签收均保持未通过。Windows ARM64 继续保留自然终态证据，
+  但无论其结果如何都不能覆盖该 x64 failure。
 
 ### I24 preservation 回归迁移（2026-08-30，本地通过）
 
@@ -165,15 +262,23 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
   `146e390d8305b0c797f7e5735a091816f44de2a33eba6bd8dc37021593cb1f66`。
   实际计时库随报告归档；固定 0.10 独立 bundle 与历史 baseline 均未改变。
 
-### I22 提交远程矩阵（`5895242`，仍未整体签收）
+### I22 提交远程矩阵（`5895242`，最终取消，未整体通过）
 
 - [run 33302635528](https://github.com/luxine/Rust_CalcKernel/actions/runs/33302635528)
-  针对同一 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`，当前已核实 7/10 必需项
+  针对同一 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`，最终核实 7/10 必需项
   success：quality `99233477544`、native integration `99233477391`、Linux ARM
   `99233477579` / x64 `99233477538`、Darwin ARM `99233477589`、performance ARM
   `99233477492` / x86-64 `99233477564`。Darwin x64 `99233477608` 已完成 bootstrap，
-  但 Native suite 暴露 I23 中断测试卡住；Windows x64 `99233477598` / ARM
-  `99233477647` 尚在构建。不能据此关闭 I21/I22/I23、阶段 11 或总验收。
+  但 Native suite 暴露 I23 中断测试卡住。Windows x64 `99233477598` 完成 bootstrap
+  后因 I25 CRT/COFF 问题失败。新候选 dispatch 按既有 concurrency 在 14:11Z 取消
+  尚未完成的 Darwin x64 与 Windows ARM `99233477647`，整轮终态为 cancelled。
+  ARM 在 oracle build 中取消，未执行 Native 验收；两项取消不是自然完成或成功。
+  旧 Windows cache 的静态 CRT 不合格，不能复用；不能据此关闭阶段 11 或总验收。
+- 已保存取消后的完整日志：Windows ARM SHA-256 为
+  `a5b52581de28ae978edb42c1527ded549676777e071df2cdd3a91658db3bf4fd`，
+  Darwin x64 为 `5b7e2ad5a3a0067e5620609c1e51f6db00f985ecd019c834357bc225abdf894c`。
+  ARM 日志也两次报告旧 `LLVM_USE_CRT_RELEASE` 未使用，进一步证实旧配方不能
+  作为合格静态 CRT 输入；没有删除或掩盖原失败/取消证据。
 - Native integration 的全特性测试 592 项、artifact fixture 5 项、Linux ownership
   ASan/UBSan/LSan 8 项均通过，0 failed/ignored；Linux 分支实际启用
   `detect_leaks=1:halt_on_error=1`。fmt、all-feature Clippy、release build、native
