@@ -219,6 +219,27 @@ fn configure_native_toolchain(target: &str) {
         LLVM_COMPONENTS,
         "native LLVM component manifest component allowlist mismatch"
     );
+    let static_libraries = manifest_array(&text, "static_libraries");
+    if target.ends_with("-msvc") {
+        require_manifest_value(&text, "msvc_runtime_library", "MultiThreaded");
+        let features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
+        assert!(
+            features.split(',').any(|feature| feature == "crt-static"),
+            "Native MSVC builds require -C target-feature=+crt-static; preserve it when overriding RUSTFLAGS"
+        );
+        for required in [
+            "lldCOFF",
+            "lldCommon",
+            "LLVMDTLTO",
+            "LLVMLibDriver",
+            "LLVMWindowsManifest",
+        ] {
+            assert!(
+                static_libraries.iter().any(|library| library == required),
+                "missing static COFF component: {required}"
+            );
+        }
+    }
 
     let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
     println!("cargo::warning=ckc LLVM manifest sha256={digest}");
@@ -257,7 +278,7 @@ fn configure_native_toolchain(target: &str) {
     configure_sanitizer_linkage(target);
 
     println!("cargo::rustc-link-search=native={}", lib_dir.display());
-    for library in manifest_array(&text, "static_libraries") {
+    for library in static_libraries {
         let archive = static_library_path(&lib_dir, &library, target);
         assert!(
             archive.is_file(),

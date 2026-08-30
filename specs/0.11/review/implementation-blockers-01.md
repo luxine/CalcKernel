@@ -1120,7 +1120,7 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 复审未发现此测试迁移的新阻断项。此结论只关闭本地 I24 覆盖缺口，不替代尚未完成的
   同一候选 SHA 全十项 CI、阶段 11 与总验收。
 
-## I25：Windows LLVM/bridge/Rust CRT 不一致且 COFF closure 缺失（已复诊，待修复）
+## I25：Windows LLVM/bridge/Rust CRT 不一致且 COFF closure 缺失（本地修复通过，矩阵待验）
 
 - `33302635528/99233477598` 的 bootstrap 在 13:25Z 完成，但随后 fact-audit 的 Cargo
   链接失败，测试尚未运行。完整 job log 的 SHA-256 为
@@ -1142,6 +1142,48 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 测试准备首次在 ARM-only pinned Clang 请求 x64 COFF 被明确拒绝，不计为行为 red；
   原计划因此修正为每个 host 使用自身已编译 backend、完整矩阵共同覆盖两架构，
   保留 host-only 编译器与实际两 Windows MSVC 验收，不改 LLVM targets 或测试门槛。
+
+### I25 实现与行内复审
+
+- `c17e1bf` 原计划、`45a88da` host-only fixture 修订均先于生产修复。初次不支持的
+  cross-target fixture 日志保留，不计为 CRT red。按 host backend 调整后，旧 verifier
+  确实接受了真实 MD archive 加 static manifest；行为 red SHA-256 为
+  `0afa88ab87a2eb9691811a7b591b0cf677a7e656afd3793312c249d87fcf460f`。
+  配置 red SHA 为 `6ceadc75c30e1f197846f4822d8f072aaf272dfecd3e74ea4101ca075243c29c`。
+- 新 guard 在 CMake build 前检查 C/C++ 实际 `/MT`，在安装及 cache boundary 用
+  pinned llvm-readobj 检查每个 archive 的真实 RuntimeLibrary/DEFAULTLIB；拒绝
+  dynamic/debug/mixed、无静态证据和工具/文件失败，纯汇编 member 不被强迫携带 CRT。
+  逐 archive 调用避免 Windows 参数长度限制，不以 manifest 声明代替内容证明。
+- 五个原 LLVM logical components 不变；COFF 另加 libdriver/windowsmanifest 的
+  libnames/system-libs 同集查询与失败检查。DTLTO/LLD 顺序保留，未改成 link-all。
+  producer 与 cache 复用同一 guard，完整 cache key 增加两项 verifier 输入，不删除
+  原输入或提供旧键 fallback。新 recipe 的真实 Windows 重建仍是待跑远程验收。
+- Cargo 对两个精确 MSVC target 的所有 profile 默认 crt-static；build.rs 在 bridge
+  编译前拒绝错误 manifest CRT、缺失 target feature 或 COFF 组件。Rust 1.90 的两架构
+  `--print cfg -C target-feature=+crt-static` 均实际报告该 feature。未更改桥接为 MD，
+  未添加强制链接或忽略 default library 参数；Unix codegen/flags/ABI 不变。
+- 实际 COFF 3 项回归通过：static/defaultlib-only 正例，dynamic/debug/单项 mismatch/
+  mixed、损坏/缺失/空 archive、伪静态 manifest 和缺少 COFF component 反例全部闭环。
+  green 日志 SHA-256 为
+  `89c74da600be81b5b069809f997dd0dc42cf2c982c8b2faa3e262cf711c204ca`。
+  原 default hash/path fixture 明确使用 double 且保留原断言，不承担 CRT 内容证明。
+- 完整 default 475、all-feature 606（Native 102），0 failed / 0 ignored；default/all
+  Clippy、fmt/diff、release lib 53 / IR 58 / Native build 全通过。
+  default/all 日志摘要为
+  `6ef13fc1481f2988873cff85207a5289e20b0994dc79e4ce72f4e3107398f3e1` /
+  `1b25ae4bb075f7b1f7c8cd2eb2417611861f2240d6e57bcf3f93eabe7fffa696`；
+  default/all Clippy 摘要为
+  `605168ee5f2ed28c6012c5635383a30f2e3bb8b34076311d2baf4083427b71ee` /
+  `56514c1a2cc5f211bb442aefd26a06483e44680b36e23262ff3e3e1a8e6dddfa`。
+- generated 3、mutation 10、fact audit 7、release verifier-cache 5、docs 16 均通过。
+  实际 release compiler 先 hardened ad-hoc 签名，再通过依赖审计；artifact/JIT audit、
+  version/licenses 和原 Unix prefix 验证通过。compiler/JIT audit 摘要为
+  `33076a392f155fc87e1b47c292d73786798f68ac06e4be64004c54abdd1a3b5f` /
+  `a68309e4e044db6d3db7bf86cc7e93a67248bb867d6d30c0867b616d9a510ebf`。
+- 当前本地 Native ABI=1、Runtime ABI=2、LLVM=22.1.8、Unix manifest SHA 仍为
+  `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
+  本地新测试只证明本机 backend 生成的 COFF 内容检查；不能冒充实际 MSVC 全链链接。
+  新提交首次完整性能、两架构 Windows 和同 SHA 十项 CI 尚待完成，阶段 11 不签收。
 
 ## 修订边界（全部阻断，持续有效）
 

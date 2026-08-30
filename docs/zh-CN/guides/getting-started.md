@@ -23,6 +23,13 @@ export fn add(a: i32, b: i32) -> i32 {
 不需要外部 compiler。Source diagnostic 包含稳定 `CKxxxx` ID、file、line、column、excerpt
 与 caret。从源码构建 Native feature 需要固定 LLVM prefix；精确 bootstrap 命令见 README。
 
+MSVC host 的 `.cargo/config.toml` 为两个受支持 Windows target 默认设置
+`-C target-feature=+crt-static`，包括 tests 和 debug builds。若覆盖 Cargo Rust flags，
+必须保留该 feature；Native build 在编译 bridge 前拒绝动态 CRT。使用 bootstrap 产出的
+prefix 并执行 `scripts/validate-llvm-prefix.ps1` 校验，不能换成 `/MD` 或 debug CRT 的
+LLVM archives。Native tests 需要 pinned Clang oracle，包括本机架构的真实 COFF archive
+检查。
+
 Optimizer contract 是显式 unsafe boundary。只能在 `unsafe { ... }` 中调用 `unsafe fn`，并在
 entry 满足全部 requirement。Native run/executable 调试可使用 `--sanitize-contracts`；普通
 release 信任 contract，不插入检查。

@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $llvmVersion = "22.1.8"
 $llvmSha256 = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "validate-msvc-crt.ps1")
 
 function Import-MsvcEnvironment([string]$RequestedTarget, [string]$ProbeRoot) {
     $programFilesX86 = ${env:ProgramFiles(x86)}
@@ -124,10 +125,12 @@ $configure = @(
     "-DLLVM_ENABLE_LIBXML2=OFF", "-DLLVM_ENABLE_TERMINFO=OFF",
     "-DLLVM_ENABLE_LIBEDIT=OFF", "-DLLVM_INCLUDE_TESTS=OFF",
     "-DLLVM_INCLUDE_BENCHMARKS=OFF", "-DLLVM_INCLUDE_EXAMPLES=OFF",
-    "-DLLVM_USE_CRT_RELEASE=MT"
+    "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
 )
 & cmake @configure
 if ($LASTEXITCODE -ne 0) { throw "LLVM CMake configuration failed" }
+Assert-MsvcCompileCommands -Path (Join-Path $binaryDir "compile_commands.json")
 foreach ($language in @("C", "CXX")) {
     $metadata = Get-ChildItem -LiteralPath $binaryDir -Recurse -File |
         Where-Object { $_.Name -eq "CMake${language}Compiler.cmake" } |
@@ -174,7 +177,11 @@ if ($Profile -eq "oracle" -and -not (Test-Path -LiteralPath $clang -PathType Lea
 }
 
 $components = @("core", "native", "orcjit", "nativecodegen", "lto")
-$llvmLibraries = ((& $llvmConfig --link-static --libnames @components) -split "\s+") |
+# LLVM 22 COFF also calls LibDriver and WindowsManifest outside the core/ORC/LTO closure.
+$linkComponents = $components + @("libdriver", "windowsmanifest")
+$libraryOutput = & $llvmConfig --link-static --libnames @linkComponents
+if ($LASTEXITCODE -ne 0) { throw "llvm-config static library query failed" }
+$llvmLibraries = ($libraryOutput -split "\s+") |
     Where-Object { $_ -ne "" } |
     ForEach-Object { $_ -replace '^lib', '' -replace '\.lib$', '' }
 $dtltoArchive = Join-Path $Prefix "lib/LLVMDTLTO.lib"
@@ -182,7 +189,11 @@ if (-not (Test-Path -LiteralPath $dtltoArchive -PathType Leaf)) {
     throw "LLVM 22 static install is missing LLVMDTLTO.lib"
 }
 $staticLibraries = @("lldCOFF", "lldCommon", "LLVMDTLTO") + $llvmLibraries
-$systemLibraries = ((& $llvmConfig --link-static --system-libs @components) -split "\s+") |
+$archives = @($staticLibraries | ForEach-Object { Join-Path $Prefix "lib/$_.lib" })
+Assert-MsvcStaticArchives -ReadObj (Join-Path $Prefix "bin/llvm-readobj.exe") -Archives $archives
+$systemOutput = & $llvmConfig --link-static --system-libs @linkComponents
+if ($LASTEXITCODE -ne 0) { throw "llvm-config system library query failed" }
+$systemLibraries = ($systemOutput -split "\s+") |
     Where-Object { $_ -ne "" } |
     ForEach-Object { $_ -replace '^[-/]DEFAULTLIB:', '' -replace '\.lib$', '' }
 
@@ -235,6 +246,7 @@ $manifest = @(
     "profile = `"$Profile`"",
     "source_sha256 = `"$llvmSha256`"",
     "static_only = true",
+    "msvc_runtime_library = `"MultiThreaded`"",
     "components = $(Format-TomlArray $components)",
     "static_libraries = $(Format-TomlArray $staticLibraries)",
     "system_libraries = $(Format-TomlArray $systemLibraries)",

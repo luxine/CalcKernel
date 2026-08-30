@@ -27,7 +27,7 @@ runs:
       env:
         CKC_BOOTSTRAP_TARGET: ${{ inputs.target }}
         CKC_BOOTSTRAP_PROFILE: ${{ inputs.profile }}
-        CKC_BOOTSTRAP_RECIPE_DIGEST: ${{ hashFiles('native/llvm/manifest.toml', 'native/runtime/**/*.c', 'native/runtime/**/*.h', 'native/runtime/**/*.S', 'native/runtime/**/*.def', 'native/runtime/**/*.tbd', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1') }}
+        CKC_BOOTSTRAP_RECIPE_DIGEST: ${{ hashFiles('native/llvm/manifest.toml', 'native/runtime/**/*.c', 'native/runtime/**/*.h', 'native/runtime/**/*.S', 'native/runtime/**/*.def', 'native/runtime/**/*.tbd', 'scripts/bootstrap-llvm.sh', 'scripts/bootstrap-llvm.ps1', 'scripts/validate-llvm-prefix.ps1', 'scripts/validate-msvc-crt.ps1') }}
       run: |
         if ($env:CKC_BOOTSTRAP_PROFILE -notin @("release", "oracle")) {
           throw "unsupported LLVM bootstrap profile: $env:CKC_BOOTSTRAP_PROFILE"

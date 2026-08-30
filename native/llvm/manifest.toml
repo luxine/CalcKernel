@@ -14,6 +14,7 @@ license_sha256 = ["3340babe8ac7bc6ae294d93aa01c310a250d43d5b760e5c12954882d4e5c8
 
 [cmake]
 build_type = "Release"
+msvc_runtime_library = "MultiThreaded"
 assertions = true
 build_shared_libs = false
 build_llvm_dylib = false
@@ -30,13 +31,13 @@ enable_libedit = false
 [profiles.release]
 projects = ["lld"]
 include_clang = false
-install_tools = ["llvm-config"]
+install_tools = ["llvm-config", "llvm-readobj"]
 link_components = ["core", "native", "orcjit", "nativecodegen", "lto"]
 
 [profiles.oracle]
 projects = ["clang", "lld"]
 include_clang = true
-install_tools = ["clang", "llvm-config"]
+install_tools = ["clang", "llvm-config", "llvm-readobj"]
 
 [targets.darwin-arm64]
 llvm_target = "AArch64"
@@ -64,8 +65,10 @@ orc_layer = "JITLink"
 llvm_target = "AArch64"
 lld_driver = "COFF"
 orc_layer = "RuntimeDyld"
+extra_link_components = ["libdriver", "windowsmanifest"]
 
 [targets.win32-x64]
 llvm_target = "X86"
 lld_driver = "COFF"
 orc_layer = "JITLink"
+extra_link_components = ["libdriver", "windowsmanifest"]

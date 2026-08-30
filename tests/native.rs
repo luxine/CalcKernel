@@ -32,6 +32,8 @@ mod run;
 mod runtime;
 #[path = "native/runtime_support.rs"]
 mod runtime_support;
+#[path = "native/static_prefix.rs"]
+mod static_prefix;
 #[path = "support/mod.rs"]
 mod support;
 

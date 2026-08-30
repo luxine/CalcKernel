@@ -34,6 +34,14 @@ Building the Native feature from source requires the pinned LLVM prefix; follow
 the exact bootstrap command in the repository README. Default features remain
 available for frontend/C/WASM development without that prefix.
 
+For MSVC hosts, `.cargo/config.toml` enables `-C target-feature=+crt-static`
+for both supported Windows targets, including tests and debug builds. If you
+override Cargo Rust flags, preserve that feature: Native builds reject a
+dynamic CRT setting before compiling the bridge. Use the bootstrap-produced
+prefix and validate it with `scripts/validate-llvm-prefix.ps1`; do not substitute
+LLVM archives built with `/MD` or a debug CRT. Native tests require the pinned
+Clang oracle, including actual COFF archive checks for the host architecture.
+
 Repository governance tests also execute the cross-platform CI prefix verifier;
 they require PowerShell 7 (`pwsh`) on the development/test host. This is a test
 tool dependency only, not a dependency of the built compiler or CK programs.

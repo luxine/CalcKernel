@@ -104,6 +104,22 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 
 ## 完成证据
 
+### I25 Windows 静态链接（2026-08-30，本地通过，远程未签收）
+
+- 计划 `c17e1bf` 与 host-only fixture 修订 `45a88da` 先提交。实际旧 verifier 接受
+  动态 COFF archive 的 red 已保留；新配置回归 2 项、真实 COFF 回归 3 项均通过。
+  详见 `../review/implementation-blockers-01.md` 的 I25 逐项复诊、修复和日志摘要。
+- 原本地门重跑：default 475 / all-feature 606（Native 102），release lib 53 / IR 58、
+  generated 3 / mutation 10 / fact audit 7 / verifier-cache 5 / docs 16，0 failed/ignored。
+  两种 Clippy、fmt/diff、Native release build、真实 compiler 签名/依赖、artifact/JIT
+  audit、version/licenses、Unix prefix 验证均通过，没有改变原 gate/数值/工具链版本。
+- default/all 日志 SHA-256 为
+  `6ef13fc1481f2988873cff85207a5289e20b0994dc79e4ce72f4e3107398f3e1` /
+  `1b25ae4bb075f7b1f7c8cd2eb2417611861f2240d6e57bcf3f93eabe7fffa696`。
+  当前 Unix manifest 仍为 `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`；
+  新 recipe 不复用旧不合格 Windows cache。原 run 33302635528 的部分绿灯不计新 SHA。
+- 当前没有签收两架构 MSVC、首次新 SHA 性能或完整十项 CI，以上未勾选项仍然有效。
+
 ### I24 preservation 回归迁移（2026-08-30，本地通过）
 
 - 计划提交 `c5652e0` 之后恢复原阶段 02 测试过滤器，实际 3 passed / 0 failed /

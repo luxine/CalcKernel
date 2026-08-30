@@ -206,7 +206,8 @@ fn release_toolchain_should_static_link_non_system_cpp_runtimes() {
 
     let windows = read("scripts/bootstrap-llvm.ps1");
     assert!(
-        windows.contains("LLVM_USE_CRT_RELEASE=MT"),
+        windows.contains("CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded")
+            && !windows.contains("LLVM_USE_CRT_RELEASE"),
         "Windows LLVM bootstrap must use the static release CRT"
     );
 
@@ -225,6 +226,118 @@ fn release_toolchain_should_static_link_non_system_cpp_runtimes() {
             "native bridge build must contain {required:?}"
         );
     }
+}
+
+#[test]
+fn windows_static_crt_policy_should_cover_bootstrap_cache_and_cargo() {
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    assert!(bootstrap.contains("CMAKE_EXPORT_COMPILE_COMMANDS=ON"));
+    assert!(
+        bootstrap
+            .find("Assert-MsvcCompileCommands")
+            .expect("check actual flags")
+            < bootstrap.find("& cmake @build").unwrap()
+    );
+    for path in [
+        "scripts/bootstrap-llvm.ps1",
+        "scripts/validate-llvm-prefix.ps1",
+    ] {
+        let text = read(path);
+        for required in [
+            "validate-msvc-crt.ps1",
+            "Assert-MsvcStaticArchives",
+            "msvc_runtime_library",
+        ] {
+            assert!(text.contains(required), "{path} must enforce {required}");
+        }
+    }
+    assert!(
+        bootstrap.contains("$linkComponents = $components + @(\"libdriver\", \"windowsmanifest\")")
+    );
+    assert!(bootstrap.contains("--libnames @linkComponents"));
+    assert!(bootstrap.contains("--system-libs @linkComponents"));
+    let build = read("build.rs");
+    for required in [
+        "CARGO_CFG_TARGET_FEATURE",
+        "crt-static",
+        "msvc_runtime_library",
+        "MultiThreaded",
+        "LLVMLibDriver",
+        "LLVMWindowsManifest",
+    ] {
+        assert!(
+            build.contains(required),
+            "Native build must enforce {required}"
+        );
+    }
+    let config = read(".cargo/config.toml");
+    for target in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+        let block = config
+            .split_once(&format!("[target.{target}]"))
+            .expect("MSVC target config")
+            .1
+            .split('[')
+            .next()
+            .unwrap();
+        assert!(
+            block.contains("rustflags = "),
+            "{target} needs static Rust flags"
+        );
+    }
+    assert_eq!(config.matches("target-feature=+crt-static").count(), 2);
+    let action = read(".github/actions/bootstrap-ckc-llvm/action.yml");
+    let digest = action
+        .lines()
+        .find(|line| line.contains("hashFiles("))
+        .unwrap();
+    for path in [
+        "scripts/validate-msvc-crt.ps1",
+        "scripts/validate-llvm-prefix.ps1",
+    ] {
+        assert!(digest.contains(path), "cache identity must include {path}");
+    }
+}
+
+#[test]
+fn windows_static_crt_should_validate_actual_compile_commands() {
+    let root = super::support::temp::temp_dir("ckc-crt-commands");
+    fs::create_dir_all(&root).unwrap();
+    let database = root.join("compile_commands.json");
+    let script = repo_root().join("scripts/validate-msvc-crt.ps1");
+    let run = || {
+        Command::new("pwsh")
+        .args(["-NoLogo", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; . $env:CKC_TEST_CRT_SCRIPT; Assert-MsvcCompileCommands -Path $env:CKC_TEST_COMMANDS"])
+        .env("CKC_TEST_CRT_SCRIPT", &script)
+        .env("CKC_TEST_COMMANDS", &database)
+        .output().expect("run actual CMake flag guard")
+    };
+    for valid in [
+        r#"[{"file":"unit.cpp","command":"cl.exe /MT /c unit.cpp"},{"file":"runtime.c","arguments":["cl.exe","/MT","/c","runtime.c"]}]"#,
+        r#"[{"file":"unit.cpp","command":"cl.exe \"/MT\" /c unit.cpp"},{"file":"asm.S","command":"assembler asm.S"}]"#,
+    ] {
+        fs::write(&database, valid).unwrap();
+        let output = run();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    for invalid in [
+        r#"[{"file":"unit.cpp","command":"cl.exe /MD /c unit.cpp"}]"#,
+        r#"[{"file":"unit.cpp","command":"cl.exe /MTd /c unit.cpp"}]"#,
+        r#"[{"file":"unit.cpp","command":"cl.exe /MT /MD /c unit.cpp"}]"#,
+        r#"[{"file":"unit.cpp","command":"cl.exe /c unit.cpp /Ipath/MT"}]"#,
+        r#"[{"file":"unit.cpp","arguments":["cl.exe","/MDd","/c","unit.cpp"]}]"#,
+        r#"[{"file":"unit.cpp","command":"cl.exe /MT /c unit.cpp"},{"file":"other.c","command":"cl.exe /MD /c other.c"}]"#,
+        "[]",
+    ] {
+        fs::write(&database, invalid).unwrap();
+        let output = run();
+        assert!(!output.status.success(), "must reject {invalid}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("MSVC compile"));
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

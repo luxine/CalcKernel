@@ -16,6 +16,14 @@ Bootstrap cache identity 除 pinned LLVM manifest 与 bootstrap recipe 外，还
 runtime source、header、assembly 与 platform link input，cached prefix 因而不能保留过期
 runtime object。
 
+Windows 的 LLVM/LLD 与 bridge 使用 release-static MSVC CRT（`/MT`），Rust 在所有
+build profile 使用 `+crt-static`。Bootstrap 设置
+`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`，并在构建前检查真实 C/C++ compile commands。
+安装和 cache validation 都用 pinned `llvm-readobj` 检查真实 COFF archive directives，
+拒绝 dynamic、debug 或混合 CRT。Windows manifest 记录此 CRT identity，并包含 COFF
+driver 的 LibDriver、WindowsManifest 与 DTLTO 依赖。校验脚本属于 cache key；仅声明
+`static_only = true` 不能证明内容使用静态 CRT。
+
 Native 只接受 verified KIR artifact。Pre-LLVM fact audit 检查每个 attribute/metadata
 candidate 的 origin、dominance、contract-instance scope、alias completeness、alignment、
 range、effect 与 proof dependency；失败发生在 bridge invocation 前。合法 fact 才可映射到

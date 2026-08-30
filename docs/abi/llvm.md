@@ -22,6 +22,16 @@ The bootstrap cache identity includes every native runtime source, header,
 assembly file, and platform link input in addition to the pinned LLVM manifest
 and bootstrap recipes, so a cached prefix cannot retain stale runtime objects.
 
+On Windows, LLVM/LLD and the bridge use the release-static MSVC CRT (`/MT`),
+and Rust uses `+crt-static` in every build profile. The bootstrap sets
+`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` and checks the actual C/C++ compile
+commands before building. Both installation and cache validation inspect real
+COFF archive directives with pinned `llvm-readobj`; dynamic, debug, or mixed
+CRT inputs are rejected. The Windows manifest records this CRT identity and
+includes the COFF driver's LibDriver, WindowsManifest, and DTLTO dependencies.
+The verifier scripts are part of the cache key; `static_only = true` alone is
+not evidence of static CRT contents.
+
 ## Internal representation
 
 Native accepts only a verified KIR artifact. A pre-LLVM fact audit validates

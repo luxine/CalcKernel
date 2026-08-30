@@ -118,8 +118,9 @@ if child > 0 {
   artifact/JIT 检查；保留 0 failed/ignored 和确切工具链身份。
 - [x] 提交已验证实现与本地证据，再以该确切 SHA 做第一次完整 schema-6 性能门及 checker，
   保留首次原件、全部门槛不变；性能证据在后续验收记录中追加，不伪称提交能引用自身摘要。
-- [ ] 等待原两个 Windows cold oracle 构建保存合格缓存，不因这个
-  Darwin 问题取消整个旧 workflow。推送 feature branch，显式触发新 SHA 完整 10 jobs。
+- [ ] 原先为保存合格 Windows cache 而等待的前提已被 I25 真实 CRT 失败否定；
+  旧 cache 不可复用。按 `11-windows-static-link-plan.md` 验证新配方后，推送 feature
+  branch 并触发新 SHA 完整 10 jobs；若 concurrency 终止旧运行，如实保留取消状态与日志。
 - [ ] 所有 required jobs 在同一最终 SHA 通过才关闭 I23/I21/I22 和阶段 11；随后才做
   `99-final-acceptance.md`。旧 589 部分证据保留，不和新 SHA 拼成全绿。
 

@@ -5,6 +5,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot "validate-msvc-crt.ps1")
 
 $manifestPath = Join-Path $Prefix "share/ckc/llvm-build.toml"
 $manifestLines = @(Get-Content -LiteralPath $manifestPath)
@@ -68,6 +69,17 @@ foreach ($directory in @("bin", "lib")) {
             throw "shared LLVM library in static prefix: $($file.Name)"
         }
     }
+}
+
+if ($isMsvc) {
+    if ((Read-String "msvc_runtime_library") -cne "MultiThreaded") {
+        throw "MSVC runtime library mismatch"
+    }
+    foreach ($required in @("lldCOFF", "lldCommon", "LLVMDTLTO", "LLVMLibDriver", "LLVMWindowsManifest")) {
+        if ($libraries -cnotcontains $required) { throw "missing static COFF component: $required" }
+    }
+    $archives = @($libraries | ForEach-Object { Join-Path $Prefix "lib/$_.lib" })
+    Assert-MsvcStaticArchives -ReadObj (Join-Path $Prefix "bin/llvm-readobj.exe") -Archives $archives
 }
 
 $objects = @(Read-Strings "runtime_objects")

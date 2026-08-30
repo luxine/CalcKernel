@@ -412,7 +412,21 @@ fn native_prefix_validation_should_check_object_hashes_before_caching() {
         assert!(!run("aarch64-apple-darwin").status.success());
     }
     fs::copy(&config, root.join("bin/llvm-config.exe")).expect("copy Windows config double");
-    fs::write(root.join("lib/LLVMDTLTO.lib"), b"archive").expect("write MSVC library");
+    for library in [
+        "lldCOFF",
+        "lldCommon",
+        "LLVMDTLTO",
+        "LLVMLibDriver",
+        "LLVMWindowsManifest",
+    ] {
+        fs::write(root.join(format!("lib/{library}.lib")), b"archive")
+            .expect("write library double");
+    }
+    // This test owns only manifest/hash/path/DLL checks. Native static_prefix tests use
+    // real COFF bytes and real llvm-readobj to prove CRT acceptance and rejection.
+    let readobj = root.join("bin/llvm-readobj.exe");
+    fs::write(&readobj, "#!/bin/sh\nif [ \"$1\" = --version ]; then\n  printf 'LLVM version 22.1.8\\n'\nelse\n  printf 'Directive(s): /DEFAULTLIB:libcmt\\n'\nfi\n").unwrap();
+    fs::set_permissions(&readobj, fs::Permissions::from_mode(0o755)).unwrap();
     for name in objects {
         fs::write(
             root.join("share/ckc/runtime")
@@ -424,9 +438,10 @@ fn native_prefix_validation_should_check_object_hashes_before_caching() {
     fs::write(root.join("share/ckc/runtime/kernel32.lib"), b"object")
         .expect("write import library");
     let windows_manifest = format!(
-        "{}runtime_platform_import = \"kernel32.lib\"\nruntime_platform_import_sha256 = \"{hash}\"\n",
+        "{}msvc_runtime_library = \"MultiThreaded\"\nruntime_platform_import = \"kernel32.lib\"\nruntime_platform_import_sha256 = \"{hash}\"\n",
         manifest
             .replace("aarch64-apple-darwin", "aarch64-pc-windows-msvc")
+            .replace("static_libraries = [\"LLVMDTLTO\"]", "static_libraries = [\"lldCOFF\", \"lldCommon\", \"LLVMDTLTO\", \"LLVMLibDriver\", \"LLVMWindowsManifest\"]")
             .replace(".o\"", ".obj\"")
     );
     fs::write(root.join("share/ckc/llvm-build.toml"), windows_manifest)

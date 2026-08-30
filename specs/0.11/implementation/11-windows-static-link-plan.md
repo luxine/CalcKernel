@@ -35,29 +35,30 @@
 `11-release-candidate-acceptance.md`、`../review/implementation-blockers-01.md`。
 
 - [x] 行内自审：两项独立根因、Rust 边界、缓存内容证明均有闭环，不改变语言设计。
-- [ ] `git diff --check`、`cargo +1.90.0 test --locked --test contracts docs::` 通过后，
+- [x] `git diff --check`、`cargo +1.90.0 test --locked --test contracts docs::` 通过后，
   单独提交上述文档，之后才改源码或测试。
+  初始计划提交 `c17e1bf`，host-only fixture 修订提交 `45a88da`；docs 16 passed。
 
 ## Task 1：先锁定错误配置与实际 archive 反例
 
 **Files:** `tests/contracts/native_toolchain.rs`、`tests/contracts/ci.rs`、
 `tests/native.rs`、新 `tests/native/static_prefix.rs`。
 
-- [ ] 更新旧的“包含 LLVM_USE_CRT_RELEASE 即成功”断言：要求当前 CMake runtime
+- [x] 更新旧的“包含 LLVM_USE_CRT_RELEASE 即成功”断言：要求当前 CMake runtime
   选项、compile_commands 检查先于 build、静态内容校验先于 cache save。
-- [ ] 新契约回归要求两个 MSVC Cargo target 的 crt-static、build.rs 的 target-feature
+- [x] 新契约回归要求两个 MSVC Cargo target 的 crt-static、build.rs 的 target-feature
   与 manifest 一致性拒绝、COFF 两个缺失组件进入 libnames/system-libs 同一查询集合。
-- [ ] 执行实际 PowerShell guard 的 compile_commands fixture：接受所有 C/C++ 都是
+- [x] 执行实际 PowerShell guard 的 compile_commands fixture：接受所有 C/C++ 都是
   `/MT`；拒绝 `/MD`、debug CRT、混合、缺失参数、空编译数据库；不把路径中的文字当参数。
-- [ ] Native 测试必须使用配置的 pinned Clang（未配置则明确失败，不 skip）和真实
+- [x] Native 测试必须使用配置的 pinned Clang（未配置则明确失败，不 skip）和真实
   llvm-ar/llvm-readobj，构造当前 host 架构的真正 COFF archives（六 host 矩阵合起来覆盖
   x64 与 ARM64；pinned prefix 按设计只编译一个 host backend）。接受 release static，
   拒绝 dynamic、debug、static+dynamic 混合、空/损坏 archive、缺少工具及失败退出码。
   同时覆盖 RuntimeLibrary mismatch 和 DEFAULTLIB 两种实际 directive。
-- [ ] 原 default verifier 的 bytes/hash/path fixture 仍然 LLVM-independent：其 Windows
+- [x] 原 default verifier 的 bytes/hash/path fixture 仍然 LLVM-independent：其 Windows
   分支可显式使用 readobj double 只测试原字段/摘要/DLL 边界；不能把 double 作为 CRT
   内容验收。真正 COFF regression 单独归 Native driver，由必跑矩阵执行。
-- [ ] 运行 targeted red，保留预期失败原因及日志；不能把编译错误当行为 red。
+- [x] 运行 targeted red，保留预期失败原因及日志；不能把编译错误当行为 red。
 
 ## Task 2：统一配置并在缓存前检查真实内容
 
@@ -65,44 +66,47 @@
 `scripts/validate-llvm-prefix.ps1`、`.github/actions/bootstrap-ckc-llvm/action.yml`、
 `native/llvm/manifest.toml`。
 
-- [ ] 配置 `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`、导出 compile_commands；配置
+- [x] 配置 `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`、导出 compile_commands；配置
   成功后、耗时 build 前检查全部 C/C++ 的实际参数。删除无效旧 CRT 选项。
-- [ ] 共享 guard 用 pinned llvm-readobj 的 `--coff-directives` 读取每个已声明 `.lib`；
+- [x] 共享 guard 用 pinned llvm-readobj 的 `--coff-directives` 读取每个已声明 `.lib`；
   任一 dynamic/debug RuntimeLibrary 或动态 CRT DEFAULTLIB 都拒绝，每个 archive
   至少一个 release-static 证据。检查错误/空输出/missing tool 均 fail closed；不要求
   每个纯汇编 member 都自带 CRT 标记。逐 archive 调用，避免 Windows 命令长度上限。
-- [ ] producer 和 cache verifier 都调用同一 guard；Windows manifest 记录
+- [x] producer 和 cache verifier 都调用同一 guard；Windows manifest 记录
   `msvc_runtime_library = "MultiThreaded"`，但声明不代替实际 bytes 检查。
-- [ ] libnames/system-libs 都查询原 components 加 `libdriver`、`windowsmanifest`，
+- [x] libnames/system-libs 都查询原 components 加 `libdriver`、`windowsmanifest`，
   检查查询 exit code；保留显式 DTLTO、lldCOFF/lldCommon 和原顺序，不使用 all。
   verifier 和 build.rs 均拒绝缺少这三个 COFF 依赖的 Windows manifest。
-- [ ] 新 guard 与 cache verifier 加入完整 recipe digest；其余原输入一个不删。不得
-  为命中旧缓存而使用 fallback/restore key；真实两架构 Windows prefix 重新构建。
+- [x] 新 guard 与 cache verifier 加入完整 recipe digest；其余原输入一个不删。不得
+  为命中旧缓存而使用 fallback/restore key。真实两架构 Windows prefix 的重新构建
+  属于 Task 4 远程门，当前尚未签收。
 
 ## Task 3：Cargo 与开发契约
 
 **Files:** 新 `.cargo/config.toml`、`build.rs`、`docs/abi/llvm.md`、
 `docs/zh-CN/abi/llvm.md`、`docs/guides/getting-started.md`、对应 zh-CN 文件。
 
-- [ ] 两个精确 MSVC target 默认 Rust `-C target-feature=+crt-static`，debug/release/test
+- [x] 两个精确 MSVC target 默认 Rust `-C target-feature=+crt-static`，debug/release/test
   一致；不向 Unix 或 CK 用户产物添加新 flag/依赖。
-- [ ] Native MSVC 的 build.rs 在编译 bridge 前要求 manifest 静态 CRT 身份和
+- [x] Native MSVC 的 build.rs 在编译 bridge 前要求 manifest 静态 CRT 身份和
   `CARGO_CFG_TARGET_FEATURE` 中的 crt-static；用户覆盖 Rust flags 时给出明确错误。
   不添加 `/NODEFAULTLIB`、`/FORCE`，不把 bridge 改为 `/MD`。
-- [ ] 同步双语当前文档：Windows 全链静态配置、source builds 的 flags 覆盖责任、
+- [x] 同步双语当前文档：Windows 全链静态配置、source builds 的 flags 覆盖责任、
   prefix 必须用校验器验证；PowerShell/Clang fixture 只属于开发测试，不增加运行依赖。
 
 ## Task 4：原门槛全部保留
 
-- [ ] 同组 targeted green、原 cache corruption/DLL tests、完整 default/all-feature、
+- [x] 同组 targeted green、原 cache corruption/DLL tests、完整 default/all-feature、
   Clippy/fmt、release lib/IR/native build、generated/mutation/fact audit/cache tests、
   artifact/JIT/version/licenses 全通过，0 failed/ignored。
-- [ ] 行内对抗性复审动态/混合 CRT 是否可绕过、两种架构 COFF closure、guard 调用顺序、
+- [x] 行内对抗性复审动态/混合 CRT 是否可绕过、两种架构 COFF closure、guard 调用顺序、
   Cargo 覆盖诊断及 Unix 不变性。新真实阻断先记录再修，不扩大优化设计。
 - [ ] 提交验证后的实现与本地证据；以确切新 SHA 做首次完整 schema-6 性能门，保留
   原件和全部原阈值。检查 replay bundle identity，真实输入改变则重新准备，不能复用失配。
 - [ ] 原 Windows ARM job 仍在旧 recipe 构建时可继续本地修复，不把它当成已通过，也不
   声称最终会得到合格 CRT cache。保存其终态与日志；新正确 recipe 运行完整十项 CI。
+  已知不合格 recipe 不再值得等待复用；新 dispatch 若按既有 concurrency 取消旧运行，
+  如实保留 cancelled，不能写成自然完成或测试成功。
 - [ ] 同一最终 SHA 的全部十项 required jobs 通过后才签收 I25/阶段 11；随后执行
   01–11/99 总验收，最终证据提交再过同 SHA 完整 CI，不合并 main。
 
@@ -117,3 +121,9 @@
 避免继续信任被忽略的声明；Rust target feature 解决下游同样的 CRT 分叉。真正 COFF
 回归可跨 host 执行，但不能替代两架构 MSVC 最终链接与依赖审计。现有逻辑五组件与
 host-only 产品边界不变，额外两项仅服务已选 COFF driver。没有降低性能或安全门槛。
+
+本地执行证据：default 475 / all-feature 606（Native 102），release lib 53 / IR 58、
+generated 3 / mutation 10 / fact audit 7 / verifier-cache 5 / docs 16 全部通过，0 failed/ignored。
+两种 Clippy、fmt/diff、Native release build、actual compiler 签名/依赖、artifact/JIT audit
+和 Unix prefix verifier 通过。真实 COFF 新测试为 3 项；细节与日志摘要见 review 的 I25。
+本地通过不是两架构 MSVC 验收，最终十项 CI 与首次新 SHA 性能仍待签收。
