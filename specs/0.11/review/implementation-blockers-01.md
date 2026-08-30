@@ -589,6 +589,30 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 阶段 11 必须诊断并通过该原始 2x suite-median / 3x individual 门槛；不得调整 corpus、
   baseline、跳过独立验证或反复重跑选取 green。阶段 05 功能签收不构成全目标完成。
 
+### I20 首次 CPU 采样与归纳查询索引（仍未关闭）
+
+- 在阶段 07 完整实现 `a617fa1` 上，用 release library 对相同 Dijkstra NativeLibrary /
+  unchecked KIR 执行 20,000 次 O3 pipeline。macOS `sample` 的主线程 8,465 个样本中，
+  3,664 个位于归纳简化，热点包括反复线性查找 SSA 定义、扫描全部 incoming edges，
+  以及每次遍历时分配长度为 0–2 的临时 Vec。原采样 SHA-256：
+  `ad42365992ccb532eba6e28936b27c127c4dd9558304784f55f06ddcba125f3e`。
+- 归纳 proposal 现为每个不可变函数建立只读定义/类型/参数/输入边索引；边遍历不再
+  分配临时 Vec。输入边顺序及同一 target 的两个 branch arm 均保留，搜索工作队列、
+  固定预算扣减和完整证书检查不变。独立 checker 不接收或信任该优化侧索引。
+  查询等值测试逐项对照原线性实现，并包含缺失/极大 ValueId 和重复 target 的两个边。
+- 修改前后 Dijkstra Inspection KIR 逐字节相同，SHA-256 均为
+  `3f49f6f77153df15c85ebc3e85318047c9b91e2d9ce65dcac40aca925fbf56f0`；NativeLibrary
+  诊断的全部 rewrite 统计也相同。相同 20,000 次驱动的总耗时由 `45.806477792 s`
+  变为 `31.702653833 s`；后续采样 SHA-256：
+  `82be7738c89e606fd9775e29770c920331c47858d99b4f2a89e657ecd5d8a383`。
+- 上述驱动计入输入 clone/结果析构，并带 CPU 采样，不是原 benchmark 的定时边界，
+  只用于定位及诊断，不能签收 I20。它也不能解释尚未实现归纳简化时的历史首次失败。
+  原始失败、全部 corpus、2x/3x 门槛和独立验证保持有效。
+- 默认测试 444 项、全特性 566 项（含 Native 93 项）及 all-target/all-feature Clippy、
+  fmt、diff 检查通过。顺序执行的 default/all-feature 日志 SHA-256 分别为
+  `471f146811b4e5574ac110b50de4325c84c55ac4aa60eafa0dadbb869985db24`、
+  `7aae4b1d621a0588025975c823a230c105c16fbfd34a71a7a5f9c759756908d5`。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median

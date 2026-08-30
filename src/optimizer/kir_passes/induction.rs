@@ -27,6 +27,49 @@ struct Replacement {
     proof: crate::ProofId,
 }
 
+/// Read-only proposal queries for one immutable function pre-state. The proof
+/// checker deliberately does not consume this optimization-side index.
+#[derive(Default)]
+struct InductionIndex<'a> {
+    blocks: BTreeMap<BlockId, &'a crate::KirBlock>,
+    parameters: BTreeMap<ValueId, (BlockId, usize)>,
+    instructions: BTreeMap<ValueId, &'a KirInstruction>,
+    integer_types: BTreeMap<ValueId, IntegerType>,
+    incoming: BTreeMap<BlockId, Vec<&'a crate::KirEdge>>,
+}
+
+impl<'a> InductionIndex<'a> {
+    fn new(function: &'a KirFunction) -> Self {
+        let mut index = Self::default();
+        for param in &function.params {
+            if let Some(ty) = IntegerType::from_mir(&param.type_node) {
+                index.integer_types.insert(param.value, ty);
+            }
+        }
+        for block in &function.blocks {
+            index.blocks.insert(block.id, block);
+            for (position, param) in block.params.iter().enumerate() {
+                index.parameters.insert(param.value, (block.id, position));
+                if let Some(ty) = IntegerType::from_mir(&param.type_node) {
+                    index.integer_types.insert(param.value, ty);
+                }
+            }
+            for instruction in &block.instructions {
+                if let Some(result) = instruction.results.first() {
+                    index.instructions.insert(result.value, instruction);
+                    if let Some(ty) = IntegerType::from_mir(&result.type_node) {
+                        index.integer_types.insert(result.value, ty);
+                    }
+                }
+            }
+            for edge in edges(&block.terminator) {
+                index.incoming.entry(edge.target).or_default().push(edge);
+            }
+        }
+        index
+    }
+}
+
 pub(crate) fn run_induction_simplification(
     module: &mut KirModule,
     live_proofs: &ProofArena,
@@ -51,16 +94,16 @@ fn run_with_config(
     let mut replacements = Vec::new();
     let mut result = InductionSimplification::default();
     for (function, analysis) in module.functions.iter().zip(analyses) {
+        if analysis.loops.is_empty() {
+            continue;
+        }
+        let queries = InductionIndex::new(function);
         let mut remaining = ScalarAnalysisBudget::for_function(function, config).max_steps();
         let mut pending = BTreeMap::new();
         let mut certificates = Vec::new();
         let mut exhausted = false;
         'loops: for loop_info in &analysis.loops {
-            let Some(header) = function
-                .blocks
-                .iter()
-                .find(|block| block.id == loop_info.header)
-            else {
+            let Some(header) = queries.blocks.get(&loop_info.header) else {
                 return Err("induction analysis names a missing header".to_string());
             };
             for (index, left) in header.params.iter().enumerate() {
@@ -70,7 +113,7 @@ fn run_with_config(
                         continue;
                     }
                     let proposal =
-                        match propose_equality(function, header.id, left, right, &mut remaining) {
+                        match propose_equality(&queries, header.id, left, right, &mut remaining) {
                             Ok(Some(proposal)) => proposal,
                             Ok(None) => continue,
                             Err(()) => {
@@ -88,9 +131,10 @@ fn run_with_config(
                         if protected.contains(&value) || pending.contains_key(&value) {
                             continue;
                         }
-                        if let (Some((source_block, _)), Some((block, _))) =
-                            (parameter(function, source), parameter(function, value))
-                            && source_block == block
+                        if let (Some((source_block, _)), Some((block, _))) = (
+                            queries.parameters.get(&source).copied(),
+                            queries.parameters.get(&value).copied(),
+                        ) && source_block == block
                         {
                             pending.insert(value, (block, source, certificate_index));
                         }
@@ -137,7 +181,7 @@ fn run_with_config(
 }
 
 fn propose_equality(
-    function: &KirFunction,
+    queries: &InductionIndex<'_>,
     header: BlockId,
     left: ValueId,
     right: ValueId,
@@ -155,14 +199,14 @@ fn propose_equality(
             continue;
         }
         *remaining = remaining.checked_sub(1).ok_or(())?;
-        let Some(ty) = integer_type(function, a) else {
+        let Some(ty) = queries.integer_types.get(&a).copied() else {
             return Ok(None);
         };
-        if integer_type(function, b) != Some(ty) {
+        if queries.integer_types.get(&b).copied() != Some(ty) {
             return Ok(None);
         }
-        let a_instruction = defining_instruction(function, a);
-        let b_instruction = defining_instruction(function, b);
+        let a_instruction = queries.instructions.get(&a).copied();
+        let b_instruction = queries.instructions.get(&b).copied();
         definitions.extend(
             a_instruction
                 .iter()
@@ -185,28 +229,21 @@ fn propose_equality(
             pending.push((a, *value));
             continue;
         }
-        if let (Some((a_block, a_index)), Some((b_block, b_index))) =
-            (parameter(function, a), parameter(function, b))
-        {
+        if let (Some((a_block, a_index)), Some((b_block, b_index))) = (
+            queries.parameters.get(&a).copied(),
+            queries.parameters.get(&b).copied(),
+        ) {
             if a_block != b_block {
                 return Ok(None);
             }
-            let mut incoming = false;
-            for block in &function.blocks {
-                for edge in edges(&block.terminator)
-                    .into_iter()
-                    .filter(|edge| edge.target == a_block)
-                {
-                    incoming = true;
-                    let (Some(a), Some(b)) = (edge.args.get(a_index), edge.args.get(b_index))
-                    else {
-                        return Ok(None);
-                    };
-                    pending.push((*a, *b));
-                }
-            }
-            if !incoming {
+            let Some(incoming) = queries.incoming.get(&a_block) else {
                 return Ok(None);
+            };
+            for edge in incoming {
+                let (Some(a), Some(b)) = (edge.args.get(a_index), edge.args.get(b_index)) else {
+                    return Ok(None);
+                };
+                pending.push((*a, *b));
             }
             continue;
         }
@@ -336,7 +373,6 @@ fn apply_replacements(
         }
         for predecessor in &function.blocks {
             if edges(&predecessor.terminator)
-                .iter()
                 .any(|edge| edge.target == block.id && edge.args.len() != block.params.len())
             {
                 return Err("induction replacement has incomplete incoming arguments".to_string());
@@ -410,6 +446,7 @@ fn repair_edge(
     }
 }
 
+#[cfg(test)]
 fn parameter(function: &KirFunction, value: ValueId) -> Option<(BlockId, usize)> {
     function.blocks.iter().find_map(|block| {
         block
@@ -420,6 +457,7 @@ fn parameter(function: &KirFunction, value: ValueId) -> Option<(BlockId, usize)>
     })
 }
 
+#[cfg(test)]
 fn defining_instruction(function: &KirFunction, value: ValueId) -> Option<&KirInstruction> {
     function
         .blocks
@@ -433,6 +471,7 @@ fn defining_instruction(function: &KirFunction, value: ValueId) -> Option<&KirIn
         })
 }
 
+#[cfg(test)]
 fn integer_type(function: &KirFunction, value: ValueId) -> Option<IntegerType> {
     function
         .params
@@ -453,16 +492,17 @@ fn integer_type(function: &KirFunction, value: ValueId) -> Option<IntegerType> {
         })
 }
 
-fn edges(terminator: &KirTerminator) -> Vec<&crate::KirEdge> {
-    match terminator {
-        KirTerminator::Return { .. } => Vec::new(),
-        KirTerminator::Jump { edge } => vec![edge],
+fn edges(terminator: &KirTerminator) -> impl Iterator<Item = &crate::KirEdge> {
+    let edges = match terminator {
+        KirTerminator::Return { .. } => [None, None],
+        KirTerminator::Jump { edge } => [Some(edge), None],
         KirTerminator::Branch {
             then_edge,
             else_edge,
             ..
-        } => vec![then_edge, else_edge],
-    }
+        } => [Some(then_edge), Some(else_edge)],
+    };
+    edges.into_iter().flatten()
 }
 
 #[cfg(test)]
@@ -512,9 +552,15 @@ mod tests {
             .expect("j")
             .value;
         let mut remaining = u32::MAX;
-        let step = propose_equality(function, header, left, right, &mut remaining)
-            .expect("budget")
-            .expect("equal induction");
+        let step = propose_equality(
+            &InductionIndex::new(function),
+            header,
+            left,
+            right,
+            &mut remaining,
+        )
+        .expect("budget")
+        .expect("equal induction");
         let mut proofs = ProofArena::new(0);
         let proof = proofs
             .try_insert(
@@ -538,6 +584,81 @@ mod tests {
                 proof,
             },
         )
+    }
+
+    #[test]
+    fn induction_index_should_match_linear_queries_and_keep_both_branch_arms() {
+        let mut module = module();
+        for block in &mut module.functions[0].blocks {
+            if let KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } = &mut block.terminator
+            {
+                *else_edge = then_edge.clone();
+            }
+        }
+        let function = &module.functions[0];
+        let queries = InductionIndex::new(function);
+        let values = function
+            .params
+            .iter()
+            .map(|param| param.value)
+            .chain(
+                function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| block.params.iter().map(|param| param.value)),
+            )
+            .chain(function.blocks.iter().flat_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .flat_map(|instruction| instruction.results.iter().map(|result| result.value))
+            }))
+            .chain(std::iter::once(ValueId::from_index(u32::MAX)));
+        for value in values {
+            assert_eq!(
+                queries.parameters.get(&value).copied(),
+                parameter(function, value)
+            );
+            assert_eq!(
+                queries.instructions.get(&value).copied(),
+                defining_instruction(function, value)
+            );
+            assert_eq!(
+                queries.integer_types.get(&value).copied(),
+                integer_type(function, value)
+            );
+        }
+        for block in &function.blocks {
+            let incoming = function
+                .blocks
+                .iter()
+                .flat_map(|predecessor| edges(&predecessor.terminator))
+                .filter(|edge| edge.target == block.id)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                queries
+                    .incoming
+                    .get(&block.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                incoming
+            );
+            if let KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } = &block.terminator
+            {
+                assert_eq!(then_edge.target, else_edge.target);
+                let actual = &queries.incoming[&then_edge.target];
+                assert!(actual.iter().any(|edge| std::ptr::eq(*edge, then_edge)));
+                assert!(actual.iter().any(|edge| std::ptr::eq(*edge, else_edge)));
+            }
+        }
     }
 
     #[test]
