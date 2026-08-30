@@ -57,34 +57,35 @@ Unchanged requirements:
 **Files:** new `scripts/prepare-performance-replay.py`,
 `benches/runtime_replay.rs`, tests under `tests/performance/`.
 
-- [ ] Add tests before implementation for absent/incomplete bundle, wrong commit,
+- [x] Add tests before implementation for absent/incomplete bundle, wrong commit,
   compiler version/LLVM/target/CPU, changed source/adapter bytes, duplicate or missing
   case/mode, malformed hash, escaping path, and modified library/compiler bytes.
   Every case must fail before loading a library or taking a timing sample.
-- [ ] Preparation creates a fresh owned directory under ignored `target/` (or an
+- [x] Preparation creates a fresh owned directory under ignored `target/` (or an
   explicit new output directory); it must refuse an existing nonempty target.
   Make an independent local clone of this repository and detach the exact pinned
   commit. Do not modify the existing 0.10 worktree, candidate checkout or main.
-- [ ] Verify the clone is clean, validate the four adapter hashes already frozen
+- [x] Verify the clone is clean, validate the four adapter hashes already frozen
   in `v0_10_compiler.toml`, and apply exactly those patches. Record the resulting
   tracked diff digest and check it again after building/emitting; no compiler source
   changes, additional patches or generated current-compiler C input are allowed.
-- [ ] Build with `cargo +1.90.0 build --release --locked --features native-toolchain
+- [x] Build with `cargo +1.90.0 build --release --locked --features native-toolchain
   --bin ckc`, using the selected pinned LLVM prefix. Validate actual verbose compiler
   version and LLVM identity. Copy the resulting compiler into the owned bundle and
   hash the actual executable, rather than accepting a user-written version label.
-- [ ] Use that compiler to emit the four fixed runtime fixtures in both checked
+- [x] Use that compiler to emit the four fixed runtime fixtures in both checked
   and unchecked modes, O3 and baseline CPU. Verify each fixture digest against the
   unchanged baseline manifest; record every actual library's SHA-256 and byte count.
   Preparation does not run benchmarks or choose a baseline from timing results.
-- [ ] Write a strict version-1 TSV bundle manifest (not a general TOML parser):
+- [x] Write a strict version-1 TSV bundle manifest (not a general TOML parser):
   first line `ckc-v010-runtime-replay\t1`; unique required scalar records for commit,
-  compiler identity/hash, LLVM version, target, CPU policy, preparation recipe hash,
-  adapter-set hash and source-diff hash; exactly eight `artifact` records containing
+  compiler identity/hash, LLVM version/installed-component-manifest hash, target,
+  CPU policy, preparation recipe hash,
+  adapter-set hash, source-diff hash and unchanged baseline-manifest hash; exactly eight `artifact` records containing
   mode, case, fixed basename, size and hash. Unknown/duplicate fields are errors.
   The recipe hash binds the preparation script and replay implementation. The
   adapter set must be the already-pinned four adapters, not a caller-supplied list.
-- [ ] The Rust loader independently validates that strict manifest, expected identity,
+- [x] The Rust loader independently validates that strict manifest, expected identity,
   fixed safe basenames, exact file sizes/hashes and current preparation recipe before
   `DynamicLibrary::open`. Keep compiler and libraries for CI audit. Source provenance
   comes from the trusted pinned-checkout preparation log; hashes are not a signature

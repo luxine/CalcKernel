@@ -318,6 +318,44 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   KIR timer/budget、CPU policy、语料或数值门槛。旧 required jobs 仍为失败，必须
   由新代码/协议在最终同一 SHA 的完整十 job matrix 全通过后再关闭 I14/I19。
 
+### Replay 准备流程的组件身份复诊（阶段 11 仍未签收）
+
+- 首次真实准备已在自有 clone 构建出精确 `df8165` 的 0.10 compiler，但 verbose
+  identity 校验拒绝了 LLVM manifest 摘要。源码 `build.rs` 明确嵌入的是选定 prefix 的
+  `share/ckc/llvm-build.toml` 摘要，不是 `native/llvm/manifest.toml` 构建配方摘要。
+  本机两者分别为 `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`
+  与 `bdfc1199416b70411d9e0c53faf3f06602f71192dab67774c21420c1564510c3`。
+- 修复只把期待值绑定到真实安装组件清单，并在准备前后核对该摘要不变，bundle 与
+  Rust loader 也记录/验证该字段；原 version、ABI、target 和四个 adapter 检查保留。
+  不修改固定编译器源码或 LLVM version，不采集或更新任何性能 baseline 数值。
+- 首次失败 driver / preparation log 摘要：
+  `4d28da0f502959dcd915e94a5835875970f7910dcd1361fd9961ff573289dc1d`、
+  `87e09eacea48a3a06ef337a734e9c0c744b2ae5ea0c99ba708714fc384d91450`。
+  此时没有成功的 replay manifest 或性能报告；后续仍需实际生成/校验完整 bundle。
+
+### Replay Task 1：独立准备与完整性校验（尚非运行时验收）
+
+- Rust loader 正例先 red，再加入严格 TSV/固定 identity、源 manifest/recipe/四 adapter
+  集合摘要、实际 compiler/library 大小和 SHA-256 校验。缺失/重复/未知字段、模式、case、
+  错误版本/target/CPU/组件清单、非 hex 摘要、路径逃逸、symlink、等长篡改与缺文件均拒绝。
+  Python 准备验证同样先 red，覆盖四份固定 adapter、四份 CK source、actual verbose
+  compiler identity 和拒绝覆盖现存目录；Rust/Python recipe 算法有独立计算对照测试。
+- 正确绑定安装组件清单后，在自有 clone 中实际构建 0.10 编译器并生成八份 O3/baseline
+  libraries；原 baseline worktree、main、固定源码/数值均不变。独立 Rust driver 对当前
+  recipe/adapter/组件清单重新计算摘要，完整读取 bundle，确认八份非空产物。此时没有
+  调用 kernel 或生成性能报告，不替代后续交错采样/差分/门禁。
+- 实际 compiler SHA-256 `c7c7878e22ac8dd221cf20b9d53dfafc9a4e230200216a4d3ad7fd36381945bb`，
+  bundle manifest `465de9f73331ed43ff791f529a5dcab6c32c90373b4c07507c17f963f129bbeb`，
+  approved source diff `a68153e19d34f3f89cbe6a2c903537d69d3aebcbbd1c59be012fbaeeb3f1e933`。
+  driver / preparation / independent verification logs：
+  `0d55b3f4a849c24946aadf39ef088a07ff569c52898dd1ad7c6940a551f1e2c2`、
+  `100c7040883927b997fcfac1fbab06af821eca546932f21355611601e1ba3357`、
+  `39bb789a9a1dcb0135450f0e8f746d2cb11fc8c37b6e3cdf0984d690802a82fa`。
+- `cargo +1.90.0 test --locked --test performance` 13 项通过（内含四项 Python preparation
+  tests）；该 target 的 Clippy `-D warnings`、fmt/diff 通过。测试日志 SHA-256
+  `f7d8c863e0b145832beb429902dd02ea89f34f57a6147d16e54babbcdb946561`。
+  自审范围为准备/完整性边界；Task 2–5 的采样、schema-6 reader、CI 与最终验收仍待执行。
+
 ## I15：Intel Cargo 产物未自动签名，CI/release 缺少显式签名步骤
 
 - Intel job `99196059470` 的 Native/CLI/release build 全部通过，随后
@@ -867,6 +905,11 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   不修改语言、ABI、平台支持范围或门槛；自审无设计阻断。
 
 ### I21 本地实现与复审（真实 Windows CI 待验）
+
+- 旧 run `33288920505` 的 ARM Windows job `99196977381` 现已结束，仍是修复前
+  `c91c2c0` 的相同 SDK 宏展开错误；不是 `8c810ae` 的新失败。release 与 oracle cache
+  均已成功保存，完整 log SHA-256 为
+  `70128bd956e68d011b8c98faa67a946dc6123e8a70d6cf6baa51b35de44180df`。
 
 - 文档提交 `800172c` 后新增真实 bridge translation-unit regression，先观察到与
   MSVC 日志逐项相同的七处宏展开错误；修复 Windows include 边界后，两种宏输入均通过。
