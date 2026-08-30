@@ -274,6 +274,14 @@ fn emit_kir_inspection(
     }
     if args.explain_optimization {
         let mut text = String::from("===== OPTIMIZATION EXPLANATIONS =====\n");
+        for fallback in &result.analysis_fallbacks {
+            text.push_str(&format!(
+                "f{} pass={} reason={}\n",
+                fallback.function.index(),
+                fallback.pass,
+                fallback.reason
+            ));
+        }
         for explanation in &result.explanations {
             let trusted = result.eliminated_guards.iter().any(|elimination| {
                 elimination.guard_instruction == explanation.guard_instruction

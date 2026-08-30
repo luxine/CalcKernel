@@ -121,6 +121,18 @@ bindings and fresh instruction IDs are checked before any mutation. Candidate
 search has a fixed per-function KIR-size budget; exhaustion discards that function's
 pending rewrites and increments `induction_budget_fallbacks` deterministically.
 
+Natural-loop analysis uses the same fixed KIR-size budget for its dominator
+matrix/iteration and subsequent loop-graph and SSA-forwarding work. Exhaustion
+discards all partial loop/induction results for that function. The structural
+verifier still computes complete dominance; an analysis fallback never skips
+verification. Dominator iteration follows block IDs, independent of storage
+order. Removing dominance backedges must leave an acyclic graph; residual
+cyclic components identify irreducible control flow even inside a natural outer
+loop. Such functions conservatively skip LICM and induction simplification.
+Self-latches do not pull preheaders into the loop body. `--explain-optimization`
+reports per-function/pass `fixed-kir-budget-exhausted` or
+`irreducible-control-flow` reasons, including induction-search exhaustion.
+
 KIR inspection uses `emit-kir`, `--print-facts`,
 `--print-effect-summaries`, and `--explain-optimization`. Output is
 deterministic and distinguishes trusted from proven evidence.

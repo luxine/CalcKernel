@@ -533,6 +533,26 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 本节修复的是 actual induction-simplify 缺口。自然循环分析的 irreducible fallback、
   完整分析预算与阶段 07 全任务仍需验收；I14/I19/I20 和全部最终 CI 门槛仍打开。
 
+### I18 第九部分：不可约循环与固定预算回退（阶段 07 尚待完整复验）
+
+- 实际 red：多入口循环的 `irreducible_blocks` 始终为空；自回边循环把 preheader
+  错误纳入 body。现移除 dominance backedge 后，对剩余图执行确定性、非递归 SCC
+  遍历，识别不可约核心；也覆盖单一外层 SCC 内隐藏的多入口内循环。自回边在 header
+  停止 predecessor 追溯。不可约函数不发布 natural-loop/induction 候选。
+- 固定预算实际 red：任何配置都返回完整结果，没有耗尽状态。现 dominator 使用与
+  structural verifier 相同的实现，但 analysis 单独计量矩阵与迭代工作；后续 SCC、
+  loop nesting、归纳候选及 SSA forwarding 也计量。任一步耗尽都丢弃整个函数的部分
+  分析结果，verifier 本身仍完整执行。预算只由 KIR 大小/固定配置确定。
+- 新测试还复现块存储顺序影响迭代预算；按 block ID 调度支配迭代后，相同 CFG 的
+  分析与回退保持确定性。嵌套自然循环预算扫描与不可约 SCC 全预算扫描验证结果只有
+  完整值或 unknown，不泄漏部分候选。原 nested、多 latch、实际归纳改写正例保留。
+- pipeline 对不可约 CFG 的真实测试验证 LICM/induction pass 都不改写，artifact 仍
+  通过 verifier。CLI 实际 red 是缺少回退原因；现 `--explain-optimization` 输出
+  函数/pass 与 `fixed-kir-budget-exhausted` 或 `irreducible-control-flow`，也覆盖
+  induction 搜索预算。CLI 重复运行字节一致，不伪造 guard ID 表示分析级原因。
+- 本节不替代剩余阶段 07 的 LICM/完整语义自审，也不覆盖 I14/I19/I20 的性能失败。
+  规范、语料、性能阈值和必需 CI job 均未调整。
+
 ## I20：布尔/checked 传播后的 optimizer latency 门槛失败（未关闭）
 
 - 阶段 05 本批代码通过功能与证书验收后的首次原 performance gate 返回 exit 1：

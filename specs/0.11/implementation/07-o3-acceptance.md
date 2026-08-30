@@ -1,7 +1,8 @@
 # 阶段 07 验收：O3
 
 当前复审状态：I18 发现的 `induction-simplify` 空实现已有实际改写与局部复验证据，
-但 irreducible/fixed-budget 及完整阶段验收仍打开。不得仅以 pass-order 测试替代改写正例/反例；见
+irreducible/fixed-budget 也已有实现与局部复验；剩余 LICM 与完整阶段验收仍打开。
+不得仅以 pass-order 测试替代改写正例/反例；见
 `../review/implementation-blockers-01.md`。
 
 ## 必须通过
@@ -115,3 +116,22 @@
   `b3dc0233360d844ed2289f38d61dbe9920d304d126e365ee537124fd01fd1201`。
 - 不可约循环识别、loop-analysis 固定预算及其消费者回退仍需继续实现验收。本节不关闭
   阶段 07 或 I14/I19/I20；无性能复测或门槛变更，main 未修改。
+
+## I18 不可约循环/预算回退的局部复验（2026-08-30，尚非阶段通过）
+
+- 本节对应 `optimizer(stage-07): bound loop analysis and report conservative fallback`，
+  parent 为 `6d3ebdac09bd43960fbb351620c45b980196316a`；实际 red/green 见 I18 第九部分。
+- 5 个新增 optimizer 测试覆盖多入口循环、自然外循环内隐藏的不可约核心、自回边
+  body、嵌套循环预算扫描、不可约 SCC 全预算扫描、块存储顺序及 pipeline 消费者回退。
+  实际不可约 pipeline 保留可验证 artifact，LICM/induction 的 changed 都为 false。
+- 新 CLI 测试用 40 个非恒定 diamond 触发默认固定预算回退，重复两次 stdout/stderr
+  字节一致，包含 `f0 pass=natural-loop-analysis reason=fixed-kir-budget-exhausted`。
+  不伪造 guard 身份，不跳过 structural verifier，不使用时间预算。
+- 顺序默认/全特性测试 435/557 项全部通过（Native 93、全特性 CLI 22）；release
+  `--test optimizer loop_` 为 18/18。all-feature Clippy、fmt、diff check 通过。
+  环境仍为 Rust 1.90.0 / AArch64 macOS / 同一 LLVM+Clang 22.1.8 overlay。
+- 默认、全特性日志 SHA-256 分别为
+  `904dc9e7010a6d1268bedc3ca3d4396c93bd690ca7cca2817ecdaa049c5a6094`、
+  `72bc3514b1fd6c25db236095e7b3ccdbe872682283022a604e7cee6eb371f0b2`。
+- 剩余阶段 07 的 LICM/完整任务自审与 I14/I19/I20 性能、同一最终 SHA 全 CI 门槛仍打开。
+  本节没有性能复测、规范或门槛调整，main 未修改。

@@ -142,3 +142,40 @@ fn kir_inspection_should_be_byte_deterministic_and_identify_trusted_evidence() {
         "inspection must not contain addresses"
     );
 }
+
+#[test]
+fn kir_inspection_should_report_fixed_loop_budget_fallback_without_losing_the_artifact() {
+    let mut text =
+        String::from("export fn diamonds(flag: bool, start: u32) -> u32 { let x: u32 = start;");
+    for _ in 0..40 {
+        text.push_str("if flag { x = x + 1; } else { x = x + 2; }");
+    }
+    text.push_str("return x; }");
+    let (_, source) = fixture(&text);
+    let args = [
+        os("emit-kir"),
+        os(&source),
+        os("-O3"),
+        os("--overflow"),
+        os("unchecked"),
+        os("--bounds"),
+        os("unchecked"),
+        os("--explain-optimization"),
+    ];
+    let first = run(args.clone());
+    let second = run(args);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(first.stdout, second.stdout);
+    assert_eq!(first.stderr, second.stderr);
+    assert!(String::from_utf8_lossy(&first.stdout).contains("export fn"));
+    assert!(
+        String::from_utf8_lossy(&first.stderr)
+            .contains("f0 pass=natural-loop-analysis reason=fixed-kir-budget-exhausted"),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+}

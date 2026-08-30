@@ -44,6 +44,14 @@ pub struct KirOptimizationExplanation {
     pub proof: Option<ProofId>,
 }
 
+/// A conservative analysis outcome that does not refer to a particular guard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KirAnalysisFallback {
+    pub function: FunctionId,
+    pub pass: String,
+    pub reason: String,
+}
+
 /// Deterministic rewrite counts used by acceptance and optimization explanations.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KirOptimizationStats {
@@ -69,6 +77,7 @@ pub struct KirPassManagerResult {
     pub proofs: ProofArena,
     pub eliminated_guards: Vec<KirGuardElimination>,
     pub explanations: Vec<KirOptimizationExplanation>,
+    pub analysis_fallbacks: Vec<KirAnalysisFallback>,
     pub contract_facts: Option<ContractFactSet>,
     pub stats: KirOptimizationStats,
     verification_cache: Option<VerifiedKirState>,
@@ -103,6 +112,7 @@ pub fn run_kir_pass_pipeline(
         proofs: ProofArena::new(GENERATION),
         eliminated_guards: Vec::new(),
         explanations: Vec::new(),
+        analysis_fallbacks: Vec::new(),
         contract_facts: contracts.cloned(),
         stats: KirOptimizationStats::default(),
         verification_cache: None,
@@ -340,6 +350,22 @@ pub fn run_kir_pass_pipeline(
             .iter()
             .map(super::analyze_natural_loops)
             .collect::<Vec<_>>();
+        for (function, analysis) in module.functions.iter().zip(&loop_analyses) {
+            let reason = if analysis.budget_exhausted {
+                Some("fixed-kir-budget-exhausted")
+            } else if !analysis.irreducible_blocks.is_empty() {
+                Some("irreducible-control-flow")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                result.analysis_fallbacks.push(KirAnalysisFallback {
+                    function: function.id,
+                    pass: "natural-loop-analysis".to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        }
         result.stats.natural_loops = loop_analyses
             .iter()
             .map(|analysis| u32::try_from(analysis.loops.len()).unwrap_or(u32::MAX))
@@ -386,6 +412,13 @@ pub fn run_kir_pass_pipeline(
         };
         result.stats.induction_simplifications = simplified.simplified;
         result.stats.induction_budget_fallbacks = simplified.exhausted_functions.len() as u32;
+        for function in simplified.exhausted_functions {
+            result.analysis_fallbacks.push(KirAnalysisFallback {
+                function,
+                pass: "induction-simplify".to_string(),
+                reason: "fixed-kir-budget-exhausted".to_string(),
+            });
+        }
         if !record_current_pass(
             &module,
             "induction-simplify",

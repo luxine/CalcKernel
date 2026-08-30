@@ -19,17 +19,40 @@ impl KirDominators {
 
 #[must_use]
 pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
+    match compute_dominators(function, |_| Ok::<(), std::convert::Infallible>(())) {
+        Ok(result) => result,
+        Err(never) => match never {},
+    }
+}
+
+pub(crate) fn compute_kir_dominators_with_budget(
+    function: &KirFunction,
+    remaining: &mut u32,
+) -> Option<KirDominators> {
+    compute_dominators(function, |units| {
+        let units = u32::try_from(units).map_err(|_| ())?;
+        *remaining = remaining.checked_sub(units).ok_or(())?;
+        Ok::<(), ()>(())
+    })
+    .ok()
+}
+
+fn compute_dominators<E>(
+    function: &KirFunction,
+    mut charge: impl FnMut(usize) -> Result<(), E>,
+) -> Result<KirDominators, E> {
     let Some(entry) = function.blocks.first().map(|block| block.id) else {
-        return KirDominators {
+        return Ok(KirDominators {
             entry: None,
             sets: BTreeMap::new(),
-        };
+        });
     };
-    let ids = function
+    let mut ids = function
         .blocks
         .iter()
         .map(|block| block.id)
         .collect::<Vec<_>>();
+    ids.sort_unstable();
     let indices = ids
         .iter()
         .enumerate()
@@ -37,13 +60,16 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
         .collect::<BTreeMap<_, _>>();
     let entry_index = indices[&entry];
     let mut predecessors = vec![Vec::new(); ids.len()];
-    for (source, block) in function.blocks.iter().enumerate() {
+    for block in &function.blocks {
+        charge(1)?;
+        let source = indices[&block.id];
         for successor in terminator_successors(&block.terminator) {
             if let Some(target) = indices.get(&successor) {
                 predecessors[*target].push(source);
             }
         }
     }
+    charge(ids.len().saturating_mul(ids.len()))?;
     let mut bits = vec![vec![true; ids.len()]; ids.len()];
     for index in 0..ids.len() {
         if index == entry_index || predecessors[index].is_empty() {
@@ -54,6 +80,7 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
     loop {
         let mut changed = false;
         for index in 0..ids.len() {
+            charge(ids.len())?;
             if index == entry_index {
                 continue;
             }
@@ -63,6 +90,7 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
                 vec![false; ids.len()]
             };
             for predecessor in predecessors[index].iter().skip(1) {
+                charge(ids.len())?;
                 for (candidate, dominates_predecessor) in
                     next.iter_mut().zip(bits[*predecessor].iter())
                 {
@@ -79,6 +107,7 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
             break;
         }
     }
+    charge(ids.len().saturating_mul(ids.len()))?;
     let sets = ids
         .iter()
         .enumerate()
@@ -91,10 +120,10 @@ pub fn compute_kir_dominators(function: &KirFunction) -> KirDominators {
             (*id, dominators)
         })
         .collect();
-    KirDominators {
+    Ok(KirDominators {
         entry: Some(entry),
         sets,
-    }
+    })
 }
 
 #[must_use]

@@ -159,6 +159,191 @@ fn loop_induction_should_check_every_latch_and_intervening_assignment() {
     }
 }
 
+fn loop_graph(successors: &[&[usize]]) -> calckernel::KirModule {
+    let (mut module, _) = build_with_modes(
+        "export fn graph(flag: bool) -> u32 { return 0; }",
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    let function = &mut module.functions[0];
+    let template = function.blocks[0].clone();
+    function.blocks = successors
+        .iter()
+        .enumerate()
+        .map(|(index, successors)| {
+            let mut block = template.clone();
+            block.id = calckernel::BlockId::from_index(index as u32);
+            block.label = format!("graph{index}");
+            if index != 0 {
+                block.instructions.clear();
+            }
+            let edge = |target: usize| calckernel::KirEdge {
+                target: calckernel::BlockId::from_index(target as u32),
+                args: Vec::new(),
+                memory_args: Vec::new(),
+            };
+            block.terminator = match *successors {
+                [] => template.terminator.clone(),
+                [target] => calckernel::KirTerminator::Jump {
+                    edge: edge(*target),
+                },
+                [left, right] => calckernel::KirTerminator::Branch {
+                    condition: function.params[0].value,
+                    then_edge: edge(*left),
+                    else_edge: edge(*right),
+                },
+                _ => panic!("KIR has at most two successors"),
+            };
+            block
+        })
+        .collect();
+    let validation = calckernel::validate_kir_module(&module);
+    assert!(validation.errors.is_empty(), "{:?}", validation.errors);
+    module
+}
+
+#[test]
+fn loop_analysis_should_report_irreducible_cycles_and_discard_natural_loop_candidates() {
+    for (graph, expected) in [
+        (
+            vec![vec![1, 2], vec![3, 4], vec![3], vec![1, 2], vec![]],
+            vec![1, 2, 3],
+        ),
+        // One maximal SCC has a dominating outer header, but its inner cycle
+        // still has two entries. A maximal-SCC-only check would miss it.
+        (
+            vec![
+                vec![1],
+                vec![2, 3],
+                vec![4],
+                vec![4],
+                vec![2, 5],
+                vec![1, 6],
+                vec![],
+            ],
+            vec![2, 4],
+        ),
+    ] {
+        let mut module = loop_graph(&graph.iter().map(Vec::as_slice).collect::<Vec<_>>());
+        let expected = expected
+            .into_iter()
+            .map(calckernel::BlockId::from_index)
+            .collect::<Vec<_>>();
+        let analysis = analyze_natural_loops(&module.functions[0]);
+        assert_eq!(analysis.irreducible_blocks, expected);
+        assert!(analysis.loops.is_empty() && analysis.inductions.is_empty());
+        module.functions[0].blocks[1..].reverse();
+        assert_eq!(analyze_natural_loops(&module.functions[0]), analysis);
+    }
+}
+
+#[test]
+fn loop_self_latch_should_not_include_the_preheader() {
+    let module = loop_graph(&[&[1], &[1, 2], &[]]);
+    let analysis = analyze_natural_loops(&module.functions[0]);
+    assert!(analysis.irreducible_blocks.is_empty());
+    assert_eq!(analysis.loops.len(), 1);
+    assert_eq!(
+        analysis.loops[0].blocks,
+        vec![calckernel::BlockId::from_index(1)]
+    );
+}
+
+#[test]
+fn loop_analysis_budget_should_discard_partial_results_deterministically() {
+    let (module, _) = build(
+        "export fn nested(n: u32) -> u32 { let i: u32 = 0; let sum: u32 = 0; while i < n { let j: u32 = 0; while j < n { sum = sum + j; j = j + 1; } i = i + 1; } return sum; }",
+        KirOverflowMode::Checked,
+    );
+    let function = &module.functions[0];
+    let full = analyze_natural_loops(function);
+    assert!(!full.budget_exhausted);
+    assert_eq!(full.loops.len(), 2);
+    let mut saw_exhaustion = false;
+    let mut saw_success = false;
+    let maximum = calckernel::ScalarAnalysisBudget::for_function(
+        function,
+        calckernel::ScalarAnalysisConfig::default(),
+    )
+    .max_steps();
+    for limit in (0..=maximum).step_by(7).chain(std::iter::once(maximum)) {
+        let config = calckernel::ScalarAnalysisConfig::with_max_steps(limit);
+        let result = calckernel::analyze_natural_loops_with_config(function, config);
+        assert_eq!(
+            result,
+            calckernel::analyze_natural_loops_with_config(function, config)
+        );
+        if result.budget_exhausted {
+            saw_exhaustion = true;
+            assert!(
+                result.loops.is_empty()
+                    && result.inductions.is_empty()
+                    && result.irreducible_blocks.is_empty()
+            );
+        } else {
+            saw_success = true;
+            assert_eq!(result, full);
+        }
+    }
+    assert!(saw_exhaustion && saw_success);
+}
+
+#[test]
+fn loop_irreducible_fallback_should_disable_loop_transforms_and_report_its_reason() {
+    let module = loop_graph(&[&[1, 2], &[3, 4], &[3], &[1, 2], &[]]);
+    let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(result.artifact.is_some());
+    assert!(
+        result.analysis_fallbacks.iter().any(|fallback| {
+            fallback.pass == "natural-loop-analysis"
+                && fallback.reason == "irreducible-control-flow"
+        }),
+        "{:?}",
+        result.analysis_fallbacks
+    );
+    assert_eq!(result.stats.hoisted_instructions, 0);
+    assert_eq!(result.stats.induction_simplifications, 0);
+    assert!(
+        result
+            .records
+            .iter()
+            .filter(|record| matches!(record.name.as_str(), "licm" | "induction-simplify"))
+            .all(|record| !record.changed && record.verified)
+    );
+}
+
+#[test]
+fn loop_irreducible_budget_should_never_publish_a_partial_component() {
+    let module = loop_graph(&[&[1], &[2, 3], &[4], &[4], &[2, 5], &[1, 6], &[]]);
+    let function = &module.functions[0];
+    let full = analyze_natural_loops(function);
+    assert!(!full.irreducible_blocks.is_empty());
+    let maximum = calckernel::ScalarAnalysisBudget::for_function(
+        function,
+        calckernel::ScalarAnalysisConfig::default(),
+    )
+    .max_steps();
+    let mut successes = 0;
+    for limit in 0..=maximum {
+        let result = calckernel::analyze_natural_loops_with_config(
+            function,
+            calckernel::ScalarAnalysisConfig::with_max_steps(limit),
+        );
+        if result.budget_exhausted {
+            assert!(
+                result.irreducible_blocks.is_empty()
+                    && result.loops.is_empty()
+                    && result.inductions.is_empty()
+            );
+        } else {
+            assert_eq!(result, full);
+            successes += 1;
+        }
+    }
+    assert!(successes > 0);
+}
+
 #[test]
 fn loop_induction_simplify_should_remove_a_redundant_recurrence() {
     let source = "export fn count(n: u32) -> u32 { let i: u32 = 0; let j: u32 = 0; while i < n { i = i + 1; j = j + 1; } return j; }";

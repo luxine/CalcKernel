@@ -4,7 +4,7 @@ use num_bigint::BigInt;
 
 use crate::{
     BlockId, KirFunction, KirInstructionKind, KirTerminator, MirBinaryOp, MirCompareOp, ValueId,
-    compute_kir_dominators,
+    compute_kir_dominators_with_budget,
 };
 
 use super::IntegerType;
@@ -35,79 +35,212 @@ pub struct NaturalLoopAnalysis {
     pub loops: Vec<NaturalLoop>,
     pub inductions: Vec<InductionVariable>,
     pub irreducible_blocks: Vec<BlockId>,
+    pub budget_exhausted: bool,
 }
 
 #[must_use]
 pub fn analyze_natural_loops(function: &KirFunction) -> NaturalLoopAnalysis {
-    let dominators = compute_kir_dominators(function);
+    analyze_natural_loops_with_config(function, super::ScalarAnalysisConfig::default())
+}
+
+#[must_use]
+pub fn analyze_natural_loops_with_config(
+    function: &KirFunction,
+    config: super::ScalarAnalysisConfig,
+) -> NaturalLoopAnalysis {
+    let mut budget = LoopBudget {
+        remaining: super::ScalarAnalysisBudget::for_function(function, config).max_steps(),
+        exhausted: false,
+    };
+    analyze_with_budget(function, &mut budget).unwrap_or_else(|| NaturalLoopAnalysis {
+        budget_exhausted: true,
+        ..NaturalLoopAnalysis::default()
+    })
+}
+
+struct LoopBudget {
+    remaining: u32,
+    exhausted: bool,
+}
+
+impl LoopBudget {
+    fn spend(&mut self, units: usize) -> Option<()> {
+        let next = u32::try_from(units)
+            .ok()
+            .and_then(|units| self.remaining.checked_sub(units));
+        if let Some(remaining) = next.filter(|_| !self.exhausted) {
+            self.remaining = remaining;
+            Some(())
+        } else {
+            self.exhausted = true;
+            None
+        }
+    }
+}
+
+fn analyze_with_budget(
+    function: &KirFunction,
+    budget: &mut LoopBudget,
+) -> Option<NaturalLoopAnalysis> {
+    budget.spend(1)?;
+    let dominators = compute_kir_dominators_with_budget(function, &mut budget.remaining)?;
+    let irreducible_blocks = irreducible_blocks(function, &dominators, budget)?;
+    if !irreducible_blocks.is_empty() {
+        return Some(NaturalLoopAnalysis {
+            irreducible_blocks,
+            ..NaturalLoopAnalysis::default()
+        });
+    }
     let predecessors = predecessor_map(function);
     let mut by_header = BTreeMap::<BlockId, BTreeSet<BlockId>>::new();
     for block in &function.blocks {
+        budget.spend(1)?;
         for target in successor_ids(&block.terminator) {
             if dominators.dominates(target, block.id) {
                 by_header.entry(target).or_default().insert(block.id);
             }
         }
     }
-    let mut loops = by_header
-        .into_iter()
-        .map(|(header, latches)| {
-            let mut blocks = BTreeSet::from([header]);
-            let mut stack = latches.iter().copied().collect::<Vec<_>>();
-            blocks.extend(latches.iter().copied());
-            while let Some(block) = stack.pop() {
-                for predecessor in predecessors.get(&block).into_iter().flatten() {
-                    if blocks.insert(*predecessor) && *predecessor != header {
-                        stack.push(*predecessor);
-                    }
+    let mut loops = Vec::new();
+    for (header, latches) in by_header {
+        let mut blocks = BTreeSet::from([header]);
+        let mut stack = latches.iter().copied().collect::<Vec<_>>();
+        blocks.extend(latches.iter().copied());
+        while let Some(block) = stack.pop() {
+            budget.spend(1)?;
+            if block == header {
+                continue;
+            }
+            for predecessor in predecessors.get(&block).into_iter().flatten() {
+                budget.spend(1)?;
+                if blocks.insert(*predecessor) && *predecessor != header {
+                    stack.push(*predecessor);
                 }
             }
-            NaturalLoop {
-                header,
-                latches: latches.into_iter().collect(),
-                blocks: blocks.into_iter().collect(),
-                parent: None,
-                depth: 1,
-            }
-        })
-        .collect::<Vec<_>>();
+        }
+        loops.push(NaturalLoop {
+            header,
+            latches: latches.into_iter().collect(),
+            blocks: blocks.into_iter().collect(),
+            parent: None,
+            depth: 1,
+        });
+    }
     loops.sort_by_key(|loop_info| loop_info.header);
     for child in 0..loops.len() {
-        let child_blocks = loops[child].blocks.iter().copied().collect::<BTreeSet<_>>();
-        let parent = (0..loops.len())
-            .filter(|candidate| *candidate != child)
-            .filter(|candidate| {
-                let candidate_blocks = loops[*candidate]
-                    .blocks
-                    .iter()
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                child_blocks.is_subset(&candidate_blocks) && child_blocks != candidate_blocks
-            })
-            .min_by_key(|candidate| loops[*candidate].blocks.len());
+        let mut parent = None;
+        for candidate in 0..loops.len() {
+            budget.spend(1)?;
+            if loops[candidate].blocks.len() <= loops[child].blocks.len() {
+                continue;
+            }
+            budget.spend(loops[child].blocks.len())?;
+            if loops[child]
+                .blocks
+                .iter()
+                .all(|block| loops[candidate].blocks.binary_search(block).is_ok())
+                && parent.is_none_or(|parent: usize| {
+                    loops[candidate].blocks.len() < loops[parent].blocks.len()
+                })
+            {
+                parent = Some(candidate);
+            }
+        }
         loops[child].parent = parent;
     }
     for index in 0..loops.len() {
         let mut depth = 1_u32;
         let mut parent = loops[index].parent;
         while let Some(parent_index) = parent {
+            budget.spend(1)?;
             depth = depth.saturating_add(1);
             parent = loops[parent_index].parent;
         }
         loops[index].depth = depth;
     }
-    let inductions = loops
-        .iter()
-        .flat_map(|loop_info| detect_inductions(function, loop_info))
-        .collect();
-    NaturalLoopAnalysis {
+    let mut inductions = Vec::new();
+    for loop_info in &loops {
+        budget.spend(1)?;
+        inductions.extend(detect_inductions(function, loop_info, budget));
+        budget.spend(0)?;
+    }
+    Some(NaturalLoopAnalysis {
         loops,
         inductions,
         irreducible_blocks: Vec::new(),
-    }
+        budget_exhausted: false,
+    })
 }
 
-fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<InductionVariable> {
+fn irreducible_blocks(
+    function: &KirFunction,
+    dominators: &crate::KirDominators,
+    budget: &mut LoopBudget,
+) -> Option<Vec<BlockId>> {
+    // A reducible graph is acyclic after removing all dominance backedges.
+    // Inspect the residual graph, not just maximal SCC entry counts: an outer
+    // natural loop can contain a multi-entry inner cycle.
+    let mut forward = BTreeMap::<BlockId, Vec<BlockId>>::new();
+    let mut reverse = BTreeMap::<BlockId, Vec<BlockId>>::new();
+    for block in &function.blocks {
+        budget.spend(1)?;
+        let targets = forward.entry(block.id).or_default();
+        for target in successor_ids(&block.terminator) {
+            if !dominators.dominates(target, block.id) {
+                targets.push(target);
+                reverse.entry(target).or_default().push(block.id);
+            }
+        }
+        targets.sort_unstable();
+        targets.dedup();
+    }
+    for predecessors in reverse.values_mut() {
+        predecessors.sort_unstable();
+        predecessors.dedup();
+    }
+    let mut visited = BTreeSet::new();
+    let mut finish = Vec::new();
+    for &root in forward.keys() {
+        let mut stack = vec![(root, false)];
+        while let Some((block, returning)) = stack.pop() {
+            budget.spend(1)?;
+            if returning {
+                finish.push(block);
+            } else if visited.insert(block) {
+                stack.push((block, true));
+                for &target in forward.get(&block).into_iter().flatten().rev() {
+                    stack.push((target, false));
+                }
+            }
+        }
+    }
+    let mut assigned = BTreeSet::new();
+    let mut irreducible = BTreeSet::new();
+    for root in finish.into_iter().rev() {
+        if assigned.contains(&root) {
+            continue;
+        }
+        let mut component = Vec::new();
+        let mut stack = vec![root];
+        while let Some(block) = stack.pop() {
+            budget.spend(1)?;
+            if assigned.insert(block) {
+                component.push(block);
+                stack.extend(reverse.get(&block).into_iter().flatten().copied());
+            }
+        }
+        if component.len() > 1 {
+            irreducible.extend(component);
+        }
+    }
+    Some(irreducible.into_iter().collect())
+}
+
+fn detect_inductions(
+    function: &KirFunction,
+    loop_info: &NaturalLoop,
+    budget: &mut LoopBudget,
+) -> Vec<InductionVariable> {
     let Some(header) = function
         .blocks
         .iter()
@@ -123,6 +256,7 @@ fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<Ind
         .iter()
         .enumerate()
         .filter_map(|(index, param)| {
+            budget.spend(1)?;
             let type_node = IntegerType::from_mir(&param.type_node)?;
             let (comparison, bound) = if left == param.value {
                 (header_comparison, right)
@@ -151,6 +285,7 @@ fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<Ind
                 .iter()
                 .filter(|(block, _)| loop_info.blocks.binary_search(block).is_ok())
             {
+                budget.spend(1)?;
                 let transfer = defining_instruction(function, *value)?;
                 if transfer.results.first()?.value != *value {
                     return None;
@@ -161,7 +296,7 @@ fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<Ind
                 else {
                     return None;
                 };
-                let next_step = if value_is_forwarded_from(function, left, param.value) {
+                let next_step = if value_is_forwarded_from(function, left, param.value, budget) {
                     let amount = resolve_constant(function, right)?;
                     match op {
                         MirBinaryOp::Add => amount,
@@ -169,7 +304,7 @@ fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<Ind
                         _ => return None,
                     }
                 } else if op == MirBinaryOp::Add
-                    && value_is_forwarded_from(function, right, param.value)
+                    && value_is_forwarded_from(function, right, param.value, budget)
                 {
                     resolve_constant(function, left)?
                 } else {
@@ -181,7 +316,7 @@ fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<Ind
                 step = Some(next_step);
             }
             let step = step?;
-            let bound = normalize_loop_invariant_bound(function, loop_info, header, bound);
+            let bound = normalize_loop_invariant_bound(function, loop_info, header, bound, budget);
             Some(InductionVariable {
                 header: header.id,
                 value: param.value,
@@ -201,11 +336,19 @@ fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<Ind
         .collect()
 }
 
-fn value_is_forwarded_from(function: &KirFunction, value: ValueId, origin: ValueId) -> bool {
+fn value_is_forwarded_from(
+    function: &KirFunction,
+    value: ValueId,
+    origin: ValueId,
+    budget: &mut LoopBudget,
+) -> bool {
     let mut pending = vec![value];
     let mut visited = BTreeSet::new();
     let mut reaches_origin = false;
     while let Some(value) = pending.pop() {
+        if budget.spend(1).is_none() {
+            return false;
+        }
         if value == origin {
             reaches_origin = true;
             continue;
@@ -250,6 +393,7 @@ fn normalize_loop_invariant_bound(
     loop_info: &NaturalLoop,
     header: &crate::KirBlock,
     bound: ValueId,
+    budget: &mut LoopBudget,
 ) -> ValueId {
     let Some((index, _)) = header
         .params
@@ -271,7 +415,7 @@ fn normalize_loop_invariant_bound(
     };
     if incoming
         .iter()
-        .all(|(_, value)| value_is_forwarded_from(function, *value, *entry))
+        .all(|(_, value)| value_is_forwarded_from(function, *value, *entry, budget))
     {
         *entry
     } else {

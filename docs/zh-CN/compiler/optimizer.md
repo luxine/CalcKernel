@@ -91,6 +91,14 @@ guard 的顺序及身份不变。未使用的 modular 递推随后可删除，ch
 核验。候选搜索使用由 KIR 大小决定的固定单函数预算；耗尽时丢弃该函数未提交的
 改写，并确定性增加 `induction_budget_fallbacks` 计数。
 
+自然循环分析使用同一固定 KIR 大小预算，覆盖支配关系矩阵/迭代及后续循环图和 SSA
+转发遍历。耗尽时丢弃该函数的所有部分循环/归纳结果。结构 verifier 仍计算完整
+支配关系，分析回退不会跳过验证。支配迭代按 block ID 进行，不依赖存储顺序。
+移除 dominance backedge 后的图必须无环；剩余的循环分量用于识别不可约控制流，
+也覆盖自然外循环内的多入口循环。此类函数保守跳过 LICM 和归纳简化。自回边不会
+把 preheader 纳入循环体。`--explain-optimization` 按函数/pass 输出
+`fixed-kir-budget-exhausted` 或 `irreducible-control-flow` 原因，也包括归纳搜索耗尽。
+
 `emit-kir`、`--print-facts`、`--print-effect-summaries`、
 `--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。
 
