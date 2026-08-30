@@ -9,25 +9,36 @@ strict floating-point、相同 target/CPU policy/mode、固定输入、warm-up�
 Native/Clang geometric-mean throughput 至少 95%，单 case 回退不超过 10%；checked 与
 unchecked 在 x86-64/AArch64 worker 上以 portable baseline CPU policy 分别验收。每次运行
 都由同一 Clang 22.1.8 编译精确 0.10 compiler 生成且摘要固定的 C oracle；native-CPU 测量
-只用于调查，不与冻结 baseline 比较。相对记录的 0.10 compiler，门禁比较
+只用于调查，不与冻结 baseline 比较。相对精确固定的 0.10 compiler，门禁比较
 `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)`，geometric 回退最多 3%、
-单 case 最多 8%。两端 Clang 都使用同一冻结 0.10 C source，因此配对分母只消除 runner/
-频率的共模漂移，不会抵消 0.11 frontend、KIR 或 Native 退化。Canonical proof-loop checked
-throughput 至少为 unchecked 的 97%。KIR optimizer 相对 0.10 MIR optimizer 的 suite median
+单 case 最多 8%。四个计时项在同一 worker 的同一进程中采样，使用独立构建的固定
+0.10 Native libraries 和同一冻结 0.10 C oracle。仅靠 Clang 归一化不能消除任意 CPU
+代际差异；历史 median 原样保留作 provenance，比较分母取实际同进程重放样本。
+两种安全模式与两个编译器版本在相同输入上采用确定性的八通道轮转采样。
+Canonical proof-loop checked throughput 至少为 unchecked 的 97%，这个候选版本
+原始比率不做归一化。KIR optimizer 相对 0.10 MIR optimizer 的 suite median
 ratio 最多 2x、单 case 最多 3x。
 
 ```sh
 cargo bench --bench ckc_perf
+python3 scripts/prepare-performance-replay.py --out target/ckc-perf/v010-replay
+export CKC_V010_RUNTIME_BUNDLE="$PWD/target/ckc-perf/v010-replay"
 cargo bench --features native-toolchain --bench ckc_perf -- \
   --case proof --task check --cpu baseline
 python3 scripts/check-native-performance.py target/ckc-perf/results.json
 ```
 
-严格 report 是 `target/ckc-perf/results.json`；case manifest 位于
+准备流程要求新的输出目录，在自有本地 clone 中构建固定编译器，不修改 main 或既有
+baseline worktree。只应用下述四份固定 adapter，校验源码/工具链身份并记录实际编译器
+与八份 library 的摘要。同一准备/重放 recipe 可以复用完整 bundle；recipe 改变时选择
+新的输出目录。缺少或被修改的重放证据必须报错。
+
+严格 schema-6 report 是 `target/ckc-perf/results.json`；case manifest 位于
 `benches/cases/native-cases.tsv`，schema 位于 `benches/summary-schema.md`。
 Normative checker 拒绝非固定 identity 或 investigative CPU policy，逐项核对 schema-2
-baseline manifest 中的 V0.10 配对 median，并从 sample array 重新计算每个已报告的 upper
-median。
+baseline manifest 中的历史 V0.10 配对 median，核对 replay bundle 与实际测量产物摘要，
+并从稳定 sample array 重新计算所有候选/重放 upper median。必须使用精确交错顺序、
+三轮 warm-up、二十个样本、每样本七次调用和两千万输入 batch；quick 测量不能通过门禁。
 General compiler-stage summary 仍写入 `build/perf/latest.summary.json` 与
 `build/perf/latest.summary.md`。
 `benches/baselines/v0_10_compiler.toml` 固定 0.10 commit/compiler/LLVM、target/CPU/mode、
@@ -56,7 +67,8 @@ Performance 不允许改变 diagnostic、evaluation order、modular integer/stri
 semantics、checked first-error、print order、semantic MIR、ABI 或 contract domain。Generated
 contract case 只能使用满足声明 domain 的输入；不能为通过候选版本而降低阈值。
 
-CI 性能门禁失败时，额外诊断记录 CPU identity，在同一 worker 上应用四份摘要固定
-adapters 重测精确固定的 0.10 compiler，并保留标量 kernel 的机器码供对照。也可以用
+CI 在两个架构的完整性能门之前准备 replay bundle，保留首次 report、构建 provenance
+和实际测量的非空 library 原件/摘要。失败后的额外诊断记录 CPU identity 并检查这些
+同一产物；空的导出 section 不能作为机器码证据。也可以用
 workflow-dispatch 的 `performance_diagnostics` 显式开启同样的诊断，无需等待再次失败。
 诊断产物不替代原门禁，不授权刷新冻结基线；原 required job 的失败状态保持不变。

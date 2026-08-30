@@ -406,13 +406,18 @@ CK 0.11 is not complete until all of the following hold:
    `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` loses no
    more than 3% in geometric-mean runtime throughput and no more than 8% on an
    individual kernel. Both Clang terms compile the same digest-pinned C source
-   emitted by the exact 0.10 compiler, so pairing removes runner common-mode
-   drift without masking 0.11 frontend, KIR, or Native regressions. The manifest
-   records the exact 0.10 source digests, paired medians, and compiler identity
-   rather than relying on a moving branch.
+   emitted by the exact 0.10 compiler. All four terms are measured in the same
+   process on the same worker, using independently built pinned 0.10 artifacts;
+   Clang normalization alone cannot remove arbitrary differences between CPU
+   generations. Historical frozen medians remain unchanged provenance, not the
+   replay denominator. The report binds exact sources, compiler/artifact hashes,
+   preparation identity, actual replay samples and medians; no moving branch or
+   candidate-generated baseline is accepted.
 10. For the accepted suite of loops whose checks are fully proven redundant,
     checked geometric-mean throughput is at least 97% of the corresponding
-    unchecked execution.
+    unchecked execution. Both safety modes and both compiler versions use a
+    deterministic interleaved eight-channel schedule on identical inputs. The
+    raw candidate checked/unchecked ratio is not Clang-normalized or relaxed.
 11. The median KIR analysis-and-optimization time is at most 2 times the pinned
     0.10 MIR optimization time, and no accepted case exceeds 3 times. A budget
     fallback must preserve semantics and report the conservative reason.

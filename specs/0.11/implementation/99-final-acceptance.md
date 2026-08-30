@@ -53,11 +53,13 @@
 - [ ] fixed-seed generated differential 与全部 KIR mutations 全绿。
 - [ ] Native/Clang >=95% geometric mean，individual regression <=10%。
 - [ ] 0.11/固定 0.10 的冻结 C-oracle Clang 配对归一化 runtime regression <=3%
-      geometric mean、<=8% individual。
+      geometric mean、<=8% individual；分母来自同进程固定编译器重放，历史数字不改。
+- [ ] schema 6 核对独立 V0.10 bundle/源码/编译器/实际产物摘要、两版本两模式的八通道
+      交错顺序与全部原始样本；不存在缺少重放证据时的历史数字 fallback。
 - [ ] proof-loop checked/unchecked throughput >=97% geometric mean。
 - [ ] KIR/MIR optimizer time median <=2x、individual <=3x，fallback 有稳定 reason。
-- [ ] 六 native host 与两 performance runner 对同一 commit 全绿；hosted runner 漂移只由
-      同机冻结 C oracle 归一化，不假定 worker 物理同一。
+- [ ] 六 native host 与两 performance runner 对同一 commit 全绿；运行时比较采用
+      同进程双版本重放与冻结 C oracle 校准，不假定跨 worker 比率或物理机器相同。
 
 ## F. Git 交付边界
 

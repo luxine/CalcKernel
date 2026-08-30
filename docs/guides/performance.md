@@ -16,13 +16,16 @@ digest-pinned C oracle emitted by the exact 0.10 compiler with the same Clang
 22.1.8 process used to calibrate the candidate. Native-CPU measurements remain
 available for investigation but are not compared with the frozen baseline.
 
-Relative to the recorded 0.10 compiler, the gate compares
+Relative to the exact pinned 0.10 compiler, the gate compares
 `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` and permits at
-most 3% geometric and 8% individual regression. The paired Clang denominator
-removes runner/frequency common-mode drift without allowing 0.11 frontend, KIR,
-or Native regressions to cancel, because both Clang measurements use the exact
-frozen 0.10 C source. A canonical proof-loop checked
-suite must deliver at least 97% of unchecked throughput for the same workload.
+most 3% geometric and 8% individual regression. All four terms are sampled in
+the same process on the same worker, with independently built pinned 0.10 Native
+libraries and the exact frozen 0.10 C oracle. Clang normalization alone does not
+remove arbitrary CPU-generation differences. Historical medians remain unchanged
+provenance; actual same-process replay samples supply the comparison denominator.
+Both safety modes and compiler versions use a deterministic eight-channel rotating
+schedule on identical inputs. A canonical proof-loop checked suite must deliver
+at least 97% of unchecked throughput; this raw candidate ratio is not normalized.
 KIR optimizer latency is gated against the 0.10 MIR optimizer: the suite median
 ratio is at most 2x and every individual ratio at most 3x. Runtime throughput,
 optimization latency, cold/warm run, memory, and artifact size are reported as
@@ -32,19 +35,31 @@ Run the contract harness with:
 
 ```sh
 cargo bench --bench ckc_perf
+python3 scripts/prepare-performance-replay.py --out target/ckc-perf/v010-replay
+export CKC_V010_RUNTIME_BUNDLE="$PWD/target/ckc-perf/v010-replay"
 cargo bench --features native-toolchain --bench ckc_perf -- \
   --case proof --task check --cpu baseline
 python3 scripts/check-native-performance.py target/ckc-perf/results.json
 ```
 
-The strict machine-readable result is `target/ckc-perf/results.json`. Cases
+Preparation requires a new output directory and builds the pinned compiler in an
+owned local clone, without changing main or an existing baseline worktree. It
+applies only the four frozen adapters below, validates source/toolchain identity,
+and hashes the actual compiler and eight libraries. Reuse an intact bundle only
+with the same preparation/replay recipe; choose a new output directory when that
+recipe changes. Missing or modified replay evidence is a hard error.
+
+The strict schema-6 result is `target/ckc-perf/results.json`. Cases
 live in `benches/cases/native-cases.tsv`, sources under `benches/fixtures`, and
 the report contract in `benches/summary-schema.md`. The harness rejects semantic
 mismatches before timing and records compiler, LLVM, OS, architecture, target,
 CPU policy, mode, warm-up, sample, batching, and statistic identity.
 The normative checker rejects any non-pinned identity or investigative CPU
-policy, verifies every reported paired V0.10 median against the schema-2
-baseline manifest, and recomputes each reported upper median from its sample array.
+policy, verifies historical paired V0.10 medians against the schema-2 baseline
+manifest, validates the replay bundle and measured artifact hashes, and recomputes
+all candidate/replay upper medians from their stable sample arrays. It requires the
+exact interleaving schedule, three warm-up rounds, twenty samples, seven calls per
+sample and twenty-million-input batches. Quick measurements cannot pass this gate.
 The general compiler-stage summaries remain `build/perf/latest.summary.json`
 and `build/perf/latest.summary.md`.
 
@@ -84,9 +99,10 @@ order, semantic MIR, ABI, or contract domain. Generated contract cases contain
 only inputs satisfying the declared domain. A benchmark, baseline, or threshold
 change requires review as a contract change.
 
-When the CI performance gate fails, failure-only diagnostics retain CPU identity,
-remeasure the exact pinned 0.10 compiler on the same worker using the four
-checksum-pinned adapters, and preserve scalar kernel machine code for comparison.
+CI prepares the replay bundle before either architecture's full performance gate
+and retains the first report, build provenance and actual nonempty measured library
+files with their hashes. Failure-only diagnostics retain CPU identity and inspect
+those same artifacts; an empty extracted section is never machine-code evidence.
 The same diagnostics can be requested explicitly with the workflow-dispatch
 `performance_diagnostics` input to investigate without waiting for another failure.
 These artifacts do not replace the original gate or authorize refreshing the

@@ -300,6 +300,24 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `e668ec15347b73ca0b7b8b21b11161c3cb557f21de82a218faad79f00ad75285`。完整 job log 摘要
   `5cf9cc10eb0f3c6f7d488d669c26952486c498219d8c4bdefa40c5ad6a1c92ae`。
 
+### I14/I19 比较协议复诊与修订（尚待实现/验收）
+
+- 上述同 worker V0.10 自比较反例足以否定“历史 Native/Clang 比率可以跨任意 worker
+  复用”的假设；它不说明源码或数值门槛需要改变。修订为独立构建同一固定 V0.10
+  编译器，把其真实产物与当前 Native、两份同源冻结 Clang oracle 在同一进程重放。
+  四项公式保持，geometric 3%/individual 8% 仍用原阈值，历史 manifest 数字完全不改。
+- I19 的多个 Native/Clang 与固定 V0.10 报告都受跨模式整套运行时段分隔影响；改为
+  双版本/双模式八通道轮转，固定三轮 warm-up、二十样本、每样本 min-of-seven 与
+  两千万 batch。原始 checked/unchecked 97% 门槛不做校准或归一化。此修订不声称
+  具体频率/调度原因已经确定，也不声称新协议必然通过。
+- 双语规范/guide、schema 6、master、阶段 11 与总验收同步；完整执行计划为
+  `../implementation/11-runtime-replay-plan.md`。独立 baseline clone、四个固定 adapter、
+  实际 compiler/library 摘要、source/recipe identity、精确输入/顺序、负例门禁和保留
+  原始报告形成闭环。自审未发现范围或证据缺口，先提交文档，再 TDD 实现。
+- 未改动任何 frozen CK/C source、V0.10 identity、历史 runtime/optimizer 数值、
+  KIR timer/budget、CPU policy、语料或数值门槛。旧 required jobs 仍为失败，必须
+  由新代码/协议在最终同一 SHA 的完整十 job matrix 全通过后再关闭 I14/I19。
+
 ## I15：Intel Cargo 产物未自动签名，CI/release 缺少显式签名步骤
 
 - Intel job `99196059470` 的 Native/CLI/release build 全部通过，随后

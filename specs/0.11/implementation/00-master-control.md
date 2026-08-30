@@ -84,6 +84,10 @@ required jobs 的修复闭环，不得改成兼容错误 archive、RWX fallback 
 
 ## 提交与证据
 
+I14/I19 的真实协议反例按 `11-runtime-replay-plan.md` 修订：固定 V0.10 源码/编译器
+及全部数值门槛，运行时改为同进程双版本、双模式交错重放；历史 baseline 数值不改，
+也不改变 optimizer timer。规范/schema/计划先提交，再实现与验收，旧失败不覆盖。
+
 阶段 11 的 I20 编译耗时修复细化见 `11-ssa-phi-pruning-plan.md`：在阶段 05
 已有的 pre-proof CFG canonicalization 内清理无根的标量 phi 参数，保留全部操作数、
 元数据和契约引用。它不重排阶段、不改变 O0/Memory SSA/效果顺序，也不调整性能门槛。

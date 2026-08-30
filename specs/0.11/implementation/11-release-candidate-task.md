@@ -32,9 +32,13 @@
   individual 回退；两个 Clang 项必须编译同一冻结 V0.10 C oracle，不能使用候选自己
   导出的 C 抵消 KIR 回退；proof-loop checked 至少 97% unchecked geo；KIR optimize time
   中位最多 2x、individual 最多 3x 0.10 MIR optimize。
+  I14/I19 修订按 `11-runtime-replay-plan.md`：上述四项运行时计时在同一进程重放，
+  使用独立固定 0.10 编译器生成的产物与八通道双模式交错采样。历史配对 median
+  保持不变作 provenance，不再代替实际重放分母；新增完整产物摘要和采样顺序校验。
 - CI 增加可在 feature branch 显式触发的 `workflow_dispatch`，六 native-host runner 都执
-  行 pre-LLVM fact audit；x86-64/AArch64 performance runner 执行全部新 gate，并通过同机
-  冻结 Clang oracle 校准 hosted runner 共模漂移。
+  行 pre-LLVM fact audit；x86-64/AArch64 performance runner 执行全部新 gate，先准备
+  固定编译器 bundle，再对双版本及冻结 Clang oracle 同进程采样，不假设跨 worker
+  的 Native/Clang 比率恒定。
 - Host bootstrap 必须把 Windows CMake 明确绑定到 MSVC，不能接受 GNU `.a` 冒充 MSVC
   `.lib`。Darwin JIT 必须按运行时能力选择 `MAP_JIT` 线程级 W^X 或普通 mapping 的页级
   RW-to-RX/R-NX；两条路径都运行完整 Native suite 和 memory audit，禁止 RWX fallback。

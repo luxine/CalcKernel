@@ -4,6 +4,10 @@
 
 使用 pinned LLVM/Clang 环境：
 
+执行 Native benchmark 前先按 `11-runtime-replay-plan.md` 准备固定编译器 bundle，
+并设置 `CKC_V010_RUNTIME_BUNDLE`。schema-6 checker 必须验证其身份、原件摘要和
+双版本/双模式的实际交错样本；原历史性能记录不替代此项新验收。
+
 1. `cargo fmt --check`
 2. `cargo clippy --all-targets --all-features --locked -- -D warnings`
 3. `cargo test --locked`
@@ -42,8 +46,9 @@ I20 本地已通过，远程与 I14/I19 尚未签收。
 - feature branch 上显式 `workflow_dispatch` 的 quality、native-integration、六个
   native-host、x86-64/AArch64 performance jobs 全绿。
 - 每个 native-host 上传/记录 pre-LLVM fact audit evidence，并拒绝注入 mutation。
-- performance artifacts 使用 schema 5，记录 pinned 0.10 digest/compiler identity、每项
-  `v010MedianNs`/`v010ClangMedianNs` 与冻结 C-oracle digest；配对归一化后的四组阈值全通过。
+- performance artifacts 使用 schema 6，记录 pinned 0.10 digest/compiler identity、原样
+  历史 `v010MedianNs`/`v010ClangMedianNs`、冻结 C-oracle digest，以及独立 bundle/实际
+  重放产物摘要、样本和八通道顺序。四组原数值阈值全部通过，原始 proof ratio 不归一化。
 - 不允许 skipped/neutralized required job；重跑必须保留失败日志并说明非代码 flake 证据。
 - Windows job 的 bootstrap/compiler/archive identity 必须为 MSVC/`.lib`。Darwin JIT audit
   必须接受且只接受与 runtime capability 一致的安全 tuple：`map-jit=yes / thread-wx-supported=yes / thread-wx=yes`，

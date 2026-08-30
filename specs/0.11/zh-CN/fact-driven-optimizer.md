@@ -330,11 +330,14 @@ KIR verifier 和后端事实审计失败是编译器错误，不是 CK 源码诊
 9. 相对固定且已验收的 0.10 编译器基线，
    `(T0.11-Native / Tcurrent-Clang) / (T0.10-Native / T0.10-Clang)` 的 runtime
    吞吐几何平均回退不得超过 3%，单项不得超过 8%。两个 Clang 项都编译由精确
-   0.10 compiler 生成且摘要固定的同一 C source，因此配对只消除 runner 共模漂移，
-   不会掩盖 0.11 frontend、KIR 或 Native 回退。benchmark manifest 必须记录准确的
-   0.10 source digest、配对 median 和 compiler identity，不能依赖移动分支。
+   0.10 compiler 生成且摘要固定的同一 C source。四个计时项必须在同一 worker 的
+   同一进程内测量，使用独立构建的固定 0.10 产物；仅靠 Clang 归一化不能消除任意
+   CPU 代际差异。历史冻结 median 原样保留作 provenance，不作为重放分母。
+   report 必须绑定精确源码、编译器/产物摘要、准备流程身份和实际重放样本/median，
+   不得依赖移动分支或候选编译器生成的基线。
 10. 对检查已被完全证明冗余的验收循环套件，checked 几何平均吞吐至少达到对应
-    unchecked 执行的 97%。
+    unchecked 执行的 97%。两种安全模式与两个编译器版本在相同输入上采用确定性的
+    八通道交错采样；候选版本的原始 checked/unchecked 比率不做 Clang 归一化或放宽。
 11. KIR 分析与优化耗时中位数最多为固定 0.10 MIR 优化耗时的 2 倍，任一验收用
     例不得超过 3 倍。预算 fallback 必须保持语义并报告保守原因。
 
