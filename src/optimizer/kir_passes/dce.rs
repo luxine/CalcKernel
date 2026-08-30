@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    InstructionId, KirInstruction, KirInstructionKind, KirModule, KirPlace, KirTerminator, ValueId,
+    InstructionId, KirFunction, KirInstruction, KirInstructionKind, KirMemoryRegionOrigin,
+    KirModule, KirPlace, KirTerminator, MemoryRegionId, ValueId,
 };
 
 pub(crate) fn run_dead_code_elimination(
@@ -26,7 +27,85 @@ pub(crate) fn run_dead_code_elimination(
             break;
         }
     }
+    for function in &mut module.functions {
+        changed |= remove_dead_descriptor_regions(function);
+    }
     changed
+}
+
+fn remove_dead_descriptor_regions(function: &mut KirFunction) -> bool {
+    let defined = function
+        .params
+        .iter()
+        .map(|param| param.value)
+        .chain(function.blocks.iter().flat_map(|block| {
+            block.params.iter().map(|param| param.value).chain(
+                block
+                    .instructions
+                    .iter()
+                    .flat_map(|instruction| instruction.results.iter().map(|result| result.value)),
+            )
+        }))
+        .collect::<BTreeSet<_>>();
+    let mut direct = BTreeSet::new();
+    direct.extend(function.initial_memory.iter().map(|memory| memory.region));
+    for block in &function.blocks {
+        direct.extend(block.memory_params.iter().map(|param| param.region));
+        if let KirTerminator::Return { memory, .. } = &block.terminator {
+            direct.extend(memory.iter().map(|(region, _)| *region));
+        }
+        for instruction in &block.instructions {
+            if let Some(memory) = &instruction.memory {
+                direct.insert(memory.region);
+            }
+            match &instruction.kind {
+                KirInstructionKind::Address { place }
+                | KirInstructionKind::Load { place }
+                | KirInstructionKind::Store { place, .. } => {
+                    collect_place_regions(place, &mut direct)
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut changed = false;
+    loop {
+        let mut referenced = direct.clone();
+        for region in &function.regions {
+            referenced.extend(region.parent);
+            referenced.insert(region.partition);
+        }
+        let before = function.regions.len();
+        function.regions.retain(|region| {
+            referenced.contains(&region.id)
+                || match region.origin {
+                    KirMemoryRegionOrigin::RawSlice(value)
+                    | KirMemoryRegionOrigin::Subslice(value) => defined.contains(&value),
+                    KirMemoryRegionOrigin::Conservative | KirMemoryRegionOrigin::Parameter(_) => {
+                        true
+                    }
+                }
+        });
+        if function.regions.len() == before {
+            break;
+        }
+        changed = true;
+    }
+    changed
+}
+
+fn collect_place_regions(place: &KirPlace, regions: &mut BTreeSet<MemoryRegionId>) {
+    match place {
+        KirPlace::Value { region, .. }
+        | KirPlace::Deref { region, .. }
+        | KirPlace::SliceIndex { region, .. } => {
+            regions.insert(*region);
+        }
+        KirPlace::Index { base, region, .. } | KirPlace::Field { base, region, .. } => {
+            regions.insert(*region);
+            collect_place_regions(base, regions);
+        }
+    }
 }
 
 fn is_dead_pure_instruction(

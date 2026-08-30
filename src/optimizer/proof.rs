@@ -258,6 +258,18 @@ impl ProofArena {
             .collect()
     }
 
+    pub(crate) fn block_parameter_dependencies(&self) -> BTreeSet<ValueId> {
+        self.proofs
+            .iter()
+            .flat_map(|proof| &proof.steps)
+            .filter_map(|step| match step {
+                ProofStep::PhiJoin { claim, .. } => Some(claim.value),
+                ProofStep::LoopInvariant { phi, .. } => Some(*phi),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn try_insert(
         &mut self,
         use_site: FactUseSite,

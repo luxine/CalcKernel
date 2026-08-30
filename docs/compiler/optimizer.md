@@ -42,6 +42,21 @@ pre-rewrite KIR before changing any instruction. Exhausting the deterministic
 per-function budget discards that function's pending proposals. This transform
 does not remove checked operations or guards and does not fold strict floats.
 
+Constant integer block parameters are materialized as fresh constant instructions
+with the same value identities; all incoming scalar arguments are repaired while
+Memory SSA arguments retain their order. The entire batch is checked and fresh
+instruction identities are reserved before mutation. Parameters referenced by live
+certificates are preserved.
+
+Before guard elimination, propagation and constant-edge pruning reach a CFG fixed
+point. Each CFG change validates structure and rebuilds live contract imports;
+discarded call instances cannot leave active facts behind. Transient scalar proofs
+are consumed before each rewrite and never reused across CFG changes. Empty jump
+blocks forward both scalar and memory arguments by substitution; blocks defining
+nonlocal SSA uses or contract bindings are retained. This forwarding neither moves
+nor removes a reachable effect. DCE also removes unreferenced descriptor regions
+whose slice definitions have disappeared, without removing checked failures.
+
 Scalar propagation uses a deterministic SSA-use worklist. A changed range queues
 only its consumers, including block parameters that depend on a comparison edge's
 other operand. Later path refinements update already-visited joins and their

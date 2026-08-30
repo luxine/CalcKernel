@@ -280,6 +280,26 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   在完整 Native suite 之前失败；保存原日志后仅重跑该 job 的同一 SHA，用于 I12 单变量
   验证。上传故障不构成 Small code model 修复成功的证据。
 
+### I14 同 worker 诊断结果（2026-08-30，门禁尚未关闭）
+
+- Run `33288920505` / SHA `c91c2c08b6ffacb3ae77835921b5c5febd396ed9` 的 x86 job
+  `99196977267` 再次以相同 unchecked/integer gate 失败。CPU 为 Intel Xeon Platinum
+  8573C（family 6/model 207）；候选 Native/Clang 为 `14671625 / 14671807 ns`，同 worker
+  精确 V0.10 为 `14665704 / 14666416 ns`。两版在该 worker 上均与 Clang 等速，而冻结
+  跨 worker 配对仍是 `23000767 / 27975716 ns`，即连未改动的 V0.10 自身也会被这项
+  跨 worker 比率判为回退。这构成 I04 “Clang 归一化足以消除不同 worker 影响”的反例，
+  后续须在不降低 3%/8% 门槛、不改变固定编译器身份的前提下复诊比较协议。
+- 诊断脚本导出的 x86 `.text` 是零字节，因为实际代码位于 `.ltext`；其空文件相等不构成
+  机器码证据。另行比对上传的完整 ELF，candidate 与 V0.10 在每个模式下逐字节一致：
+  unchecked SHA-256 `89ecf8a14d53e21fec95c57cba926a282e1100f123752cda7f193f3eef609510`，
+  checked `82183fcb2f5eb9118fe98dac90795cfaaa8670ad465eaa12001fde13b327d0cc`。
+  该结果不替代原失败，也不自动构成新协议下的验收通过。
+- Artifact `9726612505` 的 zip 摘要为
+  `f7a6c096aeab13f712373b158d0013f31e4992754d25a0191c8e0ab49199cd08`；候选与同机 V0.10
+  report 摘要分别为 `ce410c125464037dabda7429cb42e22108d0d1ac926862ea9e5025f5b5c4d0a0`、
+  `e668ec15347b73ca0b7b8b21b11161c3cb557f21de82a218faad79f00ad75285`。完整 job log 摘要
+  `5cf9cc10eb0f3c6f7d488d669c26952486c498219d8c4bdefa40c5ad6a1c92ae`。
+
 ## I15：Intel Cargo 产物未自动签名，CI/release 缺少显式签名步骤
 
 - Intel job `99196059470` 的 Native/CLI/release build 全部通过，随后
@@ -420,6 +440,23 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 这只关闭 sparse evaluation 缺口，不表示完整 SCCP 已验收：条件边剪枝、phi 本体改写、
   CFG 证据失效/重建、checked 下游传播核查以及阶段 07 实际归纳变量简化仍待完成。
 
+### I18 第四部分：常量 phi、CFG 重接与导入事实失效（阶段仍未关闭）
+
+- 首个 red 直接返回常量 phi：消费者虽可折叠，原 block parameter 仍存在。现以闭合
+  `PhiJoin` 核验全部输入，在写入任何指令前检查精确替换值与整批新 ID 空间，然后保持
+  ValueId、生成 ConstInt、删除 phi 参数并修复每条输入边。五项故障/边界回归覆盖错误值、
+  缺失输入证据、ID 耗尽、有效证明依赖保留及预算耗尽时整批撤回。
+- 条件比较折叠后原 Branch 和不可达调用/print 仍存在的三个 red，现由检查消除前的
+  propagation/CFG 不动点闭环解决。每轮改动先结构验证，再重建存活契约导入；失效的
+  分析事实不升格为契约公理，存活 inline clone 保留来源祖先，旧临时 proof 不跨 CFG 复用。
+- 空 if 的 red 为 4 个块，现转发两侧空块的标量与 memory 参数，合成相同边后为 2 个块。
+  保留具有非局部 scalar/memory 使用或契约绑定的参数定义；不移动任何可达指令。
+  新 C 执行对照覆盖 O0–O3 与 checked/unchecked 的 phi 参数交换、store 顺序和常量路径。
+- DCE 的新增 red 表明描述符删除后遗留 RawSlice/Subslice region。现仅清理无存活定义、
+  无 place/memory/父子关系引用的派生 region，仍保留无用 subslice 的失败检查。
+- 本批不等于阶段 05 完整签收。后续仍需核查布尔 Copy/phi 的条件传播、checked 双结果
+  的下游分析，以及本阶段最终验收；阶段 07 与性能阻断也未关闭。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median
@@ -438,6 +475,18 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 未终止任何用户或系统进程，未修改 benchmark 的样本数、执行顺序、阈值、语料或固定
   baseline。保留这项失败，继续诊断并等待正式稳定环境证据；I14 的远程 x86 基线问题仍
   独立打开。最终仍必须在同一最终 SHA 通过全部原门槛。
+
+- 远程 ARM job `99196977301`（run `33288920505`）也以 proof 吞吐门失败：Native
+  unchecked/checked 为 `7186124 / 7902379 ns`（`0.9093621`），Clang 同项为
+  `7240401 / 7913075 ns`（`0.9149921`）。同 worker 的固定 V0.10 诊断亦为
+  Native `7308918 / 7813684 ns`（`0.9353997`）、Clang `7336346 / 7918949 ns`
+  （`0.9264293`）。原始失败和独立诊断同时保留；这些数据尚不证明具体频率/调度原因，
+  也不授权把 raw 97% 门禁改成 optional。
+- ARM artifact `9726583739` zip SHA-256 为
+  `7ac4d11a79c0fa6731ec0d062ae32784f6118e1a401d5b56a6bed67192636692`，候选 report 为
+  `bf322d0afbdb2b845454908d6eb7f76a5776320c44f4c0ccc70beeed7075e00c`，job log 为
+  `e85cfab4b541fd412e2a888a11982aee4146ac520ee5c2dd1a54a3dd267eeba6`。该 artifact 中的
+  机器码对照只覆盖 integer kernel，不能据此声称 proof-loop 机器码已排除差异。
 
 ## 修订边界（全部阻断，持续有效）
 

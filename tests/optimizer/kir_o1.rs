@@ -272,6 +272,352 @@ fn kir_o1_sccp_should_propagate_a_constant_phi() {
 }
 
 #[test]
+fn kir_o1_sccp_should_materialize_constant_block_parameters_and_repair_edges() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn phi(flag: bool) -> i32 { let x: i32 = 0; if flag { x = 42; } else { x = 42; } return x; }",
+        KirOverflowMode::Unchecked,
+    );
+    for level in [
+        KirOptimizationLevel::O1,
+        KirOptimizationLevel::O2,
+        KirOptimizationLevel::O3,
+    ] {
+        let result = run_kir_pass_pipeline(kir.clone(), level, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let module = result.artifact.as_ref().expect("verified artifact");
+        assert!(
+            module.functions[0].blocks.iter().all(|block| block
+                .params
+                .iter()
+                .all(|param| param.type_node
+                    != calckernel::MirType::Primitive(calckernel::MirPrimitiveTypeName::I32))),
+            "constant phi definitions must disappear:\n{}",
+            print_kir_module(module)
+        );
+        let returned_constant = module.functions[0].blocks.iter().any(|block| {
+            let calckernel::KirTerminator::Return { value: Some(value), .. } = block.terminator else { return false; };
+            block.instructions.iter().any(|instruction|
+                instruction.results.iter().any(|result| result.value == value)
+                    && matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "42"))
+        });
+        assert!(
+            returned_constant,
+            "return must use the materialized constant"
+        );
+    }
+}
+
+#[test]
+fn kir_o1_sccp_should_prune_constant_edges_and_repropagate_the_surviving_phi() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn answer() -> i32 { let x: i32 = 0; if (20 + 22) == 42 { x = 7; } else { x = 9; } return x + 1; }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let module = result.artifact.as_ref().expect("artifact");
+    assert!(
+        module.functions[0]
+            .blocks
+            .iter()
+            .all(|block| !matches!(block.terminator, calckernel::KirTerminator::Branch { .. })),
+        "constant branch must be removed:\n{}",
+        print_kir_module(module)
+    );
+    assert!(module.functions[0].blocks.iter().any(|block| {
+        let calckernel::KirTerminator::Return { value: Some(value), .. } = block.terminator else { return false; };
+        block.instructions.iter().any(|instruction| instruction.results.iter().any(|result| result.value == value)
+            && matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "8"))
+    }), "only the surviving incoming value should reach the return");
+}
+
+#[test]
+fn kir_o1_cfg_should_retire_unreachable_unsafe_call_contract_instances() {
+    let (_, kir, contracts) = build_with_overflow(
+        "unsafe fn bounded(n: u32) -> u32 contract { requires n < 8; } { return n; } export fn run() -> u32 { if 1 == 2 { unsafe { return bounded(7); } } return 0; }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let module = result.artifact.as_ref().expect("artifact");
+    assert!(
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.blocks)
+            .flat_map(|block| &block.instructions)
+            .all(|instruction| !matches!(instruction.kind, KirInstructionKind::Call { .. })),
+        "unreachable call remains"
+    );
+    assert!(
+        result
+            .contract_facts
+            .as_ref()
+            .expect("contracts")
+            .instances()
+            .iter()
+            .all(|instance| !matches!(
+                instance.source,
+                calckernel::ContractInstanceSource::Call { .. }
+            )),
+        "dead call must not retain an active contract instance"
+    );
+}
+
+#[test]
+fn kir_o1_cfg_should_rebind_live_contract_ids_after_retiring_a_dead_call() {
+    let (_, kir, contracts) = build(
+        "unsafe fn bounded(n: u32) -> u32 contract { requires n < 8; } { return n + 1; } export fn run(n: u32) -> u32 { if 1 == 2 { unsafe { return bounded(7); } } unsafe { return bounded(n); } }",
+    );
+    assert_eq!(contracts.as_ref().expect("contracts").instances().len(), 3);
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let facts = result.contract_facts.as_ref().expect("rebuilt contracts");
+    assert_eq!(facts.instances().len(), 2);
+    for (index, instance) in facts.instances().iter().enumerate() {
+        assert_eq!(instance.id.index() as usize, index);
+        for id in &instance.facts {
+            let fact = facts.facts().get(*id).expect("live fact");
+            assert_eq!(
+                fact.origin,
+                calckernel::FactOrigin::TrustedContract {
+                    instance: instance.id
+                }
+            );
+            if let calckernel::FactScope::CalleeInstance {
+                instance: scoped, ..
+            } = fact.scope
+            {
+                assert_eq!(scoped, instance.id);
+            }
+        }
+    }
+    assert!(
+        validate_kir_optimization_evidence(
+            result.artifact.as_ref().expect("artifact"),
+            Some(facts),
+            &result.proofs,
+            &result.eliminated_guards,
+            0
+        )
+        .errors
+        .is_empty()
+    );
+}
+
+#[test]
+fn kir_o1_cfg_should_reject_invalid_dead_call_evidence_before_retiring_it() {
+    let (_, kir, mut contracts) = build(
+        "unsafe fn bounded(n: u32) -> u32 contract { requires n < 8; } { return n; } export fn run() -> u32 { if 1 == 2 { unsafe { return bounded(7); } } return 0; }",
+    );
+    let facts = contracts.as_mut().expect("contracts");
+    let dead_fact = facts
+        .instances()
+        .iter()
+        .find(|instance| {
+            matches!(
+                instance.source,
+                calckernel::ContractInstanceSource::Call { .. }
+            )
+        })
+        .expect("call")
+        .facts[0];
+    facts
+        .facts_mut()
+        .get_mut(dead_fact)
+        .expect("fact")
+        .generation = 1;
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.artifact.is_none());
+    assert!(
+        result.records.is_empty(),
+        "input evidence must be checked before CFG rewrites"
+    );
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("stale generation")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn kir_o1_cfg_should_remove_only_unreachable_prints_without_reordering_live_effects() {
+    let (_, kir, contracts) = build_with_overflow(
+        "fn main() -> void { print_i32(1); if (20 + 22) == 41 { print_i32(99); } print_i32(2); }",
+        KirOverflowMode::Unchecked,
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let module = result.artifact.as_ref().expect("artifact");
+    let printed = module.functions[0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| {
+            let KirInstructionKind::RuntimeCall { args, .. } = &instruction.kind else {
+                return None;
+            };
+            module.functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find_map(|definition| {
+                    let KirInstructionKind::ConstInt { value } = &definition.kind else {
+                        return None;
+                    };
+                    definition
+                        .results
+                        .iter()
+                        .any(|result| result.value == args[0])
+                        .then_some(value.as_str())
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(printed, ["1", "2"]);
+}
+
+#[test]
+fn kir_o1_cfg_should_forward_empty_blocks_with_scalar_and_memory_arguments() {
+    let (_, kir, contracts) = build_with_overflow(
+        "export fn identity(flag: bool, n: i32) -> i32 { if flag {} else {} return n; }",
+        KirOverflowMode::Unchecked,
+    );
+    assert!(kir.functions[0].blocks.len() > 2);
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let module = result.artifact.as_ref().expect("artifact");
+    assert_eq!(
+        module.functions[0].blocks.len(),
+        2,
+        "empty forwarding blocks must disappear:\n{}",
+        print_kir_module(module)
+    );
+    let entry = &module.functions[0].blocks[0];
+    let calckernel::KirTerminator::Jump { edge } = &entry.terminator else {
+        panic!(
+            "identical composed edges must become a jump:\n{}",
+            print_kir_module(module)
+        );
+    };
+    let target = &module.functions[0].blocks[1];
+    assert_eq!(edge.target, target.id);
+    assert_eq!(
+        edge.args,
+        module.functions[0]
+            .params
+            .iter()
+            .map(|param| param.value)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        edge.memory_args,
+        module.functions[0]
+            .initial_memory
+            .iter()
+            .map(|memory| memory.version)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn kir_o1_cfg_should_keep_forwarding_parameters_used_outside_the_forwarded_edge() {
+    for scalar_use in [true, false] {
+        let (_, mut kir, contracts) = build_with_overflow(
+            "export fn identity(flag: bool, n: i32) -> i32 { if flag {} else { return n; } return n; }",
+            KirOverflowMode::Unchecked,
+        );
+        let bridge = kir.functions[0]
+            .blocks
+            .iter()
+            .skip(1)
+            .find(|block| {
+                block.instructions.is_empty()
+                    && matches!(block.terminator, calckernel::KirTerminator::Jump { .. })
+            })
+            .expect("empty then block")
+            .clone();
+        let calckernel::KirTerminator::Jump { edge } = &bridge.terminator else {
+            unreachable!()
+        };
+        let target = kir.functions[0]
+            .blocks
+            .iter_mut()
+            .find(|block| block.id == edge.target)
+            .expect("return block");
+        let calckernel::KirTerminator::Return { value, memory, .. } = &mut target.terminator else {
+            unreachable!()
+        };
+        if scalar_use {
+            *value = Some(
+                bridge
+                    .params
+                    .iter()
+                    .find(|param| param.slot == "n")
+                    .expect("n")
+                    .value,
+            );
+        } else {
+            memory[0].1 = bridge.memory_params[0].version;
+        }
+        assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(
+            result.artifact.expect("artifact").functions[0]
+                .blocks
+                .iter()
+                .any(|block| block.id == bridge.id),
+            "a nonlocal SSA definition must not be removed by edge-only forwarding"
+        );
+    }
+}
+
+#[test]
+fn kir_o1_dce_should_remove_unused_slice_regions_but_keep_checked_failure() {
+    for source in [
+        "export fn discard(data: ptr<i32>) -> void { let unused: slice<i32> = slice(data, 4); }",
+        "export fn discard(items: slice<i32>) -> void { let unused: slice<i32> = items[2..1]; }",
+    ] {
+        let (_, kir, contracts) = build(source);
+        let guards_before = kir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+            .count();
+        assert!(kir.functions[0].regions.iter().any(|region| matches!(
+            region.origin,
+            calckernel::KirMemoryRegionOrigin::RawSlice(_)
+                | calckernel::KirMemoryRegionOrigin::Subslice(_)
+        )));
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let function = &result.artifact.as_ref().expect("artifact").functions[0];
+        assert!(
+            function.regions.iter().all(|region| !matches!(
+                region.origin,
+                calckernel::KirMemoryRegionOrigin::RawSlice(_)
+                    | calckernel::KirMemoryRegionOrigin::Subslice(_)
+            )),
+            "unused descriptor regions must disappear"
+        );
+        let guards_after = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+            .count();
+        assert_eq!(
+            guards_after, guards_before,
+            "unused result must not suppress invalid subslice failure"
+        );
+    }
+}
+
+#[test]
 fn kir_o1_sccp_should_not_choose_only_one_phi_input() {
     for source in [
         "export fn phi(flag: bool) -> i32 { let x: i32 = 0; if flag { x = 42; } else { x = 41; } return x + 1; }",

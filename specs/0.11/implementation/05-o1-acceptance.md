@@ -130,3 +130,35 @@
   SHA-256 为 `3d7aaef31a7d022ff016b343cf0132cc28c2ffa33e82e8eea80fc14025cb759b`，
   benchmark log 为 `2a5c1fa3c5b07b06f16488c616490468db756d98f62a26c04678868c971e1e71`。
   已保留原始样本；详见 I19，同 SHA 全门槛仍待正式通过，不用对象一致性替代性能验收。
+
+## I18 CFG/phi 与 region 清理的局部复验（2026-08-30，阶段仍未完整通过）
+
+- 本节对应 `optimizer(stage-05): canonicalize CFG and materialize constant phis`，parent
+  为 `10d6bba15a9b6d69e0bc963985101630b77d7db8`。
+- 实际 red/green 覆盖常量 phi 定义、常量分支后的再次传播、不可达 unsafe call/print、
+  空跳转块转发与未使用 slice region。空 if 从 4 块变为 2 块，标量/memory 边参数修复；
+  非局部 SSA 定义、存活契约绑定、可达 checked/print/memory 效果保留。
+- `cargo +1.90.0 test --locked --test optimizer kir_o1_cfg_ -- --nocapture`：6/6，
+  包括存活 contract instance/fact scope 重绑和死路径无效证据先拒绝的回归。
+  库测试及 release 库测试为 24/24，其中新增 phi fault/budget/preservation 用例 5 项。
+- 新 C 对照实际编译运行 O0–O3 的 checked/unchecked 模式，核对 phi 参数交换、store
+  顺序、常量分支与返回值。首次 harness 错把 bounds-checked ABI 当作普通返回值而编译
+  失败；按现有任一 checked mode 都使用 status ABI 的契约纠正测试配置，产品 ABI 未改动。
+- 顺序执行 `cargo +1.90.0 test --locked` 与
+  `cargo +1.90.0 test --all-features --locked`，391/512 项全部通过（Native 92、CLI 21）。
+  all-feature Clippy、fmt 和 diff check 通过。阶段 05 布尔 Copy/phi、checked 下游传播
+  核查与最终验收仍待完成，阶段 07 及 I14/I19 不以本节代签。
+- 默认/全特性/Release library 日志 SHA-256 分别为
+  `e5f6862929fa32b6515ed6be468a0b9c6c1fc7087e61b885db1b8e750de938b2`、
+  `1960179bef059d7c1e41735c90747da0f159f3036d906b75ef349d834732ff22`、
+  `357eb17a45adf620a22eb5d2b48b0faa9d83666a4e64526c9a8763ec4386c08e`。
+- 本批全部修改后的首次原 performance gate exit 0（Rust 1.90.0 / LLVM+Clang 22.1.8 /
+  AArch64 macOS / baseline CPU）：unchecked Clang mean `0.9993` / V0.10 ratio
+  `1.0015`，checked `1.0122` / `0.9863`，proof throughput `1.0372`，optimizer median
+  `1.2962`；全部 individual gate 通过，Dijkstra 为 `980583 / 350000 ns`。未修改任何
+  门槛、语料、baseline 或采样协议；本次通过不解释或覆盖先前 I19 的失败。
+  Report SHA-256 `17ab9887d31bf5081b274f2b42173459f852b868a54b176ab1913cf4f3c80c13`，
+  benchmark log `a0b31920ade972469c9053c1494f9f53c25f6b198117754b40c7006e77a53a9b`。
+- 行内自审核查整批写入原子性、每条边的 phi 与 Memory SSA 参数替换、非局部定义保留、
+  CFG 导入重建发生在持久 guard proof 之前、DCE 的 region 引用闭包。未发现本批新增
+  阻断项；没有用本机单轮 performance PASS 代替远程同 SHA 全部 CI。

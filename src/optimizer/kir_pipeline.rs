@@ -140,7 +140,12 @@ pub fn run_kir_pass_pipeline(
         return result;
     }
 
-    let changed = kir_passes::run_cfg_canonicalize(&mut module);
+    let changed = kir_passes::run_cfg_canonicalize(&mut module, result.contract_facts.as_ref());
+    if changed && let Err(error) = refresh_pre_guard_cfg(&module, &mut result.contract_facts) {
+        result.errors.push(error);
+        result.module = module;
+        return result;
+    }
     if !record_current_pass(
         &module,
         "cfg-canonicalize",
@@ -151,11 +156,7 @@ pub fn run_kir_pass_pipeline(
         result.module = module;
         return result;
     }
-    let changed = match kir_passes::run_integer_constant_folding(
-        &mut module,
-        result.contract_facts.as_ref(),
-        &result.proofs.instruction_dependencies(),
-    ) {
+    let changed = match run_pre_guard_sccp(&mut module, &mut result.contract_facts) {
         Ok(changed) => changed,
         Err(error) => {
             result.errors.push(error);
@@ -282,7 +283,7 @@ pub fn run_kir_pass_pipeline(
         let changed = match kir_passes::run_integer_constant_folding(
             &mut module,
             result.contract_facts.as_ref(),
-            &result.proofs.instruction_dependencies(),
+            &result.proofs,
         ) {
             Ok(changed) => changed,
             Err(error) => {
@@ -382,7 +383,7 @@ pub fn run_kir_pass_pipeline(
         let changed = match kir_passes::run_integer_constant_folding(
             &mut module,
             result.contract_facts.as_ref(),
-            &result.proofs.instruction_dependencies(),
+            &result.proofs,
         ) {
             Ok(changed) => changed,
             Err(error) => {
@@ -469,6 +470,44 @@ fn add_scalar_analysis_stats(
         u32::try_from(cache.analyzed_functions()).unwrap_or(u32::MAX)
     });
     stats.scalar_functions_analyzed = stats.scalar_functions_analyzed.saturating_add(analyzed);
+}
+
+fn refresh_pre_guard_cfg(
+    module: &KirModule,
+    contracts: &mut Option<ContractFactSet>,
+) -> Result<(), String> {
+    let validation = validate_kir_module(module);
+    if let Some(error) = validation.errors.first() {
+        return Err(error.message.clone());
+    }
+    if let Some(contracts) = contracts {
+        contracts
+            .retain_cfg_imports(module)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn run_pre_guard_sccp(
+    module: &mut KirModule,
+    contracts: &mut Option<ContractFactSet>,
+) -> Result<bool, String> {
+    // Transient scalar certificates are consumed against each immutable pre-state.
+    // CFG edits happen before guard elimination, so no persistent ProofId or
+    // guard-rewrite record can refer to the retired edges, parameters or FactIds.
+    let proofs = ProofArena::new(0);
+    let mut changed = false;
+    loop {
+        changed |= kir_passes::run_integer_constant_folding(module, contracts.as_ref(), &proofs)?;
+        let cfg_changed = kir_passes::run_cfg_canonicalize(module, contracts.as_ref());
+        if !cfg_changed {
+            return Ok(changed);
+        }
+        changed = true;
+        refresh_pre_guard_cfg(module, contracts)?;
+        // Every further round removes a branch or a block, bounding rounds by
+        // the original CFG size. Scalar analysis keeps its own fixed KIR budget.
+    }
 }
 
 fn record_verified_pass(

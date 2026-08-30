@@ -26,10 +26,20 @@ struct ConstantRewrite {
     step: ProofStepId,
 }
 
+struct PhiConstantRewrite {
+    function: FunctionId,
+    block: BlockId,
+    value: ValueId,
+    constant: String,
+    proof: ProofId,
+    step: ProofStepId,
+}
+
 pub(super) struct ScalarProposals {
     pub proofs: ProofArena,
     pub values: BTreeMap<FunctionId, (ProofId, BTreeMap<ValueId, ProofStepId>)>,
     rewrites: Vec<ConstantRewrite>,
+    phis: Vec<PhiConstantRewrite>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -150,13 +160,24 @@ impl ScalarWorklist {
 pub(crate) fn run_integer_constant_folding(
     module: &mut KirModule,
     contracts: Option<&ContractFactSet>,
-    protected: &BTreeSet<InstructionId>,
+    live_proofs: &ProofArena,
 ) -> Result<bool, String> {
     let mut proposals = propose_with_contracts(module, contracts, ScalarAnalysisConfig::default())?;
+    let protected = live_proofs.instruction_dependencies();
+    let protected_phis = live_proofs.block_parameter_dependencies();
     proposals
         .rewrites
         .retain(|rewrite| !protected.contains(&rewrite.instruction));
-    verify_and_apply_with_contracts(module, contracts, &proposals.proofs, &proposals.rewrites)
+    proposals
+        .phis
+        .retain(|rewrite| !protected_phis.contains(&rewrite.value));
+    verify_and_apply_with_contracts(
+        module,
+        contracts,
+        &proposals.proofs,
+        &proposals.rewrites,
+        &proposals.phis,
+    )
 }
 
 pub(super) fn propose_scalar_ranges(
@@ -187,6 +208,7 @@ fn propose_with_contracts(
 ) -> Result<ScalarProposals, String> {
     let mut proofs = ProofArena::new(0);
     let mut rewrites = Vec::new();
+    let mut phis = Vec::new();
     let mut scalar_values = BTreeMap::new();
     'functions: for function in &module.functions {
         let Some(entry) = function.blocks.first().map(|block| block.id) else {
@@ -499,6 +521,22 @@ fn propose_with_contracts(
         let proof = proofs
             .try_insert(use_site(function.id, entry), steps, root)
             .map_err(|error| error.to_string())?;
+        for block in &function.blocks {
+            for param in &block.params {
+                if let Some((value, step)) = values.get(&param.value)
+                    && let Some(constant) = value.exact_value()
+                {
+                    phis.push(PhiConstantRewrite {
+                        function: function.id,
+                        block: block.id,
+                        value: param.value,
+                        constant: constant.to_string(),
+                        proof,
+                        step: *step,
+                    });
+                }
+            }
+        }
         scalar_values.insert(
             function.id,
             (
@@ -526,6 +564,7 @@ fn propose_with_contracts(
         proofs,
         values: scalar_values,
         rewrites,
+        phis,
     })
 }
 
@@ -606,7 +645,7 @@ fn verify_and_apply(
     proofs: &ProofArena,
     rewrites: &[ConstantRewrite],
 ) -> Result<bool, String> {
-    verify_and_apply_with_contracts(module, None, proofs, rewrites)
+    verify_and_apply_with_contracts(module, None, proofs, rewrites, &[])
 }
 
 fn verify_and_apply_with_contracts(
@@ -614,8 +653,9 @@ fn verify_and_apply_with_contracts(
     contracts: Option<&ContractFactSet>,
     proofs: &ProofArena,
     rewrites: &[ConstantRewrite],
+    phis: &[PhiConstantRewrite],
 ) -> Result<bool, String> {
-    if rewrites.is_empty() {
+    if rewrites.is_empty() && phis.is_empty() {
         return Ok(false);
     }
     // Check the closed derivations against the immutable pre-rewrite KIR. The
@@ -699,6 +739,7 @@ fn verify_and_apply_with_contracts(
             );
         }
     }
+    let phi_replacements = prepare_phi_replacements(module, proofs, phis)?;
     let replacements = rewrites
         .iter()
         .map(|rewrite| (rewrite.instruction, &rewrite.constant))
@@ -718,7 +759,129 @@ fn verify_and_apply_with_contracts(
             };
         }
     }
+    for function in &mut module.functions {
+        for block in &mut function.blocks {
+            if let Some(replacements) = phi_replacements.get(&(function.id, block.id)) {
+                block.params = std::mem::take(&mut block.params)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, param)| {
+                        (!replacements.contains_key(&index)).then_some(param)
+                    })
+                    .collect();
+                let old = std::mem::take(&mut block.instructions);
+                block.instructions.extend(replacements.values().cloned());
+                block.instructions.extend(old);
+            }
+            let edges = match &mut block.terminator {
+                KirTerminator::Return { .. } => Vec::new(),
+                KirTerminator::Jump { edge } => vec![edge],
+                KirTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                } => vec![then_edge, else_edge],
+            };
+            for edge in edges {
+                if let Some(replacements) = phi_replacements.get(&(function.id, edge.target)) {
+                    edge.args = edge
+                        .args
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, value)| {
+                            (!replacements.contains_key(&index)).then_some(*value)
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
     Ok(true)
+}
+
+type PhiReplacements = BTreeMap<(FunctionId, BlockId), BTreeMap<usize, crate::KirInstruction>>;
+
+fn prepare_phi_replacements(
+    module: &KirModule,
+    proofs: &ProofArena,
+    phis: &[PhiConstantRewrite],
+) -> Result<PhiReplacements, String> {
+    let mut replacements = BTreeMap::new();
+    if phis.is_empty() {
+        return Ok(replacements);
+    }
+    let first = match module
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .map(|instruction| instruction.id.index())
+        .max()
+    {
+        Some(last) => last
+            .checked_add(1)
+            .ok_or("SCCP instruction identity space exhausted")?,
+        None => 0,
+    };
+    let count =
+        u32::try_from(phis.len()).map_err(|_| "SCCP instruction identity space exhausted")?;
+    first
+        .checked_add(count - 1)
+        .ok_or("SCCP instruction identity space exhausted")?;
+    for (offset, rewrite) in phis.iter().enumerate() {
+        let proof = proofs.get(rewrite.proof).ok_or("missing SCCP phi proof")?;
+        let Some(ProofStep::PhiJoin { block, claim, .. }) =
+            proof.steps.get(rewrite.step.index() as usize)
+        else {
+            return Err("SCCP phi replacement has no phi certificate".to_string());
+        };
+        if proof.use_site.function != rewrite.function
+            || *block != rewrite.block
+            || claim.value != rewrite.value
+            || claim.failure != ScalarFailure::None
+            || claim.interval.lower() != claim.interval.upper()
+            || claim.interval.lower().to_string() != rewrite.constant
+        {
+            return Err("SCCP phi replacement does not match its certificate".to_string());
+        }
+        let (index, param) = module
+            .functions
+            .iter()
+            .find(|function| function.id == rewrite.function)
+            .and_then(|function| {
+                function
+                    .blocks
+                    .iter()
+                    .find(|block| block.id == rewrite.block)
+            })
+            .and_then(|block| {
+                block
+                    .params
+                    .iter()
+                    .enumerate()
+                    .find(|(_, param)| param.value == rewrite.value)
+            })
+            .ok_or("SCCP replacement block parameter is missing")?;
+        let replacement = crate::KirInstruction {
+            id: InstructionId::from_index(first + offset as u32),
+            results: vec![crate::KirResult {
+                value: param.value,
+                type_node: param.type_node.clone(),
+            }],
+            kind: KirInstructionKind::ConstInt {
+                value: rewrite.constant.clone(),
+            },
+            memory: None,
+            effect: None,
+        };
+        let block_replacements: &mut BTreeMap<usize, crate::KirInstruction> = replacements
+            .entry((rewrite.function, rewrite.block))
+            .or_default();
+        if block_replacements.insert(index, replacement).is_some() {
+            return Err("duplicate SCCP phi replacement".to_string());
+        }
+    }
+    Ok(replacements)
 }
 
 #[cfg(test)]
@@ -746,6 +909,107 @@ mod tests {
             },
         )
         .expect("KIR")
+    }
+
+    fn phi_module() -> KirModule {
+        module_from_source(
+            "export fn phi(flag: bool) -> i32 { let x: i32 = 0; if flag { x = 42; } else { x = 42; } return x + 1; }",
+        )
+    }
+
+    #[test]
+    fn constant_phi_rewrite_should_reject_a_wrong_value_before_any_instruction_mutation() {
+        let mut module = phi_module();
+        let before = module.clone();
+        let mut proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        assert!(!proposals.rewrites.is_empty());
+        proposals.phis.last_mut().expect("constant phi").constant = "43".to_string();
+        let error = verify_and_apply_with_contracts(
+            &mut module,
+            None,
+            &proposals.proofs,
+            &proposals.rewrites,
+            &proposals.phis,
+        )
+        .expect_err("wrong phi value");
+        assert!(error.contains("phi replacement does not match"), "{error}");
+        assert_eq!(module, before);
+    }
+
+    #[test]
+    fn constant_phi_rewrite_should_reject_incomplete_incoming_edge_evidence() {
+        let mut module = phi_module();
+        let before = module.clone();
+        let mut proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        let rewrite = proposals.phis.last().expect("join phi");
+        let proof = proposals.proofs.get_mut(rewrite.proof).expect("proof");
+        let ProofStep::PhiJoin { inputs, .. } = &mut proof.steps[rewrite.step.index() as usize]
+        else {
+            panic!("phi proof");
+        };
+        assert_eq!(inputs.len(), 2);
+        inputs.pop();
+        let error = verify_and_apply_with_contracts(
+            &mut module,
+            None,
+            &proposals.proofs,
+            &proposals.rewrites,
+            &proposals.phis,
+        )
+        .expect_err("missing edge");
+        assert!(error.contains("every incoming edge"), "{error}");
+        assert_eq!(module, before);
+    }
+
+    #[test]
+    fn constant_phi_rewrite_should_fail_atomically_when_instruction_ids_are_exhausted() {
+        let mut module = phi_module();
+        module.functions[0]
+            .blocks
+            .last_mut()
+            .expect("return block")
+            .instructions
+            .last_mut()
+            .expect("arithmetic")
+            .id = InstructionId::from_index(u32::MAX);
+        let before = module.clone();
+        let proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        let error = verify_and_apply_with_contracts(
+            &mut module,
+            None,
+            &proposals.proofs,
+            &proposals.rewrites,
+            &proposals.phis,
+        )
+        .expect_err("no fresh identity");
+        assert!(error.contains("identity space exhausted"), "{error}");
+        assert_eq!(module, before);
+    }
+
+    #[test]
+    fn constant_phi_rewrite_should_preserve_definitions_required_by_live_certificates() {
+        let mut module = phi_module();
+        let before = module.clone();
+        let proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        assert!(!proposals.phis.is_empty());
+        assert!(
+            !run_integer_constant_folding(&mut module, None, &proposals.proofs).expect("preserved")
+        );
+        assert_eq!(module, before);
+        assert!(verify_ranges(&module, &proposals.proofs).errors.is_empty());
+    }
+
+    #[test]
+    fn constant_phi_rewrite_should_discard_every_phi_proposal_after_budget_exhaustion() {
+        let module = phi_module();
+        for budget in [0, 1, 4] {
+            let proposals =
+                propose_with_contracts(&module, None, ScalarAnalysisConfig::with_max_steps(budget))
+                    .expect("bounded");
+            assert!(proposals.phis.is_empty(), "budget {budget}");
+            assert!(proposals.rewrites.is_empty(), "budget {budget}");
+            assert!(proposals.proofs.proofs().is_empty(), "budget {budget}");
+        }
     }
 
     #[test]

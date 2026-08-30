@@ -103,6 +103,62 @@ fn level(level: u8) -> KirOptimizationLevel {
 }
 
 #[test]
+fn kir_c_cfg_forwarding_should_preserve_swapped_phi_arguments_and_memory_order() {
+    let source = r#"
+        export fn choose(out: ptr<i32>, flag: bool, a: i32, b: i32) -> i32 {
+          let x: i32 = a; let y: i32 = b;
+          out[0] = a;
+          if flag { x = b; y = a; } else { x = a; y = b; }
+          out[1] = x;
+          return out[0] + y;
+        }
+        export fn constant(out: ptr<i32>) -> i32 {
+          let x: i32 = 0;
+          if (20 + 22) == 42 { out[0] = 7; x = 7; }
+          else { out[0] = 99; x = 99; }
+          return x;
+        }
+    "#;
+    for optimization_level in 0..=3 {
+        for overflow in [KirOverflowMode::Checked, KirOverflowMode::Unchecked] {
+            let kir = optimized_kir(
+                source,
+                level(optimization_level),
+                overflow,
+                if overflow == KirOverflowMode::Checked {
+                    KirBoundsMode::Checked
+                } else {
+                    KirBoundsMode::Unchecked
+                },
+            );
+            let c = emit_c_kir_module(&kir).expect("CFG C");
+            let harness = if overflow == KirOverflowMode::Checked {
+                r#"
+                int main(void) {
+                  int32_t out[2] = {0, 0}; int32_t value = 0;
+                  if (choose(out, true, 10, 20, &value) != CK_OK || value != 20 || out[0] != 10 || out[1] != 20) return 1;
+                  if (choose(out, false, 10, 20, &value) != CK_OK || value != 30 || out[0] != 10 || out[1] != 10) return 2;
+                  if (constant(out, &value) != CK_OK || value != 7 || out[0] != 7) return 3;
+                  return 0;
+                }
+            "#
+            } else {
+                r#"
+                int main(void) {
+                  int32_t out[2] = {0, 0};
+                  if (choose(out, true, 10, 20) != 20 || out[0] != 10 || out[1] != 20) return 1;
+                  if (choose(out, false, 10, 20) != 30 || out[0] != 10 || out[1] != 10) return 2;
+                  if (constant(out) != 7 || out[0] != 7) return 3;
+                  return 0;
+                }
+            "#
+            };
+            compile_and_run(&c, harness);
+        }
+    }
+}
+
+#[test]
 fn kir_c_constant_propagation_should_preserve_results_and_checked_wrap_at_every_level() {
     let source = r#"
         export fn same(flag: bool) -> i32 {

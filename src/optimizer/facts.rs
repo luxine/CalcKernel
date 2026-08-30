@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use num_bigint::BigInt;
 
@@ -311,6 +315,166 @@ impl ContractFactSet {
     #[must_use]
     pub fn instances(&self) -> &[ContractFactInstance] {
         &self.instances
+    }
+
+    /// Retire dead CFG imports before any persistent guard proof exists.
+    /// The rebuilt arena invalidates old FactIds; inline provenance ancestors
+    /// remain available even when their original call has already been inlined.
+    pub(crate) fn retain_cfg_imports(
+        &mut self,
+        module: &KirModule,
+    ) -> Result<bool, ContractFactImportError> {
+        let functions = module
+            .functions
+            .iter()
+            .map(|function| function.id)
+            .collect::<BTreeSet<_>>();
+        let blocks = module
+            .functions
+            .iter()
+            .flat_map(|function| {
+                function
+                    .blocks
+                    .iter()
+                    .map(move |block| (function.id, block.id))
+            })
+            .collect::<BTreeSet<_>>();
+        let calls = module
+            .functions
+            .iter()
+            .flat_map(|function| {
+                function.blocks.iter().flat_map(move |block| {
+                    block
+                        .instructions
+                        .iter()
+                        .filter(|instruction| {
+                            matches!(instruction.kind, KirInstructionKind::Call { .. })
+                        })
+                        .map(move |instruction| (function.id, block.id, instruction.id))
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        let live = self
+            .instances
+            .iter()
+            .filter(|instance| match instance.source {
+                ContractInstanceSource::FunctionEntry => functions.contains(&instance.callee),
+                ContractInstanceSource::Call {
+                    caller,
+                    block,
+                    instruction,
+                } => calls.contains(&(caller, block, instruction)),
+                ContractInstanceSource::InlineClone { function, .. } => instance
+                    .facts
+                    .iter()
+                    .filter_map(|id| self.facts.get(*id))
+                    .any(|fact| match &fact.scope {
+                        FactScope::InlineClone { blocks: scope, .. } => scope
+                            .iter()
+                            .any(|block| blocks.contains(&(function, *block))),
+                        _ => false,
+                    }),
+            })
+            .map(|instance| instance.id)
+            .collect::<BTreeSet<_>>();
+        let mut needed = live.clone();
+        let mut pending = live.iter().copied().collect::<Vec<_>>();
+        while let Some(id) = pending.pop() {
+            let instance = self
+                .instances
+                .get(id.index() as usize)
+                .filter(|instance| instance.id == id)
+                .ok_or_else(|| {
+                    ContractFactImportError::new("CFG import names a missing contract ancestor")
+                })?;
+            if let ContractInstanceSource::InlineClone { source, .. } = instance.source
+                && needed.insert(source)
+            {
+                pending.push(source);
+            }
+        }
+        let ids = needed
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                u32::try_from(index)
+                    .map(|index| (*id, ContractInstanceId::from_index(index)))
+                    .map_err(|_| {
+                        ContractFactImportError::new(
+                            "contract instance arena exceeds u32 identity space",
+                        )
+                    })
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let mut rebuilt = Self {
+            facts: FactArena::new(self.facts.generation()),
+            instances: Vec::new(),
+        };
+        for instance in self
+            .instances
+            .iter()
+            .filter(|instance| needed.contains(&instance.id))
+        {
+            let id = ids[&instance.id];
+            let source = match instance.source {
+                ContractInstanceSource::InlineClone {
+                    source,
+                    function,
+                    clone,
+                } => ContractInstanceSource::InlineClone {
+                    source: *ids.get(&source).ok_or_else(|| {
+                        ContractFactImportError::new("missing retained contract ancestor")
+                    })?,
+                    function,
+                    clone,
+                },
+                source => source,
+            };
+            let mut facts = Vec::new();
+            for old in &instance.facts {
+                let fact = self.facts.get(*old).ok_or_else(|| {
+                    ContractFactImportError::new("CFG import names a missing fact")
+                })?;
+                if fact.origin
+                    != (FactOrigin::TrustedContract {
+                        instance: instance.id,
+                    })
+                    || fact.derivation != FactDerivation::TrustedContractLeaf
+                {
+                    return Err(ContractFactImportError::new(
+                        "CFG cannot promote a derived fact to a contract axiom",
+                    ));
+                }
+                let mut scope = fact.scope.clone();
+                match &mut scope {
+                    FactScope::CalleeInstance { instance, .. } => *instance = id,
+                    FactScope::InlineClone {
+                        function,
+                        blocks: scope,
+                        ..
+                    } if live.contains(&instance.id) => {
+                        scope.retain(|block| blocks.contains(&(*function, *block)));
+                    }
+                    _ => {}
+                }
+                facts.push(rebuilt.facts.try_insert(
+                    FactOrigin::TrustedContract { instance: id },
+                    scope,
+                    fact.predicate.clone(),
+                    FactDerivation::TrustedContractLeaf,
+                )?);
+            }
+            rebuilt.instances.push(ContractFactInstance {
+                id,
+                callee: instance.callee,
+                source,
+                bindings: instance.bindings.clone(),
+                facts,
+            });
+        }
+        let changed = *self != rebuilt;
+        *self = rebuilt;
+        Ok(changed)
     }
 }
 
