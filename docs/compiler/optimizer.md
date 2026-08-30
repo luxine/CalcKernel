@@ -90,6 +90,13 @@ certificates. Unrelated dead instructions are not retained as proof dependencies
 The separate full scalar product-domain analysis remains demand-driven by
 safety-check consumers; guard-free functions do not build unused range results.
 
+Induction discovery checks every entry and latch, requiring the same initial value
+and recurrence on all incoming paths. Transparent values and invariant bounds are
+traced through real SSA arguments and copies, never inferred from source variable
+names. Mixed steps and intervening assignments remain conservative. A scalar loop
+invariant certificate must name the transfer result actually passed on every
+backedge, not an unused operation with convenient arithmetic.
+
 KIR inspection uses `emit-kir`, `--print-facts`,
 `--print-effect-summaries`, and `--explain-optimization`. Output is
 deterministic and distinguishes trusted from proven evidence.

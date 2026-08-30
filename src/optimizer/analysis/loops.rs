@@ -98,7 +98,7 @@ pub fn analyze_natural_loops(function: &KirFunction) -> NaturalLoopAnalysis {
     }
     let inductions = loops
         .iter()
-        .flat_map(|loop_info| detect_inductions(function, loop_info, &predecessors))
+        .flat_map(|loop_info| detect_inductions(function, loop_info))
         .collect();
     NaturalLoopAnalysis {
         loops,
@@ -107,11 +107,7 @@ pub fn analyze_natural_loops(function: &KirFunction) -> NaturalLoopAnalysis {
     }
 }
 
-fn detect_inductions(
-    function: &KirFunction,
-    loop_info: &NaturalLoop,
-    predecessors: &BTreeMap<BlockId, Vec<BlockId>>,
-) -> Vec<InductionVariable> {
+fn detect_inductions(function: &KirFunction, loop_info: &NaturalLoop) -> Vec<InductionVariable> {
     let Some(header) = function
         .blocks
         .iter()
@@ -135,46 +131,57 @@ fn detect_inductions(
             } else {
                 return None;
             };
-            let incoming = predecessors
-                .get(&header.id)?
+            let incoming = incoming_edges(function, header.id)
+                .into_iter()
+                .map(|(predecessor, edge)| edge.args.get(index).map(|value| (predecessor, *value)))
+                .collect::<Option<Vec<_>>>()?;
+            let starts = incoming
                 .iter()
-                .filter_map(|predecessor| {
-                    edge_to(function, *predecessor, header.id)
-                        .and_then(|edge| edge.args.get(index))
-                        .map(|value| (*predecessor, *value))
-                })
-                .collect::<Vec<_>>();
-            let (entry, transfer) = incoming.iter().fold((None, None), |state, incoming| {
-                if loop_info.blocks.binary_search(&incoming.0).is_ok() {
-                    (state.0, Some(*incoming))
-                } else {
-                    (Some(*incoming), state.1)
+                .filter(|(block, _)| loop_info.blocks.binary_search(block).is_err())
+                .map(|(_, value)| resolve_constant(function, *value))
+                .collect::<Option<Vec<_>>>()?;
+            let start = starts.first()?.clone();
+            if starts.iter().any(|value| value != &start)
+                || super::ScalarValue::constant(type_node, start.clone()).is_err()
+            {
+                return None;
+            }
+            let mut step = None;
+            for (_, value) in incoming
+                .iter()
+                .filter(|(block, _)| loop_info.blocks.binary_search(block).is_ok())
+            {
+                let transfer = defining_instruction(function, *value)?;
+                if transfer.results.first()?.value != *value {
+                    return None;
                 }
-            });
-            let start = resolve_constant(function, entry?.1)?;
-            let transfer = defining_instruction(function, transfer?.1)?;
-            let KirInstructionKind::Binary {
-                op, left, right, ..
-            } = transfer.kind
-            else {
-                return None;
-            };
-            let left = canonical_loop_param(function, loop_info, header, param, left);
-            let right = canonical_loop_param(function, loop_info, header, param, right);
-            let step = if left == param.value {
-                resolve_constant(function, right)?
-            } else if right == param.value && op == MirBinaryOp::Add {
-                resolve_constant(function, left)?
-            } else {
-                return None;
-            };
-            let step = match op {
-                MirBinaryOp::Add => step,
-                MirBinaryOp::Sub if left == param.value => -step,
-                _ => return None,
-            };
-            let bound =
-                normalize_loop_invariant_bound(function, loop_info, header, predecessors, bound);
+                let KirInstructionKind::Binary {
+                    op, left, right, ..
+                } = transfer.kind
+                else {
+                    return None;
+                };
+                let next_step = if value_is_forwarded_from(function, left, param.value) {
+                    let amount = resolve_constant(function, right)?;
+                    match op {
+                        MirBinaryOp::Add => amount,
+                        MirBinaryOp::Sub => -amount,
+                        _ => return None,
+                    }
+                } else if op == MirBinaryOp::Add
+                    && value_is_forwarded_from(function, right, param.value)
+                {
+                    resolve_constant(function, left)?
+                } else {
+                    return None;
+                };
+                if step.as_ref().is_some_and(|step| step != &next_step) {
+                    return None;
+                }
+                step = Some(next_step);
+            }
+            let step = step?;
+            let bound = normalize_loop_invariant_bound(function, loop_info, header, bound);
             Some(InductionVariable {
                 header: header.id,
                 value: param.value,
@@ -194,44 +201,57 @@ fn detect_inductions(
         .collect()
 }
 
-fn canonical_loop_param(
-    function: &KirFunction,
-    loop_info: &NaturalLoop,
-    header: &crate::KirBlock,
-    induction: &crate::KirBlockParam,
-    value: ValueId,
-) -> ValueId {
-    if value == induction.value {
-        return value;
-    }
-    function
-        .blocks
-        .iter()
-        .filter(|block| loop_info.blocks.binary_search(&block.id).is_ok())
-        .flat_map(|block| &block.params)
-        .find(|param| {
-            param.value == value
-                && param.slot == induction.slot
-                && param.type_node == induction.type_node
-        })
-        .and_then(|_| {
-            header
+fn value_is_forwarded_from(function: &KirFunction, value: ValueId, origin: ValueId) -> bool {
+    let mut pending = vec![value];
+    let mut visited = BTreeSet::new();
+    let mut reaches_origin = false;
+    while let Some(value) = pending.pop() {
+        if value == origin {
+            reaches_origin = true;
+            continue;
+        }
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
                 .params
                 .iter()
-                .find(|param| param.slot == induction.slot)
-                .map(|param| param.value)
-        })
-        .unwrap_or(value)
+                .position(|param| param.value == value)
+                .map(|index| (block, index))
+        }) {
+            let edges = incoming_edges(function, block.id);
+            if edges.is_empty() {
+                return false;
+            }
+            for (_, edge) in edges {
+                let Some(value) = edge.args.get(index) else {
+                    return false;
+                };
+                pending.push(*value);
+            }
+        } else if let Some(crate::KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = defining_instruction(function, value)
+        {
+            pending.push(*value);
+        } else {
+            return false;
+        }
+    }
+    // Cyclic forwarding must reach a real source, and every noncyclic input must
+    // reach that same source. Source-language slot names are not SSA evidence.
+    reaches_origin
 }
 
 fn normalize_loop_invariant_bound(
     function: &KirFunction,
     loop_info: &NaturalLoop,
     header: &crate::KirBlock,
-    predecessors: &BTreeMap<BlockId, Vec<BlockId>>,
     bound: ValueId,
 ) -> ValueId {
-    let Some((index, bound_param)) = header
+    let Some((index, _)) = header
         .params
         .iter()
         .enumerate()
@@ -239,38 +259,24 @@ fn normalize_loop_invariant_bound(
     else {
         return bound;
     };
-    let incoming = predecessors
-        .get(&header.id)
+    let incoming = incoming_edges(function, header.id)
         .into_iter()
-        .flatten()
-        .filter_map(|predecessor| {
-            edge_to(function, *predecessor, header.id)
-                .and_then(|edge| edge.args.get(index))
-                .map(|value| (*predecessor, *value))
-        })
+        .filter_map(|(predecessor, edge)| edge.args.get(index).map(|value| (predecessor, *value)))
         .collect::<Vec<_>>();
-    let unchanged_backedges = incoming
+    let Some((_, entry)) = incoming
         .iter()
-        .filter(|(predecessor, _)| loop_info.blocks.binary_search(predecessor).is_ok())
-        .all(|(_, value)| {
-            function
-                .blocks
-                .iter()
-                .filter(|block| loop_info.blocks.binary_search(&block.id).is_ok())
-                .flat_map(|block| &block.params)
-                .any(|param| {
-                    param.value == *value
-                        && param.slot == bound_param.slot
-                        && param.type_node == bound_param.type_node
-                })
-        });
-    if !unchanged_backedges {
-        return bound;
-    }
-    incoming
-        .into_iter()
         .find(|(predecessor, _)| loop_info.blocks.binary_search(predecessor).is_err())
-        .map_or(bound, |(_, value)| value)
+    else {
+        return bound;
+    };
+    if incoming
+        .iter()
+        .all(|(_, value)| value_is_forwarded_from(function, *value, *entry))
+    {
+        *entry
+    } else {
+        bound
+    }
 }
 
 fn header_comparison(
@@ -345,17 +351,24 @@ fn successor_ids(terminator: &KirTerminator) -> Vec<BlockId> {
     }
 }
 
-fn edge_to(function: &KirFunction, source: BlockId, target: BlockId) -> Option<&crate::KirEdge> {
-    let block = function.blocks.iter().find(|block| block.id == source)?;
-    match &block.terminator {
-        KirTerminator::Return { .. } => None,
-        KirTerminator::Jump { edge } => (edge.target == target).then_some(edge),
-        KirTerminator::Branch {
-            then_edge,
-            else_edge,
-            ..
-        } => [then_edge, else_edge]
-            .into_iter()
-            .find(|edge| edge.target == target),
-    }
+fn incoming_edges(function: &KirFunction, target: BlockId) -> Vec<(BlockId, &crate::KirEdge)> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| {
+            let edges = match &block.terminator {
+                KirTerminator::Return { .. } => Vec::new(),
+                KirTerminator::Jump { edge } => vec![edge],
+                KirTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                } => vec![then_edge, else_edge],
+            };
+            edges
+                .into_iter()
+                .filter(move |edge| edge.target == target)
+                .map(move |edge| (block.id, edge))
+        })
+        .collect()
 }

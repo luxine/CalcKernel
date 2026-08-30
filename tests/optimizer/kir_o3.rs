@@ -143,6 +143,23 @@ fn loop_analysis_should_build_nested_natural_loop_tree_with_inductions() {
 }
 
 #[test]
+fn loop_induction_should_check_every_latch_and_intervening_assignment() {
+    for source in [
+        "export fn mixed(n: u32, flag: bool) -> u32 { let i: u32 = 0; while i < n { if flag { i = i + 2; continue; } i = i + 1; } return i; }",
+        "export fn replaced(n: u32, flag: bool) -> u32 { let i: u32 = 0; while i < n { if flag { i = 4294967295; } i = i + 1; } return i; }",
+    ] {
+        let (kir, _) = build(source, KirOverflowMode::Checked);
+        let analysis = analyze_natural_loops(&kir.functions[0]);
+        assert_eq!(analysis.loops.len(), 1);
+        assert!(
+            analysis.inductions.is_empty(),
+            "a recurrence must cover every real SSA path:\n{}\n{analysis:?}",
+            print_kir_module(&kir)
+        );
+    }
+}
+
+#[test]
 fn loop_licm_should_hoist_only_modular_pure_invariants() {
     let (kir, contracts) = build(
         r#"

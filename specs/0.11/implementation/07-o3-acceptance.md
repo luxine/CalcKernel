@@ -43,3 +43,25 @@
   全部通过 verifier，未新增 SIMD/unroll/versioning/specialization KIR operation。
 - 本文件“必须通过”第 1–8 项全部通过；另执行 `cargo test --locked`，默认特性全仓
   326 个测试通过。
+
+## I18 循环输入/不变量绑定的局部复验（2026-08-30，尚非阶段通过）
+
+- 本节对应 `optimizer(stage-07): bind induction facts to all incoming SSA edges`，parent
+  为 `cf9dc0af5dc9110b550a7ab080528ec60080edef`。具体反例见 I18 第六部分，规范与验收
+  门槛未改动。
+- 实际 red 之一：有 +2/+1 两条 latch 的循环错误报告 step=1。现检查所有入口和回边，
+  并以真实 SSA 转发替换 slot 名推断。混合步长/中间重赋值的近邻保持保守，原嵌套和
+  一致多 latch 正例、LICM、canonical slice 检查消除仍通过；loop filter 为 8/8。
+- 实际 red 之二：真实回边 i+1，却用未参与回传的 i+0 证明 i 始终等于 0，独立 checker
+  原来错误接受。现每条 backedge 必须绑定声明 transfer 的正确类型首结果；该错误证书
+  拒绝，真实回传 i+0 的合法近邻接受。Debug/release proof filter 均为 6/6。
+- 顺序全量执行 `cargo +1.90.0 test --locked` 与
+  `cargo +1.90.0 test --locked --all-features`，411/532 项全部通过（Native 92、CLI 21）；
+  all-feature Clippy、fmt、diff check 通过。环境为 Rust 1.90.0 / AArch64 macOS /
+  LLVM+Clang 22.1.8，沿用阶段 05 的固定 overlay identity。
+- 默认、全特性与 release proof 日志 SHA-256 分别为
+  `2d6717080d1693324c23e9fdb81e2ddcc559c88d66f13940e8556a8053503bf0`、
+  `d577558c42a2ffd2e8fc8171d396c1ceb7f22833f3af1fba5719271a156cc930`、
+  `2c7b76eecf4ad4f60cf5bdbe2647e593173b8b269f02b685962f04aab9abd5ac`。
+- 本节只验收上述输入绑定修复。实际 induction simplification、guard loop checker 的
+  独立性、irreducible/budget 及完整阶段任务仍打开；也未重跑或代签 I14/I19/I20 性能门槛。

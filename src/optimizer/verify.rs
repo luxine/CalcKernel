@@ -1736,7 +1736,7 @@ fn loop_invariant_matches(
     else {
         return false;
     };
-    if claim.value != phi {
+    if claim.value != phi || claim.failure != ScalarFailure::None {
         return false;
     }
     let Some(type_node) = value_integer_type(function, phi) else {
@@ -1746,8 +1746,9 @@ fn loop_invariant_matches(
         return false;
     };
     let dominators = compute_kir_dominators(function);
-    let entry_values = predecessor_edges(function, header)
-        .into_iter()
+    let incoming = predecessor_edges(function, header);
+    let entry_values = incoming
+        .iter()
         .filter(|(predecessor, _)| !dominators.dominates(header, *predecessor))
         .filter_map(|(_, edge)| edge.args.get(phi_index).copied())
         .collect::<Vec<_>>();
@@ -1768,6 +1769,21 @@ fn loop_invariant_matches(
     else {
         return false;
     };
+    let Some(result) = instruction.results.first() else {
+        return false;
+    };
+    let backedges = incoming
+        .iter()
+        .filter(|(predecessor, _)| dominators.dominates(header, *predecessor))
+        .collect::<Vec<_>>();
+    if backedges.is_empty()
+        || super::IntegerType::from_mir(&result.type_node) != Some(type_node)
+        || backedges
+            .iter()
+            .any(|(_, edge)| edge.args.get(phi_index) != Some(&result.value))
+    {
+        return false;
+    }
     let KirInstructionKind::Binary {
         op,
         left,

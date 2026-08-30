@@ -69,6 +69,11 @@ guard，证据格式或推导失效则编译失败。后续常量折叠、GVN、
 另行运行的完整 scalar product-domain analysis 仍按 safety-check consumer 的需求执行；
 无 guard 的函数不会构造无人消费的 range result。
 
+归纳变量识别检查每条入口和回边，要求所有输入路径具有相同初值和递推关系。透明值与
+不变边界沿真实 SSA 参数和 Copy 追踪，不能根据源变量名猜测。步长不同或中间重新赋值
+时保持保守。标量循环不变量证书必须指明每条回边实际传递的 transfer 结果，不能借用
+一个算术上合适但未参与回传的 operation。
+
 `emit-kir`、`--print-facts`、`--print-effect-summaries`、
 `--explain-optimization` 提供 deterministic KIR inspection，并区分 trusted/proven evidence。
 

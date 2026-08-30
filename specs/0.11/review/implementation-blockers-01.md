@@ -474,6 +474,23 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 本部分关闭阶段 05 的实际传播缺口。阶段 07 的实际 induction transform、loop 证书
   entry/transfer 独立复核与相关近邻反例仍需完成；I14/I19 和同 SHA 全 CI 仍打开。
 
+### I18 第六部分：循环输入与 scalar invariant 证书的实际反例（阶段 07 仍打开）
+
+- `while i < n { if flag { i = i + 2; continue; } i = i + 1; }` 的合法 checked KIR
+  被报告为 step=1：旧 detector 覆盖先前 latch，只使用最后一条 transfer。现逐条核对
+  所有入口初值和回边步长；混合步长与循环内分支重赋值保持 unknown。
+- 旧 `canonical_loop_param` 与 bound normalization 依据 slot 名称识别同值；现沿实际
+  SSA 输入和 Copy 遍历，所有终端都必须到达同一 origin，循环转发必须有真实 origin。
+  每条分支边保留，即使二者有相同 predecessor/target 也不合并。嵌套及一致多 latch
+  正例继续通过，不通过禁用自然循环分析规避反例。
+- 独立 scalar `LoopInvariant` checker 存在可复现错误接受：合法 KIR 的真实回边传递
+  `i + 1`，另有未参与回传的 `i + 0`；证书却可借后者证明 `i` 始终为 0。修复逐条核对
+  实际 backedge argument 必须等于 certificate transfer 的首结果，并验证类型和
+  failure=None。错误绑定拒绝；把真实回边改为 `i + 0` 的合法近邻接受。
+- 这两项针对性 red 已转 green。仍需完成实际 `induction-simplify` transform、guard
+  loop certificate 不调用优化分析的独立验证、irreducible/fixed-budget 等原阶段 07
+  要求；不得用本批局部修复签收阶段 07。
+
 ## I20：布尔/checked 传播后的 optimizer latency 门槛失败（未关闭）
 
 - 阶段 05 本批代码通过功能与证书验收后的首次原 performance gate 返回 exit 1：

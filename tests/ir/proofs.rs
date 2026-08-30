@@ -264,6 +264,77 @@ fn mutation_stale_fact_origin_and_wrong_contract_instance_should_be_rejected() {
 }
 
 #[test]
+fn proof_loop_invariant_should_require_the_claimed_transfer_on_every_backedge() {
+    for binds_backedge in [false, true] {
+        let (_, mut kir) = build(
+            "export fn count(n: u32) -> u32 { let i: u32 = 0; while i < n { let unused: u32 = i + 0; i = i + 1; } return i; }",
+        );
+        let function = &mut kir.functions[0];
+        let header = calckernel::analyze_natural_loops(function).loops[0].header;
+        let header_block = function
+            .blocks
+            .iter()
+            .find(|block| block.id == header)
+            .expect("header");
+        let (phi_index, param) = header_block
+            .params
+            .iter()
+            .enumerate()
+            .find(|(_, param)| param.slot == "i")
+            .expect("induction phi");
+        let phi = param.value;
+        let instruction = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find(|instruction| matches!(instruction.kind, KirInstructionKind::Binary { .. }))
+            .expect("unused i+0");
+        let KirInstructionKind::Binary { left, .. } = &mut instruction.kind else {
+            unreachable!()
+        };
+        *left = phi;
+        let transfer = instruction.id;
+        let transferred_value = instruction.results[0].value;
+        if binds_backedge {
+            let entry = function.blocks[0].id;
+            for block in &mut function.blocks {
+                if block.id != entry
+                    && let calckernel::KirTerminator::Jump { edge } = &mut block.terminator
+                    && edge.target == header
+                {
+                    edge.args[phi_index] = transferred_value;
+                }
+            }
+        }
+        let mut proofs = ProofArena::new(0);
+        proofs
+            .try_insert(
+                FactUseSite {
+                    function: function.id,
+                    block: header,
+                    instruction: None,
+                    contract_instance: None,
+                },
+                vec![ProofStep::LoopInvariant {
+                    header,
+                    phi,
+                    transfer,
+                    claim: ScalarClaim::new(phi, interval(0, 0), ScalarFailure::None),
+                }],
+                ProofStepId::from_index(0),
+            )
+            .expect("closed proof draft");
+        assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+        let result = verify_proof_arena(&kir, &FactArena::new(0), None, &proofs, 0);
+        assert_eq!(
+            result.errors.is_empty(),
+            binds_backedge,
+            "an unused i+0 must not certify a loop whose actual backedge is i+1: {result:?}"
+        );
+    }
+}
+
+#[test]
 fn proof_checker_should_reject_invalid_loop_invariant_and_budget_identity() {
     let (_, kir) = build(
         r#"
