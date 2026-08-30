@@ -325,6 +325,90 @@ fn scalar_checked_operations_should_retain_failure_until_range_proves_safety() {
 }
 
 #[test]
+fn scalar_exact_remainders_should_keep_the_precise_value_and_failure_state() {
+    for type_node in [
+        IntegerType::I32,
+        IntegerType::I64,
+        IntegerType::U32,
+        IntegerType::U64,
+    ] {
+        let mut cases = vec![(42, 7, 0), (43, 7, 1), (0, 7, 0)];
+        if matches!(type_node, IntegerType::I32 | IntegerType::I64) {
+            cases.extend([(-43, 7, -1), (43, -7, 1), (-43, -7, -1)]);
+        }
+        for (left, right, expected) in cases {
+            let left = ScalarValue::constant(type_node, int(left)).expect("left");
+            let right = ScalarValue::constant(type_node, int(right)).expect("right");
+            for semantics in [
+                KirArithmeticSemantics::Checked,
+                KirArithmeticSemantics::Modular,
+            ] {
+                let result =
+                    scalar_binary(MirBinaryOp::Mod, semantics, &left, &right).expect("remainder");
+                assert_eq!(result.exact_value(), Some(&int(expected)));
+                assert_eq!(result.failure(), ScalarFailure::None);
+            }
+        }
+    }
+}
+
+#[test]
+fn scalar_division_by_zero_should_be_a_runtime_failure_not_a_domain_error() {
+    for type_node in [
+        IntegerType::I32,
+        IntegerType::I64,
+        IntegerType::U32,
+        IntegerType::U64,
+    ] {
+        let numerator = ScalarValue::constant(type_node, int(42)).expect("numerator");
+        let zero = ScalarValue::constant(type_node, int(0)).expect("zero");
+        for semantics in [
+            KirArithmeticSemantics::Checked,
+            KirArithmeticSemantics::Modular,
+        ] {
+            for op in [MirBinaryOp::Div, MirBinaryOp::Mod] {
+                let result = scalar_binary(op, semantics, &numerator, &zero)
+                    .expect("runtime division failure must remain representable");
+                assert_eq!(result.failure(), ScalarFailure::Always);
+                assert!(result.is_unknown());
+                assert_eq!(result.exact_value(), None);
+            }
+        }
+    }
+}
+
+#[test]
+fn scalar_division_failure_should_keep_signed_overflow_and_safe_neighbors_distinct() {
+    for (type_node, minimum_value) in [
+        (IntegerType::I32, i32::MIN as i128),
+        (IntegerType::I64, i64::MIN as i128),
+    ] {
+        let minimum = ScalarValue::constant(type_node, int(minimum_value)).expect("minimum");
+        let minus_one = ScalarValue::constant(type_node, int(-1)).expect("minus one");
+        let one = ScalarValue::constant(type_node, int(1)).expect("one");
+        for semantics in [
+            KirArithmeticSemantics::Checked,
+            KirArithmeticSemantics::Modular,
+        ] {
+            for op in [MirBinaryOp::Div, MirBinaryOp::Mod] {
+                let overflow = scalar_binary(op, semantics, &minimum, &minus_one)
+                    .expect("signed division overflow");
+                assert_eq!(overflow.failure(), ScalarFailure::Always);
+                assert!(overflow.is_unknown());
+                let safe = scalar_binary(op, semantics, &minimum, &one).expect("safe neighbor");
+                assert_eq!(safe.failure(), ScalarFailure::None);
+                let expected = if op == MirBinaryOp::Div {
+                    int(minimum_value)
+                } else {
+                    int(0)
+                };
+                assert_eq!(safe.exact_value(), Some(&expected));
+            }
+        }
+    }
+}
+
+#[test]
 fn scalar_strict_comparison_and_branch_refinement_should_be_path_sensitive() {
     let value = ScalarValue::from_interval(
         IntegerType::I32,

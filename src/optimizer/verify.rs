@@ -338,7 +338,7 @@ fn verify_proven_fact(
 enum CheckedStep {
     Scalar(ScalarClaim, ScalarProofScope),
     Fact(FactPredicate, ScalarProofScope),
-    Boolean,
+    Boolean(ValueId, bool, ScalarProofScope),
     GuardSafety,
 }
 
@@ -587,7 +587,86 @@ fn check_step(
                     "integer comparison claim does not match local transfer",
                 ));
             }
-            Ok(CheckedStep::Boolean)
+            Ok(CheckedStep::Boolean(
+                *value,
+                *result,
+                ScalarProofScope::Block(block.id),
+            ))
+        }
+        ProofStep::BooleanTransfer {
+            instruction,
+            inputs,
+            value,
+            result,
+        } => {
+            let Some((owner, block, instruction)) = find_instruction(module, *instruction) else {
+                return Err(prefix("boolean instruction is missing"));
+            };
+            let inputs = inputs
+                .iter()
+                .map(|input| {
+                    if checked
+                        .get(input.index() as usize)
+                        .is_none_or(|step| !step_scope_allows_block(step, function, block.id))
+                    {
+                        return Err(prefix("boolean premise is outside its proven scope"));
+                    }
+                    checked_boolean(checked, *input, &prefix)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if owner.id != function.id
+                || !boolean_transfer_matches(instruction, &inputs, *value, *result)
+            {
+                return Err(prefix("boolean claim does not match local transfer"));
+            }
+            Ok(CheckedStep::Boolean(
+                *value,
+                *result,
+                ScalarProofScope::Block(block.id),
+            ))
+        }
+        ProofStep::BooleanPhiJoin {
+            block,
+            inputs,
+            value,
+            result,
+        } => {
+            let target = function
+                .blocks
+                .iter()
+                .find(|candidate| candidate.id == *block)
+                .ok_or_else(|| prefix("boolean phi block is missing"))?;
+            let index = target
+                .params
+                .iter()
+                .position(|param| {
+                    param.value == *value
+                        && param.type_node
+                            == crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+                })
+                .ok_or_else(|| prefix("boolean phi parameter is missing or not bool"))?;
+            let edges = predecessor_edges(function, *block);
+            if edges.is_empty() || edges.len() != inputs.len() {
+                return Err(prefix("boolean phi does not cover every incoming edge"));
+            }
+            for ((predecessor, edge), input) in edges.iter().zip(inputs) {
+                let (input_value, input_result) = checked_boolean(checked, *input, &prefix)?;
+                if edge.args.get(index) != Some(&input_value)
+                    || input_result != *result
+                    || checked.get(input.index() as usize).is_none_or(|step| {
+                        !step_scope_allows_edge(step, function, *predecessor, edge)
+                    })
+                {
+                    return Err(prefix(
+                        "boolean phi value or scope does not cover every incoming edge",
+                    ));
+                }
+            }
+            Ok(CheckedStep::Boolean(
+                *value,
+                *result,
+                ScalarProofScope::Block(*block),
+            ))
         }
         ProofStep::BranchRefinement {
             predecessor,
@@ -745,7 +824,7 @@ fn checked_scalar<'a>(
 ) -> Result<&'a ScalarClaim, String> {
     match checked.get(index as usize) {
         Some(CheckedStep::Scalar(claim, _)) => Ok(claim),
-        Some(CheckedStep::Fact(..) | CheckedStep::Boolean | CheckedStep::GuardSafety) => {
+        Some(CheckedStep::Fact(..) | CheckedStep::Boolean(..) | CheckedStep::GuardSafety) => {
             Err(prefix("step dependency is not a scalar claim"))
         }
         None => Err(prefix("step dependency is missing")),
@@ -786,7 +865,10 @@ fn step_scope_allows_block(
     function: &KirFunction,
     block: crate::BlockId,
 ) -> bool {
-    let (CheckedStep::Scalar(_, scope) | CheckedStep::Fact(_, scope)) = step else {
+    let (CheckedStep::Scalar(_, scope)
+    | CheckedStep::Fact(_, scope)
+    | CheckedStep::Boolean(_, _, scope)) = step
+    else {
         return false;
     };
     match scope {
@@ -1355,6 +1437,58 @@ fn binary_transfer_matches(
     scalar_binary(op, semantics, &left, &right).is_ok_and(|result| {
         claim.interval == *result.interval() && claim.failure == result.failure()
     })
+}
+
+fn checked_boolean(
+    checked: &[CheckedStep],
+    id: super::ProofStepId,
+    prefix: &impl Fn(&str) -> String,
+) -> Result<(ValueId, bool), String> {
+    match checked.get(id.index() as usize) {
+        Some(CheckedStep::Boolean(value, result, _)) => Ok((*value, *result)),
+        _ => Err(prefix("boolean premise is missing or not a boolean claim")),
+    }
+}
+
+fn boolean_transfer_matches(
+    instruction: &KirInstruction,
+    inputs: &[(ValueId, bool)],
+    value: ValueId,
+    expected: bool,
+) -> bool {
+    let [result] = instruction.results.as_slice() else {
+        return false;
+    };
+    if result.value != value
+        || result.type_node != crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+        || instruction.effect.is_some()
+        || instruction.memory.is_some()
+    {
+        return false;
+    }
+    match (&instruction.kind, inputs) {
+        (KirInstructionKind::ConstBool { value }, []) => *value == expected,
+        (KirInstructionKind::Copy { value }, [(input, result)]) => {
+            value == input && *result == expected
+        }
+        (
+            KirInstructionKind::Unary {
+                op: MirUnaryOp::Not,
+                operand,
+                ..
+            },
+            [(input, result)],
+        ) => operand == input && *result != expected,
+        (
+            KirInstructionKind::Compare { op, left, right },
+            [(left_id, left_value), (right_id, right_value)],
+        ) if left == left_id && right == right_id => match op {
+            crate::MirCompareOp::Eq => (*left_value == *right_value) == expected,
+            crate::MirCompareOp::Ne => (*left_value != *right_value) == expected,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn copy_transfer_matches(

@@ -298,8 +298,12 @@ pub fn scalar_binary(
         ));
     }
     let type_node = left.type_node;
-    let mathematical = mathematical_interval(op, &left.interval, &right.interval)?;
     let division_failure = division_failure(op, type_node, left, right);
+    // A guaranteed failure has no numeric result to bound (notably remainder by zero).
+    if division_failure == ScalarFailure::Always {
+        return Ok(ScalarValue::unknown(type_node).with_failure(division_failure));
+    }
+    let mathematical = mathematical_interval(op, &left.interval, &right.interval)?;
     match semantics {
         KirArithmeticSemantics::Checked => {
             let range_failure = range_failure(type_node, &mathematical);
@@ -821,6 +825,9 @@ fn mathematical_interval(
             )
         }
         MirBinaryOp::Mod => {
+            if left.is_exact() && right.is_exact() {
+                return exact_binary(op, &left.lower, &right.lower).map(ScalarInterval::exact);
+            }
             let maximum = right
                 .lower
                 .clone()

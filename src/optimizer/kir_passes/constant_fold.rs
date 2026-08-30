@@ -30,7 +30,7 @@ struct PhiConstantRewrite {
     function: FunctionId,
     block: BlockId,
     value: ValueId,
-    constant: String,
+    constant: FoldedConstant,
     proof: ProofId,
     step: ProofStepId,
 }
@@ -215,7 +215,7 @@ fn propose_with_contracts(
             continue;
         };
         let mut values = BTreeMap::<ValueId, (ScalarValue, ProofStepId)>::new();
-        let mut booleans = BTreeSet::new();
+        let mut booleans = BTreeMap::<ValueId, (bool, ProofStepId)>::new();
         let mut steps = Vec::new();
         let mut pending = Vec::new();
         let mut remaining = ScalarAnalysisBudget::for_function(function, config).max_steps();
@@ -295,12 +295,50 @@ fn propose_with_contracts(
                 ScalarWorkItem::Phi { block, index } => {
                     let block = &function.blocks[block];
                     let param = &block.params[index];
-                    if IntegerType::from_mir(&param.type_node).is_none() {
-                        continue;
-                    }
                     let Some(edges) = incoming.get(&block.id) else {
                         continue;
                     };
+                    if param.type_node
+                        == crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+                    {
+                        if booleans.contains_key(&param.value) {
+                            continue;
+                        }
+                        let inputs = edges
+                            .iter()
+                            .map(|(_, _, edge)| {
+                                edge.args
+                                    .get(index)
+                                    .and_then(|value| booleans.get(value))
+                                    .copied()
+                            })
+                            .collect::<Option<Vec<_>>>();
+                        let Some(inputs) = inputs else {
+                            continue;
+                        };
+                        let Some(&(constant, _)) = inputs.first() else {
+                            continue;
+                        };
+                        if inputs.iter().any(|(value, _)| *value != constant) {
+                            continue;
+                        }
+                        let step = ProofStepId::from_index(
+                            u32::try_from(steps.len())
+                                .map_err(|_| "SCCP proof exceeds u32 identity space")?,
+                        );
+                        steps.push(ProofStep::BooleanPhiJoin {
+                            block: block.id,
+                            inputs: inputs.iter().map(|(_, step)| *step).collect(),
+                            value: param.value,
+                            result: constant,
+                        });
+                        booleans.insert(param.value, (constant, step));
+                        worklist.value_changed(param.value);
+                        continue;
+                    }
+                    if IntegerType::from_mir(&param.type_node).is_none() {
+                        continue;
+                    }
                     let inputs = edges
                         .iter()
                         .map(|(_, _, edge)| {
@@ -371,10 +409,21 @@ fn propose_with_contracts(
                 }
                 ScalarWorkItem::Instruction { block, index } => {
                     let instruction = &function.blocks[block].instructions[index];
-                    let [result] = instruction.results.as_slice() else {
+                    let Some(result) = instruction.results.first() else {
                         continue;
                     };
-                    if booleans.contains(&result.value) {
+                    if instruction.results.len() != 1
+                        && !matches!(
+                            instruction.kind,
+                            KirInstructionKind::Binary {
+                                semantics: KirArithmeticSemantics::Checked,
+                                ..
+                            }
+                        )
+                    {
+                        continue;
+                    }
+                    if booleans.contains_key(&result.value) {
                         continue;
                     }
                     if instruction.effect.is_some() || instruction.memory.is_some() {
@@ -385,6 +434,25 @@ fn propose_with_contracts(
                             .map_err(|_| "SCCP proof exceeds u32 identity space")?,
                     );
                     let pending_start = pending.len();
+                    if let Some((constant, inputs)) = boolean_transfer(instruction, &booleans) {
+                        steps.push(ProofStep::BooleanTransfer {
+                            instruction: instruction.id,
+                            inputs,
+                            value: result.value,
+                            result: constant,
+                        });
+                        if !matches!(instruction.kind, KirInstructionKind::ConstBool { .. }) {
+                            pending.push((
+                                instruction.id,
+                                result.value,
+                                FoldedConstant::Boolean(constant),
+                                step,
+                            ));
+                        }
+                        booleans.insert(result.value, (constant, step));
+                        worklist.value_changed(result.value);
+                        continue;
+                    }
                     if let KirInstructionKind::Compare { op, left, right } = instruction.kind {
                         let (Some((left, left_step)), Some((right, right_step))) =
                             (values.get(&left), values.get(&right))
@@ -411,7 +479,8 @@ fn propose_with_contracts(
                             FoldedConstant::Boolean(constant),
                             step,
                         ));
-                        booleans.insert(result.value);
+                        booleans.insert(result.value, (constant, step));
+                        worklist.value_changed(result.value);
                         continue;
                     }
                     let Some(ty) = IntegerType::from_mir(&result.type_node) else {
@@ -441,20 +510,21 @@ fn propose_with_contracts(
                             op,
                             left,
                             right,
-                            semantics: KirArithmeticSemantics::Modular,
+                            semantics,
                         } => {
                             let (Some((left, left_step)), Some((right, right_step))) =
                                 (values.get(left), values.get(right))
                             else {
                                 continue;
                             };
-                            let value =
-                                scalar_binary(*op, KirArithmeticSemantics::Modular, left, right)
-                                    .map_err(|error| error.to_string())?;
+                            let value = scalar_binary(*op, *semantics, left, right)
+                                .map_err(|error| error.to_string())?;
                             if value.failure() != ScalarFailure::None {
                                 continue;
                             }
-                            if let Some(constant) = value.exact_value() {
+                            if *semantics == KirArithmeticSemantics::Modular
+                                && let Some(constant) = value.exact_value()
+                            {
                                 pending.push((
                                     instruction.id,
                                     result.value,
@@ -530,7 +600,16 @@ fn propose_with_contracts(
                         function: function.id,
                         block: block.id,
                         value: param.value,
-                        constant: constant.to_string(),
+                        constant: FoldedConstant::Integer(constant.to_string()),
+                        proof,
+                        step: *step,
+                    });
+                } else if let Some((constant, step)) = booleans.get(&param.value) {
+                    phis.push(PhiConstantRewrite {
+                        function: function.id,
+                        block: block.id,
+                        value: param.value,
+                        constant: FoldedConstant::Boolean(*constant),
                         proof,
                         step: *step,
                     });
@@ -566,6 +645,36 @@ fn propose_with_contracts(
         rewrites,
         phis,
     })
+}
+
+fn boolean_transfer(
+    instruction: &crate::KirInstruction,
+    values: &BTreeMap<ValueId, (bool, ProofStepId)>,
+) -> Option<(bool, Vec<ProofStepId>)> {
+    match instruction.kind {
+        KirInstructionKind::ConstBool { value } => Some((value, Vec::new())),
+        KirInstructionKind::Copy { value } => values
+            .get(&value)
+            .map(|(value, step)| (*value, vec![*step])),
+        KirInstructionKind::Unary {
+            op: crate::MirUnaryOp::Not,
+            operand,
+            ..
+        } => values
+            .get(&operand)
+            .map(|(value, step)| (!value, vec![*step])),
+        KirInstructionKind::Compare { op, left, right } => {
+            let (left, left_step) = values.get(&left)?;
+            let (right, right_step) = values.get(&right)?;
+            let result = match op {
+                crate::MirCompareOp::Eq => left == right,
+                crate::MirCompareOp::Ne => left != right,
+                _ => return None,
+            };
+            Some((result, vec![*left_step, *right_step]))
+        }
+        _ => None,
+    }
 }
 
 fn use_site(function: FunctionId, block: BlockId) -> FactUseSite {
@@ -695,12 +804,20 @@ fn verify_and_apply_with_contracts(
                     && claim.interval.lower().to_string() == *constant
             }
             (
-                Some(ProofStep::IntegerComparison {
-                    instruction,
-                    value,
-                    result,
-                    ..
-                }),
+                Some(
+                    ProofStep::IntegerComparison {
+                        instruction,
+                        value,
+                        result,
+                        ..
+                    }
+                    | ProofStep::BooleanTransfer {
+                        instruction,
+                        value,
+                        result,
+                        ..
+                    },
+                ),
                 FoldedConstant::Boolean(constant),
             ) => {
                 *instruction == rewrite.instruction && *value == rewrite.value && result == constant
@@ -732,6 +849,10 @@ fn verify_and_apply_with_contracts(
                     ..
                 } | KirInstructionKind::Copy { .. }
                     | KirInstructionKind::Compare { .. }
+                    | KirInstructionKind::Unary {
+                        op: crate::MirUnaryOp::Not,
+                        ..
+                    }
             )
         {
             return Err(
@@ -830,18 +951,29 @@ fn prepare_phi_replacements(
         .ok_or("SCCP instruction identity space exhausted")?;
     for (offset, rewrite) in phis.iter().enumerate() {
         let proof = proofs.get(rewrite.proof).ok_or("missing SCCP phi proof")?;
-        let Some(ProofStep::PhiJoin { block, claim, .. }) =
-            proof.steps.get(rewrite.step.index() as usize)
-        else {
-            return Err("SCCP phi replacement has no phi certificate".to_string());
+        let bound = match (
+            proof.steps.get(rewrite.step.index() as usize),
+            &rewrite.constant,
+        ) {
+            (Some(ProofStep::PhiJoin { block, claim, .. }), FoldedConstant::Integer(constant)) => {
+                *block == rewrite.block
+                    && claim.value == rewrite.value
+                    && claim.failure == ScalarFailure::None
+                    && claim.interval.lower() == claim.interval.upper()
+                    && claim.interval.lower().to_string() == *constant
+            }
+            (
+                Some(ProofStep::BooleanPhiJoin {
+                    block,
+                    value,
+                    result,
+                    ..
+                }),
+                FoldedConstant::Boolean(constant),
+            ) => *block == rewrite.block && *value == rewrite.value && result == constant,
+            _ => false,
         };
-        if proof.use_site.function != rewrite.function
-            || *block != rewrite.block
-            || claim.value != rewrite.value
-            || claim.failure != ScalarFailure::None
-            || claim.interval.lower() != claim.interval.upper()
-            || claim.interval.lower().to_string() != rewrite.constant
-        {
+        if proof.use_site.function != rewrite.function || !bound {
             return Err("SCCP phi replacement does not match its certificate".to_string());
         }
         let (index, param) = module
@@ -868,8 +1000,11 @@ fn prepare_phi_replacements(
                 value: param.value,
                 type_node: param.type_node.clone(),
             }],
-            kind: KirInstructionKind::ConstInt {
-                value: rewrite.constant.clone(),
+            kind: match &rewrite.constant {
+                FoldedConstant::Integer(value) => KirInstructionKind::ConstInt {
+                    value: value.clone(),
+                },
+                FoldedConstant::Boolean(value) => KirInstructionKind::ConstBool { value: *value },
             },
             memory: None,
             effect: None,
@@ -917,13 +1052,137 @@ mod tests {
         )
     }
 
+    fn boolean_phi_module() -> KirModule {
+        module_from_source(
+            "export fn choose(flag: bool) -> bool { let selected: bool = false; if flag { selected = true; } else { selected = true; } return selected; }",
+        )
+    }
+
+    #[test]
+    fn boolean_certificate_should_reject_a_false_transfer_without_partial_mutation() {
+        let mut module = module_from_source("export fn negated() -> bool { return !true; }");
+        let before = module.clone();
+        let mut proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        let rewrite = proposals.rewrites.first().expect("not rewrite");
+        let proof = proposals.proofs.get_mut(rewrite.proof).expect("proof");
+        let ProofStep::BooleanTransfer { result, .. } =
+            &mut proof.steps[rewrite.step.index() as usize]
+        else {
+            panic!("boolean transfer")
+        };
+        *result = !*result;
+        assert!(
+            verify_and_apply_with_contracts(
+                &mut module,
+                None,
+                &proposals.proofs,
+                &proposals.rewrites,
+                &proposals.phis
+            )
+            .expect_err("forged truth value")
+            .contains("boolean claim")
+        );
+        assert_eq!(module, before);
+    }
+
+    #[test]
+    fn boolean_certificate_should_reject_missing_or_wrong_arm_phi_premises() {
+        for missing in [true, false] {
+            let mut module = boolean_phi_module();
+            let before = module.clone();
+            let mut proposals = propose_scalar_ranges(&module, None).expect("proposal");
+            let rewrite = proposals.phis.last().expect("join phi");
+            let proof = proposals.proofs.get_mut(rewrite.proof).expect("proof");
+            let ProofStep::BooleanPhiJoin { inputs, .. } =
+                &mut proof.steps[rewrite.step.index() as usize]
+            else {
+                panic!("boolean phi")
+            };
+            assert_eq!(inputs.len(), 2);
+            if missing {
+                inputs.pop();
+            } else {
+                inputs[1] = inputs[0];
+            }
+            assert!(
+                verify_and_apply_with_contracts(
+                    &mut module,
+                    None,
+                    &proposals.proofs,
+                    &proposals.rewrites,
+                    &proposals.phis
+                )
+                .expect_err("invalid phi")
+                .contains("every incoming edge")
+            );
+            assert_eq!(module, before);
+        }
+    }
+
+    #[test]
+    fn boolean_certificate_should_reject_a_wrong_phi_replacement_atomically() {
+        let mut module = boolean_phi_module();
+        let before = module.clone();
+        let mut proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        let rewrite = proposals.phis.last_mut().expect("join phi");
+        let FoldedConstant::Boolean(value) = &mut rewrite.constant else {
+            panic!("bool")
+        };
+        assert!(*value);
+        *value = false;
+        assert!(
+            verify_and_apply_with_contracts(
+                &mut module,
+                None,
+                &proposals.proofs,
+                &proposals.rewrites,
+                &proposals.phis
+            )
+            .expect_err("wrong replacement")
+            .contains("replacement does not match")
+        );
+        assert_eq!(module, before);
+    }
+
+    #[test]
+    fn boolean_certificate_should_preserve_live_phi_and_instruction_dependencies() {
+        let mut module = boolean_phi_module();
+        let before = module.clone();
+        let proposals = propose_scalar_ranges(&module, None).expect("proposal");
+        assert!(!proposals.phis.is_empty());
+        assert!(
+            !run_integer_constant_folding(&mut module, None, &proposals.proofs).expect("preserve")
+        );
+        assert_eq!(module, before);
+        assert!(verify_ranges(&module, &proposals.proofs).errors.is_empty());
+    }
+
+    #[test]
+    fn boolean_certificate_should_discard_budget_exhausted_proposals_deterministically() {
+        let module = boolean_phi_module();
+        for budget in [0, 1, 4] {
+            let proposals =
+                propose_with_contracts(&module, None, ScalarAnalysisConfig::with_max_steps(budget))
+                    .expect("bounded");
+            assert!(proposals.phis.is_empty());
+            assert!(proposals.rewrites.is_empty());
+            assert!(proposals.proofs.proofs().is_empty());
+        }
+        let first = propose_scalar_ranges(&module, None).expect("proposal");
+        let second = propose_scalar_ranges(&module, None).expect("proposal");
+        assert_eq!(first.proofs, second.proofs);
+        let printed = crate::print_proof_arena(&first.proofs);
+        assert!(printed.contains("boolean-phi") && printed.contains("boolean i"));
+    }
+
     #[test]
     fn constant_phi_rewrite_should_reject_a_wrong_value_before_any_instruction_mutation() {
         let mut module = phi_module();
         let before = module.clone();
         let mut proposals = propose_scalar_ranges(&module, None).expect("proposal");
         assert!(!proposals.rewrites.is_empty());
-        proposals.phis.last_mut().expect("constant phi").constant = "43".to_string();
+        proposals.phis.last_mut().expect("constant phi").constant =
+            FoldedConstant::Integer("43".to_string());
         let error = verify_and_apply_with_contracts(
             &mut module,
             None,

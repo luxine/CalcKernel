@@ -370,7 +370,7 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   schema-5 performance report：
   `68633dece0da43328bfaa376e1ccb465d059db6516f85172771314191988328b`。
 
-## I18：O1 propagation 与 O3 induction simplification 的实现验收缺口（未解决）
+## I18：O1 propagation 与 O3 induction simplification 的实现验收缺口（O1 已复验，O3 未解决）
 
 - 总验收复查发现 `run_sccp_range` 只生成 `ScalarAnalysisResult`，结果除了计数没有
   被改写消费者读取；O1 无 guard 的函数甚至不执行分析。`induction-simplify` 直接
@@ -456,6 +456,37 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   无 place/memory/父子关系引用的派生 region，仍保留无用 subslice 的失败检查。
 - 本批不等于阶段 05 完整签收。后续仍需核查布尔 Copy/phi 的条件传播、checked 双结果
   的下游分析，以及本阶段最终验收；阶段 07 与性能阻断也未关闭。
+
+### I18 第五部分：布尔与 checked 传播，阶段 05 签收
+
+- 布尔 Copy/取反未折叠和全 true phi 未剪枝的实际 red 已解决。新增独立布尔证书
+  绑定 value、真假、定义 scope 和全部输入边，不以 optimizer 的布尔缓存作验证依据。
+  整数比较结果进入同一稀疏队列；不同/未知 phi 输入、循环翻转值均保持原语义。
+- checked 二结果指令的首结果只在证明 failure=None 时提供下游范围，保留 checked
+  producer，guard 仍单独携证删除。safe `(20 + 22) == 42` 与路径 `(n + 1) < 9` 的 red
+  均转 green，不能证明安全的相邻分支仍保留失败检查。
+- 真实分析反例 `% 0` 暴露 failure 分类晚于区间构造；复诊确认并非语法或运行时契约
+  问题。现先返回 unknown+Always，消除非法区间错误和除零的虚假精确结果。非零常量
+  `%` 的另一个 red 通过精确余数计算解决，负数符号、四种整数类型和两个算术模式均验证。
+- 五项布尔证据故障/预算测试及全模式 C 执行对照通过。C 对照检查短路写入、循环真假、
+  首错、失败前后的 store 与结果槽。阶段 05 第 1–9 项全部通过，全量 default/all-feature
+  为 409/530，release library 29；哈希和环境见阶段 05 验收文末。
+- 本部分关闭阶段 05 的实际传播缺口。阶段 07 的实际 induction transform、loop 证书
+  entry/transfer 独立复核与相关近邻反例仍需完成；I14/I19 和同 SHA 全 CI 仍打开。
+
+## I20：布尔/checked 传播后的 optimizer latency 门槛失败（未关闭）
+
+- 阶段 05 本批代码通过功能与证书验收后的首次原 performance gate 返回 exit 1：
+  `example-dijkstra` KIR median `1456625 ns`，固定 V0.10 MIR 为 `350000 ns`，ratio
+  `4.1618x > 3x`。此前 CFG 批次同门槛记录为 `980583 ns`；不同测量轮次不直接等于
+  精确归因，新增工作量与测量条件均待诊断，不能先归咎于机器噪声。
+- 本轮 runtime 对照为 unchecked Clang mean `0.9987` / V0.10 ratio `1.0022`，checked
+  `0.9965` / `1.0019`，proof throughput `0.9830`，这些通过项不抵消 optimizer 失败。
+- 原 schema-5 report SHA-256 为
+  `19052d5ee224f1dc9e87118a21b38c70d3df09671c9735fa7a8e6a9a4288d89d`，benchmark log 为
+  `448f835f23a8f92790624b717fdbc17cbcd67832e1cde2e79381524e09193956`。原始样本已保留。
+- 阶段 11 必须诊断并通过该原始 2x suite-median / 3x individual 门槛；不得调整 corpus、
+  baseline、跳过独立验证或反复重跑选取 green。阶段 05 功能签收不构成全目标完成。
 
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 

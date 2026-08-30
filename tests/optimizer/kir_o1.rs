@@ -272,6 +272,281 @@ fn kir_o1_sccp_should_propagate_a_constant_phi() {
 }
 
 #[test]
+fn kir_o1_sccp_checked_results_should_feed_constant_comparisons() {
+    let (_, kir, contracts) = build("export fn answer() -> bool { return (20 + 22) == 42; }");
+    for level in [
+        KirOptimizationLevel::O1,
+        KirOptimizationLevel::O2,
+        KirOptimizationLevel::O3,
+    ] {
+        let result = run_kir_pass_pipeline(kir.clone(), level, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let module = result.artifact.as_ref().expect("artifact");
+        let block = &module.functions[0].blocks[0];
+        let calckernel::KirTerminator::Return {
+            value: Some(returned),
+            ..
+        } = block.terminator
+        else {
+            unreachable!()
+        };
+        assert!(
+            block.instructions.iter().any(|instruction| instruction
+                .results
+                .iter()
+                .any(|result| result.value == returned)
+                && matches!(
+                    instruction.kind,
+                    KirInstructionKind::ConstBool { value: true }
+                )),
+            "proven-safe checked value must reach its consumer:\n{}",
+            print_kir_module(module)
+        );
+        assert!(
+            block.instructions.iter().any(|instruction| matches!(
+                instruction.kind,
+                KirInstructionKind::Binary {
+                    semantics: calckernel::KirArithmeticSemantics::Checked,
+                    ..
+                }
+            )),
+            "propagation must retain the checked producer bound by its certificate"
+        );
+    }
+}
+
+#[test]
+fn kir_o1_sccp_checked_ranges_should_feed_only_the_safe_path() {
+    let (_, kir, contracts) = build(
+        "export fn bounded(n: u32) -> bool { if n < 8 { return (n + 1) < 9; } return (n + 1) < 9; }",
+    );
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let module = result.artifact.as_ref().expect("artifact");
+    let folded_returns = module.functions[0]
+        .blocks
+        .iter()
+        .filter(|block| {
+            let calckernel::KirTerminator::Return {
+                value: Some(returned),
+                ..
+            } = block.terminator
+            else {
+                return false;
+            };
+            block.instructions.iter().any(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == returned)
+                    && matches!(
+                        instruction.kind,
+                        KirInstructionKind::ConstBool { value: true }
+                    )
+            })
+        })
+        .count();
+    assert_eq!(
+        folded_returns,
+        1,
+        "only n<8 proves n+1<9:\n{}",
+        print_kir_module(module)
+    );
+    assert_eq!(
+        module.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn kir_o1_sccp_should_fold_exact_remainders_in_checked_and_modular_modes() {
+    for overflow in [
+        calckernel::KirOverflowMode::Checked,
+        calckernel::KirOverflowMode::Unchecked,
+    ] {
+        for ty in ["i32", "i64", "u32", "u64"] {
+            let (_, kir, contracts) = build_with_overflow(
+                &format!(
+                    "export fn remainder() -> bool {{ let a: {ty} = 43; let b: {ty} = 7; return (a % b) == 1; }}"
+                ),
+                overflow,
+            );
+            let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let module = result.artifact.as_ref().expect("artifact");
+            let block = &module.functions[0].blocks[0];
+            let calckernel::KirTerminator::Return {
+                value: Some(returned),
+                ..
+            } = block.terminator
+            else {
+                unreachable!()
+            };
+            assert!(
+                block.instructions.iter().any(|instruction| instruction
+                    .results
+                    .iter()
+                    .any(|value| value.value == returned)
+                    && matches!(
+                        instruction.kind,
+                        KirInstructionKind::ConstBool { value: true }
+                    )),
+                "{ty}/{overflow:?}: exact remainder must reach its comparison:\n{}",
+                print_kir_module(module)
+            );
+        }
+    }
+}
+
+#[test]
+fn kir_o1_sccp_checked_results_should_keep_possible_and_certain_failures() {
+    for source in [
+        "export fn overflow() -> bool { let n: u32 = 4294967295; return (n + 1) == 0; }",
+        "export fn zero() -> bool { return (42 % 0) == 0; }",
+        "export fn maybe(n: u32) -> bool { return (n + 1) == 0; }",
+    ] {
+        let (_, kir, contracts) = build(source);
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let module = result.artifact.as_ref().expect("artifact");
+        assert!(
+            module.functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. })),
+            "possibly failing operation must remain guarded"
+        );
+    }
+}
+
+#[test]
+fn kir_o1_sccp_boolean_phi_should_prune_only_the_proven_branch() {
+    for source in [
+        "export fn choose(flag: bool) -> i32 { let selected: bool = false; if flag { selected = true; } else { selected = true; } if selected { return 42; } return 7; }",
+        "export fn choose(flag: bool) -> i32 { let selected: bool = false; if flag { selected = 20 < 22; } else { selected = 40 >= 22; } if selected { return 42; } return 7; }",
+    ] {
+        let (_, kir, contracts) = build(source);
+        for level in [
+            KirOptimizationLevel::O1,
+            KirOptimizationLevel::O2,
+            KirOptimizationLevel::O3,
+        ] {
+            let result = run_kir_pass_pipeline(kir.clone(), level, contracts.as_ref());
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let module = result.artifact.as_ref().expect("artifact");
+            let returned = module.functions[0]
+                .blocks
+                .iter()
+                .filter(|block| {
+                    matches!(block.terminator, calckernel::KirTerminator::Return { .. })
+                })
+                .count();
+            assert_eq!(
+                returned,
+                1,
+                "the boolean phi must remove the false return:\n{}",
+                print_kir_module(module)
+            );
+            assert!(module.functions[0].blocks.iter().flat_map(|block| &block.instructions)
+                .all(|instruction| !matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "7")));
+        }
+    }
+}
+
+#[test]
+fn kir_o1_sccp_boolean_copy_should_materialize_its_constant_result() {
+    let (_, mut kir, contracts) = build("export fn copied() -> bool { return true; }");
+    let block = &mut kir.functions[0].blocks[0];
+    let original = block.instructions[0].clone();
+    let mut copy = original.clone();
+    copy.id = calckernel::InstructionId::from_index(original.id.index() + 1);
+    copy.results[0].value = calckernel::ValueId::from_index(original.results[0].value.index() + 1);
+    copy.kind = KirInstructionKind::Copy {
+        value: original.results[0].value,
+    };
+    let copied = copy.results[0].value;
+    block.instructions.push(copy);
+    let calckernel::KirTerminator::Return { value, .. } = &mut block.terminator else {
+        unreachable!()
+    };
+    *value = Some(copied);
+    assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(
+        result.artifact.expect("artifact").functions[0].blocks[0]
+            .instructions
+            .iter()
+            .any(|instruction| instruction
+                .results
+                .iter()
+                .any(|result| result.value == copied)
+                && matches!(
+                    instruction.kind,
+                    KirInstructionKind::ConstBool { value: true }
+                )),
+        "boolean Copy must be replaced, not merely analyzed"
+    );
+}
+
+#[test]
+fn kir_o1_sccp_boolean_operators_should_preserve_truth_tables() {
+    for (expression, expected) in [
+        ("!true", false),
+        ("!false", true),
+        ("true == false", false),
+        ("true != false", true),
+    ] {
+        let (_, kir, contracts) = build(&format!(
+            "export fn folded() -> bool {{ return {expression}; }}"
+        ));
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let block = &result.artifact.as_ref().expect("artifact").functions[0].blocks[0];
+        let calckernel::KirTerminator::Return {
+            value: Some(returned),
+            ..
+        } = block.terminator
+        else {
+            unreachable!()
+        };
+        assert!(block.instructions.iter().any(|instruction|
+            instruction.results.iter().any(|result| result.value == returned)
+                && matches!(instruction.kind, KirInstructionKind::ConstBool { value } if value == expected)),
+            "{expression} must become {expected}");
+    }
+}
+
+#[test]
+fn kir_o1_sccp_boolean_phi_should_keep_differing_and_unknown_inputs() {
+    for source in [
+        "export fn choose(flag: bool) -> i32 { let selected: bool = false; if flag { selected = true; } else { selected = false; } if selected { return 42; } return 7; }",
+        "export fn choose(flag: bool, unknown: bool) -> i32 { let selected: bool = false; if flag { selected = true; } else { selected = unknown; } if selected { return 42; } return 7; }",
+    ] {
+        let (_, kir, contracts) = build(source);
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(
+            result.artifact.expect("artifact").functions[0]
+                .blocks
+                .iter()
+                .filter(|block| matches!(
+                    block.terminator,
+                    calckernel::KirTerminator::Return { .. }
+                ))
+                .count(),
+            2
+        );
+    }
+}
+
+#[test]
 fn kir_o1_sccp_should_materialize_constant_block_parameters_and_repair_edges() {
     let (_, kir, contracts) = build_with_overflow(
         "export fn phi(flag: bool) -> i32 { let x: i32 = 0; if flag { x = 42; } else { x = 42; } return x; }",

@@ -1,8 +1,8 @@
 # 阶段 05 验收：O0/O1
 
-当前复审状态：I17 release 验证缓存已完成本机复验；I18 发现实际 SCCP propagation 缺口，
-本阶段验收重新打开，以下历史记录不构成当前完整通过。见
-`../review/implementation-blockers-01.md`。
+当前复审状态：I17 release 验证缓存及 I18 的阶段 05 propagation 缺口已经完成本机
+完整复验，签收证据见文末。I18 的阶段 07、I14/I19/I20 性能问题与远程同 SHA 总验收仍然
+打开，本阶段通过不代替它们。见 `../review/implementation-blockers-01.md`。
 
 ## 必须通过
 
@@ -162,3 +162,38 @@
 - 行内自审核查整批写入原子性、每条边的 phi 与 Memory SSA 参数替换、非局部定义保留、
   CFG 导入重建发生在持久 guard proof 之前、DCE 的 region 引用闭包。未发现本批新增
   阻断项；没有用本机单轮 performance PASS 代替远程同 SHA 全部 CI。
+
+## I18 布尔/checked 传播与阶段 05 完整复验（2026-08-30）
+
+- 本节对应 `optimizer(stage-05): propagate verified boolean and checked values`，parent
+  为 `8b4c58f182bd466e18c7c81b41d48b78752b4b6e`；未修订任何规范门槛。
+- 布尔 Copy、取反、相等/不等、整数比较结果和全输入一致的 phi 均实际改写。独立
+  `BooleanTransfer`/`BooleanPhiJoin` 检查真实 SSA 定义、精确真假、每条输入边及作用域。
+  五项新库测试覆盖伪造真假、缺失/混用 phi 输入、错误替换、有效证据保护与预算撤回。
+- checked 算术的已证安全结果可继续传播，但不直接删除 checked producer。原先
+  `(20 + 22) == 42` 未折叠、`n < 8` 分支内 `(n + 1) < 9` 未折叠的 red 均转 green；
+  另一分支保留 overflow guard。常量/可能溢出与除零保持失败语义。
+- 新消费者暴露 `% 0` 在构造区间 `[1, -1]` 时错误退出。修复为先分类必然失败，保留
+  unknown + failure，不伪造结果；运行时 guard 不变。另一个实际 red 是非零常量 `%`
+  丢失精度，现保留精确余数；i32/i64/u32/u64、checked/modular、正负操作数均有对照。
+- 新 C 实际执行覆盖 O0–O3 × 四种 mode 的布尔 phi、循环取反、循环常量及短路写入；
+  checked 对照验证 overflow 先于除零、失败前写入保留、后续写入不执行、结果槽不变，
+  不可达失败与安全范围的相邻边界均保持语义。
+- 本文件第 1–9 项全部 exit 0：O0 3/3、O1 28/28、guard 11/11、proof 5/5、runtime print
+  3/3、release verifier cache 5/5，fmt、default Clippy、diff check 全部通过。另行顺序
+  全量执行 `cargo +1.90.0 test --locked` 与 `cargo +1.90.0 test --locked --all-features`：
+  409/530 项通过（Native 92、CLI 21）；release library 29/29 和 all-feature Clippy 通过。
+- 默认、全特性与 release 日志 SHA-256 分别为
+  `81129382f3ca92691631aafd1ef19f709de5b7c9068d311ff81e1c2cfd40e777`、
+  `865a81893146249f90b848482f92d9499b547092e927b96eb7a1e54aebd0cd1e`、
+  `ab9cdf6553eac43bb13a1a45d0d10ea01cf8f268bc62d727dd95c43e485ebdec`。
+  环境为 Rust 1.90.0 / AArch64 macOS / LLVM+Clang 22.1.8；LLVM overlay manifest 为
+  `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
+- 行内自审逐项复核 O0 不改写、O1 固定流水线及每项 verifier、闭合证书整批事务、CFG
+  失效/重建、ordered effect 与 region 清理，以及整数/布尔/checked 的实际消费者。
+  阶段 05 的 I18 缺口关闭；原阶段 07 和性能/跨平台总验收不得由本节代签。
+- 本批最终代码的首次原 performance gate **exit 1**：Dijkstra optimizer
+  `1456625 / 350000 ns = 4.1618x`，超过 3x individual 上限；不能作为性能通过证据。
+  unchecked Clang mean `0.9987` / V0.10 ratio `1.0022`，checked `0.9965` / `1.0019`，
+  proof throughput `0.9830`。原报告与日志均已保留，不提高预算或减少验证以掩盖失败；
+  新增 I20 跟踪本项，阶段 11/总验收继续阻断。

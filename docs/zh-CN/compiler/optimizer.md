@@ -35,7 +35,16 @@ record 与 contract fact 和上一已验证状态逐项比较。仅有 pass 的 
 KIR 检查闭合推导及精确替换值，全部通过后才修改指令。超出确定性的单函数预算时，丢弃
 该函数尚未提交的全部提案。该变换不删除 checked operation 或 guard，也不折叠 strict float。
 
-常量整数 block parameter 会改写为具有新 instruction identity、保持原 value identity 的
+布尔常量经过 Copy、取反、相等/不等比较和所有输入边的 join 传播。整数比较也向同一
+布尔工作队列提供结果，因此已经证明的布尔 join 可以驱动后续分支剪枝。检查器将每项
+真假结论绑定到真实定义并逐条验证输入边；输入不同或未知时不能替换为常量。
+
+已证明不会失败的 checked 算术也向下游传播值，包括另有 overflow 结果的 checked
+指令。原 checked producer 保持不变；其 guard 只能由独立的检查消除事务删除。必然
+失败的除法/取模得到带明确 failure 状态的 unknown 标量，不伪造数值常量，也不升级为
+分析错误。不会失败的常量取模保留精确的有符号结果。
+
+常量整数与布尔 block parameter 会改写为具有新 instruction identity、保持原 value identity 的
 常量指令，并修复全部输入边的标量参数；Memory SSA 参数顺序不变。整批证书检查与新
 指令 ID 预留都发生在写入之前。仍被有效证书引用的 block parameter 保留原定义。
 

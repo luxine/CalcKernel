@@ -84,6 +84,18 @@ pub enum ProofStep {
         value: ValueId,
         result: bool,
     },
+    BooleanTransfer {
+        instruction: InstructionId,
+        inputs: Vec<ProofStepId>,
+        value: ValueId,
+        result: bool,
+    },
+    BooleanPhiJoin {
+        block: BlockId,
+        inputs: Vec<ProofStepId>,
+        value: ValueId,
+        result: bool,
+    },
     BranchRefinement {
         predecessor: BlockId,
         target: BlockId,
@@ -114,7 +126,9 @@ impl ProofStep {
             | Self::Constant { .. }
             | Self::LoopInvariant { .. } => Vec::new(),
             Self::CopyTransfer { input, .. } => vec![*input],
-            Self::PhiJoin { inputs, .. } => inputs.clone(),
+            Self::PhiJoin { inputs, .. }
+            | Self::BooleanTransfer { inputs, .. }
+            | Self::BooleanPhiJoin { inputs, .. } => inputs.clone(),
             Self::BinaryTransfer { left, right, .. }
             | Self::IntegerComparison { left, right, .. }
             | Self::BranchRefinement { left, right, .. } => vec![*left, *right],
@@ -183,6 +197,12 @@ impl ProofCertificate {
                 ProofStep::PhiJoin {
                     inputs: premises, ..
                 }
+                | ProofStep::BooleanTransfer {
+                    inputs: premises, ..
+                }
+                | ProofStep::BooleanPhiJoin {
+                    inputs: premises, ..
+                }
                 | ProofStep::ContractRange { premises, .. }
                 | ProofStep::GuardSafety { premises, .. } => {
                     for premise in premises {
@@ -243,7 +263,8 @@ impl ProofArena {
                 ProofStep::Constant { instruction, .. }
                 | ProofStep::BinaryTransfer { instruction, .. }
                 | ProofStep::CopyTransfer { instruction, .. }
-                | ProofStep::IntegerComparison { instruction, .. } => Some(*instruction),
+                | ProofStep::IntegerComparison { instruction, .. }
+                | ProofStep::BooleanTransfer { instruction, .. } => Some(*instruction),
                 ProofStep::BranchRefinement { comparison, .. } => Some(*comparison),
                 ProofStep::LoopInvariant { transfer, .. } => Some(*transfer),
                 ProofStep::GuardSafety {
@@ -253,7 +274,8 @@ impl ProofArena {
                 ProofStep::TypeBounds { .. }
                 | ProofStep::FactLeaf { .. }
                 | ProofStep::ContractRange { .. }
-                | ProofStep::PhiJoin { .. } => None,
+                | ProofStep::PhiJoin { .. }
+                | ProofStep::BooleanPhiJoin { .. } => None,
             })
             .collect()
     }
@@ -264,6 +286,7 @@ impl ProofArena {
             .flat_map(|proof| &proof.steps)
             .filter_map(|step| match step {
                 ProofStep::PhiJoin { claim, .. } => Some(claim.value),
+                ProofStep::BooleanPhiJoin { value, .. } => Some(*value),
                 ProofStep::LoopInvariant { phi, .. } => Some(*phi),
                 _ => None,
             })
@@ -413,6 +436,36 @@ fn print_step(step: &ProofStep) -> String {
             instruction.index(),
             left.index(),
             right.index(),
+            value.index()
+        ),
+        ProofStep::BooleanTransfer {
+            instruction,
+            inputs,
+            value,
+            result,
+        } => format!(
+            "boolean i{} [{}] v{}={result}",
+            instruction.index(),
+            inputs
+                .iter()
+                .map(|step| format!("step{}", step.index()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            value.index()
+        ),
+        ProofStep::BooleanPhiJoin {
+            block,
+            inputs,
+            value,
+            result,
+        } => format!(
+            "boolean-phi b{} [{}] v{}={result}",
+            block.index(),
+            inputs
+                .iter()
+                .map(|step| format!("step{}", step.index()))
+                .collect::<Vec<_>>()
+                .join(", "),
             value.index()
         ),
         ProofStep::BranchRefinement {

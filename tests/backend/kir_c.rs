@@ -159,6 +159,131 @@ fn kir_c_cfg_forwarding_should_preserve_swapped_phi_arguments_and_memory_order()
 }
 
 #[test]
+fn kir_c_boolean_propagation_should_preserve_loops_and_short_circuit_effects() {
+    let source = r#"
+        export fn same(flag: bool) -> bool {
+          let selected: bool = false;
+          if flag { selected = 20 < 22; } else { selected = true; }
+          return selected;
+        }
+        export fn invariant(n: u32) -> bool {
+          let i: u32 = 0; let value: bool = true;
+          while i < n { value = true; i = i + 1; }
+          return value;
+        }
+        export fn toggle(n: u32) -> bool {
+          let i: u32 = 0; let value: bool = false;
+          while i < n { value = !value; i = i + 1; }
+          return value;
+        }
+        fn touch(out: ptr<i32>) -> bool { out[0] = 7; return true; }
+        export fn short_and(out: ptr<i32>) -> bool { return false && touch(out); }
+        export fn short_or(out: ptr<i32>) -> bool { return true || touch(out); }
+        export fn maybe_touch(out: ptr<i32>, flag: bool) -> bool { return flag && touch(out); }
+    "#;
+    for optimization_level in 0..=3 {
+        for overflow in [KirOverflowMode::Unchecked, KirOverflowMode::Checked] {
+            for bounds in [KirBoundsMode::Unchecked, KirBoundsMode::Checked] {
+                let kir = optimized_kir(source, level(optimization_level), overflow, bounds);
+                let checked_abi =
+                    overflow == KirOverflowMode::Checked || bounds == KirBoundsMode::Checked;
+                let harness = if checked_abi {
+                    r#"
+                    int main(void) {
+                      bool result = false; int32_t out = 0;
+                      if (same(false, &result) != CK_OK || !result) return 1;
+                      if (same(true, &result) != CK_OK || !result) return 2;
+                      for (uint32_t n = 0; n < 8; ++n) {
+                        if (invariant(n, &result) != CK_OK || !result) return 3;
+                        if (toggle(n, &result) != CK_OK || result != (n % 2 != 0)) return 4;
+                      }
+                      if (short_and(&out, &result) != CK_OK || result || out != 0) return 5;
+                      if (short_or(&out, &result) != CK_OK || !result || out != 0) return 6;
+                      if (maybe_touch(&out, false, &result) != CK_OK || result || out != 0) return 7;
+                      if (maybe_touch(&out, true, &result) != CK_OK || !result || out != 7) return 8;
+                      return 0;
+                    }
+                    "#
+                } else {
+                    r#"
+                    int main(void) {
+                      int32_t out = 0;
+                      if (!same(false) || !same(true)) return 1;
+                      for (uint32_t n = 0; n < 8; ++n) {
+                        if (!invariant(n)) return 2;
+                        if (toggle(n) != (n % 2 != 0)) return 3;
+                      }
+                      if (short_and(&out) || out != 0) return 4;
+                      if (!short_or(&out) || out != 0) return 5;
+                      if (maybe_touch(&out, false) || out != 0) return 6;
+                      if (!maybe_touch(&out, true) || out != 7) return 7;
+                      return 0;
+                    }
+                    "#
+                };
+                compile_and_run(
+                    &emit_c_kir_module(&kir).expect("boolean propagation C"),
+                    harness,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn kir_c_checked_propagation_should_preserve_first_failure_and_prior_writes() {
+    let source = r#"
+        export fn ordered(out: ptr<i32>, initial: u32, denominator: u32) -> bool {
+          out[0] = 1;
+          let x: u32 = initial + 1;
+          out[0] = 2;
+          let y: u32 = 42 % denominator;
+          out[0] = 3;
+          return (x == 1) && (y == 0);
+        }
+        export fn zero(out: ptr<i32>) -> bool {
+          out[0] = 4;
+          let y: u32 = 42 % 0;
+          out[0] = 5;
+          return y == 0;
+        }
+        export fn unreachable_failure() -> bool { return false && (42 % 0 == 0); }
+        export fn bounded(n: u32) -> bool {
+          if n < 8 { return (n + 1) < 9; }
+          return (n + 1) < 9;
+        }
+    "#;
+    for optimization_level in 0..=3 {
+        let kir = optimized_kir(
+            source,
+            level(optimization_level),
+            KirOverflowMode::Checked,
+            KirBoundsMode::Checked,
+        );
+        compile_and_run(
+            &emit_c_kir_module(&kir).expect("checked propagation C"),
+            r#"
+            int main(void) {
+              int32_t out = 0; bool result = false;
+              if (ordered(&out, UINT32_MAX, 0, &result) != CK_ERR_OVERFLOW || result || out != 1) return 1;
+              if (ordered(&out, 0, 0, &result) != CK_ERR_DIV_BY_ZERO || result || out != 2) return 2;
+              if (ordered(&out, 0, 7, &result) != CK_OK || !result || out != 3) return 3;
+              result = false;
+              if (zero(&out, &result) != CK_ERR_DIV_BY_ZERO || result || out != 4) return 4;
+              if (unreachable_failure(&result) != CK_OK || result) return 5;
+              for (uint32_t n = 0; n < 16; ++n) {
+                if (bounded(n, &result) != CK_OK || result != (n < 8)) return 6;
+              }
+              result = true;
+              if (bounded(UINT32_MAX, &result) != CK_ERR_OVERFLOW || !result) return 7;
+              return 0;
+            }
+        "#,
+        );
+    }
+}
+
+#[test]
 fn kir_c_constant_propagation_should_preserve_results_and_checked_wrap_at_every_level() {
     let source = r#"
         export fn same(flag: bool) -> i32 {

@@ -42,7 +42,20 @@ pre-rewrite KIR before changing any instruction. Exhausting the deterministic
 per-function budget discards that function's pending proposals. This transform
 does not remove checked operations or guards and does not fold strict floats.
 
-Constant integer block parameters are materialized as fresh constant instructions
+Boolean constants propagate through copies, negation, equality/inequality, and
+all-input joins. Integer comparisons feed the same Boolean worklist, so a proven
+Boolean join can drive subsequent branch pruning. The checker binds each Boolean
+truth value to the actual definition and verifies every incoming edge; differing
+or unknown inputs never authorize a constant replacement.
+
+Proven-safe checked arithmetic also supplies values to downstream propagation,
+including checked instructions with a separate overflow result. The checked
+producer remains intact; its guard can disappear only through the independent
+guard-elimination transaction. Guaranteed division/remainder failures yield an
+unknown scalar with an explicit failure state, not a numeric constant or an
+analysis error. Nonfailing constant remainders retain their exact signed result.
+
+Constant integer and Boolean block parameters become fresh constant instructions
 with the same value identities; all incoming scalar arguments are repaired while
 Memory SSA arguments retain their order. The entire batch is checked and fresh
 instruction identities are reserved before mutation. Parameters referenced by live
