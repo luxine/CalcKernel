@@ -1236,6 +1236,34 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 详细 docs-first/TDD/远程计划见 `../implementation/11-windows-static-link-plan.md`
   Task 5。当前 I26/I25/阶段 11 均未签收；同 run 的八项 success 与后续提交不得聚合。
 
+## I27：Windows ARM64 自定义 RuntimeDyld creator 漏配 COFF 符号责任
+
+- run `33316188869`、SHA
+  `d4242700489e632cd3ef2d2d9c88610b683f1fbf` 的 Windows ARM64 job
+  `99269971150` 自然完成为 failure：release/oracle bootstrap、静态 CRT/archive 检查和
+  fact audit 7/7 通过，Native suite 出现 18 个明确失败标记后以 `0x80000003` 终止。
+  完整日志 SHA-256 为
+  `0e9351c157354ea90a4cb8908d5ac524875966abc6a351bc92630162263ab67f`；fact artifact
+  ID `9737795689`，zip / 原文件摘要为
+  `2752149aea74bb5ecde01b6823437e89ee334e457e99ce5674b44bc0d3024c78` /
+  `1316726ad12ae778e9e5ecaa5c4cb58b073539dbd4a861f7cf42b0cc478f8250`。
+- I26 已覆盖该日志的 `/out:` 与 `dllexport` 类失败；其余 cache/run/JIT 路径在子进程
+  七次、父进程最终两次触发 pinned LLVM `Core.cpp:2803`：
+  `Resolving symbol with incorrect flags`。x64 JIT anchor 对 ARM64 不适用，不能扩大范围。
+- 复诊 pinned LLVM 22.1.8 后确认：CK 的 ARM64 COFF 分支为安装 audited section memory
+  manager 覆盖了 LLJIT 默认 object-layer creator，但只构造并返回
+  `RTDyldObjectLinkingLayer`。官方 LLJIT 的 COFF creator 还会设置
+  `setOverrideObjectFlagsWithResponsibilityFlags(true)` 与
+  `setAutoClaimResponsibilityForObjectSymbols(true)`；前者处理 resolved/declaration flag
+  一致性，后者处理 COFF weak/COMDAT 等 object symbols 的责任认领，恰与断言路径闭环。
+- 修订见 `../implementation/11-windows-static-link-plan.md` Task 6：先用局部 contract
+  保留 red，再只在既有 ARM64 COFF layer 上恢复两个官方设置。audited memory manager、
+  process search disabled、W^X、allowlist、backend identity 和全部 JIT tests 保持不变；
+  不关断言、不跳过、不换未经签收的 JITLink。
+- I27 是新增真实阻断，必须由修复 SHA 的本地完整门、schema-6 性能和同 SHA 十项 CI
+  签收。旧 run 的八项 success、x64/ARM64 失败与后续结果不得拼接；I27/I26/I25/阶段 11
+  当前都保持未通过。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

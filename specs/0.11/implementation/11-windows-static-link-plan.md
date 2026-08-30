@@ -172,26 +172,26 @@ artifact 原文件 SHA-256 为
 `scripts/validate-llvm-prefix.ps1`、`build.rs`、`src/backend/native_runtime.rs`、
 `src/backend/llvm/{ffi,jit}.rs`、`native/bridge/ckc_llvm.cpp` 及双语 LLVM ABI 文档。
 
-- [ ] 先提交本计划及现有失败证据，提交前通过 diff/docs 16；不得把生产修复混入计划提交。
-- [ ] red 先锁定 COFF `/out:` 分支、x64-only JIT support manifest/hash/cache 校验、五个
+- [x] 先提交本计划及现有失败证据，提交前通过 diff/docs 16；不得把生产修复混入计划提交。
+- [x] red 先锁定 COFF `/out:` 分支、x64-only JIT support manifest/hash/cache 校验、五个
   artifact runtime objects 与内部 JIT support 分离、FFI 对支持对象数量 fail-closed，以及
   Windows `dllexport` IR 行。编译错误、缺少本机 Windows SDK 或 source-string 假阳性不算 red。
-- [ ] 新 `jit_image_base.c` 只定义 JIT 私有 anchor 的 COFF `__ImageBase`，无函数、CRT
+- [x] 新 `jit_image_base.c` 只定义 JIT 私有 anchor 的 COFF `__ImageBase`，无函数、CRT
   调用、默认库或公开 CK entry。bootstrap 只为 `x86_64-pc-windows-msvc` 编译/安装/散列；
   build.rs 和 cache verifier 校验精确文件、hash、target 与路径，ARM64 和 Unix 拒绝伪字段。
-- [ ] JIT x64 在同一 `MapperJITLinkMemoryManager`/JITDylib 中先加入已验证 anchor，再加入
+- [x] JIT x64 在同一 `MapperJITLinkMemoryManager`/JITDylib 中先加入已验证 anchor，再加入
   五个 runtime objects 与 program object；512 MiB reservation hard bound 足以容纳该固定
   七对象闭包并保持 32-bit image-relative relocation 可表示。不得把 anchor 传给 LLD
   artifact link，也不得给 generated CK code 开放额外 host symbol。
-- [ ] COFF shared/executable driver 使用 `/out:<path>`；ELF/Mach-O 命令逐字保持原形式。
+- [x] COFF shared/executable driver 使用 `/out:<path>`；ELF/Mach-O 命令逐字保持原形式。
   export allowlist、`/nodefaultlib`、`/noentry`/entry、import library 和输出格式验证均保留。
 
 ### 5.3 验证与远程闭环
 
-- [ ] 本地 targeted、default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、
+- [x] 本地 targeted、default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、
   generated/mutation/fact-audit/cache/docs、artifact/JIT/version/licenses 与原 schema-6
   性能门全部通过；不得降低计数、阈值或把 Windows-only 门标成 skip 成功。
-- [ ] 保存 `33316188869` Windows ARM64 的自然终态和完整日志；该 run 已有 x64 failure，
+- [x] 保存 `33316188869` Windows ARM64 的自然终态和完整日志；该 run 已有 x64 failure，
   无论 ARM 结果如何都不能签收或 rerun 成新代码证据。
 - [ ] 以修复提交的新 SHA 重新执行全部十项 required CI；Windows x64/ARM64 都须通过
   bootstrap、fact audit、完整 Native/CLI、release static build、compiler dependency、
@@ -208,3 +208,69 @@ anchor 不是伪造 PE 或开放 process search：它给 JITLink 的 image-relat
 Native/JIT/artifact 门证明；本地 source contract 不能替代远程执行。此修订保留 JITLink、
 W^X、五个公开 runtime objects、静态 CRT、无默认库和所有原始验收门，因此没有通过任务而
 降低设计标准。
+
+## Task 6：COFF ARM64 RuntimeDyld 符号责任闭包（I27）
+
+旧候选 run `33316188869` 的 Windows ARM64 job `99269971150` 已自然结束为 failure，
+没有被后续 dispatch 取消。它完成 release/oracle bootstrap、静态 CRT/archive 校验和
+pre-LLVM fact audit 7/7，进入 Native suite 后出现 18 个明确失败标记，随后以
+`0x80000003` 终止，未生成伪造的汇总通过行。完整日志 SHA-256 为
+`0e9351c157354ea90a4cb8908d5ac524875966abc6a351bc92630162263ab67f`；fact-audit
+artifact ID `9737795689`，zip / 原文件 SHA-256 分别为
+`2752149aea74bb5ecde01b6823437e89ee334e457e99ce5674b44bc0d3024c78` /
+`1316726ad12ae778e9e5ecaa5c4cb58b073539dbd4a861f7cf42b0cc478f8250`。
+
+其中 artifact、sanitizer、executable、differential 与 ABI 文本失败已由 I26 的
+COFF `/out:` 和 Windows `dllexport` 修复覆盖；ARM64 cache/run/JIT 子进程及父进程则
+稳定触发 LLVM 断言：`Resolving symbol with incorrect flags`（pinned `Core.cpp:2803`）。
+这不是 x64 `__ImageBase` 问题，也不能由 x64-only anchor 修复。
+
+### 6.1 复诊与不变量
+
+- CK 为保留 audited `CkcAuditedSectionMemoryManager`，在 COFF ARM64 上替换了 LLJIT 的
+  默认 object-layer creator；自定义 creator 构造 bare `RTDyldObjectLinkingLayer` 后直接
+  返回，漏掉 pinned LLVM 22.1.8 的 LLJIT 默认 COFF 配置。
+- [pinned LLJIT creator](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/ExecutionEngine/Orc/LLJIT.cpp)
+  对 COFF 同时调用 `setOverrideObjectFlagsWithResponsibilityFlags(true)` 和
+  `setAutoClaimResponsibilityForObjectSymbols(true)`；前者把 RuntimeDyld resolved flags
+  与 materialization responsibility 已声明 flags 对齐，后者认领 COFF weak/COMDAT
+  等额外 object symbols。对应行为见 pinned
+  [RTDyldObjectLinkingLayer.cpp](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.cpp)
+  与断言所在的 [Core.cpp](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/ExecutionEngine/Orc/Core.cpp)。
+- 修复仅限既有 `aarch64 + COFF` RuntimeDyld 分支，必须继续使用 audited memory manager、
+  process-symbol search disabled、固定 allowlist、W^X 审计和既有 backend identity。
+  不得关闭 LLVM assertions、吞掉错误、切换 ARM64 到未经支持的 JITLink、加入 x64 anchor、
+  开放整进程符号或把 ARM64 JIT tests 标成 skip。
+
+### 6.2 计划先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/native_toolchain.rs`、`native/bridge/ckc_llvm.cpp` 和双语 LLVM ABI 文档。
+
+- [ ] 先提交 I27 复诊、真实远程证据和本计划；`git diff --check` 与 docs 16 通过，
+  生产实现不得混入该提交。
+- [ ] red contract 必须在 ARM64 COFF creator 的同一局部同时证明 audited memory manager、
+  object-flags override 与 object-symbol auto-claim；仅在注释或无关分支出现字符串不能通过。
+- [ ] 实现先构造有类型的 `RTDyldObjectLinkingLayer`，对该实例设置上述两个官方 COFF
+  选项后再上转型返回 `ObjectLayer`。x64 JITLink 与所有 Unix creator 不得改变。
+- [ ] 同步英中 LLVM ABI 当前文档，说明这是官方 COFF responsibility contract 的恢复，
+  不把 RuntimeDyld 描述成新的通用后端或降低 JIT 隔离保证。
+
+### 6.3 验证与远程闭环
+
+- [ ] 先保留 targeted red，再通过 targeted contract；随后重跑 Task 5 的全部本地门和
+  原 schema-6 性能门，计数/阈值/语料不变。
+- [ ] 在修复提交的精确 SHA 上重新 dispatch 十项 required CI。Windows ARM64 必须完成
+  Native/CLI、cache/run/JIT、release artifact 与 audit，日志不得再出现 incorrect-flags
+  assertion 或 `0x80000003`；Windows x64 同时证明 I26，其他八项不可从旧 SHA 拼接。
+- [ ] 只有该 SHA 十项全绿，才允许关闭 I27/I26/I25/阶段 11；此后仍按总控文档执行
+  01–11/99 总验收，并使最终 docs-only 交付 SHA 再通过同一完整十项矩阵。
+
+## Task 6 行内对抗性自审
+
+两项 setter 不是凭失败文本猜测的新策略，而是自定义 creator 必须手工恢复的 pinned LLJIT
+默认 COFF 行为；它们直接对应 resolved flags 断言和 COFF 额外符号责任。修复面被限制在
+现有 ARM64 RuntimeDyld 分支，不影响 x64 JITLink、AOT artifacts、ABI 或语言语义。真实
+Windows ARM64 execution 仍是最终证明，source contract 只防止再次漏配，不能替代远程门。
+复审未发现需要改变原安全模型或降低验收标准的阻断项。

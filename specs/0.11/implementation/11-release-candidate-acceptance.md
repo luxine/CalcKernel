@@ -41,6 +41,18 @@ I25 另按 `11-windows-static-link-plan.md` 执行，未签收：
 - [ ] 新 recipe cache 验证后保存，旧不合格 Windows cache 不复用；同一新 SHA 的
   完整本地门、首次性能与全部十项 required CI 通过，不拼接不同 SHA 的结果。
 
+## I27 补充验收（未签收）
+
+I27 另按 `11-windows-static-link-plan.md` Task 6 执行，未签收：
+
+- [ ] ARM64 COFF 自定义 RuntimeDyld creator 在同一 audited layer 上恢复 pinned LLJIT
+  默认的 responsibility-flags override 与 object-symbol auto-claim；x64 JITLink、Unix、
+  process-symbol isolation、W^X、allowlist、AOT artifacts 和 ABI 不变。
+- [ ] contract 先在旧实现真实 red，再在局部证明三个条件共存；source contract 不替代
+  实际 Windows ARM64 的 cache/run/JIT/CLI/artifact 执行。
+- [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能与十项 required CI 全绿；ARM64
+  日志无 incorrect-flags assertion/`0x80000003`，并同时签收 x64 I26。不得拼接旧 SHA。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：
@@ -103,6 +115,26 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 - `git status --short` 只包含预期提交前变更；无 target/build/Ai_repository/LLVM prefix。
 
 ## 完成证据
+
+### I26 本地修复与 I27 远程复诊（2026-08-31，远程未签收）
+
+- I26 实现提交 `38ad10c05e47ef0f8635bcf5218af79524993329` 已在本地通过 default 476、
+  all-feature 607（Native 102）、release lib 53 / IR 58、generated 3 / mutation 10 /
+  fact audit 7 / verifier-cache 5 / docs 16、两种 Clippy、fmt/diff、release Native build、
+  artifact/JIT/compiler/version/licenses 与 Unix prefix verifier；未跳过或降低门槛。
+- 同一提交的首次完整 schema-6 benchmark/checker 通过：unchecked Clang / V0.10 replay
+  为 `0.9973 / 1.0020`，checked 为 `1.0002 / 1.0079`，raw proof 为 `1.0004`，optimizer
+  suite median 为 `1.0952`；report SHA-256 为
+  `d6767b04917f79189e855bd47a90c61ead1e0a110d58d077d3f881794bcdfa07`。两次遗漏必需
+  pinned 环境的只读 checker 调用被正确拒绝，补齐原环境后对同一报告通过；未重计时择优。
+- 旧 run `33316188869` 的 ARM64 job `99269971150` 后来自然失败，未被取消：完整日志
+  SHA-256 `0e9351c157354ea90a4cb8908d5ac524875966abc6a351bc92630162263ab67f`，fact artifact
+  ID `9737795689`，zip / 原文件摘要为
+  `2752149aea74bb5ecde01b6823437e89ee334e457e99ce5674b44bc0d3024c78` /
+  `1316726ad12ae778e9e5ecaa5c4cb58b073539dbd4a861f7cf42b0cc478f8250`。Native suite
+  的 ARM64 cache/run/JIT 路径暴露 I27 的 ORC incorrect-flags 断言；计划与修订边界见
+  `11-windows-static-link-plan.md` Task 6。故 `38ad10c` 的本地通过不能签收远程、阶段 11
+  或总验收，必须先修 I27，再由一个新 SHA 重跑全部十项。
 
 ### I25 Windows 静态链接（2026-08-30，本地通过，远程未签收）
 
