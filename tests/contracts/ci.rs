@@ -249,6 +249,8 @@ fn performance_ci_should_select_a_case_from_the_benchmark_manifest() {
 #[test]
 fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
     let action = read(".github/actions/bootstrap-ckc-llvm/action.yml");
+    let validation = read("scripts/validate-llvm-prefix.ps1");
+    let bootstrap = format!("{action}\n{validation}");
 
     for required in [
         "native/llvm/manifest.toml",
@@ -275,7 +277,7 @@ fn native_bootstrap_action_should_pin_and_cache_the_manifest_source() {
         "llvm-config",
     ] {
         assert!(
-            action.contains(required),
+            bootstrap.contains(required),
             "native bootstrap action must contain {required:?}"
         );
     }
@@ -332,6 +334,128 @@ fn registered_release_workflow_should_dispatch_feature_candidate_ci_without_publ
             "registered CI dispatcher must not retain temporary baseline capture input {forbidden:?}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_prefix_validation_should_check_object_hashes_before_caching() {
+    use sha2::{Digest, Sha256};
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    let script = repo_root().join("scripts/validate-llvm-prefix.ps1");
+    assert!(
+        script.is_file(),
+        "cache validation must independently verify runtime bytes"
+    );
+    let root = super::support::temp::temp_dir("ckc-prefix-validation");
+    for dir in ["bin", "lib", "share/ckc/runtime"] {
+        fs::create_dir_all(root.join(dir)).expect("create mock prefix");
+    }
+    let config = root.join("bin/llvm-config");
+    fs::write(&config, "#!/bin/sh\nprintf '22.1.8\\n'\n").expect("write llvm-config double");
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o755)).expect("make executable");
+    fs::write(root.join("lib/libLLVMDTLTO.a"), b"archive").expect("write library");
+    let objects = [
+        "runtime.o",
+        "format_int.o",
+        "format_float.o",
+        "ryu.o",
+        "platform.o",
+    ];
+    for name in objects {
+        fs::write(root.join("share/ckc/runtime").join(name), b"object").expect("write object");
+    }
+    let hash = format!("{:x}", Sha256::digest(b"object"));
+    let names = objects.map(|name| format!("\"{name}\"")).join(", ");
+    let hashes = vec![format!("\"{hash}\""); 5].join(", ");
+    let manifest = format!(
+        "schema = 1\nversion = \"22.1.8\"\ntarget = \"aarch64-apple-darwin\"\nprofile = \"release\"\nsource_sha256 = \"922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888\"\nstatic_only = true\nstatic_libraries = [\"LLVMDTLTO\"]\nruntime_objects = [{names}]\nruntime_sha256 = [{hashes}]\n"
+    );
+    fs::write(root.join("share/ckc/llvm-build.toml"), &manifest).expect("write manifest");
+    let run = |target: &str| {
+        Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-File"])
+            .arg(&script)
+            .arg("-Prefix")
+            .arg(&root)
+            .args(["-Target", target, "-Profile", "release"])
+            .output()
+            .expect("run cross-platform prefix verifier")
+    };
+    let valid = run("aarch64-apple-darwin");
+    assert!(
+        valid.status.success(),
+        "{}",
+        String::from_utf8_lossy(&valid.stderr)
+    );
+    fs::write(root.join("share/ckc/runtime/platform.o"), b"tampered").expect("corrupt object");
+    let corrupt = run("aarch64-apple-darwin");
+    assert!(!corrupt.status.success());
+    assert!(String::from_utf8_lossy(&corrupt.stderr).contains("runtime object hash mismatch"));
+    fs::write(root.join("share/ckc/runtime/platform.o"), b"object").expect("restore object");
+    fs::write(
+        root.join("share/ckc/llvm-build.toml"),
+        manifest.replace("platform.o", "../platform.o"),
+    )
+    .expect("inject traversal");
+    assert!(!run("aarch64-apple-darwin").status.success());
+    for invalid in [
+        format!("{manifest}version = \"22.1.8\"\n"),
+        manifest.replace("version =", "VERSION ="),
+        manifest.replace(
+            "static_only = true",
+            "# static_only = true\nstatic_only = false",
+        ),
+    ] {
+        fs::write(root.join("share/ckc/llvm-build.toml"), invalid).expect("corrupt manifest");
+        assert!(!run("aarch64-apple-darwin").status.success());
+    }
+    fs::copy(&config, root.join("bin/llvm-config.exe")).expect("copy Windows config double");
+    fs::write(root.join("lib/LLVMDTLTO.lib"), b"archive").expect("write MSVC library");
+    for name in objects {
+        fs::write(
+            root.join("share/ckc/runtime")
+                .join(name.replace(".o", ".obj")),
+            b"object",
+        )
+        .expect("write COFF object double");
+    }
+    fs::write(root.join("share/ckc/runtime/kernel32.lib"), b"object")
+        .expect("write import library");
+    let windows_manifest = format!(
+        "{}runtime_platform_import = \"kernel32.lib\"\nruntime_platform_import_sha256 = \"{hash}\"\n",
+        manifest
+            .replace("aarch64-apple-darwin", "aarch64-pc-windows-msvc")
+            .replace(".o\"", ".obj\"")
+    );
+    fs::write(root.join("share/ckc/llvm-build.toml"), windows_manifest)
+        .expect("write MSVC manifest");
+    let windows = run("aarch64-pc-windows-msvc");
+    assert!(
+        windows.status.success(),
+        "{}",
+        String::from_utf8_lossy(&windows.stderr)
+    );
+    fs::write(root.join("share/ckc/runtime/kernel32.lib"), b"tampered").expect("corrupt import");
+    let import = run("aarch64-pc-windows-msvc");
+    assert!(!import.status.success());
+    assert!(String::from_utf8_lossy(&import.stderr).contains("runtime import hash mismatch"));
+    fs::remove_dir_all(root).expect("remove mock prefix");
+}
+
+#[test]
+fn native_bootstrap_should_save_verified_release_before_building_oracle() {
+    let action = read(".github/actions/bootstrap-ckc-llvm/action.yml");
+    let save = action
+        .find("- name: Save manifest-addressed LLVM prefix")
+        .expect("release save");
+    let oracle = action
+        .find("- name: Build pinned Clang oracle on Unix")
+        .expect("oracle build");
+    assert!(
+        save < oracle,
+        "completed release prefix must survive a later oracle build failure"
+    );
 }
 
 #[test]

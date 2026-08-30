@@ -44,6 +44,9 @@
   必须统一使用 PIC 与 Small code model，禁止 internal call 产生 absolute text fixup；
   `LC_MAIN` 使用 dyld 普通 C-ABI 调用的 compiler-generated `_main`，runtime failure
   仍由 platform exit helper 终止。撤销 I09 已被否定的 raw-stack entry 假设。
+- Cache boundary 用独立 verifier 解析准确字段并验证五个 runtime object 的 SHA-256、
+  Windows import hash 与声明的 static libraries；release prefix 验证/保存必须先于
+  oracle build，后者失败不能使已完成的 release prefix 丢失。
 - 可选 TypeScript oracle 的 checkout、build 与 `CALCKERNEL_TS_ROOT` 必须同属 quality job；
   Native/release jobs 保持 self-contained，不能继承一个不存在的 oracle 路径。
 - ELF artifact audit 必须分别证明 loader-visible dependency 与 producer provenance：linked

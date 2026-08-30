@@ -21,6 +21,9 @@ Compatibility changes released in 0.10 are indexed by
 `fixtures/compatibility/v0_10/manifest.toml` and must resolve to executable test
 evidence.
 
+The governance suite executes the CI prefix verifier using PowerShell 7 (`pwsh`)
+on Unix hosts. It is a development/test tool, never a release compiler dependency.
+
 Run the feature-disabled suite with:
 
 ```sh

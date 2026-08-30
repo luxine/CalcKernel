@@ -294,6 +294,30 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   两 workflow 的 source-order regression 转绿。Intel hardened JIT 仍必须在修订后的
   完整 CI 中实际验证，不以本机结果替代。
 
+## I16：prefix 保存前的验证尚未执行对象哈希，且 release 保存晚于 oracle build
+
+- 对 I10 修订自审发现，action 的 `Assert-Prefix` 仅匹配 manifest 子字符串并查询
+  `llvm-config --version`；真正的 runtime object/import hash validation 在后续 Cargo
+  build 才运行。因此“manifest/object validation 后保存”的计划约束尚未由 cache
+  boundary 实现。release prefix 的保存还排在完整 oracle build 后，后者失败时会丢失
+  前者已经完成的冷构建。
+- 两个新契约先在旧实现失败。修订独立 PowerShell verifier，在缓存恢复/保存边界验证
+  唯一且大小写准确的 schema/target/profile/version/source/static 字段、所有声明的 static
+  library、恰好五个规范 runtime object 名称及 SHA-256、Windows import 名称及 SHA-256，
+  并拒绝 shared LLVM 与错误的 Clang profile/version。不改现有 checksum 或 cache identity。
+- release prefix 在独立验证成功后立即保存，再构建 oracle；oracle 也独立验证后保存。
+  未通过验证的 prefix 不得被保存或暴露给 Cargo，原后续 Cargo/Native/audit gate 继续保留。
+- 本机 mock Unix/COFF prefix 正例通过；runtime/import corruption、路径穿越、重复 key、
+  大小写错误 key 与伪装 static flag 均被拒绝。真实临时 release overlay 也经过同一 verifier；
+  补记其已经存在的 LLVMDTLTO archive 到 overlay manifest，没有改动 baseline worktree/prefix。
+  测试执行使用本机已有 PowerShell 7；双语入门文档声明该测试工具依赖，不改变发布产物依赖。
+- 本机 Rust 1.90.0 fmt、all-feature Clippy、default/all-feature tests、release build 与三类
+  compiler/artifact/JIT audit 全部 exit 0。完整 default/all-feature logs 的 SHA-256 分别为
+  `50b3ab1222c2891acac57e480251efbb4a880b4738a4cc7711366e81f30d30dd`、
+  `4079c00dcd650b8c392f5c2c237966651308f7971b39f1a1d52428166cbe5e81`。
+  验证后的临时 release overlay manifest SHA-256 为
+  `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874`。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

@@ -39,6 +39,9 @@
   release/oracle prefix。Darwin 必须通过 Small+PIC 下的 O0 internal-call text relocation
   检查，以及 dyld C-ABI `LC_MAIN` entry 的 standalone、sanitizer 与 O0–O3 differential
   全部 tests；不得通过 writable code pages 修复 loader failure。
+- Cache-boundary verifier 的真实 Unix/COFF fixture 正例通过，runtime/import hash corruption、
+  traversal、重复/错误大小写字段与 false static flag 均失败；release cache save 先于
+  oracle build，两个 profile 各自在验证成功后保存。
 - Linux artifact audit 必须同时拒绝 loader-visible dependency/undefined executable symbol/
   unexpected export，并只在 `.comment` 为 non-`ALLOC` 且包含 pinned LLD 22.1.8 marker 时接受
   provenance。Darwin entitlement 必须与仓库唯一 `allow-jit=true` policy canonical 等值。

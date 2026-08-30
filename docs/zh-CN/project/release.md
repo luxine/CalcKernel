@@ -12,8 +12,9 @@ wrapper 或 registry package。
 所有 action 均锁定到完整 commit。Workflow 只获取 `native/llvm/manifest.toml` 指定的
 LLVM 22.1.8 source archive，验证 SHA-256，并恢复或构建以 manifest 寻址的 host
 cache。该 identity 还覆盖所有参与编译的 native runtime 与 platform-link input；新 prefix
-在 manifest/object hash 验证后立即保存，不等待下游测试成功。验证任务使用独立的 pinned
-Clang oracle prefix；发行构建使用排除 Clang 的
+在独立 manifest/object hash 验证后立即保存；release prefix 保存先于 Clang oracle build，
+后者失败不能丢弃已验证的 compiler toolchain。验证任务使用独立的 pinned Clang oracle
+prefix；发行构建使用排除 Clang 的
 target-minimal `release` profile，并始终执行 `cargo build --release --features
 native-toolchain --locked`。
 

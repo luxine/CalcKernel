@@ -15,8 +15,10 @@ commit. The workflow acquires only the LLVM 22.1.8 source archive named in
 `native/llvm/manifest.toml`, verifies its SHA-256, and restores or builds a
 manifest-addressed host cache. Its identity also covers every compiled native
 runtime and platform-link input, and a newly built prefix is saved immediately
-after its manifest and object hashes pass validation rather than waiting for
-downstream tests. Verification uses a separate pinned Clang oracle prefix.
+after its manifest and object hashes pass independent validation. The release
+prefix is saved before the separate Clang oracle build begins, so an oracle
+failure cannot discard the already verified compiler toolchain. Verification
+uses a separate pinned Clang oracle prefix.
 Distribution builds use the target-minimal `release` profile, which
 excludes Clang, and always run `cargo build --release --features
 native-toolchain --locked`.

@@ -27,6 +27,9 @@ Optimizer contract 是显式 unsafe boundary。只能在 `unsafe { ... }` 中调
 entry 满足全部 requirement。Native run/executable 调试可使用 `--sanitize-contracts`；普通
 release 信任 contract，不插入检查。
 
+仓库治理测试还会执行跨平台 CI prefix verifier，因此开发/测试 host 需要 PowerShell 7
+（`pwsh`）。它只属于测试工具依赖，构建出的 compiler 与 CK 程序不依赖 PowerShell。
+
 开发门禁：
 
 ```sh

@@ -34,6 +34,10 @@ Building the Native feature from source requires the pinned LLVM prefix; follow
 the exact bootstrap command in the repository README. Default features remain
 available for frontend/C/WASM development without that prefix.
 
+Repository governance tests also execute the cross-platform CI prefix verifier;
+they require PowerShell 7 (`pwsh`) on the development/test host. This is a test
+tool dependency only, not a dependency of the built compiler or CK programs.
+
 For development, run the strict gate:
 
 ```sh
