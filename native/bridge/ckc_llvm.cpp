@@ -2711,7 +2711,7 @@ extern "C" int32_t ckc_lld_link_executable(
         arguments.emplace_back("-adhoc_codesign");
         arguments.emplace_back("-dead_strip");
         arguments.emplace_back("-e");
-        arguments.emplace_back("___ck_start");
+        arguments.emplace_back("_main");
 #elif defined(CKC_LLD_COFF)
         auto platform_input = checked_path(platform_input_path_bytes,
                                            "LLD kernel32 import path");

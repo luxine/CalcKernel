@@ -32,8 +32,8 @@
 - [ ] Native ABI=1、Runtime ABI=2、private Bridge ABI=2，六 release artifact 仍零工具链依赖。
 - [ ] ELF producer metadata non-`ALLOC` 且绑定 pinned LLD；Darwin hardened entitlement 与唯一
       `allow-jit=true` policy canonical 等值，不以人类展示格式替代语义比较。
-- [ ] Runtime 输入参与 bootstrap cache identity、验证后立即保存；Darwin `__ck_start` 保持
-      x86-64 stack/C ABI 与 platform-owned exit，raw entry 不直接指向 user `main`。
+- [ ] Runtime 输入参与 bootstrap cache identity、验证后立即保存；Darwin Small+PIC 不产生
+      internal-call absolute text fixup，dyld C-ABI `LC_MAIN` entry 通过完整执行验收。
 
 ## D. CLI、兼容与文档
 

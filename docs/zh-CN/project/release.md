@@ -5,6 +5,9 @@
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
 
+仓库文本在所有 host 上都以 LF 换行 checkout。Vendor provenance 文件保留上游原始字节，
+不经 Git 换行转换；hash 校验始终比较精确字节，不通过规范化输入来接受不匹配。
+
 `native ckc release` workflow 在本仓库内自包含，不依赖外部 source checkout。
 所有 action 均锁定到完整 commit。Workflow 只获取 `native/llvm/manifest.toml` 指定的
 LLVM 22.1.8 source archive，验证 SHA-256，并恢复或构建以 manifest 寻址的 host
@@ -22,9 +25,9 @@ Apple system library。macOS 还要在 hardened runtime 下验证唯一的
 `com.apple.security.cs.allow-jit` entitlement。Audit 显式提取 XML 并比较 canonical binary
 plist，不解析随系统版本变化的 `codesign`/`plutil` 人类可读输出。JIT audit 必须验证与 runtime capability
 一致的 Darwin W^X 路径：per-thread `MAP_JIT`，或在不支持 per-thread 时用页级
-RW/NX-to-RX/R-NX finalization；永不接受 RWX fallback。Darwin standalone executable
-还必须经 runtime-owned `__ck_start` glue 进入；x86-64 先规范化 stack，并由 platform helper
-退出，不能把 C-ABI user `main` 当作 raw process entry。Tag run 必须在任何 artifact job
+RW/NX-to-RX/R-NX finalization；永不接受 RWX fallback。Darwin AOT/ORC object 统一使用 PIC
+与 Small code model；未优化的 internal call 必须检查 absolute executable-text relocation。
+Standalone executable 验证 dyld 对 `LC_MAIN` 的普通 C-ABI 调用及精确 exit/stdio 行为。Tag run 必须在任何 artifact job
 启动前验证 tag 等于 `v` 加 `Cargo.toml` 中的版本。随后生成六个 archive：
 
 - `ckc-darwin-arm64.tar.gz`

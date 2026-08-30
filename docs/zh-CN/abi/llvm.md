@@ -56,10 +56,11 @@ Dynamic library 只 export 请求的 CK symbol 与 required platform metadata。
 `Linker: LLD 22.1.8` `.comment`，artifact audit 要求该 section 必须为 non-`ALLOC`，并独立
 拒绝 loader-visible dependency、executable undefined symbol 与 unexpected export。Linux executable
 runtime 使用 kernel boundary；Windows 使用 embedded stable process import 且 computation DLL
-无 entry；Darwin 使用 embedded minimal system stub 与 LLD ad-hoc signing。Runtime-owned
-Darwin `__ck_start` 是 Mach-O process entry：x86-64 先规范化 process stack，再调用 LLVM
-C-ABI `main`；两个 Darwin architecture 都经 embedded platform exit helper 终止。User
-`main` body 不会直接成为 raw `LC_MAIN` entry。
+无 entry；Darwin 使用 embedded minimal system stub 与 LLD ad-hoc signing。Darwin AOT 与
+ORC 的 object 统一使用 PIC 与显式 Small code model。Internal call 不得在 executable
+`__text` 中产生 absolute pointer fixup，dyld 不得需要写入代码页。`LC_MAIN` 指向 compiler
+生成的 C-ABI entry `_main`，dyld 以普通函数方式调用，并将返回值作为 process exit status。
+Runtime failure 经 embedded platform exit helper 终止。
 
 `ckc run` 通过 ORC 执行相同 optimized object semantics。ELF/Mach-O AArch64/x86-64 与 COFF
 x86-64 使用 JITLink；COFF AArch64 因 LLVM 22.1.8 尚无对应 JITLink backend，使用固定

@@ -5,6 +5,10 @@
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
 
+Repository text checks out with LF endings on every host. Vendored provenance
+files retain their original bytes without Git newline conversion; hash checks
+compare those exact bytes and never normalize the input to accept a mismatch.
+
 The `native ckc release` workflow is self-contained in this repository and does
 not depend on an external source checkout. Every action is pinned to a full
 commit. The workflow acquires only the LLVM 22.1.8 source archive named in
@@ -28,10 +32,10 @@ extracts explicit XML and compares canonical binary plists, rather than parsing
 version-dependent human-readable `codesign` or `plutil` output. The audit
 requires the runtime-capability-consistent Darwin W^X path: either per-thread
 `MAP_JIT`, or page-level RW/NX-to-RX/R-NX finalization when per-thread support is
-unavailable; an RWX fallback is never accepted. Darwin standalone executables
-additionally enter through the runtime-owned
-`__ck_start` glue; x86-64 stack normalization and platform-owned exit are tested
-instead of treating the C-ABI user `main` as a raw process entry. On a tag run,
+unavailable; an RWX fallback is never accepted. Darwin AOT and ORC objects use
+PIC with the Small code model; unoptimized internal calls are checked for
+absolute executable-text relocations. Standalone executables test dyld's normal
+C-ABI `LC_MAIN` invocation and exact exit/stdio behavior. On a tag run,
 verification requires the tag to equal `v` plus the version in `Cargo.toml`
 before any artifact job starts. The workflow then builds these six archives:
 

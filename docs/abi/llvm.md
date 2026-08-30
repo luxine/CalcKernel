@@ -88,11 +88,12 @@ that section to remain non-`ALLOC` while independently rejecting loader-visible
 dependencies, undefined executable symbols, and unexpected exports.
 Linux executable runtime uses its kernel boundary; Windows uses embedded stable
 process imports and computation DLLs have no entry; Darwin uses embedded minimal
-system stubs and LLD ad-hoc signing. A runtime-owned Darwin `__ck_start` is the
-Mach-O process entry: on x86-64 it normalizes the process stack before calling
-the LLVM C-ABI `main`, and on both Darwin architectures it terminates through
-the embedded platform exit helper. The user `main` body is never exposed as a
-raw `LC_MAIN` entry.
+system stubs and LLD ad-hoc signing. Darwin objects use PIC with an explicit
+Small code model for both AOT and ORC. Internal calls must not require absolute
+pointer fixups in executable `__text`; dyld must never need to write code pages.
+`LC_MAIN` references the compiler-generated C-ABI entry `_main`, which dyld calls
+as a normal function and uses its return value as the process exit status.
+Runtime failures terminate through the embedded platform exit helper.
 
 ## ORC execution
 

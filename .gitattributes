@@ -1,0 +1,8 @@
+# Keep source, snapshots, and manifest parsing byte-identical on every host.
+* text=auto eol=lf
+
+# Upstream provenance is a hash of original bytes, never a checkout conversion.
+third_party/licenses/** -text
+native/llvm/*.TXT -text
+native/llvm/third-party/** -text
+native/runtime/vendor/** -text

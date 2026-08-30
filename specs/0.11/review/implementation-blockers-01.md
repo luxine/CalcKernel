@@ -232,12 +232,33 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   的 Windows 冷构建，原 run `33277614781` 的两个 Windows 构建继续，不把被取消 job
   计作验收通过。
 
-## 修订边界（全部阻断）
+## I13：Windows checkout 的 CRLF 转换破坏 provenance 字节
+
+- Run `33277614781` 的 Windows x64 job `99167002466` 已完成 MSVC LLVM/Clang
+  bootstrap 并保存 release/oracle cache，但在首次 Cargo build 的 provenance 检查失败。
+  `RUST-COPYRIGHT` 期望 SHA-256 为
+  `172020dbfd5b53a226dfde77616190a48dcff519b0bc0e6deb91a8450782c4af`，实际为
+  `dddcd10d99c349f384aa10b9d536239c577005328fcf317c19d8a1291a3385b9`。
+- 本机执行 `git -c core.autocrlf=true cat-file --filters HEAD:third_party/licenses/RUST-COPYRIGHT`
+  精确得到同一错误哈希，证明是缺少 repository checkout policy，而非下载篡改或 expected
+  checksum 错误。`Cargo.lock` 的多行 identity、snapshot 与 runtime source hash 同样需要
+  稳定字节，不能只特判这一个 license。
+- 先加真实 Git filter regression 并观察预期失败，再增加 `.gitattributes`：仓库文本统一
+  LF，vendor license/source 禁止 newline conversion、保留原始字节。不修改任何 pinned
+  checksum，不在 verifier 内 normalize，也不设置 user/global Git configuration。
+- 已检查当前 index 没有 CRLF/mixed text blob；无需重写源文件。属性本身会使 Windows
+  runtime recipe hash 与 Unix 使用同一 canonical 输入；旧 CRLF cache 不得作为新输入的
+  完整 prefix 命中。
+- 本机上述 Git filter regression 从失败转为通过；随后 Rust 1.90.0 的 fmt、all-feature
+  Clippy、默认/全特性完整 tests、release build、compiler/artifact/JIT audit 全部 exit 0。
+  这只构成本机证据，Windows runner 仍须实际验收。
+
+## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
 - 不跳过任何 Native/JIT/cache/run test，不把失败 job 改成 optional，不降低性能门槛。
 - 本轮修订必须在同一 commit 上重新通过 quality、native integration、六 native host 与两
-  performance runner；在此之前 I01–I10 只算本地修复，不算远程验收完成。
+  performance runner；在此之前不能把各轮本地或部分 host 成功汇总为远程验收完成。
 
 ## 修订后对抗性复审
 
@@ -245,5 +266,6 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
 是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source、release
 no-change cache 是否只复用准确的 pass change declaration、guard-free demand skip 是否会
-漏掉安全消费者、Darwin standalone entry 是否真正建立 C ABI stack/exit boundary、runtime
-cache 是否可能命中旧 source，以及是否有测试被跳过。
+漏掉安全消费者、Darwin object 是否没有 absolute text fixup、dyld C-ABI entry/exit 是否
+正确、runtime cache 是否可能命中旧 source、Windows checkout 是否保持 provenance
+字节，以及是否有测试被跳过。

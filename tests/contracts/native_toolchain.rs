@@ -292,29 +292,18 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
             "native runtime must not use {forbidden}"
         );
     }
+}
 
-    let darwin_runtime = read("native/runtime/darwin/process.c");
-    for required in [
-        "___ck_start:",
-        "andq $-16, %rsp",
-        "callq _main",
-        "callq ___ck_platform_exit",
-        "bl _main",
-        "bl ___ck_platform_exit",
-    ] {
-        assert!(
-            darwin_runtime.contains(required),
-            "Darwin freestanding runtime must provide an ABI-safe process entry containing {required:?}"
-        );
-    }
+#[test]
+fn darwin_lc_main_should_use_the_generated_c_abi_entry_without_a_raw_stack_stub() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     assert!(
-        bridge.contains("arguments.emplace_back(\"___ck_start\")"),
-        "Darwin LLD must enter through the runtime stack-normalizing stub"
+        bridge.contains("arguments.emplace_back(\"_main\")"),
+        "dyld invokes LC_MAIN through the normal C ABI"
     );
     assert!(
-        !bridge.contains("arguments.emplace_back(\"_main\")"),
-        "Darwin LLD must not expose the C ABI main body as a raw process entry"
+        !read("native/runtime/darwin/process.c").contains("__ck_start"),
+        "modern LC_MAIN does not require legacy raw-stack entry glue"
     );
 }
 
@@ -340,6 +329,41 @@ fn darwin_target_should_override_the_jit_large_code_model_for_shared_objects() {
         creation.contains("builder->setCodeModel(llvm::CodeModel::Small)"),
         "Mach-O needs an explicit small code model: JIT Large + PIC emits absolute text fixups"
     );
+}
+
+#[test]
+fn provenance_inputs_should_preserve_blob_bytes_under_windows_autocrlf() {
+    for path in [
+        "third_party/licenses/RUST-COPYRIGHT",
+        "native/llvm/LICENSE.TXT",
+        "native/runtime/vendor/ryu/d2s.c",
+        "native/runtime/common/runtime.c",
+        "Cargo.lock",
+        "benches/baselines/v0_10_compiler.toml",
+    ] {
+        let revision = format!("HEAD:{path}");
+        let blob = std::process::Command::new("git")
+            .current_dir(repo_root())
+            .args(["cat-file", "blob", &revision])
+            .output()
+            .expect("read canonical Git blob");
+        let checkout = std::process::Command::new("git")
+            .current_dir(repo_root())
+            .args([
+                "-c",
+                "core.autocrlf=true",
+                "cat-file",
+                "--filters",
+                &revision,
+            ])
+            .output()
+            .expect("simulate Windows checkout filters");
+        assert!(blob.status.success() && checkout.status.success());
+        assert!(
+            blob.stdout == checkout.stdout,
+            "checkout must preserve canonical hash/fixture bytes for {path}"
+        );
+    }
 }
 
 #[cfg(unix)]
