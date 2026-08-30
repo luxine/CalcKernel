@@ -745,6 +745,24 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   `4a7ca3a544e94e1f8c4368d87b2ca92c1c57c81b1bc0be5eca9b98f84a13cdfe`。
   本批不修改性能协议、语料、统计方式或门槛，I14/I19/I20 仍须后续正式验收。
 
+### I20 `7611fa6` 首次门禁与无用 phi 复诊（未关闭）
+
+- 原始完整门禁仍失败：Dijkstra `1112250 / 350000 ns = 3.17786x`；其余五项
+  optimizer 门通过。unchecked Native/Clang geo `1.0001`、V0.10 ratio `1.0007`，
+  checked `0.9903` / `1.0082`，proof throughput `1.0093`。没有重复同 SHA 选取绿灯。
+  report / benchmark / checker 日志 SHA-256：
+  `f0fae936759c4e0891bc5da0c8e7129d65669af1751af7d9cf3dbea3e492fe63`、
+  `c631d38f756955ff546606dd8b60cd8e284dfbf860217811a6e8a11601f8d0f9`、
+  `bd1866fe898f0f4b3b53084e9a46028c744e4275a00a39505127eb7cecd5088f`。
+- 只读 SSA 依赖图诊断发现 Dijkstra 输入函数 456 个标量 block parameters 中有 248 个
+  无根参数，O3 后 436 个中有 241 个；`should_relax` 输入和 O3 都为 16 个中 10 个。
+  诊断将全部指令操作数、分支/返回值、区域元数据和契约 binding 作为根，沿全部实际
+  phi 输入反向传播；此语料没有契约。它不修改 IR，不是性能或正确性验收证据。
+- 复诊选择细化已有 pre-proof CFG phi repair，而不是改变 O0 SSA builder 或只在
+  最终 DCE 清理。生产实现还必须保护全部 fact predicate 引用，保留双边输入与所有
+  指令/Memory SSA，详见 `../implementation/11-ssa-phi-pruning-plan.md`。该补充计划
+  自审无逻辑阻断，先单独提交，再 TDD 实现；不改变任何性能或最终 CI 门槛。
+
 ## I19：本机跨 checked 模式 proof-loop 吞吐门槛失败（未关闭）
 
 - I18 工作队列改动后的首次完整 performance gate 返回 exit 1：unchecked Native median

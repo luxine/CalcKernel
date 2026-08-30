@@ -84,6 +84,10 @@ required jobs 的修复闭环，不得改成兼容错误 archive、RWX fallback 
 
 ## 提交与证据
 
+阶段 11 的 I20 编译耗时修复细化见 `11-ssa-phi-pruning-plan.md`：在阶段 05
+已有的 pre-proof CFG canonicalization 内清理无根的标量 phi 参数，保留全部操作数、
+元数据和契约引用。它不重排阶段、不改变 O0/Memory SSA/效果顺序，也不调整性能门槛。
+
 计划与规范修订先单独提交。之后每阶段提交信息使用
 `optimizer(stage-N): <imperative outcome>`。每个 acceptance 文档底部在执行时追加：
 

@@ -22,6 +22,16 @@
 16. `git diff --check`
 17. `cargo test --release --locked --lib verifier_cache_ -- --nocapture`
 
+## I20 补充本地验收
+
+I20 补充实现必须满足 `11-ssa-phi-pruning-plan.md`，以下尚待执行签收：
+
+- [ ] 无根标量 phi 环消除，O0、公开参数、指令与 Memory SSA 保持不变。
+- [ ] 双 branch arm、跨块引用、区域元数据及全部契约 predicate 根保留；不按 slot 名识别。
+- [ ] 缺目标/标量实参数量不符时不发生部分改写；原 verifier 的拒绝门仍然有效。
+- [ ] 完整 C/WASM/Native 正例与 mutation、checked 首错/print/strict-FP 门通过。
+- [ ] 新 SHA 的原始完整性能门通过，保留首次报告，不调整阈值或删减语料。
+
 ## 远程必须通过
 
 - feature branch 上显式 `workflow_dispatch` 的 quality、native-integration、六个

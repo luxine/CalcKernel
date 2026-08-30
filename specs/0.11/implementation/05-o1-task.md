@@ -18,6 +18,8 @@ range propagation、proof-carrying redundant-check elimination、DCE 和 cleanup
 2. 写 exact O1 pass-order red test，再实现 pass manager；每个 pass 后无条件 verifier。
 3. 为 CFG canonicalization 写 empty block、constant branch、unreachable block、phi repair、
    ordered-effect barrier red tests。
+   阶段 11 对无用标量 phi 的细化按 `11-ssa-phi-pruning-plan.md` 执行：只在 pre-proof
+   CFG 阶段清理，保护所有指令操作数、区域元数据、契约 binding 和 fact predicate 引用。
 4. 为 SCCP/range 写 constant、branch path、contract range、modular wrap、budget fallback red
    tests；实现事实和 certificate 输出，不静默修改。
 5. 为 bounds/overflow/div-zero guard elimination 写最小正例与近邻反例。先观察 guard 仍

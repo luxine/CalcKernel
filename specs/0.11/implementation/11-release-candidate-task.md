@@ -75,6 +75,9 @@
 
 ## TDD 与执行顺序
 
+I20 的无用标量 phi 清理补充计划见 `11-ssa-phi-pruning-plan.md`，先观察行为 red，
+再验证闭环、双边输入、元数据/契约根与 malformed 输入原子性；不能替代以下完整门禁。
+
 1. 先写 repository scan、version/ABI/compat manifest red tests，再完成全仓切换与版本。
 2. 先写 generated/mutation corpus 的故障注入，再实现 harness，固定 seed/schema。
 3. 先用 synthetic report 证明四类 performance threshold 会分别拒绝，再跑真实测量。
