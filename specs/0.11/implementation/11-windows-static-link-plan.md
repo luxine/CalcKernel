@@ -473,3 +473,71 @@ cfg skip 还能保持原 92 项执行面。cache touch 则由
 只读 handle 与所需 Windows access mask 直接解释，是唯一生产修复。精确属性权限比通用
 写权限更小，no-follow 与 owner-only 边界不变。完整 Windows 两架构执行仍不可由本地文本
 契约替代；复审未发现需要降低门槛、扩大符号面或改变缓存格式的阻断项。
+
+## Task 9：Windows freestanding runtime 闭包与 CLI artifact 路径（I30）
+
+精确候选 `f460c2b94f204738c2cbe6b4d9509409665a78ac` 的 run
+`33349902056` 自然结束为 completed/failure：quality、native integration、Darwin
+ARM64/x64、Linux ARM64/x64 与两项 performance 共 8/10 success；Windows x64 job
+`99361072001` 和 Windows ARM64 job `99361071997` failure。两项 performance 保持原
+schema-6、语料与门槛并全部通过：ARM64 unchecked Clang/replay `0.9997 / 0.9990`、
+checked `0.9989 / 1.0012`、proof `1.0015`、optimizer suite `1.3630`；x86-64 分别为
+`1.0501 / 1.0001`、`1.0192 / 0.9853`、`0.9955`、`1.5183`。因此不得重开优化器或
+性能设计，也不能把八项 success 与后续 SHA 拼接。
+
+### 9.1 复诊与不可变边界
+
+- Windows ARM64 已通过 fact audit 7/7 和 Native 92/92，实际证明 I29 的 ABI、ownership、
+  C differential export、cache warm-hit 以及 I27 RuntimeDyld 路径全部 green；CLI 21/22
+  的唯一失败发生在已成功执行 `ckc build --exe` 后，fixture 仍检查未加 `.exe` 的原始 base
+  path。修订只能让测试通过 `NativeArtifactPaths` 与 host platform 推导 production
+  executable path；不得改 CLI 输出命名、把命令失败改成成功或用 Windows cfg skip。
+- Windows x64 已通过 fact audit 7/7；Native 为 68 passed / 24 failed / 0 ignored。全部失败
+  都由 in-process LLD/JIT 链接同一根因触发：`format_float.obj` 的优化代码引用
+  `memcpy`/`memset`，而 `/O2 /Zl` 编译的五对象 freestanding runtime 没有定义它们，
+  `kernel32.lib` 也不提供 CRT memory helpers。修订须在既有 Windows `platform.obj`
+  内提供语义正确的 byte-loop `memcpy`/`memset`，并在 MSVC 下对两个定义局部关闭优化，
+  防止编译器把实现重新识别为同名调用。
+- runtime manifest 继续精确为 `runtime.obj`、`format_int.obj`、`format_float.obj`、
+  `ryu.obj`、`platform.obj` 五个对象；不得增加第六对象、default library、动态/静态 CRT、
+  新 CK public export 或 hosted runtime 依赖。`/Zl`、唯一 `kernel32.lib` allowlist、
+  cache recipe/source digest、双 profile 验证、JIT/AOT 共用 runtime bytes 仍保持。
+- 两个 memory helper 只补齐 C compiler 可合法生成的 freestanding 内部依赖；它们使用
+  `unsigned char` 逐字节复制/填充并返回原 destination。`memcpy` 继续遵守不重叠契约，
+  不擅自实现 `memmove`；长度零不得解引用。测试 source contract 必须锁定定义、局部
+  MSVC optimize off/on 与五对象闭包，不能仅靠注释或 fixture 制造 green。
+
+### 9.2 文档先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/native_toolchain.rs`、`native/runtime/windows/process.c` 与
+`tests/cli/kir_inspection.rs`。
+
+- [x] 先提交精确 run 的 8/10 终态、两项失败原件、共同根因、不变量和本计划；docs 16 与
+  `git diff --check` 通过，不混入实现或测试修订。
+- [ ] 先给 Windows runtime production-source contract 增加 memory-helper 闭包断言，并在
+  旧源码上得到真实 0/1 red；再只在既有 `platform.obj` source 增加 helper definitions，
+  让同一 targeted contract 1/1 green。不得仅改测试期望。
+- [ ] CLI fixture 使用生产 `NativeArtifactPaths` 推导 host executable；保持原成功状态、
+  产物存在性与 executable build sanitizer 断言，不按平台删除断言。
+
+### 9.3 验证与远程闭环
+
+- [ ] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
+  小门、artifact/compiler/JIT/version/licenses、双 prefix verifier、docs 16 与原 schema-6
+  性能门全绿；测试计数、语料和阈值不降。Darwin 本地 source contract 不能替代 MSVC。
+- [ ] 在实现提交的精确 SHA 上重新 dispatch 全十项 required CI。Windows x64 必须完成
+  fact audit、完整 Native 92/92、CLI 22/22、compiler/artifact/JIT 与发布依赖审计；
+  Windows ARM64 必须保持 Native 92/92 并把 CLI 恢复为 22/22。其他八项同 SHA 全绿。
+- [ ] 同 SHA 十项全绿后才关闭 I30/I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99
+  总验收；任何旧 SHA 的 success 都只作诊断证据。
+
+## Task 9 行内对抗性自审
+
+ARM64 的 command success 与 Native 92/92 把失败精确隔离到 host artifact path fixture；
+x64 的 24 个失败共享同一 LLD undefined-symbol 原件和 `format_float.obj` producer，因此不把
+级联数量误当成多项产品设计缺陷。在既有 platform object 内提供两个标准 memory helpers
+既闭合 `/O2 /Zl` 可生成的合法依赖，又不改变五对象 manifest、CK ABI 或链接 allowlist；
+MSVC 局部关闭优化只约束 helper 自身，避免自递归，不影响其他 runtime 热路径。最终仍要求
+两个真实 Windows 架构及同 SHA 十项矩阵全绿，复审未发现需要降低门槛或扩大依赖面的阻断项。

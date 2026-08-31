@@ -1436,6 +1436,29 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   前置条件拒绝没有取新样本，不构成重跑或数值筛选。现在只剩新精确 SHA 十项远程矩阵，
   未用本地源码 contract 替代 Windows 实机执行。
 
+## I30：Windows freestanding memory helpers 与 host executable path
+
+- 精确候选 `f460c2b94f204738c2cbe6b4d9509409665a78ac` 的 run `33349902056` 自然结束为
+  8/10：除 Windows x64 `99361072001`、Windows ARM64 `99361071997` 外全部 success，
+  两项 schema-6 performance 也保持原门通过。x64 / ARM64 完整日志 SHA-256 分别为
+  `b4bc5119df80b28c7df7ad98ba6c91fffcffba1cb537c14d952893f587f6dab6` /
+  `2f189861ce8b7a3847fee3a91e75f65c1f2ba8d4daa988f11e3e3de37a5c8f0f`。
+- ARM64 fact audit 7/7、Native 92/92；I29 五项实际 Windows 路径均已通过。CLI 21/22 的
+  唯一失败发生在 executable build command success 之后：fixture 断言原始 base path
+  存在，没有使用 production Windows `.exe` artifact path。修复只统一测试与
+  `NativeArtifactPaths`；禁止改 CLI 命名、删除存在性断言或 cfg skip。
+- x64 fact audit 7/7、Native 68/92；24 个失败共享 in-process LLD/JIT 的同一 undefined
+  `memcpy`/`memset` 诊断，producer 为 `/O2 /Zl` 编译的 `format_float.obj`。MSVC 优化器
+  可以为合法 C 生成这些调用，而五对象 freestanding closure 与唯一 `kernel32.lib` 不提供
+  CRT helpers；这是生产闭包缺陷，不是测试可移植性问题。
+- 最小修订在既有 Windows `platform.obj` 定义 byte-loop `memcpy`/`memset`，并对这两个
+  MSVC definitions 局部 optimize off/on 以免重新识别为自调用。五对象 manifest、order、
+  `/Zl`、无 CRT、allowlist、CK exports、cache identity 和 ABI 均保持；不得加第六对象或
+  default library。
+- 计划与验收见 `../implementation/11-windows-static-link-plan.md` Task 9。先做旧源码
+  production-source red，再做最小 green；最终必须由新精确 SHA 的两架构 Windows
+  7/7 fact、92/92 Native、22/22 CLI 及同 SHA 十项 success 证明，不能拼接本轮八项。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
