@@ -787,6 +787,156 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn windows_native_artifact_audit_should_use_only_the_pinned_coff_inspector() {
+    let temp = super::support::temp::temp_dir("Rust_CalcKernel-native-artifact-audit");
+    let root = temp.join("Rust_CalcKernel-artifacts");
+    let runtime = root.join("runtime");
+    let prefix_bin = temp.join("prefix/bin");
+    fs::create_dir_all(&runtime).expect("create fake runtime artifact directory");
+    fs::create_dir_all(&prefix_bin).expect("create fake pinned inspector directory");
+    for relative in [
+        "module.obj",
+        "module-static.lib",
+        "module.dll",
+        "module-import.lib",
+        "program.exe",
+        "runtime/runtime.obj",
+        "runtime/format_int.obj",
+        "runtime/format_float.obj",
+        "runtime/ryu.obj",
+        "runtime/platform.obj",
+        "runtime/kernel32.lib",
+    ] {
+        fs::write(root.join(relative), []).expect("write empty artifact fixture");
+    }
+    let empty_sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    let sums = [
+        "runtime.obj",
+        "format_int.obj",
+        "format_float.obj",
+        "ryu.obj",
+        "platform.obj",
+        "kernel32.lib",
+    ]
+    .into_iter()
+    .map(|name| format!("{empty_sha}  {name}\n"))
+    .collect::<String>();
+    fs::write(runtime.join("SHA256SUMS"), sums).expect("write runtime checksums");
+
+    let inspector = prefix_bin.join("llvm-readobj.exe");
+    fs::write(
+        &inspector,
+        r#"#!/bin/sh
+mode="${CKC_TEST_ARTIFACT_MODE:-allowed}"
+file=$(basename "$2")
+if [ "$mode" = nonzero ]; then exit 71; fi
+case "$1:$file:$mode" in
+  --coff-imports:program.exe:wrong-dependency)
+    printf 'Import {\n  Name: USER32.dll\n}\n'
+    ;;
+  --coff-imports:program.exe:*)
+    printf 'File: %s\nMetadata {\n  Name: VCRUNTIME140.dll\n}\nImport {\n  Name: KERNEL32.dll\n}\n' "$2"
+    ;;
+  --coff-imports:module.dll:module-import)
+    printf 'Import {\n  Name: KERNEL32.dll\n}\n'
+    ;;
+  --coff-imports:module.dll:*)
+    printf 'File: %s\nFormat: COFF-x86-64\n' "$2"
+    ;;
+  --coff-exports:module.dll:missing-export)
+    printf 'Export {\n  Ordinal: 1\n  Name: other\n}\n'
+    ;;
+  --coff-exports:module.dll:forbidden-export)
+    printf 'Export {\n  Ordinal: 1\n  Name: answer\n}\nExport {\n  Ordinal: 2\n  Name: __ck_hidden\n}\n'
+    ;;
+  --coff-exports:module.dll:*)
+    printf 'File: %s\nMetadata {\n  Name: CalcKernelProbe\n}\nExport {\n  Ordinal: 1\n  Name: answer\n}\n' "$2"
+    ;;
+  --symbols:runtime.obj:forbidden-symbol)
+    printf 'Symbol {\n  Name: malloc\n  Section: IMAGE_SYM_UNDEFINED (0)\n}\n'
+    ;;
+  --symbols:runtime.obj:empty-symbols)
+    printf 'File: C:/free/runtime.obj\nFormat: COFF-x86-64\n'
+    ;;
+  --symbols:*.obj:*)
+    printf 'File: C:/free/runtime.obj\nSymbol {\n  Name: __ck_clean\n  Section: .text (1)\n}\n'
+    ;;
+  *) exit 72 ;;
+esac
+"#,
+    )
+    .expect("write fake llvm-readobj");
+    let mut permissions = fs::metadata(&inspector)
+        .expect("stat fake llvm-readobj")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&inspector, permissions).expect("make fake inspector executable");
+
+    let run = |mode: &str| {
+        Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-File"])
+            .arg(repo_root().join("scripts/audit-native-artifact.ps1"))
+            .arg("-Path")
+            .arg(&root)
+            .env("CKC_LLVM_PREFIX", temp.join("prefix"))
+            .env("CKC_TEST_ARTIFACT_MODE", mode)
+            .output()
+            .expect("run Windows native artifact audit")
+    };
+    let allowed = run("allowed");
+    assert!(
+        allowed.status.success(),
+        "pinned inspector rejected valid artifact fixtures:\n{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    let audit = read("scripts/audit-native-artifact.ps1");
+    for required in [
+        "llvm-readobj.exe",
+        "--coff-imports",
+        "--coff-exports",
+        "--symbols",
+    ] {
+        assert!(
+            audit.contains(required),
+            "Windows artifact audit must retain {required:?}"
+        );
+    }
+    assert!(
+        !audit.contains("Get-Command dumpbin.exe"),
+        "Windows artifact audit must not depend on an initialized SDK PATH"
+    );
+    for (mode, evidence) in [
+        (
+            "wrong-dependency",
+            "dependencies must be exactly kernel32.dll",
+        ),
+        ("module-import", "computation DLL must have no imports"),
+        ("missing-export", "does not export answer"),
+        ("forbidden-export", "forbidden computation DLL export"),
+        ("forbidden-symbol", "forbidden runtime symbol"),
+        ("empty-symbols", "no symbol descriptors"),
+        ("nonzero", "llvm-readobj --coff-imports failed"),
+    ] {
+        let output = run(mode);
+        assert!(!output.status.success(), "artifact audit accepted {mode}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let normalized_stderr = stderr
+            .replace('|', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            normalized_stderr.contains(evidence),
+            "artifact audit rejection for {mode} omitted {evidence:?}:\n{}",
+            stderr
+        );
+    }
+
+    fs::remove_dir_all(temp).expect("remove fake artifact audit tree");
+}
+
 #[test]
 fn darwin_lc_main_should_use_the_generated_c_abi_entry_without_a_raw_stack_stub() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
