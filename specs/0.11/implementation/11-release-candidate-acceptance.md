@@ -53,6 +53,18 @@ I27 另按 `11-windows-static-link-plan.md` Task 6 执行，未签收：
 - [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能与十项 required CI 全绿；ARM64
   日志无 incorrect-flags assertion/`0x80000003`，并同时签收 x64 I26。不得拼接旧 SHA。
 
+## I28 补充验收（未签收）
+
+I28 另按 `11-windows-static-link-plan.md` Task 7 执行，未签收：
+
+- [ ] `embedded_jit_objects` 的局部容器显式为 `Vec<&'static [u8]>`，Windows x64
+  `include_bytes!` array reference 在 push 边界 unsize；anchor-first + 五 runtime objects
+  的 bytes、顺序、数量与零拷贝语义不变。
+- [ ] production-source contract 在旧实现真实 red、最小类型注解后 green；不得用注释、
+  fixture 或移除 Windows cfg/anchor 来制造通过。
+- [ ] 修复精确 SHA 的完整本地、schema-6 性能与十项 required CI 全绿；Windows x64
+  实际完成 fact/Native/CLI/compiler/artifact/JIT，且同一 SHA 同时签收 ARM64 I27。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：
@@ -140,6 +152,68 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
   generated/mutation/fact/cache/docs 门、两种 Clippy、fmt/diff、release build 与三项发布审计。
   一次漏传冻结 Clang oracle 的 all-feature 调用被三项 COFF fixture 正确拒绝，补齐后从头
   完整通过。性能及修复 SHA 的十项 CI 仍待执行，本条不是阶段签收。
+- 修复 SHA `7b03f76e1139ec91a5962ca18e696c2c127604c2` 的 run
+  `33332458652` 已开始完整十项矩阵。quality job `99313407097` success；Darwin ARM64
+  host `99313407133` 也已自然 success，当前为 2/10。后者的 fact audit 7、Native 102、
+  CLI 22、hardened ad-hoc 签名及 compiler/artifact/JIT 三项审计全部通过，release/oracle
+  新 recipe cache keys 均成功保存。完整 job log SHA-256 为
+  `455a09811094e61afe66fddfc4268f4ab204490777da4883b6cdadaa1745834b`；fact artifact
+  ID `9739282165`，zip / 原文件 SHA-256 为
+  `07ecef3c1b3fb18856e757407f31408aaddd3cc4c75e1dfcf14a46fe708a775e` /
+  `573062b89c1cee7a0d403ed7ff52c5fd6d08979441c97c83f391b7a72634aedf`。
+  随后 AArch64 performance `99313407109` 也自然 success，当前为 3/10。原 checker
+  的 unchecked Clang / replay 为 `0.9978 / 1.0017`，checked 为 `0.9997 / 1.0032`，
+  raw proof 为 `1.0020`，optimizer suite median 为 `1.3436`，全部 individual gates
+  通过。job log / artifact zip / report / checker SHA-256 分别为
+  `6b296445e68e9bad057a92409aea5266bc3cbbb03e97140614e672ebed9ad5cb` /
+  `a73f48580aa72897ac0f1f0cdbf203472fb8fd2a18d943191a4fc419056b8564` /
+  `2f250e1414242703a1c611d3c5e2e1544a0eb40b630cdf7c2f09e31ed3cbb2ae` /
+  `6699fb110603d3bb5abadf42a7f570537eec88a635c997949eaa3a2a0277da4c`；artifact ID
+  `9739404998`。下载原件的 24 个 measurement 与 8 个 replay 文件逐项按 bytes/SHA-256
+  为 32/32 相符。Linux ARM64 host `99313407129` 随后也自然 success，当前为 4/10：
+  fact 7、Native 101、CLI 22 及 compiler/artifact/JIT 三项审计通过。完整 job log
+  SHA-256 为 `b12ea8aacba8a6013f436c95d71904863cf11445f54250dbe1eb1dc8fd34fc96`；fact
+  artifact ID `9739439013`，zip / 原文件摘要为
+  `c5da52139290e5870f22b048e6c0cba533b15e32f720ca36ef3cbaa568e8fc2a` /
+  `9f23d5fff246ade56df8fe39e0528e273ca9a21789649f097a235d0ed1af42fe`。该 host 的
+  cache save 因同键竞争警告，但同一 AArch64 performance job 已成功保存精确相同的
+  release/oracle keys，未跳过 prefix 验证。随后 native integration `99313407031` 与
+  x86-64 performance `99313407083` 也自然 success，矩阵为 6/10。integration 的完整
+  all-feature suite 为 607 passed / 0 failed / 0 ignored，另有 artifact fixture 5/5、
+  sanitized ownership 8/8 及 artifact/JIT 审计通过；job log SHA-256 为
+  `48227f664b063766d598dfe6a58e596117b4f737bb75f080626f94a26481c510`。x86-64
+  checker 的 unchecked Clang / replay 为 `1.0496 / 1.0007`，checked 为
+  `1.0064 / 0.9979`，raw proof 为 `0.9944`，optimizer suite median 为 `1.5071`；
+  全部 individual gates 通过。job log / artifact zip / report / checker SHA-256 分别为
+  `9a8adf924590fb128facf7ca4ab82d2a08b8383d4b5ffb6ab8c5bbcc1f1d8aa6` /
+  `4196c3f4aaa6bab14c3ec70be0fe730dbbcc562bc0a53a63b8776041630b003e` /
+  `c0a3d263791159745e4b85c0212d8028c8f6f2c9fc2bcedeb2bd03da4b1464a8` /
+  `c194c136d15f7ea442b199deee1d69b6dc2b4f9c944ce505709daaa37d931ee8`，artifact ID
+  `9740011519`；下载原件的 24 个 measurement 与 8 个 replay 文件逐项按 bytes/SHA-256
+  为 32/32 相符。Linux x86-64 host `99313407167` 随后自然 success，矩阵为 7/10：
+  fact 7、Native 101、CLI 22 及 compiler/artifact/JIT 三项审计通过。完整 job log
+  SHA-256 为 `85e58ebbdd3213633200a37b9ae9289195c9bbf13eaf8a8a866380956566903a`；
+  fact artifact ID `9740082468`，zip / 原文件摘要为
+  `d41d06ec6e19d91d55b381883ac7a5fc8c94901881cf6478d854865a6cb0bdc7` /
+  `db2b31037c193d73ee072558f8e3f2f17d27b79dd457c6b5d18a567e15648558`。Darwin
+  x86-64 host `99313407110` 随后自然 success，矩阵为 8/10：fact 7、Native 102、CLI
+  22、release/oracle cache save、hardened ad-hoc 签名及 compiler/artifact/JIT 三项审计
+  全部通过。完整 job log SHA-256 为
+  `a5d708d3efefd391f74df63a647f5a58afb172a8eec98c6a129b928726ab214a`；fact artifact
+  ID `9740622726`，zip / 原文件摘要为
+  `423cf5542f1013acb33e02c1b6a0ae418a3760adeecf55e2ed6c08f07e930c65` /
+  `4dcaddecb5366d7227efa2f20d989084fe7d7f770e579af6d2981dbcf62fc20a`。Windows x64
+  host `99313407116` 随后自然 failure：release/oracle bootstrap、77 个 MSVC 静态 CRT
+  archive 检查、x64 JIT support object、prefix 验证和两条 cache save 通过，但首次编译
+  fact-audit target 时因 `embedded_jit_objects` 的 Windows-only `include_bytes!` 把局部
+  vector 窄化为 `Vec<&[u8; 621]>`，以 E0277/E0308 停止，未进入 Native suite。完整
+  job log SHA-256 为 `5265e7791eef8994a24209daab993566d2f84d2f58ef40a26515604ed5b801a9`；
+  失败 artifact ID `9741692125`，zip / 原文件摘要为
+  `f262aa42e985645d8362cf92569fbb3009a853288f721155a0201012cb571c2d` /
+  `3e8f01a73123facfcc3cfad3e977cf31153517144eccf187b23464178521be60`。该 I28
+  编译阻断按 `11-windows-static-link-plan.md` Task 7 修复；Windows ARM64 原 job 仍自然
+  运行以保留 I27 独立证据。本 run 已失败，八项 success 不得与后续 SHA 拼接，也不签收
+  I28/I27/I26/I25 或阶段 11。
 
 ### I25 Windows 静态链接（2026-08-30，本地通过，远程未签收）
 

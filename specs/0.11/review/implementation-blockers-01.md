@@ -1282,6 +1282,91 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   记录、artifact/compiler/JIT audits、version/licenses 和 prefix manifest 验证均通过。
   英中 ABI 同步说明该设置只恢复官方 compatibility contract。原 schema-6 性能及同 SHA
   十项 CI 尚未执行，故 I27 仍未签收。
+- 精确修复 SHA `7b03f76e1139ec91a5962ca18e696c2c127604c2` 的本机 schema-6 门随后通过：
+  unchecked Clang / replay `1.0021 / 1.0008`，checked `0.9971 / 1.0033`，raw proof
+  `1.0015`，optimizer suite median `1.1159`；report SHA-256 为
+  `78f90b33afcebcbdcc01eb6ea15b77ad9f0b18c2dcfc640a84c3c8050bf34984`。
+- 同 SHA run `33332458652` 当前 quality `99313407097` 与 Darwin ARM64 host
+  `99313407133` success（2/10）。ARM host 原始日志 SHA-256
+  `455a09811094e61afe66fddfc4268f4ab204490777da4883b6cdadaa1745834b`；fact artifact
+  `9739282165` 的 zip / 原文件摘要为
+  `07ecef3c1b3fb18856e757407f31408aaddd3cc4c75e1dfcf14a46fe708a775e` /
+  `573062b89c1cee7a0d403ed7ff52c5fd6d08979441c97c83f391b7a72634aedf`。
+  fact 7、Native 102、CLI 22、签名与三项发布审计、两条 cache save 均通过；其余八项
+  当时仍运行。
+- 同轮 AArch64 performance `99313407109` 随后 success，矩阵为 3/10。原 checker
+  汇总为 unchecked `0.9978 / 1.0017`、checked `0.9997 / 1.0032`、proof `1.0020`、
+  optimizer `1.3436`，所有 individual gates 通过。完整 job log、artifact zip、report、
+  checker 摘要分别为
+  `6b296445e68e9bad057a92409aea5266bc3cbbb03e97140614e672ebed9ad5cb`、
+  `a73f48580aa72897ac0f1f0cdbf203472fb8fd2a18d943191a4fc419056b8564`、
+  `2f250e1414242703a1c611d3c5e2e1544a0eb40b630cdf7c2f09e31ed3cbb2ae`、
+  `6699fb110603d3bb5abadf42a7f570537eec88a635c997949eaa3a2a0277da4c`；artifact
+  `9739404998` 中 24 个 measurement 与 8 个 replay 文件逐项验证 32/32 相符。其余七项
+  当时仍运行。
+- Linux ARM64 host `99313407129` 随后 success，矩阵为 4/10。fact 7、Native 101、
+  CLI 22、compiler/artifact/JIT audits 均通过；完整日志 SHA-256 为
+  `b12ea8aacba8a6013f436c95d71904863cf11445f54250dbe1eb1dc8fd34fc96`。fact artifact
+  `9739439013` 的 zip / 原文件摘要为
+  `c5da52139290e5870f22b048e6c0cba533b15e32f720ca36ef3cbaa568e8fc2a` /
+  `9f23d5fff246ade56df8fe39e0528e273ca9a21789649f097a235d0ed1af42fe`。该 host 的
+  release/oracle cache save 只因同键竞争警告；同一 AArch64 performance job 的原日志
+  证明两个精确相同 keys 均已成功保存，因此不构成未验证 fallback。其余六项仍运行，
+  继续保持 I27 未签收。
+- native integration `99313407031` 随后 success：完整 all-feature suite 607 passed / 0
+  failed / 0 ignored，另有 artifact fixture 5/5、sanitized ownership 8/8 及 artifact/JIT
+  审计通过。完整日志 SHA-256 为
+  `48227f664b063766d598dfe6a58e596117b4f737bb75f080626f94a26481c510`。
+- x86-64 performance `99313407083` 随后 success，矩阵为 6/10。原 checker 的
+  unchecked Clang / replay 为 `1.0496 / 1.0007`，checked 为 `1.0064 / 0.9979`，
+  raw proof 为 `0.9944`，optimizer suite median 为 `1.5071`，全部 individual gates
+  通过。job log / artifact zip / report / checker SHA-256 分别为
+  `9a8adf924590fb128facf7ca4ab82d2a08b8383d4b5ffb6ab8c5bbcc1f1d8aa6`、
+  `4196c3f4aaa6bab14c3ec70be0fe730dbbcc562bc0a53a63b8776041630b003e`、
+  `c0a3d263791159745e4b85c0212d8028c8f6f2c9fc2bcedeb2bd03da4b1464a8`、
+  `c194c136d15f7ea442b199deee1d69b6dc2b4f9c944ce505709daaa37d931ee8`；artifact
+  `9740011519` 中 24 个 measurement 与 8 个 replay 文件逐项验证 32/32 相符。其余
+  四项仍运行，继续保持 I27 未签收。
+- Linux x86-64 host `99313407167` 随后 success，矩阵为 7/10。fact 7、Native 101、
+  CLI 22 及 compiler/artifact/JIT audits 均通过；完整日志 SHA-256 为
+  `85e58ebbdd3213633200a37b9ae9289195c9bbf13eaf8a8a866380956566903a`。fact artifact
+  `9740082468` 的 zip / 原文件摘要为
+  `d41d06ec6e19d91d55b381883ac7a5fc8c94901881cf6478d854865a6cb0bdc7` /
+  `db2b31037c193d73ee072558f8e3f2f17d27b79dd457c6b5d18a567e15648558`。其余三项
+  仍运行，继续保持 I27 未签收。
+- Darwin x86-64 host `99313407110` 随后 success，矩阵为 8/10。fact 7、Native 102、
+  CLI 22、release/oracle cache save、hardened ad-hoc 签名及 compiler/artifact/JIT audits
+  均通过；完整日志 SHA-256 为
+  `a5d708d3efefd391f74df63a647f5a58afb172a8eec98c6a129b928726ab214a`。fact artifact
+  `9740622726` 的 zip / 原文件摘要为
+  `423cf5542f1013acb33e02c1b6a0ae418a3760adeecf55e2ed6c08f07e930c65` /
+  `4dcaddecb5366d7227efa2f20d989084fe7d7f770e579af6d2981dbcf62fc20a`。其余两项
+  Windows host 仍运行，继续保持 I27 未签收。
+
+## I28：Windows x64 JIT support array reference 窄化局部 object 容器
+
+- run `33332458652`、SHA
+  `7b03f76e1139ec91a5962ca18e696c2c127604c2` 的 Windows x64 job
+  `99313407116` 自然完成为 failure。release/oracle bootstrap、77 个 MSVC archive 静态
+  CRT 检查、x64 JIT support object、prefix 验证与两条 cache save 均成功；首次执行
+  fact-audit test 编译时以 E0277/E0308 停止，未进入 Native/CLI 或发布审计。
+- 完整日志 SHA-256 为
+  `5265e7791eef8994a24209daab993566d2f84d2f58ef40a26515604ed5b801a9`；失败 artifact
+  ID `9741692125`，zip / 原文件摘要为
+  `f262aa42e985645d8362cf92569fbb3009a853288f721155a0201012cb571c2d` /
+  `3e8f01a73123facfcc3cfad3e977cf31153517144eccf187b23464178521be60`。
+- 根因位于 `embedded_jit_objects`：无类型注解的 `Vec::with_capacity(6)` 在 Windows x64
+  cfg 下先接收 `include_bytes!(CKC_RUNTIME_JIT_SUPPORT)` 的 `&[u8; 621]`，从而被推断为
+  `Vec<&[u8; 621]>`；随后不能 `extend` 五个 `&[u8]` runtime objects，也不能满足声明的
+  `Vec<&'static [u8]>` 返回类型。Unix 与 Windows ARM64 不编译该 x64-only push，不能
+  覆盖此 production cfg。
+- 修复边界见 `../implementation/11-windows-static-link-plan.md` Task 7：先锁定 production
+  source red，再只给局部容器显式 `Vec<&'static [u8]>` 类型，让标准 unsize coercion 在
+  push 边界发生。不得复制 bytes、改变 anchor-first + five-runtime 顺序/数量、移除 cfg，
+  或改动 bootstrap/cache、ABI、ORC、W^X 与任何门槛。
+- I28 是新增真实阻断。原 run 的八项 success 与后续结果不得拼接；仍在运行的 Windows
+  ARM64 job 必须自然结束并独立归档。修复后必须由完整本地、schema-6 性能和新 SHA 的
+  十项 CI 同时签收 I28/I27/I26/I25/阶段 11。
 
 ## 修订边界（全部阻断，持续有效）
 

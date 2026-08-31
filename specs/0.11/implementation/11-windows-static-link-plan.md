@@ -274,3 +274,61 @@ COFF `/out:` 和 Windows `dllexport` 修复覆盖；ARM64 cache/run/JIT 子进�
 现有 ARM64 RuntimeDyld 分支，不影响 x64 JITLink、AOT artifacts、ABI 或语言语义。真实
 Windows ARM64 execution 仍是最终证明，source contract 只防止再次漏配，不能替代远程门。
 复审未发现需要改变原安全模型或降低验收标准的阻断项。
+
+## Task 7：Windows x64 JIT object slice 类型闭包（I28）
+
+修复 SHA `7b03f76e1139ec91a5962ca18e696c2c127604c2` 的完整 run
+`33332458652` 在其他八项 success 后，Windows x64 job `99313407116` 自然结束为
+failure。release/oracle bootstrap、77 个 MSVC archive 静态 CRT 检查、x64 JIT support
+object 构建、prefix 验证和两条 cache save 均完成；首次编译 fact-audit target 时，
+`src/backend/native_runtime.rs` 触发 E0277/E0308，未进入 Native suite。完整日志
+SHA-256 为 `5265e7791eef8994a24209daab993566d2f84d2f58ef40a26515604ed5b801a9`；
+失败 artifact ID `9741692125`，zip / 原文件 SHA-256 分别为
+`f262aa42e985645d8362cf92569fbb3009a853288f721155a0201012cb571c2d` /
+`3e8f01a73123facfcc3cfad3e977cf31153517144eccf187b23464178521be60`。
+
+### 7.1 复诊与不变量
+
+- `embedded_jit_objects` 的公开内部契约已经声明返回 `Vec<&'static [u8]>`，但局部
+  `objects` 使用无类型注解的 `Vec::with_capacity(6)`。Windows x64 cfg 下第一个 `push`
+  是 `include_bytes!(CKC_RUNTIME_JIT_SUPPORT)`，其具体类型为 `&[u8; 621]`，Rust 因而先把
+  容器窄化成 `Vec<&[u8; 621]>`；随后 `extend(embedded_runtime_objects())` 的元素类型
+  `&[u8]` 无法满足 `Extend`，返回类型也无法补救已经完成的方法调用推断。
+- Linux、Darwin 和 Windows ARM64 不编译这个 x64-only `push`，所以既有本机、Unix 和
+  ARM64 入口不能证明该分支可编译。这是生产 cfg coverage 缺口，不是 LLVM、COFF、静态
+  CRT 或 artifact 内容错误。
+- 修复必须只给局部容器一个显式 `Vec<&'static [u8]>` 类型，使 array reference 在 `push`
+  边界发生标准 unsize coercion；不得复制 object bytes、改变 anchor-first + 五 runtime
+  objects 的顺序/数量、改动 bootstrap/cache manifest、ABI、ORC、process isolation、W^X
+  或任何测试/性能阈值。
+
+### 7.2 计划先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/native_toolchain.rs` 与 `src/backend/native_runtime.rs`。
+
+- [ ] 先提交 I28 远程原件、复诊、不变量和本计划；docs 16 与 `git diff --check` 通过，
+  生产实现不得混入该提交。
+- [ ] 在既有 Windows native execution contract 中先增加局部 slice-collection 类型断言，
+  对旧生产源码实际观察 targeted red；不能只在注释或测试 fixture 里出现目标字符串。
+- [ ] 最小实现只为 `objects` 增加 `Vec<&'static [u8]>` 注解。targeted contract、default
+  contract suite 与本机 native-feature 编译必须 green，且现有 object count/order 断言保留。
+
+### 7.3 验证与远程闭环
+
+- [ ] 重跑 Task 6 的全部本地门与原 schema-6 性能门；计数、语料、阈值和工具链 identity
+  不变。只有完整通过后才允许提交/推送实现。
+- [ ] 在新精确 SHA 上重新执行十项 required CI。Windows x64 必须完成 fact/Native/CLI、
+  static compiler、实际 executable/library/JIT 和发布审计；Windows ARM64 必须同时完成
+  I27 的 incorrect-flags 路径。不得拼接 `7b03f76` 的八项成功。
+- [ ] 新 SHA 十项全绿后才能关闭 I28/I27/I26/I25/阶段 11，并继续 01–11/99 总验收与
+  最终 docs-only SHA 的第二轮完整矩阵。
+
+## Task 7 行内对抗性自审
+
+失败由 Rust 诊断直接给出具体推断链，显式返回类型不足以反向约束先发生的 `push`；因此
+局部 collection 注解是最小且充分的修复。它不改变任何 object bytes、顺序或执行语义，
+同时把跨 cfg 编译意图变成稳定源码契约。文本 contract 只能防回归，实际 Windows x64
+编译/执行仍是必要验收；完整十项矩阵和既有 ARM64 ORC 门均不降低。复审未发现需扩张
+设计或调整规范/ABI 的阻断项。
