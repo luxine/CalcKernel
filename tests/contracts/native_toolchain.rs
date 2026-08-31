@@ -525,6 +525,45 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
 }
 
 #[test]
+fn coff_x64_jit_should_route_allowed_process_calls_through_graph_local_stubs() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "CkcCoffX64ProcessStubsPlugin",
+        "add_coff_x64_process_stubs",
+        "Config.PostPrunePasses.push_back",
+        "G.getEdgeKindName(edge.getKind()) !=",
+        "llvm::StringRef(\"PCRel32\")",
+        "GetStdHandle",
+        "WriteFile",
+        "ExitProcess",
+        "llvm::jitlink::x86_64::createAnonymousPointer",
+        "llvm::jitlink::x86_64::createAnonymousPointerJumpStub",
+        "llvm::jitlink::x86_64::Pointer64",
+        "call opcode",
+        "object_layer->addPlugin",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "COFF x64 process-call range extension must retain {required:?}"
+        );
+    }
+    assert_eq!(
+        bridge.matches("CkcCoffX64ProcessStubsPlugin").count(),
+        2,
+        "the COFF x64 plugin must have one declaration and one installation"
+    );
+    assert!(
+        bridge.contains("defined(CKC_LLD_COFF) &&")
+            && bridge.contains("defined(_M_X64) || defined(__x86_64__)"),
+        "process-call stubs must remain compile-time COFF x64 only"
+    );
+    assert!(
+        bridge.contains("setLinkProcessSymbolsByDefault(false)"),
+        "graph-local stubs must not reopen arbitrary process symbol lookup"
+    );
+}
+
+#[test]
 fn coff_arm64_rtdyld_should_preserve_official_orc_symbol_responsibility_contract() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let arm64_coff_creator = bridge

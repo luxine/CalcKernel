@@ -19,6 +19,7 @@
 #include <llvm/Config/llvm-config.h>
 #include <llvm/ExecutionEngine/JITLink/JITLinkMemoryManager.h>
 #include <llvm/ExecutionEngine/JITLink/JITLink.h>
+#include <llvm/ExecutionEngine/JITLink/x86_64.h>
 #include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h>
@@ -555,6 +556,108 @@ private:
     std::map<void *, Reservation> reservations_;
     std::map<uint64_t, Allocation> allocations_;
 };
+
+#if defined(CKC_LLD_COFF) && \
+    (defined(_M_X64) || defined(__x86_64__))
+bool is_allowed_coff_x64_process_symbol(const llvm::jitlink::Symbol &symbol) {
+    if (!symbol.hasName() || !symbol.isExternal()) {
+        return false;
+    }
+    const llvm::StringRef name = *symbol.getName();
+    return name == "GetStdHandle" || name == "WriteFile" ||
+           name == "ExitProcess";
+}
+
+llvm::Error add_coff_x64_process_stubs(llvm::jitlink::LinkGraph &G) {
+    std::vector<llvm::jitlink::Edge *> process_calls;
+    for (auto *block : G.blocks()) {
+        for (auto &edge : block->edges()) {
+            if (!is_allowed_coff_x64_process_symbol(edge.getTarget())) {
+                continue;
+            }
+            if (G.getEdgeKindName(edge.getKind()) !=
+                llvm::StringRef("PCRel32")) {
+                return llvm::createStringError(
+                    "COFF x64 process symbol has a non-PCRel32 relocation");
+            }
+            const auto content = block->getContent();
+            if (edge.getOffset() == 0 || edge.getOffset() > content.size() ||
+                static_cast<unsigned char>(content[edge.getOffset() - 1]) !=
+                    0xe8u) {
+                return llvm::createStringError(
+                    "COFF x64 process symbol PCRel32 is not a direct call opcode");
+            }
+            process_calls.push_back(&edge);
+        }
+    }
+    if (process_calls.empty()) {
+        return llvm::Error::success();
+    }
+    if (G.findSectionByName("$__CKC_PROCESS_GOT") != nullptr ||
+        G.findSectionByName("$__CKC_PROCESS_STUBS") != nullptr) {
+        return llvm::createStringError(
+            "COFF x64 object defines a reserved process-stub section");
+    }
+
+    auto &pointer_section = G.createSection(
+        "$__CKC_PROCESS_GOT", llvm::orc::MemProt::Read);
+    const auto stub_protection = static_cast<llvm::orc::MemProt>(
+        llvm::to_underlying(llvm::orc::MemProt::Read) |
+        llvm::to_underlying(llvm::orc::MemProt::Exec));
+    auto &stub_section = G.createSection(
+        "$__CKC_PROCESS_STUBS", stub_protection);
+    std::map<llvm::jitlink::Symbol *, llvm::jitlink::Symbol *> stubs;
+    for (auto *edge : process_calls) {
+        auto *target = &edge->getTarget();
+        auto found = stubs.find(target);
+        if (found == stubs.end()) {
+            auto &pointer = llvm::jitlink::x86_64::createAnonymousPointer(
+                G, pointer_section, target);
+            if (pointer.getBlock().edges_size() != 1 ||
+                pointer.getBlock().edges().begin()->getKind() !=
+                    llvm::jitlink::x86_64::Pointer64) {
+                return llvm::createStringError(
+                    "COFF x64 process pointer did not use Pointer64");
+            }
+            auto &stub =
+                llvm::jitlink::x86_64::createAnonymousPointerJumpStub(
+                    G, stub_section, pointer);
+            found = stubs.emplace(target, &stub).first;
+        }
+        edge->setTarget(*found->second);
+    }
+    return llvm::Error::success();
+}
+
+class CkcCoffX64ProcessStubsPlugin final
+    : public llvm::orc::LinkGraphLinkingLayer::Plugin {
+public:
+    void modifyPassConfig(
+        llvm::orc::MaterializationResponsibility &,
+        llvm::jitlink::LinkGraph &G,
+        llvm::jitlink::PassConfiguration &Config) override {
+        if (G.getTargetTriple().getArch() == llvm::Triple::x86_64 &&
+            G.getTargetTriple().isOSBinFormatCOFF()) {
+            Config.PostPrunePasses.push_back(
+                add_coff_x64_process_stubs);
+        }
+    }
+
+    llvm::Error notifyFailed(
+        llvm::orc::MaterializationResponsibility &) override {
+        return llvm::Error::success();
+    }
+
+    llvm::Error notifyRemovingResources(
+        llvm::orc::JITDylib &, llvm::orc::ResourceKey) override {
+        return llvm::Error::success();
+    }
+
+    void notifyTransferringResources(
+        llvm::orc::JITDylib &, llvm::orc::ResourceKey,
+        llvm::orc::ResourceKey) override {}
+};
+#endif
 
 class CkcSectionMemoryMapper
     : public llvm::SectionMemoryManager::MemoryMapper {
@@ -2874,9 +2977,16 @@ extern "C" int32_t ckc_llvm_jit_create(CkcLlvmJit **out,
                         llvm::orc::MapperJITLinkMemoryManager>(
                         CKC_JIT_RESERVATION_GRANULARITY,
                         std::move(*mapper));
-                    return std::unique_ptr<llvm::orc::ObjectLayer>(
+                    auto object_layer =
                         std::make_unique<llvm::orc::ObjectLinkingLayer>(
-                            session, std::move(memory_manager)));
+                            session, std::move(memory_manager));
+#if defined(CKC_LLD_COFF) && \
+    (defined(_M_X64) || defined(__x86_64__))
+                    object_layer->addPlugin(std::make_shared<
+                        CkcCoffX64ProcessStubsPlugin>());
+#endif
+                    return std::unique_ptr<llvm::orc::ObjectLayer>(
+                        std::move(object_layer));
                 });
         }
 

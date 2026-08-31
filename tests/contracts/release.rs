@@ -1,5 +1,8 @@
 use std::{fs, process::Command};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use super::support::oracle::repo_root;
 
 fn assert_actions_are_commit_pinned(workflow: &str) {
@@ -351,6 +354,95 @@ fn windows_release_audit_should_use_the_verified_prefix_inspector() {
             "Windows release audit must not depend on an uninitialized developer PATH: {forbidden}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn windows_release_audit_should_check_only_import_descriptor_names() {
+    let root = super::support::temp::temp_dir("Rust_CalcKernel-release-audit");
+    let prefix = root.join("prefix");
+    let bin = prefix.join("bin");
+    fs::create_dir_all(&bin).expect("create fake pinned prefix");
+    let inspector = bin.join("llvm-readobj.exe");
+    let candidate = root.join("Rust_CalcKernel-candidate.exe");
+
+    fs::write(
+        &inspector,
+        r#"#!/bin/sh
+case "${CKC_TEST_IMPORT_MODE:-allowed}" in
+  allowed)
+    printf '\nFile: %s\nFormat: COFF-x86-64\nMetadata {\n  Name: VCRUNTIME140.dll\n}\nImport {\n  Name: KERNEL32.dll\n  Symbol: CalcKernelProbe (0)\n}\n' "$2"
+    ;;
+  forbidden)
+    printf '\nFile: %s\nFormat: COFF-x86-64\nDelayImport {\n  Name: VCRUNTIME140.dll\n  Import {\n    Symbol: memcpy (0)\n  }\n}\n' "$2"
+    ;;
+  empty) printf '\nFile: %s\nFormat: COFF-x86-64\n' "$2" ;;
+  malformed)
+    printf '\nFile: %s\nFormat: COFF-x86-64\nImport {\n  Name: KERNEL32.dll\n}\nImport {\n  Symbol: missing-name (0)\n}\n' "$2"
+    ;;
+  nonzero) exit 71 ;;
+esac
+"#,
+    )
+    .expect("write fake inspector");
+    fs::write(
+        &candidate,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ] && [ "$2" = "--verbose" ]; then
+  printf 'LLVM: 22.1.8\n'
+elif [ "$1" = "licenses" ]; then
+  printf '===== LLVM Project 22.1.8\n'
+else
+  exit 72
+fi
+"#,
+    )
+    .expect("write fake candidate");
+    for path in [&inspector, &candidate] {
+        let mut permissions = fs::metadata(path)
+            .expect("stat executable fixture")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("make fixture executable");
+    }
+
+    let run = |mode: &str| {
+        Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-File"])
+            .arg(repo_root().join("scripts/audit-ckc-release.ps1"))
+            .arg("-Path")
+            .arg(&candidate)
+            .env("CKC_LLVM_PREFIX", &prefix)
+            .env("CKC_TEST_IMPORT_MODE", mode)
+            .output()
+            .expect("run Windows release audit with fake inspector")
+    };
+
+    let allowed = run("allowed");
+    assert!(
+        allowed.status.success(),
+        "candidate path and imported symbol metadata are not dependency names:\n{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    for (mode, evidence) in [
+        ("forbidden", "VCRUNTIME140.dll"),
+        ("empty", "no import descriptors"),
+        ("malformed", "malformed import descriptor"),
+        ("nonzero", "llvm-readobj --coff-imports failed"),
+    ] {
+        let output = run(mode);
+        assert!(
+            !output.status.success(),
+            "audit accepted {mode} inspector output"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(evidence),
+            "audit rejection for {mode} omitted {evidence:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fs::remove_dir_all(root).expect("remove fake release audit prefix");
 }
 
 #[test]
