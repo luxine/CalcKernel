@@ -1529,6 +1529,22 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   rebaseline 或改门槛。旧 run ARM64 仍自然运行，新 SHA 十项尚未 dispatch，因此 I32
   继续保持阻断，不能把本地与旧八项 success 拼接成签收。
 
+## I33：Windows release audit 隐式依赖未初始化的 `dumpbin` PATH
+
+- run `33364897799` 的 Windows ARM64 job `99403408399` 自然结束为 failure，但先通过
+  bootstrap、fact 7/7、Native 92/92、CLI 22/22 与 static-CRT release build；唯一失败在
+  `scripts/audit-ckc-release.ps1:11` 的 `Get-Command dumpbin.exe`。完整日志 SHA-256
+  `77066a288bb1db4f2b97ede1baf0a397479f334138a74629080dee4b9727ac97`；fact artifact
+  `9757383387` 的 ZIP / 原文件 SHA-256 为
+  `eab16b85762ec0f04682b5d08512e8dfee046efe5df11e75a91efe5daf017ebd` /
+  `541fe8d17eda3ee101c80dc820011dea30f91a23934cad5fbbe5e0647b4b546c`。
+- audit 在读取 candidate imports 前失败，所以不能诊断成动态 CRT；真正缺口是脚本假定 runner
+  已初始化 Visual Studio developer PATH。release/oracle prefix 本轮均验证并保存，且已经包含
+  pinned `llvm-readobj.exe`；用其绝对路径与 `--coff-imports` 可消除未冻结环境依赖。
+- 修订必须在 missing tool、inspector nonzero 或 forbidden import 时继续 fail closed，并保留
+  version/licenses、全部 forbidden runtime/compiler 名称与实际双 Windows remote audit。不得
+  通过查找任意系统 `dumpbin`、放宽 regex、跳过步骤或改链接/ABI/cache 修复。计划见 Task 12。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

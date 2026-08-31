@@ -152,7 +152,7 @@ I32 另按 `11-windows-static-link-plan.md` Task 11 执行：
 - [x] 精确保留 `5fa94b0` run `33364897799` 的 Windows x64 job `99403408409` 自然失败；
   I31 已由真实 MSVC bootstrap 与 fact 7/7 证明不再触发 C2169，但 Native 78/92，14 项
   failure 全部共享 COFF `.pdata` `Pointer32` image-relative relocation 越界。
-- [ ] 保留同 run Windows ARM64 的自然终态；不得为开始 I32 而取消仍在运行的 job，也不得
+- [x] 保留同 run Windows ARM64 的自然终态；不得为开始 I32 而取消仍在运行的 job，也不得
   把当前八项 success 与后续 SHA 拼接。
 - [x] production-source contract 在 I32 前源码真实 red；最小修订必须先单独加入并物化
   x64 私有 `__ImageBase` anchor，再加入五个 runtime objects 与 program，且同一 contract
@@ -170,6 +170,31 @@ release lib 53 / IR 58、全部独立小门、release/compiler/artifact/JIT、�
 schema-6 checker 也通过。报告仍是冻结原件 SHA-256
 `8a1254780dc13a8cabec12e3b8849ffcc860d8c91580bf28110ed9ee1091b441`，没有重计时或调整
 任何阈值。Windows ARM64 旧 job 与新 SHA 十项远程门仍未签收，故最后一项保持未勾选。
+
+旧 ARM64 job `99403408399` 最终自然 failure，但已成功完成 bootstrap、fact audit 7、
+Native 92、CLI 22 与静态 release compiler build，确认 I31 和 ARM64 execution 路径没有新
+产品阻断；它只在 Windows release compiler dependency audit 开始时因 runner PATH 找不到
+`dumpbin.exe` 而失败。完整日志 SHA-256
+`77066a288bb1db4f2b97ede1baf0a397479f334138a74629080dee4b9727ac97`；fact artifact ID
+`9757383387`，ZIP / 原文件 SHA-256 分别为
+`eab16b85762ec0f04682b5d08512e8dfee046efe5df11e75a91efe5daf017ebd` /
+`541fe8d17eda3ee101c80dc820011dea30f91a23934cad5fbbe5e0647b4b546c`。run 因 x64 I32
+和 ARM64 审计环境 I33 最终为 8/10，不与后续 SHA 拼接。
+
+## I33 补充验收（未签收）
+
+I33 另按 `11-windows-static-link-plan.md` Task 12 执行：
+
+- [x] 归档 ARM64 精确失败，确认 audit 尚未读取 candidate，不把缺少 runner PATH 工具误判
+  为静态 CRT 或 release compiler 产品失败；同时保留此前 Native/CLI/build success。
+- [ ] Windows release audit 改用同一已验证 `CKC_LLVM_PREFIX` 内的 pinned
+  `llvm-readobj.exe --coff-imports`，缺失/执行失败必须 fail closed；原 forbidden dependency、
+  version 与 licenses 检查全部保持，不通过放宽 allowlist 修复。
+- [ ] production-source contract 先在旧脚本真实 red，再由最小脚本修订 green；新精确 SHA
+  的两个真实 Windows job 都必须完成 compiler/artifact/JIT audits，且同 SHA 十项全绿。
+
+I33 不改变 release executable、Rust/bridge/runtime 链接参数、CRT identity、artifact、ABI、
+cache 或发布依赖策略；只消除对 runner 未初始化 Visual Studio developer PATH 的隐式依赖。
 
 ## I23 补充验收（未签收）
 

@@ -769,3 +769,58 @@ ID `9755398106`，上传 ZIP / 原文件 SHA-256 分别为
 策略。修复面只控制 x64 私有 support object 的 ORC 时序，不改变 allocator、权限、符号可见
 范围、runtime/AOT 闭包或 ABI。最终真实 Windows 仍是行为门，未发现需要降低原验收标准的
 理由。
+
+## Task 12：Windows release audit 的 pinned inspector 闭包（I33）
+
+精确旧 SHA `5fa94b089156ecae36a24c90d4c580fc473fbd83` 的 run
+`33364897799` 已自然结束为 completed/failure、8/10。Windows ARM64 job
+`99403408399` 成功完成约 5 小时 38 分的 bootstrap、fact audit 7/7、Native 92/92、CLI
+22/22 与 static-CRT release compiler build，随后在 dependency audit 的第一项
+`Get-Command dumpbin.exe -ErrorAction Stop` 失败；candidate 尚未被读取。完整日志 SHA-256
+`77066a288bb1db4f2b97ede1baf0a397479f334138a74629080dee4b9727ac97`；fact artifact ID
+`9757383387`，上传 ZIP / 原文件 SHA-256 分别为
+`eab16b85762ec0f04682b5d08512e8dfee046efe5df11e75a91efe5daf017ebd` /
+`541fe8d17eda3ee101c80dc820011dea30f91a23934cad5fbbe5e0647b4b546c`。release / oracle
+cache ID `7155191185` / `7161426496` 均已保存，后续不得删除或绕过 cache identity。
+
+### 12.1 复诊与不可变边界
+
+- `scripts/audit-ckc-release.ps1` 隐式要求 Visual Studio developer environment 已把
+  `dumpbin.exe` 放入 PATH；GitHub Windows ARM64 的 PowerShell job 没有该前置条件。失败发生
+  在任何 `/dependents` 输出之前，不能证明 binary 含动态 CRT，也不能降低依赖审计来掩盖。
+- 同一 bootstrap 已提供并验证 `CKC_LLVM_PREFIX/bin/llvm-readobj.exe`，其版本、归档闭包和
+  manifest identity 已由 prefix verifier fail-closed 锁定。最小修订是从该绝对 prefix
+  解析工具，要求 regular file，执行 `--coff-imports` 并检查 exit status；不得搜索 PATH、
+  `vswhere` 猜目录、启动未冻结 developer shell 或回退到系统工具。
+- 保持原 forbidden regex 对 LLVM/LLD/Clang/CalcKernel/libck/MSVCP/VCRUNTIME/CONCRT/
+  libstdc++/libc++ 的拒绝，以及 candidate version/licenses 检查。不得新增 DLL allowlist、
+  改链接参数、跳过审计，或改变 Windows runtime/bridge/Rust static CRT、artifact/ABI/cache。
+
+### 12.2 文档先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/release.rs` 与 `scripts/audit-ckc-release.ps1`。
+
+- [x] 先提交 ARM64 自然终态、原始日志/artifact/cache identity、单一环境根因与不可变边界；
+  docs 16 和 `git diff --check` 必须通过，不混入测试或脚本修订。
+- [ ] 扩展 production-source contract，要求唯一 pinned-prefix inspector、
+  `--coff-imports`、missing/nonzero fail-closed 与原 dependency/version/licenses closure，且明确
+  禁止 `Get-Command dumpbin.exe`；在旧脚本取得真实 targeted red。
+- [ ] 最小修改同一脚本使 targeted contract green；PowerShell parse、default/all-feature、
+  全部局部门与原 schema-6 只读复验通过。source contract 不替代真实 Windows PE 审计。
+
+### 12.3 远程闭环
+
+- [ ] 以实现与证据最终精确 SHA dispatch 全十项 CI。Windows ARM64/x64 必须都从验证缓存
+  完成 fact 7、Native 92、CLI 22 与 compiler/artifact/JIT audits；x64 同时证明 I32 不再有
+  negative image-relative/Pointer32。另八项也必须 success，不拼接旧 run。
+- [ ] 十项全绿后才允许关闭 I33/I32/I31/I30/I29/I28/I27/I26/I25/I23 与阶段 11，并进入
+  01–11/99 总验收；不得为 audit 环境问题降低验收门槛。
+
+## Task 12 行内对抗性自审
+
+失败发生在 inspector discovery 而非 candidate inspection，且 prefix 中已有同版本、已验证、
+跨 Windows 架构可用的 PE reader，因此把审计工具也纳入 pinned prefix 是收紧环境闭包，不是
+放松动态依赖政策。binary、链接器与 allowlist 均不变；最终仍要求两个真实 Windows runner
+执行完整审计，未发现需要扩大到构建系统或 ABI 的阻断项。
