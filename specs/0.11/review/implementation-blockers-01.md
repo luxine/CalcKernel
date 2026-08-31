@@ -1551,6 +1551,32 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   全部本地阶段 11 门通过；原 schema-6 仅只读复验。I33 的产品/本地修复已闭环，但在两个
   Windows job 和同 SHA 十项 CI 全绿前仍保持阻断，不把 source contract 当作 PE 行为证据。
 
+## I34：COFF x64 对远 process symbol 的直接 `PCRel32` 超出范围
+
+- 精确 SHA `be4b77d` 的 run `33393261918` 最终 8/10；Windows x64 job
+  `99491674256` 的 I32 negative image-relative/Pointer32 已消失，但 Native 仍为 78/92。
+  14 项全部来自 `ckc-runtime-4.o` 对 `GetStdHandle`、`WriteFile`、`ExitProcess` 的直接
+  `PCRel32` 无法跨越 JIT reservation 与系统 DLL 的 >2 GiB 距离。日志 SHA-256
+  `b96aef2719f394e7ced1490695127ebdcbad2a04a23483a9c96b4482c3e5cc00`，fact artifact
+  `9758367296`。
+- 用本机 Clang 实际生成的 x64 COFF 诊断证明：volatile internal function-pointer slot 使外部
+  三 symbol 变为 `IMAGE_REL_AMD64_ADDR64`，本地 call 只保留对 slot 的 REL32；这支持“64-bit
+  pointer + local stub”机制，但不是 production/remote 签收。正式修订应在 COFF-x64-only
+  JITLink graph pass 使用 LLVM 官方 R-only pointer/RX stub primitives，不修改共享 runtime
+  source、AOT artifact、cache recipe 或 process-symbol allowlist。
+
+## I35：Windows dependency audit 把 candidate 路径误当 import name
+
+- 同一 run 的 ARM64 job `99491674138` 已通过 fact 7/7、Native 92/92、CLI 22/22 和 static
+  release build；pinned inspector 成功执行后，regex 拒绝了整份输出。该输出首行是绝对
+  `File: C:\a\Rust_CalcKernel\...`，必然命中原本用于拒绝动态 compiler dependency 的
+  `CalcKernel`，并不能证明 import table 有 forbidden DLL。日志 SHA-256
+  `48a78a2fa36f4db15ec6415fb314382d808597c157c7af1465e5880fa8f7405c`，fact artifact
+  `9758395786`。
+- pinned LLVM 22 的 `--coff-imports` 同时列出 regular `Import`、`DelayImport`、文件元数据与
+  symbol/RVA；审计必须 fail-closed 提取两个 descriptor scope 的 `Name:`，只对依赖名应用
+  原 regex。不得删 `CalcKernel`、过滤特定 workspace 路径、跳过空/畸形输出或退回 PATH 工具。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

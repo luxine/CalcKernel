@@ -210,6 +210,42 @@ sanitizer 只记录冻结的 Linux-only capability unavailable。未重计时；
 通过，仍为 unchecked `1.0003 / 0.9979`、checked `1.0072 / 1.0056`、proof `1.0015`、
 optimizer `1.1068`、Dijkstra `2.0762x`。最后一项只等待新精确 SHA 的十项远程签收。
 
+## I34 补充验收（未签收）
+
+精确 SHA `be4b77dfef6088a3707ae2725c2077f5c415d3b6` 的 run `33393261918` 最终为
+8/10；Windows x64 job `99491674256` 在 fact 7/7 后运行 Native 78/92。I32 的负
+image-relative/Pointer32 已消失，14 个失败统一收敛为 runtime 对 `GetStdHandle`、
+`WriteFile`、`ExitProcess` 的外部 `PCRel32` 超出 ±2 GiB。完整日志 SHA-256 为
+`b96aef2719f394e7ced1490695127ebdcbad2a04a23483a9c96b4482c3e5cc00`，fact artifact ID
+`9758367296`。
+
+- [ ] COFF x64 JITLink 仅对上述三个显式 allowlisted process symbol 的外部 call `PCRel32`
+  创建 graph-local RX jump stub 与 R-only 64-bit pointer cell；原 call 只跳本地 stub，远地址
+  只由无范围限制的 `Pointer64` 写入。非 call、未知 symbol 或 pass 失败均 fail closed。
+- [ ] I32 anchor-first 与 `__ImageBase`、512 MiB manager、W^X、完整 eager materialization、
+  禁用任意 process-symbol 搜索及另外五 host object-layer policy 均保持；AOT runtime/object、
+  artifact、ABI、cache recipe 与语言语义不变。
+- [ ] production-source contract 先 red 后 green，真实 bridge syntax 与全部本地门通过；最终
+  Windows x64 必须 Native 92/92、CLI 22/22 和三类 release audit 全绿，日志不再出现
+  `PCRel32` out-of-range、negative image-relative 或 Pointer32。
+
+## I35 补充验收（未签收）
+
+同一 run 的 Windows ARM64 job `99491674138` 已通过 fact 7/7、Native 92/92、CLI 22/22
+和 static-CRT release build；pinned inspector 成功读取 candidate 后，被原 forbidden regex
+拒绝。`llvm-readobj --coff-imports` 首行包含绝对 `File: C:\a\Rust_CalcKernel\...`，旧脚本扫描
+整份人类输出，因路径中的 `CalcKernel` 自我命中，而不是 import descriptor。完整日志
+SHA-256 `48a78a2fa36f4db15ec6415fb314382d808597c157c7af1465e5880fa8f7405c`，fact artifact ID
+`9758395786`。
+
+- [ ] 仍使用唯一 pinned inspector 和同一 forbidden regex，但只从 regular `Import {}` 与
+  `DelayImport {}` scope 提取 descriptor `Name:`；不得扫描 `File:`/symbol metadata，也不得
+  放宽或删除 LLVM/LLD/Clang/CalcKernel/libck/MSVCP/VCRUNTIME/CONCRT/libstdc++/libc++。
+- [ ] inspector nonzero、缺少/畸形 descriptor 或任一 forbidden DLL name 继续 fail closed；
+  行为测试须证明含 `Rust_CalcKernel` 的允许路径通过、`VCRUNTIME140.dll` 仍被拒绝。
+- [ ] 两种真实 Windows candidate 都完成 dependency/version/licenses、artifact 与 JIT audit；
+  只有同一最终 SHA 全十项 success 才能签收 I33/I35，不把 8/10 与后续结果拼接。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：

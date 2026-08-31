@@ -831,3 +831,62 @@ all-feature 611、Native 102、release lib/IR 53/58 及全部阶段 11 局部门
 跨 Windows 架构可用的 PE reader，因此把审计工具也纳入 pinned prefix 是收紧环境闭包，不是
 放松动态依赖政策。binary、链接器与 allowlist 均不变；最终仍要求两个真实 Windows runner
 执行完整审计，未发现需要扩大到构建系统或 ABI 的阻断项。
+
+## Task 13：COFF x64 远 process call stub 闭包（I34）
+
+### 13.1 失败证据与根因
+
+精确 SHA `be4b77dfef6088a3707ae2725c2077f5c415d3b6` 的 run `33393261918` 为 8/10。
+Windows x64 job `99491674256` 已不再出现 I32 的 `__ImageBase`/Pointer32 失败，但 Native
+仍为 78 passed / 14 failed：`ckc-runtime-4.o` 对 `GetStdHandle`、`WriteFile`、`ExitProcess`
+的直接 `PCRel32` 目标位于系统 DLL 高地址，随机 JIT reservation 与其相差超过 ±2 GiB。
+完整日志 SHA-256 `b96aef2719f394e7ced1490695127ebdcbad2a04a23483a9c96b4482c3e5cc00`；fact artifact
+ID `9758367296`。这发生在 image-base anchor 正确物化之后，不能回退 I32 或调整地址假设。
+
+### 13.2 最小修订与 TDD
+
+**Files:** 本文、阶段 acceptance、review，随后才允许修改
+`tests/contracts/native_toolchain.rs` 与 `native/bridge/ckc_llvm.cpp`。
+
+- [ ] 先扩展 production-source contract，要求 COFF-x64-only `ObjectLinkingLayer` graph pass、
+  三个精确 allowlisted external symbol、call-opcode/PCRel32 检查、R-only pointer cell、RX stub、
+  `Pointer64` 闭包及 plugin 安装；旧实现取得真实 targeted red。
+- [ ] 使用 LLVM x86-64 JITLink 官方 pointer/stub primitives，在 post-prune、allocation 前给每个
+  远 process call 建立 graph-local 间接跳板。不得改变 runtime source/hash/cache recipe、
+  扩大 process symbol allowlist、搜索任意 process symbols、缩小 reservation 或开放 RWX。
+- [ ] contract green 后执行真实 bridge syntax、default/all-feature 与阶段 11 全部局部门；
+  source contract 不替代 Windows x64 的实际 JIT 执行。
+
+## Task 14：Windows import descriptor 精确解析闭包（I35）
+
+### 14.1 失败证据与根因
+
+同一 run 的 Windows ARM64 job `99491674138` 已完成 Native 92/92、CLI 22/22 与 release
+build，随后在 dependency audit 失败。pinned `llvm-readobj` 的输出包含绝对
+`File: C:\a\Rust_CalcKernel\...`；脚本把整份输出交给包含 `CalcKernel` 的 forbidden regex，
+因此在任何 import descriptor 之前就被仓库目录名自我命中。日志 SHA-256
+`48a78a2fa36f4db15ec6415fb314382d808597c157c7af1465e5880fa8f7405c`；fact artifact ID
+`9758395786`。这证明 I33 的 inspector discovery 已修复，但 raw presentation 不是 dependency
+集合，不能通过删掉 `CalcKernel` 或接受任意输出解决。
+
+### 14.2 最小修订与 TDD
+
+**Files:** 本文、阶段 acceptance、review，随后才允许修改
+`tests/contracts/release.rs` 与 `scripts/audit-ckc-release.ps1`。
+
+- [ ] 行为测试用可执行 fake inspector 输出 `File: ...Rust_CalcKernel...` 与允许的
+  `Import { Name: KERNEL32.dll }`，旧脚本必须真实 red；另有 forbidden name、空/畸形与 nonzero
+  对照，不能只做字符串存在断言。
+- [ ] 解析 pinned LLVM 22 `--coff-imports` 的 regular/delay import descriptor `Name:`，要求
+  至少一个合法 DLL name，并只对该集合应用原 forbidden regex；`File:`、`Symbol:`、RVA 不参与
+  dependency 判定。inspector/path/version/licenses 的 fail-closed 门全部保持。
+- [ ] targeted green、PowerShell parse、default/all-feature 与全部局部门通过；两种真实 Windows
+  candidate 都必须完成 dependency/artifact/JIT audits，随后才允许关闭 I33/I35。
+
+## Task 13–14 行内对抗性自审
+
+I34 只为已经允许的三项 Windows OS call 增加 JIT graph 内的范围延伸，不新增可见 symbol 或
+修改 CK/runtime ABI；64-bit pointer relocation 消除的是地址范围假设，W^X 分区仍由独立
+R/RX section 和原 memory audit 验证。I35 从“整份展示文本”收紧到“regular/delay descriptor
+name 集合”，恰好恢复原 `/dependents` 的语义，而 forbidden 集合与所有 fail-closed 条件不变。
+两项都仍以真实双 Windows job 为行为门，复审未发现需要降低既有门槛的理由。
