@@ -611,10 +611,10 @@ Native suite，不能把本地 `clang-cl` COFF 生成当成 MSVC 验收。
 
 - [x] 先提交 I30 本地证据、I31 的精确 MSVC red、官方语义、修订边界与本计划；docs 16 与
   `git diff --check` 通过，不混入实现或测试修订。
-- [ ] 先扩展 production-source contract，要求唯一的
+- [x] 先扩展 production-source contract，要求唯一的
   `#pragma function(memcpy, memset)` 位于 optimize-off 和两个 definitions 之前；在 I30 源码
   上取得真实 0/1 red，再做最小 source 修订使同一 targeted contract 1/1 green。
-- [ ] 用 pinned `clang-cl` 和 bootstrap 同组参数继续生成 ARM64 MSVC-target COFF 并检查
+- [x] 用 pinned `clang-cl` 和 bootstrap 同组参数继续生成 ARM64 MSVC-target COFF 并检查
   两个定义及无同名未解析引用；该检查只补充 source/object 证据，不替代真实 `cl.exe`。
 
 ### 10.3 验证与远程闭环
@@ -627,6 +627,26 @@ Native suite，不能把本地 `clang-cl` COFF 生成当成 MSVC 验收。
 - [ ] 新 SHA 的 Windows x64 与 ARM64 都必须用真实 MSVC 完成 bootstrap、fact audit 7/7、
   Native 92/92、CLI 22/22 和 compiler/artifact/JIT/release audits；同 SHA 另外八项也必须
   success。十项全绿后才允许关闭 I31/I30 及此前阻断并进入最终总验收。
+
+### 10.4 实现与本地非计时证据
+
+- docs-first 提交 `53ef61e` 只包含 I30 本地证据与 I31 的 MSVC red、官方语义和修订边界。
+  随后 source contract 在 I30 源码上真实 0/1 red，最小增加单个 file-local pragma 后同一
+  contract 1/1 green；red / green 日志 SHA-256 分别为
+  `213f52bf096dfeb7c952ea81d307cc8abf60fd1da08e1acc0abd987fb9f07d14` /
+  `c8498cc84f3ca5e6ba3847c68430fbc103f43006a62f6a2671986513722474c7`。
+- pinned LLVM 22 `clang-cl` 用 ARM64 MSVC target 和完整 bootstrap flags 实际生成 COFF；
+  object SHA-256 为 `62d97e9ed35d52cea34fbfdc9dc9fc93a098e548145e5dd01349aeca39f63bc3`，
+  `llvm-nm` 同时显示 `T memcpy`、`T memset`，且没有同名 undefined。空编译日志与 nm 日志
+  SHA-256 分别为 `e3b0c442...` / `6226128e...`；真实 `cl.exe` 仍待新远程矩阵签收。
+- default 479、all-feature 610（Native 102）、release lib 53 / IR 58、generated 3、
+  mutation 10、fact audit 7、verifier-cache 5、docs 16、artifact fixture 5 全部 0 failed/ignored；
+  两种 Clippy、fmt、release Native build、artifact/compiler/JIT/version/licenses 与 release/
+  oracle 双 prefix verifier 全绿。Apple sanitizer 按冻结契约报告 Linux-only unavailable。
+  初次发布审计因后续 default release tests 覆盖 `target/release/ckc` 为 feature-disabled 产物而
+  fail closed；按 CI 顺序重建 Native release 并签名后从头复验通过，没有修改审计或门槛。
+- schema-6 性能仍待满足既有 idle/no-heavy-process 资格窗口后执行；本节不把 I30 的合格
+  报告冒充新实现提交的性能签收，也不在共享主机有 virtualization/FSEvents 高负载时取样。
 
 ## Task 10 行内对抗性自审
 

@@ -1477,6 +1477,11 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   ABI、cache identity 或 CLI artifact path；不得用全 runtime `/Oi-` 或 default CRT 绕过。
   计划与验收见 Task 10/I31，先 source contract red→green，最后由新精确 SHA 的两架构真实
   MSVC 与同 SHA 十项矩阵签收。
+- docs-first `53ef61e` 后，production-source contract 在旧源码真实 0/1 red，只增加唯一
+  `#pragma function(memcpy, memset)` 后 1/1 green；现有 optimize off/on、两个 byte loops、
+  五对象和 `/O2 /Zl` 断言全部保留。pinned `clang-cl` ARM64 COFF 实际定义两个符号且没有
+  同名 undefined。完整本地非计时门保持 default 479 / all-feature 610 / Native 102 及原独立
+  计数全绿；性能与真实 MSVC 修复 SHA 矩阵尚待签收，不能据本条关闭 I31。
 
 ## 修订边界（全部阻断，持续有效）
 

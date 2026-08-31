@@ -121,11 +121,11 @@ I31 另按 `11-windows-static-link-plan.md` Task 10 执行：
 
 - [ ] 精确保留 `991d192` run `33351217336` 的自然终态与原始失败；Windows x64 的真实
   MSVC `C2169` 日志及摘要入档，未取消仍在运行的 jobs，也不复用其成功项签收后续 SHA。
-- [ ] production-source contract 在 I30 源码上真实 0/1 red；最小修订只在 Windows
+- [x] production-source contract 在 I30 源码上真实 0/1 red；最小修订只在 Windows
   `process.c` 的 optimize-off 之前增加唯一 `#pragma function(memcpy, memset)`，同一 contract
   1/1 green。pragma 必须先于两个 definitions，现有 optimize off/on、byte loops、五对象
   manifest 与 `/O2 /Zl` 均保持。
-- [ ] pinned `clang-cl` ARM64 MSVC-target COFF 仍定义两个 helper 且没有同名未解析引用；
+- [x] pinned `clang-cl` ARM64 MSVC-target COFF 仍定义两个 helper 且没有同名未解析引用；
   该本地结果不代替真实 MSVC x64/ARM64 bootstrap、链接与执行。
 - [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能与十项 required CI 全绿；Windows 两
   架构都必须 fact audit 7/7、Native 92/92、CLI 22/22，并完成全部 release/audit 门。

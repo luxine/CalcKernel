@@ -332,8 +332,16 @@ fn windows_cache_hit_should_open_no_follow_entry_for_attribute_touch() {
 #[test]
 fn windows_freestanding_runtime_should_close_optimizer_generated_memory_helpers() {
     let platform = read("native/runtime/windows/process.c");
+    const FUNCTION_PRAGMA: &str = "#pragma function(memcpy, memset)";
+    assert_eq!(platform.matches(FUNCTION_PRAGMA).count(), 1);
     assert_eq!(platform.matches("#pragma optimize(\"\", off)").count(), 1);
     assert_eq!(platform.matches("#pragma optimize(\"\", on)").count(), 1);
+    assert!(
+        platform.contains(
+            "#if defined(_MSC_VER)\n#pragma function(memcpy, memset)\n#pragma optimize(\"\", off)"
+        ),
+        "MSVC must force calls for memcpy/memset before defining them under the local optimization boundary"
+    );
     let helpers = platform
         .split_once("#pragma optimize(\"\", off)")
         .expect("MSVC memory helper optimization boundary")

@@ -12,6 +12,7 @@ CKC_NORETURN void __stdcall ExitProcess(CK_DWORD status);
 extern int main(void);
 
 #if defined(_MSC_VER)
+#pragma function(memcpy, memset)
 #pragma optimize("", off)
 #endif
 
