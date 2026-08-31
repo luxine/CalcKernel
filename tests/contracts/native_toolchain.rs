@@ -461,6 +461,58 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
         bridge.contains("runtime_object_count != 6"),
         "COFF x64 JIT must fail closed unless it receives anchor + five runtime objects"
     );
+    let execute = bridge
+        .split_once("extern \"C\" int32_t ckc_llvm_jit_execute(")
+        .expect("native JIT execution bridge")
+        .1;
+    let materialization = execute
+        .split_once("buffers.push_back(std::move(*program));")
+        .expect("fully validated JIT object collection")
+        .1
+        .split_once("llvm::orc::ExecutorAddr entry_address;")
+        .expect("JIT object materialization boundary")
+        .0;
+    let materialization = materialization
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let coff_guard = materialization
+        .find("defined(CKC_LLD_COFF)")
+        .expect("eager anchor materialization must remain COFF-only");
+    let msvc_x64_guard = materialization
+        .find("defined(_M_X64)")
+        .expect("eager anchor materialization must remain MSVC-x64-only");
+    let clang_x64_guard = materialization
+        .find("defined(__x86_64__)")
+        .expect("eager anchor materialization must remain Clang-x64-only");
+    let anchor_add = materialization
+        .find("jit->value->addObjectFile(std::move(buffers.front()))")
+        .expect("COFF x64 must add its image-base anchor first");
+    let anchor_lookup = materialization
+        .find("jit->value->lookupLinkerMangled(\"__ImageBase\")")
+        .expect("COFF x64 must eagerly materialize its image-base anchor");
+    let remaining_loop = materialization
+        .find("for(size_tindex=1;index<buffers.size();++index)")
+        .expect("COFF x64 must add the remaining objects after its anchor");
+    assert!(
+        coff_guard < anchor_add
+            && msvc_x64_guard < anchor_add
+            && clang_x64_guard < anchor_add
+            && anchor_add < anchor_lookup
+            && anchor_lookup < remaining_loop,
+        "COFF x64 guard, anchor add, eager lookup, and remaining-object add must stay ordered"
+    );
+    assert!(
+        materialization.contains(
+            "if(!image_base_address){returnset_llvm_error(error,image_base_address.takeError());}"
+        ),
+        "COFF x64 image-base materialization failures must fail closed"
+    );
+    assert!(
+        materialization.contains("#elsefor(auto&buffer:buffers)")
+            && materialization.contains("#endif"),
+        "non-COFF-x64 targets must retain the generic object-add loop"
+    );
 
     let anchor = read("native/runtime/windows/jit_image_base.c");
     assert!(anchor.contains("__ImageBase"));

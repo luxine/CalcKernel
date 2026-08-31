@@ -2992,11 +2992,30 @@ extern "C" int32_t ckc_llvm_jit_execute(
                               program_symbols->end());
         buffers.push_back(std::move(*program));
 
+#if defined(CKC_LLD_COFF) && \
+    (defined(_M_X64) || defined(__x86_64__))
+        if (auto add_error =
+                jit->value->addObjectFile(std::move(buffers.front()))) {
+            return set_llvm_error(error, std::move(add_error));
+        }
+        auto image_base_address =
+            jit->value->lookupLinkerMangled("__ImageBase");
+        if (!image_base_address) {
+            return set_llvm_error(error, image_base_address.takeError());
+        }
+        for (size_t index = 1; index < buffers.size(); ++index) {
+            if (auto add_error =
+                    jit->value->addObjectFile(std::move(buffers[index]))) {
+                return set_llvm_error(error, std::move(add_error));
+            }
+        }
+#else
         for (auto &buffer : buffers) {
             if (auto add_error = jit->value->addObjectFile(std::move(buffer))) {
                 return set_llvm_error(error, std::move(add_error));
             }
         }
+#endif
         llvm::orc::ExecutorAddr entry_address;
         const std::string main_linker_name =
             jit->value->mangle("main");
