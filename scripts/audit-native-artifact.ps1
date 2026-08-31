@@ -85,6 +85,65 @@ function Get-CoffScopeNames {
     return $names
 }
 
+function Get-CoffSymbolNames {
+    param([string]$Text)
+    $names = @()
+    $seenTable = $false
+    $inTable = $false
+    $symbolDepth = 0
+    $symbolName = $null
+    foreach ($line in @($Text -split '\r?\n')) {
+        if (-not $inTable) {
+            if ($line -match '^Symbols[ \t]*\[[ \t]*$') {
+                if ($seenTable) {
+                    throw "native artifact audit: malformed symbol table"
+                }
+                $seenTable = $true
+                $inTable = $true
+            }
+            continue
+        }
+        if ($symbolDepth -eq 0) {
+            if ($line -match '^[ \t]+Symbol[ \t]*\{[ \t]*$') {
+                $symbolDepth = 1
+                $symbolName = $null
+                continue
+            }
+            if ($line -match '^\][ \t]*$') {
+                $inTable = $false
+                continue
+            }
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                throw "native artifact audit: malformed symbol table"
+            }
+            continue
+        }
+        if ($symbolDepth -eq 1 -and
+            $line -match '^[ \t]+Name:[ \t]*(?<name>[^\r\n]+?)[ \t]*$') {
+            if ($null -ne $symbolName) {
+                throw "native artifact audit: malformed symbol table"
+            }
+            $symbolName = $Matches['name'].Trim()
+        }
+        $symbolDepth += [regex]::Matches($line, '\{').Count
+        $symbolDepth -= [regex]::Matches($line, '\}').Count
+        if ($symbolDepth -lt 0) {
+            throw "native artifact audit: malformed symbol table"
+        }
+        if ($symbolDepth -eq 0) {
+            if ([string]::IsNullOrWhiteSpace($symbolName)) {
+                throw "native artifact audit: malformed symbol table"
+            }
+            $names += $symbolName
+            $symbolName = $null
+        }
+    }
+    if (-not $seenTable -or $inTable -or $symbolDepth -ne 0) {
+        throw "native artifact audit: malformed symbol table"
+    }
+    return $names
+}
+
 $programImports = Invoke-CoffInspector --coff-imports (Join-Path $root "program.exe")
 $dependencyNames = @(Get-CoffScopeNames $programImports 'Import|DelayImport' 'import descriptor')
 if (@($dependencyNames | Where-Object { $_ -notmatch '(?i)^[a-z0-9][a-z0-9._-]*\.dll$' }).Count -ne 0) {
@@ -114,7 +173,7 @@ if ($forbiddenExports.Count -ne 0) {
 $forbidden = '(?i)\b(malloc|calloc|realloc|free|printf|fprintf|sprintf|snprintf|vsnprintf|setlocale|localeconv|__stack_chk_fail)\b'
 foreach ($object in Get-ChildItem -LiteralPath $runtime -Filter "*.obj" -File) {
     $symbols = Invoke-CoffInspector --symbols $object.FullName
-    $symbolNames = @(Get-CoffScopeNames $symbols 'Symbol' 'symbol descriptor')
+    $symbolNames = @(Get-CoffSymbolNames $symbols)
     if ($symbolNames.Count -eq 0) {
         throw "native artifact audit: llvm-readobj reported no symbol descriptors"
     }

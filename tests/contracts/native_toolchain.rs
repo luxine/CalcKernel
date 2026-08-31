@@ -897,13 +897,25 @@ case "$1:$file:$mode" in
     printf 'File: %s\nMetadata {\n  Name: CalcKernelProbe\n}\nExport {\n  Ordinal: 1\n  Name: answer\n}\n' "$2"
     ;;
   --symbols:runtime.obj:forbidden-symbol)
-    printf 'Symbol {\n  Name: malloc\n  Section: IMAGE_SYM_UNDEFINED (0)\n}\n'
+    printf 'Symbols [\n  Symbol {\n    Name: malloc\n    Section: IMAGE_SYM_UNDEFINED (0)\n  }\n]\n'
     ;;
   --symbols:runtime.obj:empty-symbols)
+    printf 'File: C:/free/runtime.obj\nFormat: COFF-x86-64\nSymbols [\n]\n'
+    ;;
+  --symbols:runtime.obj:missing-symbol-container)
     printf 'File: C:/free/runtime.obj\nFormat: COFF-x86-64\n'
     ;;
+  --symbols:runtime.obj:unclosed-symbol-container)
+    printf 'Symbols [\n  Symbol {\n    Name: __ck_clean\n  }\n'
+    ;;
+  --symbols:runtime.obj:missing-symbol-name)
+    printf 'Symbols [\n  Symbol {\n    Section: .text (1)\n  }\n]\n'
+    ;;
+  --symbols:runtime.obj:duplicate-symbol-name)
+    printf 'Symbols [\n  Symbol {\n    Name: __ck_clean\n    Name: __ck_other\n  }\n]\n'
+    ;;
   --symbols:*.obj:*)
-    printf 'File: C:/free/runtime.obj\nSymbol {\n  Name: __ck_clean\n  Section: .text (1)\n}\n'
+    printf 'File: C:/free/runtime.obj\nSymbols [\n  Symbol {\n    Name: __ck_clean\n    Section: .text (1)\n    AuxSymbolCount: 1\n    AuxSectionDef {\n      Name: free\n    }\n  }\n]\n'
     ;;
   *) exit 72 ;;
 esac
@@ -959,6 +971,10 @@ esac
         ("forbidden-export", "forbidden computation DLL export"),
         ("forbidden-symbol", "forbidden runtime symbol"),
         ("empty-symbols", "no symbol descriptors"),
+        ("missing-symbol-container", "malformed symbol table"),
+        ("unclosed-symbol-container", "malformed symbol table"),
+        ("missing-symbol-name", "malformed symbol table"),
+        ("duplicate-symbol-name", "malformed symbol table"),
         ("nonzero", "llvm-readobj --coff-imports failed"),
     ] {
         let output = run(mode);
