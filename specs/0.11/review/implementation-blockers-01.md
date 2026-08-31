@@ -1408,8 +1408,9 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   checked modes、W^X audit、standalone executable 和 generated differential 实际通过。
   五个剩余失败是新的 host conformance 阻断，不能用这些通过项抵消。
 - ABI 失败来自正确的 Windows `dllexport` 与写死 `define [2 x i64]` 的断言不匹配；两项
-  ownership 失败来自 macOS 专项缺 OS cfg 及通用测试硬编码 JITLink。修订只能匹配合法
-  storage class 并消费既有六 host policy，不能改变 ARM64 RuntimeDyld 生产选择。
+  ownership 失败来自名为 macOS 的测试和通用测试都硬编码 JITLink。修订只能匹配合法
+  storage class，并把两项都改为既有六 host policy 断言；不得用 cfg skip 把 Windows
+  执行数从 92 降到 91，也不能改变 ARM64 RuntimeDyld 生产选择。
 - differential 在第一个 C oracle `GetProcAddress("scalar")` 即失败：Windows Clang
   fixture 没把 MIR exports 传给 COFF linker。必须由同一 MIR export 集生成完整 `/export:`
   参数，并继续对 oracle/Native 双库实际逐符号执行；不能修改 CK Native exports 掩盖 oracle。
@@ -1419,6 +1420,21 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   root、entry bytes 与 cache failure 不影响程序执行的边界；禁止延长 25 ms 测试等待。
 - 计划与验收见 `../implementation/11-windows-static-link-plan.md` Task 8。I29 修复必须
   叠加 I28 后由新的同 SHA 全十项矩阵证明；`7b03f76` 的八项 success 不得拼接。
+- docs-first `fd594d9587cee8cf5c69d797fde0dab2940976c4` 后，cache production-source contract
+  在旧实现上实际 0/1 red，精确 `GENERIC_READ | FILE_WRITE_ATTRIBUTES` access mask 后 1/1
+  green；行内复审进一步锁定三个 access/flag 常量的精确值，不能仅凭名称假绿。没有
+  generic write、entry rewrite 或 sleep 修订。ABI/ownership/oracle fixture 分别按合法
+  storage class、冻结六 host policy、同 MIR 完整 exports 做最小修订。
+- 完整本地非计时门已通过：default 478、all-feature 609、Native 102、release lib 53 / IR 58、
+  generated 3 / mutation 10 / fact audit 7 / verifier-cache 5 / docs 16，均 0 failed/ignored；
+  两种 Clippy、fmt/diff 与全部 release audits 也通过。
+- 共享主机高负载期间没有启动计时；一个满足 idle 数值但末尾出现 project-index 的正式
+  preflight 也被拒绝。随后六个样本 76%–85% idle、首尾无高负载编译/索引，只执行一次
+  schema-6 benchmark。同一原始结果由完整身份环境下的原 checker 通过：unchecked
+  `0.9998 / 0.9995`、checked `1.0055 / 1.0005`、proof `0.9976`、optimizer suite
+  `1.1641`、Dijkstra `2.1876x`；24+8 artifacts 完整保留。两次 checker 缺身份环境的
+  前置条件拒绝没有取新样本，不构成重跑或数值筛选。现在只剩新精确 SHA 十项远程矩阵，
+  未用本地源码 contract 替代 Windows 实机执行。
 
 ## 修订边界（全部阻断，持续有效）
 

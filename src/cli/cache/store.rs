@@ -480,9 +480,13 @@ fn temporary_path(root: &Path, key: &str) -> Result<PathBuf, String> {
 #[cfg(target_os = "windows")]
 fn open_read_nofollow(path: &Path) -> std::io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
+
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     OpenOptions::new()
-        .read(true)
-        .custom_flags(0x0020_0000)
+        .access_mode(GENERIC_READ | FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
 }
 

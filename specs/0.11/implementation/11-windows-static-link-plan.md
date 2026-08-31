@@ -388,10 +388,10 @@ fact artifact ID `9742713855`，zip / 原文件 SHA-256 为
 - `native_llvm_should_hide_internal_signatures_behind_host_c_abi_thunks` 仍把 AArch64 external
   definition 写死为 `define [2 x i64]`；Windows 正确插入 `dllexport`。只允许像已有 checked
   ABI 断言一样匹配 `define` 行中的返回 shape/符号，不能移除 storage class 或降低 ABI shape。
-- `native_jit_should_use_jitlink_on_macos_aarch64` 名称限定 macOS 却未加 OS cfg；通用
-  ownership test 又硬编码 JITLink。两者必须消费已冻结的六 host policy：仅 Windows ARM64
-  为 `RuntimeDyldCoffAarch64`，其余 host 为 JITLink；不得改回 ARM64 JITLink 或 skip 通用
-  ownership 覆盖。
+- `native_jit_should_use_jitlink_on_macos_aarch64` 名称限定 macOS、实现却在六 host 都执行并
+  硬编码 JITLink；通用 ownership test 也有相同问题。两者必须改为消费已冻结的六 host
+  policy：仅 Windows ARM64 为 `RuntimeDyldCoffAarch64`，其余 host 为 JITLink；不得改回
+  ARM64 JITLink，也不得用 cfg 跳过 Windows 测试而把 Native 计数从 92 降到 91。
 - Windows C differential oracle 使用 Clang `-shared` 但没有把从同一 MIR 得到的 exports
   传给 COFF linker，故首先在 oracle `GetProcAddress("scalar")` 失败，尚未比较 Native
   library。fixture 必须对 Windows 精确追加同一 exports 集的 `/export:<name>`；不能修改
@@ -409,28 +409,67 @@ fact artifact ID `9742713855`，zip / 原文件 SHA-256 为
 `tests/native/ownership.rs`、`tests/native/differential.rs`、`src/cli/cache/store.rs` 与必要的
 production-source contract。
 
-- [ ] 先提交自然终态、完整 hashes、五项分类、不变量与本计划；docs 16 / diff 通过，
+- [x] 先提交自然终态、完整 hashes、五项分类、不变量与本计划；docs 16 / diff 通过，
   不混入实现或测试修订。
-- [ ] 以 job `99313407132` 的 87/5 作为真实 Windows ARM64 red。修复 ABI/ownership/oracle
+- [x] 以 job `99313407132` 的 87/5 作为真实 Windows ARM64 red。修复 ABI/ownership/oracle
   fixture 时保留原结构和失败可诊断性；cache 必须修生产 handle，不能只改时间等待断言。
-- [ ] 最小 green：ABI line matcher 容纳合法 `dllexport`；macOS 专项加精确 cfg，通用
-  ownership 使用冻结 host policy；oracle export list 从同一 MIR 派生并仅在 COFF 传给
-  linker；Windows cache open 使用 `GENERIC_READ | FILE_WRITE_ATTRIBUTES` 且继续 no-follow。
+- [x] 最小 green：ABI line matcher 容纳合法 `dllexport`；两个 ownership tests 都重命名/
+  改写为冻结 host policy 断言并继续在六 host 执行；oracle export list 从同一 MIR 派生并
+  仅在 COFF 传给 linker；Windows cache open 使用 `GENERIC_READ | FILE_WRITE_ATTRIBUTES`
+  且继续 no-follow。
 
 ### 8.3 验证与远程闭环
 
-- [ ] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
+- [x] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
   小门、artifact/compiler/JIT/version/licenses 与 schema-6 原门全绿；测试计数、语料和
-  阈值不降。Windows-only green 最终由真实 ARM64/X64 host 证明。
+  阈值不降。本项只签收本地与计时门；Windows-only green 仍由真实 ARM64/X64 host 证明。
 - [ ] 将 I29 修复叠加到已本地验证的 I28 提交后，以新的精确 SHA dispatch 全十项矩阵。
   Windows ARM64 必须 92/92 Native + CLI + release/audits 全绿；Windows x64 同时证明 I28
   编译闭包；其他八项不能从 `7b03f76` 拼接。
 - [ ] 同 SHA 十项全绿后才关闭 I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99 总验收。
 
+### 8.4 实现与本地证据
+
+- docs-first 提交 `fd594d9587cee8cf5c69d797fde0dab2940976c4` 只含旧 run 自然终态、
+  五项复诊、修订边界与计划。随后 Windows cache production-source contract 在旧源码上
+  实际 0/1 red，最小 access-mask 修订后 1/1 green；red / green 日志 SHA-256 为
+  `1430f8d2266322b8c8fdeaf97e5be04f6591453a57f798d7134eba12cf34f4dd` /
+  `7c23eefff9612a796cd95474e7779466afb96d1ab9f285560c5edc566c5e2824`；最终 contract 还在
+  行内复审后锁定三个 Windows 常量的精确数值，避免仅有常量名称的假绿。
+- 唯一生产改动把 Windows no-follow cache entry handle 的 access mask 从隐式 read 改为
+  `GENERIC_READ | FILE_WRITE_ATTRIBUTES`；没有请求 generic write、改 cache bytes/格式、
+  延长 sleep 或改变 best-effort 失败语义。ABI line matcher 仍要求精确 small aggregate
+  shape/sret；两个 ownership tests 继续在六 host 执行；C oracle exports 从同一 MIR
+  一次派生并同时供 oracle linker 与 Native linker 使用。
+- 完整 default 478 / all-feature 609（Native 102）、单独 Native 102、release lib 53 / IR 58、
+  generated 3 / mutation 10 / fact audit 7 / verifier-cache 5 / docs 16 全部 0 failed/ignored；
+  两种 Clippy、fmt/diff、artifact fixture 5、compiler/artifact/JIT/version/licenses 与两个
+  prefix verifier 全绿。default / all-feature / Native / 独立小门 / release-audits 日志
+  SHA-256 分别为 `9d0ac7d1ee8b66d1f1ffb515abc839da399edd36aa85230e5cec4cc8eaad3571` /
+  `92f5c2e5f3a5af24e7e64755f8941d14e00cd3d4e687d5394abe1b71f7bf8642` /
+  `da8cffc4fdba087118ba2a47a8e3565a3dc93c1be69f8445d5591c00b205425f` /
+  `65fda20fb4b36222c18215420446ed1c8cce6cca55f04a75991777ac65a8bd6d` /
+  `c01231d71e997cc86f8baea0ea03c38c631f34f32e1d39f8614676bf0278e546`。
+- 第一个正式 preflight 的六个 CPU 样本为 72%–86% idle，但末尾进程快照捕获刚启动的
+  `project-index generate`，因此没有启动 benchmark；该失败前检原件 SHA-256 为
+  `53fe06e727240648d456df4a62933b1fca5e21c90425b1f69ce93ac53b8af4bb`。随后只读等待到
+  六个当前样本为 76%–85% idle 且首尾均无高负载编译/索引，资格前检 SHA-256 为
+  `b4611a64966b5f1d17dec47dcdfda6c127aceaf56da683462f0e9303929fdd67`。
+- 只执行一次 schema-6 benchmark；同一原始结果补齐 frozen bundle / LLVM prefix / oracle
+  环境后由原 checker exit 0：unchecked Clang/replay `0.9998 / 0.9995`，checked
+  `1.0055 / 1.0005`，proof `0.9976`，optimizer suite `1.1641`，Dijkstra
+  `765667 / 350000 = 2.1876x`。report / benchmark / 最终 checker SHA-256 为
+  `333a0ac36c7b1075093383efe70cf579f0acabfcf9a219ffb09789c1af87d67b` /
+  `5fb86d57cc48f1815dbd38a52732a923ec865725168974343574c79740baf89b` /
+  `b109162bcadbfc856d44b54e06ea954bb06a36f85e90aae08b249ddeb092b5a5`；24 个 measurement 与
+  8 个 replay artifacts 均已归档。两次缺少 checker 身份环境的前置条件拒绝日志也保留，
+  它们没有取新样本、修改结果或改变门槛。当前只剩新精确 SHA 十项远程矩阵。
+
 ## Task 8 行内对抗性自审
 
 五项都由实际 Windows ARM64 原件定位：两项 host policy、一项合法 IR storage class 和一项
-C oracle export 都是测试跨平台假设，不授权修改生产 ABI/ORC/export；cache touch 则由
+C oracle export 都是测试跨平台假设，不授权修改生产 ABI/ORC/export；用 policy 断言替代
+cfg skip 还能保持原 92 项执行面。cache touch 则由
 只读 handle 与所需 Windows access mask 直接解释，是唯一生产修复。精确属性权限比通用
 写权限更小，no-follow 与 owner-only 边界不变。完整 Windows 两架构执行仍不可由本地文本
 契约替代；复审未发现需要降低门槛、扩大符号面或改变缓存格式的阻断项。

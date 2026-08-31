@@ -76,14 +76,20 @@ I28 另按 `11-windows-static-link-plan.md` Task 7 执行，未签收：
 
 I29 另按 `11-windows-static-link-plan.md` Task 8 执行：
 
-- [ ] AArch64 ABI 文本断言接受 Windows 合法 `dllexport` 但继续精确验证 `[2 x i64]`
+- [x] AArch64 ABI 文本断言接受 Windows 合法 `dllexport` 但继续精确验证 `[2 x i64]`
   return/parameter shape 与 sret；ownership tests 与冻结六 host object-layer policy 一致。
-- [ ] Windows differential C oracle 从同一 MIR export 集生成完整 COFF `/export:` 参数；
+- [x] Windows differential C oracle 从同一 MIR export 集生成完整 COFF `/export:` 参数；
   oracle 与 Native 动态库都逐符号实际加载/调用，不将缺符号改成 skip。
-- [ ] Windows cache warm hit 的 no-follow handle 仅增加 `FILE_WRITE_ATTRIBUTES`，entry bytes、
+- [x] Windows cache warm hit 的 no-follow handle 仅增加 `FILE_WRITE_ATTRIBUTES`，entry bytes、
   owner-only root、reparse-point 防护、best-effort 执行与 LRU mtime 更新全部成立；不增加 sleep。
 - [ ] 修复精确 SHA 的完整本地、schema-6 性能与十项 required CI 全绿；Windows ARM64
   Native 92/92、CLI、compiler/artifact/JIT 全部完成，Windows x64 同时签收 I28。
+
+前三项已有旧 Windows ARM64 87/5 red、production-source 0/1 red→1/1 green、完整本地
+default 478 / all-feature 609 / Native 102 以及全套非计时审计证据；摘要见
+`11-windows-static-link-plan.md` 8.4。唯一 schema-6 资格计时也由原 checker 通过：optimizer
+suite `1.1641`、Dijkstra `2.1876x`，原始报告和 24+8 artifacts 已保留，未改门槛或重跑
+计时。最后一项继续保持未签收，只等待实现提交后的同 SHA 十项 CI。
 
 ## I23 补充验收（未签收）
 

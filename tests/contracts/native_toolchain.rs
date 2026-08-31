@@ -299,6 +299,37 @@ fn windows_static_crt_policy_should_cover_bootstrap_cache_and_cargo() {
 }
 
 #[test]
+fn windows_cache_hit_should_open_no_follow_entry_for_attribute_touch() {
+    let store = read("src/cli/cache/store.rs");
+    let windows_open = store
+        .split_once("#[cfg(target_os = \"windows\")]\nfn open_read_nofollow")
+        .map(|(_, suffix)| suffix)
+        .and_then(|suffix| {
+            suffix
+                .split_once("#[cfg(all(not(unix)")
+                .map(|(block, _)| block)
+        })
+        .expect("Windows cache entry opener");
+
+    for required in [
+        "const GENERIC_READ: u32 = 0x8000_0000;",
+        "const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;",
+        ".access_mode(GENERIC_READ | FILE_WRITE_ATTRIBUTES)",
+        "const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;",
+        ".custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)",
+    ] {
+        assert!(
+            windows_open.contains(required),
+            "Windows cache hit must retain no-follow read access and allow only mtime attribute writes with {required:?}"
+        );
+    }
+    assert!(
+        !windows_open.contains(".write(true)"),
+        "cache hit must not request generic write access to immutable entry bytes"
+    );
+}
+
+#[test]
 fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runtime() {
     let bootstrap = read("scripts/bootstrap-llvm.ps1");
     for required in [

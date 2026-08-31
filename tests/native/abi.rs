@@ -530,7 +530,9 @@ fn native_llvm_should_hide_internal_signatures_behind_host_c_abi_thunks() {
     assert!(!text.contains("define %struct.Big @echo_big"), "{text}");
     if cfg!(target_arch = "aarch64") {
         assert!(
-            text.contains("define [2 x i64] @echo_small([2 x i64]"),
+            text.lines().any(|line| {
+                line.starts_with("define ") && line.contains(" [2 x i64] @echo_small([2 x i64]")
+            }),
             "{text}"
         );
         assert!(text.contains("sret(%struct.Big)"), "{text}");

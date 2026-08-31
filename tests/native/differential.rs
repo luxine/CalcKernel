@@ -55,6 +55,12 @@ fn differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_throu
         let checked_program = check(&SourceFile::new("differential.ck", SOURCE));
         assert_eq!(checked_program.diagnostics, []);
         let mir = lower_to_mir(&checked_program.checked_program).expect("lower differential MIR");
+        let exports = mir
+            .functions
+            .iter()
+            .filter(|function| function.exported)
+            .map(|function| function.name.clone())
+            .collect::<Vec<_>>();
         let c_kir = build_kir_module(
             &mir,
             KirBuildConfig {
@@ -85,7 +91,7 @@ fn differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_throu
         let c_path = root.join(format!("oracle-{suffix}.c"));
         let oracle_path = root.join(format!("oracle-{suffix}{}", dynamic_suffix()));
         fs::write(&c_path, c_source).expect("write C oracle source");
-        compile_oracle_library(&clang, &c_path, &oracle_path);
+        compile_oracle_library(&clang, &c_path, &oracle_path, &exports);
 
         let oracle = DynamicLibrary::open(&oracle_path);
         for (kir_level, native_level, level_name) in [
@@ -132,12 +138,6 @@ fn differential_native_exports_should_match_pinned_clang_c_libraries_at_o0_throu
             let object = target
                 .emit_object(optimized)
                 .expect("emit differential object");
-            let exports = mir
-                .functions
-                .iter()
-                .filter(|function| function.exported)
-                .map(|function| function.name.clone())
-                .collect::<Vec<_>>();
             let native = link_native_dynamic_library(&object, &exports)
                 .expect("link native differential library");
             let native_path =
@@ -308,7 +308,7 @@ unsafe fn observe_generated(
         .collect()
 }
 
-fn compile_oracle_library(clang: &Path, source: &Path, output: &Path) {
+fn compile_oracle_library(clang: &Path, source: &Path, output: &Path, exports: &[String]) {
     let mut command = Command::new(clang);
     command.args([
         "-std=c11",
@@ -325,6 +325,9 @@ fn compile_oracle_library(clang: &Path, source: &Path, output: &Path) {
         ]);
     } else if cfg!(target_os = "windows") {
         command.args(["-shared", "-Wl,/noentry"]);
+        for export in exports {
+            command.arg(format!("-Wl,/export:{export}"));
+        }
     } else {
         command.args(["-shared", "-fPIC", "-Wl,--no-undefined"]);
     }
