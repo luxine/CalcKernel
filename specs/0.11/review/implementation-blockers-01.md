@@ -1586,7 +1586,24 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 
 ## 修订后对抗性复审
 
-待修复后的全量本地与六 host 证据完成后追加。复审重点是 Windows archive/CRT identity、
+### I34/I35 实现后本地复审
+
+- I34 使用 LLVM 22 的官方 x86-64 anonymous pointer/jump-stub primitives；原 COFF `PCRel32`
+  只改指向同 graph 的 RX stub，真正 process address 由 R-only cell 的 `Pointer64` 承载。
+  pass 位于 COFF lowering 之前的 PostPrune，后续官方 PreFixup 仍负责把平台 edge 降为通用
+  x86-64 edge。三项外部 symbol、direct-call opcode、edge kind、reserved section 与 pointer
+  edge 均 fail closed；任意 process lookup 仍关闭。未发现扩展 ABI、runtime source/cache、
+  AOT artifact 或 W^X 权限的路径。
+- I35 初版虽不再扫描 `File:`/`Symbol:`，但只凭缩进抓 `Name:`，不能证明 scope。复审把它
+  判为真实阻断并新增第二轮行为 red：scope 外 `VCRUNTIME140.dll` 必须忽略，同时任一缺名
+  descriptor 即使旁边另有有效 descriptor 也必须拒绝。最终 parser 只进入顶层 `Import {}` /
+  `DelayImport {}`，按 brace depth 收集唯一直接 `Name:`，未闭合、缺名、重复、非法 DLL、
+  空集合、forbidden 名与 inspector nonzero 全部 fail closed。该补强没有删除或放宽原 regex。
+- 最终全量本地与冻结 schema-6 只读复验通过；当前未发现新的本地 blocker。仍不能据此关闭
+  I25–I35 或阶段 11：I34 的真实远地址执行、I35 的真实 PE 输出和双 Windows release audits
+  必须由同一最终 SHA 的十项远程矩阵证明。
+
+远程复审重点保持为 Windows archive/CRT identity、
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
 是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source、release
 no-change cache 是否独立核对完整状态而非信任 pass change declaration、guard-free demand skip 是否会

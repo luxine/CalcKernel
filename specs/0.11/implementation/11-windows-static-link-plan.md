@@ -848,13 +848,13 @@ ID `9758367296`。这发生在 image-base anchor 正确物化之后，不能回�
 **Files:** 本文、阶段 acceptance、review，随后才允许修改
 `tests/contracts/native_toolchain.rs` 与 `native/bridge/ckc_llvm.cpp`。
 
-- [ ] 先扩展 production-source contract，要求 COFF-x64-only `ObjectLinkingLayer` graph pass、
+- [x] 先扩展 production-source contract，要求 COFF-x64-only `ObjectLinkingLayer` graph pass、
   三个精确 allowlisted external symbol、call-opcode/PCRel32 检查、R-only pointer cell、RX stub、
   `Pointer64` 闭包及 plugin 安装；旧实现取得真实 targeted red。
-- [ ] 使用 LLVM x86-64 JITLink 官方 pointer/stub primitives，在 post-prune、allocation 前给每个
+- [x] 使用 LLVM x86-64 JITLink 官方 pointer/stub primitives，在 post-prune、allocation 前给每个
   远 process call 建立 graph-local 间接跳板。不得改变 runtime source/hash/cache recipe、
   扩大 process symbol allowlist、搜索任意 process symbols、缩小 reservation 或开放 RWX。
-- [ ] contract green 后执行真实 bridge syntax、default/all-feature 与阶段 11 全部局部门；
+- [x] contract green 后执行真实 bridge syntax、default/all-feature 与阶段 11 全部局部门；
   source contract 不替代 Windows x64 的实际 JIT 执行。
 
 ## Task 14：Windows import descriptor 精确解析闭包（I35）
@@ -874,14 +874,35 @@ build，随后在 dependency audit 失败。pinned `llvm-readobj` 的输出包�
 **Files:** 本文、阶段 acceptance、review，随后才允许修改
 `tests/contracts/release.rs` 与 `scripts/audit-ckc-release.ps1`。
 
-- [ ] 行为测试用可执行 fake inspector 输出 `File: ...Rust_CalcKernel...` 与允许的
+- [x] 行为测试用可执行 fake inspector 输出 `File: ...Rust_CalcKernel...` 与允许的
   `Import { Name: KERNEL32.dll }`，旧脚本必须真实 red；另有 forbidden name、空/畸形与 nonzero
   对照，不能只做字符串存在断言。
-- [ ] 解析 pinned LLVM 22 `--coff-imports` 的 regular/delay import descriptor `Name:`，要求
+- [x] 解析 pinned LLVM 22 `--coff-imports` 的 regular/delay import descriptor `Name:`，要求
   至少一个合法 DLL name，并只对该集合应用原 forbidden regex；`File:`、`Symbol:`、RVA 不参与
   dependency 判定。inspector/path/version/licenses 的 fail-closed 门全部保持。
-- [ ] targeted green、PowerShell parse、default/all-feature 与全部局部门通过；两种真实 Windows
-  candidate 都必须完成 dependency/artifact/JIT audits，随后才允许关闭 I33/I35。
+- [x] targeted green、PowerShell parse、default/all-feature 与全部局部门通过。
+- [ ] 两种真实 Windows candidate 都必须完成 dependency/artifact/JIT audits，随后才允许关闭
+  I33/I35。
+
+### 14.3 实现与本地证据
+
+- 实现提交 `592614ffd7a00ba8e77f4d8f5e63bb710b15d8e0`。I34 production-source
+  contract 在旧 bridge 上 0/1 red，加入 COFF-x64-only PostPrune plugin 后 1/1 green；日志
+  SHA-256 为 `40a74e9254108de4ff65396119110e7b346de96e5973735eb9ec865a247b1f45` /
+  `ec9f78422ff3d332cb103555731619e83c02cf7bb3102e53412cdf78cff8237f`。显式激活
+  x64 COFF 分支的 syntax-only 检查通过且日志为空。
+- I35 原行为测试先证明允许 candidate 路径被整份输出扫描误拒，0/1 red；descriptor-only
+  初版为 1/1 green。行内复审又发现“任意缩进 `Name:`”不等于 descriptor scope，遂增加
+  scope 外 forbidden `Name:` 与“一个有效、一个缺名 descriptor”对照，初版真实 red，按
+  brace depth 精确解析顶层 regular/delay descriptor 后 green。两轮 red/green 摘要分别为
+  `674e8e6c...` / `18a3b2b2...` 与 `21f5386f...` / `e3c11363...`；empty、malformed、
+  duplicate name、forbidden DLL 与 inspector nonzero 均 fail closed，原 forbidden regex 未改。
+- 最终工作树的 default 482 / all-feature 613（Native 102）、release lib 53 / IR 58、
+  generated 3、mutation 10、fact 7、verifier-cache 5、docs 18、artifact 5 全绿；两种 Clippy、
+  fmt/diff、双 prefix、release build/sign、compiler/artifact/JIT audits 同样通过。Apple
+  sanitizer 仅记录冻结的 Linux-only unavailable。schema-6 原报告只读复验通过，仍为
+  unchecked `1.0003 / 0.9979`、checked `1.0072 / 1.0056`、proof `1.0015`、optimizer
+  `1.1068`，没有重新计时或调整门槛。
 
 ## Task 13–14 行内对抗性自审
 

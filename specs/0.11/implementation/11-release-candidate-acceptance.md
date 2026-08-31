@@ -219,10 +219,10 @@ image-relative/Pointer32 已消失，14 个失败统一收敛为 runtime 对 `Ge
 `b96aef2719f394e7ced1490695127ebdcbad2a04a23483a9c96b4482c3e5cc00`，fact artifact ID
 `9758367296`。
 
-- [ ] COFF x64 JITLink 仅对上述三个显式 allowlisted process symbol 的外部 call `PCRel32`
+- [x] COFF x64 JITLink 仅对上述三个显式 allowlisted process symbol 的外部 call `PCRel32`
   创建 graph-local RX jump stub 与 R-only 64-bit pointer cell；原 call 只跳本地 stub，远地址
   只由无范围限制的 `Pointer64` 写入。非 call、未知 symbol 或 pass 失败均 fail closed。
-- [ ] I32 anchor-first 与 `__ImageBase`、512 MiB manager、W^X、完整 eager materialization、
+- [x] I32 anchor-first 与 `__ImageBase`、512 MiB manager、W^X、完整 eager materialization、
   禁用任意 process-symbol 搜索及另外五 host object-layer policy 均保持；AOT runtime/object、
   artifact、ABI、cache recipe 与语言语义不变。
 - [ ] production-source contract 先 red 后 green，真实 bridge syntax 与全部本地门通过；最终
@@ -238,13 +238,21 @@ image-relative/Pointer32 已消失，14 个失败统一收敛为 runtime 对 `Ge
 SHA-256 `48a78a2fa36f4db15ec6415fb314382d808597c157c7af1465e5880fa8f7405c`，fact artifact ID
 `9758395786`。
 
-- [ ] 仍使用唯一 pinned inspector 和同一 forbidden regex，但只从 regular `Import {}` 与
+- [x] 仍使用唯一 pinned inspector 和同一 forbidden regex，但只从 regular `Import {}` 与
   `DelayImport {}` scope 提取 descriptor `Name:`；不得扫描 `File:`/symbol metadata，也不得
   放宽或删除 LLVM/LLD/Clang/CalcKernel/libck/MSVCP/VCRUNTIME/CONCRT/libstdc++/libc++。
-- [ ] inspector nonzero、缺少/畸形 descriptor 或任一 forbidden DLL name 继续 fail closed；
+- [x] inspector nonzero、缺少/畸形 descriptor 或任一 forbidden DLL name 继续 fail closed；
   行为测试须证明含 `Rust_CalcKernel` 的允许路径通过、`VCRUNTIME140.dll` 仍被拒绝。
 - [ ] 两种真实 Windows candidate 都完成 dependency/version/licenses、artifact 与 JIT audit；
   只有同一最终 SHA 全十项 success 才能签收 I33/I35，不把 8/10 与后续结果拼接。
+
+I34/I35 实现提交 `592614ffd7a00ba8e77f4d8f5e63bb710b15d8e0` 已完成两组
+production/behavior red→green；行内复审另以 scope 外 `Name:` 和缺名 descriptor 对照发现并
+修复初版 I35 的缩进解析缺口。最终 default 482、all-feature 613（Native 102），release
+lib 53 / IR 58、generated 3、mutation 10、fact 7、verifier-cache 5、docs 18、artifact 5，
+以及 fmt、两种 Clippy、双 prefix、release/sign/compiler/artifact/JIT 审计全部通过。
+schema-6 报告 `8a125478...` 仍只读复验，无重计时。上述本地证据不替代真实 Windows；
+I34 第三项、I35 第三项和此前远程项继续保持未签收，等待同一最终 SHA 十项矩阵。
 
 ## I23 补充验收（未签收）
 
