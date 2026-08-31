@@ -1368,6 +1368,33 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   ARM64 job 必须自然结束并独立归档。修复后必须由完整本地、schema-6 性能和新 SHA 的
   十项 CI 同时签收 I28/I27/I26/I25/阶段 11。
 
+### I28 本地复诊、修复与资格复验（远程待验）
+
+- docs-first `bc009e5` 后，production-source contract 在旧实现真实 0/1 red；只给局部
+  `objects` 增加 `Vec<&'static [u8]>` 注解后 1/1 green。行内复审确认 cfg、anchor-first、
+  五 runtime objects、容量、bytes、顺序和零拷贝语义均未改变；没有把支持对象送入 AOT
+  artifacts，也没有触及 ABI、ORC、process symbol isolation 或 W^X。
+- default 477 / all-feature 608（Native 102）、release lib 53 / IR 58、全部独立小门、两种
+  Clippy、fmt/diff、artifact 5 与发布审计均通过。旧 Unix prefix 的 manifest 缺少实际
+  `LLVMDTLTO` 条目，被 verifier fail-closed 拒绝；按当前 recipe 全量重建的 release/oracle
+  manifest 摘要为 `8a0d25cdcd729cd35be139d9f3b571d3a0769a380d1fce1e9731292119dc290c` /
+  `b073daad34f4dfd5055614c7893b42c38f875cb54198b528729247dd3d13f934`，双 profile、实际
+  compiler dependency、artifact 与 JIT audit 全部通过。没有手改旧 manifest 伪造成功。
+- 首次 schema-6 原件被原 checker 拒绝：Dijkstra `3.7952x`，report SHA-256
+  `0c4c5420d664028e8a0341a754f938aa45ff077b63f6a8f21a0b3efafa8d38bc`。当时共享主机刚完成
+  4361-target LLVM 构建，CPU idle 多轮仅 23%–61%，并观测到多核 Node/index/FSEvents；
+  六个 optimizer case 相对此前同机合格轮次都变慢，而四组同轮 runtime 对照仍约 1.0。
+  这些是环境干扰证据，不把失败改写成通过，也不声称逐样本调度的直接因果。
+- 既有资格规则满足后只追加一次完整同参数测量：连续六个当前 idle 样本 74%–84%，无
+  高负载构建/索引进程；原 checker 对所有保留样本 exit 0。unchecked Clang/replay
+  `0.9993 / 1.0002`、checked `1.0014 / 1.0011`、proof `0.9965`、optimizer suite
+  `1.0929`、Dijkstra `1.9954x`。report/checker SHA-256 为
+  `9618e947dd66a31aa0258691117087d3e040392fc9c4ed64710e3a0d5496a682` /
+  `79181453144d5862641e70aa0a710fd27b928cc4562eac2f746c2424e83f8a0c`。首次失败与资格
+  原件、24+8 artifacts、preflight 均独立保留；没有第三次计时或任何门槛修改。
+- I28 本地阻断已消除，但真实 Windows x64 编译/执行和 Windows ARM64 I27 路径只能由
+  新提交精确 SHA 的完整十项矩阵证明；旧 run 的八项 success 继续不得拼接。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

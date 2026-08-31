@@ -341,6 +341,12 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
     assert!(runtime.contains("embedded_jit_objects"));
     assert!(runtime.contains("CKC_RUNTIME_JIT_SUPPORT"));
     assert!(
+        runtime.lines().any(|line| {
+            line.trim() == "let mut objects: Vec<&'static [u8]> = Vec::with_capacity(6);"
+        }),
+        "the Windows x64 JIT anchor must enter an explicitly slice-typed object collection"
+    );
+    assert!(
         runtime.contains("embedded_runtime_objects"),
         "the five artifact runtime objects remain a separate closed set"
     );

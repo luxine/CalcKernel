@@ -57,13 +57,20 @@ I27 另按 `11-windows-static-link-plan.md` Task 6 执行，未签收：
 
 I28 另按 `11-windows-static-link-plan.md` Task 7 执行，未签收：
 
-- [ ] `embedded_jit_objects` 的局部容器显式为 `Vec<&'static [u8]>`，Windows x64
+- [x] `embedded_jit_objects` 的局部容器显式为 `Vec<&'static [u8]>`，Windows x64
   `include_bytes!` array reference 在 push 边界 unsize；anchor-first + 五 runtime objects
   的 bytes、顺序、数量与零拷贝语义不变。
-- [ ] production-source contract 在旧实现真实 red、最小类型注解后 green；不得用注释、
+- [x] production-source contract 在旧实现真实 red、最小类型注解后 green；不得用注释、
   fixture 或移除 Windows cfg/anchor 来制造通过。
 - [ ] 修复精确 SHA 的完整本地、schema-6 性能与十项 required CI 全绿；Windows x64
   实际完成 fact/Native/CLI/compiler/artifact/JIT，且同一 SHA 同时签收 ARM64 I27。
+
+本轮修复工作树的完整本地与 schema-6 门已经通过，细节见
+`11-windows-static-link-plan.md` 7.4。第一次性能原件因共享主机负载使
+`example-dijkstra` 达 `3.7952x` 而被原 checker 拒绝；满足既有 idle preflight 后的唯一
+同参数 qualification 由同一 checker 通过，optimizer suite 为 `1.0929`、Dijkstra 为
+`1.9954x`。两份原件均保留，未调整 3x individual 或其他阈值。上面最后一项仍不勾选，
+因为只有提交后的精确 SHA 与同 SHA 十项 CI 才能签收远程和阶段 11。
 
 ## I23 补充验收（未签收）
 

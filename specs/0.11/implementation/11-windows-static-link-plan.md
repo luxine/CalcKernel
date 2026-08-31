@@ -259,7 +259,7 @@ COFF `/out:` 和 Windows `dllexport` 修复覆盖；ARM64 cache/run/JIT 子进�
 
 ### 6.3 验证与远程闭环
 
-- [ ] 先保留 targeted red，再通过 targeted contract；随后重跑 Task 5 的全部本地门和
+- [x] 先保留 targeted red，再通过 targeted contract；随后重跑 Task 5 的全部本地门和
   原 schema-6 性能门，计数/阈值/语料不变。
 - [ ] 在修复提交的精确 SHA 上重新 dispatch 十项 required CI。Windows ARM64 必须完成
   Native/CLI、cache/run/JIT、release artifact 与 audit，日志不得再出现 incorrect-flags
@@ -308,22 +308,57 @@ SHA-256 为 `5265e7791eef8994a24209daab993566d2f84d2f58ef40a26515604ed5b801a9`�
 `../review/implementation-blockers-01.md`，随后才允许修改
 `tests/contracts/native_toolchain.rs` 与 `src/backend/native_runtime.rs`。
 
-- [ ] 先提交 I28 远程原件、复诊、不变量和本计划；docs 16 与 `git diff --check` 通过，
+- [x] 先提交 I28 远程原件、复诊、不变量和本计划；docs 16 与 `git diff --check` 通过，
   生产实现不得混入该提交。
-- [ ] 在既有 Windows native execution contract 中先增加局部 slice-collection 类型断言，
+- [x] 在既有 Windows native execution contract 中先增加局部 slice-collection 类型断言，
   对旧生产源码实际观察 targeted red；不能只在注释或测试 fixture 里出现目标字符串。
-- [ ] 最小实现只为 `objects` 增加 `Vec<&'static [u8]>` 注解。targeted contract、default
+- [x] 最小实现只为 `objects` 增加 `Vec<&'static [u8]>` 注解。targeted contract、default
   contract suite 与本机 native-feature 编译必须 green，且现有 object count/order 断言保留。
 
 ### 7.3 验证与远程闭环
 
-- [ ] 重跑 Task 6 的全部本地门与原 schema-6 性能门；计数、语料、阈值和工具链 identity
+- [x] 重跑 Task 6 的全部本地门与原 schema-6 性能门；计数、语料、阈值和工具链 identity
   不变。只有完整通过后才允许提交/推送实现。
 - [ ] 在新精确 SHA 上重新执行十项 required CI。Windows x64 必须完成 fact/Native/CLI、
   static compiler、实际 executable/library/JIT 和发布审计；Windows ARM64 必须同时完成
   I27 的 incorrect-flags 路径。不得拼接 `7b03f76` 的八项成功。
 - [ ] 新 SHA 十项全绿后才能关闭 I28/I27/I26/I25/阶段 11，并继续 01–11/99 总验收与
   最终 docs-only SHA 的第二轮完整矩阵。
+
+### 7.4 本地执行证据（远程未签收）
+
+- docs-first 提交 `bc009e5` 只含 I28 原件、复诊与计划。随后 contract 在旧生产源码上
+  实际为 0 passed / 1 failed，失败信息精确要求显式 slice-typed collection；最小实现
+  只把局部声明改为 `let mut objects: Vec<&'static [u8]> = Vec::with_capacity(6);`，同一
+  targeted contract 随后 1/1 green。既有 anchor-first、五 runtime objects、容量与返回
+  类型断言均保留。
+- 完整 default 477 / all-feature 608（Native 102）、release lib 53 / IR 58、generated 3 /
+  mutation 10 / fact audit 7 / verifier-cache 5 / docs 16、两种 Clippy、fmt/diff、artifact
+  fixture 5、compiler/artifact/JIT/version/licenses 全部通过，0 failed/ignored。default /
+  all-feature 日志 SHA-256 为
+  `d2d4ba35f95172a21581644f681b64af46b92e68f8d3f273f7055656ec594b20` /
+  `f45b697fb89b6e0eb447d2dcf59b8544dc9e7327726ddecc7ac7b1c65835a4fc`。
+- 旧本机 prefix 因 manifest 未列出实际存在的 `LLVMDTLTO` 被当前 verifier 正确拒绝，未
+  手改清单或绕过门。按当前配方重新构建 release/oracle 后，manifest SHA-256 分别为
+  `8a0d25cdcd729cd35be139d9f3b571d3a0769a380d1fce1e9731292119dc290c` /
+  `b073daad34f4dfd5055614c7893b42c38f875cb54198b528729247dd3d13f934`，两个 profile 均由
+  `validate-llvm-prefix.ps1` 通过；实际 release compiler 也报告前一摘要并通过全部发布审计。
+- 第一次完整 schema-6 报告保留为失败：runtime 四组与 proof 通过，但共享主机刚完成
+  4361-target LLVM 构建并持续出现多核 Node/index/FSEvents 负载，六个 optimizer case
+  相对此前同机合格结果全面变慢；`example-dijkstra` 为 `1328333 / 350000 = 3.7952x`，
+  超过原 3x individual 门。report / benchmark / checker SHA-256 为
+  `0c4c5420d664028e8a0341a754f938aa45ff077b63f6a8f21a0b3efafa8d38bc` /
+  `837026db6a75bcd22eb01fee27a232b40f9b529db016b83329cf711809d5189d` /
+  `2d539d81e4bb79ed56a560b31d629be81d7a0a3148e7716bf9c40e85b0a23718`。
+- 沿用既有不降门槛资格规则，只读等待到连续六个当前样本 idle 74%–84% 且进程快照无
+  高负载构建/索引后，执行唯一一次同工作树、同 bundle、同参数 qualification。原 checker
+  exit 0：unchecked Clang/replay `0.9993 / 1.0002`，checked `1.0014 / 1.0011`，proof
+  `0.9965`，optimizer suite `1.0929`，Dijkstra `1.9954x`；24 measurement + 8 replay
+  artifacts 完整。report / benchmark / checker SHA-256 为
+  `9618e947dd66a31aa0258691117087d3e040392fc9c4ed64710e3a0d5496a682` /
+  `e42894b8ed4e8e99a0f6e58be5649e2901eda7039a1d9d4ef0bcbb2d296bd3c9` /
+  `79181453144d5862641e70aa0a710fd27b928cc4562eac2f746c2424e83f8a0c`。首次失败原件未
+  删除或覆盖，没有第三次计时；新提交精确 SHA 的十项远程矩阵仍是必要验收。
 
 ## Task 7 行内对抗性自审
 

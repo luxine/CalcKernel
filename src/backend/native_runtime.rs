@@ -9,7 +9,7 @@ pub(crate) fn embedded_runtime_objects() -> [&'static [u8]; 5] {
 }
 
 pub(crate) fn embedded_jit_objects() -> Vec<&'static [u8]> {
-    let mut objects = Vec::with_capacity(6);
+    let mut objects: Vec<&'static [u8]> = Vec::with_capacity(6);
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     objects.push(include_bytes!(env!("CKC_RUNTIME_JIT_SUPPORT")));
     objects.extend(embedded_runtime_objects());
