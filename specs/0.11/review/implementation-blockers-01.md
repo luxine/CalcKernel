@@ -1395,6 +1395,31 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - I28 本地阻断已消除，但真实 Windows x64 编译/执行和 Windows ARM64 I27 路径只能由
   新提交精确 SHA 的完整十项矩阵证明；旧 run 的八项 success 继续不得拼接。
 
+## I29：Windows ARM64 host conformance 与 cache touch
+
+- run `33332458652` 最终 completed/failure；Windows ARM64 job `99313407132` 自然完成
+  release/oracle 新 recipe bootstrap、双 cache 保存/验证和 fact audit 7/7，Native suite
+  为 87 passed / 5 failed / 0 ignored。完整日志 SHA-256
+  `7b13024e4f5177674a999f03ce8bbe2cb438eece7b90c98480ffe5ee80b60720`；fact artifact
+  `9742713855` 的 zip / 原文件摘要为
+  `bc023be4906d0a3bedf39d3b6fd32ed1599c48a69869211602669dd73ffaea85` /
+  `dee966674a5e187610d392b266a03f6a2746e930f3dc39ba13e26d564cc975b4`。
+- 原 I27 incorrect-flags assertion 与 `0x80000003` 消失；JIT cache/run、完整 object graph、
+  checked modes、W^X audit、standalone executable 和 generated differential 实际通过。
+  五个剩余失败是新的 host conformance 阻断，不能用这些通过项抵消。
+- ABI 失败来自正确的 Windows `dllexport` 与写死 `define [2 x i64]` 的断言不匹配；两项
+  ownership 失败来自 macOS 专项缺 OS cfg 及通用测试硬编码 JITLink。修订只能匹配合法
+  storage class 并消费既有六 host policy，不能改变 ARM64 RuntimeDyld 生产选择。
+- differential 在第一个 C oracle `GetProcAddress("scalar")` 即失败：Windows Clang
+  fixture 没把 MIR exports 传给 COFF linker。必须由同一 MIR export 集生成完整 `/export:`
+  参数，并继续对 oracle/Native 双库实际逐符号执行；不能修改 CK Native exports 掩盖 oracle。
+- cache warm-hit 是生产缺陷：Windows no-follow entry handle 只有 read access，无法完成
+  `File::set_times` 所需的 `FILE_WRITE_ATTRIBUTES`，错误又按 best-effort 被忽略。最小修复
+  只增加精确属性权限，保留 `GENERIC_READ`、`FILE_FLAG_OPEN_REPARSE_POINT`、owner-only
+  root、entry bytes 与 cache failure 不影响程序执行的边界；禁止延长 25 ms 测试等待。
+- 计划与验收见 `../implementation/11-windows-static-link-plan.md` Task 8。I29 修复必须
+  叠加 I28 后由新的同 SHA 全十项矩阵证明；`7b03f76` 的八项 success 不得拼接。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

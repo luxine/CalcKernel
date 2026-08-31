@@ -367,3 +367,70 @@ SHA-256 为 `5265e7791eef8994a24209daab993566d2f84d2f58ef40a26515604ed5b801a9`�
 同时把跨 cfg 编译意图变成稳定源码契约。文本 contract 只能防回归，实际 Windows x64
 编译/执行仍是必要验收；完整十项矩阵和既有 ARM64 ORC 门均不降低。复审未发现需扩张
 设计或调整规范/ABI 的阻断项。
+
+## Task 8：Windows ARM64 host conformance 与 cache touch 闭包（I29）
+
+旧精确 SHA `7b03f76e1139ec91a5962ca18e696c2c127604c2` 的 run `33332458652`
+最终 completed/failure。Windows ARM64 job `99313407132` 自然完成当前 recipe 的
+release/oracle bootstrap，两个 `c8b5101e…` cache 均保存并通过 prefix 验证；pre-LLVM
+fact audit 7/7 后，required Native suite 为 87 passed / 5 failed / 0 ignored。完整 job
+日志 SHA-256 为 `7b13024e4f5177674a999f03ce8bbe2cb438eece7b90c98480ffe5ee80b60720`；
+fact artifact ID `9742713855`，zip / 原文件 SHA-256 为
+`bc023be4906d0a3bedf39d3b6fd32ed1599c48a69869211602669dd73ffaea85` /
+`dee966674a5e187610d392b266a03f6a2746e930f3dc39ba13e26d564cc975b4`。
+
+### 8.1 复诊与不变量
+
+- I27 的 `Resolving symbol with incorrect flags` 与 `0x80000003` 均未复现；cache/run/JIT、
+  complete object graph、checked modes、memory audit、standalone executable 与 generated
+  differential 等路径实际通过。ARM64 RuntimeDyld responsibility 修复有效，但该旧 SHA
+  仍因后续 host conformance 缺口不能签收。
+- `native_llvm_should_hide_internal_signatures_behind_host_c_abi_thunks` 仍把 AArch64 external
+  definition 写死为 `define [2 x i64]`；Windows 正确插入 `dllexport`。只允许像已有 checked
+  ABI 断言一样匹配 `define` 行中的返回 shape/符号，不能移除 storage class 或降低 ABI shape。
+- `native_jit_should_use_jitlink_on_macos_aarch64` 名称限定 macOS 却未加 OS cfg；通用
+  ownership test 又硬编码 JITLink。两者必须消费已冻结的六 host policy：仅 Windows ARM64
+  为 `RuntimeDyldCoffAarch64`，其余 host 为 JITLink；不得改回 ARM64 JITLink 或 skip 通用
+  ownership 覆盖。
+- Windows C differential oracle 使用 Clang `-shared` 但没有把从同一 MIR 得到的 exports
+  传给 COFF linker，故首先在 oracle `GetProcAddress("scalar")` 失败，尚未比较 Native
+  library。fixture 必须对 Windows 精确追加同一 exports 集的 `/export:<name>`；不能修改
+  CK Native export 实现、硬编码少于完整集合或把缺符号当 skip。
+- cache warm-hit 使用 `File::set_times` 更新 LRU mtime，但 Windows entry handle 只有
+  `GENERIC_READ`；`FILE_WRITE_ATTRIBUTES` 缺失使调用静默失败。修复只给 no-follow handle
+  增加属性写权限，同时保留 read data、`FILE_FLAG_OPEN_REPARSE_POINT`、owner-only root、
+  entry bytes 与 best-effort cache-hit 语义。不得延长测试 sleep、重写 cache entry 或把
+  touch 失败升级成 CK 程序执行失败。
+
+### 8.2 计划先行与现有真实 red
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改 `tests/native/abi.rs`、
+`tests/native/ownership.rs`、`tests/native/differential.rs`、`src/cli/cache/store.rs` 与必要的
+production-source contract。
+
+- [ ] 先提交自然终态、完整 hashes、五项分类、不变量与本计划；docs 16 / diff 通过，
+  不混入实现或测试修订。
+- [ ] 以 job `99313407132` 的 87/5 作为真实 Windows ARM64 red。修复 ABI/ownership/oracle
+  fixture 时保留原结构和失败可诊断性；cache 必须修生产 handle，不能只改时间等待断言。
+- [ ] 最小 green：ABI line matcher 容纳合法 `dllexport`；macOS 专项加精确 cfg，通用
+  ownership 使用冻结 host policy；oracle export list 从同一 MIR 派生并仅在 COFF 传给
+  linker；Windows cache open 使用 `GENERIC_READ | FILE_WRITE_ATTRIBUTES` 且继续 no-follow。
+
+### 8.3 验证与远程闭环
+
+- [ ] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
+  小门、artifact/compiler/JIT/version/licenses 与 schema-6 原门全绿；测试计数、语料和
+  阈值不降。Windows-only green 最终由真实 ARM64/X64 host 证明。
+- [ ] 将 I29 修复叠加到已本地验证的 I28 提交后，以新的精确 SHA dispatch 全十项矩阵。
+  Windows ARM64 必须 92/92 Native + CLI + release/audits 全绿；Windows x64 同时证明 I28
+  编译闭包；其他八项不能从 `7b03f76` 拼接。
+- [ ] 同 SHA 十项全绿后才关闭 I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99 总验收。
+
+## Task 8 行内对抗性自审
+
+五项都由实际 Windows ARM64 原件定位：两项 host policy、一项合法 IR storage class 和一项
+C oracle export 都是测试跨平台假设，不授权修改生产 ABI/ORC/export；cache touch 则由
+只读 handle 与所需 Windows access mask 直接解释，是唯一生产修复。精确属性权限比通用
+写权限更小，no-follow 与 owner-only 边界不变。完整 Windows 两架构执行仍不可由本地文本
+契约替代；复审未发现需要降低门槛、扩大符号面或改变缓存格式的阻断项。
