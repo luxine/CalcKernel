@@ -305,11 +305,15 @@ symbol parsing 唯一失败，日志 SHA-256 分别为 `02a1f340…0680` / `d7bb
 真实 x64 COFF probe（SHA-256 `fc944225…034`）证明 LLVM 22 输出为 `Symbols [` 容器内嵌
 `Symbol {}`，当前顶层 brace parser 的空集不代表 object 没有 symbols。
 
-- [ ] parser 必须验证唯一闭合 `Symbols [`，只提取直接 child `Symbol {}` 的唯一直接
+- [x] parser 必须验证唯一闭合 `Symbols [`，只提取直接 child `Symbol {}` 的唯一直接
   `Name:`；File/nested auxiliary metadata 隔离，missing/duplicate/unclosed/empty 全部拒绝。
-- [ ] 原 forbidden symbol、imports/exports/dependency/hash 门不变，真实/fixture `free` 仍拒绝；
+- [x] 原 forbidden symbol、imports/exports/dependency/hash 门不变，真实/fixture `free` 仍拒绝；
   behavior red→green、PowerShell parse 和完整本地门通过。
 - [ ] 同一最终 SHA 十项 CI 全绿，双 Windows 完成 compiler/artifact/JIT audits，不拼接本 run。
+
+I38 实现提交 `7ddb963170eb2b3f471221023f27fb634228ec7b`，真实形状 fixture red/green 日志
+SHA-256 为 `24aa6945…80bb` / `ef25befd…f6ef`。最终本地 default 484、all-feature 615
+（Native 102）及全部独立门、冻结性能复验通过；前两项已签收，第三项等待最终矩阵。
 
 ## I23 补充验收（未签收）
 

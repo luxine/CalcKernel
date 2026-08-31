@@ -1664,6 +1664,16 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 远程自然结束后，quality/native-integration 已确认同属 I37；双 Windows 则独立暴露 I38，
   不能因为 I37 已修复而签收本轮 6/10。I38 必须按真实 COFF probe 另行闭环。
 
+### I38 实现后本地复审
+
+- `7ddb963170eb2b3f471221023f27fb634228ec7b` 用唯一 `Symbols [` 容器和直接 child
+  `Symbol {}` scope 建模真实 LLVM 22 输出；nested auxiliary `Name:` 隔离，容器/child 任一
+  malformed 与空集均 fail closed。旧 forbidden set、hash、imports/exports 与绝对 inspector
+  identity 不变。
+- targeted 真实形状 red→green、PowerShell parse、完整本地与冻结 schema-6 复验全绿，当前
+  未发现新的本地 blocker。双 Windows 的真实 symbol table 和后续 JIT 仍由下一轮同 SHA
+  十项矩阵签收，不能用本机 probe 替代。
+
 远程复审重点保持为 Windows archive/CRT identity、
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
 是否仍跨 job 泄漏、performance 分母是否确为摘要固定的 V0.10 C source、release

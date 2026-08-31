@@ -1060,13 +1060,13 @@ Native、CLI、static release build 和 release dependency audit，随后在 nat
 **Files:** 本文、阶段 acceptance、review，随后才允许修改
 `tests/contracts/native_toolchain.rs` 与 `scripts/audit-native-artifact.ps1`。
 
-- [ ] 把 fake `--symbols` 输出改为真实 `Symbols [` / child `Symbol {}` 形状，在当前实现观察
+- [x] 把 fake `--symbols` 输出改为真实 `Symbols [` / child `Symbol {}` 形状，在当前实现观察
   allowed fixture red；保留 File 路径污染、forbidden symbol、空/malformed container、缺名 /
   重复名 symbol 与 inspector nonzero 的拒绝对照。
-- [ ] 为 symbols 实现独立容器感知 parser：必须恰有一个闭合顶层 `Symbols [`，只收集其
+- [x] 为 symbols 实现独立容器感知 parser：必须恰有一个闭合顶层 `Symbols [`，只收集其
   直接 child `Symbol {}` 的唯一直接 `Name:`；nested auxiliary `Name:`、File/metadata 不得进入
   集合。缺容器、重复/未闭合容器、畸形 child、缺名/重复名或零 symbol 均 fail closed。
-- [ ] imports/exports 的既有顶层 brace parser、全部 dependency/export/symbol/hash allowlist、
+- [x] imports/exports 的既有顶层 brace parser、全部 dependency/export/symbol/hash allowlist、
   artifact、linker、ABI、cache 与 required CI 状态保持不变；真实 dirty COFF 的 undefined
   `free` 必须仍被拒绝。
 - [ ] targeted、PowerShell parse、完整本地和冻结性能只读门通过；新 SHA 十项 required CI
@@ -1079,3 +1079,24 @@ Native、CLI、static release build 和 release dependency audit，随后在 nat
 任何真实 object，属于降低门槛；扫描缩进 `Name:` 又会重现 I35/I36 的 scope 污染。因此必须
 建模唯一 `Symbols [` 容器和直接 child scope，同时维持严格 malformed 拒绝。当前未发现需要
 修改 LLVM invocation、runtime producer 或 artifact policy 的阻断。
+
+### 17.3 实现与本地验收证据
+
+实现提交 `7ddb963170eb2b3f471221023f27fb634228ec7b` 增加独立 `Get-CoffSymbolNames`，没有
+修改 imports/exports parser 或任何产物门。真实容器 fixture 在旧实现 red、最终 green 的日志
+SHA-256 分别为 `24aa6945f9b574243481d5d49f6bf4a51023b76af9eb18ac1b2cf50f4b4080bb` 与
+`ef25befd5a841944207e6e5f4a8f1a91abd4a2c26fd8d08a02ce1d6adfeff6ef`；PowerShell AST
+parse 同时通过。allowed fixture 的 nested auxiliary `Name: free` 被隔离，独立 undefined
+`malloc` 仍被拒绝；empty/missing/unclosed container 和 missing/duplicate child name 均 fail closed。
+
+最终本地 default 484、all-feature 615（Native 102）、release lib 53 / IR 58、generated 3、
+mutation 10、fact 7、cache 5、docs 18、artifact 5 全绿；fmt、双 Clippy、双 prefix、release /
+sign/compiler/artifact/JIT audits 通过。Apple sanitizer 按契约 unavailable，schema-6 性能只读
+复验仍为 `1.0003/0.9979`、`1.0072/1.0056`、`1.0015`、`1.1068`。
+
+## Task 17 实现后行内对抗性复审
+
+parser 在容器层拒绝额外 child，在 symbol 层用 brace depth 隔离 auxiliary scope；重复容器、
+畸形闭合、缺名、重复直接名和零 symbol 均无法静默通过。它仍只检查既有 runtime `.obj` 集合，
+不读取不可信 PATH，不改变 linker/runtime/ABI/cache。真实 x64 probe 与双架构相同失败定位一致，
+当前未发现新的本地 blocker；最终仍需两个 Windows job 对真实产物完成 artifact/JIT audit。
