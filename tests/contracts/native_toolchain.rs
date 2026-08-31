@@ -12,6 +12,48 @@ fn read(path: &str) -> String {
         .unwrap_or_else(|error| panic!("failed to read {path}: {error}"))
 }
 
+fn normalize_powershell_diagnostic(stderr: &str) -> String {
+    let mut without_sgr = String::with_capacity(stderr.len());
+    let mut remaining = stderr;
+    while let Some(start) = remaining.find("\u{1b}[") {
+        without_sgr.push_str(&remaining[..start]);
+        let parameters = &remaining[start + 2..];
+        let Some(end) = parameters.find('m') else {
+            without_sgr.push_str(&remaining[start..]);
+            remaining = "";
+            break;
+        };
+        if parameters[..end]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b';' | b':'))
+        {
+            remaining = &parameters[end + 1..];
+        } else {
+            without_sgr.push('\u{1b}');
+            remaining = &remaining[start + 1..];
+        }
+    }
+    without_sgr.push_str(remaining);
+    without_sgr
+        .replace('|', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn powershell_diagnostic_normalization_should_ignore_ansi_sgr() {
+    let stderr = concat!(
+        "native artifact audit: executable dependencies must be exactly",
+        "\u{1b}[0m\n",
+        "\u{1b}[31;1m| kernel32.dll\u{1b}[0m\n",
+    );
+    assert_eq!(
+        normalize_powershell_diagnostic(stderr),
+        "native artifact audit: executable dependencies must be exactly kernel32.dll"
+    );
+}
+
 fn quoted_scalar(block: &str, key: &str) -> String {
     let prefix = format!("{key} = \"");
     block
@@ -922,11 +964,7 @@ esac
         let output = run(mode);
         assert!(!output.status.success(), "artifact audit accepted {mode}");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let normalized_stderr = stderr
-            .replace('|', "")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let normalized_stderr = normalize_powershell_diagnostic(&stderr);
         assert!(
             normalized_stderr.contains(evidence),
             "artifact audit rejection for {mode} omitted {evidence:?}:\n{}",
