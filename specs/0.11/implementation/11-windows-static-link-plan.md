@@ -911,3 +911,43 @@ I34 只为已经允许的三项 Windows OS call 增加 JIT graph 内的范围延
 R/RX section 和原 memory audit 验证。I35 从“整份展示文本”收紧到“regular/delay descriptor
 name 集合”，恰好恢复原 `/dependents` 的语义，而 forbidden 集合与所有 fail-closed 条件不变。
 两项都仍以真实双 Windows job 为行为门，复审未发现需要降低既有门槛的理由。
+
+## Task 15：Windows native artifact audit 的 pinned inspector 闭包（I36）
+
+### 15.1 失败证据与根因
+
+精确 SHA `6dcd2ce3af6bc4bb2c19a86ef7865811735efd58` 的 run `33397814019` 中，Windows
+x64 job `99506470952` 已通过 fact audit 7/7、Native 92/92、CLI 22/22、static release build
+及修复后的 release dependency audit；随后 `scripts/audit-native-artifact.ps1:31` 再次通过
+runner PATH 查找 `dumpbin.exe` 并失败，尚未读取 artifact imports/exports/symbols。完整 job
+日志 SHA-256 为 `9b10eec294ba922bc2f9934c64b6108bf662ba113257f70a5072807aae0f503b`。
+
+I33 只修复了 release compiler audit；native artifact audit 保留了同类未冻结环境依赖，因此
+这不是 I34/I35 产品回归，也不能由已通过的 release audit 抵消。该 run 的其他 jobs 继续自然
+结束；其成功项不得与后续修复 SHA 拼接。
+
+### 15.2 最小修订与 TDD
+
+**Files:** 本文、阶段 acceptance、review，随后才允许修改
+`tests/contracts/native_toolchain.rs` 与 `scripts/audit-native-artifact.ps1`。
+
+- [ ] 先增加可执行 fake inspector 行为测试：允许 artifact 通过；program 非唯一
+  `kernel32.dll` dependency、module import、缺少 `answer`/forbidden export、runtime forbidden
+  symbol 与 inspector nonzero 分别失败。在旧脚本真实 red，并由 production-source contract
+  禁止 `Get-Command dumpbin.exe`。
+- [ ] 只使用同一已验证 `CKC_LLVM_PREFIX/bin/llvm-readobj.exe`：`--coff-imports` 解析 program /
+  module 顶层 regular/delay descriptor，`--coff-exports` 解析 module 顶层 export，`--symbols`
+  检查 runtime objects。缺 prefix/tool、任一 inspector nonzero、畸形 scope/name 均 fail closed。
+- [ ] 保持 program dependency 必须精确为唯一 `kernel32.dll`、module 无 imports、必须导出
+  `answer` 且拒绝 LLVM/LLD/Clang/CalcKernel/`__ck_`、runtime memory/locale symbols 禁止及
+  SHA256SUMS 验证；不得改 artifact、linker、ABI、cache、allowlist 或 CI required 状态。
+- [ ] targeted green、PowerShell parse 与完整本地门通过；最终双 Windows job 均完成 release /
+  artifact/JIT 三项 audit，同一新 SHA 十项全绿后才允许关闭 I36 及此前远程项。
+
+## Task 15 行内对抗性自审
+
+已验证 prefix 本来就安装、散列并校验 `llvm-readobj.exe`，它能覆盖 COFF imports、exports 与
+symbol table；因此修订只关闭第二个 audit 脚本的 PATH 缺口，不引入新工具或改变产物政策。
+真实 artifact 内容尚未被失败 job 审计，所以本地 fake inspector 只能锁定 parser 与
+fail-closed 边界，最终仍必须由两个 Windows candidate 执行签收。当前未发现需要扩大到
+bootstrap、runtime 或链接参数的设计阻断。

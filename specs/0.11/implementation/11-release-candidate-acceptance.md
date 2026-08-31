@@ -254,6 +254,21 @@ lib 53 / IR 58、generated 3、mutation 10、fact 7、verifier-cache 5、docs 18
 schema-6 报告 `8a125478...` 仍只读复验，无重计时。上述本地证据不替代真实 Windows；
 I34 第三项、I35 第三项和此前远程项继续保持未签收，等待同一最终 SHA 十项矩阵。
 
+## I36 补充验收（未签收）
+
+精确 SHA `6dcd2ce3af6bc4bb2c19a86ef7865811735efd58` 的 run `33397814019` 中，Windows
+x64 job `99506470952` 已通过 fact 7、Native 92、CLI 22、static release build 与 release
+dependency audit，证明 I34/I35 的真实 x64 路径已通过；随后 native artifact audit 在读取
+任何 candidate 前因 `Get-Command dumpbin.exe` 失败。完整日志 SHA-256
+`9b10eec294ba922bc2f9934c64b6108bf662ba113257f70a5072807aae0f503b`。
+
+- [ ] native artifact audit 只使用验证 prefix 的绝对 `llvm-readobj.exe`，分别解析 imports、
+  exports 与 symbols；不搜索 PATH、系统 SDK 或回退工具，缺失/nonzero/畸形均 fail closed。
+- [ ] program 仍只依赖 `kernel32.dll`，module 无 imports且导出 `answer`，forbidden exports /
+  runtime symbols 与 SHA256SUMS 原门槛不变；production behavior contract 必须 red→green。
+- [ ] 修复精确 SHA 的完整本地、原 schema-6 只读性能门和十项 required CI 全绿；两个
+  Windows job 都必须完成 compiler/artifact/JIT audits，不拼接本 run 的部分 success。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：

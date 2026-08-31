@@ -1577,6 +1577,20 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   symbol/RVA；审计必须 fail-closed 提取两个 descriptor scope 的 `Name:`，只对依赖名应用
   原 regex。不得删 `CalcKernel`、过滤特定 workspace 路径、跳过空/畸形输出或退回 PATH 工具。
 
+## I36：Windows native artifact audit 重复依赖 `dumpbin` PATH
+
+- 精确 SHA `6dcd2ce` 的 run `33397814019` 中，Windows x64 job `99506470952` 已完成
+  fact 7、Native 92、CLI 22、static release build，且 I35 修复后的 release dependency audit
+  明确 passed；下一步 `scripts/audit-native-artifact.ps1:31` 的 `Get-Command dumpbin.exe`
+  因 runner PATH 未初始化失败。完整日志 SHA-256
+  `9b10eec294ba922bc2f9934c64b6108bf662ba113257f70a5072807aae0f503b`。
+- 该脚本尚未读取 program/module/runtime candidates，不能把失败解释为 artifact 内容不合格。
+  根因与 I33 同类但位于独立审计面：必须改用已验证 prefix 的绝对 `llvm-readobj.exe`，并保持
+  imports/exports/symbols 三类语义与全部 fail-closed 门。不得通过初始化任意 SDK PATH、删除
+  artifact audit、放宽 `kernel32.dll`/export/symbol allowlist 或把 Windows job 标 optional 修复。
+- 计划见 Task 15。当前 run 的剩余 jobs 必须自然终止；后续只由修复后同一 SHA 的完整十项
+  矩阵签收 I36/I35/I34 及此前远程项。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
