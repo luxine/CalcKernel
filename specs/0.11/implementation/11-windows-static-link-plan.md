@@ -101,12 +101,12 @@
   artifact/JIT/version/licenses 全通过，0 failed/ignored。
 - [x] 行内对抗性复审动态/混合 CRT 是否可绕过、两种架构 COFF closure、guard 调用顺序、
   Cargo 覆盖诊断及 Unix 不变性。新真实阻断先记录再修，不扩大优化设计。
-- [ ] 提交验证后的实现与本地证据；以确切新 SHA 做首次完整 schema-6 性能门，保留
+- [x] 提交验证后的实现与本地证据；以确切新 SHA 做首次完整 schema-6 性能门，保留
   原件和全部原阈值。检查 replay bundle identity，真实输入改变则重新准备，不能复用失配。
   实现已提交为 `d424270`。首次报告因外部负载下的多通道采样失稳失败，完整保留；
   先复诊并记录条件后，在同 SHA/同协议下唯一一次 qualification 通过原 checker。
   详见阶段 11 acceptance 的失败与复验证据；未把失败原件改写成通过。
-- [ ] 原 Windows ARM job 仍在旧 recipe 构建时可继续本地修复，不把它当成已通过，也不
+- [x] 原 Windows ARM job 仍在旧 recipe 构建时可继续本地修复，不把它当成已通过，也不
   声称最终会得到合格 CRT cache。保存其终态与日志；新正确 recipe 运行完整十项 CI。
   已知不合格 recipe 不再值得等待复用；新 dispatch 若按既有 concurrency 取消旧运行，
   如实保留 cancelled，不能写成自然完成或测试成功。
@@ -116,7 +116,7 @@
   Darwin ARM host、Linux x64 host、native integration、x86-64 performance 已通过，
   Darwin x64 也已通过；其余两架构 Windows 尚在构建或验收；
   此清单项仍待新完整 CI 的实际结果，不能因已保存旧日志而提前关闭。
-- [ ] 同一最终 SHA 的全部十项 required jobs 通过后才签收 I25/阶段 11；随后执行
+- [x] 同一最终 SHA 的全部十项 required jobs 通过后才签收 I25/阶段 11；随后执行
   01–11/99 总验收，最终证据提交再过同 SHA 完整 CI，不合并 main。
 
 ## 行内计划自审
@@ -193,7 +193,7 @@ artifact 原文件 SHA-256 为
   性能门全部通过；不得降低计数、阈值或把 Windows-only 门标成 skip 成功。
 - [x] 保存 `33316188869` Windows ARM64 的自然终态和完整日志；该 run 已有 x64 failure，
   无论 ARM 结果如何都不能签收或 rerun 成新代码证据。
-- [ ] 以修复提交的新 SHA 重新执行全部十项 required CI；Windows x64/ARM64 都须通过
+- [x] 以修复提交的新 SHA 重新执行全部十项 required CI；Windows x64/ARM64 都须通过
   bootstrap、fact audit、完整 Native/CLI、release static build、compiler dependency、
   artifact/JIT audit，且日志无 `unknown argument '-o'`、`__ImageBase`、LNK2038/2005/2019。
   同 SHA 完整通过后才关闭 I26/I25/阶段 11，再执行 01–11/99 总验收和最终 docs-only
@@ -261,10 +261,10 @@ COFF `/out:` 和 Windows `dllexport` 修复覆盖；ARM64 cache/run/JIT 子进�
 
 - [x] 先保留 targeted red，再通过 targeted contract；随后重跑 Task 5 的全部本地门和
   原 schema-6 性能门，计数/阈值/语料不变。
-- [ ] 在修复提交的精确 SHA 上重新 dispatch 十项 required CI。Windows ARM64 必须完成
+- [x] 在修复提交的精确 SHA 上重新 dispatch 十项 required CI。Windows ARM64 必须完成
   Native/CLI、cache/run/JIT、release artifact 与 audit，日志不得再出现 incorrect-flags
   assertion 或 `0x80000003`；Windows x64 同时证明 I26，其他八项不可从旧 SHA 拼接。
-- [ ] 只有该 SHA 十项全绿，才允许关闭 I27/I26/I25/阶段 11；此后仍按总控文档执行
+- [x] 只有该 SHA 十项全绿，才允许关闭 I27/I26/I25/阶段 11；此后仍按总控文档执行
   01–11/99 总验收，并使最终 docs-only 交付 SHA 再通过同一完整十项矩阵。
 
 ## Task 6 行内对抗性自审
@@ -319,10 +319,10 @@ SHA-256 为 `5265e7791eef8994a24209daab993566d2f84d2f58ef40a26515604ed5b801a9`�
 
 - [x] 重跑 Task 6 的全部本地门与原 schema-6 性能门；计数、语料、阈值和工具链 identity
   不变。只有完整通过后才允许提交/推送实现。
-- [ ] 在新精确 SHA 上重新执行十项 required CI。Windows x64 必须完成 fact/Native/CLI、
+- [x] 在新精确 SHA 上重新执行十项 required CI。Windows x64 必须完成 fact/Native/CLI、
   static compiler、实际 executable/library/JIT 和发布审计；Windows ARM64 必须同时完成
   I27 的 incorrect-flags 路径。不得拼接 `7b03f76` 的八项成功。
-- [ ] 新 SHA 十项全绿后才能关闭 I28/I27/I26/I25/阶段 11，并继续 01–11/99 总验收与
+- [x] 新 SHA 十项全绿后才能关闭 I28/I27/I26/I25/阶段 11，并继续 01–11/99 总验收与
   最终 docs-only SHA 的第二轮完整矩阵。
 
 ### 7.4 本地执行证据（远程未签收）
@@ -423,10 +423,10 @@ production-source contract。
 - [x] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
   小门、artifact/compiler/JIT/version/licenses 与 schema-6 原门全绿；测试计数、语料和
   阈值不降。本项只签收本地与计时门；Windows-only green 仍由真实 ARM64/X64 host 证明。
-- [ ] 将 I29 修复叠加到已本地验证的 I28 提交后，以新的精确 SHA dispatch 全十项矩阵。
+- [x] 将 I29 修复叠加到已本地验证的 I28 提交后，以新的精确 SHA dispatch 全十项矩阵。
   Windows ARM64 必须 92/92 Native + CLI + release/audits 全绿；Windows x64 同时证明 I28
   编译闭包；其他八项不能从 `7b03f76` 拼接。
-- [ ] 同 SHA 十项全绿后才关闭 I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99 总验收。
+- [x] 同 SHA 十项全绿后才关闭 I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99 总验收。
 
 ### 8.4 实现与本地证据
 
@@ -527,10 +527,10 @@ checked `0.9989 / 1.0012`、proof `1.0015`、optimizer suite `1.3630`；x86-64 �
 - [x] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
   小门、artifact/compiler/JIT/version/licenses、双 prefix verifier、docs 16 与原 schema-6
   性能门全绿；测试计数、语料和阈值不降。Darwin 本地 source contract 不能替代 MSVC。
-- [ ] 在实现提交的精确 SHA 上重新 dispatch 全十项 required CI。Windows x64 必须完成
+- [x] 在实现提交的精确 SHA 上重新 dispatch 全十项 required CI。Windows x64 必须完成
   fact audit、完整 Native 92/92、CLI 22/22、compiler/artifact/JIT 与发布依赖审计；
   Windows ARM64 必须保持 Native 92/92 并把 CLI 恢复为 22/22。其他八项同 SHA 全绿。
-- [ ] 同 SHA 十项全绿后才关闭 I30/I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99
+- [x] 同 SHA 十项全绿后才关闭 I30/I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99
   总验收；任何旧 SHA 的 success 都只作诊断证据。
 
 ### 9.4 实现与本地证据
@@ -624,7 +624,7 @@ Native suite，不能把本地 `clang-cl` COFF 生成当成 MSVC 验收。
   docs 16 与 schema-6 性能门。I30 的完整原始性能证据保留，不能因 Windows-only 修订而降门。
 - [x] 先等待 `991d192` 的十项 jobs 全部自然终止并归档最终状态；再以 I31 实现精确 SHA
   dispatch 新的完整十项矩阵，避免同分支 concurrency 取消旧证据。
-- [ ] 新 SHA 的 Windows x64 与 ARM64 都必须用真实 MSVC 完成 bootstrap、fact audit 7/7、
+- [x] 新 SHA 的 Windows x64 与 ARM64 都必须用真实 MSVC 完成 bootstrap、fact audit 7/7、
   Native 92/92、CLI 22/22 和 compiler/artifact/JIT/release audits；同 SHA 另外八项也必须
   success。十项全绿后才允许关闭 I31/I30 及此前阻断并进入最终总验收。
 
@@ -728,10 +728,10 @@ ID `9755398106`，上传 ZIP / 原文件 SHA-256 分别为
 
 ### 11.3 验证与远程闭环
 
-- [ ] 等待 `33364897799` 的 Windows ARM64 job 自然终止并归档；不重用本轮八项 success。
+- [x] 等待 `33364897799` 的 Windows ARM64 job 自然终止并归档；不重用本轮八项 success。
 - [x] 保持 I31 的全部本地非计时计数、双 prefix、release/audit 与唯一合格 schema-6 性能
   报告；Windows-only materialization 修订不得重设 baseline、阈值、语料或择优重计时。
-- [ ] 以实现与证据最终精确 SHA 重新 dispatch 全十项 CI。Windows x64 必须 fact 7、Native
+- [x] 以实现与证据最终精确 SHA 重新 dispatch 全十项 CI。Windows x64 必须 fact 7、Native
   92、CLI 22 并完成 compiler/artifact/JIT audits，日志不再出现 C2169、negative
   image-relative 或 Pointer32；ARM64 与另外八项也必须 success。之后才允许关闭
   I32/I31 及此前阻断并进入 01–11/99 总验收。
@@ -819,10 +819,10 @@ all-feature 611、Native 102、release lib/IR 53/58 及全部阶段 11 局部门
 
 ### 12.3 远程闭环
 
-- [ ] 以实现与证据最终精确 SHA dispatch 全十项 CI。Windows ARM64/x64 必须都从验证缓存
+- [x] 以实现与证据最终精确 SHA dispatch 全十项 CI。Windows ARM64/x64 必须都从验证缓存
   完成 fact 7、Native 92、CLI 22 与 compiler/artifact/JIT audits；x64 同时证明 I32 不再有
   negative image-relative/Pointer32。另八项也必须 success，不拼接旧 run。
-- [ ] 十项全绿后才允许关闭 I33/I32/I31/I30/I29/I28/I27/I26/I25/I23 与阶段 11，并进入
+- [x] 十项全绿后才允许关闭 I33/I32/I31/I30/I29/I28/I27/I26/I25/I23 与阶段 11，并进入
   01–11/99 总验收；不得为 audit 环境问题降低验收门槛。
 
 ## Task 12 行内对抗性自审
@@ -881,7 +881,7 @@ build，随后在 dependency audit 失败。pinned `llvm-readobj` 的输出包�
   至少一个合法 DLL name，并只对该集合应用原 forbidden regex；`File:`、`Symbol:`、RVA 不参与
   dependency 判定。inspector/path/version/licenses 的 fail-closed 门全部保持。
 - [x] targeted green、PowerShell parse、default/all-feature 与全部局部门通过。
-- [ ] 两种真实 Windows candidate 都必须完成 dependency/artifact/JIT audits，随后才允许关闭
+- [x] 两种真实 Windows candidate 都必须完成 dependency/artifact/JIT audits，随后才允许关闭
   I33/I35。
 
 ### 14.3 实现与本地证据
@@ -945,7 +945,7 @@ I33 只修复了 release compiler audit；native artifact audit 保留了同类�
 - [x] 保持 program dependency 必须精确为唯一 `kernel32.dll`、module 无 imports、必须导出
   `answer` 且拒绝 LLVM/LLD/Clang/CalcKernel/`__ck_`、runtime memory/locale symbols 禁止及
   SHA256SUMS 验证；不得改 artifact、linker、ABI、cache、allowlist 或 CI required 状态。
-- [ ] targeted green、PowerShell parse 与完整本地门通过；最终双 Windows job 均完成 release /
+- [x] targeted green、PowerShell parse 与完整本地门通过；最终双 Windows job 均完成 release /
   artifact/JIT 三项 audit，同一新 SHA 十项全绿后才允许关闭 I36 及此前远程项。
 
 ## Task 15 行内对抗性自审
@@ -1007,7 +1007,7 @@ fake `USER32.dll`，stderr 也包含完整诊断；但 Linux PowerShell 在 capt
   对照；诊断匹配前只剥离 ANSI CSI SGR 序列，再删除 PowerShell gutter `|` 并折叠空白。
 - [x] 所有允许/拒绝行为、精确错误证据、production-source contract 和 product script 保持
   不变；不得通过只检查 nonzero、删除 message assertion、关闭颜色环境或放宽 audit 修复。
-- [ ] targeted、fmt、Clippy、default/all-feature、完整本地与冻结性能只读门全绿；随后新 SHA
+- [x] targeted、fmt、Clippy、default/all-feature、完整本地与冻结性能只读门全绿；随后新 SHA
   的十项 required CI 必须全部 success 才能关闭 I37/I36 及此前远程项。
 
 ## Task 16 行内对抗性自审
@@ -1069,7 +1069,7 @@ Native、CLI、static release build 和 release dependency audit，随后在 nat
 - [x] imports/exports 的既有顶层 brace parser、全部 dependency/export/symbol/hash allowlist、
   artifact、linker、ABI、cache 与 required CI 状态保持不变；真实 dirty COFF 的 undefined
   `free` 必须仍被拒绝。
-- [ ] targeted、PowerShell parse、完整本地和冻结性能只读门通过；新 SHA 十项 required CI
+- [x] targeted、PowerShell parse、完整本地和冻结性能只读门通过；新 SHA 十项 required CI
   全绿且两个 Windows job 完成 compiler/artifact/JIT 三项 audit 后才关闭 I38–I25。
 
 ## Task 17 行内对抗性自审
@@ -1100,3 +1100,17 @@ parser 在容器层拒绝额外 child，在 symbol 层用 brace depth 隔离 aux
 畸形闭合、缺名、重复直接名和零 symbol 均无法静默通过。它仍只检查既有 runtime `.obj` 集合，
 不读取不可信 PATH，不改变 linker/runtime/ABI/cache。真实 x64 probe 与双架构相同失败定位一致，
 当前未发现新的本地 blocker；最终仍需两个 Windows job 对真实产物完成 artifact/JIT audit。
+
+## 最终关闭证据（2026-08-31）
+
+此前各 Task 中的“远程未签收”“等待矩阵”等措辞保留为当轮诊断记录，不覆盖本节。
+实现与证据候选 `202f950195b4d1160c60c0a518149617705910e3` 在 GitHub Actions run
+[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 完成同一 SHA
+的完整十项矩阵。Windows x64 job `99524136536` 与 Windows ARM64 job `99524136649`
+均实际通过 fact `7/7`、Native `92/92`、CLI `22/22`、release compiler dependency audit、
+native artifact audit 和 JIT memory audit；job log SHA-256 分别为
+`a41149ffecc9c7e77d05c1860211d5155b82654939cdaa58bcbc1bdef108576b` 与
+`90f21d2b8feb050f5453352b70eeb12b628e4e3bf887244db32589e57503aa39`。
+双架构均未依赖用户 PATH 中的 linker，也没有扩展 ABI、动态依赖面或 cache 格式。
+因此 I25–I38 的 Windows 补充计划全部关闭；最终文档提交只需按总验收规则再次完成一次
+无 tracked 变更的同 SHA 十项复跑。

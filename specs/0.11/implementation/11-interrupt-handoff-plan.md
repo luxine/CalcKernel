@@ -118,10 +118,10 @@ if child > 0 {
   artifact/JIT 检查；保留 0 failed/ignored 和确切工具链身份。
 - [x] 提交已验证实现与本地证据，再以该确切 SHA 做第一次完整 schema-6 性能门及 checker，
   保留首次原件、全部门槛不变；性能证据在后续验收记录中追加，不伪称提交能引用自身摘要。
-- [ ] 原先为保存合格 Windows cache 而等待的前提已被 I25 真实 CRT 失败否定；
+- [x] 原先为保存合格 Windows cache 而等待的前提已被 I25 真实 CRT 失败否定；
   旧 cache 不可复用。按 `11-windows-static-link-plan.md` 验证新配方后，推送 feature
   branch 并触发新 SHA 完整 10 jobs；若 concurrency 终止旧运行，如实保留取消状态与日志。
-- [ ] 所有 required jobs 在同一最终 SHA 通过才关闭 I23/I21/I22 和阶段 11；随后才做
+- [x] 所有 required jobs 在同一最终 SHA 通过才关闭 I23/I21/I22 和阶段 11；随后才做
   `99-final-acceptance.md`。旧 589 部分证据保留，不和新 SHA 拼成全绿。
 
 ## 自审结论
@@ -130,3 +130,12 @@ if child > 0 {
 将一次 pending 请求交给 child；非实时 SIGINT 允许多次未处理请求合并。测试子进程
 隔离真实 handler，完整 public CLI 另外覆盖自拉起、状态映射和空 PATH。有限期限只把
 原来的无限卡住转为明确失败，不降低验收。无需扩展语言设计或更改性能协议。
+
+## 最终关闭证据（2026-08-31）
+
+I23 的真实 SIGINT/process-group handoff、10 秒有限期限、owner kill/reap、public CLI
+自拉起与状态映射均已落地并通过本机与远端矩阵。实现与证据候选
+`202f950195b4d1160c60c0a518149617705910e3` 在 GitHub Actions run
+[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 的同 SHA
+十项 required jobs 全部成功；没有用 sleep/retry 或 mock signal 降低验收。故本计划已签收，
+最终文档提交只需按总验收规则完成一次无 tracked 变更的同 SHA 复跑。

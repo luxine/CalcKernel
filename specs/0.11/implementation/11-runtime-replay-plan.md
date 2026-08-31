@@ -180,10 +180,10 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
   separate from local macro simulation. Do not run builds while timing performance.
 - [x] Commit implementation and run the first complete native performance gate on
   that SHA. Retain all raw measurements even on failure; do not reroll for green.
-- [ ] Dispatch the unchanged ten-job matrix on the final candidate after prior cold
+- [x] Dispatch the unchanged ten-job matrix on the final candidate after prior cold
   Windows bootstrap has completed/saved its cache. All required jobs must be green
   for the same final SHA; earlier partial successes cannot be combined.
-- [ ] Audit phases 01–11 and `99-final-acceptance.md`, commit final evidence, retain
+- [x] Audit phases 01–11 and `99-final-acceptance.md`, commit final evidence, retain
   the feature worktree and wait for user review without merging main.
 
 ## Adversarial self-review
@@ -199,3 +199,13 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
   every future hardware/scheduling effect is removed or that any new gate has passed.
 - No blocker found in this supplemental design. Implementation and real evidence are
   still required before I14/I19 or stage 11 can be closed.
+
+## 最终关闭证据（2026-08-31）
+
+上述结论是本计划建立时的状态记录。runtime replay 的生产实现、负向测试、cache 隔离与
+artifact 审计已经纳入 I14/I19 和阶段 11 总审；实现与证据候选
+`202f950195b4d1160c60c0a518149617705910e3` 通过 GitHub Actions run
+[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 的同 SHA
+十项 required jobs。两架构 schema-6 native performance report 也均通过 replay aggregate 与
+individual gates；因此本补充计划不再有未签收项，最终文档提交仅需按 `99-final-acceptance.md`
+约定完成一次无 tracked 变更的同 SHA 复跑。
