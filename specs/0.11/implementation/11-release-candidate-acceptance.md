@@ -187,7 +187,7 @@ I33 另按 `11-windows-static-link-plan.md` Task 12 执行：
 
 - [x] 归档 ARM64 精确失败，确认 audit 尚未读取 candidate，不把缺少 runner PATH 工具误判
   为静态 CRT 或 release compiler 产品失败；同时保留此前 Native/CLI/build success。
-- [ ] Windows release audit 改用同一已验证 `CKC_LLVM_PREFIX` 内的 pinned
+- [x] Windows release audit 改用同一已验证 `CKC_LLVM_PREFIX` 内的 pinned
   `llvm-readobj.exe --coff-imports`，缺失/执行失败必须 fail closed；原 forbidden dependency、
   version 与 licenses 检查全部保持，不通过放宽 allowlist 修复。
 - [ ] production-source contract 先在旧脚本真实 red，再由最小脚本修订 green；新精确 SHA
@@ -195,6 +195,20 @@ I33 另按 `11-windows-static-link-plan.md` Task 12 执行：
 
 I33 不改变 release executable、Rust/bridge/runtime 链接参数、CRT identity、artifact、ABI、
 cache 或发布依赖策略；只消除对 runner 未初始化 Visual Studio developer PATH 的隐式依赖。
+
+实现提交 `bde2ed1421350d59a02034b56f7bb171b53c97e5` 仅修改 Windows release audit
+及其 production-source contract。旧脚本定向测试真实 0/1 red，修订后 1/1 green；日志
+SHA-256 分别为 `3e70a2a99f7a664512a2b1e4939d280c34ba050f0fccd81822967293a3e055d7` /
+`ac9e54ea947cdac6fd4e42b817b0ab952afae0790e1339b220c5bfb81d49c8ce`。PowerShell AST parse
+通过且日志为空。最终本地测试版本 default 480 / all-feature 611（Native 102）全绿，日志
+SHA-256 为 `8be6d7e94a2dcea5c7486877c211cf59ff6999772b009f69da5c8112d0bd9114` /
+`8efec08e30a4ae8b7ad60aafc28b76ea5f5e8f6f71e3f1d4b37620ae46aa7a20`；release lib 53、
+IR 58、generated 3、mutation 10、fact 7、verifier-cache 5、docs 16、artifact 5、双 prefix、
+release build 与 compiler/artifact/JIT audit、fmt/diff 和两种 Clippy 同样通过。Apple
+sanitizer 只记录冻结的 Linux-only capability unavailable。未重计时；schema-6 原报告
+`8a1254780dc13a8cabec12e3b8849ffcc860d8c91580bf28110ed9ee1091b441` 由原 checker 只读复验
+通过，仍为 unchecked `1.0003 / 0.9979`、checked `1.0072 / 1.0056`、proof `1.0015`、
+optimizer `1.1068`、Dijkstra `2.0762x`。最后一项只等待新精确 SHA 的十项远程签收。
 
 ## I23 补充验收（未签收）
 

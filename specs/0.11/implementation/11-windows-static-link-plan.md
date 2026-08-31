@@ -804,11 +804,18 @@ cache ID `7155191185` / `7161426496` 均已保存，后续不得删除或绕过 
 
 - [x] 先提交 ARM64 自然终态、原始日志/artifact/cache identity、单一环境根因与不可变边界；
   docs 16 和 `git diff --check` 必须通过，不混入测试或脚本修订。
-- [ ] 扩展 production-source contract，要求唯一 pinned-prefix inspector、
+- [x] 扩展 production-source contract，要求唯一 pinned-prefix inspector、
   `--coff-imports`、missing/nonzero fail-closed 与原 dependency/version/licenses closure，且明确
   禁止 `Get-Command dumpbin.exe`；在旧脚本取得真实 targeted red。
-- [ ] 最小修改同一脚本使 targeted contract green；PowerShell parse、default/all-feature、
+- [x] 最小修改同一脚本使 targeted contract green；PowerShell parse、default/all-feature、
   全部局部门与原 schema-6 只读复验通过。source contract 不替代真实 Windows PE 审计。
+
+实现提交 `bde2ed1421350d59a02034b56f7bb171b53c97e5` 的旧/新定向契约分别为 0/1 red 与
+1/1 green，日志 SHA-256 `3e70a2a99f7a664512a2b1e4939d280c34ba050f0fccd81822967293a3e055d7` /
+`ac9e54ea947cdac6fd4e42b817b0ab952afae0790e1339b220c5bfb81d49c8ce`；parse 空日志 SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`。最终本地 default 480、
+all-feature 611、Native 102、release lib/IR 53/58 及全部阶段 11 局部门通过；schema-6 原件
+`8a125478...` 只读复验通过，未重计时或改门槛。远程真实 PE 审计仍由 12.3 唯一签收。
 
 ### 12.3 远程闭环
 

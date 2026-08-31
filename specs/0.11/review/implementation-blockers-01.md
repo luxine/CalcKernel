@@ -1544,6 +1544,12 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 修订必须在 missing tool、inspector nonzero 或 forbidden import 时继续 fail closed，并保留
   version/licenses、全部 forbidden runtime/compiler 名称与实际双 Windows remote audit。不得
   通过查找任意系统 `dumpbin`、放宽 regex、跳过步骤或改链接/ABI/cache 修复。计划见 Task 12。
+- docs-first 提交 `91f3f1d` 后，production-source contract 在旧脚本真实 red；实现提交
+  `bde2ed1421350d59a02034b56f7bb171b53c97e5` 改为从 `CKC_LLVM_PREFIX` 解析唯一
+  `bin/llvm-readobj.exe`，regular-file、nonzero、forbidden import、version 与 licenses 均继续
+  fail closed。targeted green、PowerShell parse、default 480、all-feature 611（Native 102）及
+  全部本地阶段 11 门通过；原 schema-6 仅只读复验。I33 的产品/本地修复已闭环，但在两个
+  Windows job 和同 SHA 十项 CI 全绿前仍保持阻断，不把 source contract 当作 PE 行为证据。
 
 ## 修订边界（全部阻断，持续有效）
 
