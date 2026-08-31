@@ -154,7 +154,7 @@ I32 另按 `11-windows-static-link-plan.md` Task 11 执行：
   failure 全部共享 COFF `.pdata` `Pointer32` image-relative relocation 越界。
 - [ ] 保留同 run Windows ARM64 的自然终态；不得为开始 I32 而取消仍在运行的 job，也不得
   把当前八项 success 与后续 SHA 拼接。
-- [ ] production-source contract 在 I32 前源码真实 red；最小修订必须先单独加入并物化
+- [x] production-source contract 在 I32 前源码真实 red；最小修订必须先单独加入并物化
   x64 私有 `__ImageBase` anchor，再加入五个 runtime objects 与 program，且同一 contract
   green。不得仅调整符号遍历排序或依赖未冻结的 object symbol 名。
 - [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能及同 SHA 十项 required CI 全绿；
@@ -163,6 +163,13 @@ I32 另按 `11-windows-static-link-plan.md` Task 11 执行：
 I32 不改变 512 MiB reservation、`MapperJITLinkMemoryManager`、JITLink、W^X、禁用 process
 symbol search、六对象 x64 JIT 输入、五对象 artifact、ABI 或 cache 语义。修复只补足既有
 “anchor 先于闭包”约束中的物化顺序；最终仍由真实 Windows execution 签收。
+实现提交 `9be13325e258a2cef2789ee82853ae18b5530c37` 已取得 source contract 0/1
+red→1/1 green，并通过显式激活新增 x64 分支的本机 C++ syntax-only 检查。最终测试版本的
+default 479 / all-feature 610（Native 102）、两种 Clippy、fmt/diff 全绿；相同生产实现的
+release lib 53 / IR 58、全部独立小门、release/compiler/artifact/JIT、双 prefix 与只读
+schema-6 checker 也通过。报告仍是冻结原件 SHA-256
+`8a1254780dc13a8cabec12e3b8849ffcc860d8c91580bf28110ed9ee1091b441`，没有重计时或调整
+任何阈值。Windows ARM64 旧 job 与新 SHA 十项远程门仍未签收，故最后一项保持未勾选。
 
 ## I23 补充验收（未签收）
 

@@ -720,21 +720,47 @@ ID `9755398106`，上传 ZIP / 原文件 SHA-256 分别为
 
 - [x] 先提交 x64 原始失败、单一根因、pinned allocator 行为、不可变边界与本计划；docs 16
   和 `git diff --check` 必须通过，不混入生产实现或测试修订。
-- [ ] 扩展既有 COFF JIT production-source contract，在 I32 前源码取得真实 targeted red：
+- [x] 扩展既有 COFF JIT production-source contract，在 I32 前源码取得真实 targeted red：
   anchor `addObjectFile`、`lookupLinkerMangled("__ImageBase")`、余下对象 loop 必须按此顺序
   位于 x64 条件分支，且 lookup error fail closed；注释或单纯把 `__ImageBase` 提前排序不算。
-- [ ] 最小实现使同一 targeted contract green；非 COFF-x64 保持原 loop，之后运行真实 bridge
+- [x] 最小实现使同一 targeted contract green；非 COFF-x64 保持原 loop，之后运行真实 bridge
   syntax、default/all-feature 与全部局部门。source contract 只证明结构，不能替代 Windows。
 
 ### 11.3 验证与远程闭环
 
 - [ ] 等待 `33364897799` 的 Windows ARM64 job 自然终止并归档；不重用本轮八项 success。
-- [ ] 保持 I31 的全部本地非计时计数、双 prefix、release/audit 与唯一合格 schema-6 性能
+- [x] 保持 I31 的全部本地非计时计数、双 prefix、release/audit 与唯一合格 schema-6 性能
   报告；Windows-only materialization 修订不得重设 baseline、阈值、语料或择优重计时。
 - [ ] 以实现与证据最终精确 SHA 重新 dispatch 全十项 CI。Windows x64 必须 fact 7、Native
   92、CLI 22 并完成 compiler/artifact/JIT audits，日志不再出现 C2169、negative
   image-relative 或 Pointer32；ARM64 与另外八项也必须 success。之后才允许关闭
   I32/I31 及此前阻断并进入 01–11/99 总验收。
+
+### 11.4 实现与本地证据
+
+- docs-first 提交 `ae564c5c82ff5eb4823036252440dfad06d7fc9f` 后，production-source
+  contract 在原实现真实 0/1 red；实现提交
+  `9be13325e258a2cef2789ee82853ae18b5530c37` 只给 COFF x64 增加 anchor
+  `addObjectFile`、`lookupLinkerMangled("__ImageBase")`、余下对象 loop 三段有序路径，
+  lookup error 继续 fail closed，非 COFF-x64 原 loop 原样保留。red / 最终 green 日志
+  SHA-256 分别为 `1e1a0ef2a19223d116cd73579ec29a6ea7567872d8c7b9aa9de88e423d57706d` /
+  `3894ce814560553a13e84e1ed92290fc75f3f5f0fa0c83cdf6b9b07ae97d2e72`。
+- 既有两输入 bridge syntax regression 通过；另在 Apple ARM host 显式取消 ARM 预定义并
+  激活 `__x86_64__`，实际编译新增分支的 syntax-only 日志为空，SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`。该补充检查仍不替代
+  真实 Windows MSVC/JITLink execution。
+- 最终测试版本顺序重跑 default 479 / all-feature 610（Native 102）全绿，日志 SHA-256
+  `25015a4a7fce1320f22a34c21d5536cca6536dd25007ffb4f08d310fe558e4b1` /
+  `4fe875afddc666554855078f698cbb372d4dd40d6cfa704f2a8b232b68cc9b72`；两种 Clippy、
+  fmt/diff 通过。相同生产实现还通过独立 Native 102、release lib 53 / IR 58、generated
+  3 / mutation 10 / fact 7 / verifier-cache 5 / docs 16 / artifact fixture 5、release build、
+  compiler/artifact/JIT audits、version/licenses、双 prefix verifier；Apple sanitizer 按冻结
+  契约报告 Linux-only capability unavailable。
+- Windows-only 物化时序不影响 codegen/benchmark corpus，故没有重计时或重设 baseline。
+  唯一合格 schema-6 原报告仍为
+  `8a1254780dc13a8cabec12e3b8849ffcc860d8c91580bf28110ed9ee1091b441`；补齐冻结 replay
+  bundle 身份后原 checker 只读复验 exit 0，仍为 unchecked `1.0003 / 0.9979`、checked
+  `1.0072 / 1.0056`、proof `1.0015`、optimizer `1.1068`、Dijkstra `2.0762x`。
 
 ## Task 11 行内对抗性自审
 

@@ -1517,6 +1517,17 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   JITLink/512 MiB reservation/audited mapper/W^X，禁用 process search；不改 anchor bytes、
   六对象 JIT、五对象 artifact、ARM64 RuntimeDyld、ABI、cache 或性能门槛。计划与验收见
   Task 11；先 production-source red→green，最终由新 SHA 的完整十项矩阵签收。
+- docs-first `ae564c5` 后，production-source contract 在原实现真实 0/1 red；最小实现
+  `9be13325e258a2cef2789ee82853ae18b5530c37` 的同一 contract 1/1 green，并额外通过
+  显式激活 x64 新分支的 C++ syntax-only 编译。顺序、COFF/MSVC/Clang x64 guard、lookup
+  fail-closed 与非 x64 原 loop 都由 contract 锁定；red / green 日志 SHA-256 为
+  `1e1a0ef2a19223d116cd73579ec29a6ea7567872d8c7b9aa9de88e423d57706d` /
+  `3894ce814560553a13e84e1ed92290fc75f3f5f0fa0c83cdf6b9b07ae97d2e72`。
+- 最终测试版本的 default 479 / all-feature 610（Native 102）、两种 Clippy 与 fmt/diff
+  全绿；相同生产实现的 release lib/IR、独立 Native 与全部小门、release/audits、双 prefix
+  也通过。唯一合格 schema-6 报告 `8a125478...` 仅由原 checker 只读复验，没有重计时、
+  rebaseline 或改门槛。旧 run ARM64 仍自然运行，新 SHA 十项尚未 dispatch，因此 I32
+  继续保持阻断，不能把本地与旧八项 success 拼接成签收。
 
 ## 修订边界（全部阻断，持续有效）
 
