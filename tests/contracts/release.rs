@@ -326,6 +326,34 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
 }
 
 #[test]
+fn windows_release_audit_should_use_the_verified_prefix_inspector() {
+    let audit = fs::read_to_string(repo_root().join("scripts/audit-ckc-release.ps1"))
+        .expect("read Windows release audit");
+
+    for required in [
+        "$env:CKC_LLVM_PREFIX",
+        "bin/llvm-readobj.exe",
+        "-PathType Leaf",
+        "--coff-imports",
+        "$LASTEXITCODE -ne 0",
+        "LLVM|LLD|Clang|CalcKernel|libck|MSVCP|VCRUNTIME|CONCRT",
+        "--version --verbose",
+        "licenses",
+    ] {
+        assert!(
+            audit.contains(required),
+            "Windows release audit must preserve the pinned inspector closure with {required:?}"
+        );
+    }
+    for forbidden in ["Get-Command dumpbin.exe", "/dependents"] {
+        assert!(
+            !audit.contains(forbidden),
+            "Windows release audit must not depend on an uninitialized developer PATH: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn darwin_ci_and_release_should_sign_the_actual_compiler_before_auditing() {
     for path in [
         ".github/workflows/ci.yml",
