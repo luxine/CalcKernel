@@ -921,6 +921,10 @@ x64 job `99506470952` 已通过 fact audit 7/7、Native 92/92、CLI 22/22、stat
 及修复后的 release dependency audit；随后 `scripts/audit-native-artifact.ps1:31` 再次通过
 runner PATH 查找 `dumpbin.exe` 并失败，尚未读取 artifact imports/exports/symbols。完整 job
 日志 SHA-256 为 `9b10eec294ba922bc2f9934c64b6108bf662ba113257f70a5072807aae0f503b`。
+同一 run 的 Windows ARM64 job `99506471267` 到达完全相同的唯一失败点，其完整日志
+SHA-256 为 `1ccfd53449e985393d152da27ec7744e8e5fe664f91429616d063e6a560014f3`。该 run
+自然结束为 8/10 success，只有两个 Windows job 失败；这组事实用于根因复诊，不作为跨 SHA
+拼接验收。
 
 I33 只修复了 release compiler audit；native artifact audit 保留了同类未冻结环境依赖，因此
 这不是 I34/I35 产品回归，也不能由已通过的 release audit 抵消。该 run 的其他 jobs 继续自然
@@ -931,14 +935,14 @@ I33 只修复了 release compiler audit；native artifact audit 保留了同类�
 **Files:** 本文、阶段 acceptance、review，随后才允许修改
 `tests/contracts/native_toolchain.rs` 与 `scripts/audit-native-artifact.ps1`。
 
-- [ ] 先增加可执行 fake inspector 行为测试：允许 artifact 通过；program 非唯一
+- [x] 先增加可执行 fake inspector 行为测试：允许 artifact 通过；program 非唯一
   `kernel32.dll` dependency、module import、缺少 `answer`/forbidden export、runtime forbidden
   symbol 与 inspector nonzero 分别失败。在旧脚本真实 red，并由 production-source contract
   禁止 `Get-Command dumpbin.exe`。
-- [ ] 只使用同一已验证 `CKC_LLVM_PREFIX/bin/llvm-readobj.exe`：`--coff-imports` 解析 program /
+- [x] 只使用同一已验证 `CKC_LLVM_PREFIX/bin/llvm-readobj.exe`：`--coff-imports` 解析 program /
   module 顶层 regular/delay descriptor，`--coff-exports` 解析 module 顶层 export，`--symbols`
   检查 runtime objects。缺 prefix/tool、任一 inspector nonzero、畸形 scope/name 均 fail closed。
-- [ ] 保持 program dependency 必须精确为唯一 `kernel32.dll`、module 无 imports、必须导出
+- [x] 保持 program dependency 必须精确为唯一 `kernel32.dll`、module 无 imports、必须导出
   `answer` 且拒绝 LLVM/LLD/Clang/CalcKernel/`__ck_`、runtime memory/locale symbols 禁止及
   SHA256SUMS 验证；不得改 artifact、linker、ABI、cache、allowlist 或 CI required 状态。
 - [ ] targeted green、PowerShell parse 与完整本地门通过；最终双 Windows job 均完成 release /
@@ -951,3 +955,30 @@ symbol table；因此修订只关闭第二个 audit 脚本的 PATH 缺口，不�
 真实 artifact 内容尚未被失败 job 审计，所以本地 fake inspector 只能锁定 parser 与
 fail-closed 边界，最终仍必须由两个 Windows candidate 执行签收。当前未发现需要扩大到
 bootstrap、runtime 或链接参数的设计阻断。
+
+### 15.3 实现与本地验收证据
+
+实现提交 `1b842e32272325cf88304eb558c245ef363ea0d4` 只修改 Windows artifact audit 与其
+行为契约。旧脚本的真实行为 red 日志 SHA-256 为
+`abf659a6109964fdeefc4391ca963659a6deff2fe0bbecb0cbbc455de3b005cd`。初版实现 targeted
+green 后，行内复审用 `File: C:/free/runtime.obj` 且没有 `Symbol {}` 的 inspector 输出发现：
+若扫描原始 `--symbols` 文本，路径元数据会误命中 forbidden symbol；该第二轮 red 日志
+SHA-256 为 `7554dbbf3e8e85cd70795c37954c24eb15252c2e1c6d5a4205ece272da3a819c`。
+最终实现只解析顶层 `Symbol {}` 的唯一直接 `Name:`，无 symbol descriptor 也 fail closed；
+第二轮 green 日志 SHA-256 为
+`580108280268ad987176b9523c4780f4716a446c995a201e84e87c1801db3a05`，PowerShell AST
+parse 无错误。
+
+最终本地 default 483、all-feature 614（Native 102）、release lib 53 / IR 58、generated 3、
+mutation 10、fact 7、verifier-cache 5、docs 18、artifact 5 全绿；fmt、两种 Clippy、双 prefix、
+release build/sign、compiler/artifact/JIT audits 也全部通过。Apple sanitizer 按冻结契约报告
+Linux-only unavailable。原 schema-6 性能报告只读复验仍为 unchecked `1.0003 / 0.9979`、
+checked `1.0072 / 1.0056`、proof `1.0015`、optimizer `1.1068`，未重新计时或改门槛。
+
+## Task 15 实现后行内对抗性复审
+
+最终 parser 只接受顶层 `Import`/`DelayImport`、`Export`、`Symbol` scope 的直接且唯一
+`Name:`；scope 缺名、重复名、未闭合、非法名称、inspector nonzero 与空 symbol table 均
+fail closed。检查器来自已散列验证 prefix 的绝对路径，原 program/module/export/runtime/hash
+门槛保持不变。未发现新的本地 blocker；真实 PE/COFF 输出与 I34 JIT stub 仍必须由同一候选
+SHA 的两个 Windows job 完成 compiler/artifact/JIT 三项 audit 后签收。

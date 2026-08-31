@@ -261,13 +261,26 @@ x64 job `99506470952` 已通过 fact 7、Native 92、CLI 22、static release bui
 dependency audit，证明 I34/I35 的真实 x64 路径已通过；随后 native artifact audit 在读取
 任何 candidate 前因 `Get-Command dumpbin.exe` 失败。完整日志 SHA-256
 `9b10eec294ba922bc2f9934c64b6108bf662ba113257f70a5072807aae0f503b`。
+同一 run 的 Windows ARM64 job `99506471267` 到达相同唯一失败点，日志 SHA-256
+`1ccfd53449e985393d152da27ec7744e8e5fe664f91429616d063e6a560014f3`；run 自然结束
+8/10 success，不与后续 SHA 拼接。
 
-- [ ] native artifact audit 只使用验证 prefix 的绝对 `llvm-readobj.exe`，分别解析 imports、
+- [x] native artifact audit 只使用验证 prefix 的绝对 `llvm-readobj.exe`，分别解析 imports、
   exports 与 symbols；不搜索 PATH、系统 SDK 或回退工具，缺失/nonzero/畸形均 fail closed。
-- [ ] program 仍只依赖 `kernel32.dll`，module 无 imports且导出 `answer`，forbidden exports /
+- [x] program 仍只依赖 `kernel32.dll`，module 无 imports且导出 `answer`，forbidden exports /
   runtime symbols 与 SHA256SUMS 原门槛不变；production behavior contract 必须 red→green。
 - [ ] 修复精确 SHA 的完整本地、原 schema-6 只读性能门和十项 required CI 全绿；两个
   Windows job 都必须完成 compiler/artifact/JIT audits，不拼接本 run 的部分 success。
+
+实现提交 `1b842e32272325cf88304eb558c245ef363ea0d4` 的首轮真实 behavior red 日志 SHA-256
+为 `abf659a6109964fdeefc4391ca963659a6deff2fe0bbecb0cbbc455de3b005cd`。行内复审又发现
+原始 symbols 文本的 `File: C:/free/...` 会污染 forbidden 检查，补充第二轮 red
+`7554dbbf3e8e85cd70795c37954c24eb15252c2e1c6d5a4205ece272da3a819c`，最终 scope-only
+green `580108280268ad987176b9523c4780f4716a446c995a201e84e87c1801db3a05`。最终本地
+default 483、all-feature 614（Native 102）、release lib 53 / IR 58、generated 3、mutation 10、
+fact 7、cache 5、docs 18、artifact 5，以及 fmt、双 Clippy、双 prefix、release/sign 和
+compiler/artifact/JIT audits 全绿。冻结性能四门仍为 `1.0003/0.9979`、`1.0072/1.0056`、
+`1.0015`、`1.1068`；本地部分已签收，第三项只等待同一新 SHA 十项 CI。
 
 ## I23 补充验收（未签收）
 

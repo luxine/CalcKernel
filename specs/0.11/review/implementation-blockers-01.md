@@ -1584,6 +1584,9 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   明确 passed；下一步 `scripts/audit-native-artifact.ps1:31` 的 `Get-Command dumpbin.exe`
   因 runner PATH 未初始化失败。完整日志 SHA-256
   `9b10eec294ba922bc2f9934c64b6108bf662ba113257f70a5072807aae0f503b`。
+- 同一 run 的 Windows ARM64 job `99506471267` 到达相同的唯一失败点，完整日志 SHA-256
+  `1ccfd53449e985393d152da27ec7744e8e5fe664f91429616d063e6a560014f3`；run 已自然结束
+  8/10 success。两份日志共同证明问题与 candidate architecture 无关，但不构成跨 SHA 验收。
 - 该脚本尚未读取 program/module/runtime candidates，不能把失败解释为 artifact 内容不合格。
   根因与 I33 同类但位于独立审计面：必须改用已验证 prefix 的绝对 `llvm-readobj.exe`，并保持
   imports/exports/symbols 三类语义与全部 fail-closed 门。不得通过初始化任意 SDK PATH、删除
@@ -1616,6 +1619,17 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 最终全量本地与冻结 schema-6 只读复验通过；当前未发现新的本地 blocker。仍不能据此关闭
   I25–I35 或阶段 11：I34 的真实远地址执行、I35 的真实 PE 输出和双 Windows release audits
   必须由同一最终 SHA 的十项远程矩阵证明。
+
+### I36 实现后本地复审
+
+- 实现提交 `1b842e32272325cf88304eb558c245ef363ea0d4` 改用已验证 prefix 的绝对
+  `llvm-readobj.exe`，保留 imports/exports/symbols 与所有原 allowlist/hash 门。首轮旧脚本
+  behavior red 与实现 green 后，复审没有停在表面 source contract：新增 scope 外
+  `File: C:/free/runtime.obj` 对照，证明扫描原始 symbols 文本会把路径误当 forbidden `free`。
+- 第二轮实现统一按顶层 scope/brace depth 收集唯一直接 `Name:`，空 symbol table 也拒绝；
+  malformed/unclosed/duplicate/illegal name 与 inspector nonzero 均 fail closed。此修订不改变
+  artifact、linker、ABI、cache、CI 状态或 forbidden 集合。完整本地门与冻结性能复验全绿，
+  当前未发现新的本地 blocker；I36 和此前远程项仍等待同一 SHA 的十项矩阵签收。
 
 远程复审重点保持为 Windows archive/CRT identity、
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
