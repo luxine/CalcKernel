@@ -289,10 +289,27 @@ job `99515949231` 的产品 audit 正确拒绝 fake `USER32.dll`，唯一错误�
 PowerShell 的 ANSI 颜色序列，导致完整诊断的相邻词被错误分隔。完整日志 SHA-256
 `a551bce289a2685283eae897d64f3021a3227e4b3502cae3c293943066bf91ac`。
 
-- [ ] 测试诊断规范化只剥离 ANSI SGR、PowerShell gutter 并折叠空白，随后仍匹配每种拒绝
+- [x] 测试诊断规范化只剥离 ANSI SGR、PowerShell gutter 并折叠空白，随后仍匹配每种拒绝
   的完整语义证据；不修改 production audit，不把 message assertion 降为只看 exit status。
 - [ ] targeted red→green、完整本地与冻结性能门通过；新 SHA 十项 required CI 全绿，不拼接
   本 run 的其他结果。
+
+I37 实现提交 `b57734e44e855c32a6cef89138f5a28af4dee053`，固定 ANSI red/green 日志
+SHA-256 为 `22b589c0…a535` / `4f648f8b…589f`。最终本地 default 484、all-feature 615
+（Native 102），其余计数与冻结性能门均保持通过；第二项的本地部分已签收，只等待最终矩阵。
+
+## I38 补充验收（未签收）
+
+同一 SHA/run 的 Windows x64 `99515949259` / ARM64 `99515949274` 均在 artifact audit 的
+symbol parsing 唯一失败，日志 SHA-256 分别为 `02a1f340…0680` / `d7bb6782…0202`。
+真实 x64 COFF probe（SHA-256 `fc944225…034`）证明 LLVM 22 输出为 `Symbols [` 容器内嵌
+`Symbol {}`，当前顶层 brace parser 的空集不代表 object 没有 symbols。
+
+- [ ] parser 必须验证唯一闭合 `Symbols [`，只提取直接 child `Symbol {}` 的唯一直接
+  `Name:`；File/nested auxiliary metadata 隔离，missing/duplicate/unclosed/empty 全部拒绝。
+- [ ] 原 forbidden symbol、imports/exports/dependency/hash 门不变，真实/fixture `free` 仍拒绝；
+  behavior red→green、PowerShell parse 和完整本地门通过。
+- [ ] 同一最终 SHA 十项 CI 全绿，双 Windows 完成 compiler/artifact/JIT audits，不拼接本 run。
 
 ## I23 补充验收（未签收）
 

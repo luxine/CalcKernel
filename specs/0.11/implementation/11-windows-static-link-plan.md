@@ -1003,9 +1003,9 @@ fake `USER32.dll`，stderr 也包含完整诊断；但 Linux PowerShell 在 capt
 **Files:** 本文、阶段 acceptance、review，随后只允许修改
 `tests/contracts/native_toolchain.rs`。
 
-- [ ] 保留上述真实 Linux job 为 red，增加/使用可复现的 ANSI-wrapped PowerShell stderr
+- [x] 保留上述真实 Linux job 为 red，增加/使用可复现的 ANSI-wrapped PowerShell stderr
   对照；诊断匹配前只剥离 ANSI CSI SGR 序列，再删除 PowerShell gutter `|` 并折叠空白。
-- [ ] 所有允许/拒绝行为、精确错误证据、production-source contract 和 product script 保持
+- [x] 所有允许/拒绝行为、精确错误证据、production-source contract 和 product script 保持
   不变；不得通过只检查 nonzero、删除 message assertion、关闭颜色环境或放宽 audit 修复。
 - [ ] targeted、fmt、Clippy、default/all-feature、完整本地与冻结性能只读门全绿；随后新 SHA
   的十项 required CI 必须全部 success 才能关闭 I37/I36 及此前远程项。
@@ -1016,3 +1016,66 @@ fake `USER32.dll`，stderr 也包含完整诊断；但 Linux PowerShell 在 capt
 限定剥离标准 ANSI SGR、继续匹配完整语义文本，比设置宿主专用环境或弱化断言更稳定。修订不得
 触碰生产脚本，真实 Windows artifact/JIT 行为仍由后续完整矩阵独立证明。当前未发现需要扩大
 到 CI workflow 或产品实现的阻断。
+
+### 16.3 实现与本地验收证据
+
+实现提交 `b57734e44e855c32a6cef89138f5a28af4dee053` 只修改测试辅助函数。固定 ANSI
+反例 red/green 日志 SHA-256 分别为
+`22b589c0ee1ce4a8f5589ad3bfae556b69fca97c55064a73530419aa28cfa535` 与
+`4f648f8b8b6c92e1a565de0b121743b500994598b660fa6076c1acf44e9f589f`。实现只剥离参数由
+数字、`;`、`:` 组成且以 `m` 结束的 SGR；未知或畸形 escape 保留。原七种 audit 拒绝仍匹配
+完整语义文本，production script 未改。
+
+完整本地 default 484、all-feature 615（Native 102）、release lib 53 / IR 58、generated 3、
+mutation 10、fact 7、cache 5、docs 18、artifact 5，以及 fmt、双 Clippy、双 prefix、release /
+sign/compiler/artifact/JIT audits 全绿。冻结性能四门仍为 `1.0003/0.9979`、
+`1.0072/1.0056`、`1.0015`、`1.1068`。首次 all-feature Clippy 命令因 shell 漏设
+`CKC_LLVM_PREFIX` 在 build.rs 前置检查退出；保留该环境日志后，使用已验证 prefix 的原门
+重跑通过，未据此改变代码或门槛。
+
+## Task 16 实现后行内对抗性复审
+
+修订没有设置宿主颜色环境，也没有把 message assertion 降为 exit-only；标准 SGR 外的字节
+仍参与匹配，因此不会掩盖诊断内容变化。quality/native-integration 的失败文本可由固定反例
+逐字复现，当前未发现 I37 本地 blocker；它仍需随最终 SHA 十项矩阵签收。
+
+## Task 17：真实 `llvm-readobj` Symbols 容器解析（I38）
+
+### 17.1 失败证据与复诊
+
+同一 SHA/run 的 Windows x64 job `99515949259` 与 ARM64 job `99515949274` 均通过 fact、
+Native、CLI、static release build 和 release dependency audit，随后在 native artifact audit
+报告 `llvm-readobj reported no symbol descriptors`。完整日志 SHA-256 分别为
+`02a1f34079f8938dd40ac10635d60bc5e41516adf370317ed978b63953ef0680` 与
+`d7bb6782c8ca5f8aab2e41dc2e823ed3769ea39a9c214658f6bfec8d962d0202`。
+
+用本机 Clang 生成真实 x64 COFF，再由同一 pinned LLVM 22 `llvm-readobj --symbols` 检查，输出
+明确为顶层 `Symbols [` 容器，内部是缩进的 `Symbol {}`，其直接 `Name:` 再缩进一级；probe
+日志 SHA-256 为 `fc9442257b3aa93371024252ca29a494322062f00ee85a30839464267c76f034`。
+当前通用 brace parser 只接受列首 scope，故对两个真实架构都得到空集；这不是 runtime object
+真的无 symbols，也不能通过取消空集拒绝来修复。
+
+### 17.2 最小修订与 TDD
+
+**Files:** 本文、阶段 acceptance、review，随后才允许修改
+`tests/contracts/native_toolchain.rs` 与 `scripts/audit-native-artifact.ps1`。
+
+- [ ] 把 fake `--symbols` 输出改为真实 `Symbols [` / child `Symbol {}` 形状，在当前实现观察
+  allowed fixture red；保留 File 路径污染、forbidden symbol、空/malformed container、缺名 /
+  重复名 symbol 与 inspector nonzero 的拒绝对照。
+- [ ] 为 symbols 实现独立容器感知 parser：必须恰有一个闭合顶层 `Symbols [`，只收集其
+  直接 child `Symbol {}` 的唯一直接 `Name:`；nested auxiliary `Name:`、File/metadata 不得进入
+  集合。缺容器、重复/未闭合容器、畸形 child、缺名/重复名或零 symbol 均 fail closed。
+- [ ] imports/exports 的既有顶层 brace parser、全部 dependency/export/symbol/hash allowlist、
+  artifact、linker、ABI、cache 与 required CI 状态保持不变；真实 dirty COFF 的 undefined
+  `free` 必须仍被拒绝。
+- [ ] targeted、PowerShell parse、完整本地和冻结性能只读门通过；新 SHA 十项 required CI
+  全绿且两个 Windows job 完成 compiler/artifact/JIT 三项 audit 后才关闭 I38–I25。
+
+## Task 17 行内对抗性自审
+
+真实 probe 同时含 section symbols、nested `AuxSectionDef {}`、undefined `free` 与 File metadata，
+足以证明 symbols 语法不同于 imports/exports。取消“零 symbol”检查会让当前 parser 静默接受
+任何真实 object，属于降低门槛；扫描缩进 `Name:` 又会重现 I35/I36 的 scope 污染。因此必须
+建模唯一 `Symbols [` 容器和直接 child scope，同时维持严格 malformed 拒绝。当前未发现需要
+修改 LLVM invocation、runtime producer 或 artifact policy 的阻断。

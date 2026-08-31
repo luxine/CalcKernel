@@ -1606,6 +1606,19 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   精确 message assertion；不得改 audit、删除诊断检查、只验证 nonzero 或取消 quality job。
   计划见 Task 16；当前 run 的其他 jobs 必须自然结束，后续仍需新 SHA 完整十项矩阵。
 
+## I38：symbol parser 忽略真实 `Symbols [` 容器
+
+- run `33400680042` 的 Windows x64 job `99515949259` 与 ARM64 job `99515949274` 均通过
+  release dependency audit，随后 artifact audit 报告 no symbol descriptors；日志 SHA-256
+  分别为 `02a1f34079f8938dd40ac10635d60bc5e41516adf370317ed978b63953ef0680` 与
+  `d7bb6782c8ca5f8aab2e41dc2e823ed3769ea39a9c214658f6bfec8d962d0202`。
+- pinned LLVM 22 对真实 COFF 的结构是顶层 `Symbols [`、缩进 child `Symbol {}`、更深层直接
+  `Name:` 和 auxiliary scopes；本机真实 probe 日志 SHA-256
+  `fc9442257b3aa93371024252ca29a494322062f00ee85a30839464267c76f034`。I36 的通用 parser
+  只接受列首 brace scope，故错误地产生空集。两个架构一致失败证明是格式模型错误。
+- 修复必须增加容器感知、scope-aware、fail-closed parser；不得取消空集拒绝、扫描所有缩进
+  Name、回退 raw regex 或放宽 forbidden symbols。计划见 Task 17，后续仍需新 SHA 全矩阵。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
@@ -1642,6 +1655,14 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   malformed/unclosed/duplicate/illegal name 与 inspector nonzero 均 fail closed。此修订不改变
   artifact、linker、ABI、cache、CI 状态或 forbidden 集合。完整本地门与冻结性能复验全绿，
   当前未发现新的本地 blocker；I36 和此前远程项仍等待同一 SHA 的十项矩阵签收。
+
+### I37 实现后本地复审
+
+- `b57734e44e855c32a6cef89138f5a28af4dee053` 只在测试侧剥离严格 SGR，仍匹配完整
+  PowerShell 诊断；未知 escape 不删除，产品脚本和所有拒绝门不变。固定 red→green 与完整本地
+  门通过，未发现新的 I37 本地 blocker。
+- 远程自然结束后，quality/native-integration 已确认同属 I37；双 Windows 则独立暴露 I38，
+  不能因为 I37 已修复而签收本轮 6/10。I38 必须按真实 COFF probe 另行闭环。
 
 远程复审重点保持为 Windows archive/CRT identity、
 Darwin 两条路径的 W^X 互斥性、audit 是否可能接受不一致 tuple、TypeScript oracle 配置
