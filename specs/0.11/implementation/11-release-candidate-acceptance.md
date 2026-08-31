@@ -282,6 +282,18 @@ fact 7、cache 5、docs 18、artifact 5，以及 fmt、双 Clippy、双 prefix�
 compiler/artifact/JIT audits 全绿。冻结性能四门仍为 `1.0003/0.9979`、`1.0072/1.0056`、
 `1.0015`、`1.1068`；本地部分已签收，第三项只等待同一新 SHA 十项 CI。
 
+## I37 补充验收（未签收）
+
+精确 SHA `bcfb4ffd6307b3a154a4b8b9a94595dcb430bd58` 的 run `33400680042` 中，quality
+job `99515949231` 的产品 audit 正确拒绝 fake `USER32.dll`，唯一错误是测试未剥离 Linux
+PowerShell 的 ANSI 颜色序列，导致完整诊断的相邻词被错误分隔。完整日志 SHA-256
+`a551bce289a2685283eae897d64f3021a3227e4b3502cae3c293943066bf91ac`。
+
+- [ ] 测试诊断规范化只剥离 ANSI SGR、PowerShell gutter 并折叠空白，随后仍匹配每种拒绝
+  的完整语义证据；不修改 production audit，不把 message assertion 降为只看 exit status。
+- [ ] targeted red→green、完整本地与冻结性能门通过；新 SHA 十项 required CI 全绿，不拼接
+  本 run 的其他结果。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：

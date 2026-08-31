@@ -982,3 +982,37 @@ checked `1.0072 / 1.0056`、proof `1.0015`、optimizer `1.1068`，未重新计�
 fail closed。检查器来自已散列验证 prefix 的绝对路径，原 program/module/export/runtime/hash
 门槛保持不变。未发现新的本地 blocker；真实 PE/COFF 输出与 I34 JIT stub 仍必须由同一候选
 SHA 的两个 Windows job 完成 compiler/artifact/JIT 三项 audit 后签收。
+
+## Task 16：PowerShell 诊断颜色可移植性（I37）
+
+### 16.1 失败证据与复诊
+
+精确 SHA `bcfb4ffd6307b3a154a4b8b9a94595dcb430bd58` 的 run `33400680042` 中，quality
+job `99515949231` 唯一失败为
+`windows_native_artifact_audit_should_use_only_the_pinned_coff_inspector`。产品脚本正确拒绝了
+fake `USER32.dll`，stderr 也包含完整诊断；但 Linux PowerShell 在 captured stderr 中插入 ANSI
+颜色序列，把 `exactly` 与 `kernel32.dll` 分隔，测试只删除了 `|` 并折叠空白，因此错误地认为
+诊断缺失。job 日志 SHA-256 为
+`a551bce289a2685283eae897d64f3021a3227e4b3502cae3c293943066bf91ac`。
+
+该失败不涉及 inspector、parser、artifact 或 allowlist；其余 jobs 必须继续自然结束，且不得与
+修复后 SHA 拼接。
+
+### 16.2 最小修订与 TDD
+
+**Files:** 本文、阶段 acceptance、review，随后只允许修改
+`tests/contracts/native_toolchain.rs`。
+
+- [ ] 保留上述真实 Linux job 为 red，增加/使用可复现的 ANSI-wrapped PowerShell stderr
+  对照；诊断匹配前只剥离 ANSI CSI SGR 序列，再删除 PowerShell gutter `|` 并折叠空白。
+- [ ] 所有允许/拒绝行为、精确错误证据、production-source contract 和 product script 保持
+  不变；不得通过只检查 nonzero、删除 message assertion、关闭颜色环境或放宽 audit 修复。
+- [ ] targeted、fmt、Clippy、default/all-feature、完整本地与冻结性能只读门全绿；随后新 SHA
+  的十项 required CI 必须全部 success 才能关闭 I37/I36 及此前远程项。
+
+## Task 16 行内对抗性自审
+
+失败发生在测试读取已经正确产生的诊断之后；颜色属于展示层且因 PowerShell host/runner 而异。
+限定剥离标准 ANSI SGR、继续匹配完整语义文本，比设置宿主专用环境或弱化断言更稳定。修订不得
+触碰生产脚本，真实 Windows artifact/JIT 行为仍由后续完整矩阵独立证明。当前未发现需要扩大
+到 CI workflow 或产品实现的阻断。

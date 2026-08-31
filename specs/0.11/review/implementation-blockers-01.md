@@ -1594,6 +1594,18 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 - 计划见 Task 15。当前 run 的剩余 jobs 必须自然终止；后续只由修复后同一 SHA 的完整十项
   矩阵签收 I36/I35/I34 及此前远程项。
 
+## I37：Linux PowerShell ANSI 颜色破坏测试诊断匹配
+
+- 精确 SHA `bcfb4ffd6307b3a154a4b8b9a94595dcb430bd58` 的 run `33400680042` 中，quality
+  job `99515949231` 唯一失败为 Windows artifact audit 的 Unix fake-inspector contract。
+  product audit 正确 nonzero，stderr 含预期 `dependencies must be exactly kernel32.dll`，但
+  Linux PowerShell 插入的 ANSI SGR 把相邻词分隔；现有测试仅删除 `|`/折叠空白后无法匹配。
+  完整日志 SHA-256 为
+  `a551bce289a2685283eae897d64f3021a3227e4b3502cae3c293943066bf91ac`。
+- 这是测试输出规范化缺陷而不是 product/CI 环境缺失。修复只允许剥离标准 ANSI SGR 后继续
+  精确 message assertion；不得改 audit、删除诊断检查、只验证 nonzero 或取消 quality job。
+  计划见 Task 16；当前 run 的其他 jobs 必须自然结束，后续仍需新 SHA 完整十项矩阵。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
