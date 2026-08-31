@@ -119,7 +119,7 @@ I30 的 red 来自 `f460c2b` 精确 run `33349902056`：ARM64 已以 Native 92/9
 
 I31 另按 `11-windows-static-link-plan.md` Task 10 执行：
 
-- [ ] 精确保留 `991d192` run `33351217336` 的自然终态与原始失败；Windows x64 的真实
+- [x] 精确保留 `991d192` run `33351217336` 的自然终态与原始失败；Windows x64 的真实
   MSVC `C2169` 日志及摘要入档，未取消仍在运行的 jobs，也不复用其成功项签收后续 SHA。
 - [x] production-source contract 在 I30 源码上真实 0/1 red；最小修订只在 Windows
   `process.c` 的 optimize-off 之前增加唯一 `#pragma function(memcpy, memset)`，同一 contract
@@ -133,6 +133,17 @@ I31 另按 `11-windows-static-link-plan.md` Task 10 执行：
 I31 不授权移除 `/O2`、给全部 runtime 增加 `/Oi-`、加入第六对象/default CRT，或改变 CK
 export/ABI。`#pragma function` 解决 intrinsic definition 身份，既有 optimize-off 解决 helper
 loop 被重新识别，两项契约必须同时保留；最后一项继续保持未签收，直到新 SHA 十项自然完成。
+完整本地非计时门与唯一合格 schema-6 计时已通过；本轮 optimizer suite `1.1068`、Dijkstra
+`2.0762x`，报告及 24+8 artifacts 均已归档并由原 checker 复验。该本地结果不勾选最后一项，
+因为真实 MSVC 双架构与同 SHA 十项 CI 仍未签收。
+旧 run 最终自然结束为 completed/failure、8/10：除 Windows x64 `99364841264` 与 ARM64
+`99364841227` 外其余八项 success；两项 Windows 都在 bootstrap 内由真实 `cl.exe` 对同一
+两个 definitions 报 C2169。最后结束的 Darwin x64 `99364841169` 通过 fact 7、Native 102、
+CLI 22、release compiler、ad-hoc hardened signing、artifact/compiler/JIT audits；其原始日志
+SHA-256 为 `255ac924fd7df59fc03e468de1c9957b44f7325b4cd531d525f9ca271701fcab`，fact artifact
+ID `9747706336`、上传 ZIP SHA-256
+`9b378f7881ce6f13d63a6aac3c99493a2fb5fb35e788b8cee51b4e5363024ff1`。该 8/10 仅完成
+I31 red 的自然归档，不勾选修复 SHA 的十项验收。
 
 ## I23 补充验收（未签收）
 

@@ -1461,9 +1461,10 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
 
 ## I31：MSVC 拒绝定义已启用的 `memcpy`/`memset` intrinsic
 
-- 精确候选 `991d192f13b845abc2e35e9406982093fe07b44e` 的 run `33351217336` 仍在
-  自然运行；截至复诊时 quality 与 Darwin ARM64 success，Windows x64 job
-  `99364841264` failure，其余七项未结束。现阶段不取消 jobs、不宣称本轮整体终态。
+- 精确候选 `991d192f13b845abc2e35e9406982093fe07b44e` 的 run `33351217336` 已自然结束为
+  completed/failure、8/10。quality、native integration、Darwin/Linux 双架构 host 和两项
+  performance success；Windows x64 `99364841264` 与 ARM64 `99364841227` failure，期间
+  没有取消 jobs，也不把八项 success 与后续修复 SHA 拼接。
 - x64 已完成 cold LLVM build，但真实 `cl.exe` 用 `/O2 /W3 /WX /GS- /Zl` 编译
   `native/runtime/windows/process.c` 时，对 `memcpy` 和 `memset` definitions 分别报告
   C2169。完整 job log SHA-256 为
@@ -1482,6 +1483,21 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   五对象和 `/O2 /Zl` 断言全部保留。pinned `clang-cl` ARM64 COFF 实际定义两个符号且没有
   同名 undefined。完整本地非计时门保持 default 479 / all-feature 610 / Native 102 及原独立
   计数全绿；性能与真实 MSVC 修复 SHA 矩阵尚待签收，不能据本条关闭 I31。
+- 旧 run 的 Windows ARM64 job `99364841227` 也已自然复现同一组 C2169，完整日志 SHA-256
+  `18cea61e528bae68e562501d2dfd8592269b4f21cc12d8b2d8f1b774930c52c1`。它与 x64 一样
+  未进入 Native suite，故修复后仍必须由两架构各自完整 bootstrap/执行门签收。
+- 最后结束的 Darwin x64 `99364841169` 通过 fact 7、Native 102、CLI 22 与全部 release/
+  artifact/JIT audits；原始日志 SHA-256 为
+  `255ac924fd7df59fc03e468de1c9957b44f7325b4cd531d525f9ca271701fcab`，fact artifact
+  `9747706336` 的上传 ZIP SHA-256 为
+  `9b378f7881ce6f13d63a6aac3c99493a2fb5fb35e788b8cee51b4e5363024ff1`。因此旧 run 的
+  自然终态完整，仍只证明 I31 red，不关闭修复后的真实 MSVC 门。
+- 高负载期间两个 preflight 与持续监视均不启动 benchmark；连续资格曾在 4/6、5/6 被真实
+  外部任务归零。最终六样本 `81.73 / 85.98 / 85.58 / 85.85 / 86.23 / 79.75% idle`
+  且无高负载编译/索引/Node/Java/VM 后，只执行一次完整 schema-6。原 checker 与归档只读
+  复验均通过：unchecked `1.0003 / 0.9979`、checked `1.0072 / 1.0056`、proof `1.0015`、
+  optimizer `1.1068`、Dijkstra `2.0762x`；报告 SHA-256 `8a125478...`，24+8 artifacts
+  完整保留，没有重跑择优或修改阈值。
 
 ## 修订边界（全部阻断，持续有效）
 

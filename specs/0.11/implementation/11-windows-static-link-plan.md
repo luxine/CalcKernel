@@ -619,10 +619,10 @@ Native suite，不能把本地 `clang-cl` COFF 生成当成 MSVC 验收。
 
 ### 10.3 验证与远程闭环
 
-- [ ] 保持原计数与阈值，重跑 targeted/default/all-feature、两种 Clippy、fmt/diff、release
+- [x] 保持原计数与阈值，重跑 targeted/default/all-feature、两种 Clippy、fmt/diff、release
   lib/IR/native、全部独立小门、artifact/compiler/JIT/version/licenses、双 prefix verifier、
   docs 16 与 schema-6 性能门。I30 的完整原始性能证据保留，不能因 Windows-only 修订而降门。
-- [ ] 先等待 `991d192` 的十项 jobs 全部自然终止并归档最终状态；再以 I31 实现精确 SHA
+- [x] 先等待 `991d192` 的十项 jobs 全部自然终止并归档最终状态；再以 I31 实现精确 SHA
   dispatch 新的完整十项矩阵，避免同分支 concurrency 取消旧证据。
 - [ ] 新 SHA 的 Windows x64 与 ARM64 都必须用真实 MSVC 完成 bootstrap、fact audit 7/7、
   Native 92/92、CLI 22/22 和 compiler/artifact/JIT/release audits；同 SHA 另外八项也必须
@@ -639,14 +639,39 @@ Native suite，不能把本地 `clang-cl` COFF 生成当成 MSVC 验收。
   object SHA-256 为 `62d97e9ed35d52cea34fbfdc9dc9fc93a098e548145e5dd01349aeca39f63bc3`，
   `llvm-nm` 同时显示 `T memcpy`、`T memset`，且没有同名 undefined。空编译日志与 nm 日志
   SHA-256 分别为 `e3b0c442...` / `6226128e...`；真实 `cl.exe` 仍待新远程矩阵签收。
+- 旧 run 的 Windows ARM64 job `99364841227` 随后也自然 failure；它同样先完成 cold LLVM
+  build，再在 `process.c` 两个 definitions 上报告相同 C2169，未进入 Native suite。完整日志
+  SHA-256 为 `18cea61e528bae68e562501d2dfd8592269b4f21cc12d8b2d8f1b774930c52c1`。
+  两架构独立重现确认 I31 是共同 MSVC source contract，不是 x64 linker 特例。
+- run `33351217336` 最终自然结束为 completed/failure、精确 8/10。success jobs 为 quality
+  `99364841132`、native integration `99364841232`、Darwin x64 `99364841169` / ARM64
+  `99364841260`、Linux x64 `99364841301` / ARM64 `99364841283`、performance x86-64
+  `99364841101` / AArch64 `99364841106`；仅上述两个 Windows jobs failure，没有取消或
+  拼接。最后结束的 Darwin x64 原始日志 SHA-256 为
+  `255ac924fd7df59fc03e468de1c9957b44f7325b4cd531d525f9ca271701fcab`，其中 fact 7、
+  Native 102、CLI 22 与 compiler/artifact/JIT audits 全绿；fact artifact ID `9747706336`，
+  上传 ZIP SHA-256 为 `9b378f7881ce6f13d63a6aac3c99493a2fb5fb35e788b8cee51b4e5363024ff1`。
 - default 479、all-feature 610（Native 102）、release lib 53 / IR 58、generated 3、
   mutation 10、fact audit 7、verifier-cache 5、docs 16、artifact fixture 5 全部 0 failed/ignored；
   两种 Clippy、fmt、release Native build、artifact/compiler/JIT/version/licenses 与 release/
   oracle 双 prefix verifier 全绿。Apple sanitizer 按冻结契约报告 Linux-only unavailable。
   初次发布审计因后续 default release tests 覆盖 `target/release/ckc` 为 feature-disabled 产物而
   fail closed；按 CI 顺序重建 Native release 并签名后从头复验通过，没有修改审计或门槛。
-- schema-6 性能仍待满足既有 idle/no-heavy-process 资格窗口后执行；本节不把 I30 的合格
-  报告冒充新实现提交的性能签收，也不在共享主机有 virtualization/FSEvents 高负载时取样。
+- 两个正式 preflight 与后续只读监视先后捕获 `0–73% idle`、多轮外部 Rust/Node/index/VM
+  高负载，均未启动 benchmark；其中 preflight 原件 SHA-256 为 `679a85c6...` /
+  `e789a320...`。监视严格要求六个连续 `idle >= 74%` 且高负载计数为零，曾在 4/6、5/6
+  被新活动归零，没有停止外部任务或放宽规则。最终合格六样本为
+  `81.73 / 85.98 / 85.58 / 85.85 / 86.23 / 79.75%`，资格日志 SHA-256 为
+  `63340dd0adcefd89e217957f0fc5240c8ecfa83eebb236e271b2b9c289a723df`。
+- 合格后只执行一次进入 runtime sampling 的原 schema-6 benchmark；原 checker 与归档布局
+  上的只读复验均 exit 0：unchecked Clang/replay `1.0003 / 0.9979`、checked
+  `1.0072 / 1.0056`、proof `1.0015`、optimizer suite `1.1068`、Dijkstra
+  `726666 / 350000 = 2.0762x`。report / benchmark / checker SHA-256 分别为
+  `8a1254780dc13a8cabec12e3b8849ffcc860d8c91580bf28110ed9ee1091b441` /
+  `ecf718488c28849f6fea25cf695db3c7a1522e26856d383c26a8d4d875805bda` /
+  `5aae632d7b04087fcfbe2dc2a1c73e561e9b19b4ca39e3b0728f913892d94839`；24+8
+  artifacts 与完整 replay identity 已归档，checksum manifest SHA-256 为
+  `52c4858538580c3d520cc368256087e2636c8ad0443374637be7cdf865e63d09`，没有再计时。
 
 ## Task 10 行内对抗性自审
 
