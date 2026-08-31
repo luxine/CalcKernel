@@ -1459,6 +1459,25 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   production-source red，再做最小 green；最终必须由新精确 SHA 的两架构 Windows
   7/7 fact、92/92 Native、22/22 CLI 及同 SHA 十项 success 证明，不能拼接本轮八项。
 
+## I31：MSVC 拒绝定义已启用的 `memcpy`/`memset` intrinsic
+
+- 精确候选 `991d192f13b845abc2e35e9406982093fe07b44e` 的 run `33351217336` 仍在
+  自然运行；截至复诊时 quality 与 Darwin ARM64 success，Windows x64 job
+  `99364841264` failure，其余七项未结束。现阶段不取消 jobs、不宣称本轮整体终态。
+- x64 已完成 cold LLVM build，但真实 `cl.exe` 用 `/O2 /W3 /WX /GS- /Zl` 编译
+  `native/runtime/windows/process.c` 时，对 `memcpy` 和 `memset` definitions 分别报告
+  C2169。完整 job log SHA-256 为
+  `60112035de5a469e3d28b1bc915f4e91986a871416fc7343667dee19624db022`；失败发生在
+  Native suite 前，I30 的本地 `clang-cl` 对象检查不能替代该 red。
+- 官方诊断说明 C2169 是定义已声明为 intrinsic 的函数；官方 `#pragma function` 会在源文件
+  后续范围强制指定 intrinsic 生成函数调用。I30 的 optimize-off 只能阻止 helper loop 被
+  重新优化，不能改变 intrinsic 身份。最小修复是在同一 `process.c`、optimize-off 之前增加
+  唯一 `#pragma function(memcpy, memset)`，并继续保留 optimize off/on。
+- 不改 `/O2 /Zl`、五对象 manifest/order、唯一 `kernel32.lib`、CRT-free 审计、CK exports、
+  ABI、cache identity 或 CLI artifact path；不得用全 runtime `/Oi-` 或 default CRT 绕过。
+  计划与验收见 Task 10/I31，先 source contract red→green，最后由新精确 SHA 的两架构真实
+  MSVC 与同 SHA 十项矩阵签收。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。

@@ -516,15 +516,15 @@ checked `0.9989 / 1.0012`、proof `1.0015`、optimizer suite `1.3630`；x86-64 �
 
 - [x] 先提交精确 run 的 8/10 终态、两项失败原件、共同根因、不变量和本计划；docs 16 与
   `git diff --check` 通过，不混入实现或测试修订。
-- [ ] 先给 Windows runtime production-source contract 增加 memory-helper 闭包断言，并在
+- [x] 先给 Windows runtime production-source contract 增加 memory-helper 闭包断言，并在
   旧源码上得到真实 0/1 red；再只在既有 `platform.obj` source 增加 helper definitions，
   让同一 targeted contract 1/1 green。不得仅改测试期望。
-- [ ] CLI fixture 使用生产 `NativeArtifactPaths` 推导 host executable；保持原成功状态、
+- [x] CLI fixture 使用生产 `NativeArtifactPaths` 推导 host executable；保持原成功状态、
   产物存在性与 executable build sanitizer 断言，不按平台删除断言。
 
 ### 9.3 验证与远程闭环
 
-- [ ] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
+- [x] targeted/default/all-feature、两种 Clippy、fmt/diff、release lib/IR/native、全部独立
   小门、artifact/compiler/JIT/version/licenses、双 prefix verifier、docs 16 与原 schema-6
   性能门全绿；测试计数、语料和阈值不降。Darwin 本地 source contract 不能替代 MSVC。
 - [ ] 在实现提交的精确 SHA 上重新 dispatch 全十项 required CI。Windows x64 必须完成
@@ -532,6 +532,41 @@ checked `0.9989 / 1.0012`、proof `1.0015`、optimizer suite `1.3630`；x86-64 �
   Windows ARM64 必须保持 Native 92/92 并把 CLI 恢复为 22/22。其他八项同 SHA 全绿。
 - [ ] 同 SHA 十项全绿后才关闭 I30/I29/I28/I27/I26/I25/I23/阶段 11，并进入 01–11/99
   总验收；任何旧 SHA 的 success 都只作诊断证据。
+
+### 9.4 实现与本地证据
+
+- docs-first `45142fa` 后，新 production-source contract 在未定义 memory helpers 的旧
+  `process.c` 上真实 0/1 red；实现后同一 contract 1/1 green，并在行内复审后进一步要求
+  optimize off/on 各精确一次、两个定义必须位于边界内部、两个零长度安全 byte loop 与
+  destination return 都精确存在。禁止 hosted headers、`memmove`、allocation，并继续锁定
+  `/O2 /Zl` 与五对象 manifest。
+- 实现提交 `991d192f13b845abc2e35e9406982093fe07b44e` 只在既有 Windows
+  `platform.obj` source 增加 `memcpy`/`memset`，没有第六对象、default library、CK export
+  或 ABI 变化；CLI fixture 改用 production `NativeArtifactPaths`，仍先验证 command
+  success 再验证真实 host artifact 存在。pinned LLVM 22 `clang-cl` 以 ARM64 MSVC target
+  和 bootstrap 同组 `/O2 /W3 /WX /GS- /Zl` 参数实际生成 COFF，`llvm-nm` 显示两个 helper
+  均为本对象定义且没有同名未解析引用；真实 MSVC x64 仍由远程门签收。
+- 使用 manifest SHA-256 为
+  `8a0d25cdcd729cd35be139d9f3b571d3a0769a380d1fce1e9731292119dc290c` 的当前 release
+  prefix 和 `b073daad34f4dfd5055614c7893b42c38f875cb54198b528729247dd3d13f934` 的 oracle
+  prefix 复验：default 479、all-feature 610、Native 102、release lib 53 / IR 58、generated
+  3 / mutation 10 / fact audit 7 / verifier-cache 5 / docs 16、artifact fixture 5 全部
+  0 failed/ignored；两种 Clippy、fmt/diff、release compiler、artifact 与 JIT audit 全绿。
+  Apple sanitizer 按冻结契约明确报告 Linux-only capability unavailable，不冒充 Linux 门。
+- 首轮数值合格但使用旧 overlay 的 benchmark invocation 被 replay identity 前置条件拒绝：
+  它只执行六项 optimizer 计时，未进入 Native/Clang/replay runtime 采样，未创建 measurement
+  目录，也未覆盖原 `results.json`；该拒绝不记作通过。定位到旧 overlay manifest
+  `b8b790dcfdd9652b1634d8d50075b1037298ec7cbcf3e7a5fefabb55d1f84874` 与冻结 bundle
+  的 `8a0d25...` 不匹配后，先用正确身份对原报告做只读 checker 验证，再重新等待资格窗口。
+- 新资格窗口六个 idle 样本为 `75.15 / 81.88 / 80.70 / 77.63 / 82.30 / 79.70%`，且无
+  高负载编译、索引、Node、Java 或虚拟化进程；只执行一次进入完整 runtime sampling 的
+  schema-6 benchmark。同一原始结果由原 checker exit 0：unchecked Clang/replay
+  `1.0008 / 0.9999`、checked `1.0065 / 0.9876`、proof `1.0022`、optimizer suite
+  `1.1255`、Dijkstra `727417 / 350000 = 2.0783x`。report / benchmark / checker SHA-256
+  分别为 `cd2ac37789504687ba58e93edb4fea071967a42da9922ac767a98eaad714afca` /
+  `b9e62f66b72c0d80850b5e5f9aac068e3334a11764a105a0216030d8373d36fb` /
+  `f73cf2f122ed75275255982895034f9297caaeee522a8829cafb8028ec0ecc4c`；24+8 artifacts
+  已归档，没有再计时或调整门槛。
 
 ## Task 9 行内对抗性自审
 
@@ -541,3 +576,62 @@ x64 的 24 个失败共享同一 LLD undefined-symbol 原件和 `format_float.ob
 既闭合 `/O2 /Zl` 可生成的合法依赖，又不改变五对象 manifest、CK ABI 或链接 allowlist；
 MSVC 局部关闭优化只约束 helper 自身，避免自递归，不影响其他 runtime 热路径。最终仍要求
 两个真实 Windows 架构及同 SHA 十项矩阵全绿，复审未发现需要降低门槛或扩大依赖面的阻断项。
+
+## Task 10：MSVC intrinsic definition 闭包（I31）
+
+精确候选 `991d192f13b845abc2e35e9406982093fe07b44e` 的 run `33351217336`
+仍在自然运行；截至本计划提交前，quality 与 Darwin ARM64 success，Windows x64 job
+`99364841264` failure，其余七项尚未结束。不得取消剩余 jobs，也不得把本轮已成功项与修复
+SHA 拼接。x64 的 cold LLVM build 完成后，真实 MSVC 以既有 `/O2 /W3 /WX /GS- /Zl`
+编译 `process.c`，在 `memcpy`/`memset` definitions 分别报告 `C2169: intrinsic function,
+cannot be defined`；完整 job log SHA-256 为
+`60112035de5a469e3d28b1bc915f4e91986a871416fc7343667dee19624db022`。因此本轮没有进入
+Native suite，不能把本地 `clang-cl` COFF 生成当成 MSVC 验收。
+
+### 10.1 复诊与不可变边界
+
+- Microsoft 的 `C2169` 契约表明失败来自“已经被声明为 intrinsic 的函数又出现定义”；
+  `/O2` 包含 intrinsic 优化，而 `memcpy`/`memset` 都具有 MSVC intrinsic form。现有
+  `#pragma optimize("", off)` 只关闭 helper definitions 的优化，不能解除它们在编译器中的
+  intrinsic 身份，所以 I30 的防递归措施必要但不充分。
+- Microsoft 的 `#pragma function(memcpy, memset)` 在文件作用域强制这些 intrinsic 生成实际
+  函数调用，并持续到源文件末尾或相反的 `#pragma intrinsic`。最小修订是在既有 optimize-off
+  边界前增加一次该 pragma；它只作用于 `process.c`，源文件后续没有依赖两者 intrinsic 化的
+  热路径。不得改为全 runtime `/Oi-`、移除 `/O2`、新增对象/库或回退 memory-helper 闭包。
+- 五对象 manifest/order、`/O2 /Zl`、唯一 `kernel32.lib` allowlist、无默认 CRT、CK public
+  exports、ABI、cache identity、CLI artifact path 与两个 byte-loop 语义保持不变。
+  `#pragma function` 必须先于 `#pragma optimize("", off)` 和两个 definitions；现有 optimize
+  off/on 仍精确包住 definitions，防止实现循环被识别回同名调用。
+
+### 10.2 文档先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/native_toolchain.rs` 与 `native/runtime/windows/process.c`。
+
+- [x] 先提交 I30 本地证据、I31 的精确 MSVC red、官方语义、修订边界与本计划；docs 16 与
+  `git diff --check` 通过，不混入实现或测试修订。
+- [ ] 先扩展 production-source contract，要求唯一的
+  `#pragma function(memcpy, memset)` 位于 optimize-off 和两个 definitions 之前；在 I30 源码
+  上取得真实 0/1 red，再做最小 source 修订使同一 targeted contract 1/1 green。
+- [ ] 用 pinned `clang-cl` 和 bootstrap 同组参数继续生成 ARM64 MSVC-target COFF 并检查
+  两个定义及无同名未解析引用；该检查只补充 source/object 证据，不替代真实 `cl.exe`。
+
+### 10.3 验证与远程闭环
+
+- [ ] 保持原计数与阈值，重跑 targeted/default/all-feature、两种 Clippy、fmt/diff、release
+  lib/IR/native、全部独立小门、artifact/compiler/JIT/version/licenses、双 prefix verifier、
+  docs 16 与 schema-6 性能门。I30 的完整原始性能证据保留，不能因 Windows-only 修订而降门。
+- [ ] 先等待 `991d192` 的十项 jobs 全部自然终止并归档最终状态；再以 I31 实现精确 SHA
+  dispatch 新的完整十项矩阵，避免同分支 concurrency 取消旧证据。
+- [ ] 新 SHA 的 Windows x64 与 ARM64 都必须用真实 MSVC 完成 bootstrap、fact audit 7/7、
+  Native 92/92、CLI 22/22 和 compiler/artifact/JIT/release audits；同 SHA 另外八项也必须
+  success。十项全绿后才允许关闭 I31/I30 及此前阻断并进入最终总验收。
+
+## Task 10 行内对抗性自审
+
+真实 `cl.exe` 的 C2169、官方 diagnostic 与 pragma 语义构成直接因果链，不需要扩大到 LLVM、
+LLD、runtime ABI 或算法设计。文件局部 `#pragma function` 比全局 `/Oi-` 更窄，且与现有
+optimize-off 分别解决“允许定义”和“避免循环被重新识别”两个独立问题；两者都由 source
+contract 锁定，并最终由两种真实 MSVC 架构签收。没有降低测试、性能或平台门槛，复审未发现
+新的逻辑缺口。

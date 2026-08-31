@@ -95,14 +95,14 @@ suite `1.1641`、Dijkstra `2.1876x`，原始报告和 24+8 artifacts 已保留�
 
 I30 另按 `11-windows-static-link-plan.md` Task 9 执行：
 
-- [ ] Windows 五对象 freestanding runtime 的既有 `platform.obj` 定义语义正确的
+- [x] Windows 五对象 freestanding runtime 的既有 `platform.obj` 定义语义正确的
   `memcpy`/`memset`；MSVC 下只对 helper definitions 局部关闭优化，避免识别回同名调用。
   五对象 manifest/order、`/O2 /Zl`、唯一 `kernel32.lib` allowlist、CRT-free 审计与 CK
   public export 面均不变。
-- [ ] production-source contract 在旧源码真实 red、最小 runtime 修订后 green，并同时锁定
+- [x] production-source contract 在旧源码真实 red、最小 runtime 修订后 green，并同时锁定
   helper definitions、byte-loop、optimize off/on 和五对象闭包；source contract 不替代真实
   MSVC x64 链接/执行。
-- [ ] executable-build sanitizer fixture 通过 production `NativeArtifactPaths` 推导 host
+- [x] executable-build sanitizer fixture 通过 production `NativeArtifactPaths` 推导 host
   executable，Windows 检查 `.exe`，其他 host 保持原路径；command success、产物存在性与
   sanitizer 断言均不得删除或 skip。
 - [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能及十项 required CI 全绿；Windows x64
@@ -114,6 +114,25 @@ I30 的 red 来自 `f460c2b` 精确 run `33349902056`：ARM64 已以 Native 92/9
 均来自同一 `format_float.obj` 对 `memcpy`/`memset` 的未解析引用。两项 performance 与另外
 六项 required jobs 已通过，只用于定位而不构成阶段签收。最后一项保持未签收，直到新 SHA
 全十项自然完成为 success。
+
+## I31 补充验收（未签收）
+
+I31 另按 `11-windows-static-link-plan.md` Task 10 执行：
+
+- [ ] 精确保留 `991d192` run `33351217336` 的自然终态与原始失败；Windows x64 的真实
+  MSVC `C2169` 日志及摘要入档，未取消仍在运行的 jobs，也不复用其成功项签收后续 SHA。
+- [ ] production-source contract 在 I30 源码上真实 0/1 red；最小修订只在 Windows
+  `process.c` 的 optimize-off 之前增加唯一 `#pragma function(memcpy, memset)`，同一 contract
+  1/1 green。pragma 必须先于两个 definitions，现有 optimize off/on、byte loops、五对象
+  manifest 与 `/O2 /Zl` 均保持。
+- [ ] pinned `clang-cl` ARM64 MSVC-target COFF 仍定义两个 helper 且没有同名未解析引用；
+  该本地结果不代替真实 MSVC x64/ARM64 bootstrap、链接与执行。
+- [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能与十项 required CI 全绿；Windows 两
+  架构都必须 fact audit 7/7、Native 92/92、CLI 22/22，并完成全部 release/audit 门。
+
+I31 不授权移除 `/O2`、给全部 runtime 增加 `/Oi-`、加入第六对象/default CRT，或改变 CK
+export/ABI。`#pragma function` 解决 intrinsic definition 身份，既有 optimize-off 解决 helper
+loop 被重新识别，两项契约必须同时保留；最后一项继续保持未签收，直到新 SHA 十项自然完成。
 
 ## I23 补充验收（未签收）
 
