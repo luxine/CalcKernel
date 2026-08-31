@@ -11,6 +11,33 @@ CK_BOOL __stdcall WriteFile(CK_HANDLE handle, const void *bytes,
 CKC_NORETURN void __stdcall ExitProcess(CK_DWORD status);
 extern int main(void);
 
+#if defined(_MSC_VER)
+#pragma optimize("", off)
+#endif
+
+void *memcpy(void *destination, const void *source, size_t length) {
+  unsigned char *output = (unsigned char *)destination;
+  const unsigned char *input = (const unsigned char *)source;
+  while (length != 0u) {
+    *output++ = *input++;
+    --length;
+  }
+  return destination;
+}
+
+void *memset(void *destination, int value, size_t length) {
+  unsigned char *output = (unsigned char *)destination;
+  while (length != 0u) {
+    *output++ = (unsigned char)value;
+    --length;
+  }
+  return destination;
+}
+
+#if defined(_MSC_VER)
+#pragma optimize("", on)
+#endif
+
 int64_t __ck_platform_write(int32_t stream, const uint8_t *bytes,
                             uint64_t length) {
   const CK_DWORD selector = stream == 1 ? (CK_DWORD)-11 : (CK_DWORD)-12;

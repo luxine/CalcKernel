@@ -330,6 +330,65 @@ fn windows_cache_hit_should_open_no_follow_entry_for_attribute_touch() {
 }
 
 #[test]
+fn windows_freestanding_runtime_should_close_optimizer_generated_memory_helpers() {
+    let platform = read("native/runtime/windows/process.c");
+    assert_eq!(platform.matches("#pragma optimize(\"\", off)").count(), 1);
+    assert_eq!(platform.matches("#pragma optimize(\"\", on)").count(), 1);
+    let helpers = platform
+        .split_once("#pragma optimize(\"\", off)")
+        .expect("MSVC memory helper optimization boundary")
+        .1
+        .split_once("#pragma optimize(\"\", on)")
+        .expect("MSVC memory helper optimization restore")
+        .0;
+    for required in [
+        "void *memcpy(void *destination, const void *source, size_t length)",
+        "const unsigned char *input = (const unsigned char *)source;",
+        "void *memset(void *destination, int value, size_t length)",
+        "*output++ = (unsigned char)value;",
+    ] {
+        assert!(
+            helpers.contains(required),
+            "Windows freestanding runtime must define optimizer memory helper contract {required:?}"
+        );
+    }
+    assert_eq!(
+        helpers.matches("while (length != 0u)").count(),
+        2,
+        "both helpers must use a zero-length-safe byte loop"
+    );
+    assert_eq!(
+        helpers.matches("return destination;").count(),
+        2,
+        "both helpers must return the original destination"
+    );
+    for forbidden in ["#include <string.h>", "memmove(", "malloc("] {
+        assert!(
+            !platform.contains(forbidden),
+            "Windows platform object must remain freestanding: {forbidden}"
+        );
+    }
+
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let sources = bootstrap
+        .split_once("$runtimeSources = @(")
+        .expect("Windows runtime source manifest")
+        .1
+        .split_once("\n)\n$runtimeObjects = @()")
+        .expect("Windows runtime source manifest end")
+        .0;
+    assert_eq!(
+        sources.matches("    @(\"").count(),
+        5,
+        "freestanding memory helpers must stay inside the five-object runtime closure"
+    );
+    assert!(sources.contains(
+        "@(\"platform.obj\", (Join-Path $repoRoot \"native/runtime/windows/process.c\"))"
+    ));
+    assert!(bootstrap.contains("cl.exe /nologo /c /TC /O2 /W3 /WX /GS- /Zl"));
+}
+
+#[test]
 fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runtime() {
     let bootstrap = read("scripts/bootstrap-llvm.ps1");
     for required in [

@@ -1,5 +1,8 @@
 use std::{ffi::OsString, fs, process::Command};
 
+#[cfg(feature = "native-toolchain")]
+use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
 use super::support::temp::unique_id;
 
 fn os(value: impl AsRef<std::ffi::OsStr>) -> OsString {
@@ -77,12 +80,12 @@ fn argument_contract_sanitizer_should_accept_only_run_and_executable_build() {
     assert_eq!(output.status.code(), Some(1));
     assert!(!rejected.exists());
 
-    let executable = dir.join("program");
+    let executable_base = dir.join("program");
     let accepted = run([
         os("build"),
         os(&source),
         os("--out"),
-        os(&executable),
+        os(&executable_base),
         os("--kind"),
         os("executable"),
         os("--sanitize-contracts"),
@@ -93,6 +96,12 @@ fn argument_contract_sanitizer_should_accept_only_run_and_executable_build() {
         "{}",
         String::from_utf8_lossy(&accepted.stderr)
     );
+    let executable = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &executable_base,
+    )
+    .primary;
     assert!(executable.exists());
 }
 
