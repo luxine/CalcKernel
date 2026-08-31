@@ -680,3 +680,66 @@ LLD、runtime ABI 或算法设计。文件局部 `#pragma function` 比全局 `/
 optimize-off 分别解决“允许定义”和“避免循环被重新识别”两个独立问题；两者都由 source
 contract 锁定，并最终由两种真实 MSVC 架构签收。没有降低测试、性能或平台门槛，复审未发现
 新的逻辑缺口。
+
+## Task 11：COFF x64 JIT image-base 物化顺序闭包（I32）
+
+精确候选 `5fa94b089156ecae36a24c90d4c580fc473fbd83` 的 run `33364897799` 已有八项
+success；Windows x64 job `99403408409` 自然 failure，Windows ARM64 仍在 cold bootstrap，
+不得取消。x64 已完成新 recipe、真实 MSVC、prefix/cache 验证及 fact audit 7/7，证明 I31
+不再触发 C2169；required Native suite 为 78 passed / 14 failed。完整原始日志 SHA-256 为
+`8c3a22a7d14038230d9d760d1cced0383c82e45abdb2c1b563bfaf4b08ab8b75`；fact artifact
+ID `9755398106`，上传 ZIP / 原文件 SHA-256 分别为
+`a95b9547cbc119b12cfe8a490af6c124c2afe7788d4fa7931d47119da17706bf` /
+`61920673061079661677c0abc0e8fb8974be26c57b813d179821a52a1b7dc5b9`。
+
+### 11.1 复诊与不可变边界
+
+- 7 个 cache、4 个 JIT 与 3 个 run failure 都是同一 JIT 级联：COFF x64 runtime
+  `.pdata` 的 `IMAGE_REL_AMD64_ADDR32NB` 被计算成 `-0xcb0` 等负值，JITLink 报
+  `out of range of Pointer32 fixup`。AOT executable、differential、fact audit 与静态
+  prefix tests 继续通过；不得把 14 项删减成 skip 或误诊为 cache 行为。
+- pinned LLVM 22.1.8 `MapperJITLinkMemoryManager::allocate` 在首次 materialization 时把
+  graph 放到新 reservation 的 `Start`，并把 `NextSegAddr..End` 保存给后续 allocations；
+  后续 graph 因此向高地址增长。当前实现按顺序验证并 `addObjectFile` anchor/runtime/program，
+  但 ORC materialization 仍是 lazy；随后按 `std::set` 排序 lookup 全部 symbols，MSVC
+  `??_C...` runtime symbols 先于 `__ImageBase`，使 runtime 先占低地址、anchor 后占高地址。
+  `.pdata` 相对更高 anchor 得到负 image-relative 值，虽在同一 512 MiB reservation 仍非法。
+- 最小修复仅限 COFF x64：验证完整六个 runtime inputs 后，先把 `buffers.front()` anchor
+  加入 LLJIT 并立即 `lookupLinkerMangled("__ImageBase")`，要求成功物化；之后才加入余下
+  五个 runtime objects 与 program。不得靠更改全局 symbol sort、伪造绝对地址、删除
+  `.pdata`、开放 process symbols、切回 RuntimeDyld、扩大 reservation 或放宽 relocation。
+- x64 私有 anchor bytes/hash/cache、六对象 fail-closed 输入、五对象 public artifact、
+  ARM64 RuntimeDyld responsibility、JIT W^X audit、ABI 与语言语义全部保持。I31 的 pragma
+  与 memory-helper closure 也必须继续由 source contract 锁定。
+
+### 11.2 文档先行与 TDD
+
+**Files:** 本文、`11-release-candidate-acceptance.md`、
+`../review/implementation-blockers-01.md`，随后才允许修改
+`tests/contracts/native_toolchain.rs` 与 `native/bridge/ckc_llvm.cpp`。
+
+- [x] 先提交 x64 原始失败、单一根因、pinned allocator 行为、不可变边界与本计划；docs 16
+  和 `git diff --check` 必须通过，不混入生产实现或测试修订。
+- [ ] 扩展既有 COFF JIT production-source contract，在 I32 前源码取得真实 targeted red：
+  anchor `addObjectFile`、`lookupLinkerMangled("__ImageBase")`、余下对象 loop 必须按此顺序
+  位于 x64 条件分支，且 lookup error fail closed；注释或单纯把 `__ImageBase` 提前排序不算。
+- [ ] 最小实现使同一 targeted contract green；非 COFF-x64 保持原 loop，之后运行真实 bridge
+  syntax、default/all-feature 与全部局部门。source contract 只证明结构，不能替代 Windows。
+
+### 11.3 验证与远程闭环
+
+- [ ] 等待 `33364897799` 的 Windows ARM64 job 自然终止并归档；不重用本轮八项 success。
+- [ ] 保持 I31 的全部本地非计时计数、双 prefix、release/audit 与唯一合格 schema-6 性能
+  报告；Windows-only materialization 修订不得重设 baseline、阈值、语料或择优重计时。
+- [ ] 以实现与证据最终精确 SHA 重新 dispatch 全十项 CI。Windows x64 必须 fact 7、Native
+  92、CLI 22 并完成 compiler/artifact/JIT audits，日志不再出现 C2169、negative
+  image-relative 或 Pointer32；ARM64 与另外八项也必须 success。之后才允许关闭
+  I32/I31 及此前阻断并进入 01–11/99 总验收。
+
+## Task 11 行内对抗性自审
+
+失败地址、14 项 stderr 与 pinned allocator 源码共同证明“同 reservation”不是“anchor 在
+最低地址”的充分条件；补一次显式 materialization 是恢复既有设计意图，而不是引入新 JIT
+策略。修复面只控制 x64 私有 support object 的 ORC 时序，不改变 allocator、权限、符号可见
+范围、runtime/AOT 闭包或 ABI。最终真实 Windows 仍是行为门，未发现需要降低原验收标准的
+理由。

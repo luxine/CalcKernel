@@ -145,6 +145,25 @@ ID `9747706336`、上传 ZIP SHA-256
 `9b378f7881ce6f13d63a6aac3c99493a2fb5fb35e788b8cee51b4e5363024ff1`。该 8/10 仅完成
 I31 red 的自然归档，不勾选修复 SHA 的十项验收。
 
+## I32 补充验收（未签收）
+
+I32 另按 `11-windows-static-link-plan.md` Task 11 执行：
+
+- [x] 精确保留 `5fa94b0` run `33364897799` 的 Windows x64 job `99403408409` 自然失败；
+  I31 已由真实 MSVC bootstrap 与 fact 7/7 证明不再触发 C2169，但 Native 78/92，14 项
+  failure 全部共享 COFF `.pdata` `Pointer32` image-relative relocation 越界。
+- [ ] 保留同 run Windows ARM64 的自然终态；不得为开始 I32 而取消仍在运行的 job，也不得
+  把当前八项 success 与后续 SHA 拼接。
+- [ ] production-source contract 在 I32 前源码真实 red；最小修订必须先单独加入并物化
+  x64 私有 `__ImageBase` anchor，再加入五个 runtime objects 与 program，且同一 contract
+  green。不得仅调整符号遍历排序或依赖未冻结的 object symbol 名。
+- [ ] 修复精确 SHA 的完整本地门、原 schema-6 性能及同 SHA 十项 required CI 全绿；
+  Windows x64/ARM64 均须 fact 7、Native 92、CLI 22 与全部 release/audit 门通过。
+
+I32 不改变 512 MiB reservation、`MapperJITLinkMemoryManager`、JITLink、W^X、禁用 process
+symbol search、六对象 x64 JIT 输入、五对象 artifact、ABI 或 cache 语义。修复只补足既有
+“anchor 先于闭包”约束中的物化顺序；最终仍由真实 Windows execution 签收。
+
 ## I23 补充验收（未签收）
 
 按 `11-interrupt-handoff-plan.md` 执行：

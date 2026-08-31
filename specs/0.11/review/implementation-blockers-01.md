@@ -1499,6 +1499,25 @@ run `33258768178`（commit `d8d7f903bed9a215e78986634d1f2c29cc264bee`）。
   optimizer `1.1068`、Dijkstra `2.0762x`；报告 SHA-256 `8a125478...`，24+8 artifacts
   完整保留，没有重跑择优或修改阈值。
 
+## I32：COFF x64 `__ImageBase` 晚物化产生负 image-relative relocation
+
+- 精确候选 `5fa94b089156ecae36a24c90d4c580fc473fbd83` 的 run `33364897799` 已有八项
+  success；Windows x64 `99403408409` 自然 failure，ARM64 仍在运行且不会被取消。x64
+  bootstrap 与 fact 7/7 已通过，确认 I31 的真实 MSVC C2169 已关闭到下一层执行门。
+- Native 78/92；7 个 cache、4 个 JIT、3 个 run failure 的 stderr 全部是 runtime `.pdata`
+  `Pointer32` relocation 到 `__ImageBase` 得到 `-0xcb0` 等负 image-relative 值。完整日志
+  SHA-256 `8c3a22a7d14038230d9d760d1cced0383c82e45abdb2c1b563bfaf4b08ab8b75`；fact
+  artifact `9755398106` 的 ZIP / 原文件 SHA-256 为
+  `a95b9547cbc119b12cfe8a490af6c124c2afe7788d4fa7931d47119da17706bf` /
+  `61920673061079661677c0abc0e8fb8974be26c57b813d179821a52a1b7dc5b9`。
+- pinned `MapperJITLinkMemoryManager` 把首个 materialized graph 放在 reservation 起点，余量
+  从其后向高地址分配。现实现虽先 add anchor，却在全部对象加入后按 symbol set lookup；
+  `??_C...` 先触发 runtime materialization，anchor 后置于更高地址，故 image-relative 为负。
+- 最小修订只让 COFF x64 anchor 单独 add 并 lookup 成功后再 add 余下固定闭包。继续使用
+  JITLink/512 MiB reservation/audited mapper/W^X，禁用 process search；不改 anchor bytes、
+  六对象 JIT、五对象 artifact、ARM64 RuntimeDyld、ABI、cache 或性能门槛。计划与验收见
+  Task 11；先 production-source red→green，最终由新 SHA 的完整十项矩阵签收。
+
 ## 修订边界（全部阻断，持续有效）
 
 - 同步修订 Native LLVM ABI 与 release 双语文档、阶段 11 task/acceptance 和仓库契约测试。
