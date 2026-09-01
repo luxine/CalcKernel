@@ -369,8 +369,10 @@ completed shard, and automatic mode fails on the abnormal child.
 An instrumented static or dynamic library instead adds one
 instrumentation-only C control entry named
 `ck_profile_flush_<full-profile-identity-hex>() -> i32` to its
-generated header
-and, where applicable, its temporary export/import table. The host must quiesce
+generated header. `full-profile-identity-hex` is the 64 lowercase hexadecimal
+characters of SHA-256 over the canonical serialized `CkProfileIdentity`, not
+the serialized identity text itself. The entry is also added, where applicable,
+to its temporary export/import table. The host must quiesce
 calls into that library and invoke the entry at its host-defined shutdown
 boundary, before unloading a dynamic library or discarding the final linked
 static-library state.
@@ -498,6 +500,13 @@ profile data. Any unmapped block stays in its ordinary order. A verifier
 independently compares the pre/post snapshots and rejects a plan outside this
 closed delta. This structural boundary, not LLVM pass names, defines O2
 permission.
+
+Each target owns a closed post-layout repair allowlist. If CFI, unwind, LOH,
+security, bundle, or other target state would require a repair outside that
+allowlist, the layout proposal is rejected and ordinary order is retained.
+AArch64 reruns its required branch relaxation after an accepted reorder. This
+conservative target fallback is a normal explanation, not permission to extend
+the allowlist implicitly.
 
 At O3, the same data can additionally affect existing verified transformations:
 

@@ -309,8 +309,11 @@ instrumented executable 的 compiler-owned entry wrapper 在 `main()` 正常返�
 
 instrumented static/dynamic library 则在生成的 header 以及适用的临时 export/import table
 增加一个 instrumentation-only C control entry：
-`ck_profile_flush_<full-profile-identity-hex>() -> i32`。host 必须等待进入该
-library 的调用静止，并在 host-defined shutdown boundary 调用它：dynamic library unload 前，
+`ck_profile_flush_<full-profile-identity-hex>() -> i32`。
+`full-profile-identity-hex` 是 canonical serialized `CkProfileIdentity` 的 SHA-256 所得 64 个
+lowercase hexadecimal character，不是 serialized identity text 本身。该 entry 同时加入临时
+export/import table。host 必须等待进入该 library 的调用静止，并在 host-defined shutdown
+boundary 调用它：dynamic library unload 前，
 或 final linked static-library state 被丢弃前。第一次调用 snapshot counter 并写恰好一个
 shard；后续
 调用 idempotent，返回同一 success/failure status。library unload hook 与 `DllMain` 不做
@@ -404,6 +407,11 @@ instruction、outline、split、merge、reschedule 或改变 call target。此�
 branch relaxation、offset/fixup assignment、alignment padding 与 object emission，且都不接收
 profile data。unmapped block 保持 ordinary order。verifier 独立比较 pre/post snapshot，拒绝
 闭合集以外 delta。定义 O2 权限的是该 structural boundary，而不是 LLVM pass 名称。
+
+每个 target 拥有 closed post-layout repair allowlist。若 CFI、unwind、LOH、security、bundle
+或其他 target state 需要 allowlist 以外 repair，则拒绝 layout proposal 并保留 ordinary order。
+AArch64 在接受 reorder 后重新运行所需 branch relaxation。该 conservative target fallback
+属于正常 explanation，不能作为隐式扩张 allowlist 的许可。
 
 O3 还可以影响已有 verified transformation：
 
