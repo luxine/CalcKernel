@@ -58,7 +58,12 @@ impl CacheStore {
         Ok(Self { root })
     }
 
+    #[cfg(test)]
     pub(super) fn read(&self, key: &str) -> Option<Vec<u8>> {
+        self.read_entry(key).map(|(_, object)| object)
+    }
+
+    pub(super) fn read_entry(&self, key: &str) -> Option<(CacheManifest, Vec<u8>)> {
         if !valid_key(key) {
             return None;
         }
@@ -72,9 +77,11 @@ impl CacheStore {
         }
         let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).ok()?);
         file.read_to_end(&mut bytes).ok()?;
-        let object = decode_entry(key, &bytes).ok()?.object.to_vec();
+        let decoded = decode_entry(key, &bytes).ok()?;
+        let manifest = decoded.manifest;
+        let object = decoded.object.to_vec();
         let _ = file.set_times(FileTimes::new().set_modified(SystemTime::now()));
-        Some(object)
+        Some((manifest, object))
     }
 
     pub(super) fn write(&self, manifest: &CacheManifest, object: &[u8]) -> Result<(), String> {
@@ -985,6 +992,12 @@ mod tests {
             vector_cost_model_schema: 1,
             vector_proof_schema: 1,
             vector_budget_identity: "vector-budget-schema=1;growth=20".to_string(),
+            profile_identity: "mode=off".to_string(),
+            artifact_identity: "kind=object;topology=native-library".to_string(),
+            pgo_identity: "mode=off".to_string(),
+            multiversion_identity: "policy=baseline".to_string(),
+            dispatch_identity: "none".to_string(),
+            budget_identity: "none".to_string(),
         }
     }
 

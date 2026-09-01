@@ -908,6 +908,55 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
     }
 }
 
+#[test]
+fn native_cache_schema4_contract_should_bind_complete_bundle_and_atomic_outputs() {
+    let key = read("src/cli/cache/key.rs");
+    let entry = read("src/cli/cache/entry.rs");
+    let cache = read("src/cli/cache/mod.rs");
+    let output = read("src/cli/output.rs");
+    for required in [
+        "const KEY_SCHEMA: u32 = 4",
+        "profile_identity",
+        "artifact_identity",
+        "pgo_identity",
+        "multiversion_identity",
+        "dispatch_identity",
+        "budget_identity",
+    ] {
+        assert!(key.contains(required), "cache key missing {required}");
+    }
+    for required in [
+        "CKCOBJ03",
+        "const MANIFEST_SCHEMA: u32 = 4",
+        "CKCBND01",
+        "dispatch_runtime_digest",
+        "cache bundle variant order is invalid",
+        "cache bundle has trailing data",
+    ] {
+        assert!(entry.contains(required), "cache entry missing {required}");
+    }
+    for required in [
+        "load_multiversion_bundle",
+        "store_multiversion_bundle",
+        "object_manifest != expected_manifest",
+        "Sha256::digest(&object)",
+        "from_cached_objects",
+    ] {
+        assert!(cache.contains(required), "bundle cache missing {required}");
+    }
+    for required in [
+        "canonical_output_identity",
+        "existing_files_alias",
+        "output destination identity changed before commit",
+        "output transaction rolled back",
+    ] {
+        assert!(
+            output.contains(required),
+            "output transaction missing {required}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn windows_native_artifact_audit_should_use_only_the_pinned_coff_inspector() {

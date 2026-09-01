@@ -24,6 +24,8 @@ mod libraries;
 mod llvm_ir;
 #[path = "native/multiversion.rs"]
 mod multiversion;
+#[path = "native/multiversion_artifacts.rs"]
+mod multiversion_artifacts;
 #[path = "native/multiversion_dispatch.rs"]
 mod multiversion_dispatch;
 #[path = "native/object.rs"]

@@ -2,7 +2,7 @@ use std::{
     env, fs,
     fs::OpenOptions,
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -123,6 +123,7 @@ pub(super) struct OutputTransaction {
 
 struct PendingOutput {
     destination: PathBuf,
+    identity: PathBuf,
     staged: PathBuf,
     backup: Option<PathBuf>,
     committed: bool,
@@ -154,19 +155,19 @@ impl OutputTransaction {
         bytes: &[u8],
         executable: bool,
     ) -> Result<(), String> {
-        if self
-            .entries
-            .iter()
-            .any(|entry| entry.destination == destination)
-        {
+        let lexical = lexical_output_identity(&destination)?;
+        create_parent_dirs(&lexical)?;
+        let identity = canonical_output_identity(&lexical)?;
+        if self.entries.iter().any(|entry| {
+            entry.identity == identity || existing_files_alias(&entry.destination, &destination)
+        }) {
             return Err(format!(
                 "duplicate output destination '{}': transaction rejected",
                 destination.display()
             ));
         }
-        create_parent_dirs(&destination)?;
-        reject_symlink(&destination)?;
-        let staged = unique_sibling(&destination, "stage")?;
+        reject_symlink(&identity)?;
+        let staged = unique_sibling(&identity, "stage")?;
         let write_result = (|| {
             let mut file = OpenOptions::new()
                 .write(true)
@@ -186,7 +187,8 @@ impl OutputTransaction {
             return Err(error);
         }
         self.entries.push(PendingOutput {
-            destination,
+            destination: identity.clone(),
+            identity,
             staged,
             backup: None,
             committed: false,
@@ -205,6 +207,16 @@ impl OutputTransaction {
         let mut replacements = 0usize;
         for index in 0..self.entries.len() {
             let destination = self.entries[index].destination.clone();
+            let current_identity = match canonical_output_identity(&destination) {
+                Ok(identity) => identity,
+                Err(error) => return self.rollback(error),
+            };
+            if current_identity != self.entries[index].identity {
+                return self.rollback(format!(
+                    "output destination identity changed before commit: '{}'",
+                    destination.display()
+                ));
+            }
             if let Err(error) = reject_symlink(&destination) {
                 return self.rollback(error);
             }
@@ -324,6 +336,57 @@ fn reject_symlink(path: &Path) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format_open_file_error(path, error)),
     }
+}
+
+fn lexical_output_identity(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("resolve output working directory: {error}"))?
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(format!(
+                        "output path '{}' escapes its filesystem root",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+fn canonical_output_identity(path: &Path) -> Result<PathBuf, String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = fs::canonicalize(parent).map_err(|error| format_open_file_error(parent, error))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("output path '{}' has no file name", path.display()))?;
+    Ok(parent.join(name))
+}
+
+#[cfg(unix)]
+fn existing_files_alias(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(left), Ok(right)) = (fs::metadata(left), fs::metadata(right)) else {
+        return false;
+    };
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn existing_files_alias(_left: &Path, _right: &Path) -> bool {
+    false
 }
 
 fn unique_sibling(destination: &Path, role: &str) -> Result<PathBuf, String> {
@@ -468,6 +531,33 @@ mod transaction_tests {
         assert_eq!(fs::read(&first).expect("read first"), b"new-first");
         assert_eq!(fs::read(&second).expect("read second"), b"new-second");
         assert_no_transaction_files(&root);
+        fs::remove_dir_all(root).expect("remove root");
+    }
+
+    #[test]
+    fn build_transaction_rejects_lexical_and_existing_file_aliases() {
+        let root = test_root("aliases");
+        let destination = root.join("artifact.bin");
+        fs::write(&destination, b"prior").expect("seed artifact");
+        let hardlink = root.join("artifact-hardlink.bin");
+        fs::hard_link(&destination, &hardlink).expect("hard link fixture");
+        let mut transaction = OutputTransaction::new();
+        transaction
+            .stage(destination.clone(), b"new")
+            .expect("stage first alias");
+        let error = transaction
+            .stage(hardlink, b"other")
+            .expect_err("reject existing hard-link alias");
+        assert!(error.contains("duplicate output destination"));
+
+        let mut lexical = OutputTransaction::new();
+        lexical
+            .stage(root.join("nested/../same.bin"), b"one")
+            .expect("stage normalized output");
+        let error = lexical
+            .stage(root.join("same.bin"), b"two")
+            .expect_err("reject lexical alias");
+        assert!(error.contains("duplicate output destination"));
         fs::remove_dir_all(root).expect("remove root");
     }
 

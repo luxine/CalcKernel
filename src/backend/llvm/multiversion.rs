@@ -5,6 +5,7 @@ use crate::{
     check_kir_multiversion_bundle, materialized_tier, run_kir_pass_pipeline,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 use super::{
     NativeContext, NativeError, NativeObject, NativeOptimizationLevel, NativeStage, NativeTarget,
@@ -85,6 +86,160 @@ impl NativeMultiversionObjectBundle {
     pub fn objects(&self) -> &[NativeMultiversionObject] {
         &self.objects
     }
+
+    /// Returns the canonical, path-free named-object manifest after checking
+    /// order, roles, names, and every physical object digest.
+    pub fn manifest_bytes(&self) -> Result<Vec<u8>, NativeError> {
+        self.validate()?;
+        let mut output = Vec::with_capacity(128 + self.objects.len() * 128);
+        output.extend_from_slice(b"CKC-MV-OBJECTS\0");
+        output.extend_from_slice(&1_u32.to_be_bytes());
+        output.extend_from_slice(&self.target_set_digest);
+        output.extend_from_slice(&self.dispatch_runtime_digest);
+        output.extend_from_slice(&(self.objects.len() as u32).to_be_bytes());
+        for object in &self.objects {
+            output.extend_from_slice(&(object.name.len() as u32).to_be_bytes());
+            output.extend_from_slice(object.name.as_bytes());
+            match object.role {
+                NativeMultiversionObjectRole::Baseline => output.push(1),
+                NativeMultiversionObjectRole::Variant { root, tier } => {
+                    output.push(2);
+                    output.extend_from_slice(&root.index().to_be_bytes());
+                    let tier = tier.stable_name().as_bytes();
+                    output.extend_from_slice(&(tier.len() as u32).to_be_bytes());
+                    output.extend_from_slice(tier);
+                }
+                NativeMultiversionObjectRole::DispatchRuntime => output.push(3),
+            }
+            output.extend_from_slice(&object.digest);
+        }
+        Ok(output)
+    }
+
+    /// Content identity of the complete ordered object bundle.
+    pub fn bundle_digest(&self) -> Result<[u8; 32], NativeError> {
+        Ok(Sha256::digest(self.manifest_bytes()?).into())
+    }
+
+    pub(in crate::backend) fn validate(&self) -> Result<(), NativeError> {
+        if self.objects.len() < 2
+            || self.objects.first().map(NativeMultiversionObject::role)
+                != Some(NativeMultiversionObjectRole::Baseline)
+            || self.objects.last().map(NativeMultiversionObject::role)
+                != Some(NativeMultiversionObjectRole::DispatchRuntime)
+        {
+            return Err(object_error(
+                "multiversion object bundle must be baseline, ordered variants, then dispatch runtime",
+            ));
+        }
+        let namespace = object_namespace(&self.target_set_digest);
+        let mut names = BTreeSet::new();
+        let mut prior_variant = None;
+        for (index, object) in self.objects.iter().enumerate() {
+            if object.name.is_empty()
+                || object.name.len() > 255
+                || object.name.starts_with('.')
+                || !object
+                    .name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+                || !object.name.ends_with(".o")
+                || !object.name.contains(&namespace)
+                || !names.insert(object.name.as_str())
+            {
+                return Err(object_error(
+                    "multiversion object name is unsafe, duplicated, or not target-set namespaced",
+                ));
+            }
+            if object.object.is_empty()
+                || <[u8; 32]>::from(Sha256::digest(object.object.as_bytes())) != object.digest
+            {
+                return Err(object_error("multiversion physical object digest mismatch"));
+            }
+            match object.role {
+                NativeMultiversionObjectRole::Baseline if index == 0 => {}
+                NativeMultiversionObjectRole::DispatchRuntime
+                    if index + 1 == self.objects.len() =>
+                {
+                    if object.digest != self.dispatch_runtime_digest {
+                        return Err(object_error("dispatch runtime identity mismatch"));
+                    }
+                }
+                NativeMultiversionObjectRole::Variant { root, tier }
+                    if index > 0 && index + 1 < self.objects.len() =>
+                {
+                    let key = (root.index(), tier.stable_name());
+                    if prior_variant.is_some_and(|prior| prior >= key) {
+                        return Err(object_error(
+                            "multiversion variant object order is not canonical",
+                        ));
+                    }
+                    prior_variant = Some(key);
+                }
+                _ => {
+                    return Err(object_error(
+                        "multiversion object role does not match its canonical position",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn expected_layout(
+        bundle: &KirMultiversionBundle,
+    ) -> Vec<(String, NativeMultiversionObjectRole)> {
+        let namespace = object_namespace(&bundle.target_set.digest);
+        let mut layout = vec![(
+            format!("baseline-{namespace}.o"),
+            NativeMultiversionObjectRole::Baseline,
+        )];
+        for root in &bundle.roots {
+            for variant in &root.variants {
+                layout.push((
+                    format!(
+                        "variant-f{}-{}-{namespace}.o",
+                        variant.root.index(),
+                        variant.tier.stable_name().replace('-', "_")
+                    ),
+                    NativeMultiversionObjectRole::Variant {
+                        root: variant.root,
+                        tier: variant.tier,
+                    },
+                ));
+            }
+        }
+        layout.push((
+            format!("dispatch-runtime-{namespace}.o"),
+            NativeMultiversionObjectRole::DispatchRuntime,
+        ));
+        layout
+    }
+
+    /// Re-parses and validates every object recovered from the private cache.
+    /// The closed constructor prevents cached bytes from bypassing target or
+    /// bundle validation.
+    #[doc(hidden)]
+    pub fn from_cached_objects(
+        target: &NativeTarget,
+        target_set_digest: [u8; 32],
+        dispatch_runtime_digest: [u8; 32],
+        cached: Vec<(String, NativeMultiversionObjectRole, Vec<u8>)>,
+    ) -> Result<Self, NativeError> {
+        let mut objects = Vec::with_capacity(cached.len());
+        for (name, role, bytes) in cached {
+            let object = target.parse_cached_object(&bytes)?;
+            objects.push(named_object(name, role, object));
+        }
+        let bundle = Self {
+            target_set_digest,
+            dispatch_runtime_digest,
+            objects,
+        };
+        bundle.validate()?;
+        Ok(bundle)
+    }
 }
 
 /// Emits baseline, every accepted enhanced module, and private detector support
@@ -125,10 +280,10 @@ pub fn emit_native_multiversion_objects(
         .audit()?
         .optimize(baseline_target, NativeOptimizationLevel::O3)?,
     )?;
-    let namespace = object_namespace(&bundle.target_set.digest);
+    let expected_layout = NativeMultiversionObjectBundle::expected_layout(bundle);
     let mut objects = vec![named_object(
-        format!("baseline-{namespace}.o"),
-        NativeMultiversionObjectRole::Baseline,
+        expected_layout[0].0.clone(),
+        expected_layout[0].1,
         baseline,
     )];
 
@@ -153,18 +308,8 @@ pub fn emit_native_multiversion_objects(
                 .audit()?
                 .optimize(target, NativeOptimizationLevel::O3)?,
             )?;
-            objects.push(named_object(
-                format!(
-                    "variant-f{}-{}-{namespace}.o",
-                    variant.root.index(),
-                    variant.tier.stable_name().replace('-', "_")
-                ),
-                NativeMultiversionObjectRole::Variant {
-                    root: variant.root,
-                    tier: variant.tier,
-                },
-                object,
-            ));
+            let layout = &expected_layout[objects.len()];
+            objects.push(named_object(layout.0.clone(), layout.1, object));
         }
     }
 
@@ -172,7 +317,7 @@ pub fn emit_native_multiversion_objects(
         .parse_cached_object(crate::backend::native_runtime::embedded_dispatch_runtime_object())?;
     let dispatch_runtime_digest = Sha256::digest(runtime.as_bytes()).into();
     objects.push(named_object(
-        format!("dispatch-runtime-{namespace}.o"),
+        expected_layout.last().expect("dispatch layout").0.clone(),
         NativeMultiversionObjectRole::DispatchRuntime,
         runtime,
     ));
@@ -280,4 +425,8 @@ impl NativeMultiversionTargetSet {
 
 fn error(message: impl Into<String>) -> NativeError {
     NativeError::new(NativeStage::Target, 1, message.into())
+}
+
+fn object_error(message: impl Into<String>) -> NativeError {
+    NativeError::new(NativeStage::Object, 1, message.into())
 }

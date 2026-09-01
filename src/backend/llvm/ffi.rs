@@ -816,6 +816,7 @@ unsafe extern "C" {
     fn ckc_llvm_object_dispose(object: *mut CkcLlvmObject);
     fn ckc_llvm_archive_create(
         objects: *const *const CkcLlvmObject,
+        member_names: *const CkcLlvmBytes,
         object_count: usize,
         kind: u32,
         out: *mut *mut CkcLlvmArchive,
@@ -2036,11 +2037,23 @@ pub(in crate::backend) enum BridgeArchiveKind {
 
 pub(in crate::backend) fn archive_create(
     objects: &[NonNull<CkcLlvmObject>],
+    member_names: &[String],
     kind: BridgeArchiveKind,
 ) -> Result<NonNull<CkcLlvmArchive>, NativeError> {
+    if objects.len() != member_names.len() {
+        return Err(NativeError::new(
+            NativeStage::Archive,
+            1,
+            "archive object/name count mismatch".to_string(),
+        ));
+    }
     let objects = objects
         .iter()
         .map(|object| object.as_ptr().cast_const())
+        .collect::<Vec<_>>();
+    let member_names = member_names
+        .iter()
+        .map(|name| CkcLlvmBytes::new(name))
         .collect::<Vec<_>>();
     let mut handle = ptr::null_mut();
     let mut error = CkcLlvmError::empty();
@@ -2049,6 +2062,7 @@ pub(in crate::backend) fn archive_create(
     let status = unsafe {
         ckc_llvm_archive_create(
             objects.as_ptr(),
+            member_names.as_ptr(),
             objects.len(),
             kind as u32,
             &mut handle,

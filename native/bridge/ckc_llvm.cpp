@@ -1,6 +1,7 @@
 #include "ckc_llvm.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -3604,11 +3605,13 @@ extern "C" void ckc_llvm_object_dispose(CkcLlvmObject *object) {
 }
 
 extern "C" int32_t ckc_llvm_archive_create(
-    const CkcLlvmObject *const *objects, size_t object_count, uint32_t kind,
+    const CkcLlvmObject *const *objects, const CkcLlvmBytes *member_names,
+    size_t object_count, uint32_t kind,
                                              CkcLlvmArchive **out,
                                              CkcLlvmError *error) {
     clear_error(error);
-    if (objects == nullptr || object_count == 0 || out == nullptr) {
+    if (objects == nullptr || member_names == nullptr || object_count == 0 ||
+        out == nullptr) {
         return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                          "LLVM archive input or output is null");
     }
@@ -3632,6 +3635,7 @@ extern "C" int32_t ckc_llvm_archive_create(
 
         std::vector<std::unique_ptr<llvm::MemoryBuffer>> buffers;
         std::vector<llvm::NewArchiveMember> members;
+        std::set<std::string> unique_names;
         buffers.reserve(object_count);
         members.reserve(object_count);
         for (size_t index = 0; index < object_count; ++index) {
@@ -3642,12 +3646,22 @@ extern "C" int32_t ckc_llvm_archive_create(
             const llvm::StringRef object_bytes(
                 reinterpret_cast<const char *>(objects[index]->bytes.data()),
                 objects[index]->bytes.size());
-            const std::string member_name =
-                index == 0 ? "ck_module.o" : "ck_profile_runtime.o";
+            const std::string member_name = borrowed_string(member_names[index]).str();
+            if (member_name.empty() || member_name.size() > 255 ||
+                member_name.front() == '.' ||
+                !std::all_of(member_name.begin(), member_name.end(), [](char value) {
+                    const auto byte = static_cast<unsigned char>(value);
+                    return std::isalnum(byte) != 0 || value == '.' || value == '_' ||
+                           value == '-';
+                }) ||
+                !unique_names.insert(member_name).second) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "LLVM archive member name is invalid or duplicated");
+            }
             buffers.push_back(
                 llvm::MemoryBuffer::getMemBufferCopy(object_bytes, member_name));
             llvm::NewArchiveMember member(buffers.back()->getMemBufferRef());
-            member.MemberName = member_name;
+            member.MemberName = buffers.back()->getBufferIdentifier();
             members.push_back(std::move(member));
         }
         auto written = llvm::writeArchiveToBuffer(

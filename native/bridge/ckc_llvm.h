@@ -494,6 +494,7 @@ size_t ckc_llvm_object_size(const CkcLlvmObject *object);
 const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object);
 void ckc_llvm_object_dispose(CkcLlvmObject *object);
 int32_t ckc_llvm_archive_create(const CkcLlvmObject *const *objects,
+                                const CkcLlvmBytes *member_names,
                                 size_t object_count, uint32_t kind,
                                 CkcLlvmArchive **out,
                                 CkcLlvmError *error);

@@ -16,9 +16,11 @@ use crate::{MirFunction, MirInstruction, MirPlace, MirPrimitiveTypeName, MirType
 #[cfg(feature = "native-toolchain")]
 pub use artifact::{
     NativeArchive, NativeArtifactKind, NativeArtifactPaths, NativeDynamicLibrary, NativeExecutable,
-    NativePlatform, create_native_profile_generation_static_archive, create_native_static_archive,
-    link_native_dynamic_library, link_native_executable,
-    link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
+    NativePlatform, create_native_multiversion_static_archive,
+    create_native_profile_generation_static_archive, create_native_static_archive,
+    link_native_dynamic_library, link_native_executable, link_native_multiversion_dynamic_library,
+    link_native_multiversion_executable, link_native_profile_generation_dynamic_library,
+    link_native_profile_generation_executable,
 };
 pub use c::{
     BoundsMode, EmitCOptions, OverflowMode, emit_c_kir_header, emit_c_kir_module,

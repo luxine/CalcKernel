@@ -76,7 +76,7 @@ fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_
 
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn multiversion_build_should_reach_the_verified_bundle_builder_before_stage09_with_no_output() {
+fn multiversion_build_should_commit_the_verified_stage09_artifact_bundle() {
     let (dir, source) = fixture("export fn add(a: i32, b: i32) -> i32 { return a + b; }");
     let artifact = dir.join("libadd.dylib");
     let output = run([
@@ -90,14 +90,14 @@ fn multiversion_build_should_reach_the_verified_bundle_builder_before_stage09_wi
         os("multiversion"),
         os("-O3"),
     ]);
-    assert_eq!(output.code, Some(1));
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert!(
-        output.stderr.contains("multiversion KIR bundle"),
+        output.stdout.contains("multiversion bundle"),
         "{}",
-        output.stderr
+        output.stdout
     );
-    assert!(output.stderr.contains("stage 09"), "{}", output.stderr);
-    assert!(!artifact.exists());
+    assert!(artifact.exists());
+    assert!(dir.join("libadd.h").exists());
 }
 
 #[test]
@@ -613,7 +613,7 @@ fn pgo_o2_should_reach_real_late_layout_boundary_with_checked_fallback_or_plan()
 
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn pgo_build_should_preserve_prior_outputs_when_training_returns_nonzero() {
+fn build_transaction_should_preserve_prior_outputs_when_training_returns_nonzero() {
     use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
 
     let (dir, source) = fixture("fn main() -> i32 { return 7; }");

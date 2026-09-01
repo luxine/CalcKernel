@@ -86,15 +86,15 @@ fn cache_entries(root: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-fn cache_schema_should_use_v3_identity_and_reject_ckcobj01_entries() {
+fn cache_schema_should_use_v4_identity_and_reject_ckcobj02_entries() {
     let fixture = Fixture::new("fn main() -> i32 { return 0; }");
     assert_eq!(fixture.run(&[]).status.code(), Some(0));
     let entry = cache_entries(&fixture.cache_root()).remove(0);
-    let bytes = fs::read(&entry).expect("read cache v3 entry");
-    assert!(bytes.starts_with(b"CKCOBJ02"));
+    let bytes = fs::read(&entry).expect("read cache v4 entry");
+    assert!(bytes.starts_with(b"CKCOBJ03"));
 
     let mut old = bytes;
-    old[..8].copy_from_slice(b"CKCOBJ01");
+    old[..8].copy_from_slice(b"CKCOBJ02");
     fs::write(&entry, old).expect("install legacy cache magic");
     #[cfg(unix)]
     {
@@ -106,7 +106,7 @@ fn cache_schema_should_use_v3_identity_and_reject_ckcobj01_entries() {
     assert!(
         fs::read(&entry)
             .expect("read repaired cache entry")
-            .starts_with(b"CKCOBJ02")
+            .starts_with(b"CKCOBJ03")
     );
 }
 

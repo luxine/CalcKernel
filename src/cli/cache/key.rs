@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 const KEY_MAGIC: &[u8] = b"CKC-CACHE-KEY\0";
-const KEY_SCHEMA: u32 = 3;
+const KEY_SCHEMA: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::cli) struct CacheKeyInput {
@@ -26,6 +26,12 @@ pub(in crate::cli) struct CacheKeyInput {
     pub(in crate::cli) features: String,
     pub(in crate::cli) codegen_contract: String,
     pub(in crate::cli) runtime_sha256: [String; 5],
+    pub(in crate::cli) profile_identity: String,
+    pub(in crate::cli) artifact_identity: String,
+    pub(in crate::cli) pgo_identity: String,
+    pub(in crate::cli) multiversion_identity: String,
+    pub(in crate::cli) dispatch_identity: String,
+    pub(in crate::cli) budget_identity: String,
 }
 
 pub(super) fn canonical_key_bytes(input: &CacheKeyInput) -> Vec<u8> {
@@ -59,6 +65,12 @@ pub(super) fn canonical_key_bytes(input: &CacheKeyInput) -> Vec<u8> {
         field(&mut output, 20 + index as u16, hash.as_bytes());
     }
     field(&mut output, 30, input.vector_budget_identity.as_bytes());
+    field(&mut output, 31, input.profile_identity.as_bytes());
+    field(&mut output, 32, input.artifact_identity.as_bytes());
+    field(&mut output, 33, input.pgo_identity.as_bytes());
+    field(&mut output, 34, input.multiversion_identity.as_bytes());
+    field(&mut output, 35, input.dispatch_identity.as_bytes());
+    field(&mut output, 36, input.budget_identity.as_bytes());
     output
 }
 
@@ -112,6 +124,12 @@ mod tests {
                 "24".repeat(32),
                 "25".repeat(32),
             ],
+            profile_identity: "mode=use;format=1;contract=1;digest=41".to_string(),
+            artifact_identity: "kind=dynamic;topology=native-library".to_string(),
+            pgo_identity: "confidence=95/100;hot=900/1000;site=3;cost=3".to_string(),
+            multiversion_identity: "target-set=51;variants=baseline,x86-64-v3".to_string(),
+            dispatch_identity: "table=61;detector=1;thunk=1;runtime=71".to_string(),
+            budget_identity: "multiversion=1;growth=100;root=25".to_string(),
         }
     }
 
@@ -119,10 +137,10 @@ mod tests {
     fn canonical_key_should_have_one_exact_architecture_independent_vector() {
         let input = vector();
         let bytes = canonical_key_bytes(&input);
-        assert!(bytes.starts_with(b"CKC-CACHE-KEY\0\0\0\0\x03"));
+        assert!(bytes.starts_with(b"CKC-CACHE-KEY\0\0\0\0\x04"));
         assert_eq!(
             cache_key_hex(&input),
-            "2aef2877444ba674f0cfdace6dcbe14f5e00c6efea586a921c323ad8b54575ec"
+            "4b6a7c147c891bbc12a17d1d805a1479ad3b6fe5f9a31366dc1e49b3df4d6407"
         );
     }
 
@@ -167,6 +185,15 @@ mod tests {
         let mut runtime = baseline.runtime_sha256.clone();
         runtime[3] = "ff".repeat(32);
         changed!(runtime_sha256, runtime);
+        changed!(profile_identity, "mode=off".to_string());
+        changed!(
+            artifact_identity,
+            "kind=static;topology=native-library".to_string()
+        );
+        changed!(pgo_identity, "confidence=90/100".to_string());
+        changed!(multiversion_identity, "target-set=52".to_string());
+        changed!(dispatch_identity, "table=62".to_string());
+        changed!(budget_identity, "multiversion=2".to_string());
         for (name, mutation) in mutations {
             assert_ne!(cache_key_hex(&mutation), expected, "unchanged {name}");
         }

@@ -28,13 +28,14 @@ use calckernel::{
     NativeMultiversionTargetSet, NativeObject, NativeOptimizationLevel, NativePlatform,
     NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
     build_late_profile_layout_plan, check_kir_multiversion_bundle,
-    create_native_profile_generation_static_archive, create_native_static_archive,
-    emit_native_header, emit_native_profile_generation_header, link_native_dynamic_library,
-    link_native_executable, link_native_profile_generation_dynamic_library,
-    link_native_profile_generation_executable, lower_native_kir_module,
-    lower_native_profile_generation_module, prepare_ck_profile_kir, print_kir_multiversion_bundle,
-    propose_kir_multiversion_bundle, read_profile_input, run_profile_guided_kir_pass_pipeline,
-    validate_profile_analysis_for_optimizer,
+    create_native_multiversion_static_archive, create_native_profile_generation_static_archive,
+    create_native_static_archive, emit_native_header, emit_native_multiversion_objects,
+    emit_native_profile_generation_header, link_native_dynamic_library, link_native_executable,
+    link_native_multiversion_dynamic_library, link_native_multiversion_executable,
+    link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
+    lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
+    print_kir_multiversion_bundle, propose_kir_multiversion_bundle, read_profile_input,
+    run_profile_guided_kir_pass_pipeline, validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
@@ -88,6 +89,18 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
             env!("CKC_RUNTIME_SHA256_3").to_string(),
             env!("CKC_RUNTIME_SHA256_4").to_string(),
         ],
+        profile_identity: "mode=off;format=1;contract=1;digest=none".to_string(),
+        artifact_identity: "kind=jit-object;topology=native-executable".to_string(),
+        pgo_identity: "mode=off;confidence=1;site=3;cost=3".to_string(),
+        multiversion_identity: "policy=native;target-set=single;variants=none".to_string(),
+        dispatch_identity: format!(
+            "table=none;detector=1;thunk=1;runtime={}",
+            calckernel::NATIVE_DISPATCH_RUNTIME_SHA256
+        ),
+        budget_identity: format!(
+            "vector={};multiversion=1;growth=none",
+            calckernel::kir_vector_budget_identity()
+        ),
     };
     let key = cache::cache_key_hex(&key_input);
     let manifest = CacheManifest {
@@ -110,8 +123,14 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
         vector_cost_model_schema: key_input.vector_cost_model_schema,
         vector_proof_schema: key_input.vector_proof_schema,
         vector_budget_identity: key_input.vector_budget_identity,
+        profile_identity: key_input.profile_identity,
+        artifact_identity: key_input.artifact_identity,
+        pgo_identity: key_input.pgo_identity,
+        multiversion_identity: key_input.multiversion_identity,
+        dispatch_identity: key_input.dispatch_identity,
+        budget_identity: key_input.budget_identity,
     };
-    if let Some(object) = cache::load_object(&target, &key, args.no_cache) {
+    if let Some(object) = cache::load_object(&target, &manifest, args.no_cache) {
         return Ok(object);
     }
 
@@ -1119,10 +1138,262 @@ fn run_multiversion_planning_build(
     };
     let bundle = propose_kir_multiversion_bundle(&request)?;
     check_kir_multiversion_bundle(&request, &bundle)?;
-    Err(format!(
-        "multiversion KIR bundle {} was verified, but production dispatch and artifact packaging are unavailable until stage 09; no output was created",
+    if let Some(application) = &application {
+        emit_profile_analysis(&application.analysis, args)?;
+    }
+    emit_pgo_optimizer_report(&compiled.result, args)?;
+    let cache_manifest = multiversion_cache_manifest(
+        args,
+        baseline_target,
+        consumer,
+        kind,
+        overflow_mode,
+        bounds_mode,
+        opt_level,
+        &bundle,
+    )?;
+    let objects = if let Some(cached) =
+        cache::load_multiversion_bundle(baseline_target, &cache_manifest, &bundle, args.no_cache)
+    {
+        cached
+    } else {
+        let context = NativeContext::new().map_err(|error| error.to_string())?;
+        let emitted = emit_native_multiversion_objects(
+            &context,
+            &targets,
+            &request,
+            &bundle,
+            &EmitLlvmOptions {
+                source_file_name: None,
+                target_triple: args.target.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        cache::store_multiversion_bundle(&cache_manifest, &emitted, args.no_cache);
+        emitted
+    };
+    let exports = request
+        .logical_pre_state
+        .functions
+        .iter()
+        .filter(|function| function.exported)
+        .map(|function| function.name.clone())
+        .collect::<Vec<_>>();
+    let artifact_kind = match kind {
+        ArtifactKind::Executable => NativeArtifactKind::Executable,
+        ArtifactKind::Dynamic => NativeArtifactKind::Dynamic,
+        ArtifactKind::Static => NativeArtifactKind::Static,
+        ArtifactKind::Object => unreachable!("multiversion object rejected above"),
+    };
+    let out = require_out(args, "build")?;
+    let paths = NativeArtifactPaths::new(NativePlatform::host(), artifact_kind, &absolutize(out));
+    let header = (kind != ArtifactKind::Executable).then(|| {
+        annotate_unsafe_contracts(
+            &emit_native_header(
+                &request.logical_pre_state,
+                if kind == ArtifactKind::Dynamic {
+                    NativeHeaderMode::Dynamic
+                } else {
+                    NativeHeaderMode::StaticOrObject
+                },
+            ),
+            program,
+        )
+    });
+    let (primary, import_library) = match kind {
+        ArtifactKind::Executable => (
+            link_native_multiversion_executable(&objects)
+                .map_err(|error| error.to_string())?
+                .as_bytes()
+                .to_vec(),
+            None,
+        ),
+        ArtifactKind::Static => (
+            create_native_multiversion_static_archive(&objects)
+                .map_err(|error| error.to_string())?
+                .as_bytes()
+                .to_vec(),
+            None,
+        ),
+        ArtifactKind::Dynamic => {
+            let library = link_native_multiversion_dynamic_library(&objects, &exports)
+                .map_err(|error| error.to_string())?;
+            (
+                library.as_bytes().to_vec(),
+                library.import_library().map(<[u8]>::to_vec),
+            )
+        }
+        ArtifactKind::Object => unreachable!("multiversion object rejected above"),
+    };
+    let mut transaction = OutputTransaction::new();
+    if kind == ArtifactKind::Executable {
+        transaction.stage_executable(paths.primary.clone(), &primary)?;
+    } else {
+        transaction.stage(paths.primary.clone(), &primary)?;
+    }
+    if let (Some(path), Some(header)) = (&paths.header, header.as_deref()) {
+        transaction.stage(path.clone(), header.as_bytes())?;
+    }
+    if let (Some(path), Some(bytes)) = (&paths.import_library, import_library.as_deref()) {
+        transaction.stage(path.clone(), bytes)?;
+    }
+    transaction.commit()?;
+    println!(
+        "OK: built native {} with multiversion bundle {}",
+        artifact_kind_name(artifact_kind),
         bundle.digest_hex()
-    ))
+    );
+    println!("{}", paths.primary.display());
+    if let Some(path) = paths.header {
+        println!("{}", path.display());
+    }
+    if let Some(path) = paths.import_library {
+        println!("{}", path.display());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "native-toolchain")]
+#[allow(clippy::too_many_arguments)]
+fn multiversion_cache_manifest(
+    args: &ParsedArgs,
+    target: &NativeTarget,
+    consumer: KirConsumer,
+    kind: ArtifactKind,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+    bundle: &calckernel::KirMultiversionBundle,
+) -> Result<CacheManifest, String> {
+    let source = read_file_bytes(require_input(args, "build")?)?;
+    let bridge = calckernel::bridge_info().map_err(|error| error.to_string())?;
+    let target_triple = target.triple().map_err(|error| error.to_string())?;
+    let cpu = target.cpu().map_err(|error| error.to_string())?;
+    let features = target.features().map_err(|error| error.to_string())?;
+    let profile_digest = args
+        .pgo_use
+        .as_deref()
+        .map(read_file_bytes)
+        .transpose()?
+        .map(|bytes| digest_hex(&Sha256::digest(bytes)))
+        .unwrap_or_else(|| "none".to_string());
+    let profile_contract = calckernel::CkProfileContract::schema1();
+    let profile_identity = format!(
+        "mode={};format={};contract={};digest={profile_digest}",
+        if args.pgo_use.is_some() { "use" } else { "off" },
+        profile_contract.format_schema,
+        profile_contract.contract_schema,
+    );
+    let artifact_identity = format!(
+        "kind={};topology={}",
+        match kind {
+            ArtifactKind::Executable => "executable",
+            ArtifactKind::Dynamic => "dynamic",
+            ArtifactKind::Static => "static",
+            ArtifactKind::Object => "object",
+        },
+        if consumer == KirConsumer::NativeExecutable {
+            "native-executable"
+        } else {
+            "native-library"
+        }
+    );
+    let pgo_identity = format!(
+        "minimum-observations={};branch-bp={};histogram-bp={};cold-bp={};hot-work-bp={};root-work-bp={};site-schema=3;cost-schema=3",
+        profile_contract.minimum_decision_observations,
+        profile_contract.branch_dominance_basis_points,
+        profile_contract.histogram_dominance_basis_points,
+        profile_contract.cold_basis_points,
+        profile_contract.hot_work_coverage_basis_points,
+        profile_contract.minimum_root_work_basis_points,
+    );
+    let multiversion_identity = format!(
+        "schema={};target-set={};bundle={}",
+        bundle.schema_version,
+        bundle.target_set.digest_hex(),
+        bundle.digest_hex()
+    );
+    let dispatch_identity = format!(
+        "dispatch-plan={};detector=closed-v1;thunk=acqrel-v1;runtime={}",
+        bundle.digest_hex(),
+        calckernel::NATIVE_DISPATCH_RUNTIME_SHA256
+    );
+    let budget_identity = format!(
+        "minimum-benefit-bp={};minimum-units={};maximum-variants={};maximum-growth-bp={};shared-before={};trial={};additional={};total={}",
+        profile_contract.minimum_variant_benefit_basis_points,
+        profile_contract.minimum_absolute_cost_units,
+        profile_contract.maximum_enhanced_variants,
+        profile_contract.maximum_additional_kir_basis_points,
+        bundle.shared_growth_consumed_before,
+        bundle.trial_audit_units,
+        bundle.additional_kir_units,
+        bundle.total_kir_units,
+    );
+    let codegen_contract =
+        "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1".to_string();
+    let key_input = CacheKeyInput {
+        source,
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        native_abi: calckernel::NATIVE_ABI_VERSION,
+        runtime_abi: calckernel::RUNTIME_ABI_VERSION,
+        bridge_abi: calckernel::LLVM_BRIDGE_ABI_VERSION,
+        llvm_version: bridge.llvm_version.clone(),
+        llvm_manifest_sha256: env!("CKC_LLVM_MANIFEST_SHA256").to_string(),
+        target_triple: target_triple.clone(),
+        optimization_level: opt_level,
+        overflow_mode: mode_value(overflow_mode),
+        bounds_mode: bounds_mode_value(bounds_mode),
+        kir_contract_version: 3,
+        sanitizer_mode: 0,
+        target_profile_digest: bundle.target_set.tiers[0].profile.digest_hex(),
+        vector_cost_model_schema: calckernel::KIR_VECTOR_COST_MODEL_SCHEMA,
+        vector_proof_schema: calckernel::KIR_VECTOR_PROOF_SCHEMA,
+        vector_budget_identity: calckernel::kir_vector_budget_identity().to_string(),
+        cpu: cpu.clone(),
+        features: features.clone(),
+        codegen_contract: codegen_contract.clone(),
+        runtime_sha256: [
+            env!("CKC_RUNTIME_SHA256_0").to_string(),
+            env!("CKC_RUNTIME_SHA256_1").to_string(),
+            env!("CKC_RUNTIME_SHA256_2").to_string(),
+            env!("CKC_RUNTIME_SHA256_3").to_string(),
+            env!("CKC_RUNTIME_SHA256_4").to_string(),
+        ],
+        profile_identity: profile_identity.clone(),
+        artifact_identity: artifact_identity.clone(),
+        pgo_identity: pgo_identity.clone(),
+        multiversion_identity: multiversion_identity.clone(),
+        dispatch_identity: dispatch_identity.clone(),
+        budget_identity: budget_identity.clone(),
+    };
+    let key = cache::cache_key_hex(&key_input);
+    Ok(CacheManifest {
+        key,
+        compiler_version: key_input.compiler_version,
+        llvm_version: key_input.llvm_version,
+        target_triple,
+        cpu,
+        features,
+        codegen_contract,
+        native_abi: key_input.native_abi,
+        runtime_abi: key_input.runtime_abi,
+        bridge_abi: key_input.bridge_abi,
+        optimization_level: opt_level,
+        overflow_mode: key_input.overflow_mode,
+        bounds_mode: key_input.bounds_mode,
+        kir_contract_version: key_input.kir_contract_version,
+        sanitizer_mode: key_input.sanitizer_mode,
+        target_profile_digest: key_input.target_profile_digest,
+        vector_cost_model_schema: key_input.vector_cost_model_schema,
+        vector_proof_schema: key_input.vector_proof_schema,
+        vector_budget_identity: key_input.vector_budget_identity,
+        profile_identity,
+        artifact_identity,
+        pgo_identity,
+        multiversion_identity,
+        dispatch_identity,
+        budget_identity,
+    })
 }
 
 #[cfg(feature = "native-toolchain")]
