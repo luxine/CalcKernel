@@ -189,6 +189,10 @@ fi
   -I"$ckc_repo_root/native/profile_runtime" -c \
   "$ckc_repo_root/native/profile_runtime/profile_runtime.c" \
   -o "$ckc_runtime_dir/profile_runtime.o"
+"$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -std=c11 \
+  -I"$ckc_repo_root/native/dispatch_runtime/include" -c \
+  "$ckc_repo_root/native/dispatch_runtime/dispatch_runtime.c" \
+  -o "$ckc_runtime_dir/dispatch_runtime.o"
 if [[ "$ckc_target" == *-apple-darwin ]]; then
   "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
     "$ckc_repo_root/native/runtime/darwin/process.c" -o "$ckc_runtime_dir/platform.o"
@@ -207,8 +211,10 @@ for ckc_runtime_object in "${ckc_runtime_objects[@]}"; do
 done
 if command -v sha256sum >/dev/null 2>&1; then
   ckc_profile_runtime_hash="$(sha256sum "$ckc_runtime_dir/profile_runtime.o" | awk '{print $1}')"
+  ckc_dispatch_runtime_hash="$(sha256sum "$ckc_runtime_dir/dispatch_runtime.o" | awk '{print $1}')"
 else
   ckc_profile_runtime_hash="$(shasum -a 256 "$ckc_runtime_dir/profile_runtime.o" | awk '{print $1}')"
+  ckc_dispatch_runtime_hash="$(shasum -a 256 "$ckc_runtime_dir/dispatch_runtime.o" | awk '{print $1}')"
 fi
 
 toml_array() {
@@ -247,6 +253,9 @@ mkdir -p "$ckc_prefix/share/ckc"
   printf '\nprofile_runtime_schema = 1\n'
   printf 'profile_runtime_object = "profile_runtime.o"\n'
   printf 'profile_runtime_sha256 = "%s"\n' "$ckc_profile_runtime_hash"
+  printf 'dispatch_runtime_schema = 1\n'
+  printf 'dispatch_runtime_object = "dispatch_runtime.o"\n'
+  printf 'dispatch_runtime_sha256 = "%s"\n' "$ckc_dispatch_runtime_hash"
   printf '\n'
 } > "$ckc_prefix/share/ckc/llvm-build.toml"
 

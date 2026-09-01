@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use sha2::Digest;
+
 use crate::*;
 
 use super::{
@@ -29,6 +31,157 @@ pub fn lower_native_kir_module<'context>(
     options: &EmitLlvmOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
     lower_native_kir_module_inner(context, target, result, None, options)
+}
+
+/// Lowers the immutable baseline module and installs baseline-safe per-root
+/// dispatchers without merging any enhanced LLVM module into it.
+pub fn lower_native_multiversion_baseline_module<'context>(
+    context: &'context NativeContext,
+    target: &NativeTarget,
+    result: &KirPassManagerResult,
+    bundle: &KirMultiversionBundle,
+    options: &EmitLlvmOptions,
+) -> Result<NativeModule<'context>, NativeError> {
+    validate_multiversion_lowering_input(result, bundle)?;
+    let mut module = lower_native_kir_module(context, target, result, options)?;
+    let namespace = dispatch_namespace(&bundle.target_set.digest);
+    for entry in &bundle.dispatch_plan {
+        if entry.ranked_tiers.len() != entry.implementation_symbols.len()
+            || entry.ranked_tiers.last() != Some(&KirMultiversionTierId::Baseline)
+            || entry.implementation_symbols.last() != Some(&entry.public_symbol)
+        {
+            return Err(lowering_error(
+                "multiversion dispatch entry is malformed or lacks final baseline",
+            ));
+        }
+        if entry.ranked_tiers.len() == 1 {
+            continue;
+        }
+        let function = bundle
+            .baseline
+            .functions
+            .iter()
+            .find(|function| function.id == entry.root)
+            .ok_or_else(|| lowering_error("multiversion dispatch root is missing"))?;
+        let implementation = if bundle.baseline.config.consumer == KirConsumer::NativeExecutable
+            && bundle
+                .baseline
+                .entry
+                .as_ref()
+                .is_some_and(|candidate| candidate.function_name == function.name)
+        {
+            "__ck_user_main".to_string()
+        } else if function.exported {
+            format!("__ck_impl_{}", function.name)
+        } else {
+            function.name.clone()
+        };
+        let baseline_hidden = format!("__ck_mv_{namespace}_{}_baseline", entry.public_symbol);
+        let variants = entry
+            .ranked_tiers
+            .iter()
+            .zip(&entry.implementation_symbols)
+            .take(entry.ranked_tiers.len() - 1)
+            .map(|(tier, symbol)| {
+                Ok::<_, NativeError>((symbol.as_str(), dispatch_capabilities(*tier)?))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        module.add_multiversion_dispatch(
+            &entry.public_symbol,
+            &implementation,
+            &baseline_hidden,
+            &namespace,
+            &variants,
+        )?;
+    }
+    Ok(module)
+}
+
+/// Lowers one checked enhanced KIR module and exposes only its root symbol as
+/// hidden external linkage. Helpers remain local to this object.
+pub fn lower_native_multiversion_variant_module<'context>(
+    context: &'context NativeContext,
+    target: &NativeTarget,
+    result: &KirPassManagerResult,
+    variant: &KirMultiversionVariant,
+    options: &EmitLlvmOptions,
+) -> Result<NativeModule<'context>, NativeError> {
+    if result.artifact.as_ref() != Some(&variant.module) {
+        return Err(lowering_error(
+            "multiversion variant result does not match the checked variant module",
+        ));
+    }
+    let root_symbol = variant
+        .hidden_symbols
+        .iter()
+        .find(|symbol| {
+            variant
+                .module
+                .functions
+                .iter()
+                .find(|function| function.id == variant.root)
+                .is_some_and(|function| function.name == symbol.hidden_name)
+        })
+        .map(|symbol| symbol.hidden_name.as_str())
+        .ok_or_else(|| lowering_error("multiversion variant root symbol is missing"))?;
+    let module = lower_native_kir_module(context, target, result, options)?;
+    module.expose_hidden_function(root_symbol)?;
+    Ok(module)
+}
+
+fn validate_multiversion_lowering_input(
+    result: &KirPassManagerResult,
+    bundle: &KirMultiversionBundle,
+) -> Result<(), NativeError> {
+    bundle.target_set.validate().map_err(lowering_error)?;
+    let expected_digest: [u8; 32] =
+        sha2::Sha256::digest(bundle.canonical_bytes_without_digest()).into();
+    if result.artifact.as_ref() != Some(&bundle.baseline) || bundle.digest != expected_digest {
+        return Err(lowering_error(
+            "multiversion baseline or canonical bundle digest is stale",
+        ));
+    }
+    Ok(())
+}
+
+fn dispatch_capabilities(tier: KirMultiversionTierId) -> Result<u32, NativeError> {
+    match tier {
+        KirMultiversionTierId::X86_64V3 => Ok(1),
+        KirMultiversionTierId::X86_64V4 => Ok(3),
+        KirMultiversionTierId::AArch64Sve => Ok(4),
+        KirMultiversionTierId::AArch64Sve2 => Ok(12),
+        KirMultiversionTierId::Baseline => Err(lowering_error(
+            "baseline cannot appear in the enhanced dispatch prefix",
+        )),
+    }
+}
+
+fn dispatch_namespace(digest: &[u8; 32]) -> String {
+    let mut output = String::with_capacity(16);
+    for byte in &digest[..8] {
+        use std::fmt::Write;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
+/// Test-only seam for exercising the exact LLVM thunk transformation on a
+/// host baseline module even when the host target set has no enhanced tier.
+#[doc(hidden)]
+pub fn test_add_multiversion_dispatch(
+    module: &mut NativeModule<'_>,
+    public_name: &str,
+    implementation_name: &str,
+    variant_name: &str,
+    required_capabilities: u32,
+) -> Result<(), NativeError> {
+    module.add_multiversion_dispatch(
+        public_name,
+        implementation_name,
+        &format!("__ck_mv_0102030405060708_{public_name}_baseline"),
+        "0102030405060708",
+        &[(variant_name, required_capabilities)],
+    )
 }
 
 /// Lowers one canonical generation plan with CK-owned instrumentation.

@@ -2165,6 +2165,209 @@ extern "C" int32_t ckc_llvm_module_fact_audit_counts(
     });
 }
 
+extern "C" int32_t ckc_llvm_module_expose_hidden_function(
+    CkcLlvmModule *module, CkcLlvmBytes function_name,
+    CkcLlvmError *error) {
+    return guarded(error, "exposing hidden multiversion function", [&] {
+        if (module == nullptr || module->value == nullptr) {
+            return invalid(error, "multiversion module is null");
+        }
+        const auto name = borrowed_string(function_name);
+        auto *function = module->value->getFunction(name);
+        if (name.empty() || function == nullptr || function->isDeclaration()) {
+            return invalid(error,
+                           "multiversion hidden function is missing or undefined");
+        }
+        function->setLinkage(llvm::GlobalValue::ExternalLinkage);
+        function->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        function->setDSOLocal(true);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
+    CkcLlvmModule *module, CkcLlvmBytes public_name_bytes,
+    CkcLlvmBytes implementation_name_bytes,
+    CkcLlvmBytes baseline_hidden_name_bytes,
+    CkcLlvmBytes dispatch_namespace_bytes,
+    const CkcLlvmBytes *variant_name_bytes,
+    const uint32_t *required_capabilities, size_t variant_count,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM multiversion dispatcher", [&] {
+        if (module == nullptr || module->value == nullptr ||
+            (variant_count != 0 &&
+             (variant_name_bytes == nullptr || required_capabilities == nullptr))) {
+            return invalid(error, "multiversion dispatch input is null");
+        }
+        auto &llvm_module = *module->value;
+        auto &context = llvm_module.getContext();
+        const auto public_name = borrowed_string(public_name_bytes);
+        const auto implementation_name =
+            borrowed_string(implementation_name_bytes);
+        const auto baseline_hidden_name =
+            borrowed_string(baseline_hidden_name_bytes);
+        const auto dispatch_namespace =
+            borrowed_string(dispatch_namespace_bytes);
+        if (public_name.empty() || implementation_name.empty() ||
+            baseline_hidden_name.empty() || dispatch_namespace.empty() ||
+            implementation_name == baseline_hidden_name ||
+            llvm_module.getNamedValue(baseline_hidden_name) != nullptr) {
+            return invalid(error, "multiversion dispatch names are invalid or collide");
+        }
+        auto *public_thunk = llvm_module.getFunction(public_name);
+        auto *baseline = llvm_module.getFunction(implementation_name);
+        if (public_thunk == nullptr || public_thunk->isDeclaration() ||
+            baseline == nullptr || baseline->isDeclaration()) {
+            return invalid(error,
+                           "multiversion public thunk or baseline implementation is missing");
+        }
+
+        auto *function_type = baseline->getFunctionType();
+        baseline->setName(baseline_hidden_name);
+        baseline->setLinkage(llvm::GlobalValue::ExternalLinkage);
+        baseline->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        baseline->setDSOLocal(true);
+
+        std::vector<llvm::Function *> variants;
+        variants.reserve(variant_count);
+        std::set<std::string> names;
+        for (size_t index = 0; index < variant_count; ++index) {
+            const auto name = borrowed_string(variant_name_bytes[index]);
+            if (name.empty() || name == baseline_hidden_name ||
+                !names.insert(name.str()).second ||
+                llvm_module.getNamedValue(name) != nullptr) {
+                return invalid(error,
+                               "multiversion variant name is empty, duplicated, or collides");
+            }
+            auto *variant = llvm::Function::Create(
+                function_type, llvm::GlobalValue::ExternalLinkage, name,
+                llvm_module);
+            variant->setVisibility(llvm::GlobalValue::HiddenVisibility);
+            variant->setDSOLocal(true);
+            variant->setCallingConv(baseline->getCallingConv());
+            variants.push_back(variant);
+        }
+
+        const std::string stem = "__ck_mv_" + dispatch_namespace.str() +
+                                 "_" + public_name.str();
+        auto *pointer_type = llvm::PointerType::get(context, 0);
+        auto *null_pointer = llvm::ConstantPointerNull::get(pointer_type);
+        auto *slot = new llvm::GlobalVariable(
+            llvm_module, pointer_type, false,
+            llvm::GlobalValue::InternalLinkage, null_pointer,
+            stem + "_slot");
+        slot->setAlignment(llvm::Align(8));
+
+        auto *i32_type = llvm::Type::getInt32Ty(context);
+        auto *detector_type = llvm::FunctionType::get(i32_type, false);
+        auto detector = llvm_module.getOrInsertFunction(
+            "__ck_dispatch_detect_capabilities", detector_type);
+        if (auto *detector_function =
+                llvm::dyn_cast<llvm::Function>(detector.getCallee())) {
+            detector_function->setVisibility(
+                llvm::GlobalValue::HiddenVisibility);
+        }
+
+        auto *resolver_type = llvm::FunctionType::get(pointer_type, false);
+        auto *resolver = llvm::Function::Create(
+            resolver_type, llvm::GlobalValue::InternalLinkage,
+            stem + "_resolve", llvm_module);
+        resolver->addFnAttr(llvm::Attribute::NoInline);
+        resolver->addFnAttr(llvm::Attribute::Cold);
+        auto *resolver_entry =
+            llvm::BasicBlock::Create(context, "entry", resolver);
+        llvm::IRBuilder<> resolver_builder(resolver_entry);
+        auto *capabilities = resolver_builder.CreateCall(
+            detector_type, detector.getCallee(), {}, "ck.capabilities");
+        llvm::Value *selected = baseline;
+        for (size_t reverse = variant_count; reverse > 0; --reverse) {
+            const size_t index = reverse - 1;
+            const uint32_t required = required_capabilities[index];
+            if (required == 0u || (required & ~0x0fu) != 0u) {
+                return invalid(error,
+                               "multiversion requirement is baseline or outside the closed set");
+            }
+            auto *required_value = llvm::ConstantInt::get(i32_type, required);
+            auto *masked = resolver_builder.CreateAnd(
+                capabilities, required_value, "ck.capability.mask");
+            auto *compatible = resolver_builder.CreateICmpEQ(
+                masked, required_value, "ck.capability.compatible");
+            selected = resolver_builder.CreateSelect(
+                compatible, variants[index], selected, "ck.selected");
+        }
+        auto *publication = resolver_builder.CreateAtomicCmpXchg(
+            slot, null_pointer, selected, llvm::Align(8),
+            llvm::AtomicOrdering::AcquireRelease,
+            llvm::AtomicOrdering::Acquire);
+        publication->setWeak(false);
+        auto *winner = resolver_builder.CreateExtractValue(
+            publication, 0, "ck.published.pointer");
+        auto *published = resolver_builder.CreateExtractValue(
+            publication, 1, "ck.publication.won");
+        auto *resolved = resolver_builder.CreateSelect(
+            published, selected, winner, "ck.resolved.pointer");
+        resolver_builder.CreateRet(resolved);
+
+        auto *dispatcher = llvm::Function::Create(
+            function_type, llvm::GlobalValue::InternalLinkage,
+            implementation_name, llvm_module);
+        dispatcher->setCallingConv(baseline->getCallingConv());
+        dispatcher->setAttributes(baseline->getAttributes());
+        dispatcher->addFnAttr(llvm::Attribute::AlwaysInline);
+        auto *entry = llvm::BasicBlock::Create(context, "entry", dispatcher);
+        auto *slow = llvm::BasicBlock::Create(context, "resolve", dispatcher);
+        auto *invoke = llvm::BasicBlock::Create(context, "invoke", dispatcher);
+        llvm::IRBuilder<> dispatch_builder(entry);
+        auto *cached = dispatch_builder.CreateLoad(pointer_type, slot,
+                                                   "ck.dispatch.pointer");
+        cached->setAtomic(llvm::AtomicOrdering::Acquire);
+        cached->setAlignment(llvm::Align(8));
+        auto *uninitialized = dispatch_builder.CreateICmpEQ(
+            cached, null_pointer, "ck.dispatch.uninitialized");
+        dispatch_builder.CreateCondBr(uninitialized, slow, invoke);
+        dispatch_builder.SetInsertPoint(slow);
+        auto *fresh = dispatch_builder.CreateCall(resolver, {}, "ck.dispatch.fresh");
+        dispatch_builder.CreateBr(invoke);
+        dispatch_builder.SetInsertPoint(invoke);
+        auto *pointer = dispatch_builder.CreatePHI(pointer_type, 2,
+                                                  "ck.dispatch.target");
+        pointer->addIncoming(cached, entry);
+        pointer->addIncoming(fresh, slow);
+        std::vector<llvm::Value *> arguments;
+        arguments.reserve(dispatcher->arg_size());
+        for (auto &argument : dispatcher->args()) {
+            arguments.push_back(&argument);
+        }
+        auto *call = dispatch_builder.CreateCall(function_type, pointer,
+                                                 arguments, "ck.dispatch.call");
+        call->setCallingConv(baseline->getCallingConv());
+        call->setAttributes(baseline->getAttributes());
+        call->setTailCallKind(llvm::CallInst::TCK_MustTail);
+        if (function_type->getReturnType()->isVoidTy()) {
+            dispatch_builder.CreateRetVoid();
+        } else {
+            dispatch_builder.CreateRet(call);
+        }
+
+        size_t rewritten = 0;
+        for (auto &block : *public_thunk) {
+            for (auto &instruction : block) {
+                auto *call_base = llvm::dyn_cast<llvm::CallBase>(&instruction);
+                if (call_base != nullptr &&
+                    call_base->getCalledOperand()->stripPointerCasts() == baseline) {
+                    call_base->setCalledFunction(dispatcher);
+                    ++rewritten;
+                }
+            }
+        }
+        if (rewritten != 1) {
+            return invalid(error,
+                           "multiversion public thunk must contain exactly one baseline call");
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" void ckc_llvm_target_dispose(CkcLlvmTarget *target) {
     delete target;
 }

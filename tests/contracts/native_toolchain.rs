@@ -854,6 +854,60 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
     }
 }
 
+#[test]
+fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi() {
+    for path in [
+        "native/dispatch_runtime/include/ckc_dispatch_runtime.h",
+        "native/dispatch_runtime/dispatch_runtime.c",
+        "native/dispatch_runtime/provenance.toml",
+    ] {
+        assert!(repo_root().join(path).is_file(), "missing {path}");
+    }
+    let provenance = read("native/dispatch_runtime/provenance.toml");
+    assert!(provenance.contains("dispatch_runtime_schema = 1"));
+    assert!(provenance.contains("compiler_private = true"));
+    assert!(provenance.contains("failure_policy = \"baseline\""));
+
+    let build = read("build.rs");
+    for required in [
+        "CKC_DISPATCH_RUNTIME_OBJECT",
+        "CKC_DISPATCH_RUNTIME_SHA256",
+        "dispatch_runtime_object",
+        "compile_intermediates",
+    ] {
+        assert!(build.contains(required), "build.rs missing {required}");
+    }
+    for bootstrap in ["scripts/bootstrap-llvm.sh", "scripts/bootstrap-llvm.ps1"] {
+        let text = read(bootstrap);
+        for required in [
+            "dispatch_runtime_schema",
+            "dispatch_runtime_object",
+            "dispatch_runtime_sha256",
+        ] {
+            assert!(text.contains(required), "{bootstrap} missing {required}");
+        }
+    }
+
+    let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
+    for required in [
+        "__ck_dispatch_detect_capabilities",
+        "__ck_dispatch_select_ranked",
+        "__atomic_compare_exchange_n",
+        "CK_DISPATCH_BASELINE",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "dispatch runtime missing {required}"
+        );
+    }
+    for forbidden in ["getenv(", "malloc(", "free(", "printf(", "getauxval("] {
+        assert!(
+            !runtime.contains(forbidden),
+            "dispatch runtime must not use {forbidden}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn windows_native_artifact_audit_should_use_only_the_pinned_coff_inspector() {

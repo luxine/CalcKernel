@@ -42,6 +42,7 @@ fn main() {
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.h");
     println!("cargo::rerun-if-changed=native/runtime");
     println!("cargo::rerun-if-changed=native/profile_runtime");
+    println!("cargo::rerun-if-changed=native/dispatch_runtime");
     println!("cargo::rerun-if-changed=third_party");
     println!("cargo::rerun-if-changed=THIRD_PARTY_NOTICES.md");
     println!("cargo::rerun-if-changed=Cargo.lock");
@@ -152,6 +153,17 @@ fn validate_third_party_provenance() {
     validate_file_hashes(
         &root.join("native/profile_runtime"),
         &profile_runtime,
+        "runtime_files",
+        "runtime_source_sha256",
+    );
+    let dispatch_runtime = read_required(
+        &root.join("native/dispatch_runtime/provenance.toml"),
+        "dispatch runtime provenance",
+    );
+    require_manifest_value(&dispatch_runtime, "dispatch_runtime_schema", "1");
+    validate_file_hashes(
+        &root.join("native/dispatch_runtime"),
+        &dispatch_runtime,
         "runtime_files",
         "runtime_source_sha256",
     );
@@ -385,6 +397,7 @@ fn configure_native_toolchain(target: &str) {
         profile_runtime_path.display()
     );
     println!("cargo::rustc-env=CKC_PROFILE_RUNTIME_SHA256={profile_runtime_hash}");
+    configure_dispatch_runtime(target, &text, &runtime_dir, expected_suffix);
     if target.ends_with("-msvc") {
         let name = manifest_scalar(&text, "runtime_platform_import")
             .expect("native Windows runtime manifest is missing runtime_platform_import");
@@ -450,6 +463,79 @@ fn configure_native_toolchain(target: &str) {
             "native JIT support is only valid for x86_64-pc-windows-msvc"
         );
     }
+}
+
+fn configure_dispatch_runtime(
+    target: &str,
+    manifest: &str,
+    runtime_dir: &std::path::Path,
+    expected_suffix: &str,
+) {
+    let (path, expected_hash) =
+        if let Some(name) = manifest_scalar(manifest, "dispatch_runtime_object") {
+            require_manifest_value(manifest, "dispatch_runtime_schema", "1");
+            assert!(
+                name.ends_with(expected_suffix) && !name.contains('/') && !name.contains('\\'),
+                "invalid dispatch runtime object name: {name}"
+            );
+            let expected = manifest_scalar(manifest, "dispatch_runtime_sha256")
+                .expect("native manifest is missing dispatch_runtime_sha256")
+                .to_string();
+            (runtime_dir.join(name), Some(expected))
+        } else {
+            let mut build = cc::Build::new();
+            build
+                .file("native/dispatch_runtime/dispatch_runtime.c")
+                .include("native/dispatch_runtime/include")
+                .static_crt(true)
+                .warnings(true)
+                .warnings_into_errors(true)
+                .opt_level(3);
+            if target.ends_with("-msvc") {
+                build.flag("/std:c11").flag("/GS-").flag("/Zl");
+            } else {
+                build
+                    .flag("-std=c11")
+                    .flag("-fPIC")
+                    .flag("-ffreestanding")
+                    .flag("-fno-stack-protector")
+                    .flag("-fno-asynchronous-unwind-tables")
+                    .flag("-fno-unwind-tables")
+                    .flag("-fvisibility=hidden")
+                    .flag("-ffunction-sections")
+                    .flag("-fdata-sections");
+                if target.contains("apple-darwin") {
+                    build.flag("-mmacosx-version-min=11.0");
+                }
+            }
+            let mut objects = build.compile_intermediates();
+            assert_eq!(
+                objects.len(),
+                1,
+                "dispatch runtime must compile to one object"
+            );
+            (objects.remove(0), None)
+        };
+    let bytes = fs::read(&path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read dispatch runtime object {}: {error}",
+            path.display()
+        )
+    });
+    let actual_hash = format!("{:x}", Sha256::digest(bytes));
+    if let Some(expected_hash) = expected_hash {
+        assert_eq!(
+            actual_hash,
+            expected_hash,
+            "dispatch runtime object hash mismatch for {}",
+            path.display()
+        );
+    }
+    println!(
+        "cargo::rustc-env=CKC_DISPATCH_RUNTIME_OBJECT={}",
+        path.display()
+    );
+    println!("cargo::rustc-env=CKC_DISPATCH_RUNTIME_SHA256={actual_hash}");
 }
 
 fn configure_sanitizer_linkage(target: &str) {

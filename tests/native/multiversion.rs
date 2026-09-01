@@ -2,9 +2,10 @@ use calckernel::{
     EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirCpuIdentity,
     KirMultiversionPlanningRequest, KirMultiversionTierId, KirNativeCpuPolicy,
     KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
-    NativeMultiversionTargetSet, NativeOptimizationLevel, SourceFile, build_kir_module, check,
-    check_kir_multiversion_bundle, import_contract_facts, lower_native_kir_module, lower_to_mir,
-    propose_kir_multiversion_bundle, run_kir_pass_pipeline,
+    NativeMultiversionObjectRole, NativeMultiversionTargetSet, NativeOptimizationLevel, SourceFile,
+    build_kir_module, check, check_kir_multiversion_bundle, emit_native_multiversion_objects,
+    import_contract_facts, lower_native_kir_module, lower_to_mir, propose_kir_multiversion_bundle,
+    run_kir_pass_pipeline,
 };
 
 #[test]
@@ -114,5 +115,71 @@ fn variant_feature_target_profiles_should_be_explicit_and_contained() {
                 .all(|pair| pair[0] < pair[1])
         );
         assert_eq!(tier.predicate.hardware_features, tier.required_features);
+    }
+}
+
+#[test]
+fn multiversion_dispatch_named_objects_should_remain_separate_and_canonical() {
+    let targets = NativeMultiversionTargetSet::host(KirConsumer::NativeLibrary)
+        .expect("materialized host target set");
+    let checked = check(&SourceFile::new(
+        "dispatch-objects.ck",
+        "export fn sum(items: slice<i32>, n: u32) -> i32 { let i: u32 = 0; let total: i32 = 0; while i < n { total = total + items[i]; i = i + 1; } return total; }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let mut kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Checked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    kir.profile = targets.target_set().tiers[0].profile.clone();
+    let contracts = import_contract_facts(&kir, &checked.checked_program, 0).expect("contracts");
+    let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
+    assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let request = KirMultiversionPlanningRequest {
+        logical_pre_state: optimized.artifact.expect("baseline"),
+        target_set: targets.target_set().clone(),
+        pgo_hot_roots: None,
+        shared_growth_consumed: 0,
+    };
+    let bundle = propose_kir_multiversion_bundle(&request).expect("bundle");
+    check_kir_multiversion_bundle(&request, &bundle).expect("checked bundle");
+    let context = NativeContext::new().expect("context");
+    let objects = emit_native_multiversion_objects(
+        &context,
+        &targets,
+        &request,
+        &bundle,
+        &EmitLlvmOptions::default(),
+    )
+    .expect("separate named objects");
+    assert_eq!(objects.target_set_digest(), &bundle.target_set.digest);
+    assert_eq!(
+        objects.objects().len(),
+        2 + bundle
+            .roots
+            .iter()
+            .map(|root| root.variants.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        objects.objects()[0].role(),
+        NativeMultiversionObjectRole::Baseline
+    );
+    assert_eq!(
+        objects.objects().last().expect("runtime").role(),
+        NativeMultiversionObjectRole::DispatchRuntime
+    );
+    let mut names = std::collections::BTreeSet::new();
+    for object in objects.objects() {
+        assert!(names.insert(object.name()));
+        assert!(!object.object().is_empty());
+        assert_eq!(object.digest().len(), 32);
     }
 }

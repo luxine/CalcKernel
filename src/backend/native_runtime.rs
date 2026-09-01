@@ -20,7 +20,12 @@ pub(crate) fn embedded_profile_runtime_object() -> &'static [u8] {
     include_bytes!(env!("CKC_PROFILE_RUNTIME_OBJECT"))
 }
 
+pub fn embedded_dispatch_runtime_object() -> &'static [u8] {
+    include_bytes!(env!("CKC_DISPATCH_RUNTIME_OBJECT"))
+}
+
 pub const NATIVE_PROFILE_RUNTIME_SHA256: &str = env!("CKC_PROFILE_RUNTIME_SHA256");
+pub const NATIVE_DISPATCH_RUNTIME_SHA256: &str = env!("CKC_DISPATCH_RUNTIME_SHA256");
 
 #[cfg(target_os = "windows")]
 pub(crate) fn embedded_windows_import_library() -> &'static [u8] {

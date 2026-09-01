@@ -262,6 +262,15 @@ int32_t ckc_llvm_module_test_inject_untracked_flag(
 int32_t ckc_llvm_module_fact_audit_counts(
     CkcLlvmModule *module, CkcLlvmFactAuditCounts *out,
     CkcLlvmError *error);
+int32_t ckc_llvm_module_expose_hidden_function(
+    CkcLlvmModule *module, CkcLlvmBytes function_name,
+    CkcLlvmError *error);
+int32_t ckc_llvm_module_add_multiversion_dispatch(
+    CkcLlvmModule *module, CkcLlvmBytes public_name,
+    CkcLlvmBytes implementation_name, CkcLlvmBytes baseline_hidden_name,
+    CkcLlvmBytes dispatch_namespace, const CkcLlvmBytes *variant_names,
+    const uint32_t *required_capabilities, size_t variant_count,
+    CkcLlvmError *error);
 
 int32_t ckc_llvm_type_void(CkcLlvmContext *context, CkcLlvmType **out,
                            CkcLlvmError *error);

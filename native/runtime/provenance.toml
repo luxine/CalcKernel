@@ -3,8 +3,8 @@ runtime_abi = 2
 heap = false
 locale = false
 libc_formatting = false
-runtime_files = ["common/runtime.c", "common/contract.c", "include/ckc_runtime.h", "windows/jit_image_base.c"]
-runtime_source_sha256 = ["d84babba682a69ad433997bf8e160a5ab77fc93672950f212a94212b2a98e248", "12433a7ba30b4cfbc85d8c01423266b8cea9621ba1f96002ef793fc2c7809a97", "6f4e8c46360cf19548e94bf240334d091e7aaf6955097125afb9aa34ec93266b", "39341a0b3b9485209e1ffb3ec5ef387135ba57c15e58004a0aa59348386e5cad"]
+runtime_files = ["common/runtime.c", "common/contract.c", "include/ckc_runtime.h", "linux/syscalls.S", "windows/jit_image_base.c"]
+runtime_source_sha256 = ["d84babba682a69ad433997bf8e160a5ab77fc93672950f212a94212b2a98e248", "12433a7ba30b4cfbc85d8c01423266b8cea9621ba1f96002ef793fc2c7809a97", "6f4e8c46360cf19548e94bf240334d091e7aaf6955097125afb9aa34ec93266b", "a0c249a58b694d59b45605ea6fa894c97cb596416db3b75cd25b435b6d0db87a", "39341a0b3b9485209e1ffb3ec5ef387135ba57c15e58004a0aa59348386e5cad"]
 
 [[vendor]]
 name = "Ryu"

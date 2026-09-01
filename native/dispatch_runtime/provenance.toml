@@ -1,0 +1,13 @@
+schema = 1
+dispatch_runtime_schema = 1
+runtime_files = ["include/ckc_dispatch_runtime.h", "dispatch_runtime.c"]
+runtime_source_sha256 = ["d8a977de1e9fdac8e6160f5e50e6d7b148060091766eee3a4cdb881f9b381045", "c16fdf728565fc3dac2f19bf46e9921bb609927d6342bd7c5b65bb94c1464510"]
+
+[contract]
+compiler_private = true
+heap = false
+network = false
+locale = false
+mutable_text_configuration = false
+capability_publication = "process-local-acquire-release"
+failure_policy = "baseline"

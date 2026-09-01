@@ -405,6 +405,22 @@ unsafe extern "C" {
         out: *mut CkcLlvmFactAuditCounts,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_module_expose_hidden_function(
+        module: *mut CkcLlvmModule,
+        function_name: CkcLlvmBytes,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_add_multiversion_dispatch(
+        module: *mut CkcLlvmModule,
+        public_name: CkcLlvmBytes,
+        implementation_name: CkcLlvmBytes,
+        baseline_hidden_name: CkcLlvmBytes,
+        dispatch_namespace: CkcLlvmBytes,
+        variant_names: *const CkcLlvmBytes,
+        required_capabilities: *const u32,
+        variant_count: usize,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_type_void(
         context: *mut CkcLlvmContext,
         out: *mut *mut CkcLlvmType,
@@ -951,6 +967,50 @@ pub(super) fn module_verify(module: NonNull<CkcLlvmModule>) -> Result<(), Native
 pub(super) fn module_print(module: NonNull<CkcLlvmModule>) -> Result<String, NativeError> {
     owned_string_call(NativeStage::Module, |out, error| unsafe {
         ckc_llvm_module_print(module.as_ptr(), out, error)
+    })
+}
+
+pub(super) fn module_expose_hidden_function(
+    module: NonNull<CkcLlvmModule>,
+    function_name: &str,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_expose_hidden_function(
+            module.as_ptr(),
+            CkcLlvmBytes::new(function_name),
+            error,
+        )
+    })
+}
+
+pub(super) fn module_add_multiversion_dispatch(
+    module: NonNull<CkcLlvmModule>,
+    public_name: &str,
+    implementation_name: &str,
+    baseline_hidden_name: &str,
+    dispatch_namespace: &str,
+    variants: &[(&str, u32)],
+) -> Result<(), NativeError> {
+    let variant_names = variants
+        .iter()
+        .map(|(name, _)| CkcLlvmBytes::new(name))
+        .collect::<Vec<_>>();
+    let required_capabilities = variants
+        .iter()
+        .map(|(_, capabilities)| *capabilities)
+        .collect::<Vec<_>>();
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_add_multiversion_dispatch(
+            module.as_ptr(),
+            CkcLlvmBytes::new(public_name),
+            CkcLlvmBytes::new(implementation_name),
+            CkcLlvmBytes::new(baseline_hidden_name),
+            CkcLlvmBytes::new(dispatch_namespace),
+            variant_names.as_ptr(),
+            required_capabilities.as_ptr(),
+            variants.len(),
+            error,
+        )
     })
 }
 

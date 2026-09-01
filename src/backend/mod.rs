@@ -30,14 +30,20 @@ pub use header::{
 };
 #[cfg(feature = "native-toolchain")]
 pub use llvm::{
-    AuditedNativeModule, CkLateProfileFunctionLayout, CkLateProfileLayoutPlan,
+    Aarch64AuxvSnapshot, AuditedNativeModule, CkLateProfileFunctionLayout, CkLateProfileLayoutPlan,
     CkLateProfileLayoutReport, CkLateProfileRepair, LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo,
-    NativeContext, NativeCpu, NativeError, NativeFactAuditReport, NativeFactProperty,
-    NativeFactSource, NativeJit, NativeJitMemoryAudit, NativeModule, NativeMultiversionTargetSet,
-    NativeObject, NativeOptimizationLevel, NativeProfileGeneration, NativeStage,
-    NativeStrengtheningKind, NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer,
-    VerifiedNativeModule, bridge_info, build_late_profile_layout_plan, lower_native_kir_module,
-    lower_native_profile_generation_module, test_apply_late_layout_bytes,
+    NativeCapabilityCache, NativeCapabilitySet, NativeContext, NativeCpu, NativeDispatchCandidate,
+    NativeDispatchCell, NativeDispatchTable, NativeDispatchThunkContract, NativeDispatchTier,
+    NativeError, NativeFactAuditReport, NativeFactProperty, NativeFactSource, NativeJit,
+    NativeJitMemoryAudit, NativeModule, NativeMultiversionObject, NativeMultiversionObjectBundle,
+    NativeMultiversionObjectRole, NativeMultiversionTargetSet, NativeObject,
+    NativeOptimizationLevel, NativeProfileGeneration, NativeStage, NativeStrengtheningKind,
+    NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer, VerifiedNativeModule,
+    X86CpuidSnapshot, bridge_info, build_late_profile_layout_plan, detect_aarch64_auxv,
+    detect_host_cpu_capabilities, detect_x86_cpuid, emit_native_multiversion_objects,
+    lower_native_kir_module, lower_native_multiversion_baseline_module,
+    lower_native_multiversion_variant_module, lower_native_profile_generation_module,
+    test_add_multiversion_dispatch, test_apply_late_layout_bytes,
     test_error as native_bridge_test_error,
     test_inject_untracked_flag as native_fact_audit_test_inject_untracked_flag,
     test_inject_untracked_strengthening as native_fact_audit_test_inject_untracked,
@@ -53,7 +59,9 @@ pub use native_abi::{
     NativeAbiPassMode, NativeAbiRegister, NativeAbiRegisterClass, NativeAbiTarget, NativeAbiValue,
 };
 #[cfg(feature = "native-toolchain")]
-pub use native_runtime::NATIVE_PROFILE_RUNTIME_SHA256;
+pub use native_runtime::{
+    NATIVE_DISPATCH_RUNTIME_SHA256, NATIVE_PROFILE_RUNTIME_SHA256, embedded_dispatch_runtime_object,
+};
 pub use wasm::{EmitWasmOptions, emit_wasm_kir_module, emit_wat_kir_module};
 
 pub(super) fn is_f64_type(type_node: &MirType) -> bool {

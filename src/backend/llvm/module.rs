@@ -50,6 +50,36 @@ impl<'context> NativeModule<'context> {
     pub(super) fn register_fact_property(&mut self, property: NativeFactProperty) {
         self.fact_properties.push(property);
     }
+
+    pub(super) fn expose_hidden_function(&self, name: &str) -> Result<(), NativeError> {
+        ffi::module_expose_hidden_function(self.handle, name)
+    }
+
+    pub(super) fn add_multiversion_dispatch(
+        &mut self,
+        public_name: &str,
+        implementation_name: &str,
+        baseline_hidden_name: &str,
+        dispatch_namespace: &str,
+        variants: &[(&str, u32)],
+    ) -> Result<(), NativeError> {
+        ffi::module_add_multiversion_dispatch(
+            self.handle,
+            public_name,
+            implementation_name,
+            baseline_hidden_name,
+            dispatch_namespace,
+            variants,
+        )?;
+        let duplicated = self
+            .fact_properties
+            .iter()
+            .filter(|property| property.function == public_name)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.fact_properties.extend(duplicated);
+        Ok(())
+    }
 }
 
 impl Drop for NativeModule<'_> {

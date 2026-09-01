@@ -115,6 +115,10 @@ fn archive_api_should_accept_only_verified_native_objects() {
 #[test]
 fn native_acceptance_artifact_set_should_cover_every_audited_kind() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/native-acceptance");
+    write_native_acceptance_artifact_set(&root);
+}
+
+pub(super) fn write_native_acceptance_artifact_set(root: &Path) {
     let runtime_dir = root.join("runtime");
     fs::create_dir_all(&runtime_dir).expect("create native acceptance directory");
 
@@ -192,6 +196,11 @@ fn native_acceptance_artifact_set_should_cover_every_audited_kind() {
             "platform",
             env!("CKC_RUNTIME_OBJECT_4"),
             env!("CKC_RUNTIME_SHA256_4"),
+        ),
+        (
+            "dispatch_runtime",
+            env!("CKC_DISPATCH_RUNTIME_OBJECT"),
+            env!("CKC_DISPATCH_RUNTIME_SHA256"),
         ),
     ];
     let suffix = if platform == NativePlatform::Windows {
