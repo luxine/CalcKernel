@@ -15,20 +15,20 @@ use super::cache::{self, CacheKeyInput, CacheManifest};
 use super::{args::*, output::*};
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    CkCompilerProfileIdentity, CkImmutableProfileAnalysis, CkModuleProfileIdentity,
-    CkProfileAnalysis, CkProfileContract, CkProfileCpuPolicy, CkProfileEndianness, CkProfileEvent,
-    CkProfileIdentity, CkProfileKirMode, CkProfileModes, CkProfileObjectFormat,
-    CkProfileObservation, CkProfileOptimizationFamily, CkProfileSchemaIdentity,
-    CkProfileTargetIdentity, CkProfileTopology, CkProfileWorkTerm, EmitLlvmOptions,
-    NATIVE_PROFILE_RUNTIME_SHA256, NativeArtifactKind, NativeArtifactPaths, NativeContext,
-    NativeCpu, NativeHeaderMode, NativeObject, NativeOptimizationLevel, NativePlatform,
-    NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
-    create_native_profile_generation_static_archive, create_native_static_archive,
-    emit_native_header, emit_native_profile_generation_header, link_native_dynamic_library,
-    link_native_executable, link_native_profile_generation_dynamic_library,
-    link_native_profile_generation_executable, lower_native_kir_module,
-    lower_native_profile_generation_module, prepare_ck_profile_kir, read_profile_input,
-    validate_profile_analysis_for_optimizer,
+    CkCompilerProfileIdentity, CkImmutableProfileAnalysis, CkLateProfileLayoutPlan,
+    CkLateProfileLayoutReport, CkModuleProfileIdentity, CkProfileAnalysis, CkProfileContract,
+    CkProfileCpuPolicy, CkProfileEndianness, CkProfileEvent, CkProfileIdentity, CkProfileKirMode,
+    CkProfileModes, CkProfileObjectFormat, CkProfileObservation, CkProfileOptimizationFamily,
+    CkProfileSchemaIdentity, CkProfileTargetIdentity, CkProfileTopology, CkProfileWorkTerm,
+    EmitLlvmOptions, NATIVE_PROFILE_RUNTIME_SHA256, NativeArtifactKind, NativeArtifactPaths,
+    NativeContext, NativeCpu, NativeHeaderMode, NativeObject, NativeOptimizationLevel,
+    NativePlatform, NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
+    build_late_profile_layout_plan, create_native_profile_generation_static_archive,
+    create_native_static_archive, emit_native_header, emit_native_profile_generation_header,
+    link_native_dynamic_library, link_native_executable,
+    link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
+    lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
+    read_profile_input, validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
@@ -434,7 +434,7 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
                 cpu_policy,
             },
         )?;
-        emit_profile_analysis(&analysis, args)?;
+        emit_profile_analysis(&analysis.analysis, args)?;
     }
     write_or_print(
         args.out.as_deref(),
@@ -783,7 +783,7 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         }
     };
     let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
-    let profile_analysis = args
+    let profile_application = args
         .pgo_use
         .as_ref()
         .map(|_| {
@@ -817,8 +817,8 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         args.sanitize_contracts,
         args,
     )?;
-    if let Some(analysis) = &profile_analysis {
-        emit_profile_analysis(analysis, args)?;
+    if let Some(application) = &profile_application {
+        emit_profile_analysis(&application.analysis, args)?;
     }
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
@@ -839,6 +839,28 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .optimize(&target, level)
         .map_err(|error| error.to_string())?;
+    let optimized = if level == NativeOptimizationLevel::O2 {
+        if let Some(application) = &profile_application {
+            let plan = late_layout_plan_for_optimized_kir(&compiled, application, &optimized)?;
+            if plan.functions.is_empty() {
+                let report = optimized
+                    .late_layout_snapshot(&target)
+                    .map_err(|error| error.to_string())?;
+                emit_late_layout_report(&report, "mapping-unavailable", args)?;
+                optimized
+            } else {
+                let (optimized, report) = optimized
+                    .apply_late_profile_layout(&target, &plan)
+                    .map_err(|error| error.to_string())?;
+                emit_late_layout_report(&report, &report.reason, args)?;
+                optimized
+            }
+        } else {
+            optimized
+        }
+    } else {
+        optimized
+    };
     let object = target
         .emit_object(optimized)
         .map_err(|error| error.to_string())?;
@@ -1166,11 +1188,16 @@ struct ProfileApplicationRequest<'a> {
 }
 
 #[cfg(feature = "native-toolchain")]
+struct PreparedProfileApplication {
+    analysis: CkProfileAnalysis,
+}
+
+#[cfg(feature = "native-toolchain")]
 fn prepare_profile_application(
     program: &CheckedProgram,
     args: &ParsedArgs,
     request: ProfileApplicationRequest<'_>,
-) -> Result<CkProfileAnalysis, String> {
+) -> Result<PreparedProfileApplication, String> {
     let target_profile = request
         .target
         .kir_profile(request.consumer)
@@ -1206,7 +1233,114 @@ fn prepare_profile_application(
         .map_err(|error| error.to_string())?;
     let immutable = CkImmutableProfileAnalysis::new(analysis.clone());
     validate_profile_analysis_for_optimizer(&use_plan, &immutable, &compiled.result.proofs)?;
-    Ok(analysis)
+    Ok(PreparedProfileApplication { analysis })
+}
+
+#[cfg(feature = "native-toolchain")]
+fn late_layout_plan_for_optimized_kir(
+    compiled: &CompiledKir,
+    application: &PreparedProfileApplication,
+    optimized: &calckernel::OptimizedNativeModule<'_>,
+) -> Result<CkLateProfileLayoutPlan, String> {
+    let ordinary = compiled
+        .result
+        .artifact
+        .as_ref()
+        .ok_or_else(|| "optimized KIR artifact is missing".to_string())?;
+    let use_plan = match prepare_ck_profile_kir(ordinary, CkProfileKirMode::Use) {
+        Ok(plan) => plan,
+        Err(_) => return Ok(CkLateProfileLayoutPlan::default()),
+    };
+    let immutable = CkImmutableProfileAnalysis::new(application.analysis.clone());
+    if validate_profile_analysis_for_optimizer(&use_plan, &immutable, &compiled.result.proofs)
+        .is_err()
+    {
+        return Ok(CkLateProfileLayoutPlan::default());
+    }
+    let proposed = build_late_profile_layout_plan(&use_plan, &application.analysis);
+    let ir = optimized
+        .to_ir_string()
+        .map_err(|error| error.to_string())?;
+    Ok(reconcile_late_layout_names(proposed, &ir))
+}
+
+#[cfg(feature = "native-toolchain")]
+fn reconcile_late_layout_names(
+    mut plan: CkLateProfileLayoutPlan,
+    ir: &str,
+) -> CkLateProfileLayoutPlan {
+    for function in &mut plan.functions {
+        let candidates = [
+            function.llvm_function.clone(),
+            format!("__ck_impl_{}", function.llvm_function),
+        ];
+        let Some((name, labels)) = candidates.into_iter().find_map(|candidate| {
+            llvm_function_labels(ir, &candidate).map(|labels| (candidate, labels))
+        }) else {
+            return CkLateProfileLayoutPlan::default();
+        };
+        function.llvm_function = name;
+        for block in &mut function.blocks {
+            let matches = labels
+                .iter()
+                .filter(|label| *label == block || label.starts_with(&format!("{block}.")))
+                .cloned()
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return CkLateProfileLayoutPlan::default();
+            }
+            *block = matches[0].clone();
+        }
+    }
+    plan
+}
+
+#[cfg(feature = "native-toolchain")]
+fn llvm_function_labels(ir: &str, function: &str) -> Option<Vec<String>> {
+    let marker = format!("@{function}(");
+    let mut inside = false;
+    let mut labels = Vec::new();
+    for line in ir.lines() {
+        if line.starts_with("define ") && line.contains(&marker) {
+            inside = true;
+            continue;
+        }
+        if inside && line == "}" {
+            return Some(labels);
+        }
+        if inside
+            && let Some((label, _)) = line.trim().split_once(':')
+            && label != "entry"
+            && !label.is_empty()
+        {
+            labels.push(label.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(feature = "native-toolchain")]
+fn emit_late_layout_report(
+    report: &CkLateProfileLayoutReport,
+    reason: &str,
+    args: &ParsedArgs,
+) -> Result<(), String> {
+    if !args.explain_optimization {
+        return Ok(());
+    }
+    let text = format!(
+        "===== O2 LATE PROFILE LAYOUT =====\naccepted={} changed={} pre={} post={} structural={} repairs={:?} reason={reason}\n",
+        report.accepted,
+        report.changed,
+        digest_hex(&report.pre_layout_digest),
+        digest_hex(&report.post_layout_digest),
+        digest_hex(&report.pre_structural_digest),
+        report.repairs,
+    );
+    io::stderr()
+        .lock()
+        .write_all(text.as_bytes())
+        .map_err(|error| format!("failed to write late layout report: {error}"))
 }
 
 #[cfg(feature = "native-toolchain")]

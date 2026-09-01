@@ -14,6 +14,20 @@ fn bridge_should_report_the_private_abi_version() {
 }
 
 #[test]
+fn bridge_abi_4_should_define_owned_late_layout_plan_and_report_surface() {
+    let header = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("native/bridge/ckc_llvm.h"),
+    )
+    .expect("bridge header");
+    assert!(header.contains("#define CKC_LLVM_BRIDGE_ABI_VERSION 4u"));
+    assert!(header.contains("typedef struct CkcLlvmLateLayoutReport"));
+    assert!(header.contains("uint8_t pre_layout_digest[32]"));
+    assert!(header.contains("uint8_t post_structural_digest[32]"));
+    assert!(header.contains("ckc_llvm_module_apply_late_layout"));
+    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 4);
+}
+
+#[test]
 fn bridge_should_report_pinned_llvm_version() {
     let info = bridge_info().expect("read linked LLVM bridge metadata");
 

@@ -157,6 +157,31 @@ struct CkcLlvmTargetProfileResult {
     legalized_type: CkcLlvmOwnedBytes,
 }
 
+#[repr(C)]
+#[derive(Debug)]
+struct CkcLlvmLateLayoutReport {
+    accepted: u32,
+    changed: u32,
+    repair_mask: u32,
+    pre_layout_digest: [u8; 32],
+    post_layout_digest: [u8; 32],
+    pre_structural_digest: [u8; 32],
+    post_structural_digest: [u8; 32],
+    reason: CkcLlvmOwnedBytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BridgeLateLayoutReport {
+    pub accepted: bool,
+    pub changed: bool,
+    pub repair_mask: u32,
+    pub pre_layout_digest: [u8; 32],
+    pub post_layout_digest: [u8; 32],
+    pub pre_structural_digest: [u8; 32],
+    pub post_structural_digest: [u8; 32],
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BridgeTargetProfileResult {
     pub available: bool,
@@ -347,6 +372,13 @@ unsafe extern "C" {
         module: *mut CkcLlvmModule,
         target: *mut CkcLlvmTarget,
         opt_level: u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_apply_late_layout(
+        module: *mut CkcLlvmModule,
+        target: *mut CkcLlvmTarget,
+        plan: CkcLlvmBytes,
+        out: *mut CkcLlvmLateLayoutReport,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_module_make_invalid_for_test(
@@ -993,6 +1025,49 @@ pub(super) fn module_optimize(
             u32::from(opt_level),
             error,
         )
+    })
+}
+
+pub(super) fn module_apply_late_layout(
+    module: NonNull<CkcLlvmModule>,
+    target: NonNull<CkcLlvmTarget>,
+    plan: &[u8],
+) -> Result<BridgeLateLayoutReport, NativeError> {
+    let mut out = CkcLlvmLateLayoutReport {
+        accepted: 0,
+        changed: 0,
+        repair_mask: 0,
+        pre_layout_digest: [0; 32],
+        post_layout_digest: [0; 32],
+        pre_structural_digest: [0; 32],
+        post_structural_digest: [0; 32],
+        reason: CkcLlvmOwnedBytes::empty(),
+    };
+    let mut error = CkcLlvmError::empty();
+    // SAFETY: Module and target owners remain live, plan is borrowed for the
+    // call, and the bridge initializes the complete C-layout report.
+    let status = unsafe {
+        ckc_llvm_module_apply_late_layout(
+            module.as_ptr(),
+            target.as_ptr(),
+            CkcLlvmBytes::from_bytes(plan),
+            &mut out,
+            &mut error,
+        )
+    };
+    let reason = take_vec(&mut out.reason);
+    if status != 0 {
+        return Err(take_error(NativeStage::Module, status, &mut error));
+    }
+    Ok(BridgeLateLayoutReport {
+        accepted: out.accepted != 0,
+        changed: out.changed != 0,
+        repair_mask: out.repair_mask,
+        pre_layout_digest: out.pre_layout_digest,
+        post_layout_digest: out.post_layout_digest,
+        pre_structural_digest: out.pre_structural_digest,
+        post_structural_digest: out.post_structural_digest,
+        reason: parse_utf8(reason)?,
     })
 }
 

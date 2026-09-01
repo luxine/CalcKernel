@@ -66,6 +66,17 @@ typedef struct CkcLlvmTargetProfileResult {
     CkcLlvmOwnedBytes legalized_type;
 } CkcLlvmTargetProfileResult;
 
+typedef struct CkcLlvmLateLayoutReport {
+    uint32_t accepted;
+    uint32_t changed;
+    uint32_t repair_mask;
+    uint8_t pre_layout_digest[32];
+    uint8_t post_layout_digest[32];
+    uint8_t pre_structural_digest[32];
+    uint8_t post_structural_digest[32];
+    CkcLlvmOwnedBytes reason;
+} CkcLlvmLateLayoutReport;
+
 #if defined(__cplusplus)
 static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
 static_assert(sizeof(int32_t) == 4, "bridge requires 32-bit int32_t");
@@ -234,6 +245,9 @@ int32_t ckc_llvm_module_optimize(CkcLlvmModule *module,
                                  CkcLlvmTarget *target,
                                  uint32_t opt_level,
                                  CkcLlvmError *error);
+int32_t ckc_llvm_module_apply_late_layout(
+    CkcLlvmModule *module, CkcLlvmTarget *target, CkcLlvmBytes plan,
+    CkcLlvmLateLayoutReport *out, CkcLlvmError *error);
 int32_t ckc_llvm_module_make_invalid_for_test(CkcLlvmModule *module,
                                                CkcLlvmError *error);
 int32_t ckc_llvm_module_test_inject_untracked_strengthening(

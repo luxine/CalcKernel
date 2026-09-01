@@ -26,6 +26,8 @@ mod llvm_ir;
 mod object;
 #[path = "native/ownership.rs"]
 mod ownership;
+#[path = "native/pgo_layout.rs"]
+mod pgo_layout;
 #[path = "native/profile.rs"]
 mod profile;
 #[path = "native/profile_generation.rs"]

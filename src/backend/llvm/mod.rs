@@ -17,6 +17,8 @@ mod jit;
 #[cfg(feature = "native-toolchain")]
 mod kir_lower;
 #[cfg(feature = "native-toolchain")]
+mod late_layout;
+#[cfg(feature = "native-toolchain")]
 mod layout;
 #[cfg(feature = "native-toolchain")]
 mod lower_shared;
@@ -53,6 +55,11 @@ pub use ffi::{
 pub use jit::{NativeJit, NativeJitMemoryAudit, OrcObjectLayer};
 #[cfg(feature = "native-toolchain")]
 pub use kir_lower::{lower_native_kir_module, lower_native_profile_generation_module};
+#[cfg(feature = "native-toolchain")]
+pub use late_layout::{
+    CkLateProfileFunctionLayout, CkLateProfileLayoutPlan, CkLateProfileLayoutReport,
+    CkLateProfileRepair, build_late_profile_layout_plan, test_apply_late_layout_bytes,
+};
 #[cfg(feature = "native-toolchain")]
 pub use module::NativeModule;
 pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices};

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -66,6 +67,7 @@
 #include <llvm/Support/Process.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/SHA256.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <lld/Common/Driver.h>
@@ -1313,6 +1315,118 @@ std::string profile_legalized_type(llvm::Type *value_type, uint32_t lanes,
     return text;
 }
 
+struct CkcLateLayoutDirective {
+    std::string function;
+    std::vector<std::string> blocks;
+};
+
+void sha256_text(std::string_view text, uint8_t output[32]) {
+    llvm::SHA256 digest;
+    digest.update(llvm::StringRef(text.data(), text.size()));
+    const auto bytes = digest.final();
+    std::copy(bytes.begin(), bytes.end(), output);
+}
+
+std::string instruction_text(const llvm::Instruction &instruction) {
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    instruction.print(stream);
+    stream.flush();
+    return text;
+}
+
+std::string late_layout_snapshot(const llvm::Module &module,
+                                 bool structural) {
+    std::vector<std::string> functions;
+    for (const llvm::Function &function : module) {
+        if (function.isDeclaration()) {
+            continue;
+        }
+        std::vector<std::string> blocks;
+        for (const llvm::BasicBlock &block : function) {
+            std::string block_text = "block\t" + block.getName().str() + "\n";
+            for (const llvm::Instruction &instruction : block) {
+                block_text += instruction_text(instruction);
+                block_text.push_back('\n');
+            }
+            blocks.push_back(std::move(block_text));
+        }
+        if (structural) {
+            std::sort(blocks.begin(), blocks.end());
+        }
+        std::string function_text = "function\t" + function.getName().str() + "\n";
+        for (const std::string &block : blocks) {
+            function_text += block;
+        }
+        functions.push_back(std::move(function_text));
+    }
+    if (structural) {
+        std::sort(functions.begin(), functions.end());
+    }
+    std::string snapshot = "CK-LATE-LAYOUT-SNAPSHOT-1\n";
+    for (const std::string &function : functions) {
+        snapshot += function;
+    }
+    return snapshot;
+}
+
+std::optional<std::vector<CkcLateLayoutDirective>>
+parse_late_layout_plan(CkcLlvmBytes plan, std::string &failure) {
+    if (plan.len != 0 && plan.data == nullptr) {
+        failure = "late layout plan data is null";
+        return std::nullopt;
+    }
+    std::string input(reinterpret_cast<const char *>(plan.data), plan.len);
+    if (input.find('\0') != std::string::npos) {
+        failure = "late layout plan contains NUL";
+        return std::nullopt;
+    }
+    std::istringstream stream(input);
+    std::string line;
+    if (!std::getline(stream, line) || line != "CKLAYOUT1") {
+        failure = "late layout plan has invalid schema";
+        return std::nullopt;
+    }
+    std::vector<CkcLateLayoutDirective> directives;
+    std::map<std::string, size_t> functions;
+    std::set<std::pair<std::string, std::string>> blocks;
+    while (std::getline(stream, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        if (line.rfind("B\t", 0) != 0) {
+            failure = "late layout plan has an unknown record";
+            return std::nullopt;
+        }
+        const size_t separator = line.find('\t', 2);
+        if (separator == std::string::npos || separator == 2 ||
+            separator + 1 == line.size()) {
+            failure = "late layout block record is malformed";
+            return std::nullopt;
+        }
+        const std::string function = line.substr(2, separator - 2);
+        const std::string block = line.substr(separator + 1);
+        if (!blocks.insert({function, block}).second) {
+            failure = "late layout block record is duplicated";
+            return std::nullopt;
+        }
+        auto [position, inserted] = functions.emplace(function, directives.size());
+        if (inserted) {
+            directives.push_back({function, {}});
+        }
+        directives[position->second].blocks.push_back(block);
+    }
+    return directives;
+}
+
+bool late_layout_target_supported(const llvm::Triple &triple) {
+    const bool architecture = triple.getArch() == llvm::Triple::x86_64 ||
+                              triple.getArch() == llvm::Triple::aarch64;
+    const bool format = triple.isOSBinFormatELF() || triple.isOSBinFormatMachO() ||
+                        triple.isOSBinFormatCOFF();
+    return architecture && format;
+}
+
 } // namespace
 
 extern "C" int32_t ckc_llvm_bridge_info(CkcLlvmBridgeInfo *out,
@@ -1727,6 +1841,111 @@ extern "C" int32_t ckc_llvm_module_optimize(
         if (llvm::verifyModule(*module->value, &stream)) {
             stream.flush();
             return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_apply_late_layout(
+    CkcLlvmModule *module, CkcLlvmTarget *target, CkcLlvmBytes plan,
+    CkcLlvmLateLayoutReport *out, CkcLlvmError *error) {
+    clear_error(error);
+    if (out != nullptr) {
+        std::memset(out, 0, sizeof(*out));
+        clear_bytes(&out->reason);
+    }
+    return guarded(error, "applying CK late profile layout", [&] {
+        if (module == nullptr || module->value == nullptr || target == nullptr ||
+            target->value == nullptr || out == nullptr) {
+            return invalid(error, "late profile layout input is invalid");
+        }
+        const std::string pre_layout = late_layout_snapshot(*module->value, false);
+        const std::string pre_structural = late_layout_snapshot(*module->value, true);
+        sha256_text(pre_layout, out->pre_layout_digest);
+        sha256_text(pre_structural, out->pre_structural_digest);
+        std::copy(std::begin(out->pre_layout_digest),
+                  std::end(out->pre_layout_digest), out->post_layout_digest);
+        std::copy(std::begin(out->pre_structural_digest),
+                  std::end(out->pre_structural_digest),
+                  out->post_structural_digest);
+
+        std::string parse_failure;
+        auto parsed = parse_late_layout_plan(plan, parse_failure);
+        if (!parsed) {
+            return invalid(error, parse_failure);
+        }
+        const llvm::Triple &triple = target->value->getTargetTriple();
+        if (!late_layout_target_supported(triple)) {
+            if (!copy_bytes("unsupported-target-repair", &out->reason)) {
+                return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                                 "allocating late layout reason failed");
+            }
+            return CKC_LLVM_OK;
+        }
+        if (parsed->empty()) {
+            if (!copy_bytes("no-layout-authority", &out->reason)) {
+                return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                                 "allocating late layout reason failed");
+            }
+            return CKC_LLVM_OK;
+        }
+
+        std::vector<std::pair<llvm::Function *, std::vector<llvm::BasicBlock *>>>
+            resolved;
+        for (const CkcLateLayoutDirective &directive : *parsed) {
+            llvm::Function *function =
+                module->value->getFunction(directive.function);
+            if (function == nullptr || function->isDeclaration() ||
+                function->empty()) {
+                return invalid(error, "late layout names an unknown function");
+            }
+            std::vector<llvm::BasicBlock *> blocks;
+            for (const std::string &name : directive.blocks) {
+                llvm::BasicBlock *found = nullptr;
+                for (llvm::BasicBlock &block : *function) {
+                    if (block.getName() == name) {
+                        found = &block;
+                        break;
+                    }
+                }
+                if (found == nullptr) {
+                    return invalid(error, "late layout names an unknown block");
+                }
+                if (found == &function->getEntryBlock()) {
+                    return invalid(error,
+                                   "late layout cannot move the IR entry block");
+                }
+                blocks.push_back(found);
+            }
+            resolved.push_back({function, std::move(blocks)});
+        }
+
+        for (auto &[function, blocks] : resolved) {
+            llvm::BasicBlock *anchor = &function->getEntryBlock();
+            for (llvm::BasicBlock *block : blocks) {
+                block->moveAfter(anchor);
+                anchor = block;
+            }
+        }
+        const std::string post_layout = late_layout_snapshot(*module->value, false);
+        const std::string post_structural = late_layout_snapshot(*module->value, true);
+        sha256_text(post_layout, out->post_layout_digest);
+        sha256_text(post_structural, out->post_structural_digest);
+        if (pre_structural != post_structural) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "late layout changed non-layout structure");
+        }
+        out->accepted = 1;
+        out->changed = pre_layout != post_layout;
+        // The target emission pipeline performs these closed repairs after the
+        // verified permutation; no additional optimizing pass is introduced.
+        out->repair_mask = 1u | 8u;
+        out->repair_mask |= triple.getArch() == llvm::Triple::aarch64 ? 2u : 4u;
+        const std::string_view reason =
+            out->changed != 0 ? "accepted" : "accepted-no-order-delta";
+        if (!copy_bytes(reason, &out->reason)) {
+            return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                             "allocating late layout reason failed");
         }
         return CKC_LLVM_OK;
     });

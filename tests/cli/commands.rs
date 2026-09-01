@@ -401,6 +401,77 @@ fn pgo_use_should_validate_real_profile_explain_analysis_and_preserve_off_bytes(
 
 #[cfg(feature = "native-toolchain")]
 #[test]
+fn pgo_o2_should_reach_real_late_layout_boundary_with_checked_fallback_or_plan() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) =
+        fixture("fn main() -> i32 { let i: u32 = 0; while i < 9 { i = i + 1; } return 0; }");
+    let dir = fs::canonicalize(dir).expect("canonical O2 PGO fixture");
+    let shards = dir.join("o2-shards");
+    fs::create_dir(&shards).expect("O2 shard directory");
+    let generation_base = dir.join("o2-generation");
+    let generation = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&generation_base),
+        os("--pgo-generate"),
+        os(&shards),
+        os("-O2"),
+    ]);
+    assert_eq!(generation.code, Some(0), "{}", generation.stderr);
+    let generation_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &generation_base,
+    )
+    .primary;
+    assert_eq!(
+        Command::new(generation_path)
+            .env("PATH", "")
+            .status()
+            .expect("run O2 generation")
+            .code(),
+        Some(0)
+    );
+    let profile = dir.join("o2.ckprof");
+    let merge = run_empty_path([
+        os("pgo"),
+        os("merge"),
+        os(&shards),
+        os("--out"),
+        os(&profile),
+    ]);
+    assert_eq!(merge.code, Some(0), "{}", merge.stderr);
+    let use_base = dir.join("o2-use");
+    let applied = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&use_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("--explain-optimization"),
+        os("-O2"),
+    ]);
+    assert_eq!(applied.code, Some(0), "{}", applied.stderr);
+    assert!(
+        applied
+            .stderr
+            .contains("===== O2 LATE PROFILE LAYOUT ====="),
+        "{}",
+        applied.stderr
+    );
+    assert!(applied.stderr.contains("pre="), "{}", applied.stderr);
+    assert!(applied.stderr.contains("structural="), "{}", applied.stderr);
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
 fn pgo_build_should_preserve_prior_outputs_when_training_returns_nonzero() {
     use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
 
