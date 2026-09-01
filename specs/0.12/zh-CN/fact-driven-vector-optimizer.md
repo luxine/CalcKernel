@@ -128,6 +128,28 @@ schema data、legality/layout data 相互矛盾，或实际生成工作的 cost 
 malformed 并触发 compiler error。只有明确不产生工作的 no-op（例如 representation-
 preserving cast）可以使用零成本。同一 profile digest 进入 cache 与 benchmark identity。
 
+Native profile construction 使用一个带精确 TargetMachine triple/data layout 的 synthetic
+LLVM module，以及一个携带该 machine normalized CPU 与排序后 feature attribute 的 internal
+probe function。所有 cost 都使用 TCK_RecipThroughput。有限 query domain 是 KIR schema 2
+实际可表示的笛卡尔子集：五种 lane type、固定 lane count 2、4、8、16 且总宽度不超过
+512 bit、封闭的 arithmetic/
+unary/compare/select/cast/insert/extract/reduction operation，以及从一 byte 到 vector byte
+width 的 power-of-two alignment class。Bridge 使用各 operation 对应的 TTI arithmetic、
+compare/select、cast、memory、vector-instruction、reduction 与 control-flow query，不使用
+generic guessed cost。
+
+上述有限全集中的每个 operation key 都必须精确出现一次，值为 Legal 或 Unavailable；target
+不支持的 width 记录为 Unavailable，不能省略 key。Mask 使用相同的四种 lane-count candidate。
+Probe universe 是 schema 上限，不承诺每个 target 支持每个 width。
+
+每个 entry 还记录 LLVM type-legalization part count 与 legalized type identity。Part count
+非法，或 legalized form 被 scalarize/不受支持时，该 operation 为 Unavailable。TTI operation
+cost 已包含 target lowering，CK 不会再次乘 legalization part count。Invalid cost、低于零
+或高于 u32::MAX 的 valid cost，以及不在 whitelist 内的零都记录为 Unavailable。Canonical
+profile byte 使用固定 numeric tag、big-endian integer、length-prefixed UTF-8 string、排序
+feature name 与 lexicographic operation key；digest 是 schema tag 加这些 bytes 的 SHA-256。
+测试会重复构造 profile；同一 TargetMachine identity 不能生成 byte-identical output 时失败。
+
 ## KIR v2 类型与指令模型
 
 Semantic MIR 保持 scalar 与 source ordered。KIR 新增 KirValueType：
@@ -255,6 +277,23 @@ VectorizationPlan 记录 input LoopId、VF、UF、scalar-to-vector map、memory 
 predicate、epilogue、target-profile digest、estimated cost、code growth 与 proof root。SLP
 与 specialization 使用相应的封闭 record。
 
+Pass manager 保持两个相互分离的状态层。KirVerifiedProgramState 拥有 module、contract
+fact、proof arena、eliminated guard、verification cache、evidence generation 与确定性 IR ID
+allocator。只有该状态会被 speculative transaction 复制，并且只能整体 commit 或 rollback。
+KirOptimizationAuditState 拥有冻结的 proposer/checker budget ledger、单调 attempt sequence、
+accepted/rejected counter、stable explanation 与 budget fallback。Audit state 只能 append/debit，
+绝不随 KIR rollback。
+
+Proposal 与 checker step 在执行时直接扣 outer audit ledger；rejection、复用 specialization 或
+未获胜 frontier candidate 都不退款。Audit record 使用 transaction 前稳定的 source/KIR
+identity、kind、VF 与 UF 标识 candidate，绝不引用 trial-only ID。Candidate 按 function 与
+pipeline stage 顺序和以下唯一 stable key 枚举：specialization 使用 caller FunctionId、call
+InstructionId、callee FunctionId 与 canonical fact-set digest；loop frontier 使用 FunctionId、
+LoopId、kind rank Loop SIMD/full unroll/partial unroll、scalar-or-SLP variant rank，再按递增
+VF/UF；residual SLP 使用 FunctionId、BlockId、root InstructionId，再按递增 lane count。每个
+stage 完成后才进入下一 stage，共享 ledger 永不重置。接受时只交换 verified program-state
+snapshot 并 append accepted audit record；拒绝时只丢弃 snapshot 并 append stable reason。
+
 Independent checker 读取 pre-transform KIR、proposed record、target profile、facts 与 proofs。
 它不调用 vectorizer、dependence analyzer 或 proposer cost model，也不把它们的结论当作
 premise；它根据封闭 record 重新计算 legality、integer cost total、profitability threshold、
@@ -309,6 +348,12 @@ Unrolling 必须确定且由成本驱动：
   或由 trial unroll 加 SLP plan 共同达到收益门槛。由 SLP 证明收益的 unroll 与对应 pack 构成
   一个经过独立检查的事务，任一半都不能单独提交。
 
+每个 scalar full-unroll、scalar partial-unroll 与组合 unroll-plus-SLP proposal 都必须相对
+同一冻结 pre-state 预测至少 10% total loop execution-cost reduction，且至少节省两个 absolute
+cost unit。这些要求叠加于上述 trip、body、factor 与 growth 限制。Loop SIMD 保持更严格的
+20% 门槛。Frontier proposal 先通过自身门槛与 independent checker，只有已接受 proposal
+才能进入公共 winner 比较。
+
 Checker 证明 iteration coverage、order-sensitive effect preservation、phi/LCSSA mapping 与
 精确 remainder behavior。Unrolling 绝不越过 scalar program 原本可能停止的位置复制潜在
 可观察 failure 或 call。
@@ -325,11 +370,20 @@ internal deterministic digest，不能 export。0.12 不专用化 recursive SCC�
 address-taken function、runtime call 与 sanitizer mode。
 
 Specialization 在 O1 fact/check prefix 之后、O2 inlining 之前执行，使 clone 能暴露 constant
-folding、check elimination、loop bound 和 vectorization。在隔离事务内，trial clone 替换
-scoped fact，执行有界 function-local CFG/SCCP/range/check、loop、unroll 与 vector/SLP
-optimization。Trial 期间禁用 nested specialization 与 interprocedural inlining，每个
-downstream transform 使用正常 independent checker。Aggregate cost 与 growth 通过后，已优化
-clone 与 call redirection 在正常 O2 inlining 前一起提交；否则丢弃整个 trial，call graph 不变。
+folding、check elimination、loop bound 和后续 vectorization。每个 trial 拥有
+KirVerifiedProgramState 的完整副本：module、contract fact、proof arena、eliminated-guard
+record、verification cache、evidence generation 与确定性 IR ID allocator；其工作直接计入
+outer KirOptimizationAuditState。它替换 scoped fact、创建并重定向 clone，只执行有界
+clone-local CFG/SCCP/range/check/DCE scalar
+finalization。Trial 期间禁用 nested specialization 与 interprocedural inlining。
+
+Specialization checker 针对 copied pre-state 独立验证 fact scope、argument/ID mapping、scalar
+cost reduction、code growth 与 caller/callee 两侧预算扣除。接受必须由已经 materialize 的
+scalar reduction 满足正常 10% 且两个 unit 的 specialization 门槛；预测但尚未提交的 vector
+收益不能让原本无收益的 clone 通过。接受时完整 verified program-state 副本原子替换
+pre-state；拒绝时只丢弃该副本，audit charge 与 rejection explanation 保留。已接受 clone
+随后只遍历一次正常 O2 与剩余 O3 loop/vector pipeline，不迁移
+trial proof/descriptor，也不会成为第二个 specialization root。
 
 Specialization clone 自身永不成为 specialization root。相同 canonical fact set 复用同一
 digest-named clone，限制只计算不同 fact set。即使 clone 被复用或拒绝，pass manager 仍扣除
@@ -375,19 +429,23 @@ saturating u32。预算耗尽是带稳定原因、无部分修改的保守拒绝
 O0、O1、O2 保持 0.11 顺序。O3 依次执行：
 
 1. O1 CFG/SCCP/range/check prefix；
-2. fact-driven direct-call specialization 与隔离的 function-local trial finalization，随后刷新
+2. fact-driven direct-call specialization 与隔离的 complete-state scalar trial finalization，随后刷新
    CFG/SCCP/check；
 3. 既有 O2 inline、Memory SSA、GVN、forwarding、DSE、propagation 与 check cleanup；
 4. loop-simplify 与 canonical descriptor verification；
 5. natural-loop/induction analysis、LICM、induction simplification 与 scalar
    propagation/check cleanup；
-6. 有收益的小型 constant full-unroll 和独立有收益的 scalar partial-unroll trial，随后重建
-   descriptor；
-7. Native 组合 scalar partial-unroll-plus-SLP planning、独立验证与事务 rewrite；
-8. Native Loop vector planning、可选 versioning、独立验证与事务 rewrite；
-9. target-bounded vector interleave/unroll；
-10. residual Native SLP planning、独立验证与事务 rewrite；
-11. 对剩余 scalar value 执行 final SCCP、DCE、Memory SSA cleanup、evidence validation 与
+6. 重建 canonical loop、dependence、Memory SSA 与 cost descriptor，并为每个 innermost loop
+   冻结同一个 immutable scalar pre-state；
+7. 从同一 pre-state 分别提出 Loop SIMD（包含可选 versioning 与 target-bounded VF/UF）、
+   small constant full-unroll 与 scalar partial-unroll alternative，后两者各自可为 scalar-only
+   或原子追加 SLP；独立验证
+   每个 proposal，按 predicted total cost、code shape、更低 VF/UF、KIR identity 比较已接受
+   alternative，并为每个 loop 至多事务提交一个 winner；non-Native profile 只提出 scalar-
+   unroll alternative；
+8. 在选定 loop transaction 后重建 descriptor；
+9. 对已提交 loop region 之外执行 residual Native SLP planning、独立验证与事务 rewrite；
+10. 对剩余 scalar value 执行 final SCCP、DCE、Memory SSA cleanup、evidence validation 与
     structural verification。
 
 每个 named pass 记录 changed/verified state。所有 CFG-changing step 显式声明 preserved
@@ -427,9 +485,12 @@ float reduction、illegal target operation、profitability threshold、code-size
 budget。
 
 emit-kir 保持既有默认 inspection 行为，即 scalar 且 target independent。它增加 --consumer
-native --cpu baseline|native，用于打印 host profile 的精确 final Vector KIR；--cpu 对其他
-consumer 非法，native consumer 要求 compiler 启用 native-toolchain feature。emit-llvm 使用
-Native baseline；build 使用所选 CPU policy；run 与现有行为一样使用 native。
+inspection|c|wasm|native-library|native-executable，默认 inspection。--cpu baseline|native
+只对两个 Native consumer 合法，且缺省为 baseline。Native consumer 要求 compiler 启用
+native-toolchain feature；native-executable 要求存在 executable build/run 接受的同一合法
+main entry。该命令打印对应 consumer/profile 的精确 final KIR，不根据源码内容推断 artifact
+kind。emit-llvm 使用 Native baseline；build 使用所选 CPU policy；run 与现有行为一样使用
+native。
 
 Unsupported candidate 与 analysis budget 是正常保守 fallback。Invalid target identity、
 invalid certificate、stale evidence 或 invalid post-transform KIR 是 compiler error，不生成
@@ -441,10 +502,12 @@ CK source syntax、type system、semantic MIR、diagnostic、strict f64、checke
 rule、slice ABI、public symbol 与 Native C ABI version 1 保持不变。Runtime ABI 保持 version 2，
 因为没有新增 runtime helper。
 
-KIR/cache contract 从 kir-v1 升级到 kir-v2。Private LLVM bridge ABI 从 2 升级到 3。Compiler
-与 package version 只在实施时变为 0.12.0。Native cache identity 额外覆盖完整 target profile
-digest、vector cost-model schema、vector proof schema 与所有固定预算常量。0.11 object 或 cache
-entry 不能被 0.12 接受。
+KIR print/schema identity 从 kir-v1 升级到 kir-v2；0.12 不新增持久化 serialized KIR artifact
+cache。既有 Native object/run cache 升级为 entry magic CKCOBJ02、key schema 3 与 manifest
+schema 3。其 key 与 manifest 除既有 identity 外，还覆盖完整 target-profile digest、vector
+cost-model schema、vector proof schema 与所有固定预算常量。Private LLVM bridge ABI 从 2
+升级到 3。Compiler 与 package version 只在实施时变为 0.12.0。0.11 object/cache entry 会在
+entry 或 identity 检查中失败，不能被 0.12 接受。
 
 Vector 与 specialization clone symbol 仅为 internal，并从 header、export、dynamic symbol
 table 与 public ABI audit 中排除。

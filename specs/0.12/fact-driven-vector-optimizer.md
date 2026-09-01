@@ -153,6 +153,35 @@ is accepted only for an explicitly cost-free no-op such as a representation-
 preserving cast. The same profile digest is part of cache and benchmark
 identity.
 
+Native profile construction uses one synthetic LLVM module with the exact
+TargetMachine triple and data layout and one internal probe function carrying
+that machine's normalized CPU and sorted feature attributes. All costs use
+'TCK_RecipThroughput'. The finite query domain is the Cartesian subset actually
+representable by KIR schema 2: the five lane types, fixed lane counts 2, 4, 8,
+and 16 whose total width does not exceed 512 bits,
+closed arithmetic/unary/compare/select/cast/insert/extract/reduction operations,
+and power-of-two alignment classes from one byte through the vector byte width.
+The bridge uses the operation-specific TTI arithmetic, compare/select, cast,
+memory, vector-instruction, reduction, and control-flow queries rather than a
+generic guessed cost.
+
+Every operation key in that finite universe is present exactly once as 'Legal'
+or 'Unavailable'; an unsupported target width is represented by 'Unavailable',
+not by omitting the key. Masks use the same four lane-count candidates. This
+probe universe is a schema limit, not a promise that every target supports every
+width.
+
+Every entry also records LLVM's type-legalization part count and legalized type
+identity. An invalid part count or scalarized/unsupported legalized form makes
+the operation unavailable. The TTI operation cost already models its lowering,
+so CK does not multiply it by the part count a second time. An invalid cost, a
+valid cost below zero or above 'u32::MAX', and a non-whitelisted zero are
+'Unavailable'. Canonical profile bytes use fixed numeric tags, big-endian
+integers, length-prefixed UTF-8 strings, sorted feature names, and lexicographic
+operation keys; the digest is SHA-256 over a schema tag and those bytes. Profile
+construction is repeated in tests and fails if the same TargetMachine identity
+does not produce byte-identical output.
+
 ## KIR v2 type and instruction model
 
 Semantic MIR remains scalar and source ordered. KIR introduces 'KirValueType':
@@ -308,6 +337,29 @@ memory groups, optional predicates, epilogue, target-profile digest, estimated
 cost, code growth, and proof roots. SLP and specialization use analogous closed
 records.
 
+The pass manager keeps two disjoint state layers. 'KirVerifiedProgramState'
+owns the module, contract facts, proof arena, eliminated guards, verification
+cache, evidence generation, and deterministic IR ID allocators. It is the only
+state copied by a speculative transaction and is committed or rolled back as a
+whole. 'KirOptimizationAuditState' owns frozen proposer/checker budget ledgers,
+the monotonic attempt sequence, accepted/rejected counters, stable explanations,
+and budget fallbacks. Audit state is append/debit only and never rolls back with
+KIR.
+
+Proposal and checker steps debit the outer audit ledger as they execute; a
+rejection, reused specialization, or non-winning frontier candidate receives no
+refund. Audit records identify a candidate by its pre-transaction source/KIR
+identity, kind, VF, and UF, never by a trial-only ID. Candidates are enumerated
+in pipeline stage order with these unique stable keys: specialization uses
+caller FunctionId, call InstructionId, callee FunctionId, and canonical fact-set
+digest; loop-frontier work uses FunctionId, LoopId, kind rank Loop SIMD/full
+unroll/partial unroll, scalar-or-SLP variant rank, then ascending VF/UF; residual
+SLP uses FunctionId, BlockId, root InstructionId, then ascending lane count. A
+stage completes before the next begins and the shared ledger never resets.
+Acceptance swaps only the verified program-state snapshot and appends an
+accepted audit record; rejection discards only that snapshot and appends its
+stable reason.
+
 The independent checker reads the pre-transform KIR, proposed record, target
 profile, facts, and proofs. It does not call the vectorizer, dependence analyzer,
 or proposer cost model and does not accept their conclusion as a premise. It
@@ -374,6 +426,14 @@ Unrolling is deterministic and cost driven:
   profitability threshold. An SLP-justified unroll and its pack form one
   independently checked transaction; neither half may be committed alone.
 
+Every scalar full-unroll, scalar partial-unroll, and combined unroll-plus-SLP
+proposal must predict at least 10 percent total loop execution-cost reduction
+and at least two absolute cost units against the same frozen pre-state. These
+requirements are additional to the trip, body, factor, and growth limits above.
+Loop SIMD retains its stricter 20 percent threshold. A frontier proposal first
+passes its own threshold and independent checker; only accepted proposals enter
+the common winner comparison.
+
 The checker proves iteration coverage, order-sensitive effect preservation,
 phi/LCSSA mapping, and exact remainder behavior. Unrolling never duplicates a
 potentially observable failure or call across a point where the scalar program
@@ -393,14 +453,25 @@ Recursive SCCs, indirect calls, address-taken functions, runtime calls, and
 sanitizer mode are not specialized in 0.12.
 
 Specialization runs after the O1 fact/check prefix and before O2 inlining so a
-clone can expose constant folding, check elimination, loop bounds, and
-vectorization. In an isolated transaction, a trial clone substitutes the scoped
-facts and runs bounded function-local CFG/SCCP/range/check, loop, unroll, and
-vector/SLP optimization. Nested specialization and interprocedural inlining are
-disabled during the trial, and every downstream transform uses its normal
-independent checker. If aggregate cost and growth pass, the already optimized
-clone and call redirection are committed together before normal O2 inlining;
-otherwise the entire trial is discarded and the call graph remains unchanged.
+clone can expose constant folding, check elimination, loop bounds, and later
+vectorization. A trial owns a complete copy of 'KirVerifiedProgramState':
+module, contract facts, proof arena, eliminated-guard records, verification
+cache, evidence generation, and deterministic IR ID allocators. Its work is
+charged directly to the outer 'KirOptimizationAuditState'.
+It substitutes the scoped facts, creates and redirects the clone, and runs only
+bounded clone-local CFG/SCCP/range/check/DCE scalar finalization. Nested
+specialization and interprocedural inlining are disabled during the trial.
+
+The specialization checker independently verifies fact scope, argument and ID
+mapping, scalar cost reduction, code growth, and both caller/callee budget
+charges against the copied pre-state. Acceptance requires the normal 10 percent
+and two-unit specialization threshold from this materialized scalar reduction;
+predicted but uncommitted vector benefit cannot make an otherwise unprofitable
+clone pass. On acceptance the complete verified program-state copy atomically
+replaces the pre-state; on rejection only that copy is discarded while audit
+charges and the rejection explanation remain. The accepted clone then traverses
+normal O2 and the remaining O3 loop/vector pipeline exactly once, with no trial
+proof or descriptor migration and no second specialization root.
 
 A specialization clone is never itself a specialization root. Equal canonical
 fact sets reuse the same digest-named clone, and the limits count only distinct
@@ -454,23 +525,26 @@ conservative rejection with a stable reason and no partial mutation.
 O0, O1, and O2 retain the 0.11 sequence. O3 runs:
 
 1. the O1 CFG/SCCP/range/check prefix;
-2. fact-driven direct-call specialization with isolated function-local trial
+2. fact-driven direct-call specialization with isolated complete-state scalar trial
    finalization, then CFG/SCCP/check refresh;
 3. the existing O2 inline, Memory SSA, GVN, forwarding, DSE, propagation, and
    check cleanup;
 4. loop-simplify and canonical descriptor verification;
 5. natural-loop/induction analysis, LICM, induction simplification, and scalar
    propagation/check cleanup;
-6. profitable small constant full-unroll and independently profitable scalar
-   partial-unroll trials, then descriptor rebuild;
-7. Native combined scalar partial-unroll-plus-SLP planning, independent
+6. rebuild canonical loop, dependence, Memory SSA, and cost descriptors and
+   freeze one immutable scalar pre-state per innermost loop;
+7. from that same pre-state, propose Loop SIMD (including optional versioning
+   and target-bounded VF/UF), small constant full-unroll and scalar partial-
+   unroll alternatives, each either scalar-only or atomically followed by SLP;
+   independently verify
+   every proposal, compare accepted alternatives by predicted total cost, code
+   shape, lower VF/UF, then KIR identity, and transactionally commit at most one
+   winner per loop; non-Native profiles propose only scalar unroll alternatives;
+8. rebuild descriptors after the selected loop transactions;
+9. residual Native SLP planning outside committed loop regions, independent
    verification, and transactional rewrite;
-8. Native Loop vector planning, optional versioning, independent verification,
-   and transactional rewrite;
-9. target-bounded vector interleave/unroll;
-10. residual Native SLP planning, independent verification, and transactional
-    rewrite;
-11. final SCCP where scalar values remain, DCE, Memory SSA cleanup, evidence
+10. final SCCP where scalar values remain, DCE, Memory SSA cleanup, evidence
     validation, and structural verification.
 
 Each named pass records changed/verified state. Any CFG-changing step explicitly
@@ -515,11 +589,15 @@ unsupported effect, strict-float reduction, illegal target operation,
 profitability threshold, code-size budget, and analysis budget.
 
 'emit-kir' keeps its existing default inspection behavior, which is scalar and
-target independent. It gains '--consumer native --cpu baseline|native' to print
-the exact final Vector KIR for the host profile; '--cpu' is invalid for other
-consumers, and the native consumer requires a compiler built with the native
-toolchain feature. 'emit-llvm' uses Native baseline. 'build' uses its selected
-CPU policy and 'run' uses native as before.
+target independent. It gains '--consumer
+inspection|c|wasm|native-library|native-executable'; the default is
+'inspection'. '--cpu baseline|native' is valid only with the two Native
+consumers and defaults there to 'baseline'. Native consumers require a compiler
+built with the native-toolchain feature, and 'native-executable' requires the
+same valid 'main' entry accepted by executable build/run. This prints the exact
+final KIR for that consumer/profile rather than inferring artifact kind from
+source contents. 'emit-llvm' uses Native baseline. 'build' uses its selected CPU
+policy and 'run' uses native as before.
 
 Unsupported candidates and analysis budgets are normal conservative fallbacks.
 Invalid target identity, invalid certificates, stale evidence, or invalid
@@ -532,11 +610,15 @@ CK source syntax, type system, semantic MIR, diagnostics, strict f64, checked
 status/first-error rules, slice ABI, public symbols, and Native C ABI version 1
 remain unchanged. Runtime ABI stays version 2 because no runtime helper is added.
 
-KIR/cache contract advances from 'kir-v1' to 'kir-v2'. The private LLVM bridge
-ABI advances from 2 to 3. Compiler and package version become 0.12.0 only during
-implementation. Native cache identity additionally covers the complete target
-profile digest, vector cost-model schema, vector proof schema, and all fixed
-budget constants. A 0.11 object or cache entry cannot be accepted as 0.12.
+The KIR print/schema identity advances from 'kir-v1' to 'kir-v2'; 0.12 does not
+add a persistent serialized KIR artifact cache. The existing Native object/run
+cache advances to entry magic 'CKCOBJ02', key schema 3, and manifest schema 3.
+Its key and manifest cover the complete target-profile digest, vector
+cost-model schema, vector proof schema, and all fixed budget constants in
+addition to the existing identities. The private LLVM bridge ABI advances from
+2 to 3. Compiler and package version become 0.12.0 only during implementation.
+A 0.11 object/cache entry fails the entry or identity check and cannot be
+accepted as 0.12.
 
 Vector and specialization clone symbols are internal and excluded from headers,
 exports, dynamic symbol tables, and public ABI audits.
