@@ -42,3 +42,6 @@ mod vectorize;
 
 #[path = "optimizer/profile_mapping.rs"]
 mod profile_mapping;
+
+#[path = "optimizer/pgo.rs"]
+mod pgo;

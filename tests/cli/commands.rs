@@ -368,10 +368,14 @@ fn pgo_use_should_validate_real_profile_explain_analysis_and_preserve_off_bytes(
         &use_base,
     )
     .primary;
+    assert!(ordinary_path.is_file());
     assert_eq!(
-        fs::read(&ordinary_path).expect("ordinary artifact"),
-        fs::read(&use_path).expect("profile-use artifact"),
-        "stage 04 analysis must not change code generation"
+        Command::new(&use_path)
+            .env("PATH", "")
+            .status()
+            .expect("execute O3 profile-use artifact")
+            .code(),
+        Some(0)
     );
 
     let changed = dir.join("changed.ck");
@@ -397,6 +401,90 @@ fn pgo_use_should_validate_real_profile_explain_analysis_and_preserve_off_bytes(
         rejected.stderr
     );
     assert_eq!(fs::read(use_path).expect("preserved use artifact"), prior);
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_build_final_should_run_checked_o3_optimizer_before_committing_artifact() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture(
+        "fn classify(value: u32) -> u32 { if value == 7 { return 1; } return 0; } fn main() -> i32 { let i: u32 = 0; let sum: u32 = 0; while i < 256 { sum = sum + classify(i); i = i + 1; } return 0; }",
+    );
+    let dir = fs::canonicalize(dir).expect("canonical O3 PGO fixture");
+    let shards = dir.join("o3-shards");
+    fs::create_dir(&shards).expect("O3 shard directory");
+    let generation_base = dir.join("o3-generation");
+    let generation = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&generation_base),
+        os("--pgo-generate"),
+        os(&shards),
+        os("-O3"),
+    ]);
+    assert_eq!(generation.code, Some(0), "{}", generation.stderr);
+    let generation_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &generation_base,
+    )
+    .primary;
+    assert_eq!(
+        Command::new(generation_path)
+            .env("PATH", "")
+            .status()
+            .expect("run O3 generation")
+            .code(),
+        Some(0)
+    );
+    let profile = dir.join("o3.ckprof");
+    let merge = run_empty_path([
+        os("pgo"),
+        os("merge"),
+        os(&shards),
+        os("--out"),
+        os(&profile),
+    ]);
+    assert_eq!(merge.code, Some(0), "{}", merge.stderr);
+
+    let final_base = dir.join("o3-final");
+    let final_build = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&final_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("--explain-optimization"),
+        os("-O3"),
+    ]);
+    assert_eq!(final_build.code, Some(0), "{}", final_build.stderr);
+    assert!(
+        final_build.stderr.contains("===== O3 PGO OPTIMIZER ====="),
+        "{}",
+        final_build.stderr
+    );
+    assert!(final_build.stderr.contains("proof-authority=false"));
+    let final_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &final_base,
+    )
+    .primary;
+    assert_eq!(
+        Command::new(final_path)
+            .env("PATH", "")
+            .status()
+            .expect("run final O3 PGO artifact")
+            .code(),
+        Some(0)
+    );
 }
 
 #[cfg(feature = "native-toolchain")]

@@ -320,6 +320,11 @@ int32_t ckc_llvm_function_add_attribute(CkcLlvmFunction *function,
 int32_t ckc_llvm_function_set_memory_effects(CkcLlvmFunction *function,
                                               uint32_t effects,
                                               CkcLlvmError *error);
+int32_t ckc_llvm_function_set_profile(CkcLlvmFunction *function,
+                                      uint64_t entry_count,
+                                      uint32_t hot,
+                                      uint32_t cold,
+                                      CkcLlvmError *error);
 int32_t ckc_llvm_function_set_dll_export(CkcLlvmFunction *function,
                                          CkcLlvmError *error);
 
@@ -459,6 +464,10 @@ int32_t ckc_llvm_builder_cond_branch(CkcLlvmBuilder *builder,
                                      CkcLlvmBlock *then_block,
                                      CkcLlvmBlock *else_block,
                                      CkcLlvmError *error);
+int32_t ckc_llvm_builder_cond_branch_weighted(
+    CkcLlvmBuilder *builder, CkcLlvmValue *condition,
+    CkcLlvmBlock *then_block, CkcLlvmBlock *else_block,
+    uint64_t then_count, uint64_t else_count, CkcLlvmError *error);
 int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
                                     CkcLlvmModule *module,
                                     CkcLlvmObject **out,

@@ -152,6 +152,8 @@ pub struct KirPassManagerResult {
     pub contract_facts: Option<ContractFactSet>,
     pub stats: KirOptimizationStats,
     pub audit: KirOptimizationAuditState,
+    /// Independently checked O3 workload guidance, absent for ordinary/O2 builds.
+    pub pgo: Option<super::CkPgoOptimizerPlan>,
     verification_cache: Option<VerifiedKirState>,
 }
 
@@ -165,9 +167,18 @@ struct VerifiedKirState {
 
 #[must_use]
 pub fn run_kir_pass_pipeline(
+    module: KirModule,
+    level: KirOptimizationLevel,
+    contracts: Option<&ContractFactSet>,
+) -> KirPassManagerResult {
+    run_kir_pass_pipeline_with_profile(module, level, contracts, None)
+}
+
+pub(crate) fn run_kir_pass_pipeline_with_profile(
     mut module: KirModule,
     level: KirOptimizationLevel,
     contracts: Option<&ContractFactSet>,
+    pgo: Option<&super::CkPgoOptimizerPlan>,
 ) -> KirPassManagerResult {
     const GENERATION: u32 = 0;
     let input_audit = KirOptimizationAuditState::for_module(&module);
@@ -191,6 +202,7 @@ pub fn run_kir_pass_pipeline(
         contract_facts: contracts.cloned(),
         stats: KirOptimizationStats::default(),
         audit: input_audit,
+        pgo: None,
         verification_cache: None,
     };
     let mut o3_entry_module_units = None;
@@ -334,8 +346,22 @@ pub fn run_kir_pass_pipeline(
         // This is the original-function O3 entry fixed by the 0.12 budget
         // contract. No candidate work has executed before this point.
         result.audit = KirOptimizationAuditState::for_module(&module);
-        let specialization_discovery =
+        let mut specialization_discovery =
             discover_specialization_candidates(&module, result.contract_facts.as_ref());
+        if let Some(pgo) = pgo {
+            specialization_discovery.candidates.sort_by(|left, right| {
+                (
+                    !pgo.function_is_hot(left.caller),
+                    !pgo.function_is_hot(left.callee),
+                    &left.key,
+                )
+                    .cmp(&(
+                        !pgo.function_is_hot(right.caller),
+                        !pgo.function_is_hot(right.callee),
+                        &right.key,
+                    ))
+            });
+        }
         let specialization = if specialization_discovery.candidates.is_empty() {
             specialization_frontier_result(&specialization_discovery)
         } else {
@@ -398,6 +424,7 @@ pub fn run_kir_pass_pipeline(
                     &mut module,
                     &mut result.contract_facts,
                     &result.eliminated_guards,
+                    pgo,
                 )
             };
         if result.stats.inlined_calls != 0 {
@@ -777,7 +804,7 @@ pub fn run_kir_pass_pipeline(
                     return result;
                 }
             };
-            let vector = match run_native_vector_frontier(&mut state, &mut result.audit) {
+            let vector = match run_native_vector_frontier(&mut state, &mut result.audit, pgo) {
                 Ok(vector) => vector,
                 Err(error) => {
                     result.errors.push(error);
@@ -1164,6 +1191,7 @@ fn loop_frontier_scalar_body_cost(
 fn loop_frontier_iterations(
     state: &KirVerifiedProgramState,
     candidate: &super::VectorizationCandidate,
+    pgo: Option<&super::CkPgoOptimizerPlan>,
 ) -> u32 {
     let minimum = candidate.minimum_trip;
     state
@@ -1183,6 +1211,10 @@ fn loop_frontier_iterations(
             _ => None,
         })
         .unwrap_or(minimum)
+        .max(
+            pgo.and_then(|profile| profile.loop_minimum_trip(candidate.function, candidate.header))
+                .unwrap_or(minimum),
+        )
         .max(minimum)
 }
 
@@ -1222,6 +1254,7 @@ fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations:
 fn run_native_vector_frontier(
     state: &mut KirVerifiedProgramState,
     audit: &mut KirOptimizationAuditState,
+    pgo: Option<&super::CkPgoOptimizerPlan>,
 ) -> Result<VectorFrontierResult, String> {
     let mut result = VectorFrontierResult::default();
     if !matches!(
@@ -1296,7 +1329,7 @@ fn run_native_vector_frontier(
             ) {
                 Ok(()) => {
                     let scalar_body_cost = loop_frontier_scalar_body_cost(&candidate)?;
-                    let iterations = loop_frontier_iterations(state, &candidate);
+                    let iterations = loop_frontier_iterations(state, &candidate, pgo);
                     vector_alternatives.push((
                         0,
                         candidate,

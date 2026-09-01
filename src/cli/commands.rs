@@ -28,7 +28,8 @@ use calckernel::{
     link_native_dynamic_library, link_native_executable,
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
     lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
-    read_profile_input, validate_profile_analysis_for_optimizer,
+    read_profile_input, run_profile_guided_kir_pass_pipeline,
+    validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
@@ -801,25 +802,32 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
             )
         })
         .transpose()?;
-    let compiled = compile_kir(
-        &checked.checked_program,
-        KirCompilationTarget {
-            consumer,
-            profile: Some(
-                target
-                    .kir_profile(consumer)
-                    .map_err(|error| error.to_string())?,
-            ),
-        },
-        overflow_mode,
-        bounds_mode,
-        opt_level,
-        args.sanitize_contracts,
-        args,
-    )?;
+    let compiled = if let Some(application) = profile_application.as_ref()
+        && opt_level == 3
+    {
+        compile_profile_guided_kir(&checked.checked_program, application, args)?
+    } else {
+        compile_kir(
+            &checked.checked_program,
+            KirCompilationTarget {
+                consumer,
+                profile: Some(
+                    target
+                        .kir_profile(consumer)
+                        .map_err(|error| error.to_string())?,
+                ),
+            },
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+            args.sanitize_contracts,
+            args,
+        )?
+    };
     if let Some(application) = &profile_application {
         emit_profile_analysis(&application.analysis, args)?;
     }
+    emit_pgo_optimizer_report(&compiled.result, args)?;
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
     let lowered = lower_native_kir_module(
@@ -951,6 +959,7 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
 struct CompiledProfileGeneration {
     result: KirPassManagerResult,
     plan: calckernel::CkProfileKirPlan,
+    prepared_contracts: Option<calckernel::ContractFactSet>,
     semantic_graph_digest: [u8; 32],
 }
 
@@ -1173,6 +1182,7 @@ fn compile_profile_generation_kir(
     Ok(CompiledProfileGeneration {
         result,
         plan,
+        prepared_contracts: prepared.contract_facts,
         semantic_graph_digest,
     })
 }
@@ -1190,6 +1200,9 @@ struct ProfileApplicationRequest<'a> {
 #[cfg(feature = "native-toolchain")]
 struct PreparedProfileApplication {
     analysis: CkProfileAnalysis,
+    use_plan: calckernel::CkProfileKirPlan,
+    contract: CkProfileContract,
+    contracts: Option<calckernel::ContractFactSet>,
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -1226,6 +1239,7 @@ fn prepare_profile_application(
             .ok_or_else(|| "profile use path is missing".to_string())?,
     );
     let (profile, _) = read_profile_input(&profile_path).map_err(|error| error.to_string())?;
+    let contract = profile.identity.contract.clone();
     let work_terms = profile_work_terms(&compiled.plan)?;
     let analysis = apply_profile(&profile, &identity, &compiled.plan.sites, &work_terms)
         .map_err(|error| error.to_string())?;
@@ -1233,7 +1247,35 @@ fn prepare_profile_application(
         .map_err(|error| error.to_string())?;
     let immutable = CkImmutableProfileAnalysis::new(analysis.clone());
     validate_profile_analysis_for_optimizer(&use_plan, &immutable, &compiled.result.proofs)?;
-    Ok(PreparedProfileApplication { analysis })
+    Ok(PreparedProfileApplication {
+        analysis,
+        use_plan,
+        contract,
+        contracts: compiled.prepared_contracts,
+    })
+}
+
+#[cfg(feature = "native-toolchain")]
+fn compile_profile_guided_kir(
+    program: &CheckedProgram,
+    application: &PreparedProfileApplication,
+    args: &ParsedArgs,
+) -> Result<CompiledKir, String> {
+    let immutable = CkImmutableProfileAnalysis::new(application.analysis.clone());
+    let result = run_profile_guided_kir_pass_pipeline(
+        &application.use_plan,
+        &immutable,
+        &application.contract,
+        application.contracts.as_ref(),
+    );
+    if !result.errors.is_empty() {
+        return Err(format!(
+            "KIR PGO verification failed: {}",
+            result.errors.join("; ")
+        ));
+    }
+    emit_kir_inspection(program, &result, args)?;
+    Ok(CompiledKir { result })
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -1426,6 +1468,53 @@ fn emit_profile_analysis(analysis: &CkProfileAnalysis, args: &ParsedArgs) -> Res
         .lock()
         .write_all(text.as_bytes())
         .map_err(|error| format!("failed to write profile analysis: {error}"))
+}
+
+#[cfg(feature = "native-toolchain")]
+fn emit_pgo_optimizer_report(
+    result: &KirPassManagerResult,
+    args: &ParsedArgs,
+) -> Result<(), String> {
+    if !args.explain_optimization {
+        return Ok(());
+    }
+    let Some(plan) = result.pgo.as_ref() else {
+        return Ok(());
+    };
+    let accepted = plan
+        .decisions
+        .iter()
+        .filter(|decision| decision.accepted)
+        .count();
+    let mut text = format!(
+        "===== O3 PGO OPTIMIZER =====\naudit={} accepted={}/{} functions={} branches={} loops={} values={} proof-authority=false\n",
+        digest_hex(&plan.audit_digest),
+        accepted,
+        plan.decisions.len(),
+        plan.functions.len(),
+        plan.branches.len(),
+        plan.loop_hints.len(),
+        plan.value_hints.len(),
+    );
+    for decision in &plan.decisions {
+        text.push_str(&format!(
+            "site={} kind={:?} accepted={} observations={} class={} reason={}\n",
+            digest_hex(&decision.site_id.0),
+            decision.kind,
+            decision.accepted,
+            decision
+                .observations
+                .map_or_else(|| "unknown".to_string(), |value| value.to_string()),
+            decision
+                .selected_class
+                .map_or_else(|| "none".to_string(), |value| value.to_string()),
+            decision.reason,
+        ));
+    }
+    io::stderr()
+        .lock()
+        .write_all(text.as_bytes())
+        .map_err(|error| format!("failed to write O3 PGO report: {error}"))
 }
 
 #[cfg(feature = "native-toolchain")]

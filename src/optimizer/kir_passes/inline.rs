@@ -117,11 +117,13 @@ pub(crate) fn run_effect_aware_inline(
     module: &mut KirModule,
     contracts: &mut Option<ContractFactSet>,
     eliminations: &[KirGuardElimination],
+    pgo: Option<&crate::CkPgoOptimizerPlan>,
 ) -> u32 {
     let mut allocator = IdAllocator::for_module(module);
     let mut inlined = 0_u32;
     loop {
-        let Some(candidate) = find_candidate(module, contracts.as_ref(), eliminations, inlined)
+        let Some(candidate) =
+            find_candidate(module, contracts.as_ref(), eliminations, inlined, pgo)
         else {
             break;
         };
@@ -145,6 +147,7 @@ fn find_candidate(
     contracts: Option<&ContractFactSet>,
     eliminations: &[KirGuardElimination],
     already_inlined: u32,
+    pgo: Option<&crate::CkPgoOptimizerPlan>,
 ) -> Option<InlineCandidate> {
     if already_inlined >= INLINE_MODULE_BUDGET {
         return None;
@@ -162,6 +165,13 @@ fn find_candidate(
                 else {
                     continue;
                 };
+                let callee_budget = if pgo.is_some_and(|profile| {
+                    profile.function_is_hot(caller.id) || profile.function_is_hot(callee.id)
+                }) {
+                    48
+                } else {
+                    INLINE_CALLEE_BUDGET
+                };
                 if callee.exported
                     || callee.id == caller.id
                     || callee
@@ -169,7 +179,7 @@ fn find_candidate(
                         .iter()
                         .map(|block| block.instructions.len())
                         .sum::<usize>()
-                        > INLINE_CALLEE_BUDGET
+                        > callee_budget
                     || !callee_is_supported(callee)
                     || block.instructions[call_index + 1..].iter().any(|after| {
                         eliminations.iter().any(|elimination| {

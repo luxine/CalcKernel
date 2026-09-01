@@ -220,6 +220,15 @@ impl<'module> NativeFunction<'module> {
     ) -> Result<(), NativeError> {
         ffi::function_set_memory_effects(self.handle, effects)
     }
+
+    pub(super) fn set_profile(
+        self,
+        entry_count: u64,
+        hot: bool,
+        cold: bool,
+    ) -> Result<(), NativeError> {
+        ffi::function_set_profile(self.handle, entry_count, hot, cold)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -662,6 +671,24 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
             condition.handle,
             then_block.handle,
             else_block.handle,
+        )
+    }
+
+    pub(super) fn cond_branch_weighted(
+        &mut self,
+        condition: NativeValue<'module>,
+        then_block: NativeBlock<'module>,
+        else_block: NativeBlock<'module>,
+        then_count: u64,
+        else_count: u64,
+    ) -> Result<(), NativeError> {
+        ffi::builder_cond_branch_weighted(
+            self.handle,
+            condition.handle,
+            then_block.handle,
+            else_block.handle,
+            then_count,
+            else_count,
         )
     }
 }

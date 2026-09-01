@@ -28,6 +28,8 @@ mod object;
 mod ownership;
 #[path = "native/pgo_layout.rs"]
 mod pgo_layout;
+#[path = "native/pgo_o3.rs"]
+mod pgo_o3;
 #[path = "native/profile.rs"]
 mod profile;
 #[path = "native/profile_generation.rs"]

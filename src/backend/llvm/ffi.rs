@@ -516,6 +516,13 @@ unsafe extern "C" {
         effects: u32,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_function_set_profile(
+        function: *mut CkcLlvmFunction,
+        entry_count: u64,
+        hot: u32,
+        cold: u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_function_set_dll_export(
         function: *mut CkcLlvmFunction,
         error: *mut CkcLlvmError,
@@ -758,6 +765,15 @@ unsafe extern "C" {
         condition: *mut CkcLlvmValue,
         then_block: *mut CkcLlvmBlock,
         else_block: *mut CkcLlvmBlock,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_cond_branch_weighted(
+        builder: *mut CkcLlvmBuilder,
+        condition: *mut CkcLlvmValue,
+        then_block: *mut CkcLlvmBlock,
+        else_block: *mut CkcLlvmBlock,
+        then_count: u64,
+        else_count: u64,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_target_emit_object(
@@ -1328,6 +1344,23 @@ pub(super) fn function_set_memory_effects(
     })
 }
 
+pub(super) fn function_set_profile(
+    function: NonNull<CkcLlvmFunction>,
+    entry_count: u64,
+    hot: bool,
+    cold: bool,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_set_profile(
+            function.as_ptr(),
+            entry_count,
+            u32::from(hot),
+            u32::from(cold),
+            error,
+        )
+    })
+}
+
 pub(super) fn function_set_dll_export(
     function: NonNull<CkcLlvmFunction>,
 ) -> Result<(), NativeError> {
@@ -1842,6 +1875,27 @@ pub(super) fn builder_cond_branch(
             condition.as_ptr(),
             then_block.as_ptr(),
             else_block.as_ptr(),
+            error,
+        )
+    })
+}
+
+pub(super) fn builder_cond_branch_weighted(
+    builder: NonNull<CkcLlvmBuilder>,
+    condition: NonNull<CkcLlvmValue>,
+    then_block: NonNull<CkcLlvmBlock>,
+    else_block: NonNull<CkcLlvmBlock>,
+    then_count: u64,
+    else_count: u64,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_builder_cond_branch_weighted(
+            builder.as_ptr(),
+            condition.as_ptr(),
+            then_block.as_ptr(),
+            else_block.as_ptr(),
+            then_count,
+            else_count,
             error,
         )
     })

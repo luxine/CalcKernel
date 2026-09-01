@@ -40,6 +40,7 @@
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Operator.h>
@@ -2518,6 +2519,28 @@ extern "C" int32_t ckc_llvm_function_set_memory_effects(
     });
 }
 
+extern "C" int32_t ckc_llvm_function_set_profile(
+    CkcLlvmFunction *function, uint64_t entry_count, uint32_t hot,
+    uint32_t cold, CkcLlvmError *error) {
+    return guarded(error, "setting checked LLVM function profile", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr) {
+            return invalid(error, "LLVM profile function is null");
+        }
+        if (hot > 1 || cold > 1 || (hot != 0 && cold != 0)) {
+            return invalid(error, "LLVM function profile classification is invalid");
+        }
+        value->setEntryCount(entry_count, llvm::Function::PCT_Real);
+        if (hot != 0) {
+            value->addFnAttr(llvm::Attribute::Hot);
+        }
+        if (cold != 0) {
+            value->addFnAttr(llvm::Attribute::Cold);
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_function_set_dll_export(
     CkcLlvmFunction *function, CkcLlvmError *error) {
     return guarded(error, "setting LLVM DLL export storage", [&] {
@@ -3195,6 +3218,42 @@ extern "C" int32_t ckc_llvm_builder_cond_branch(
         }
         builder->value->CreateCondBr(llvm_value(condition), llvm_block(then_block),
                                      llvm_block(else_block));
+        return CKC_LLVM_OK;
+    });
+}
+
+static std::pair<uint32_t, uint32_t> ckc_branch_weights(uint64_t then_count,
+                                                        uint64_t else_count) {
+    uint64_t maximum = std::max(then_count, else_count);
+    while (maximum > std::numeric_limits<uint32_t>::max()) {
+        then_count >>= 1;
+        else_count >>= 1;
+        maximum >>= 1;
+    }
+    // A zero observation is not an unreachable proof. Keep both successors
+    // possible while preserving the checked profile ratio as closely as the
+    // LLVM metadata schema permits.
+    return {static_cast<uint32_t>(std::max<uint64_t>(then_count, 1)),
+            static_cast<uint32_t>(std::max<uint64_t>(else_count, 1))};
+}
+
+extern "C" int32_t ckc_llvm_builder_cond_branch_weighted(
+    CkcLlvmBuilder *builder, CkcLlvmValue *condition,
+    CkcLlvmBlock *then_block, CkcLlvmBlock *else_block,
+    uint64_t then_count, uint64_t else_count, CkcLlvmError *error) {
+    return guarded(error, "building checked LLVM weighted branch", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            condition == nullptr || then_block == nullptr || else_block == nullptr) {
+            return invalid(error, "LLVM weighted branch input is null");
+        }
+        auto *branch = builder->value->CreateCondBr(
+            llvm_value(condition), llvm_block(then_block), llvm_block(else_block));
+        const auto [then_weight, else_weight] =
+            ckc_branch_weights(then_count, else_count);
+        llvm::MDBuilder metadata(branch->getContext());
+        branch->setMetadata(
+            llvm::LLVMContext::MD_prof,
+            metadata.createBranchWeights(then_weight, else_weight));
         return CKC_LLVM_OK;
     });
 }

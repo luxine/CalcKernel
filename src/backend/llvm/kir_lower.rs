@@ -85,6 +85,9 @@ fn lower_native_kir_module_inner<'context>(
             "native LLVM lowering requires a native KIR consumer",
         ));
     }
+    if let Some(pgo) = result.pgo.as_ref() {
+        validate_pgo_plan_for_kir(kir, pgo).map_err(lowering_error)?;
+    }
     if kir.profile.vector_operations_enabled() {
         let expected = target.kir_profile(kir.config.consumer)?;
         if kir.profile.digest_hex() != expected.digest_hex() {
@@ -143,6 +146,32 @@ fn lower_native_kir_module_inner<'context>(
         collect_scoped_alias_facts(kir, result)
     };
     let contract_checks = collect_contract_checks(kir, result);
+    let pgo_functions = result
+        .pgo
+        .as_ref()
+        .map(|plan| {
+            plan.functions
+                .iter()
+                .filter(|profile| profile.confident)
+                .map(|profile| (profile.function, profile))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let pgo_branches = result
+        .pgo
+        .as_ref()
+        .map(|plan| {
+            plan.branches
+                .iter()
+                .map(|profile| {
+                    (
+                        (profile.function, profile.block),
+                        (profile.then_count, profile.else_count),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
     for ((function, instruction), (proof, kind)) in &wrap_proofs {
         let function_name = kir
             .functions
@@ -238,6 +267,9 @@ fn lower_native_kir_module_inner<'context>(
                 &params,
                 false,
             )?;
+            if let Some(profile) = pgo_functions.get(&kir_function.id) {
+                handle.set_profile(profile.entries, profile.hot, false)?;
+            }
             for attribute in contract_attributes
                 .get(&kir_function.id)
                 .into_iter()
@@ -275,6 +307,7 @@ fn lower_native_kir_module_inner<'context>(
             status_abi: status,
             facts: &lowering_facts,
             profile: profile_runtime.as_ref(),
+            pgo_branches: &pgo_branches,
         };
         for function in &kir.functions {
             lower_function(context, &module, function, &environment)?;
@@ -641,6 +674,7 @@ struct KirLoweringEnvironment<'module, 'context, 'a> {
     status_abi: bool,
     facts: &'a NativeKirFacts<'a>,
     profile: Option<&'a NativeProfileRuntime<'module>>,
+    pgo_branches: &'a BTreeMap<(FunctionId, BlockId), (u64, u64)>,
 }
 
 type ScopedAliasFactMap = BTreeMap<FunctionId, Vec<(FactId, ValueId, ValueId)>>;
@@ -1228,6 +1262,7 @@ struct KirFunctionLowerer<'module, 'context, 'a> {
     guard_conditions: HashSet<ValueId>,
     facts: &'a NativeKirFacts<'a>,
     profile: Option<&'a NativeProfileRuntime<'module>>,
+    pgo_branches: &'a BTreeMap<(FunctionId, BlockId), (u64, u64)>,
     loop_storage: BTreeMap<u32, Storage<'module>>,
     temporary: u32,
 }
@@ -1274,6 +1309,7 @@ fn lower_function<'module, 'context>(
             .collect(),
         facts: environment.facts,
         profile: environment.profile,
+        pgo_branches: environment.pgo_branches,
         loop_storage: BTreeMap::new(),
         temporary: 0,
     };
@@ -2680,7 +2716,15 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                 self.builder.position(native_source)?;
                 let else_block = self.edge_block(source, else_edge)?;
                 self.builder.position(native_source)?;
-                self.builder.cond_branch(condition, then_block, else_block)
+                if let Some((then_count, else_count)) =
+                    self.pgo_branches.get(&(self.function.id, source)).copied()
+                {
+                    self.builder.cond_branch_weighted(
+                        condition, then_block, else_block, then_count, else_count,
+                    )
+                } else {
+                    self.builder.cond_branch(condition, then_block, else_block)
+                }
             }
         }
     }
