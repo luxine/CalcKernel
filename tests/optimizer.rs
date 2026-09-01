@@ -39,3 +39,6 @@ mod slp;
 
 #[path = "optimizer/vectorize.rs"]
 mod vectorize;
+
+#[path = "optimizer/profile_mapping.rs"]
+mod profile_mapping;

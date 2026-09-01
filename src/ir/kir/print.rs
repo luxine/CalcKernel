@@ -5,7 +5,7 @@ use super::*;
 #[must_use]
 pub fn print_kir_module(module: &KirModule) -> String {
     let mut output = format!(
-        "kir-v2 consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}\n",
+        "kir-v3 consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}\n",
         print_consumer(module.config.consumer),
         print_overflow_mode(module.config.overflow_mode),
         print_bounds_mode(module.config.bounds_mode),
@@ -38,7 +38,7 @@ pub fn print_kir_module(module: &KirModule) -> String {
     output
 }
 
-fn print_kir_function(function: &KirFunction) -> String {
+pub(super) fn print_kir_function(function: &KirFunction) -> String {
     let exported = if function.exported { "export " } else { "" };
     let params = function
         .params

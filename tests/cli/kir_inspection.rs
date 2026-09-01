@@ -78,7 +78,7 @@ fn emit_kir_consumer_should_select_every_portable_identity_and_validate_cpu_pair
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8(output.stdout).expect("KIR UTF-8");
-        assert!(stdout.starts_with("kir-v2 "), "{consumer}: {stdout}");
+        assert!(stdout.starts_with("kir-v3 "), "{consumer}: {stdout}");
         assert!(stdout.contains(printed), "{consumer}: {stdout}");
     }
 

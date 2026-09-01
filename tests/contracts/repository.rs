@@ -22,6 +22,16 @@ fn repository_should_preserve_v0_10_as_compatibility_history() {
 }
 
 #[test]
+fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_history() {
+    assert!(read("src/ir/kir/print.rs").contains("kir-v3 consumer="));
+    assert!(read("src/cli/commands.rs").contains("kir-v3;strict-fp"));
+    assert!(
+        read("tests/fixtures/compatibility/v0_12/manifest.toml")
+            .contains("id = \"kir-v2-target-profile\"")
+    );
+}
+
+#[test]
 fn repository_should_declare_v0_12_everywhere() {
     let cargo = read("Cargo.toml");
     let lock = read("Cargo.lock");

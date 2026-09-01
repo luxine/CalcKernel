@@ -39,7 +39,7 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     let cpu = target.cpu().map_err(|error| error.to_string())?;
     let features = target.features().map_err(|error| error.to_string())?;
     let codegen_contract = format!(
-        "kir-v2;strict-fp;entry-wrapper-v1;native-cpu;host-only;sanitizer-contracts={}",
+        "kir-v3;strict-fp;entry-wrapper-v1;native-cpu;host-only;sanitizer-contracts={}",
         u8::from(args.sanitize_contracts)
     );
     let key_input = CacheKeyInput {
