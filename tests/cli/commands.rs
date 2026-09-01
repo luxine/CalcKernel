@@ -149,6 +149,128 @@ fn cli_should_reject_unknown_and_command_irrelevant_options() {
     }
 }
 
+#[test]
+fn pgo_cli_should_merge_raw_shards_and_inspect_terminal_profile() {
+    use calckernel::{
+        CkCompilerProfileIdentity, CkModuleProfileIdentity, CkProfileContract, CkProfileCounter,
+        CkProfileCounterRecord, CkProfileCpuPolicy, CkProfileEndianness, CkProfileIdentity,
+        CkProfileModes, CkProfileObjectFormat, CkProfileOptimizationFamily,
+        CkProfileSchemaIdentity, CkProfileShard, CkProfileSiteDescriptor, CkProfileSiteId,
+        CkProfileSiteKind, CkProfileTargetIdentity, CkProfileTopology, profile_site_table_digest,
+        serialize_profile_shard,
+    };
+
+    let root = std::env::current_dir()
+        .expect("current directory")
+        .join("target")
+        .join("cli-profile-tests")
+        .join(unique_id().to_string());
+    fs::create_dir_all(&root).expect("create profile CLI root");
+    let site = CkProfileSiteDescriptor {
+        id: CkProfileSiteId([1; 16]),
+        function_digest: [2; 32],
+        location: 1,
+        kind: CkProfileSiteKind::FunctionEntry,
+    };
+    let shard = CkProfileShard {
+        identity: CkProfileIdentity {
+            compiler: CkCompilerProfileIdentity {
+                package_version: env!("CARGO_PKG_VERSION").to_string(),
+                source_identity: [3; 32],
+                profile_runtime_identity: [4; 32],
+            },
+            module: CkModuleProfileIdentity {
+                semantic_graph_digest: [5; 32],
+                pre_profile_kir_digest: [6; 32],
+                site_table_digest: profile_site_table_digest(std::slice::from_ref(&site))
+                    .expect("site table digest"),
+            },
+            schemas: CkProfileSchemaIdentity {
+                language: 1,
+                native_abi: 1,
+                runtime_abi: 2,
+                kir: 3,
+                proof: 3,
+                cost_model: 3,
+                target_profile: 1,
+                llvm_bridge: 4,
+                cache: 4,
+            },
+            target: CkProfileTargetIdentity {
+                triple: "x86_64-unknown-linux-gnu".to_string(),
+                pointer_width: 64,
+                endianness: CkProfileEndianness::Little,
+                object_format: CkProfileObjectFormat::Elf,
+                os_abi: "linux-gnu".to_string(),
+                target_set_digest: [7; 32],
+            },
+            modes: CkProfileModes {
+                overflow_checked: false,
+                bounds_checked: false,
+                strict_float: true,
+                sanitizer: false,
+                topology: CkProfileTopology::NativeExecutable,
+                optimization_family: CkProfileOptimizationFamily::O3,
+                cpu_policy: CkProfileCpuPolicy::Baseline,
+            },
+            contract: CkProfileContract::schema1(),
+        },
+        sites: vec![site.clone()],
+        counters: vec![CkProfileCounterRecord {
+            site_id: site.id,
+            counter: CkProfileCounter::Scalar(11),
+        }],
+        run_id: [8; 16],
+        overflowed: false,
+        incomplete_observations: false,
+    };
+    let shard_path = root.join("run.ckprof-part");
+    let profile_path = root.join("app.ckprof");
+    fs::write(
+        &shard_path,
+        serialize_profile_shard(&shard).expect("serialize CLI shard"),
+    )
+    .expect("write CLI shard");
+
+    let merge = run([
+        os("pgo"),
+        os("merge"),
+        os(&shard_path),
+        os("--out"),
+        os(&profile_path),
+    ]);
+    assert_eq!(merge.code, Some(0), "{}", merge.stderr);
+    let inspect = run([os("pgo"), os("inspect"), os(&profile_path), os("--json")]);
+    assert_eq!(inspect.code, Some(0), "{}", inspect.stderr);
+    assert!(inspect.stdout.contains("\"format\":\"CKPROF01\""));
+    assert!(inspect.stdout.contains("\"completedRuns\":1"));
+    fs::remove_dir_all(root).expect("remove profile CLI root");
+}
+
+#[test]
+fn pgo_cli_should_reject_terminal_profile_as_merge_input_without_output() {
+    let root = std::env::current_dir()
+        .expect("current directory")
+        .join("target")
+        .join("cli-profile-tests")
+        .join(unique_id().to_string());
+    fs::create_dir_all(&root).expect("create profile CLI root");
+    let final_input = root.join("input.ckprof");
+    let output = root.join("nested.ckprof");
+    fs::write(&final_input, b"CKPROF01").expect("write terminal marker");
+
+    let result = run([
+        os("pgo"),
+        os("merge"),
+        os(&final_input),
+        os("--out"),
+        os(&output),
+    ]);
+    assert_eq!(result.code, Some(1));
+    assert!(!output.exists());
+    fs::remove_dir_all(&root).expect("remove profile CLI root");
+}
+
 #[cfg(feature = "native-toolchain")]
 #[test]
 fn emit_llvm_should_render_verified_structural_module_and_accept_checked_modes() {

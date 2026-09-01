@@ -3,6 +3,7 @@ mod args;
 mod cache;
 mod commands;
 mod output;
+mod pgo;
 #[cfg(feature = "native-toolchain")]
 mod run;
 
@@ -23,6 +24,16 @@ pub(crate) fn run(args: Vec<String>) -> i32 {
     #[cfg(feature = "native-toolchain")]
     if command == "run" {
         return run::run_public_parent(&args[1..]);
+    }
+
+    if command == "pgo" {
+        return match pgo::run(&args[1..]) {
+            Ok(()) => 0,
+            Err(message) => {
+                print_error(&message);
+                1
+            }
+        };
     }
 
     if command == "--help" || command == "-h" {

@@ -26,6 +26,7 @@ impl ArtifactKind {
 pub(super) enum CpuPolicy {
     Baseline,
     Native,
+    Multiversion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +72,9 @@ impl CpuPolicy {
         match value {
             "baseline" => Ok(Self::Baseline),
             "native" => Ok(Self::Native),
+            "multiversion" => Ok(Self::Multiversion),
             _ => Err(format!(
-                "Invalid value for --cpu: {value}. Expected 'baseline' or 'native'."
+                "Invalid value for --cpu: {value}. Expected 'baseline', 'native', or 'multiversion'."
             )),
         }
     }
@@ -110,6 +112,9 @@ pub(super) struct ParsedArgs {
     pub(super) cpu: Option<CpuPolicy>,
     pub(super) consumer: Option<EmitKirConsumer>,
     pub(super) header: Option<String>,
+    pub(super) profile_out: Option<String>,
+    pub(super) pgo_generate: Option<String>,
+    pub(super) pgo_use: Option<String>,
     pub(super) no_cache: bool,
     pub(super) print_facts: bool,
     pub(super) print_effect_summaries: bool,
@@ -131,6 +136,9 @@ impl ParsedArgs {
             cpu: None,
             consumer: None,
             header: None,
+            profile_out: None,
+            pgo_generate: None,
+            pgo_use: None,
             no_cache: false,
             print_facts: false,
             print_effect_summaries: false,
@@ -207,6 +215,24 @@ impl ParsedArgs {
                     parsed.header =
                         Some(require_long_flag_value(args, index, "--header")?.to_string());
                 }
+                "--profile-out" => {
+                    require_allowed(command, "--profile-out")?;
+                    index += 1;
+                    let value = require_long_flag_value(args, index, "--profile-out")?.to_string();
+                    set_once(&mut parsed.profile_out, value, "--profile-out")?;
+                }
+                "--pgo-generate" => {
+                    require_allowed(command, "--pgo-generate")?;
+                    index += 1;
+                    let value = require_long_flag_value(args, index, "--pgo-generate")?.to_string();
+                    set_once(&mut parsed.pgo_generate, value, "--pgo-generate")?;
+                }
+                "--pgo-use" => {
+                    require_allowed(command, "--pgo-use")?;
+                    index += 1;
+                    let value = require_long_flag_value(args, index, "--pgo-use")?.to_string();
+                    set_once(&mut parsed.pgo_use, value, "--pgo-use")?;
+                }
                 "--no-cache" => {
                     require_allowed(command, "--no-cache")?;
                     parsed.no_cache = true;
@@ -254,6 +280,7 @@ impl ParsedArgs {
                 parsed.cpu = Some(CpuPolicy::Baseline);
             }
         }
+        validate_profile_options(&parsed)?;
         Ok(parsed)
     }
 }
@@ -278,7 +305,7 @@ pub(super) fn parse_opt_level(args: &ParsedArgs) -> Result<u8, String> {
 }
 
 fn default_opt_level(command: &str) -> u8 {
-    if matches!(command, "run" | "build" | "build-llvm") {
+    if matches!(command, "run" | "build" | "build-llvm" | "pgo-build") {
         3
     } else {
         0
@@ -297,6 +324,7 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "emit-llvm"
                 | "build"
                 | "build-llvm"
+                | "pgo-build"
         ),
         "--overflow" | "--bounds" => matches!(
             command,
@@ -308,6 +336,7 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "build"
                 | "build-llvm"
                 | "run"
+                | "pgo-build"
         ),
         "--opt-level" => matches!(
             command,
@@ -320,10 +349,11 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "build"
                 | "build-llvm"
                 | "run"
+                | "pgo-build"
         ),
         "--target" => matches!(command, "emit-llvm" | "build" | "build-llvm"),
         "--kind" => matches!(command, "build" | "build-llvm"),
-        "--cpu" => matches!(command, "build" | "emit-kir"),
+        "--cpu" => matches!(command, "build" | "emit-kir" | "pgo-build"),
         "--consumer" => command == "emit-kir",
         "--header" => command == "emit-c",
         "--no-cache" => command == "run",
@@ -338,7 +368,12 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "build-llvm"
                 | "run"
         ),
-        "--sanitize-contracts" => matches!(command, "run" | "build" | "build-llvm"),
+        "--sanitize-contracts" => {
+            matches!(command, "run" | "build" | "build-llvm" | "pgo-build")
+        }
+        "--profile-out" => command == "pgo-build",
+        "--pgo-generate" => command == "build",
+        "--pgo-use" => matches!(command, "build" | "emit-kir"),
         _ => false,
     };
     if allowed {
@@ -346,6 +381,52 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
     } else {
         Err(format!("Option {flag} is not valid for '{command}'."))
     }
+}
+
+fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("Option {flag} was provided more than once."));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+fn validate_profile_options(args: &ParsedArgs) -> Result<(), String> {
+    if args.pgo_generate.is_some() && args.pgo_use.is_some() {
+        return Err("Options --pgo-generate and --pgo-use are mutually exclusive.".to_string());
+    }
+    let profile_requested = args.pgo_generate.is_some() || args.pgo_use.is_some();
+    if args.sanitize_contracts
+        && (profile_requested
+            || args.command == "pgo-build"
+            || args.cpu == Some(CpuPolicy::Multiversion))
+    {
+        return Err(
+            "Contract sanitizer mode is incompatible with PGO and multiversioning.".to_string(),
+        );
+    }
+    if args.pgo_generate.is_some() && args.kind == Some(ArtifactKind::Object) {
+        return Err("Profile generation does not support --kind object.".to_string());
+    }
+    if args.command == "emit-kir" && args.pgo_use.is_some() {
+        let consumer = args.consumer.unwrap_or(EmitKirConsumer::Inspection);
+        if !consumer.is_native() {
+            return Err("Option --pgo-use requires a Native emit-kir consumer.".to_string());
+        }
+    }
+    let level = parse_opt_level(args)?;
+    if profile_requested && level < 2 {
+        return Err("Profile generation and use require -O2 or -O3.".to_string());
+    }
+    if args.cpu == Some(CpuPolicy::Multiversion) {
+        if level != 3 {
+            return Err("CPU multiversioning requires -O3.".to_string());
+        }
+        if args.command == "build" && args.kind == Some(ArtifactKind::Object) {
+            return Err("CPU multiversioning does not support --kind object.".to_string());
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn parse_overflow_mode(args: &ParsedArgs) -> Result<OverflowMode, String> {
@@ -421,12 +502,15 @@ pub(super) fn usage() -> &'static str {
         "  ckc check <file>\n",
         "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-kir <file> [--out <kir-file>] [--consumer <inspection|c|wasm|native-library|native-executable>] [--cpu <baseline|native>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
+        "  ckc emit-kir <file> [--out <kir-file>] [--consumer <inspection|c|wasm|native-library|native-executable>] [--cpu <baseline|native|multiversion>] [--pgo-use <file.ckprof>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
         "  ckc emit-llvm <file> [--out <ll-file>] [--target <host-triple>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native>] [-O0|-O1|-O2|-O3] [--sanitize-contracts]\n",
+        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native|multiversion>] [--pgo-generate <directory>|--pgo-use <file.ckprof>] [-O0|-O1|-O2|-O3] [--sanitize-contracts]\n",
         "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [native build options]\n",
+        "  ckc pgo build <file> --out <executable> [--profile-out <file.ckprof>] [-O3]\n",
+        "  ckc pgo merge <shard-or-directory>... --out <file.ckprof>\n",
+        "  ckc pgo inspect <file.ckprof> [--json]\n",
         "  ckc run <file> [-O0|-O1|-O2|-O3] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--no-cache] [--sanitize-contracts]\n",
         "  ckc cache clean\n",
         "  ckc licenses\n",
@@ -437,7 +521,10 @@ pub(super) fn usage() -> &'static str {
         "  -o <file>                         Alias for --out <file>.\n",
         "  --opt-level <0|1|2|3>            KIR and backend optimization level.\n",
         "  --consumer <consumer>             Consumer profile for emit-kir. Default: inspection.\n",
-        "  --cpu <baseline|native>            CPU policy for build or Native emit-kir.\n",
+        "  --cpu <baseline|native|multiversion> CPU policy for build or Native emit-kir.\n",
+        "  --pgo-generate <directory>         Build a temporary Native collection artifact.\n",
+        "  --pgo-use <file.ckprof>            Apply a validated CK workload profile.\n",
+        "  --profile-out <file.ckprof>        Output profile for 'pgo build'.\n",
         "  -O0, -O1, -O2, -O3              Alias for --opt-level.\n",
         "  --print-facts                   Print deterministic verified KIR facts to stderr.\n",
         "  --print-effect-summaries        Print deterministic effect summaries to stderr.\n",
@@ -448,7 +535,7 @@ pub(super) fn usage() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedArgs, parse_opt_level};
+    use super::{CpuPolicy, ParsedArgs, parse_opt_level};
 
     #[test]
     fn execution_commands_default_to_o3_and_inspection_defaults_to_o0() {
@@ -478,5 +565,122 @@ mod tests {
                 assert_eq!(parse_opt_level(&parsed), Ok(level), "{command} -O{level}");
             }
         }
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_reject_mutually_exclusive_profile_modes() {
+        let error = ParsedArgs::parse(
+            "build",
+            &[
+                "input.ck".to_string(),
+                "--pgo-generate".to_string(),
+                "profiles".to_string(),
+                "--pgo-use".to_string(),
+                "input.ckprof".to_string(),
+            ],
+        )
+        .expect_err("reject mutually exclusive profile modes");
+
+        assert!(error.contains("mutually exclusive"), "{error}");
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_reject_generation_object() {
+        let error = ParsedArgs::parse(
+            "build",
+            &[
+                "--kind".to_string(),
+                "object".to_string(),
+                "--pgo-generate".to_string(),
+                "profiles".to_string(),
+            ],
+        )
+        .expect_err("reject object generation");
+
+        assert!(error.contains("does not support --kind object"), "{error}");
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_reject_profile_use_below_o2() {
+        let error = ParsedArgs::parse(
+            "build",
+            &[
+                "--pgo-use".to_string(),
+                "input.ckprof".to_string(),
+                "-O1".to_string(),
+            ],
+        )
+        .expect_err("reject O1 profile use");
+
+        assert!(error.contains("require -O2 or -O3"), "{error}");
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_reject_multiversion_below_o3() {
+        let error = ParsedArgs::parse(
+            "build",
+            &[
+                "--cpu".to_string(),
+                "multiversion".to_string(),
+                "-O2".to_string(),
+            ],
+        )
+        .expect_err("reject O2 multiversioning");
+
+        assert!(error.contains("requires -O3"), "{error}");
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_reject_sanitized_profile_use() {
+        let error = ParsedArgs::parse(
+            "build",
+            &[
+                "--kind".to_string(),
+                "executable".to_string(),
+                "--sanitize-contracts".to_string(),
+                "--pgo-use".to_string(),
+                "input.ckprof".to_string(),
+            ],
+        )
+        .expect_err("reject sanitizer with profile use");
+
+        assert!(error.contains("incompatible with PGO"), "{error}");
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_require_native_emit_kir_consumer() {
+        let error = ParsedArgs::parse(
+            "emit-kir",
+            &[
+                "--consumer".to_string(),
+                "c".to_string(),
+                "--pgo-use".to_string(),
+                "input.ckprof".to_string(),
+            ],
+        )
+        .expect_err("reject portable profile use");
+
+        assert!(error.contains("Native emit-kir consumer"), "{error}");
+    }
+
+    #[test]
+    fn pgo_cli_parser_should_accept_multiversion_o3_and_profile_output() {
+        let parsed = ParsedArgs::parse(
+            "pgo-build",
+            &[
+                "input.ck".to_string(),
+                "--out".to_string(),
+                "app".to_string(),
+                "--profile-out".to_string(),
+                "app.ckprof".to_string(),
+                "--cpu".to_string(),
+                "multiversion".to_string(),
+            ],
+        )
+        .expect("accept O3 pgo convenience command");
+
+        assert_eq!(parsed.cpu, Some(CpuPolicy::Multiversion));
+        assert_eq!(parsed.profile_out.as_deref(), Some("app.ckprof"));
+        assert_eq!(parse_opt_level(&parsed), Ok(3));
     }
 }

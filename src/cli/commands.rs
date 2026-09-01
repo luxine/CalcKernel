@@ -349,6 +349,11 @@ fn emit_kir_inspection(
 
 pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-kir")?;
+    if args.pgo_use.is_some() {
+        return Err(
+            "profile use is unavailable until CK profile application is implemented.".to_string(),
+        );
+    }
     let consumer = args
         .consumer
         .unwrap_or(EmitKirConsumer::Inspection)
@@ -375,6 +380,12 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
             CpuPolicy::Baseline => NativeCpu::Baseline,
             CpuPolicy::Native => NativeCpu::Native,
+            CpuPolicy::Multiversion => {
+                return Err(
+                    "CPU multiversioning is unavailable until variant planning is implemented."
+                        .to_string(),
+                );
+            }
         };
         let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
         Some(
@@ -709,6 +720,12 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
 pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
+    if args.pgo_generate.is_some() || args.pgo_use.is_some() {
+        return Err(
+            "PGO build modes are unavailable until profile generation and use are implemented."
+                .to_string(),
+        );
+    }
     let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
     let overflow_mode = parse_overflow_mode(args)?;
     let bounds_mode = parse_bounds_mode(args)?;
@@ -731,6 +748,12 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
         CpuPolicy::Baseline => NativeCpu::Baseline,
         CpuPolicy::Native => NativeCpu::Native,
+        CpuPolicy::Multiversion => {
+            return Err(
+                "CPU multiversioning is unavailable until variant planning is implemented."
+                    .to_string(),
+            );
+        }
     };
     let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
     let compiled = compile_kir(
