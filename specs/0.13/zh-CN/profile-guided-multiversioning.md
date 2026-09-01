@@ -50,8 +50,9 @@ CK 0.13 在不要求日常开发执行训练的前提下，引入真实 workload
   选择 baseline，不能乐观选择增强 variant。
 - exported function 的公开地址始终是稳定 dispatcher thunk。variant 与支持符号隐藏，
   不属于公开 ABI。
-- PGO use 支持 O2/O3；O2 的频率只用于 metadata、layout 与其他非复制决策。
-  PGO-influenced inline、specialization、loop cloning 与 multiversion 只属于 O3。
+- PGO use 支持 O2/O3；O2 的频率只通过 CK-owned late machine-layout plan 使用，不发出
+  profile-derived LLVM metadata。PGO-influenced inline、specialization、loop cloning 与
+  multiversion 只属于 O3。
   profile generation 使用一个固定且版本化的 instrumentation pipeline。
 - 0.13 中 contract sanitizer 与 profile generate、profile use、multiversion
   不兼容；非法组合明确失败，不能静默改变策略。
@@ -187,15 +188,22 @@ CLI 契约：
   `--cpu multiversion --kind object`，因为 dispatcher 与 variant 是独立审计
   module，而 schema 1 未定义 multi-object bundle 或跨平台 partial-link product。
   single-version baseline/native profile-use object 仍受支持；
+- Native executable 与 Native library 是两个 profile-topology class。dynamic、static 与
+  object artifact 共享 Native-library topology，因此通过临时 dynamic/static library 生成的
+  compatible profile 可用于 baseline/native object。Native `emit-kir` 按 `--consumer` 选择的
+  topology 校验，而不是按 physical artifact kind 校验；
 - Native `build` 与 Native `emit-kir` 的 `--cpu` 变为
   `baseline|native|multiversion`；portable consumer 与当前一样拒绝后两者；
 - `ckc pgo build` 只接受有合法 `main()` 的 executable，默认 O3；library 使用显式流程；
 - `--profile-out` 默认 `<out>.ckprof`，不能与最终 artifact 路径相同；
 - `--pgo-generate` 的 `<directory>` 必须已存在、必须是真实 directory，resolved path 中
-  不能有 symlink/reparse-point component。compiler 按 build-time current directory 解析它，
-  规范化并验证 absolute path，只把该路径嵌入临时 generation artifact。operational path
-  不进入 profile、
-  final-artifact 或 cache identity；
+  不能有 symlink/reparse-point component。compiler 按 build-time current directory 解析并
+  规范化 absolute path、捕获 platform file identity，并只把该 path/identity 嵌入临时
+  generation artifact。operational path/directory identity 不进入 profile、final-artifact 或
+  cache identity。runtime collector 使用 component-wise
+  no-follow/reparse-point check 重新打开 directory，并把所有 temporary/completed file operation
+  anchor 到该 verified directory handle；build 与 execution 之间发生替换时拒绝运行。
+  platform/filesystem 若没有 stable directory identity，则拒绝 generation；
 - generation 配合 `--cpu multiversion` 时绑定预期 target-set identity，但只执行一个
   instrumented baseline implementation；训练阶段不在已经优化好的 variant 间 dispatch；
 - generate artifact 不进入 Native object cache，因为输出目录属于 operational state，
@@ -216,14 +224,17 @@ output set；pre-commit 失败必须保留全部旧 destination。
 - language、public Native ABI、Runtime ABI、KIR、proof、cost-model、target profile、
   LLVM bridge 与 cache schema identity；
 - target triple、pointer width、endianness、object format 与 OS ABI；
-- overflow、bounds、strict-float、sanitizer、consumer、artifact-kind mode；
+- overflow、bounds、strict-float、sanitizer、consumer 与 profile-topology class
+  （`native-executable` 或 `native-library`）；
 - 会改变合法 consumer 的 optimization family（`o2`/`o3`），固定 generation topology
   单独表示；
 - CPU policy 与完整有序 multiversion target-set digest；
 - 全部固定 PGO confidence、profitability、code-growth 与 resource limit。
 
-身份排除绝对路径、源码格式、注释、timestamp、PID、host name、shard name、环境变量与
-机器负载。格式/注释变化只有在 canonical semantic/KIR/site identity 字节完全一致时
+身份排除绝对路径、源码格式、注释、timestamp、PID、host name、shard name、环境变量、
+机器负载与 physical dynamic/static/object artifact kind。physical kind 继续进入 final
+artifact transaction 与 Native object/cache identity，但不能拆分 canonical Native-library
+KIR/site topology 相同的 profile。格式/注释变化只有在 canonical semantic/KIR/site identity 字节完全一致时
 才能复用。任何语义、module graph、site、compiler contract、ABI、target set、safety 或
 schema 变化都会失效。
 
@@ -298,14 +309,20 @@ instrumented executable 的 compiler-owned entry wrapper 在 `main()` 正常返�
 
 instrumented static/dynamic library 则在生成的 header 以及适用的临时 export/import table
 增加一个 instrumentation-only C control entry：
-`ck_profile_flush_<first-128-bit-profile-identity-hex>() -> i32`。host 必须等待进入该
-library 的调用静止，并在 unlink/unload 前调用它。第一次调用 snapshot counter 并写恰好
-一个 shard；后续
+`ck_profile_flush_<full-profile-identity-hex>() -> i32`。host 必须等待进入该
+library 的调用静止，并在 host-defined shutdown boundary 调用它：dynamic library unload 前，
+或 final linked static-library state 被丢弃前。第一次调用 snapshot counter 并写恰好一个
+shard；后续
 调用 idempotent，返回同一 success/failure status。library unload hook 与 `DllMain` 不做
 profile I/O，因此 write failure 可由 host 同步观察。返回 0 表示 validated completed shard
 已 publish；稳定非零 instrumentation status 表示该 library instance 没有 publish completed
 shard。普通 artifact 与 profile-use artifact
 完全不含该 control entry、symbol 与 runtime，它也不进入 public Native ABI versioning。
+
+host quiescence 后的 concurrent flush call 通过 private atomic state machine 串行化；恰好一个
+call 执行 publication，所有 caller 观察相同 terminal status。仍有 thread 可能进入或执行 CK
+code 时调用 flush，违反临时 instrumentation API precondition；host test seam 可观察时必须
+diagnose，不能通过并发复制 counter 假装 data-race safe。
 
 shard publication 在所选目录创建 unique temporary file，flush 并验证 bytes，再 atomic
 rename 为完整 `.ckprof-part`，不能覆盖已有 entry。并发 process 不更新同一 file。
@@ -350,33 +367,43 @@ target-profile static cost unit。按 work 降序并以稳定 function identity 
 cache identity。
 
 每个 profile-weighted proposal 暴露一个闭合 observed outcome class 集与 immutable integer
-target cost。对 `N` 次 observation，guarded proposal 不做除法，使用
-`guard_cost*N + sum(class_count*selected_class_cost)` 与
-`sum(class_count*baseline_class_cost)` 比较；miss class 包含完整 generic fallback cost。
-histogram class 使用 inclusive upper endpoint 作为 schema-fixed representative（final bucket
-使用 `u32::MAX`）。checker 必须证明 candidate 的 integer outcome-cost formula 在 bucket 内
-monotone nondecreasing，否则拒绝对该 candidate 使用 profile weight；不能发明 sampled value。
-全部乘加在 `u128::MAX` saturated，任何 saturation 选择 baseline；ratio 用 checked cross
-multiplication 比较，tie 或 fractional ambiguity 向 baseline 取整。independent checker 从
-profile record 与 target cost 重算，不能信任 proposal total。若 saturated site 参与 function
-dynamic-work estimate，该 function 不可成为 PGO-hot root。
+target-cost formula。`N` 是全部 class count 的 checked sum。对 exact branch/value class，
+checker 计算 unchanged baseline 与 guarded selected path 的 integer cost difference；miss 包含
+完整 generic fallback。对 histogram bucket，checker 必须使用 closed target formula 证明
+bucket 内每个 `v` 的 `baseline_cost(v) - selected_cost(v)` signed lower bound；无法证明时，
+该 bucket 不提供 PGO authority，proposal 回退到 static decision。不能发明 sampled 或
+representative value。
+
+conservative net benefit 是 `class_count*lower_bound_difference` 的 checked signed-magnitude
+sum，再减 `N*guard_cost`。proposal 必须在该 lower bound 以及全部现有 static/growth gate 下
+仍有收益。全部 magnitude 使用 checked `u128`；overflow、indeterminate sign、tie 或 fractional
+ambiguity 一律选择 baseline。ratio 使用 checked cross multiplication。independent checker
+从 profile record 与 target formula 重算每个 class bound 与 total，不能信任 proposal total。
+若 saturated site 参与 function dynamic-work estimate，该 function 不可成为 PGO-hot root。
 
 ## PGO 引导优化
 
 O2 中 validated count 只能影响非复制决策：
 
-- CFG successor order、branch weight、hot/cold section 与 function layout；
-- 只有完整 profile-blind default O2 LLVM IR pipeline 完成后，才从精确 verified post-O2
-  mapping 发出 LLVM frequency metadata；
-- 保持 KIR graph 的 backend block placement 与 scheduling。
+- late machine-block order，不能 duplicate body 或改变 semantic machine CFG；
+- function 与 hot/cold section order；
+- accepted order 所必需的 terminator inversion/fallthrough repair、target branch relaxation
+  与 alignment padding。
 
-O2 phase boundary 为闭集：lowering 初始不发出 profile summary、entry count、branch weight、
-hot/cold attribute 或其他 profile-derived LLVM metadata。LLVM 完整 default O2 IR pipeline
-在 profile-blind 状态运行。随后 CK 验证 bridge 为 surviving function/block 产生的 mapping，
-只对精确 mapped survivor 附加 metadata，并且不再运行任何可能 clone、delete、inline、
-vectorize、unroll 或 rewrite CFG 的 LLVM IR transform。只有 section/function order 与 machine
-codegen layout/scheduling tail 可消费 metadata；unmapped survivor 保持 unweighted。定义 O2
-权限的是该 boundary，而非 pass 名称或假定的 inlining frontier。
+O2 phase boundary 为闭集。profile-on/off build lower 相同 semantic/structural KIR；O2
+profile analysis 作为 unlowered sidecar 保留到 late boundary。两种 mode 以 profile-blind
+方式运行完整 default O2 LLVM IR pipeline，以及全部 ordinary IR preparation、instruction selection、
+scheduling、outlining、splitting、merging、tail duplication 与其他 machine-structure pass。
+该 boundary 之前不存在 profile summary、entry count、branch weight、hot/cold attribute、
+CFG successor order 或其他 profile-derived LLVM input。
+
+bridge snapshot 并验证所得 machine CFG、block body 与 symbol map，再应用一个 CK-owned
+`CkLateProfileLayout` plan。该 pass 只能 permute 现有 machine block/function/section，并修复
+permutation 所需 terminator/fallthrough；不能 duplicate/delete body、改变 non-terminator
+instruction、outline、split、merge、reschedule 或改变 call target。此后只运行 target-mandated
+branch relaxation、offset/fixup assignment、alignment padding 与 object emission，且都不接收
+profile data。unmapped block 保持 ordinary order。verifier 独立比较 pre/post snapshot，拒绝
+闭合集以外 delta。定义 O2 权限的是该 structural boundary，而不是 LLVM pass 名称。
 
 O3 还可以影响已有 verified transformation：
 
@@ -501,15 +528,15 @@ baseline、每个 enhanced variant 和 dispatch support 分别 lowering 到带�
 dispatcher。artifact assembler 只在每个 module 通过 LLVM verify 与 feature containment
 disassembly 后链接。
 
-CK 只有在验证 exact KIR-to-LLVM block/function map 后，才能把 validated edge/function
-count 转为 LLVM branch weight、entry count、hot/cold attribute 与 internal profile summary。
-O2 中其可见性限于上述 post-IR layout/codegen tail；O3 中 LLVM 还可将其用于 inline、
-vector cleanup 与其他 O3 transform。两种 mode 都不能让 LLVM 削弱 CK alias、bounds、
-failure、floating 语义。
+O2 中 CK 只把 validated count 转为上述 private late-layout plan；LLVM 不接收 profile-derived
+metadata/attribute。O3 中，CK 验证 exact KIR-to-LLVM block/function map 后，可附加 LLVM
+branch weight、entry count、hot/cold attribute 与 internal profile summary，供 inline、vector
+cleanup、scheduling、instruction selection 与其他 O3 transform 使用。两种 mode 都不能让
+LLVM 削弱 CK alias、bounds、failure、floating 语义。
 
 Native bridge 增加 explicit feature-level target machine、normalized runtime predicate、
-profile metadata attachment 与 per-module feature audit。全部 query cost/operation 仍遵守
-0.12 closed target-profile validation。
+verified O2 late-layout boundary、O3 profile metadata attachment 与 per-module feature audit。
+全部 query cost/operation 仍遵守 0.12 closed target-profile validation。
 
 最终 executable、dynamic、static 与受支持的 single-version object 继续遵守现有
 system-runtime policy 自包含。multiversion final artifact 只可为 executable、dynamic 或
@@ -529,6 +556,7 @@ Native cache 从 `CKCOBJ02`、key schema 3、manifest schema 3 推进到 `CKCOBJ
 schema 4、manifest schema 4。除全部 0.12 字段外，还覆盖：
 
 - profile mode、profile format/contract identity、exact `.ckprof` digest；
+- physical output artifact kind 及其 validated profile-topology compatibility；
 - 全部 confidence、hotness、weighting、site、PGO cost constant；
 - target-set 与 per-variant profile/proof/codegen digest；
 - dispatch table、detector、thunk、private runtime identity；
@@ -588,7 +616,7 @@ feature 就 resolve host 或隐藏 variant。
    merge/JSON inspect。
 3. instrumentation tests 对 normal executable exit、early return、break/continue、checked
    failure、recursion、multi-threaded host call、multiple process、host-quiesced library flush、
-   repeat-flush idempotence、unload-without-I/O、write failure propagation、abnormal termination
+   concurrent/repeat-flush idempotence、unload-without-I/O、write failure propagation、abnormal termination
    验证 exact function/edge/loop/length/constant count。
 4. differential tests 在 training、held-out、adversarial non-training input 上比较 ordinary O0、
    ordinary O3、generate execution、PGO O2/O3、baseline、每个 test-only forced compatible
@@ -600,13 +628,16 @@ feature 就 resolve host 或隐藏 variant。
    组合在输出前失败；baseline/thunk 无 optional ISA，每个 variant 只含 declared feature，
    variant/runtime symbol 隐藏，final-use artifact 无 profile runtime，ordinary/profile-use
    public ABI/header bytes 稳定；generation-only flush declaration 只能存在于临时
-   instrumentation header。
+   instrumentation header。通过 dynamic/static packaging 生成的 Native-library profile 必须
+   可用于 baseline/native object；executable-topology profile 必须拒绝该 use。
 7. runtime dispatch tests 覆盖 concurrent first call、stable public address、exactly-once
    capability caching、per-root order、query failure、baseline-only target 与可用 real hardware。
 8. reproducibility tests 在不同 directory、shard、map、process order 构建/merge，要求
    byte-identical final profile 与 unsigned artifact。
-9. O2 phase-boundary mutation test 注入 profile 偏好的 inline/vector/CFG opportunity，证明
-   default LLVM O2 IR result 对 profile blind，同时 post-IR layout metadata 仍有效。
+9. O2 phase-boundary mutation test 注入 profile 偏好的 inline/vector/CFG/tail-duplication
+   opportunity，证明 profile-on/off snapshot 在 `CkLateProfileLayout` 前完全一致；随后用
+   MIR/object/disassembly audit 证明 accepted delta 仅含 ordering、必要 terminator/fallthrough
+   repair、branch relaxation 与 alignment padding，并且不存在 profile-derived LLVM metadata。
 10. exact final candidate SHA 通过 quality、Native integration、六个 Native host 与固定
    x86-64/AArch64 performance acceptance。
 
