@@ -45,3 +45,6 @@ mod profile_mapping;
 
 #[path = "optimizer/pgo.rs"]
 mod pgo;
+
+#[path = "optimizer/multiversion.rs"]
+mod multiversion;

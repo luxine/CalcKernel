@@ -1040,16 +1040,21 @@ fn write_executable(path: &Path, source: &str) {
 fn darwin_target_should_override_the_jit_large_code_model_for_shared_objects() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let creation = bridge
-        .split("extern \"C\" int32_t ckc_llvm_target_create_host(")
+        .split("int32_t finish_target_machine(")
         .nth(1)
-        .expect("host target constructor")
-        .split("auto target_machine = builder->createTargetMachine();")
+        .expect("shared target-machine constructor")
+        .split("llvm::Type *llvm_type")
         .next()
-        .expect("target configuration precedes creation");
-    assert!(creation.contains("builder->setRelocationModel(llvm::Reloc::PIC_)"));
+        .expect("target configuration helper boundary");
+    assert!(creation.contains("builder.setRelocationModel(llvm::Reloc::PIC_)"));
     assert!(
-        creation.contains("builder->setCodeModel(llvm::CodeModel::Small)"),
+        creation.contains("builder.setCodeModel(llvm::CodeModel::Small)"),
         "Mach-O needs an explicit small code model: JIT Large + PIC emits absolute text fixups"
+    );
+    assert_eq!(
+        bridge.matches("return finish_target_machine(").count(),
+        2,
+        "host and explicit feature targets must share the same relocation/code-model policy"
     );
 }
 

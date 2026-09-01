@@ -22,6 +22,8 @@ mod jit;
 mod libraries;
 #[path = "native/llvm_ir.rs"]
 mod llvm_ir;
+#[path = "native/multiversion.rs"]
+mod multiversion;
 #[path = "native/object.rs"]
 mod object;
 #[path = "native/ownership.rs"]

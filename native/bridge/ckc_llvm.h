@@ -221,6 +221,11 @@ int32_t ckc_llvm_module_print(CkcLlvmModule *module,
 int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
                                     CkcLlvmTarget **out,
                                     CkcLlvmError *error);
+int32_t ckc_llvm_target_create_explicit(CkcLlvmBytes triple,
+                                        CkcLlvmBytes cpu,
+                                        CkcLlvmBytes features,
+                                        CkcLlvmTarget **out,
+                                        CkcLlvmError *error);
 void ckc_llvm_target_dispose(CkcLlvmTarget *target);
 int32_t ckc_llvm_target_triple(CkcLlvmTarget *target,
                                CkcLlvmOwnedBytes *out,

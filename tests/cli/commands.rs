@@ -47,6 +47,59 @@ fn fixture(source: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, path)
 }
 
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_pruning() {
+    let (_dir, source) = fixture(
+        "export fn sum(items: slice<i32>, n: u32) -> i32 { let i: u32 = 0; let total: i32 = 0; while i < n { total = total + items[i]; i = i + 1; } return total; }",
+    );
+    let output = run([
+        os("emit-kir"),
+        os(&source),
+        os("--consumer"),
+        os("native-library"),
+        os("--cpu"),
+        os("multiversion"),
+        os("-O3"),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    for needle in [
+        "kir-multiversion-v1",
+        "target-tier baseline",
+        "verified-baseline",
+        "dispatch-plan",
+        "multiversion-root",
+    ] {
+        assert!(output.stdout.contains(needle), "{}", output.stdout);
+    }
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn multiversion_build_should_reach_the_verified_bundle_builder_before_stage09_with_no_output() {
+    let (dir, source) = fixture("export fn add(a: i32, b: i32) -> i32 { return a + b; }");
+    let artifact = dir.join("libadd.dylib");
+    let output = run([
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&artifact),
+        os("--kind"),
+        os("dynamic"),
+        os("--cpu"),
+        os("multiversion"),
+        os("-O3"),
+    ]);
+    assert_eq!(output.code, Some(1));
+    assert!(
+        output.stderr.contains("multiversion KIR bundle"),
+        "{}",
+        output.stderr
+    );
+    assert!(output.stderr.contains("stage 09"), "{}", output.stderr);
+    assert!(!artifact.exists());
+}
+
 #[test]
 fn cli_should_report_version_and_embedded_licenses() {
     let version = run([os("--version")]);

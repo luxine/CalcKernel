@@ -1,5 +1,8 @@
 use std::{io, io::Write};
 
+#[cfg(feature = "native-toolchain")]
+use std::collections::BTreeSet;
+
 use calckernel::{
     BoundsMode, CheckedProgram, EffectTarget, EmitWasmOptions, KirBoundsMode, KirBuildConfig,
     KirConsumer, KirOptimizationLevel, KirOverflowMode, KirPassManagerResult, KirSanitizerMode,
@@ -20,15 +23,17 @@ use calckernel::{
     CkProfileCpuPolicy, CkProfileEndianness, CkProfileEvent, CkProfileIdentity, CkProfileKirMode,
     CkProfileModes, CkProfileObjectFormat, CkProfileObservation, CkProfileOptimizationFamily,
     CkProfileSchemaIdentity, CkProfileTargetIdentity, CkProfileTopology, CkProfileWorkTerm,
-    EmitLlvmOptions, NATIVE_PROFILE_RUNTIME_SHA256, NativeArtifactKind, NativeArtifactPaths,
-    NativeContext, NativeCpu, NativeHeaderMode, NativeObject, NativeOptimizationLevel,
-    NativePlatform, NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
-    build_late_profile_layout_plan, create_native_profile_generation_static_archive,
-    create_native_static_archive, emit_native_header, emit_native_profile_generation_header,
-    link_native_dynamic_library, link_native_executable,
-    link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
-    lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
-    read_profile_input, run_profile_guided_kir_pass_pipeline,
+    EmitLlvmOptions, KirMultiversionPlanningRequest, NATIVE_PROFILE_RUNTIME_SHA256,
+    NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu, NativeHeaderMode,
+    NativeMultiversionTargetSet, NativeObject, NativeOptimizationLevel, NativePlatform,
+    NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
+    build_late_profile_layout_plan, check_kir_multiversion_bundle,
+    create_native_profile_generation_static_archive, create_native_static_archive,
+    emit_native_header, emit_native_profile_generation_header, link_native_dynamic_library,
+    link_native_executable, link_native_profile_generation_dynamic_library,
+    link_native_profile_generation_executable, lower_native_kir_module,
+    lower_native_profile_generation_module, prepare_ck_profile_kir, print_kir_multiversion_bundle,
+    propose_kir_multiversion_bundle, read_profile_input, run_profile_guided_kir_pass_pipeline,
     validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
@@ -381,6 +386,43 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
     #[cfg(feature = "native-toolchain")]
+    let multiversion_targets = if matches!(
+        consumer,
+        KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+    ) && args.cpu == Some(CpuPolicy::Multiversion)
+    {
+        Some(NativeMultiversionTargetSet::host(consumer).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    #[cfg(feature = "native-toolchain")]
+    let multiversion_application = if args.pgo_use.is_some() {
+        multiversion_targets
+            .as_ref()
+            .map(|targets| {
+                let baseline = targets
+                    .target(calckernel::KirMultiversionTierId::Baseline)
+                    .ok_or_else(|| {
+                        "multiversion target set is missing its baseline target".to_string()
+                    })?;
+                prepare_profile_application(
+                    &checked.checked_program,
+                    args,
+                    ProfileApplicationRequest {
+                        target: baseline,
+                        consumer,
+                        overflow_mode,
+                        bounds_mode,
+                        opt_level,
+                        cpu_policy: CpuPolicy::Multiversion,
+                    },
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    #[cfg(feature = "native-toolchain")]
     let profile = if matches!(
         consumer,
         KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
@@ -388,24 +430,38 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
             CpuPolicy::Baseline => NativeCpu::Baseline,
             CpuPolicy::Native => NativeCpu::Native,
-            CpuPolicy::Multiversion => {
-                return Err(
-                    "CPU multiversioning is unavailable until variant planning is implemented."
-                        .to_string(),
-                );
-            }
+            CpuPolicy::Multiversion => NativeCpu::Multiversion,
         };
-        let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
-        Some(
-            target
-                .kir_profile(consumer)
-                .map_err(|error| error.to_string())?,
-        )
+        if let Some(targets) = &multiversion_targets {
+            Some(targets.target_set().tiers[0].profile.clone())
+        } else {
+            let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
+            Some(
+                target
+                    .kir_profile(consumer)
+                    .map_err(|error| error.to_string())?,
+            )
+        }
     } else {
         None
     };
     #[cfg(not(feature = "native-toolchain"))]
     let profile = None;
+    #[cfg(feature = "native-toolchain")]
+    let compiled = if let Some(application) = &multiversion_application {
+        compile_profile_guided_kir(&checked.checked_program, application, args)?
+    } else {
+        compile_kir(
+            &checked.checked_program,
+            KirCompilationTarget { consumer, profile },
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+            false,
+            args,
+        )?
+    };
+    #[cfg(not(feature = "native-toolchain"))]
     let compiled = compile_kir(
         &checked.checked_program,
         KirCompilationTarget { consumer, profile },
@@ -415,6 +471,37 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         false,
         args,
     )?;
+    #[cfg(feature = "native-toolchain")]
+    if let Some(targets) = &multiversion_targets {
+        if let Some(application) = &multiversion_application {
+            emit_profile_analysis(&application.analysis, args)?;
+        }
+        emit_pgo_optimizer_report(&compiled.result, args)?;
+        let pgo_hot_roots = compiled.result.pgo.as_ref().map(|pgo| {
+            pgo.functions
+                .iter()
+                .filter(|function| function.hot)
+                .map(|function| function.function)
+                .collect::<BTreeSet<_>>()
+        });
+        let request = KirMultiversionPlanningRequest {
+            logical_pre_state: compiled
+                .result
+                .artifact
+                .clone()
+                .expect("verified KIR artifact"),
+            target_set: targets.target_set().clone(),
+            pgo_hot_roots,
+            shared_growth_consumed: 0,
+        };
+        let bundle = propose_kir_multiversion_bundle(&request)?;
+        check_kir_multiversion_bundle(&request, &bundle)?;
+        return write_or_print(
+            args.out.as_deref(),
+            &print_kir_multiversion_bundle(&bundle),
+            "multiversion KIR bundle",
+        );
+    }
     #[cfg(feature = "native-toolchain")]
     if args.pgo_use.is_some() {
         let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
@@ -773,15 +860,21 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         KirConsumer::NativeLibrary
     };
     let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
+    if cpu_policy == CpuPolicy::Multiversion {
+        return run_multiversion_planning_build(
+            args,
+            &checked.checked_program,
+            consumer,
+            kind,
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+        );
+    }
     let cpu = match cpu_policy {
         CpuPolicy::Baseline => NativeCpu::Baseline,
         CpuPolicy::Native => NativeCpu::Native,
-        CpuPolicy::Multiversion => {
-            return Err(
-                "CPU multiversioning is unavailable until variant planning is implemented."
-                    .to_string(),
-            );
-        }
+        CpuPolicy::Multiversion => unreachable!("handled by bundle planner"),
     };
     let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
     let profile_application = args
@@ -956,6 +1049,83 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
 }
 
 #[cfg(feature = "native-toolchain")]
+#[allow(clippy::too_many_arguments)]
+fn run_multiversion_planning_build(
+    args: &ParsedArgs,
+    program: &CheckedProgram,
+    consumer: KirConsumer,
+    kind: ArtifactKind,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+) -> Result<(), String> {
+    if kind == ArtifactKind::Object {
+        return Err("CPU multiversioning does not support --kind object.".to_string());
+    }
+    let targets = NativeMultiversionTargetSet::host(consumer).map_err(|error| error.to_string())?;
+    let baseline_target = targets
+        .target(calckernel::KirMultiversionTierId::Baseline)
+        .ok_or_else(|| "multiversion target set is missing its baseline target".to_string())?;
+    let application = args
+        .pgo_use
+        .as_ref()
+        .map(|_| {
+            prepare_profile_application(
+                program,
+                args,
+                ProfileApplicationRequest {
+                    target: baseline_target,
+                    consumer,
+                    overflow_mode,
+                    bounds_mode,
+                    opt_level,
+                    cpu_policy: CpuPolicy::Multiversion,
+                },
+            )
+        })
+        .transpose()?;
+    let compiled = if let Some(application) = &application {
+        compile_profile_guided_kir(program, application, args)?
+    } else {
+        compile_kir(
+            program,
+            KirCompilationTarget {
+                consumer,
+                profile: Some(targets.target_set().tiers[0].profile.clone()),
+            },
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+            false,
+            args,
+        )?
+    };
+    let hot_roots = compiled.result.pgo.as_ref().map(|pgo| {
+        pgo.functions
+            .iter()
+            .filter(|function| function.hot)
+            .map(|function| function.function)
+            .collect::<BTreeSet<_>>()
+    });
+    let request = KirMultiversionPlanningRequest {
+        logical_pre_state: compiled
+            .result
+            .artifact
+            .clone()
+            .ok_or_else(|| "multiversion baseline KIR artifact is missing".to_string())?,
+        target_set: targets.target_set().clone(),
+        pgo_hot_roots: hot_roots,
+        shared_growth_consumed: 0,
+    };
+    let bundle = propose_kir_multiversion_bundle(&request)?;
+    check_kir_multiversion_bundle(&request, &bundle)?;
+    Err(format!(
+        "multiversion KIR bundle {} was verified, but production dispatch and artifact packaging are unavailable until stage 09; no output was created",
+        bundle.digest_hex()
+    ))
+}
+
+#[cfg(feature = "native-toolchain")]
 struct CompiledProfileGeneration {
     result: KirPassManagerResult,
     plan: calckernel::CkProfileKirPlan,
@@ -995,8 +1165,9 @@ fn run_profile_generation_build(args: &ParsedArgs) -> Result<(), String> {
     };
     let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
     let target_cpu = match cpu_policy {
-        CpuPolicy::Baseline | CpuPolicy::Multiversion => NativeCpu::Baseline,
+        CpuPolicy::Baseline => NativeCpu::Baseline,
         CpuPolicy::Native => NativeCpu::Native,
+        CpuPolicy::Multiversion => NativeCpu::Multiversion,
     };
     let target = NativeTarget::host_with_cpu(target_cpu).map_err(|error| error.to_string())?;
     let target_profile = target
@@ -1535,17 +1706,25 @@ fn profile_generation_identity(
     let triple = target.triple().map_err(|error| error.to_string())?;
     let cpu = target.cpu().map_err(|error| error.to_string())?;
     let features = target.features().map_err(|error| error.to_string())?;
-    let mut target_set = Vec::new();
-    target_set.extend_from_slice(triple.as_bytes());
-    target_set.push(0);
-    target_set.extend_from_slice(cpu.as_bytes());
-    target_set.push(0);
-    target_set.extend_from_slice(features.as_bytes());
-    target_set.push(match cpu_policy {
-        CpuPolicy::Baseline => 1,
-        CpuPolicy::Native => 2,
-        CpuPolicy::Multiversion => 3,
-    });
+    let target_set_digest = if cpu_policy == CpuPolicy::Multiversion {
+        NativeMultiversionTargetSet::host(consumer)
+            .map_err(|error| error.to_string())?
+            .target_set()
+            .digest
+    } else {
+        let mut target_set = Vec::new();
+        target_set.extend_from_slice(triple.as_bytes());
+        target_set.push(0);
+        target_set.extend_from_slice(cpu.as_bytes());
+        target_set.push(0);
+        target_set.extend_from_slice(features.as_bytes());
+        target_set.push(match cpu_policy {
+            CpuPolicy::Baseline => 1,
+            CpuPolicy::Native => 2,
+            CpuPolicy::Multiversion => unreachable!("handled as a closed target set"),
+        });
+        hash_domain(b"CK-PROFILE-TARGET-SET\0", &target_set)
+    };
     Ok(CkProfileIdentity {
         compiler: CkCompilerProfileIdentity {
             package_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -1587,7 +1766,7 @@ fn profile_generation_identity(
                 NativePlatform::Windows => "windows-msvc",
             }
             .to_string(),
-            target_set_digest: hash_domain(b"CK-PROFILE-TARGET-SET\0", &target_set),
+            target_set_digest,
         },
         modes: CkProfileModes {
             overflow_checked: overflow_mode == OverflowMode::Checked,

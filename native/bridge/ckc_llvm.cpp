@@ -860,6 +860,40 @@ llvm::StringRef borrowed_string(CkcLlvmBytes bytes) {
     return {reinterpret_cast<const char *>(bytes.data), bytes.len};
 }
 
+int32_t finish_target_machine(llvm::orc::JITTargetMachineBuilder &builder,
+                              CkcLlvmTarget **out,
+                              CkcLlvmError *error) {
+    builder.setRelocationModel(llvm::Reloc::PIC_);
+    if (builder.getTargetTriple().isOSBinFormatMachO()) {
+        // JIT defaults to Large on x86-64, whose Mach-O calls still use
+        // absolute text relocations even with PIC. The same object must also
+        // be loadable by dyld without writing its executable pages.
+        builder.setCodeModel(llvm::CodeModel::Small);
+    }
+    auto target_machine = builder.createTargetMachine();
+    if (!target_machine) {
+        return set_llvm_error(error, target_machine.takeError());
+    }
+    auto target = std::make_unique<CkcLlvmTarget>();
+    target->value = std::move(*target_machine);
+    target->cpu = target->value->getTargetCPU().str();
+    target->features = target->value->getTargetFeatureString().str();
+    target->profile_context = std::make_unique<llvm::LLVMContext>();
+    target->profile_module = std::make_unique<llvm::Module>(
+        "ckc.target.profile", *target->profile_context);
+    target->profile_module->setTargetTriple(target->value->getTargetTriple());
+    target->profile_module->setDataLayout(target->value->createDataLayout());
+    auto *profile_function_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*target->profile_context), false);
+    target->profile_function = llvm::Function::Create(
+        profile_function_type, llvm::GlobalValue::InternalLinkage,
+        "__ck_target_profile_probe", *target->profile_module);
+    target->profile_function->addFnAttr("target-cpu", target->cpu);
+    target->profile_function->addFnAttr("target-features", target->features);
+    *out = target.release();
+    return CKC_LLVM_OK;
+}
+
 llvm::Type *llvm_type(CkcLlvmType *value) {
     return reinterpret_cast<llvm::Type *>(value);
 }
@@ -1646,43 +1680,58 @@ extern "C" int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
         } else if (cpu_policy != CKC_LLVM_CPU_NATIVE) {
             return invalid(error, "unknown LLVM CPU policy");
         }
-        builder->setRelocationModel(llvm::Reloc::PIC_);
-        if (builder->getTargetTriple().isOSBinFormatMachO()) {
-            // JIT defaults to Large on x86-64, whose Mach-O calls still use
-            // absolute text relocations even with PIC. The same object must
-            // also be loadable by dyld without writing its executable pages.
-            builder->setCodeModel(llvm::CodeModel::Small);
-        }
-        auto target_machine = builder->createTargetMachine();
-        if (!target_machine) {
-            return set_llvm_error(error, target_machine.takeError());
-        }
-        auto target = std::make_unique<CkcLlvmTarget>();
-        target->value = std::move(*target_machine);
-        target->cpu = target->value->getTargetCPU().str();
-        target->features = target->value->getTargetFeatureString().str();
-        target->profile_context = std::make_unique<llvm::LLVMContext>();
-        target->profile_module = std::make_unique<llvm::Module>(
-            "ckc.target.profile", *target->profile_context);
-        target->profile_module->setTargetTriple(
-            target->value->getTargetTriple());
-        target->profile_module->setDataLayout(
-            target->value->createDataLayout());
-        auto *profile_function_type = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(*target->profile_context), false);
-        target->profile_function = llvm::Function::Create(
-            profile_function_type, llvm::GlobalValue::InternalLinkage,
-            "__ck_target_profile_probe", *target->profile_module);
-        target->profile_function->addFnAttr("target-cpu", target->cpu);
-        target->profile_function->addFnAttr("target-features",
-                                            target->features);
-        *out = target.release();
-        return CKC_LLVM_OK;
+        return finish_target_machine(*builder, out, error);
     } catch (const std::exception &exception) {
         return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
     } catch (...) {
         return set_error(error, CKC_LLVM_INTERNAL_ERROR,
                          "unknown C++ exception creating LLVM target");
+    }
+}
+
+extern "C" int32_t ckc_llvm_target_create_explicit(
+    CkcLlvmBytes triple_bytes, CkcLlvmBytes cpu_bytes,
+    CkcLlvmBytes feature_bytes, CkcLlvmTarget **out,
+    CkcLlvmError *error) {
+    clear_error(error);
+    if (out == nullptr) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "LLVM explicit target output is null");
+    }
+    *out = nullptr;
+    try {
+        if (auto init_error = initialize_host_target()) {
+            return set_llvm_error(error, std::move(init_error));
+        }
+        auto triple = llvm::Triple::normalize(borrowed_string(triple_bytes));
+        auto cpu = borrowed_string(cpu_bytes).str();
+        auto features = borrowed_string(feature_bytes).str();
+        if (triple.empty() || cpu.empty()) {
+            return invalid(error,
+                           "LLVM explicit target triple or CPU is empty");
+        }
+        auto detected_builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+        if (!detected_builder) {
+            return set_llvm_error(error, detected_builder.takeError());
+        }
+        auto requested = llvm::Triple(triple);
+        auto detected = detected_builder->getTargetTriple();
+        if (requested.getArch() != detected.getArch() ||
+            requested.getOS() != detected.getOS() ||
+            requested.getEnvironment() != detected.getEnvironment()) {
+            return invalid(
+                error,
+                "explicit LLVM feature target must match the build host ABI");
+        }
+        llvm::orc::JITTargetMachineBuilder builder(std::move(requested));
+        builder.setCPU(cpu);
+        builder.setFeatures(features);
+        return finish_target_machine(builder, out, error);
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception creating explicit LLVM target");
     }
 }
 

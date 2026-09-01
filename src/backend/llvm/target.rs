@@ -18,6 +18,8 @@ pub enum NativeCpu {
     Baseline,
     /// Complete CPU and feature set detected on the current host.
     Native,
+    /// Baseline member of the closed compiler-owned multiversion target set.
+    Multiversion,
 }
 
 /// Unique owner of the host LLVM target machine.
@@ -43,6 +45,7 @@ impl NativeTarget {
             handle: ffi::target_create_host(match cpu {
                 NativeCpu::Baseline => BridgeCpuPolicy::Baseline,
                 NativeCpu::Native => BridgeCpuPolicy::Native,
+                NativeCpu::Multiversion => BridgeCpuPolicy::Baseline,
             })?,
             cpu_policy: cpu,
             not_send_or_sync: PhantomData,
@@ -110,6 +113,7 @@ impl NativeTarget {
             match self.cpu_policy {
                 NativeCpu::Baseline => KirNativeCpuPolicy::Baseline,
                 NativeCpu::Native => KirNativeCpuPolicy::Native,
+                NativeCpu::Multiversion => KirNativeCpuPolicy::Multiversion,
             },
             cpu,
             features,
@@ -160,6 +164,18 @@ impl NativeTarget {
             format!("ckc-llvm-bridge-abi-{}", ffi::LLVM_BRIDGE_ABI_VERSION),
         );
         builder.build().map_err(profile_error)
+    }
+
+    pub(super) fn explicit_multiversion(
+        triple: &str,
+        cpu: &str,
+        features: &[String],
+    ) -> Result<Self, NativeError> {
+        Ok(Self {
+            handle: ffi::target_create_explicit(triple, cpu, &features.join(","))?,
+            cpu_policy: NativeCpu::Multiversion,
+            not_send_or_sync: PhantomData,
+        })
     }
 
     /// Verifies and emits one module as a host object.

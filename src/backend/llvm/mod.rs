@@ -25,6 +25,8 @@ mod lower_shared;
 #[cfg(feature = "native-toolchain")]
 mod module;
 #[cfg(feature = "native-toolchain")]
+mod multiversion;
+#[cfg(feature = "native-toolchain")]
 mod names;
 mod notices;
 #[cfg(feature = "native-toolchain")]
@@ -62,6 +64,8 @@ pub use late_layout::{
 };
 #[cfg(feature = "native-toolchain")]
 pub use module::NativeModule;
+#[cfg(feature = "native-toolchain")]
+pub use multiversion::NativeMultiversionTargetSet;
 pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices};
 #[cfg(feature = "native-toolchain")]
 pub use object::{NativeObject, OptimizedNativeModule};

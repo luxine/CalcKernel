@@ -335,6 +335,13 @@ unsafe extern "C" {
         out: *mut *mut CkcLlvmTarget,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_target_create_explicit(
+        triple: CkcLlvmBytes,
+        cpu: CkcLlvmBytes,
+        features: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmTarget,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_target_dispose(target: *mut CkcLlvmTarget);
     fn ckc_llvm_target_triple(
         target: *mut CkcLlvmTarget,
@@ -955,6 +962,27 @@ pub(super) fn target_create_host(
     // SAFETY: Both out-pointers reference initialized writable storage and the
     // bridge either leaves the handle null or transfers one owned handle.
     let status = unsafe { ckc_llvm_target_create_host(cpu_policy as u32, &mut handle, &mut error) };
+    handle_result(NativeStage::Target, status, handle, &mut error)
+}
+
+pub(super) fn target_create_explicit(
+    triple: &str,
+    cpu: &str,
+    features: &str,
+) -> Result<NonNull<CkcLlvmTarget>, NativeError> {
+    let mut handle = ptr::null_mut();
+    let mut error = CkcLlvmError::empty();
+    // SAFETY: all byte views remain live for the call and both out-pointers
+    // reference initialized writable storage.
+    let status = unsafe {
+        ckc_llvm_target_create_explicit(
+            CkcLlvmBytes::new(triple),
+            CkcLlvmBytes::new(cpu),
+            CkcLlvmBytes::new(features),
+            &mut handle,
+            &mut error,
+        )
+    };
     handle_result(NativeStage::Target, status, handle, &mut error)
 }
 
