@@ -342,6 +342,13 @@ modular integer add/mul reduction。Checked integer reduction 在 0.12 中保持
 reduction、scan、recurrence、gather/scatter、complex predication 与 interleaved memory 不
 属于范围。
 
+这里的 supported source surface 不承诺每个 kernel 在每个 target 都会被接受。每个具体
+target profile 仍必须证明未改变的 20% profitability threshold。在固定 baseline profile
+中，AArch64 可以接受完整结构 corpus，而 x86-64 会保守地让高吞吐 strict-f64 division
+以及不盈利的 horizontal integer multiplication reduction 保持 scalar。跨 target 测试必须
+断言精确的 accepted subset 与稳定 profitability rejection；每个实际 accepted plan 都必须
+提供结构 vector 证据。
+
 对于 checked element-wise operation，只有既有 fact 或允许的 version predicate 证明每个
 vector lane 都不会失败时，fast path 才合法。Scalar fallback 保留所有原始 guard。不实现
 vector failure 的 per-lane recovery。

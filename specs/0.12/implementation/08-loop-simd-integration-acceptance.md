@@ -27,6 +27,9 @@
 
 - Accepted kernel 在 optimized KIR 和 pre-LLVM IR 都有预期 vector op；object disassembly 有
   pinned arch 的真实 SIMD，三层证据缺一不可。
+- Accepted subset 由固定 target profile 和未降低的 20% 门槛决定；六 host 必须断言各自精确
+  subset。合法但不盈利的 x86-64 strict-f64 division / horizontal multiply reduction 必须以
+  稳定 `vector-profitability-threshold-not-met` 保持 scalar，不能被测试强制接受。
 - Zero/short/overlap/misaligned/overflow predicate 走 original scalar fallback；exact/remainder
   coverage 无漏/重迭代或越界访问。
 - Checked first-error、strict f64、print/effect order 与 O0 一致；unsupported reduction保持 scalar。

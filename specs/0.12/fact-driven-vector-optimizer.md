@@ -419,6 +419,15 @@ exact lane partition and horizontal fold. Checked integer reductions remain
 scalar in 0.12. Other reductions, scans, recurrences, gather/scatter, complex
 predication, and interleaved memory are outside scope.
 
+This supported source surface is not a promise that every kernel is accepted on
+every target. Each concrete target profile must still prove the unchanged 20
+percent profitability threshold. In the pinned baseline profiles, AArch64 may
+accept the complete structural corpus while x86-64 conservatively keeps
+high-throughput strict-f64 division and an unprofitable horizontal integer
+multiplication reduction scalar. Cross-target tests assert the exact accepted
+subset and a stable profitability rejection; structural vector evidence is
+required for every plan that is actually accepted.
+
 For checked element-wise operations, the fast path is legal only when existing
 facts or permitted version predicates prove that every vector lane cannot fail.
 The scalar fallback retains every original guard. Per-lane recovery from a

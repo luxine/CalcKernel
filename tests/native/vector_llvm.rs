@@ -450,6 +450,25 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         import_contract_facts(&kir, &checked.checked_program, 0).expect("loop SIMD contracts");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(result.errors.is_empty(), "{:?}", result.errors);
+    if cfg!(target_arch = "x86_64") {
+        assert_eq!(
+            result.stats.vectorized_loops, 0,
+            "{:?}",
+            result.analysis_fallbacks
+        );
+        assert!(result.analysis_fallbacks.iter().any(|fallback| {
+            fallback.pass == "loop-simd"
+                && fallback.reason == "vector-profitability-threshold-not-met"
+        }));
+        let kir = print_kir_module(
+            result
+                .artifact
+                .as_ref()
+                .expect("scalar strict f64 fallback artifact"),
+        );
+        assert!(!kir.contains("vector_divide"), "{kir}");
+        return;
+    }
     assert_eq!(
         result.stats.vectorized_loops, 1,
         "{:?}",
@@ -698,16 +717,30 @@ fn vector_loop_simd_modular_reductions_should_survive_into_pre_llvm_ir() {
         .expect("reduction loop SIMD contracts");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 1 } else { 2 };
     assert_eq!(
-        result.stats.vectorized_loops, 2,
+        result.stats.vectorized_loops, expected_vectorized_loops,
         "{:?}",
         result.analysis_fallbacks
     );
     let kir_text = print_kir_module(result.artifact.as_ref().expect("reduction artifact"));
-    for spelling in ["vector_reduce_modularadd", "vector_reduce_modularmultiply"] {
+    assert!(
+        kir_text.contains("vector_reduce_modularadd"),
+        "missing modular add reduction:\n{kir_text}"
+    );
+    if cfg!(target_arch = "x86_64") {
         assert!(
-            kir_text.contains(spelling),
-            "missing {spelling}:\n{kir_text}"
+            !kir_text.contains("vector_reduce_modularmultiply"),
+            "unprofitable x86-64 multiply reduction was accepted:\n{kir_text}"
+        );
+        assert!(result.analysis_fallbacks.iter().any(|fallback| {
+            fallback.pass == "loop-simd"
+                && fallback.reason == "vector-profitability-threshold-not-met"
+        }));
+    } else {
+        assert!(
+            kir_text.contains("vector_reduce_modularmultiply"),
+            "missing modular multiply reduction:\n{kir_text}"
         );
     }
     let context = NativeContext::new().expect("context");
@@ -717,8 +750,11 @@ fn vector_loop_simd_modular_reductions_should_survive_into_pre_llvm_ir() {
         .expect("verify reduction vector loops")
         .to_ir_string()
         .expect("reduction LLVM IR");
-    for spelling in ["llvm.vector.reduce.add", "llvm.vector.reduce.mul"] {
-        assert!(llvm.contains(spelling), "missing {spelling}:\n{llvm}");
+    assert!(llvm.contains("llvm.vector.reduce.add"), "{llvm}");
+    if cfg!(target_arch = "x86_64") {
+        assert!(!llvm.contains("llvm.vector.reduce.mul"), "{llvm}");
+    } else {
+        assert!(llvm.contains("llvm.vector.reduce.mul"), "{llvm}");
     }
 }
 

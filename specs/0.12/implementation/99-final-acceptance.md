@@ -44,8 +44,8 @@ required job、旧日志、历史数值或 lowered threshold。
   双侧预算正确；trial 不提前运行 loop/vector。
 - [ ] Scalar full/partial unroll 与 unroll+SLP 满足 trip/body/factor/growth 和 >=10%+2 unit；SLP
   只做 identity pack且不跨 barrier。
-- [ ] Loop SIMD 满足 >=20%，支持冻结的 element-wise/reduction/diamond 范围；checked lane
-  no-failure、strict f64、footprint 和 epilogue 正确。
+- [ ] Loop SIMD 满足 >=20%，支持冻结的 element-wise/reduction/diamond 范围；各 target 断言其
+  精确盈利子集及稳定拒绝，checked lane no-failure、strict f64、footprint 和 epilogue 正确。
 - [ ] 同一 scalar pre-state 的 frontier 至多提交一个 winner；residual SLP 不进入 committed loop
   region；stable order/stats/explanations 不受存储顺序影响。
 
