@@ -21,7 +21,9 @@ Loop SIMD frontier 完成前不得抢先提交。
 3. 写 unroll checker mutation RED：iteration coverage、order、phi/LCSSA、remainder、cost/growth/
    budget 任一伪造拒绝；ID exhaustion/预算耗尽整 proposal 回滚。
 4. 写 SLP discovery RED：同 block、isomorphic、independent、同 lane type/semantics、source-order
-   identity packing；splat/arithmetic/compare/cast/select/contiguous memory。
+   identity packing；splat/arithmetic/compare/cast/select/contiguous memory；同 root 的重叠宽度
+   全部基于同一 pre-state 独立验算，按绝对 cost reduction 选择一个 winner，其他项计费为
+   non-winner，不能由先到的窄 pack 抢占宽 pack。
 5. 写 SLP barrier RED：guard/call/runtime/print/unknown write/block edge/certificate dependency、
    非连续或逆序 memory、shuffle 需求、f64 horizontal、partial call 全拒绝。
 6. 写 combined transaction RED：只有 unroll+SLP 合计过 10%+2 时两者原子提交；任一 checker/

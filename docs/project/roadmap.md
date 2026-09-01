@@ -3,10 +3,11 @@
 [简体中文](../zh-CN/project/roadmap.md)
 
 This document is non-normative and lists only undelivered possibilities. It does
-not override the [0.11 compatibility policy](compatibility.md).
+not override the [0.12 compatibility policy](compatibility.md).
 
-- Add source SIMD types, target-specific superword/vector cost models, PGO, and
-  auto-tuning only through separately reviewed future contracts.
+- Add source SIMD types and richer target-specific vector facilities only
+  through separately reviewed future contracts. PGO remains 0.13. Auto-Tuning
+  remains 0.14.
 - Harden target-specific LLVM calling conventions and data-layout reporting.
 - Evaluate checked bounds/status support for WASM only as a future, explicitly
   versioned ABI addition.

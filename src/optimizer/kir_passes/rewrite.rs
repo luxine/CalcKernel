@@ -94,6 +94,62 @@ pub(super) fn remap_instruction_values(
             remap_value(start, values);
             remap_value(end, values);
         }
+        KirInstructionKind::VersionPredicate { predicate } => {
+            for conjunct in &mut predicate.conjuncts {
+                match conjunct {
+                    crate::KirVersionPredicateConjunct::TripThreshold { value, .. } => {
+                        remap_value(value, values);
+                    }
+                    crate::KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                        left,
+                        left_count,
+                        right,
+                        right_count,
+                        ..
+                    } => {
+                        remap_value(left, values);
+                        remap_value(left_count, values);
+                        remap_value(right, values);
+                        remap_value(right_count, values);
+                    }
+                }
+            }
+        }
+        KirInstructionKind::VectorSplat { scalar, .. } => remap_value(scalar, values),
+        KirInstructionKind::VectorLoad { access, .. } => {
+            remap_value(&mut access.slice, values);
+            remap_value(&mut access.start, values);
+            remap_value(&mut access.end, values);
+        }
+        KirInstructionKind::VectorStore { access, value, .. } => {
+            remap_value(&mut access.slice, values);
+            remap_value(&mut access.start, values);
+            remap_value(&mut access.end, values);
+            remap_value(value, values);
+        }
+        KirInstructionKind::VectorBinary { left, right, .. }
+        | KirInstructionKind::VectorCompare { left, right, .. } => {
+            remap_value(left, values);
+            remap_value(right, values);
+        }
+        KirInstructionKind::VectorUnary { operand, .. } => remap_value(operand, values),
+        KirInstructionKind::VectorSelect {
+            mask,
+            when_true,
+            when_false,
+            ..
+        } => {
+            remap_value(mask, values);
+            remap_value(when_true, values);
+            remap_value(when_false, values);
+        }
+        KirInstructionKind::VectorCast { value, .. } => remap_value(value, values),
+        KirInstructionKind::VectorInsert { vector, scalar, .. } => {
+            remap_value(vector, values);
+            remap_value(scalar, values);
+        }
+        KirInstructionKind::VectorExtract { vector, .. }
+        | KirInstructionKind::VectorReduce { vector, .. } => remap_value(vector, values),
     }
 }
 

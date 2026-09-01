@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 
 #[cfg(feature = "native-toolchain")]
 mod runtime_replay;
+#[cfg(feature = "native-toolchain")]
+mod vector_perf;
 
 use calckernel::{
     BoundsMode, EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
@@ -942,27 +944,43 @@ fn measure_native_runtime(
 ) -> Result<NativeRuntimeReport, String> {
     let clang = clang_oracle()?;
     let clang_version = clang_version(&clang)?;
-    let bundle = env::var_os("CKC_V010_RUNTIME_BUNDLE")
+    let bundle_v011 = env::var_os("CKC_V011_RUNTIME_BUNDLE")
         .map(PathBuf::from)
         .ok_or_else(|| {
-            "set CKC_V010_RUNTIME_BUNDLE after running scripts/prepare-performance-replay.py"
-                .to_string()
+            "set CKC_V011_RUNTIME_BUNDLE after preparing the pinned 0.11 replay".to_string()
         })?;
+    let bundle_v010 = env::var_os("CKC_V010_RUNTIME_BUNDLE")
+        .map(PathBuf::from)
+        .ok_or_else(|| "set CKC_V010_RUNTIME_BUNDLE for the retained 0.10 replay".to_string())?;
     let recipe = runtime_replay::recipe_digest(repo_root)?;
-    let adapters = runtime_replay::adapter_set_digest(repo_root)?;
+    let adapters_v011 = runtime_replay::v011_adapter_set_digest(repo_root)?;
+    let adapters_v010 = runtime_replay::v010_adapter_set_digest(repo_root)?;
     let target = host_target_name();
-    let expected = runtime_replay::ExpectedReplay {
+    let expected_v011 = runtime_replay::ExpectedReplay {
+        generation: runtime_replay::ReplayGeneration::V011,
         target: &target,
         cpu: match config.cpu_policy {
             CpuPolicy::Baseline => "baseline",
             CpuPolicy::Native => "native",
         },
         recipe_sha256: &recipe,
-        adapter_set_sha256: &adapters,
+        adapter_set_sha256: &adapters_v011,
         llvm_component_sha256: env!("CKC_LLVM_MANIFEST_SHA256"),
     };
-    // Validate the entire independently prepared bundle before opening any library.
-    let replay = runtime_replay::load_replay(&bundle, &expected)?;
+    let expected_v010 = runtime_replay::ExpectedReplay {
+        generation: runtime_replay::ReplayGeneration::V010,
+        target: &target,
+        cpu: match config.cpu_policy {
+            CpuPolicy::Baseline => "baseline",
+            CpuPolicy::Native => "native",
+        },
+        recipe_sha256: &recipe,
+        adapter_set_sha256: &adapters_v010,
+        llvm_component_sha256: env!("CKC_LLVM_MANIFEST_SHA256"),
+    };
+    // Validate both independently prepared bundles before opening any library.
+    let replay_v011 = runtime_replay::load_replay(&bundle_v011, &expected_v011)?;
+    let replay_v010 = runtime_replay::load_replay(&bundle_v010, &expected_v010)?;
     let root = runtime_evidence_dir(repo_root)?;
     let evidence_directory = root
         .file_name()
@@ -985,7 +1003,14 @@ fn measure_native_runtime(
             .join(NATIVE_RUNTIME_FIXTURE_ROOT)
             .join(format!("{name}.ck"));
         let measured = measure_native_case(
-            repo_root, &fixture, &root, &clang, config, baseline, &replay,
+            repo_root,
+            &fixture,
+            &root,
+            &clang,
+            config,
+            baseline,
+            &replay_v011,
+            &replay_v010,
         )?;
         for (mode, (case, artifacts)) in measured.into_iter().enumerate() {
             suites[mode].cases.push(case);
@@ -996,19 +1021,26 @@ fn measure_native_runtime(
     for artifact in &measured_artifacts {
         artifact.verify(&root)?;
     }
-    if runtime_replay::load_replay(&bundle, &expected)?.manifest_sha256 != replay.manifest_sha256 {
-        return Err("replay manifest changed during measurement".into());
+    if runtime_replay::load_replay(&bundle_v011, &expected_v011)?.manifest_sha256
+        != replay_v011.manifest_sha256
+        || runtime_replay::load_replay(&bundle_v010, &expected_v010)?.manifest_sha256
+            != replay_v010.manifest_sha256
+    {
+        return Err("a replay manifest changed during measurement".into());
     }
+    let vector = vector_perf::measure(repo_root, config, &clang, &root, &replay_v011)?;
     Ok(NativeRuntimeReport {
         cpu_policy: config.cpu_policy,
         clang_version,
         warmup: config.warmup,
         suites: suites.into(),
         baseline: baseline.clone(),
-        replay,
+        replay_v011,
+        replay_v010,
         evidence_directory,
         measured_artifacts,
         optimizer: measure_optimizer_comparisons(repo_root, compiler_cases, config, baseline)?,
+        vector,
     })
 }
 
@@ -1021,7 +1053,8 @@ fn measure_native_case(
     clang: &Path,
     config: &Config,
     baseline: &CompilerBaseline,
-    replay: &runtime_replay::RuntimeReplay,
+    replay_v011: &runtime_replay::RuntimeReplay,
+    replay_v010: &runtime_replay::RuntimeReplay,
 ) -> Result<[(NativeRuntimeCase, Vec<MeasuredArtifact>); 2], String> {
     let name = fixture
         .file_stem()
@@ -1054,30 +1087,41 @@ fn measure_native_case(
         prepare_native_case(repo_root, &input, root, clang, false, config)?,
         prepare_native_case(repo_root, &input, root, clang, true, config)?,
     ];
-    let mut libraries = Vec::with_capacity(8);
-    let mut cold_ns = [0; 8];
-    let mut results = [0; 8];
-    for channel in 0..8 {
+    let mut libraries = Vec::with_capacity(12);
+    let mut cold_ns = [0; 12];
+    let mut results = [0; 12];
+    for channel in 0..12 {
         let mode = channel % 2;
         let path = match channel / 2 {
             0 => &prepared[mode].native_path,
             1 => &prepared[mode].clang_path,
             2 => {
-                &replay
+                &replay_v011
                     .artifacts
                     .iter()
                     .find(|artifact| {
                         artifact.case == name && artifact.mode == ["unchecked", "checked"][mode]
                     })
-                    .ok_or_else(|| "verified replay case disappeared".to_string())?
+                    .ok_or_else(|| "verified v0.11 replay case disappeared".to_string())?
                     .path
             }
-            _ => &prepared[mode].replay_clang_path,
+            3 => &prepared[mode].replay_v011_clang_path,
+            4 => {
+                &replay_v010
+                    .artifacts
+                    .iter()
+                    .find(|artifact| {
+                        artifact.case == name && artifact.mode == ["unchecked", "checked"][mode]
+                    })
+                    .ok_or_else(|| "verified v0.10 replay case disappeared".to_string())?
+                    .path
+            }
+            _ => &prepared[mode].replay_v010_clang_path,
         };
         let start = Instant::now();
         let library = DynamicLibrary::open(path)?;
         results[channel] = unsafe {
-            // SAFETY: All eight libraries use the pinned fixture and the selected C ABI.
+            // SAFETY: All twelve libraries use the pinned fixture and selected C ABI.
             call_kernel(
                 &library,
                 mode == 1,
@@ -1124,8 +1168,10 @@ fn measure_native_case(
     for (mode, prepared) in prepared.into_iter().enumerate() {
         let native_samples_ns = sampled.channels[mode].clone();
         let clang_c_samples_ns = sampled.channels[mode + 2].clone();
-        let replay_native_samples_ns = sampled.channels[mode + 4].clone();
-        let replay_clang_samples_ns = sampled.channels[mode + 6].clone();
+        let replay_v011_native_samples_ns = sampled.channels[mode + 4].clone();
+        let replay_v011_clang_samples_ns = sampled.channels[mode + 6].clone();
+        let replay_v010_native_samples_ns = sampled.channels[mode + 8].clone();
+        let replay_v010_clang_samples_ns = sampled.channels[mode + 10].clone();
         let (v0_10_median_ns, v0_10_clang_median_ns) =
             baseline.runtime_medians(config.cpu_policy, ["unchecked", "checked"][mode], name)?;
         output.push((
@@ -1138,12 +1184,16 @@ fn measure_native_case(
                 clang_c_cold_ns: cold_ns[mode + 2],
                 native_median_ns: median(&native_samples_ns),
                 clang_c_median_ns: median(&clang_c_samples_ns),
-                replay_native_median_ns: median(&replay_native_samples_ns),
-                replay_clang_median_ns: median(&replay_clang_samples_ns),
+                replay_v011_native_median_ns: median(&replay_v011_native_samples_ns),
+                replay_v011_clang_median_ns: median(&replay_v011_clang_samples_ns),
+                replay_v010_native_median_ns: median(&replay_v010_native_samples_ns),
+                replay_v010_clang_median_ns: median(&replay_v010_clang_samples_ns),
                 native_samples_ns,
                 clang_c_samples_ns,
-                replay_native_samples_ns,
-                replay_clang_samples_ns,
+                replay_v011_native_samples_ns,
+                replay_v011_clang_samples_ns,
+                replay_v010_native_samples_ns,
+                replay_v010_clang_samples_ns,
                 warmup_order: sampled.warmup_order.clone(),
                 sample_order: sampled.sample_order.clone(),
                 peak_memory_bytes: peak_memory_bytes(),
@@ -1167,7 +1217,8 @@ fn measure_native_case(
 struct PreparedNativeCase {
     native_path: PathBuf,
     clang_path: PathBuf,
-    replay_clang_path: PathBuf,
+    replay_v011_clang_path: PathBuf,
+    replay_v010_clang_path: PathBuf,
     native_compile_ns: u128,
     clang_c_compile_ns: u128,
     artifacts: Vec<MeasuredArtifact>,
@@ -1234,12 +1285,21 @@ fn prepare_native_case(
     compile_strict_clang_library(clang, &c_path, &clang_path, config.cpu_policy)?;
     let clang_c_compile_ns = clang_compile_start.elapsed().as_nanos();
     // Compile a separate calibration copy; never ask the candidate to emit C.
-    let replay_clang_path = root.join(format!("{name}-{suffix}-replay-clang{}", dynamic_suffix()));
-    compile_strict_clang_library(clang, &c_path, &replay_clang_path, config.cpu_policy)?;
+    let replay_v011_clang_path = root.join(format!(
+        "{name}-{suffix}-replay-v011-clang{}",
+        dynamic_suffix()
+    ));
+    compile_strict_clang_library(clang, &c_path, &replay_v011_clang_path, config.cpu_policy)?;
+    let replay_v010_clang_path = root.join(format!(
+        "{name}-{suffix}-replay-v010-clang{}",
+        dynamic_suffix()
+    ));
+    compile_strict_clang_library(clang, &c_path, &replay_v010_clang_path, config.cpu_policy)?;
     let artifacts = [
         ("candidateNative", &native_path),
         ("currentClang", &clang_path),
-        ("replayClang", &replay_clang_path),
+        ("replayV011Clang", &replay_v011_clang_path),
+        ("replayV010Clang", &replay_v010_clang_path),
     ]
     .into_iter()
     .map(|(channel, path)| MeasuredArtifact::new(name, suffix, channel, path))
@@ -1247,7 +1307,8 @@ fn prepare_native_case(
     Ok(PreparedNativeCase {
         native_path,
         clang_path,
-        replay_clang_path,
+        replay_v011_clang_path,
+        replay_v010_clang_path,
         native_compile_ns,
         clang_c_compile_ns,
         artifacts,
@@ -1491,9 +1552,11 @@ struct NativeRuntimeReport {
     suites: Vec<NativeRuntimeSuite>,
     baseline: CompilerBaseline,
     optimizer: Vec<OptimizerComparison>,
-    replay: runtime_replay::RuntimeReplay,
+    replay_v011: runtime_replay::RuntimeReplay,
+    replay_v010: runtime_replay::RuntimeReplay,
     evidence_directory: String,
     measured_artifacts: Vec<MeasuredArtifact>,
+    vector: vector_perf::VectorPerformanceReport,
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -1572,12 +1635,16 @@ struct NativeRuntimeCase {
     clang_c_samples_ns: Vec<u128>,
     native_median_ns: u128,
     clang_c_median_ns: u128,
-    replay_native_samples_ns: Vec<u128>,
-    replay_clang_samples_ns: Vec<u128>,
-    replay_native_median_ns: u128,
-    replay_clang_median_ns: u128,
-    warmup_order: Vec<[usize; 8]>,
-    sample_order: Vec<[usize; 8]>,
+    replay_v011_native_samples_ns: Vec<u128>,
+    replay_v011_clang_samples_ns: Vec<u128>,
+    replay_v011_native_median_ns: u128,
+    replay_v011_clang_median_ns: u128,
+    replay_v010_native_samples_ns: Vec<u128>,
+    replay_v010_clang_samples_ns: Vec<u128>,
+    replay_v010_native_median_ns: u128,
+    replay_v010_clang_median_ns: u128,
+    warmup_order: Vec<[usize; 12]>,
+    sample_order: Vec<[usize; 12]>,
     peak_memory_bytes: u64,
     native_artifact_bytes: u64,
     clang_c_artifact_bytes: u64,
@@ -1596,40 +1663,50 @@ struct OptimizerComparison {
 }
 
 #[cfg(feature = "native-toolchain")]
+fn replay_json(replay: &runtime_replay::RuntimeReplay) -> String {
+    let metadata = replay
+        .metadata
+        .iter()
+        .map(|(key, value)| format!("\"{}\":\"{}\"", json_escape(key), json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let artifacts = replay
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            format!(
+                r#"{{"case":"{}","mode":"{}","file":"{}","bytes":{},"sha256":"{}"}}"#,
+                json_escape(&artifact.case),
+                json_escape(&artifact.mode),
+                json_escape(&artifact.path.file_name().unwrap().to_string_lossy()),
+                artifact.bytes,
+                artifact.sha256
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"metadata\": {{{metadata}}}, \"manifestSha256\": \"{}\", \"artifacts\": [{artifacts}]}}",
+        replay.manifest_sha256
+    )
+}
+
+#[cfg(feature = "native-toolchain")]
 impl NativeRuntimeReport {
     fn to_json(&self) -> String {
         let mut output = String::new();
-        output.push_str("{\n  \"schemaVersion\": 6,\n");
+        output.push_str("{\n  \"schemaVersion\": 7,\n");
         output.push_str(&format!(
             "  \"candidateVersion\": \"{}\",\n",
             env!("CARGO_PKG_VERSION")
         ));
-        output.push_str("  \"samplingProtocol\": \"rotating-eight-channel-v1\",\n");
-        output.push_str("  \"channelNames\": [\"candidateNativeUnchecked\",\"candidateNativeChecked\",\"currentClangUnchecked\",\"currentClangChecked\",\"replayNativeUnchecked\",\"replayNativeChecked\",\"replayClangUnchecked\",\"replayClangChecked\"],\n");
-        let replay_metadata = self
-            .replay
-            .metadata
-            .iter()
-            .map(|(key, value)| format!("\"{}\":\"{}\"", json_escape(key), json_escape(value)))
-            .collect::<Vec<_>>()
-            .join(",");
-        let replay_artifacts = self
-            .replay
-            .artifacts
-            .iter()
-            .map(|artifact| {
-                format!(
-                    r#"{{"case":"{}","mode":"{}","file":"{}","bytes":{},"sha256":"{}"}}"#,
-                    json_escape(&artifact.case),
-                    json_escape(&artifact.mode),
-                    json_escape(&artifact.path.file_name().unwrap().to_string_lossy()),
-                    artifact.bytes,
-                    artifact.sha256
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        output.push_str(&format!("  \"runtimeReplay\": {{\"metadata\": {{{replay_metadata}}}, \"manifestSha256\": \"{}\", \"artifacts\": [{replay_artifacts}]}},\n", self.replay.manifest_sha256));
+        output.push_str("  \"samplingProtocol\": \"rotating-twelve-channel-v1\",\n");
+        output.push_str("  \"channelNames\": [\"candidateNativeUnchecked\",\"candidateNativeChecked\",\"currentClangUnchecked\",\"currentClangChecked\",\"replayV011NativeUnchecked\",\"replayV011NativeChecked\",\"replayV011ClangUnchecked\",\"replayV011ClangChecked\",\"replayV010NativeUnchecked\",\"replayV010NativeChecked\",\"replayV010ClangUnchecked\",\"replayV010ClangChecked\"],\n");
+        output.push_str(&format!(
+            "  \"runtimeReplayV011\": {},\n  \"runtimeReplayV010\": {},\n",
+            replay_json(&self.replay_v011),
+            replay_json(&self.replay_v010)
+        ));
         output.push_str(&format!(
             "  \"evidenceDirectory\": \"{}\",\n  \"measuredArtifacts\": [{}],\n",
             json_escape(&self.evidence_directory),
@@ -1647,6 +1724,11 @@ impl NativeRuntimeReport {
             }
         ));
         output.push_str("  \"fastMath\": false,\n");
+        output.push_str(&format!(
+            "  \"rustVersion\": \"{}\",\n  \"targetProfile\": {},\n",
+            json_escape(&self.vector.rust_version),
+            self.vector.target_profile_json(),
+        ));
         let source_digests = self
             .baseline
             .source_digests
@@ -1686,7 +1768,15 @@ impl NativeRuntimeReport {
             }
             output.push('\n');
         }
-        output.push_str("  ],\n  \"optimizerComparisons\": [\n");
+        output.push_str(&format!(
+            "  ],\n  \"vectorSuites\": {},\n  \"domainFactSuites\": {},\n  \"oracleIdentity\": {},\n  \"oracleArtifacts\": {},\n  \"artifactSizeComparisons\": {},\n  \"compileTimeComparisons\": {},\n  \"optimizerComparisons\": [\n",
+            self.vector.vector_suites_json(),
+            self.vector.domain_suites_json(),
+            self.vector.identity_json(),
+            self.vector.artifacts_json(),
+            self.vector.sizes_json(),
+            self.vector.compile_times_json(),
+        ));
         for (index, comparison) in self.optimizer.iter().enumerate() {
             output.push_str(&format!(
                 "    {{ \"case\": \"{}\", \"kirMedianNs\": {}, \"v010MirMedianNs\": {} }}",
@@ -1729,16 +1819,18 @@ impl NativeRuntimeCase {
             self.result,
         );
         output.truncate(output.trim_end().len() - 1);
-        output.push_str(&format!(", \"replayNativeMedianNs\": {}, \"replayClangMedianNs\": {}, \"replayNativeSamplesNs\": {}, \"replayClangSamplesNs\": {}, \"warmupOrder\": {}, \"sampleOrder\": {} }}",
-            self.replay_native_median_ns, self.replay_clang_median_ns,
-            json_u128_array(&self.replay_native_samples_ns), json_u128_array(&self.replay_clang_samples_ns),
+        output.push_str(&format!(", \"replayV011NativeMedianNs\": {}, \"replayV011ClangMedianNs\": {}, \"replayV011NativeSamplesNs\": {}, \"replayV011ClangSamplesNs\": {}, \"replayV010NativeMedianNs\": {}, \"replayV010ClangMedianNs\": {}, \"replayV010NativeSamplesNs\": {}, \"replayV010ClangSamplesNs\": {}, \"warmupOrder\": {}, \"sampleOrder\": {} }}",
+            self.replay_v011_native_median_ns, self.replay_v011_clang_median_ns,
+            json_u128_array(&self.replay_v011_native_samples_ns), json_u128_array(&self.replay_v011_clang_samples_ns),
+            self.replay_v010_native_median_ns, self.replay_v010_clang_median_ns,
+            json_u128_array(&self.replay_v010_native_samples_ns), json_u128_array(&self.replay_v010_clang_samples_ns),
             json_sampling_order(&self.warmup_order), json_sampling_order(&self.sample_order)));
         output
     }
 }
 
 #[cfg(feature = "native-toolchain")]
-fn json_sampling_order(rounds: &[[usize; 8]]) -> String {
+fn json_sampling_order<const CHANNELS: usize>(rounds: &[[usize; CHANNELS]]) -> String {
     format!(
         "[{}]",
         rounds

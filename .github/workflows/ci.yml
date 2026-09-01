@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       performance_diagnostics:
-        description: "Record same-worker pinned v0.10 diagnostics without changing performance gates"
+        description: "Record same-worker pinned v0.11/v0.10 diagnostics without changing performance gates"
         type: boolean
         required: false
         default: false
@@ -203,7 +203,9 @@ jobs:
   performance:
     name: performance (${{ matrix.arch }})
     env:
+      CKC_V011_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay-v011
       CKC_V010_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay
+      CKC_CANDIDATE_COMPILER: ${{ github.workspace }}/target/release/ckc
     strategy:
       fail-fast: false
       matrix:
@@ -227,8 +229,14 @@ jobs:
         with:
           target: ${{ matrix.target }}
           profile: oracle
-      - name: Prepare independently built pinned compiler replay
-        run: python3 scripts/prepare-performance-replay.py --out "$CKC_V010_RUNTIME_BUNDLE"
+      - name: Build exact candidate compiler used by size and compile-time gates
+        run: cargo build --release --features native-toolchain --locked
+      - name: Audit pinned C and Rust vector oracles
+        run: python3 -B scripts/audit-performance-oracles.py
+      - name: Prepare independently built pinned 0.11 compiler replay
+        run: python3 scripts/prepare-performance-replay.py --out "$CKC_V011_RUNTIME_BUNDLE"
+      - name: Prepare retained independently built pinned 0.10 compiler replay
+        run: python3 scripts/prepare-performance-replay.py --baseline 0.10 --out "$CKC_V010_RUNTIME_BUNDLE"
       - name: Gate baseline CPU policy
         id: performance-gate
         run: |
@@ -247,6 +255,10 @@ jobs:
           name: performance-${{ matrix.arch }}
           path: |
             target/ckc-perf/
+            target/performance-runtime-replay-v011/ckc-v011
+            target/performance-runtime-replay-v011/replay.tsv
+            target/performance-runtime-replay-v011/preparation.log
+            target/performance-runtime-replay-v011/*.so
             target/performance-runtime-replay/ckc-v010
             target/performance-runtime-replay/replay.tsv
             target/performance-runtime-replay/preparation.log

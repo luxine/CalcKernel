@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an independently built pinned V0.10 runtime replay bundle."""
+"""Prepare an independently built pinned V0.11 or retained V0.10 replay bundle."""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ import subprocess
 import sys
 import tomllib
 
-BASELINE_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
-BASELINE_MANIFEST_SHA256 = "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3"
+BASELINE_COMMIT = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
+BASELINE_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
+V010_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
+V010_MANIFEST_SHA256 = "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3"
 RUNTIME_CASES = ("branch_mix", "integer_accumulate", "proof_loop", "remainder_chain")
 ADAPTERS = (
     ("v0_10_linux_cpp_runtime_harness.patch", "099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff"),
@@ -25,8 +27,11 @@ ADAPTERS = (
 )
 RECIPE_FILES = (
     "scripts/prepare-performance-replay.py",
+    "scripts/audit-performance-oracles.py",
     "benches/runtime_replay.rs",
     "benches/ckc_perf.rs",
+    "benches/vector_perf.rs",
+    "benches/oracles/manifest.toml",
 )
 
 
@@ -35,27 +40,68 @@ def sha256_file(path: pathlib.Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def validate_pins(repo: pathlib.Path) -> dict:
+def baseline_identity(version: str) -> dict:
+    if version == "0.11":
+        return {
+            "version": version,
+            "commit": BASELINE_COMMIT,
+            "manifest": "v0_11_compiler.toml",
+            "manifestSha256": BASELINE_MANIFEST_SHA256,
+            "compiler": "ckc-v011",
+            "header": "ckc-v011-runtime-replay",
+            "runtimeAbi": "2",
+            "adapters": (),
+        }
+    if version == "0.10":
+        return {
+            "version": version,
+            "commit": V010_COMMIT,
+            "manifest": "v0_10_compiler.toml",
+            "manifestSha256": V010_MANIFEST_SHA256,
+            "compiler": "ckc-v010",
+            "header": "ckc-v010-runtime-replay",
+            "runtimeAbi": "1",
+            "adapters": ADAPTERS,
+        }
+    raise ValueError(f"unsupported replay baseline {version!r}")
+
+
+def validate_pins(repo: pathlib.Path, version: str = "0.11") -> dict:
+    identity = baseline_identity(version)
     baseline = repo / "benches/baselines"
-    manifest_path = baseline / "v0_10_compiler.toml"
-    if sha256_file(manifest_path) != BASELINE_MANIFEST_SHA256:
-        raise ValueError("the frozen V0.10 baseline manifest has changed")
+    manifest_path = baseline / identity["manifest"]
+    if sha256_file(manifest_path) != identity["manifestSha256"]:
+        raise ValueError(f"the frozen V{version} baseline manifest has changed")
     with manifest_path.open("rb") as source:
         manifest = tomllib.load(source)
-    for name, digest in ADAPTERS:
+    if manifest.get("commit") != identity["commit"]:
+        raise ValueError(f"the frozen V{version} commit identity has changed")
+    for name, digest in identity["adapters"]:
         if sha256_file(baseline / name) != digest:
             raise ValueError(f"pinned replay adapter has changed: {name}")
+    source_digests = manifest.get("source_digests", manifest)
     for case in RUNTIME_CASES:
         source = repo / "tests/fixtures/performance/native" / f"{case}.ck"
-        if sha256_file(source) != manifest[f"source_digest_{case}"]:
+        expected = source_digests.get(case, manifest.get(f"source_digest_{case}"))
+        if sha256_file(source) != expected:
             raise ValueError(f"pinned replay CK source has changed: {case}")
+    if version == "0.11":
+        for mode in ("unchecked", "checked"):
+            for case in RUNTIME_CASES:
+                oracle = repo / "benches/baselines/v0_10_c_oracle" / f"{case}-{mode}.c"
+                key = f"{case}_{mode}"
+                if sha256_file(oracle) != manifest["c_oracle_digests"].get(key):
+                    raise ValueError(f"pinned replay C oracle has changed: {case}/{mode}")
     return manifest
 
 
-def validate_compiler_output(text: str, target: str, manifest_sha256: str) -> None:
+def validate_compiler_output(
+    text: str, target: str, manifest_sha256: str, version: str = "0.11"
+) -> None:
+    identity = baseline_identity(version)
     lines = text.splitlines()
-    if not lines or lines[0] != "ckc 0.10.0":
-        raise ValueError("replay must use the actual pinned 0.10.0 compiler")
+    if not lines or lines[0] != f"ckc {version}.0":
+        raise ValueError(f"replay must use the actual pinned {version}.0 compiler")
     fields = {}
     for line in lines[1:]:
         name, separator, value = line.partition(": ")
@@ -64,7 +110,7 @@ def validate_compiler_output(text: str, target: str, manifest_sha256: str) -> No
         fields[name] = value
     expected = {
         "Native ABI": "1",
-        "Runtime ABI": "1",
+        "Runtime ABI": identity["runtimeAbi"],
         "LLVM": "22.1.8",
         "LLVM manifest SHA-256": manifest_sha256,
         "Target": target,
@@ -97,20 +143,31 @@ def host_identity() -> tuple[str, str, str]:
     return target, triple, ".so" if os_name == "linux" else ".dylib"
 
 
-def prepare(repo: pathlib.Path, out: pathlib.Path) -> None:
+def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.11") -> None:
     repo = repo.resolve()
     out = out.absolute()
     if os.path.lexists(out):
         raise ValueError(f"replay output already exists; choose a new owned directory: {out}")
-    manifest = validate_pins(repo)
+    identity = baseline_identity(version)
+    manifest = validate_pins(repo, version)
     target, triple, suffix = host_identity()
     if not os.environ.get("CKC_LLVM_PREFIX"):
         raise ValueError("set CKC_LLVM_PREFIX to the pinned release LLVM prefix first")
     component_manifest = pathlib.Path(os.environ["CKC_LLVM_PREFIX"]) / "share/ckc/llvm-build.toml"
     component_digest = sha256_file(component_manifest)
-    runtime_keys = {(entry["target"], entry["cpu"], entry["mode"], entry["case"]) for entry in manifest["runtime"]}
-    if any((target, "baseline", mode, case) not in runtime_keys for mode in ("unchecked", "checked") for case in RUNTIME_CASES):
-        raise ValueError(f"no complete frozen runtime identity for {target}/baseline")
+    # V0.11 is measured live and therefore pins source/compiler identity only;
+    # retained historical medians exist solely in the V0.10 schema-2 manifest.
+    if version == "0.10":
+        runtime_keys = {
+            (entry["target"], entry["cpu"], entry["mode"], entry["case"])
+            for entry in manifest["runtime"]
+        }
+        if any(
+            (target, "baseline", mode, case) not in runtime_keys
+            for mode in ("unchecked", "checked")
+            for case in RUNTIME_CASES
+        ):
+            raise ValueError(f"no complete frozen runtime identity for {target}/baseline")
     recipe = recipe_digest(repo)
     out.mkdir(parents=True)
     source = out / ".source"
@@ -134,12 +191,12 @@ def prepare(repo: pathlib.Path, out: pathlib.Path) -> None:
         # This is an owned local clone, never an existing user baseline worktree.
         run(["git", "clone", "--no-hardlinks", "--no-checkout", repo, source])
         run(["git", "config", "core.autocrlf", "false"], source)
-        run(["git", "checkout", "--detach", BASELINE_COMMIT], source)
-        if run(["git", "rev-parse", "HEAD"], source).strip() != BASELINE_COMMIT:
+        run(["git", "checkout", "--detach", identity["commit"]], source)
+        if run(["git", "rev-parse", "HEAD"], source).strip() != identity["commit"]:
             raise ValueError("baseline checkout is not the exact pinned commit")
         if run(["git", "status", "--porcelain", "--untracked-files=all"], source).strip():
             raise ValueError("baseline checkout must be clean before approved adapters")
-        for name, digest in ADAPTERS:
+        for name, digest in identity["adapters"]:
             patch = repo / "benches/baselines" / name
             if sha256_file(patch) != digest:
                 raise ValueError(f"adapter changed during preparation: {name}")
@@ -147,13 +204,14 @@ def prepare(repo: pathlib.Path, out: pathlib.Path) -> None:
             run(["git", "apply", patch], source)
 
         def source_state() -> tuple[str, str]:
-            if run(["git", "rev-parse", "HEAD"], source).strip() != BASELINE_COMMIT:
+            if run(["git", "rev-parse", "HEAD"], source).strip() != identity["commit"]:
                 raise ValueError("baseline checkout moved during preparation")
             if run(["git", "ls-files", "--others", "--exclude-standard"], source).strip():
                 raise ValueError("unexpected untracked baseline source input")
             names = set(run(["git", "diff", "--name-only"], source).splitlines())
-            if names != {"build.rs", "benches/ckc_perf.rs"}:
-                raise ValueError("only the fixed build/harness adapters may modify baseline source")
+            expected_names = {"build.rs", "benches/ckc_perf.rs"} if version == "0.10" else set()
+            if names != expected_names:
+                raise ValueError("only the fixed version-specific adapters may modify baseline source")
             diff = run(["git", "diff", "--binary", "--full-index", "--no-ext-diff"], source)
             status = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
             return status, hashlib.sha256(diff.encode("utf-8")).hexdigest()
@@ -162,16 +220,18 @@ def prepare(repo: pathlib.Path, out: pathlib.Path) -> None:
         run(["rustc", "+1.90.0", "--version", "--verbose"], source)
         run(["cargo", "+1.90.0", "build", "--release", "--locked", "--features", "native-toolchain", "--bin", "ckc"], source)
         compiler = source / "target/release/ckc"
-        version = run([compiler, "--version", "--verbose"], source)
+        verbose = run([compiler, "--version", "--verbose"], source)
         # build.rs embeds the installed component manifest, not the source recipe.
-        validate_compiler_output(version, triple, component_digest)
+        validate_compiler_output(verbose, triple, component_digest, identity["version"])
         compiler_digest = sha256_file(compiler)
-        shutil.copy2(compiler, out / "ckc-v010")
+        shutil.copy2(compiler, out / identity["compiler"])
         artifacts = []
         for mode in ("unchecked", "checked"):
             for case in RUNTIME_CASES:
                 fixture = repo / "tests/fixtures/performance/native" / f"{case}.ck"
-                if sha256_file(fixture) != manifest[f"source_digest_{case}"]:
+                source_digests = manifest.get("source_digests", manifest)
+                expected_source = source_digests.get(case, manifest.get(f"source_digest_{case}"))
+                if sha256_file(fixture) != expected_source:
                     raise ValueError(f"runtime source changed during preparation: {case}")
                 filename = f"{case}-{mode}{suffix}"
                 library = out / filename
@@ -182,39 +242,40 @@ def prepare(repo: pathlib.Path, out: pathlib.Path) -> None:
                 artifacts.append((mode, case, filename, str(library.stat().st_size), sha256_file(library)))
         if source_state() != original_state:
             raise ValueError("baseline source changed after applying the exact approved adapters")
-        validate_pins(repo)
+        validate_pins(repo, identity["version"])
         if recipe_digest(repo) != recipe:
             raise ValueError("preparation/replay implementation changed during preparation")
         if sha256_file(component_manifest) != component_digest:
             raise ValueError("installed LLVM component identity changed during preparation")
-        if sha256_file(compiler) != compiler_digest or sha256_file(out / "ckc-v010") != compiler_digest:
+        if sha256_file(compiler) != compiler_digest or sha256_file(out / identity["compiler"]) != compiler_digest:
             raise ValueError("baseline compiler changed during library emission")
 
         metadata = {
-            "commit": BASELINE_COMMIT,
-            "compilerIdentity": f"calckernel 0.10.0 ({BASELINE_COMMIT})",
+            "commit": identity["commit"],
+            "compilerIdentity": f"calckernel {identity['version']}.0 ({identity['commit']})",
             "compilerSha256": compiler_digest,
-            "compilerBytes": str((out / "ckc-v010").stat().st_size),
+            "compilerBytes": str((out / identity["compiler"]).stat().st_size),
             "llvmVersion": "22.1.8", "target": target, "cpuPolicy": "baseline",
             "llvmComponentSha256": component_digest,
             "recipeSha256": recipe,
-            "adapterSetSha256": named_digest((f"benches/baselines/{name}", digest) for name, digest in ADAPTERS),
+            "adapterSetSha256": named_digest((f"benches/baselines/{name}", digest) for name, digest in identity["adapters"]),
             "sourceDiffSha256": original_state[1],
-            "baselineManifestSha256": BASELINE_MANIFEST_SHA256,
+            "baselineManifestSha256": identity["manifestSha256"],
         }
-        records = ["ckc-v010-runtime-replay\t1"]
+        records = [f"{identity['header']}\t1"]
         records.extend(f"{name}\t{value}" for name, value in metadata.items())
         records.extend("artifact\t" + "\t".join(artifact) for artifact in artifacts)
         (out / "replay.tsv").write_text("\n".join(records) + "\n", encoding="utf-8", newline="\n")
-    print(f"Prepared pinned V0.10 replay bundle: {out}", flush=True)
+    print(f"Prepared pinned V{identity['version']} replay bundle: {out}", flush=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=pathlib.Path, help="new owned bundle output directory")
+    parser.add_argument("--baseline", choices=("0.11", "0.10"), default="0.11")
     args = parser.parse_args()
     try:
-        prepare(pathlib.Path(__file__).resolve().parents[1], args.out)
+        prepare(pathlib.Path(__file__).resolve().parents[1], args.out, args.baseline)
     except (OSError, ValueError) as error:
         print(f"replay preparation failed: {error}", file=sys.stderr)
         return 1

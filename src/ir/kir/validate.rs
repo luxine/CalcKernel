@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{MirBinaryOp, MirType, MirUnaryOp};
+use crate::{MirBinaryOp, MirPrimitiveTypeName, MirType, MirUnaryOp};
 
 use super::*;
 
@@ -18,22 +18,22 @@ enum MemoryDefinition {
     Instruction(BlockId, usize),
 }
 
-#[derive(Clone, Copy)]
-struct ValueRecord<'a> {
+#[derive(Clone)]
+struct ValueRecord {
     definition: Option<ValueDefinition>,
-    type_node: &'a MirType,
+    type_node: KirValueType,
 }
 
 /// Validation-local queries, rebuilt from the actual function on every check.
 /// Dense storage is bounded by definition count, never by an untrusted max ID.
 /// Sparse identities and any later inserts use the same exact lookup semantics.
-struct ValueTable<'a> {
+struct ValueTable {
     base: u32,
-    dense: Vec<Option<ValueRecord<'a>>>,
-    sparse: HashMap<ValueId, ValueRecord<'a>>,
+    dense: Vec<Option<ValueRecord>>,
+    sparse: HashMap<ValueId, ValueRecord>,
 }
 
-impl<'a> ValueTable<'a> {
+impl ValueTable {
     fn new(mut ids: impl Iterator<Item = ValueId>, capacity: usize) -> Self {
         let (base, size) = ids.next().map_or((0, 0), |first| {
             let (min, max) = ids.fold((first.index(), first.index()), |(min, max), id| {
@@ -61,7 +61,7 @@ impl<'a> ValueTable<'a> {
             .filter(|index| *index < self.dense.len())
     }
 
-    fn get(&self, value: ValueId) -> Option<&ValueRecord<'a>> {
+    fn get(&self, value: ValueId) -> Option<&ValueRecord> {
         self.dense_index(value)
             .and_then(|index| self.dense[index].as_ref())
             .or_else(|| self.sparse.get(&value))
@@ -71,19 +71,19 @@ impl<'a> ValueTable<'a> {
         self.get(value).and_then(|record| record.definition)
     }
 
-    fn type_of(&self, value: ValueId) -> Option<&'a MirType> {
-        self.get(value).map(|record| record.type_node)
+    fn type_of(&self, value: ValueId) -> Option<&KirValueType> {
+        self.get(value).map(|record| &record.type_node)
     }
 
     fn record(
         &mut self,
         value: ValueId,
-        type_node: &'a MirType,
+        type_node: &KirValueType,
         definition: Option<ValueDefinition>,
     ) -> Option<ValueDefinition> {
         let empty = ValueRecord {
             definition: None,
-            type_node,
+            type_node: type_node.clone(),
         };
         let record = if let Some(index) = self.dense_index(value) {
             self.dense[index].get_or_insert(empty)
@@ -92,14 +92,43 @@ impl<'a> ValueTable<'a> {
         };
         // Legacy validation retains the first definition after a module-wide ID
         // collision, but still records the last type for subsequent diagnostics.
-        record.type_node = type_node;
+        record.type_node.clone_from(type_node);
         definition.and_then(|definition| record.definition.replace(definition))
     }
 }
 
 #[must_use]
 pub fn validate_kir_module(module: &KirModule) -> KirValidationResult {
+    validate_kir_module_with_previous(module, None)
+}
+
+#[must_use]
+pub(crate) fn validate_kir_module_incremental(
+    module: &KirModule,
+    previous: &KirModule,
+) -> KirValidationResult {
+    if module.config != previous.config || module.profile != previous.profile {
+        validate_kir_module(module)
+    } else {
+        validate_kir_module_with_previous(module, Some(previous))
+    }
+}
+
+fn validate_kir_module_with_previous(
+    module: &KirModule,
+    previous: Option<&KirModule>,
+) -> KirValidationResult {
     let mut errors = Vec::new();
+    if let Err(message) = module.profile.validate() {
+        errors.push(error(message, None, None, None));
+    } else if module.profile.consumer() != module.config.consumer {
+        errors.push(error(
+            "KIR target profile consumer does not match module consumer",
+            None,
+            None,
+            None,
+        ));
+    }
     let block_capacity = module
         .functions
         .iter()
@@ -176,21 +205,135 @@ pub fn validate_kir_module(module: &KirModule) -> KirValidationResult {
                 None,
             ));
         }
-        validate_function(
-            function,
-            &mut block_ids,
-            &mut instruction_ids,
-            &mut module_value_ids,
-            &mut module_region_ids,
-            &mut module_memory_ids,
-            &mut errors,
-        );
+        let unchanged = previous.is_some_and(|previous| {
+            previous
+                .functions
+                .iter()
+                .find(|candidate| candidate.id == function.id)
+                == Some(function)
+        });
+        if unchanged {
+            record_verified_function_identities(
+                function,
+                &mut block_ids,
+                &mut instruction_ids,
+                &mut module_value_ids,
+                &mut module_region_ids,
+                &mut module_memory_ids,
+                &mut errors,
+            );
+        } else {
+            validate_function(
+                function,
+                &module.profile,
+                &mut block_ids,
+                &mut instruction_ids,
+                &mut module_value_ids,
+                &mut module_region_ids,
+                &mut module_memory_ids,
+                &mut errors,
+            );
+        }
     }
     KirValidationResult { errors }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn record_verified_function_identities(
+    function: &KirFunction,
+    module_block_ids: &mut HashSet<BlockId>,
+    module_instruction_ids: &mut HashSet<InstructionId>,
+    module_value_ids: &mut HashSet<ValueId>,
+    module_region_ids: &mut HashSet<MemoryRegionId>,
+    module_memory_ids: &mut HashSet<MemoryVersionId>,
+    errors: &mut Vec<KirValidationError>,
+) {
+    let mut duplicate = |inserted: bool,
+                         message: &'static str,
+                         block: Option<BlockId>,
+                         instruction: Option<InstructionId>| {
+        if !inserted {
+            errors.push(error(message, Some(function.id), block, instruction));
+        }
+    };
+    for region in &function.regions {
+        duplicate(
+            module_region_ids.insert(region.id),
+            "duplicate memory region id",
+            None,
+            None,
+        );
+    }
+    for initial in &function.initial_memory {
+        duplicate(
+            module_memory_ids.insert(initial.version),
+            "duplicate memory version id",
+            None,
+            None,
+        );
+    }
+    for param in &function.params {
+        duplicate(
+            module_value_ids.insert(param.value),
+            "duplicate value id",
+            None,
+            None,
+        );
+    }
+    for block in &function.blocks {
+        duplicate(
+            module_block_ids.insert(block.id),
+            "duplicate block id",
+            Some(block.id),
+            None,
+        );
+        for param in &block.params {
+            duplicate(
+                module_value_ids.insert(param.value),
+                "duplicate value id",
+                Some(block.id),
+                None,
+            );
+        }
+        for param in &block.memory_params {
+            duplicate(
+                module_memory_ids.insert(param.version),
+                "duplicate memory version id",
+                Some(block.id),
+                None,
+            );
+        }
+        for instruction in &block.instructions {
+            duplicate(
+                module_instruction_ids.insert(instruction.id),
+                "duplicate instruction id",
+                Some(block.id),
+                Some(instruction.id),
+            );
+            for result in &instruction.results {
+                duplicate(
+                    module_value_ids.insert(result.value),
+                    "duplicate value id",
+                    Some(block.id),
+                    Some(instruction.id),
+                );
+            }
+            if let Some(output) = instruction.memory.as_ref().and_then(|memory| memory.output) {
+                duplicate(
+                    module_memory_ids.insert(output),
+                    "duplicate memory version id",
+                    Some(block.id),
+                    Some(instruction.id),
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_function(
     function: &KirFunction,
+    profile: &KirTargetProfile,
     module_block_ids: &mut HashSet<BlockId>,
     module_instruction_ids: &mut HashSet<InstructionId>,
     module_value_ids: &mut HashSet<ValueId>,
@@ -246,6 +389,7 @@ fn validate_function(
     let mut memory_definitions = HashMap::with_capacity(memory_capacity);
     let mut memory_regions = HashMap::with_capacity(memory_capacity);
     let mut function_region_ids = HashSet::with_capacity(function.regions.len());
+    validate_vector_regions(function, errors);
     for region in &function.regions {
         function_region_ids.insert(region.id);
         if !module_region_ids.insert(region.id) {
@@ -302,7 +446,7 @@ fn validate_function(
         define_value(
             function,
             param.value,
-            &param.type_node,
+            &KirValueType::Scalar(param.type_node.clone()),
             ValueDefinition::FunctionParam,
             None,
             None,
@@ -321,6 +465,14 @@ fn validate_function(
             ));
         }
         for param in &block.params {
+            validate_value_type(
+                function,
+                profile,
+                &param.type_node,
+                Some(block.id),
+                None,
+                errors,
+            );
             define_value(
                 function,
                 param.value,
@@ -356,6 +508,14 @@ fn validate_function(
                 ));
             }
             for result in &instruction.results {
+                validate_value_type(
+                    function,
+                    profile,
+                    &result.type_node,
+                    Some(block.id),
+                    Some(instruction.id),
+                    errors,
+                );
                 define_value(
                     function,
                     result.value,
@@ -414,7 +574,7 @@ fn validate_function(
                     errors,
                 );
             });
-            validate_instruction_structure(function, block, index, &values, errors);
+            validate_instruction_structure(function, profile, block, index, &values, errors);
             if let Some(effect) = &instruction.effect {
                 if previous_effect_order.is_some_and(|previous| effect.order <= previous)
                     || !effect_orders.insert(effect.order)
@@ -462,6 +622,7 @@ fn validate_function(
                 errors,
             );
         }
+        validate_terminator_types(function, block, &values, errors);
         for edge in terminator_edges(&block.terminator) {
             validate_edge(
                 function,
@@ -523,9 +684,10 @@ fn validate_function(
 
 fn validate_instruction_structure(
     function: &KirFunction,
+    profile: &KirTargetProfile,
     block: &KirBlock,
     index: usize,
-    values: &ValueTable<'_>,
+    values: &ValueTable,
     errors: &mut Vec<KirValidationError>,
 ) {
     let instruction = &block.instructions[index];
@@ -605,7 +767,7 @@ fn validate_instruction_structure(
         if !values.type_of(condition).is_some_and(|type_node| {
             matches!(
                 type_node,
-                MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+                KirValueType::Scalar(MirType::Primitive(crate::MirPrimitiveTypeName::Bool))
             )
         }) {
             errors.push(error(
@@ -616,6 +778,1030 @@ fn validate_instruction_structure(
             ));
         }
     }
+    if let KirInstructionKind::VersionPredicate { predicate } = &instruction.kind {
+        validate_version_predicate(
+            function,
+            profile,
+            block,
+            instruction,
+            predicate,
+            values,
+            errors,
+        );
+    }
+    validate_vector_instruction(function, profile, block, instruction, values, errors);
+}
+
+fn validate_version_predicate(
+    function: &KirFunction,
+    profile: &KirTargetProfile,
+    block: &KirBlock,
+    instruction: &KirInstruction,
+    predicate: &KirVersionPredicate,
+    values: &ValueTable,
+    errors: &mut Vec<KirValidationError>,
+) {
+    let bool_type = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::Bool));
+    let u32_type = MirType::Primitive(MirPrimitiveTypeName::U32);
+    let valid_result = instruction.results.as_slice()
+        == [KirResult {
+            value: instruction
+                .results
+                .first()
+                .map_or(ValueId::from_index(u32::MAX), |result| result.value),
+            type_node: bool_type,
+        }];
+    let layout_matches = matches!(
+        profile.layout(),
+        KirProfileLayout::Known { pointer_width_bits, .. }
+            if pointer_width_bits == u16::from(predicate.address_bits)
+    );
+    if !valid_result
+        || instruction.memory.is_some()
+        || instruction.effect.is_some()
+        || !matches!(
+            profile.consumer(),
+            KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+        )
+        || !layout_matches
+        || predicate.conjuncts.is_empty()
+        || predicate.conjuncts.len() > 4
+    {
+        errors.push(error(
+            "version predicate result, target layout, or conjunct count is invalid",
+            Some(function.id),
+            Some(block.id),
+            Some(instruction.id),
+        ));
+        return;
+    }
+    for conjunct in &predicate.conjuncts {
+        let valid = match conjunct {
+            KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
+                *minimum > 0
+                    && values.type_of(*value).and_then(KirValueType::as_scalar) == Some(&u32_type)
+            }
+            KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                left,
+                left_count,
+                left_element_bytes,
+                right,
+                right_count,
+                right_element_bytes,
+            } => {
+                let slice_bytes = |value: ValueId| {
+                    values
+                        .type_of(value)
+                        .and_then(KirValueType::as_scalar)
+                        .and_then(|type_node| match type_node {
+                            MirType::Slice(element) => match element.as_ref() {
+                                MirType::Primitive(
+                                    MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32,
+                                ) => Some(4),
+                                MirType::Primitive(
+                                    MirPrimitiveTypeName::I64
+                                    | MirPrimitiveTypeName::U64
+                                    | MirPrimitiveTypeName::F64,
+                                ) => Some(8),
+                                _ => None,
+                            },
+                            _ => None,
+                        })
+                };
+                left != right
+                    && slice_bytes(*left) == Some(*left_element_bytes)
+                    && slice_bytes(*right) == Some(*right_element_bytes)
+                    && values
+                        .type_of(*left_count)
+                        .and_then(KirValueType::as_scalar)
+                        == Some(&u32_type)
+                    && values
+                        .type_of(*right_count)
+                        .and_then(KirValueType::as_scalar)
+                        == Some(&u32_type)
+            }
+        };
+        if !valid {
+            errors.push(error(
+                "version predicate conjunct is not total and well typed",
+                Some(function.id),
+                Some(block.id),
+                Some(instruction.id),
+            ));
+        }
+    }
+}
+
+fn validate_vector_regions(function: &KirFunction, errors: &mut Vec<KirValidationError>) {
+    let blocks = function
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<HashSet<_>>();
+    let mut ids = HashSet::new();
+    let mut owners = HashMap::new();
+    for region in &function.vector_regions {
+        if !ids.insert(region.id) {
+            errors.push(error(
+                "duplicate vector region id",
+                Some(function.id),
+                None,
+                None,
+            ));
+        }
+        let mut previous = None;
+        for &block in &region.blocks {
+            if !blocks.contains(&block) {
+                errors.push(error(
+                    "vector region names an undefined block",
+                    Some(function.id),
+                    Some(block),
+                    None,
+                ));
+            }
+            if previous.is_some_and(|previous| previous >= block) {
+                errors.push(error(
+                    "vector region blocks must be strictly ordered and unique",
+                    Some(function.id),
+                    Some(block),
+                    None,
+                ));
+            }
+            previous = Some(block);
+            if owners.insert(block, region.id).is_some() {
+                errors.push(error(
+                    "a block cannot belong to more than one vector region",
+                    Some(function.id),
+                    Some(block),
+                    None,
+                ));
+            }
+        }
+    }
+}
+
+fn validate_value_type(
+    function: &KirFunction,
+    profile: &KirTargetProfile,
+    type_node: &KirValueType,
+    block: Option<BlockId>,
+    instruction: Option<InstructionId>,
+    errors: &mut Vec<KirValidationError>,
+) {
+    let valid = match type_node {
+        KirValueType::Scalar(_) => true,
+        KirValueType::FixedVector { lane, lanes } => {
+            profile.vector_operations_enabled() && profile.supports_vector_shape(*lane, *lanes)
+        }
+        KirValueType::Mask { lanes } => {
+            profile.vector_operations_enabled() && profile.supports_mask_lanes(*lanes)
+        }
+    };
+    if !valid {
+        let message = if profile.vector_operations_enabled() {
+            "KIR value uses a vector lane/count unsupported by the target profile"
+        } else {
+            "KIR target profile vector operations are disabled"
+        };
+        errors.push(error(message, Some(function.id), block, instruction));
+    }
+}
+
+fn validate_vector_instruction(
+    function: &KirFunction,
+    profile: &KirTargetProfile,
+    block: &KirBlock,
+    instruction: &KirInstruction,
+    values: &ValueTable,
+    errors: &mut Vec<KirValidationError>,
+) {
+    let vector_kind = matches!(
+        instruction.kind,
+        KirInstructionKind::VectorSplat { .. }
+            | KirInstructionKind::VectorLoad { .. }
+            | KirInstructionKind::VectorStore { .. }
+            | KirInstructionKind::VectorBinary { .. }
+            | KirInstructionKind::VectorUnary { .. }
+            | KirInstructionKind::VectorCompare { .. }
+            | KirInstructionKind::VectorSelect { .. }
+            | KirInstructionKind::VectorCast { .. }
+            | KirInstructionKind::VectorInsert { .. }
+            | KirInstructionKind::VectorExtract { .. }
+            | KirInstructionKind::VectorReduce { .. }
+    );
+    if !vector_kind {
+        if instruction
+            .results
+            .iter()
+            .any(|result| result.type_node.as_scalar().is_none())
+        {
+            vector_error(
+                function,
+                block,
+                instruction,
+                "scalar KIR instruction cannot produce a vector or mask value",
+                errors,
+            );
+        }
+        return;
+    }
+    let region = vector_instruction_region(&instruction.kind)
+        .expect("every closed vector instruction has a region");
+    if !function
+        .vector_regions
+        .iter()
+        .any(|candidate| candidate.id == region && candidate.blocks.contains(&block.id))
+    {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector instruction is outside its declared vector region",
+            errors,
+        );
+    }
+    match &instruction.kind {
+        KirInstructionKind::VectorSplat { scalar, .. } => {
+            let Some((lane, lanes)) = one_vector_result(instruction) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector splat result is malformed",
+                    errors,
+                );
+                return;
+            };
+            if values.type_of(*scalar).and_then(KirValueType::as_scalar)
+                != Some(&lane_mir_type(lane))
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector splat scalar lane type mismatch",
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                KirProfileOperation::Splat,
+                lane,
+                lanes,
+                KirCostSemantics::NotApplicable,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorLoad { access, .. } => {
+            if one_vector_result(instruction) != Some((access.lane, access.lanes)) {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector load result type mismatch",
+                    errors,
+                );
+            }
+            validate_vector_memory(
+                function,
+                profile,
+                block,
+                instruction,
+                access,
+                false,
+                values,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorStore { access, value, .. } => {
+            if !instruction.results.is_empty()
+                || values.type_of(*value)
+                    != Some(&KirValueType::FixedVector {
+                        lane: access.lane,
+                        lanes: access.lanes,
+                    })
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector store value type mismatch",
+                    errors,
+                );
+            }
+            validate_vector_memory(
+                function,
+                profile,
+                block,
+                instruction,
+                access,
+                true,
+                values,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorBinary {
+            op,
+            left,
+            right,
+            semantics,
+            no_failure_proof,
+            ..
+        } => {
+            let Some((lane, lanes)) = one_vector_result(instruction) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector binary result is malformed",
+                    errors,
+                );
+                return;
+            };
+            let expected = KirValueType::FixedVector { lane, lanes };
+            if values.type_of(*left) != Some(&expected) || values.type_of(*right) != Some(&expected)
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector binary operand/result lane mismatch",
+                    errors,
+                );
+            }
+            let semantic_valid = if lane == KirLaneType::F64 {
+                *semantics == KirArithmeticSemantics::StrictFloat
+                    && *op != KirVectorBinaryOp::Remainder
+            } else {
+                *semantics != KirArithmeticSemantics::StrictFloat
+            };
+            if !semantic_valid {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector binary arithmetic semantics are invalid",
+                    errors,
+                );
+            }
+            let proof_required = lane != KirLaneType::F64
+                && (*semantics == KirArithmeticSemantics::Checked
+                    || matches!(op, KirVectorBinaryOp::Divide | KirVectorBinaryOp::Remainder));
+            if proof_required != no_failure_proof.is_some() {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    if proof_required {
+                        "failing integer vector arithmetic requires a no-failure proof"
+                    } else {
+                        "infallible vector arithmetic has an unexpected no-failure proof"
+                    },
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                vector_binary_profile_operation(*op),
+                lane,
+                lanes,
+                cost_semantics(*semantics),
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorUnary {
+            op,
+            operand,
+            semantics,
+            no_failure_proof,
+            ..
+        } => match op {
+            KirVectorUnaryOp::Negate => {
+                let Some((lane, lanes)) = one_vector_result(instruction) else {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "vector unary result is malformed",
+                        errors,
+                    );
+                    return;
+                };
+                if values.type_of(*operand) != Some(&KirValueType::FixedVector { lane, lanes })
+                    || (lane == KirLaneType::F64
+                        && *semantics != KirArithmeticSemantics::StrictFloat)
+                    || (lane != KirLaneType::F64
+                        && *semantics == KirArithmeticSemantics::StrictFloat)
+                {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "vector unary lane or semantics mismatch",
+                        errors,
+                    );
+                }
+                let proof_required =
+                    lane != KirLaneType::F64 && *semantics == KirArithmeticSemantics::Checked;
+                if proof_required != no_failure_proof.is_some() {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        if proof_required {
+                            "checked integer vector negate requires a no-failure proof"
+                        } else {
+                            "vector negate has an unexpected no-failure proof"
+                        },
+                        errors,
+                    );
+                }
+                require_vector_operation(
+                    function,
+                    profile,
+                    block,
+                    instruction,
+                    KirProfileOperation::Negate,
+                    lane,
+                    lanes,
+                    cost_semantics(*semantics),
+                    KirAlignmentClass::NotApplicable,
+                    errors,
+                );
+            }
+            KirVectorUnaryOp::MaskNot => {
+                let [result] = instruction.results.as_slice() else {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "mask not result is malformed",
+                        errors,
+                    );
+                    return;
+                };
+                let KirValueType::Mask { lanes } = result.type_node else {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "mask not must produce a mask",
+                        errors,
+                    );
+                    return;
+                };
+                if values.type_of(*operand) != Some(&KirValueType::Mask { lanes }) {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "mask not operand lane mismatch",
+                        errors,
+                    );
+                }
+                if *semantics != KirArithmeticSemantics::Modular {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "mask not must use canonical modular semantics",
+                        errors,
+                    );
+                }
+                if no_failure_proof.is_some() {
+                    vector_error(
+                        function,
+                        block,
+                        instruction,
+                        "mask not cannot carry a no-failure proof",
+                        errors,
+                    );
+                }
+                require_vector_operation(
+                    function,
+                    profile,
+                    block,
+                    instruction,
+                    KirProfileOperation::MaskNot,
+                    KIR_MASK_COST_LANE,
+                    lanes,
+                    KirCostSemantics::NotApplicable,
+                    KirAlignmentClass::NotApplicable,
+                    errors,
+                );
+            }
+        },
+        KirInstructionKind::VectorCompare { left, right, .. } => {
+            let [result] = instruction.results.as_slice() else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector compare result is malformed",
+                    errors,
+                );
+                return;
+            };
+            let KirValueType::Mask { lanes } = result.type_node else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector compare must produce a mask",
+                    errors,
+                );
+                return;
+            };
+            let Some(KirValueType::FixedVector {
+                lane,
+                lanes: operand_lanes,
+            }) = values.type_of(*left)
+            else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector compare operands must be vectors",
+                    errors,
+                );
+                return;
+            };
+            if *operand_lanes != lanes || values.type_of(*right) != values.type_of(*left) {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector compare lane mismatch",
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                KirProfileOperation::Compare,
+                *lane,
+                lanes,
+                KirCostSemantics::NotApplicable,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorSelect {
+            mask,
+            when_true,
+            when_false,
+            ..
+        } => {
+            let Some((lane, lanes)) = one_vector_result(instruction) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector select result is malformed",
+                    errors,
+                );
+                return;
+            };
+            let expected = KirValueType::FixedVector { lane, lanes };
+            if values.type_of(*mask) != Some(&KirValueType::Mask { lanes })
+                || values.type_of(*when_true) != Some(&expected)
+                || values.type_of(*when_false) != Some(&expected)
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector select mask or lane mismatch",
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                KirProfileOperation::Select,
+                lane,
+                lanes,
+                KirCostSemantics::NotApplicable,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorCast { op, value, .. } => {
+            let Some((target_lane, lanes)) = one_vector_result(instruction) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector cast result is malformed",
+                    errors,
+                );
+                return;
+            };
+            let source_lane = match op {
+                KirVectorCastOp::I32ToF64 => KirLaneType::I32,
+                KirVectorCastOp::U32ToF64 => KirLaneType::U32,
+            };
+            if target_lane != KirLaneType::F64
+                || values.type_of(*value)
+                    != Some(&KirValueType::FixedVector {
+                        lane: source_lane,
+                        lanes,
+                    })
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "unsupported vector cast lane mapping",
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                KirProfileOperation::Cast,
+                source_lane,
+                lanes,
+                KirCostSemantics::NotApplicable,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorInsert {
+            vector,
+            scalar,
+            lane_index,
+            ..
+        } => {
+            let Some((lane, lanes)) = one_vector_result(instruction) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector insert result is malformed",
+                    errors,
+                );
+                return;
+            };
+            if *lane_index >= lanes
+                || values.type_of(*vector) != Some(&KirValueType::FixedVector { lane, lanes })
+                || values.type_of(*scalar).and_then(KirValueType::as_scalar)
+                    != Some(&lane_mir_type(lane))
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector insert lane mapping is invalid",
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                KirProfileOperation::Insert,
+                lane,
+                lanes,
+                KirCostSemantics::NotApplicable,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorExtract {
+            vector, lane_index, ..
+        } => {
+            let Some(KirValueType::FixedVector { lane, lanes }) = values.type_of(*vector) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector extract operand is not a vector",
+                    errors,
+                );
+                return;
+            };
+            if *lane_index >= *lanes
+                || instruction
+                    .results
+                    .as_slice()
+                    .first()
+                    .and_then(|result| result.type_node.as_scalar())
+                    != Some(&lane_mir_type(*lane))
+                || instruction.results.len() != 1
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector extract lane mapping is invalid",
+                    errors,
+                );
+            }
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                KirProfileOperation::Extract,
+                *lane,
+                *lanes,
+                KirCostSemantics::NotApplicable,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        KirInstructionKind::VectorReduce {
+            op,
+            vector,
+            semantics,
+            ..
+        } => {
+            let Some(KirValueType::FixedVector { lane, lanes }) = values.type_of(*vector) else {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector reduction operand is not a vector",
+                    errors,
+                );
+                return;
+            };
+            if *lane == KirLaneType::F64
+                || *semantics != KirArithmeticSemantics::Modular
+                || instruction.results.len() != 1
+                || instruction.results[0].type_node.as_scalar() != Some(&lane_mir_type(*lane))
+            {
+                vector_error(
+                    function,
+                    block,
+                    instruction,
+                    "vector reduction must be exact modular integer reduction",
+                    errors,
+                );
+            }
+            let operation = match op {
+                KirVectorReductionOp::ModularAdd => KirProfileOperation::ReduceAdd,
+                KirVectorReductionOp::ModularMultiply => KirProfileOperation::ReduceMultiply,
+                KirVectorReductionOp::ModularMin => KirProfileOperation::ReduceMin,
+                KirVectorReductionOp::ModularMax => KirProfileOperation::ReduceMax,
+            };
+            require_vector_operation(
+                function,
+                profile,
+                block,
+                instruction,
+                operation,
+                *lane,
+                *lanes,
+                KirCostSemantics::Modular,
+                KirAlignmentClass::NotApplicable,
+                errors,
+            );
+        }
+        _ => unreachable!("non-vector instruction returned above"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_vector_memory(
+    function: &KirFunction,
+    profile: &KirTargetProfile,
+    block: &KirBlock,
+    instruction: &KirInstruction,
+    access: &KirVectorMemoryAccess,
+    store: bool,
+    values: &ValueTable,
+    errors: &mut Vec<KirValidationError>,
+) {
+    let expected_bytes = u32::from(access.lane.bit_width() / 8) * u32::from(access.lanes);
+    if access.byte_footprint != expected_bytes {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector memory byte footprint is not exact",
+            errors,
+        );
+    }
+    if access.known_alignment == 0
+        || !access.known_alignment.is_power_of_two()
+        || access.required_alignment == 0
+        || !access.required_alignment.is_power_of_two()
+        || access.known_alignment < access.required_alignment
+    {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector memory alignment is invalid or unproven",
+            errors,
+        );
+    }
+    let u32_type = MirType::Primitive(crate::MirPrimitiveTypeName::U32);
+    if values
+        .type_of(access.start)
+        .and_then(KirValueType::as_scalar)
+        != Some(&u32_type)
+        || values.type_of(access.end).and_then(KirValueType::as_scalar) != Some(&u32_type)
+    {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector memory start/end must be u32",
+            errors,
+        );
+    }
+    let expected_slice = MirType::Slice(Box::new(lane_mir_type(access.lane)));
+    if values
+        .type_of(access.slice)
+        .and_then(KirValueType::as_scalar)
+        != Some(&expected_slice)
+    {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector memory slice lane type mismatch",
+            errors,
+        );
+    }
+    let valid_memory = instruction.memory.as_ref().is_some_and(|memory| {
+        function
+            .regions
+            .iter()
+            .any(|region| region.id == memory.region && region.partition == memory.region)
+            && function.regions.iter().any(|region| {
+                region.partition == memory.region
+                    && matches!(
+                        region.origin,
+                        KirMemoryRegionOrigin::Parameter(value)
+                            | KirMemoryRegionOrigin::RawSlice(value)
+                            | KirMemoryRegionOrigin::Subslice(value)
+                            if value == access.slice
+                    )
+            })
+            && if store {
+                memory.output.is_some()
+                    && instruction
+                        .effect
+                        .as_ref()
+                        .is_some_and(|effect| effect.kind == KirEffectKind::WriteMemory)
+            } else {
+                memory.output.is_none()
+                    && instruction
+                        .effect
+                        .as_ref()
+                        .is_some_and(|effect| effect.kind == KirEffectKind::ReadMemory)
+            }
+    });
+    if !valid_memory {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector memory instruction has invalid Memory SSA or effect",
+            errors,
+        );
+    }
+    require_vector_operation(
+        function,
+        profile,
+        block,
+        instruction,
+        if store {
+            KirProfileOperation::Store
+        } else {
+            KirProfileOperation::Load
+        },
+        access.lane,
+        access.lanes,
+        KirCostSemantics::NotApplicable,
+        KirAlignmentClass::Bytes(access.required_alignment),
+        errors,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn require_vector_operation(
+    function: &KirFunction,
+    profile: &KirTargetProfile,
+    block: &KirBlock,
+    instruction: &KirInstruction,
+    operation: KirProfileOperation,
+    lane: KirLaneType,
+    lanes: u16,
+    semantics: KirCostSemantics,
+    alignment: KirAlignmentClass,
+    errors: &mut Vec<KirValidationError>,
+) {
+    let legal = u8::try_from(lanes).ok().is_some_and(|lanes| {
+        matches!(
+            profile.operation_availability(&KirCostKey {
+                operation,
+                lane,
+                lanes,
+                semantics,
+                alignment,
+            }),
+            Some(KirOperationAvailability::Legal(_))
+        )
+    });
+    if !legal {
+        vector_error(
+            function,
+            block,
+            instruction,
+            "vector instruction is unavailable in the exact target profile",
+            errors,
+        );
+    }
+}
+
+fn one_vector_result(instruction: &KirInstruction) -> Option<(KirLaneType, u16)> {
+    let [result] = instruction.results.as_slice() else {
+        return None;
+    };
+    match result.type_node {
+        KirValueType::FixedVector { lane, lanes } => Some((lane, lanes)),
+        KirValueType::Scalar(_) | KirValueType::Mask { .. } => None,
+    }
+}
+
+const fn vector_instruction_region(kind: &KirInstructionKind) -> Option<VectorRegionId> {
+    match kind {
+        KirInstructionKind::VectorSplat { region, .. }
+        | KirInstructionKind::VectorLoad { region, .. }
+        | KirInstructionKind::VectorStore { region, .. }
+        | KirInstructionKind::VectorBinary { region, .. }
+        | KirInstructionKind::VectorUnary { region, .. }
+        | KirInstructionKind::VectorCompare { region, .. }
+        | KirInstructionKind::VectorSelect { region, .. }
+        | KirInstructionKind::VectorCast { region, .. }
+        | KirInstructionKind::VectorInsert { region, .. }
+        | KirInstructionKind::VectorExtract { region, .. }
+        | KirInstructionKind::VectorReduce { region, .. } => Some(*region),
+        _ => None,
+    }
+}
+
+const fn vector_binary_profile_operation(op: KirVectorBinaryOp) -> KirProfileOperation {
+    match op {
+        KirVectorBinaryOp::Add => KirProfileOperation::Add,
+        KirVectorBinaryOp::Subtract => KirProfileOperation::Subtract,
+        KirVectorBinaryOp::Multiply => KirProfileOperation::Multiply,
+        KirVectorBinaryOp::Divide => KirProfileOperation::Divide,
+        KirVectorBinaryOp::Remainder => KirProfileOperation::Remainder,
+    }
+}
+
+const fn cost_semantics(semantics: KirArithmeticSemantics) -> KirCostSemantics {
+    match semantics {
+        KirArithmeticSemantics::Modular => KirCostSemantics::Modular,
+        KirArithmeticSemantics::Checked => KirCostSemantics::Checked,
+        KirArithmeticSemantics::StrictFloat => KirCostSemantics::StrictFloat,
+    }
+}
+
+fn lane_mir_type(lane: KirLaneType) -> MirType {
+    MirType::Primitive(match lane {
+        KirLaneType::I32 => crate::MirPrimitiveTypeName::I32,
+        KirLaneType::I64 => crate::MirPrimitiveTypeName::I64,
+        KirLaneType::U32 => crate::MirPrimitiveTypeName::U32,
+        KirLaneType::U64 => crate::MirPrimitiveTypeName::U64,
+        KirLaneType::F64 => crate::MirPrimitiveTypeName::F64,
+    })
+}
+
+fn vector_error(
+    function: &KirFunction,
+    block: &KirBlock,
+    instruction: &KirInstruction,
+    message: &str,
+    errors: &mut Vec<KirValidationError>,
+) {
+    errors.push(error(
+        message,
+        Some(function.id),
+        Some(block.id),
+        Some(instruction.id),
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -640,15 +1826,15 @@ fn define_memory(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn define_value<'a>(
+fn define_value(
     function: &KirFunction,
     value: ValueId,
-    type_node: &'a MirType,
+    type_node: &KirValueType,
     definition: ValueDefinition,
     block: Option<BlockId>,
     instruction: Option<InstructionId>,
     module_value_ids: &mut HashSet<ValueId>,
-    values: &mut ValueTable<'a>,
+    values: &mut ValueTable,
     errors: &mut Vec<KirValidationError>,
 ) {
     let fresh = module_value_ids.insert(value);
@@ -670,7 +1856,7 @@ fn validate_use(
     use_index: usize,
     value: ValueId,
     instruction: Option<InstructionId>,
-    values: &ValueTable<'_>,
+    values: &ValueTable,
     dominators: &KirDominators,
     errors: &mut Vec<KirValidationError>,
 ) {
@@ -760,7 +1946,7 @@ fn validate_edge(
     source: BlockId,
     edge: &KirEdge,
     blocks: &HashMap<BlockId, &KirBlock>,
-    values: &ValueTable<'_>,
+    values: &ValueTable,
     memory_regions: &HashMap<MemoryVersionId, MemoryRegionId>,
     errors: &mut Vec<KirValidationError>,
 ) {
@@ -818,6 +2004,22 @@ fn validate_edge(
                 None,
             ));
         }
+        if values
+            .type_of(*argument)
+            .is_some_and(|type_node| type_node.as_scalar().is_none())
+            || param.type_node.as_scalar().is_none()
+        {
+            let source_region = vector_region_for_block(function, source);
+            let target_region = vector_region_for_block(function, edge.target);
+            if source_region.is_none() || source_region != target_region {
+                errors.push(error(
+                    "vector or mask value escapes its vector region on a block edge",
+                    Some(function.id),
+                    Some(source),
+                    None,
+                ));
+            }
+        }
     }
     for (argument, param) in edge.memory_args.iter().zip(&target.memory_params) {
         if memory_regions.get(argument) != Some(&param.region) {
@@ -828,6 +2030,56 @@ fn validate_edge(
                 None,
             ));
         }
+    }
+}
+
+fn vector_region_for_block(function: &KirFunction, block: BlockId) -> Option<VectorRegionId> {
+    function
+        .vector_regions
+        .iter()
+        .find(|region| region.blocks.contains(&block))
+        .map(|region| region.id)
+}
+
+fn validate_terminator_types(
+    function: &KirFunction,
+    block: &KirBlock,
+    values: &ValueTable,
+    errors: &mut Vec<KirValidationError>,
+) {
+    match &block.terminator {
+        KirTerminator::Return { value, .. } => {
+            let valid = match (value, &function.return_type) {
+                (None, MirType::Void) => true,
+                (Some(value), expected) => {
+                    values.type_of(*value) == Some(&KirValueType::Scalar(expected.clone()))
+                }
+                (None, _) => false,
+            };
+            if !valid {
+                errors.push(error(
+                    "return value cannot expose a vector or mismatch the scalar function ABI",
+                    Some(function.id),
+                    Some(block.id),
+                    None,
+                ));
+            }
+        }
+        KirTerminator::Branch { condition, .. } => {
+            if values.type_of(*condition)
+                != Some(&KirValueType::Scalar(MirType::Primitive(
+                    crate::MirPrimitiveTypeName::Bool,
+                )))
+            {
+                errors.push(error(
+                    "branch condition must be scalar bool, not a vector mask",
+                    Some(function.id),
+                    Some(block.id),
+                    None,
+                ));
+            }
+        }
+        KirTerminator::Jump { .. } => {}
     }
 }
 
@@ -869,6 +2121,60 @@ fn visit_instruction_uses(instruction: &KirInstruction, mut visit: impl FnMut(Va
             visit(*start);
             visit(*end);
         }
+        KirInstructionKind::VersionPredicate { predicate } => {
+            for conjunct in &predicate.conjuncts {
+                match conjunct {
+                    KirVersionPredicateConjunct::TripThreshold { value, .. } => visit(*value),
+                    KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                        left,
+                        left_count,
+                        right,
+                        right_count,
+                        ..
+                    } => {
+                        visit(*left);
+                        visit(*left_count);
+                        visit(*right);
+                        visit(*right_count);
+                    }
+                }
+            }
+        }
+        KirInstructionKind::VectorSplat { scalar, .. } => visit(*scalar),
+        KirInstructionKind::VectorLoad { access, .. } => {
+            visit(access.slice);
+            visit(access.start);
+            visit(access.end);
+        }
+        KirInstructionKind::VectorStore { access, value, .. } => {
+            visit(access.slice);
+            visit(access.start);
+            visit(access.end);
+            visit(*value);
+        }
+        KirInstructionKind::VectorBinary { left, right, .. }
+        | KirInstructionKind::VectorCompare { left, right, .. } => {
+            visit(*left);
+            visit(*right);
+        }
+        KirInstructionKind::VectorUnary { operand, .. } => visit(*operand),
+        KirInstructionKind::VectorSelect {
+            mask,
+            when_true,
+            when_false,
+            ..
+        } => {
+            visit(*mask);
+            visit(*when_true);
+            visit(*when_false);
+        }
+        KirInstructionKind::VectorCast { value, .. } => visit(*value),
+        KirInstructionKind::VectorInsert { vector, scalar, .. } => {
+            visit(*vector);
+            visit(*scalar);
+        }
+        KirInstructionKind::VectorExtract { vector, .. }
+        | KirInstructionKind::VectorReduce { vector, .. } => visit(*vector),
     }
 }
 
@@ -916,6 +2222,40 @@ fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
             vec![*slice]
         }
         KirInstructionKind::Subslice { slice, start, end } => vec![*slice, *start, *end],
+        KirInstructionKind::VersionPredicate { predicate } => predicate
+            .conjuncts
+            .iter()
+            .flat_map(|conjunct| match conjunct {
+                KirVersionPredicateConjunct::TripThreshold { value, .. } => vec![*value],
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                    left,
+                    left_count,
+                    right,
+                    right_count,
+                    ..
+                } => vec![*left, *left_count, *right, *right_count],
+            })
+            .collect(),
+        KirInstructionKind::VectorSplat { scalar, .. } => vec![*scalar],
+        KirInstructionKind::VectorLoad { access, .. } => {
+            vec![access.slice, access.start, access.end]
+        }
+        KirInstructionKind::VectorStore { access, value, .. } => {
+            vec![access.slice, access.start, access.end, *value]
+        }
+        KirInstructionKind::VectorBinary { left, right, .. }
+        | KirInstructionKind::VectorCompare { left, right, .. } => vec![*left, *right],
+        KirInstructionKind::VectorUnary { operand, .. } => vec![*operand],
+        KirInstructionKind::VectorSelect {
+            mask,
+            when_true,
+            when_false,
+            ..
+        } => vec![*mask, *when_true, *when_false],
+        KirInstructionKind::VectorCast { value, .. } => vec![*value],
+        KirInstructionKind::VectorInsert { vector, scalar, .. } => vec![*vector, *scalar],
+        KirInstructionKind::VectorExtract { vector, .. }
+        | KirInstructionKind::VectorReduce { vector, .. } => vec![*vector],
     }
 }
 
@@ -987,6 +2327,7 @@ mod tests {
             return_type: MirType::Void,
             regions: vec![],
             initial_memory: vec![],
+            vector_regions: vec![],
             blocks: blocks
                 .iter()
                 .map(|&id| KirBlock {
@@ -1020,7 +2361,7 @@ mod tests {
             let mut values = ValueTable::new(std::iter::once(value), 1);
             values.record(
                 value,
-                &MirType::Void,
+                &KirValueType::Scalar(MirType::Void),
                 Some(ValueDefinition::BlockParam(definition)),
             );
             let memories = HashMap::from([(memory, MemoryDefinition::BlockParam(definition))]);
@@ -1057,8 +2398,8 @@ mod tests {
     #[test]
     fn value_table_should_match_legacy_queries_without_sparse_id_allocation() {
         let types = [
-            MirType::Void,
-            MirType::Primitive(crate::MirPrimitiveTypeName::I32),
+            KirValueType::Scalar(MirType::Void),
+            KirValueType::Scalar(MirType::Primitive(crate::MirPrimitiveTypeName::I32)),
         ];
         for ids in [
             vec![],
@@ -1093,7 +2434,7 @@ mod tests {
                     } else {
                         None
                     };
-                    old_types.insert(value, &types[round % types.len()]);
+                    old_types.insert(value, types[round % types.len()].clone());
                     let actual = table.record(
                         value,
                         &types[round % types.len()],
@@ -1102,7 +2443,7 @@ mod tests {
                     assert_eq!(actual, previous);
                     for probe in ids.iter().copied().chain([0, 1, 7, 8, 9, u32::MAX]) {
                         let probe = ValueId::from_index(probe);
-                        assert_eq!(table.type_of(probe), old_types.get(&probe).copied());
+                        assert_eq!(table.type_of(probe), old_types.get(&probe));
                         assert_eq!(
                             table.definition(probe),
                             old_definitions.get(&probe).copied()

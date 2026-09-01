@@ -1,9 +1,30 @@
 use std::{fs, process::Command};
 
 use calckernel::{
-    BoundsMode, KirConsumer, KirInstructionKind, KirTerminator, MirPrimitiveTypeName,
-    MirRuntimeIntrinsic, MirType, OverflowMode, emit_c_kir_module_with_contracts,
+    BoundsMode, KirConsumer, KirInstructionKind, KirOptimizationLevel, KirTargetProfile,
+    KirTerminator, MirPrimitiveTypeName, MirRuntimeIntrinsic, MirType, OverflowMode,
+    emit_c_kir_module_with_contracts, run_kir_pass_pipeline,
 };
+
+#[test]
+fn profile_mismatch_should_withhold_even_an_o0_optimizer_artifact() {
+    let result = optimized_module(
+        "export fn answer() -> i32 { return 42; }",
+        0,
+        KirConsumer::Inspection,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
+    let mut module = verified_artifact(&result).clone();
+    module.profile = KirTargetProfile::portable_c();
+    let rejected = run_kir_pass_pipeline(module, KirOptimizationLevel::O0, None);
+    assert!(rejected.artifact.is_none());
+    assert_eq!(rejected.records, []);
+    assert_eq!(
+        rejected.errors,
+        ["KIR target profile consumer does not match module consumer"]
+    );
+}
 
 use super::support::{
     compiler::{optimized_module, verified_artifact},

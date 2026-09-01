@@ -56,7 +56,7 @@ impl<'a> InductionIndex<'a> {
             for (position, param) in block.params.iter().enumerate() {
                 let value = index.values.entry(param.value).or_default();
                 value.parameter = Some((block.id, position));
-                if let Some(ty) = IntegerType::from_mir(&param.type_node) {
+                if let Some(ty) = IntegerType::from_kir(&param.type_node) {
                     value.integer_type = Some(ty);
                 }
             }
@@ -64,7 +64,7 @@ impl<'a> InductionIndex<'a> {
                 if let Some(result) = instruction.results.first() {
                     let value = index.values.entry(result.value).or_default();
                     value.instruction = Some(instruction);
-                    if let Some(ty) = IntegerType::from_mir(&result.type_node) {
+                    if let Some(ty) = IntegerType::from_kir(&result.type_node) {
                         value.integer_type = Some(ty);
                     }
                 }
@@ -497,11 +497,11 @@ fn integer_type(function: &KirFunction, value: ValueId) -> Option<IntegerType> {
                 .iter()
                 .flat_map(|block| &block.params)
                 .find(|param| param.value == value)
-                .and_then(|param| IntegerType::from_mir(&param.type_node))
+                .and_then(|param| IntegerType::from_kir(&param.type_node))
         })
         .or_else(|| {
             defining_instruction(function, value)
-                .and_then(|instruction| IntegerType::from_mir(&instruction.results[0].type_node))
+                .and_then(|instruction| IntegerType::from_kir(&instruction.results[0].type_node))
         })
 }
 

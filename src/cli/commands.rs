@@ -3,10 +3,11 @@ use std::{io, io::Write};
 use calckernel::{
     BoundsMode, CheckedProgram, EffectTarget, EmitWasmOptions, KirBoundsMode, KirBuildConfig,
     KirConsumer, KirOptimizationLevel, KirOverflowMode, KirPassManagerResult, KirSanitizerMode,
-    MemoryEffect, OverflowMode, SourceFile, annotate_unsafe_contracts, build_kir_module, check,
-    emit_c_kir_header, emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
+    KirTargetProfile, MemoryEffect, OverflowMode, SourceFile, annotate_unsafe_contracts,
+    build_kir_module, build_kir_module_with_profile, check, emit_c_kir_header,
+    emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
     format_diagnostics, import_contract_facts, lower_to_mir, print_fact_arena, print_kir_module,
-    print_mir_module, print_proof_arena, run_kir_pass_pipeline,
+    print_mir_module, print_optimization_audit, print_proof_arena, run_kir_pass_pipeline,
 };
 
 #[cfg(feature = "native-toolchain")]
@@ -30,12 +31,15 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     let source_bytes = read_file_bytes(input)?;
     let target =
         NativeTarget::host_with_cpu(NativeCpu::Native).map_err(|error| error.to_string())?;
+    let profile = target
+        .kir_profile(KirConsumer::NativeExecutable)
+        .map_err(|error| error.to_string())?;
     let bridge = calckernel::bridge_info().map_err(|error| error.to_string())?;
     let target_triple = target.triple().map_err(|error| error.to_string())?;
     let cpu = target.cpu().map_err(|error| error.to_string())?;
     let features = target.features().map_err(|error| error.to_string())?;
     let codegen_contract = format!(
-        "kir-v1;strict-fp;entry-wrapper-v1;native-cpu;host-only;sanitizer-contracts={}",
+        "kir-v2;strict-fp;entry-wrapper-v1;native-cpu;host-only;sanitizer-contracts={}",
         u8::from(args.sanitize_contracts)
     );
     let key_input = CacheKeyInput {
@@ -50,8 +54,12 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
         optimization_level: opt_level,
         overflow_mode: mode_value(overflow_mode),
         bounds_mode: bounds_mode_value(bounds_mode),
-        kir_contract_version: 1,
+        kir_contract_version: 2,
         sanitizer_mode: u8::from(args.sanitize_contracts),
+        target_profile_digest: profile.digest_hex(),
+        vector_cost_model_schema: calckernel::KIR_VECTOR_COST_MODEL_SCHEMA,
+        vector_proof_schema: calckernel::KIR_VECTOR_PROOF_SCHEMA,
+        vector_budget_identity: calckernel::kir_vector_budget_identity().to_string(),
         cpu: cpu.clone(),
         features: features.clone(),
         codegen_contract: codegen_contract.clone(),
@@ -80,6 +88,10 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
         bounds_mode: key_input.bounds_mode,
         kir_contract_version: key_input.kir_contract_version,
         sanitizer_mode: key_input.sanitizer_mode,
+        target_profile_digest: key_input.target_profile_digest,
+        vector_cost_model_schema: key_input.vector_cost_model_schema,
+        vector_proof_schema: key_input.vector_proof_schema,
+        vector_budget_identity: key_input.vector_budget_identity,
     };
     if let Some(object) = cache::load_object(&target, &key, args.no_cache) {
         return Ok(object);
@@ -95,7 +107,10 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     }
     let compiled = compile_kir(
         &checked.checked_program,
-        KirConsumer::NativeExecutable,
+        KirCompilationTarget {
+            consumer: KirConsumer::NativeExecutable,
+            profile: Some(profile),
+        },
         overflow_mode,
         bounds_mode,
         opt_level,
@@ -173,9 +188,14 @@ struct CompiledKir {
     result: KirPassManagerResult,
 }
 
+struct KirCompilationTarget {
+    consumer: KirConsumer,
+    profile: Option<KirTargetProfile>,
+}
+
 fn compile_kir(
     program: &CheckedProgram,
-    consumer: KirConsumer,
+    target: KirCompilationTarget,
     overflow_mode: OverflowMode,
     bounds_mode: BoundsMode,
     opt_level: u8,
@@ -183,25 +203,26 @@ fn compile_kir(
     args: &ParsedArgs,
 ) -> Result<CompiledKir, String> {
     let semantic_mir = lower_to_mir(program).map_err(|error| error.to_string())?;
-    let kir = build_kir_module(
-        &semantic_mir,
-        KirBuildConfig {
-            consumer,
-            overflow_mode: match overflow_mode {
-                OverflowMode::Unchecked => KirOverflowMode::Unchecked,
-                OverflowMode::Checked => KirOverflowMode::Checked,
-            },
-            bounds_mode: match bounds_mode {
-                BoundsMode::Unchecked => KirBoundsMode::Unchecked,
-                BoundsMode::Checked => KirBoundsMode::Checked,
-            },
-            sanitizer_mode: if sanitize_contracts {
-                KirSanitizerMode::Contracts
-            } else {
-                KirSanitizerMode::Disabled
-            },
+    let config = KirBuildConfig {
+        consumer: target.consumer,
+        overflow_mode: match overflow_mode {
+            OverflowMode::Unchecked => KirOverflowMode::Unchecked,
+            OverflowMode::Checked => KirOverflowMode::Checked,
         },
-    )
+        bounds_mode: match bounds_mode {
+            BoundsMode::Unchecked => KirBoundsMode::Unchecked,
+            BoundsMode::Checked => KirBoundsMode::Checked,
+        },
+        sanitizer_mode: if sanitize_contracts {
+            KirSanitizerMode::Contracts
+        } else {
+            KirSanitizerMode::Disabled
+        },
+    };
+    let kir = match target.profile {
+        Some(profile) => build_kir_module_with_profile(&semantic_mir, config, profile),
+        None => build_kir_module(&semantic_mir, config),
+    }
     .map_err(|error| error.to_string())?;
     let contracts = import_contract_facts(&kir, program, 0).map_err(|error| error.to_string())?;
     let result = run_kir_pass_pipeline(
@@ -300,6 +321,11 @@ fn emit_kir_inspection(
                 explanation.reason
             ));
         }
+        text.push_str(&print_optimization_audit(&result.audit));
+        for explanation in &result.vector_explanations {
+            text.push_str(&explanation.stable_text());
+            text.push('\n');
+        }
         sections.push(text);
     }
     if sections.is_empty() {
@@ -323,6 +349,17 @@ fn emit_kir_inspection(
 
 pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-kir")?;
+    let consumer = args
+        .consumer
+        .unwrap_or(EmitKirConsumer::Inspection)
+        .kir_consumer();
+    #[cfg(not(feature = "native-toolchain"))]
+    if matches!(
+        consumer,
+        KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+    ) {
+        return Err(native_unavailable_error());
+    }
     let overflow_mode = parse_overflow_mode(args)?;
     let bounds_mode = parse_bounds_mode(args)?;
     let opt_level = parse_opt_level(args)?;
@@ -330,9 +367,29 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
+    #[cfg(feature = "native-toolchain")]
+    let profile = if matches!(
+        consumer,
+        KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+    ) {
+        let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
+            CpuPolicy::Baseline => NativeCpu::Baseline,
+            CpuPolicy::Native => NativeCpu::Native,
+        };
+        let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
+        Some(
+            target
+                .kir_profile(consumer)
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(feature = "native-toolchain"))]
+    let profile = None;
     let compiled = compile_kir(
         &checked.checked_program,
-        KirConsumer::Inspection,
+        KirCompilationTarget { consumer, profile },
         overflow_mode,
         bounds_mode,
         opt_level,
@@ -485,7 +542,10 @@ pub(super) fn run_emit_c(args: &ParsedArgs) -> Result<(), String> {
     }
     let compiled = compile_kir(
         &checked.checked_program,
-        KirConsumer::C,
+        KirCompilationTarget {
+            consumer: KirConsumer::C,
+            profile: None,
+        },
         overflow_mode,
         bounds_mode,
         opt_level,
@@ -531,7 +591,10 @@ pub(super) fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
     }
     let compiled = compile_kir(
         &checked.checked_program,
-        KirConsumer::WebAssembly,
+        KirCompilationTarget {
+            consumer: KirConsumer::WebAssembly,
+            profile: None,
+        },
         overflow_mode,
         bounds_mode,
         opt_level,
@@ -568,7 +631,10 @@ pub(super) fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
     }
     let compiled = compile_kir(
         &checked.checked_program,
-        KirConsumer::WebAssembly,
+        KirCompilationTarget {
+            consumer: KirConsumer::WebAssembly,
+            profile: None,
+        },
         overflow_mode,
         bounds_mode,
         opt_level,
@@ -598,9 +664,18 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
     if !checked.diagnostics.is_empty() {
         return Err(format_diagnostics(&source, &checked.diagnostics));
     }
+    let target =
+        NativeTarget::host_with_cpu(NativeCpu::Baseline).map_err(|error| error.to_string())?;
     let compiled = compile_kir(
         &checked.checked_program,
-        KirConsumer::NativeLibrary,
+        KirCompilationTarget {
+            consumer: KirConsumer::NativeLibrary,
+            profile: Some(
+                target
+                    .kir_profile(KirConsumer::NativeLibrary)
+                    .map_err(|error| error.to_string())?,
+            ),
+        },
         overflow_mode,
         bounds_mode,
         opt_level,
@@ -608,8 +683,6 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
         args,
     )?;
     let context = NativeContext::new().map_err(|error| error.to_string())?;
-    let target =
-        NativeTarget::host_with_cpu(NativeCpu::Baseline).map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
     let text = lower_native_kir_module(
         &context,
@@ -655,21 +728,28 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     } else {
         KirConsumer::NativeLibrary
     };
+    let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
+        CpuPolicy::Baseline => NativeCpu::Baseline,
+        CpuPolicy::Native => NativeCpu::Native,
+    };
+    let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
     let compiled = compile_kir(
         &checked.checked_program,
-        consumer,
+        KirCompilationTarget {
+            consumer,
+            profile: Some(
+                target
+                    .kir_profile(consumer)
+                    .map_err(|error| error.to_string())?,
+            ),
+        },
         overflow_mode,
         bounds_mode,
         opt_level,
         args.sanitize_contracts,
         args,
     )?;
-    let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
-        CpuPolicy::Baseline => NativeCpu::Baseline,
-        CpuPolicy::Native => NativeCpu::Native,
-    };
     let context = NativeContext::new().map_err(|error| error.to_string())?;
-    let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
     let lowered = lower_native_kir_module(
         &context,

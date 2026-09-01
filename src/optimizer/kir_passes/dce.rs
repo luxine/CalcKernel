@@ -187,6 +187,40 @@ pub(super) fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
             vec![*slice]
         }
         KirInstructionKind::Subslice { slice, start, end } => vec![*slice, *start, *end],
+        KirInstructionKind::VersionPredicate { predicate } => predicate
+            .conjuncts
+            .iter()
+            .flat_map(|conjunct| match conjunct {
+                crate::KirVersionPredicateConjunct::TripThreshold { value, .. } => vec![*value],
+                crate::KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                    left,
+                    left_count,
+                    right,
+                    right_count,
+                    ..
+                } => vec![*left, *left_count, *right, *right_count],
+            })
+            .collect(),
+        KirInstructionKind::VectorSplat { scalar, .. } => vec![*scalar],
+        KirInstructionKind::VectorLoad { access, .. } => {
+            vec![access.slice, access.start, access.end]
+        }
+        KirInstructionKind::VectorStore { access, value, .. } => {
+            vec![access.slice, access.start, access.end, *value]
+        }
+        KirInstructionKind::VectorBinary { left, right, .. }
+        | KirInstructionKind::VectorCompare { left, right, .. } => vec![*left, *right],
+        KirInstructionKind::VectorUnary { operand, .. } => vec![*operand],
+        KirInstructionKind::VectorSelect {
+            mask,
+            when_true,
+            when_false,
+            ..
+        } => vec![*mask, *when_true, *when_false],
+        KirInstructionKind::VectorCast { value, .. } => vec![*value],
+        KirInstructionKind::VectorInsert { vector, scalar, .. } => vec![*vector, *scalar],
+        KirInstructionKind::VectorExtract { vector, .. }
+        | KirInstructionKind::VectorReduce { vector, .. } => vec![*vector],
     }
 }
 

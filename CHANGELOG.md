@@ -2,6 +2,28 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
+## 0.12.0 - Unreleased
+
+- Added KIR v2 fixed-vector and mask instructions plus deterministic Native
+  `KirTargetProfile` capability/cost data derived from pinned LLVM 22.1.8.
+- Added transactional, independently checked O3 specialization, controlled
+  full/partial unrolling, SLP, and Loop SIMD frontiers with monotonic analysis
+  budgets and stable optimization explanations.
+- Added unit-stride Loop SIMD for integer and strict element-wise f64 arithmetic,
+  supported casts, pure compare/select diamonds, splats, and contiguous memory;
+  strict f64 keeps per-element ordering and never enables fast math.
+- Added total runtime alias versioning with the unchanged scalar loop as the
+  fallback, scalar epilogues, and exact unchecked modular u32 add/multiply
+  reductions. Checked failures, effects, unsupported recurrences, scans, C,
+  and WebAssembly remain scalar.
+- Advanced the private LLVM bridge to ABI 3, KIR identity to `kir-v2`, and the
+  Native object cache to `CKCOBJ02` key/manifest schema 3 while retaining public
+  Native C ABI 1, Runtime ABI 2, source syntax, diagnostics, and checked
+  first-error behavior.
+- Added KIR/pre-LLVM/object structural evidence, fixed-seed O0/O3 differential
+  coverage, mutation tests, target-feature containment, and schema-7 performance
+  gate inputs. PGO/multiversioning and Auto-Tuning remain future work.
+
 ## 0.11.0 - Unreleased
 
 - Added explicit `unsafe fn` contracts for affine range requirements,

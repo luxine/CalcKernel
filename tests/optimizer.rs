@@ -21,3 +21,21 @@ mod kir_o2;
 
 #[path = "optimizer/kir_o3.rs"]
 mod kir_o3;
+
+#[path = "optimizer/vector_plan.rs"]
+mod vector_plan;
+
+#[path = "optimizer/transaction.rs"]
+mod transaction;
+
+#[path = "optimizer/specialization.rs"]
+mod specialization;
+
+#[path = "optimizer/unroll.rs"]
+mod unroll;
+
+#[path = "optimizer/slp.rs"]
+mod slp;
+
+#[path = "optimizer/vectorize.rs"]
+mod vectorize;

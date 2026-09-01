@@ -31,6 +31,8 @@ class ReplayPreparation(unittest.TestCase):
         manifest = PREPARE.validate_pins(REPO)
         self.assertEqual(manifest["commit"], PREPARE.BASELINE_COMMIT)
         self.assertEqual(manifest["llvm_version"], "22.1.8")
+        legacy = PREPARE.validate_pins(REPO, "0.10")
+        self.assertEqual(legacy["commit"], PREPARE.V010_COMMIT)
 
     def test_changed_runtime_source_or_adapter_is_rejected(self):
         with tempfile.TemporaryDirectory(prefix="ckc-replay-pins-") as directory:
@@ -44,27 +46,27 @@ class ReplayPreparation(unittest.TestCase):
             fixtures.mkdir(parents=True)
             for case in PREPARE.RUNTIME_CASES:
                 shutil.copyfile(REPO / "tests/fixtures/performance/native" / f"{case}.ck", fixtures / f"{case}.ck")
-            PREPARE.validate_pins(root)
+            PREPARE.validate_pins(root, "0.10")
             targets = [baseline / "v0_10_compiler.toml", *sorted(baseline.glob("*.patch")), *sorted(fixtures.glob("*.ck"))]
             for target in targets:
                 with self.subTest(target=target.name):
                     original_bytes = target.read_bytes()
                     target.write_bytes(original_bytes + b"\n")
                     with self.assertRaises(ValueError):
-                        PREPARE.validate_pins(root)
+                        PREPARE.validate_pins(root, "0.10")
                     target.write_bytes(original_bytes)
             (fixtures / "proof_loop.ck").unlink()
             with self.assertRaises((ValueError, OSError)):
-                PREPARE.validate_pins(root)
+                PREPARE.validate_pins(root, "0.10")
 
     def test_actual_verbose_compiler_identity_is_required(self):
         digest = "5" * 64
-        output = f"ckc 0.10.0\nNative ABI: 1\nRuntime ABI: 1\nLLVM: 22.1.8\nLLVM manifest SHA-256: {digest}\nTarget: aarch64-apple-darwin\nCode generator: AArch64\nORC object layer: JITLink\n"
+        output = f"ckc 0.11.0\nNative ABI: 1\nRuntime ABI: 2\nLLVM: 22.1.8\nLLVM manifest SHA-256: {digest}\nTarget: aarch64-apple-darwin\nCode generator: AArch64\nORC object layer: JITLink\n"
         PREPARE.validate_compiler_output(output, "aarch64-apple-darwin", digest)
         for old, new in [
-            ("ckc 0.10.0", "ckc 0.11.0"),
+            ("ckc 0.11.0", "ckc 0.10.0"),
             ("Native ABI: 1", "Native ABI: 2"),
-            ("Runtime ABI: 1", "Runtime ABI: 2"),
+            ("Runtime ABI: 2", "Runtime ABI: 1"),
             ("LLVM: 22.1.8", "LLVM: 22.1.7"),
             (digest, "6" * 64),
             ("aarch64-apple-darwin", "x86_64-apple-darwin"),
@@ -72,6 +74,13 @@ class ReplayPreparation(unittest.TestCase):
         ]:
             with self.subTest(new=new), self.assertRaises(ValueError):
                 PREPARE.validate_compiler_output(output.replace(old, new), "aarch64-apple-darwin", digest)
+
+        legacy = output.replace("ckc 0.11.0", "ckc 0.10.0").replace(
+            "Runtime ABI: 2", "Runtime ABI: 1"
+        )
+        PREPARE.validate_compiler_output(
+            legacy, "aarch64-apple-darwin", digest, "0.10"
+        )
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Validate CK 0.11 strict runtime, baseline, proof-loop, and optimizer gates."""
+"""Validate the fail-closed CK 0.12 schema-7 performance contract."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import math
 import os
 import pathlib
@@ -15,551 +15,611 @@ import statistics
 import sys
 import tomllib
 
-BASELINE_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
-BASELINE_COMPILER_IDENTITY = f"calckernel 0.10.0 ({BASELINE_COMMIT})"
-BASELINE_LLVM_VERSION = "22.1.8"
-BASELINE_HARNESS = (
-    "ckc_perf schema 2 + proof-loop ABI adapter "
-    "sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + "
-    "MIR optimizer timer "
-    "sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + "
-    "Linux C++ runtime link adapter "
-    "sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff + "
-    "Clang CPU policy adapter "
-    "sha256=f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1; "
-    "warmup=3; samples=20; repetitions=7; batch=20000000"
-)
-BASELINE_STATISTICS = (
-    "minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8"
-)
-SAMPLE_COUNT = 20
-BASELINE_MANIFEST_SHA256 = "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3"
 REPO = pathlib.Path(__file__).resolve().parents[1]
-RECIPE_FILES = ["scripts/prepare-performance-replay.py", "benches/runtime_replay.rs", "benches/ckc_perf.rs"]
-ADAPTER_FILES = {
-    "benches/baselines/v0_10_linux_cpp_runtime_harness.patch": "099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff",
-    "benches/baselines/v0_10_clang_cpu_harness.patch": "f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1",
-    "benches/baselines/v0_10_mir_optimizer_harness.patch": "828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b",
-    "benches/baselines/v0_10_proof_loop_harness.patch": "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e",
+V010_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
+V010_COMPILER = f"calckernel 0.10.0 ({V010_COMMIT})"
+V010_MANIFEST_SHA256 = "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3"
+V011_COMMIT = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
+V011_COMPILER = f"calckernel 0.11.0 ({V011_COMMIT})"
+V011_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
+LLVM_VERSION = "22.1.8"
+RUST_VERSION = "1.90.0"
+ORACLE_MANIFEST_SHA256 = "7ebe12a1fc4e3217ef7824fa75ad40caa6a76461a05af5f7a4b65a432c902631"
+DEFAULT_BASELINE_MANIFEST = REPO / "benches/baselines/v0_10_compiler.toml"
+RECIPE_FILES = [
+    "scripts/prepare-performance-replay.py",
+    "scripts/audit-performance-oracles.py",
+    "benches/runtime_replay.rs",
+    "benches/ckc_perf.rs",
+    "benches/vector_perf.rs",
+    "benches/oracles/manifest.toml",
+]
+V010_ADAPTERS = [
+    "benches/baselines/v0_10_linux_cpp_runtime_harness.patch",
+    "benches/baselines/v0_10_clang_cpu_harness.patch",
+    "benches/baselines/v0_10_mir_optimizer_harness.patch",
+    "benches/baselines/v0_10_proof_loop_harness.patch",
+]
+SCALAR_CASES = {"branch_mix", "integer_accumulate", "proof_loop", "remainder_chain"}
+VECTOR_CASES = {
+    "map_u32", "zip_u32", "strict_f64", "integer_cast", "modular_reduction",
+    "slp_quad", "runtime_noalias", "specialized_length",
 }
-CHANNEL_NAMES = [f"{kind}{mode}" for kind in
-                 ["candidateNative", "currentClang", "replayNative", "replayClang"]
-                 for mode in ["Unchecked", "Checked"]]
-BASELINE_SOURCE_DIGESTS = {
-    "branch_mix": "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8",
-    "integer_accumulate": "4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39",
-    "proof_loop": "ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d",
-    "remainder_chain": "87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e",
-    "pricing": "be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416",
-    "pricing_soa": "5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad",
-    "f64_kernels": "58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be",
-    "example_pricing": "aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a",
-    "example_dijkstra": "490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96",
-    "v0_10_c_branch_mix_checked": "fb5b95130998c20a0014b01af5659720771d836614c5bd0aa85e5c02d68921e2",
-    "v0_10_c_branch_mix_unchecked": "523e5f4af4c4bb64e6949dd7bfcd15578adb8ff47aa4437b5e1d01e6df84512b",
-    "v0_10_c_integer_accumulate_checked": "91b9abc17ff50d7d55733ba0972f268779e8f2ea07ed96683dfa376a57113952",
-    "v0_10_c_integer_accumulate_unchecked": "82b09a2e7428d99190cc50b03c709e5b018b082d0c265564bb4618e547fadf8a",
-    "v0_10_c_proof_loop_checked": "044bc8d4b456a64d9cb6f3af057466796466b8cf32628fa4cb5e78b0e57bfee8",
-    "v0_10_c_proof_loop_unchecked": "fed666f2048f254401e8554f8447b874cd4f602c1996f16825ea01d55e968326",
-    "v0_10_c_remainder_chain_checked": "1dc89902f0e636a2c0a8f63a644a734ffcbbedb0b3039e299bc0c8b6ac439eda",
-    "v0_10_c_remainder_chain_unchecked": "855c5bcb9bf82a8b06aab295c05211663a97a505654613a7b5dae33d2a6e9aeb",
-}
-RUNTIME_CASE_NAMES = {
-    "branch_mix",
-    "integer_accumulate",
-    "proof_loop",
-    "remainder_chain",
-}
-OPTIMIZER_CASE_NAMES = {
-    "pricing",
-    "pricing-soa",
-    "f64-kernels",
-    "proof",
-    "example-pricing",
-    "example-dijkstra",
-}
-DEFAULT_BASELINE_MANIFEST = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "benches"
-    / "baselines"
-    / "v0_10_compiler.toml"
-)
+DOMAIN_CASES = {"contract_noalias", "contract_fixed_length"}
+CHANNEL_NAMES = [
+    f"{kind}{mode}"
+    for kind in [
+        "candidateNative", "currentClang", "replayV011Native",
+        "replayV011Clang", "replayV010Native", "replayV010Clang",
+    ]
+    for mode in ["Unchecked", "Checked"]
+]
+SAMPLE_COUNT = 20
 
 
-def fail(message: str) -> None:
+def fail(message: str):
     raise ValueError(message)
 
 
-def positive_number(value: object, field: str) -> float:
-    if (isinstance(value, bool) or not isinstance(value, (int, float))
-            or value <= 0 or not math.isfinite(value)):
-        fail(f"{field} must be a finite positive number")
-    return float(value)
-
-
-def file_digest(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def named_digest(paths: list[str]) -> str:
-    digest = hashlib.sha256()
-    for name in sorted(paths):
-        digest.update(name.encode() + b"\0" + file_digest(REPO / name).encode() + b"\n")
-    return digest.hexdigest()
-
-
-def hash_value(value: object, label: str) -> str:
-    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
-        fail(f"{label} must be a lowercase SHA-256 hash")
-    return value
-
-
-def verify_file(path: pathlib.Path, size: object, digest: object, label: str) -> None:
-    hash_value(digest, label)
-    metadata = path.lstat()
-    if (type(size) is not int or size <= 0 or not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_size != size or file_digest(path) != digest):
-        fail(f"{label} file size or SHA-256 mismatch: {path}")
-
-
-def strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def strict_json_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            fail(f"duplicate JSON field {key}")
+            fail(f"duplicate JSON key {key!r}")
         result[key] = value
     return result
 
 
-def expected_order(count: int) -> list[list[int]]:
-    return [[(round_index + offset) % 8 for offset in range(8)] for round_index in range(count)]
+def file_digest(path: pathlib.Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def check_order(value: object, count: int, field: str) -> None:
-    if (not isinstance(value, list) or len(value) != count
-            or any(not isinstance(row, list) or len(row) != 8
-                   or any(type(channel) is not int for channel in row) for row in value)
-            or value != expected_order(count)):
-        fail(f"{field} must record the exact rotating eight-channel order")
+def named_digest(paths) -> str:
+    digest = hashlib.sha256()
+    for name in sorted(paths):
+        digest.update(name.encode())
+        digest.update(b"\0")
+        digest.update(file_digest(REPO / name).encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
-def check_replay(report: dict[str, object], report_path: pathlib.Path) -> None:
-    replay = report.get("runtimeReplay")
-    if not isinstance(replay, dict) or set(replay) != {"metadata", "manifestSha256", "artifacts"}:
-        fail("runtime replay must include exact metadata, manifest and artifact evidence")
-    bundle_value = os.environ.get("CKC_V010_RUNTIME_BUNDLE")
-    if not bundle_value:
-        fail("set CKC_V010_RUNTIME_BUNDLE after scripts/prepare-performance-replay.py")
-    bundle = pathlib.Path(bundle_value).resolve(strict=True)
-    manifest_path = bundle / "replay.tsv"
-    manifest_digest = hash_value(replay.get("manifestSha256"), "replay manifest")
-    if (not stat.S_ISREG(manifest_path.lstat().st_mode)
-            or file_digest(manifest_path) != manifest_digest):
-        fail("replay manifest SHA-256 mismatch")
-    lines = manifest_path.read_text(encoding="utf-8").splitlines()
-    if not lines or lines[0] != "ckc-v010-runtime-replay\t1":
-        fail("unsupported replay bundle schema")
-    fields = {"commit", "compilerIdentity", "compilerSha256", "compilerBytes", "llvmVersion",
-              "target", "cpuPolicy", "recipeSha256", "adapterSetSha256", "sourceDiffSha256",
-              "baselineManifestSha256", "llvmComponentSha256"}
-    metadata = {}
-    artifacts = {}
-    target = host_target_name()
-    suffix = {"linux": ".so", "macos": ".dylib", "windows": ".dll"}[target.split("-")[0]]
-    for line in lines[1:]:
-        parts = line.split("\t")
-        if len(parts) == 2 and parts[0] in fields and parts[1]:
-            key, value = parts
-            if key in metadata:
-                fail(f"duplicate replay metadata {key}")
-            metadata[key] = value
-        elif len(parts) == 6 and parts[0] == "artifact":
-            _, mode, case, filename, size, digest = parts
-            if (mode not in {"unchecked", "checked"} or case not in RUNTIME_CASE_NAMES
-                    or filename != f"{case}-{mode}{suffix}" or (mode, case) in artifacts
-                    or re.fullmatch(r"[0-9]+", size) is None or not 0 < int(size) < 2**64):
-                fail("invalid or duplicate replay artifact record")
-            verify_file(bundle / filename, int(size), digest, "replay artifact")
-            artifacts[mode, case] = dict(mode=mode, case=case, file=filename, bytes=int(size), sha256=digest)
-        else:
-            fail("unknown or malformed replay manifest record")
-    if set(metadata) != fields or len(artifacts) != 8 or replay.get("metadata") != metadata:
-        fail("replay metadata/artifact set does not match the exact bundle")
-    prefix_value = os.environ.get("CKC_LLVM_PREFIX")
-    if not prefix_value:
-        fail("CKC_LLVM_PREFIX is required to verify the replay LLVM component identity")
-    for name, digest in ADAPTER_FILES.items():
-        if file_digest(REPO / name) != digest:
-            fail(f"pinned replay adapter changed: {name}")
-    expected = dict(commit=BASELINE_COMMIT, compilerIdentity=BASELINE_COMPILER_IDENTITY,
-                    llvmVersion=BASELINE_LLVM_VERSION, target=target, cpuPolicy="baseline",
-                    recipeSha256=named_digest(RECIPE_FILES), adapterSetSha256=named_digest(list(ADAPTER_FILES)),
-                    baselineManifestSha256=BASELINE_MANIFEST_SHA256,
-                    llvmComponentSha256=file_digest(pathlib.Path(prefix_value) / "share/ckc/llvm-build.toml"))
-    for key, value in expected.items():
-        if metadata[key] != value:
-            fail(f"replay {key} does not match the pinned identity")
-    for field in fields:
-        if field.endswith("Sha256"):
-            hash_value(metadata[field], f"replay {field}")
-    compiler_size = metadata["compilerBytes"]
-    if re.fullmatch(r"[0-9]+", compiler_size) is None or not 0 < int(compiler_size) < 2**64:
-        fail("replay compiler size must be a positive u64")
-    verify_file(bundle / "ckc-v010", int(compiler_size), metadata["compilerSha256"], "replay compiler")
-    reported = replay.get("artifacts")
-    if not isinstance(reported, list) or len(reported) != 8:
-        fail("replay must report exactly eight artifact records")
-    seen = set()
-    for item in reported:
-        if not isinstance(item, dict) or not isinstance(item.get("mode"), str) or not isinstance(item.get("case"), str):
-            fail("malformed replay artifact")
-        key = item["mode"], item["case"]
-        if key in seen or artifacts.get(key) != item or type(item.get("bytes")) is not int:
-            fail("replay artifact record mismatch or duplicate")
-        seen.add(key)
-    directory = report.get("evidenceDirectory")
-    if not isinstance(directory, str) or re.fullmatch(r"measurement-[0-9]+-[0-9]+", directory) is None:
-        fail("invalid measured evidence directory")
-    evidence_root = report_path.parent / directory
-    if not stat.S_ISDIR(evidence_root.lstat().st_mode):
-        fail("measured evidence directory must not be a symlink")
-    measured = report.get("measuredArtifacts")
-    if not isinstance(measured, list) or len(measured) != 24:
-        fail("report must retain exactly twenty-four measured artifact records")
-    seen = set()
-    sizes = {}
-    for item in measured:
-        if not isinstance(item, dict) or set(item) != {"case", "mode", "channel", "file", "bytes", "sha256"}:
-            fail("malformed measured artifact")
-        case, mode, channel = (item[key] for key in ("case", "mode", "channel"))
-        if not all(isinstance(value, str) for value in (case, mode, channel)):
-            fail("invalid measured artifact identity")
-        endings = {"candidateNative": "native", "currentClang": "clang", "replayClang": "replay-clang"}
-        if case not in RUNTIME_CASE_NAMES or mode not in {"checked", "unchecked"} or channel not in endings:
-            fail("unknown measured artifact identity")
-        key = mode, case, channel
-        filename = f"{case}-{mode}-{endings[channel]}{suffix}"
-        if key in seen or item["file"] != filename:
-            fail("duplicate or escaping measured artifact")
-        seen.add(key)
-        verify_file(evidence_root / filename, item["bytes"], item["sha256"], "measured artifact")
-        sizes[key] = item["bytes"]
-    for suite in report["suites"]:
-        for case in suite["cases"]:
-            for field, channel in [("nativeArtifactBytes", "candidateNative"), ("clangCArtifactBytes", "currentClang")]:
-                if case[field] != sizes[suite["mode"], case["name"], channel]:
-                    fail("runtime artifact size does not match measured evidence")
+def hash_value(value, field):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        fail(f"{field} must be a lowercase SHA-256 digest")
+    return value
 
 
-def stable_samples(value: object, field: str) -> list[float]:
-    if not isinstance(value, list) or len(value) != SAMPLE_COUNT:
-        fail(f"{field} must contain exactly {SAMPLE_COUNT} samples")
-    samples = [positive_number(sample, field) for sample in value]
+def positive(value, field):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        fail(f"{field} must be a finite positive number")
+    if not math.isfinite(value) or value <= 0:
+        fail(f"{field} must be a finite positive number")
+    return float(value)
+
+
+def stable_samples(value, field, count=SAMPLE_COUNT):
+    if not isinstance(value, list) or len(value) != count:
+        fail(f"{field} must contain exactly {count} samples")
+    samples = [positive(sample, field) for sample in value]
     median = statistics.median(samples)
-    stable = sum(median * 0.75 <= sample <= median * 1.25 for sample in samples)
-    if stable / len(samples) < 0.80:
+    if sum(median * .75 <= sample <= median * 1.25 for sample in samples) < math.ceil(.8 * count):
         fail(f"{field} is unstable around its median")
     return samples
 
 
-def geometric_mean(values: list[float], field: str) -> float:
-    if not values:
-        fail(f"{field} must contain at least one value")
-    return math.exp(sum(math.log(value) for value in values) / len(values))
-
-
-def upper_median(values: list[float]) -> float:
+def upper_median(values):
     ordered = sorted(values)
     return ordered[len(ordered) // 2]
 
 
-def host_target_name() -> str:
-    os_name = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(
-        platform.system()
-    )
-    arch_name = {
-        "aarch64": "aarch64",
-        "arm64": "aarch64",
-        "amd64": "x86_64",
-        "x86_64": "x86_64",
-    }.get(platform.machine().lower())
-    if os_name is None or arch_name is None:
-        fail(
-            f"unsupported performance host identity: {platform.system()}/"
-            f"{platform.machine()}"
-        )
-    return f"{os_name}-{arch_name}"
+def geometric_mean(values, field):
+    if not values:
+        fail(f"{field} has no values")
+    return math.exp(sum(math.log(value) for value in values) / len(values))
 
 
-def load_runtime_baseline(path: pathlib.Path) -> dict[tuple[str, str, str, str], tuple[int, int]]:
-    if file_digest(path) != BASELINE_MANIFEST_SHA256:
-        fail("frozen manifest SHA-256 does not match the accepted V0.10 baseline")
+def exact_keys(value, expected, field):
+    if not isinstance(value, dict):
+        fail(f"{field} must be an object")
+    unknown = set(value) - set(expected)
+    missing = set(expected) - set(value)
+    if unknown or missing:
+        fail(f"{field} has unknown or missing fields: unknown={sorted(unknown)}, missing={sorted(missing)}")
+
+
+def check_order(value, width, rows, field):
+    expected = [[(row + offset) % width for offset in range(width)] for row in range(rows)]
+    if value != expected:
+        fail(f"{field} does not match the exact rotating order")
+
+
+def verify_file(path, size, digest, field):
+    hash_value(digest, f"{field} digest")
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        fail(f"{field} is missing: {error}")
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size <= 0:
+        fail(f"{field} must be a nonempty regular file, not a symlink")
+    if type(size) is not int or size <= 0 or metadata.st_size != size:
+        fail(f"{field} size mismatch")
+    if file_digest(path) != digest:
+        fail(f"{field} SHA-256 mismatch")
+
+
+def host_target_name():
+    system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
+    arch = {"aarch64": "aarch64", "arm64": "aarch64", "amd64": "x86_64",
+            "x86_64": "x86_64"}.get(platform.machine().lower())
+    if system is None or arch is None:
+        fail(f"unsupported performance host {platform.system()}/{platform.machine()}")
+    return f"{system}-{arch}"
+
+
+def dynamic_suffix(target):
+    if target.startswith("windows-"):
+        return ".dll"
+    if target.startswith("macos-"):
+        return ".dylib"
+    return ".so"
+
+
+def replay_expected(generation):
+    if generation == "v011":
+        return V011_COMMIT, V011_COMPILER, V011_MANIFEST_SHA256, "ckc-v011", hashlib.sha256(b"").hexdigest()
+    return V010_COMMIT, V010_COMPILER, V010_MANIFEST_SHA256, "ckc-v010", named_digest(V010_ADAPTERS)
+
+
+def check_replay(report, key, generation, report_path):
+    env_name = f"CKC_{generation.upper()}_RUNTIME_BUNDLE"
+    raw = os.environ.get(env_name)
+    if not raw:
+        fail(f"{env_name} is required")
+    bundle = pathlib.Path(raw)
+    commit, compiler_identity, manifest_digest, compiler_file, adapter_digest = replay_expected(generation)
+    manifest_path = bundle / "replay.tsv"
+    try:
+        manifest_metadata = manifest_path.lstat()
+    except OSError as error:
+        fail(f"{generation} replay manifest is missing: {error}")
+    if not stat.S_ISREG(manifest_metadata.st_mode):
+        fail(f"{generation} replay manifest must not be a symlink")
+    text = manifest_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines or lines[0] != f"ckc-{generation}-runtime-replay\t1":
+        fail(f"{generation} replay schema is unsupported")
+    fields = {
+        "commit", "compilerIdentity", "compilerSha256", "compilerBytes", "llvmVersion",
+        "target", "cpuPolicy", "recipeSha256", "adapterSetSha256", "sourceDiffSha256",
+        "baselineManifestSha256", "llvmComponentSha256",
+    }
+    metadata = {}
+    artifacts = {}
+    target = host_target_name()
+    suffix = dynamic_suffix(target)
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[0] in fields and parts[1]:
+            if parts[0] in metadata:
+                fail(f"duplicate {generation} replay metadata")
+            metadata[parts[0]] = parts[1]
+        elif len(parts) == 6 and parts[0] == "artifact":
+            _, mode, case, filename, size, sha = parts
+            identity = mode, case
+            if (mode not in {"checked", "unchecked"} or case not in SCALAR_CASES
+                    or filename != f"{case}-{mode}{suffix}" or identity in artifacts
+                    or re.fullmatch(r"[0-9]+", size) is None):
+                fail(f"invalid or duplicate {generation} replay artifact")
+            item = dict(case=case, mode=mode, file=filename, bytes=int(size), sha256=sha)
+            verify_file(bundle / filename, item["bytes"], sha, f"{generation} replay artifact")
+            artifacts[identity] = item
+        else:
+            fail(f"unknown or malformed {generation} replay record")
+    if set(metadata) != fields or len(artifacts) != 8:
+        fail(f"{generation} replay must contain every identity and eight artifact records")
+    prefix = os.environ.get("CKC_LLVM_PREFIX")
+    if not prefix:
+        fail("CKC_LLVM_PREFIX is required to verify replay identity")
+    expected = {
+        "commit": commit, "compilerIdentity": compiler_identity, "llvmVersion": LLVM_VERSION,
+        "target": target, "cpuPolicy": "baseline", "recipeSha256": named_digest(RECIPE_FILES),
+        "adapterSetSha256": adapter_digest, "baselineManifestSha256": manifest_digest,
+        "llvmComponentSha256": file_digest(pathlib.Path(prefix) / "share/ckc/llvm-build.toml"),
+    }
+    for name, value in expected.items():
+        if metadata.get(name) != value:
+            fail(f"{generation} replay {name} does not match pinned identity")
+    for name in fields:
+        if name.endswith("Sha256"):
+            hash_value(metadata[name], f"{generation} replay {name}")
+    if re.fullmatch(r"[0-9]+", metadata["compilerBytes"]) is None:
+        fail(f"{generation} replay compiler size is invalid")
+    verify_file(bundle / compiler_file, int(metadata["compilerBytes"]), metadata["compilerSha256"],
+                f"{generation} replay compiler")
+    replay = report.get(key)
+    exact_keys(replay, {"metadata", "manifestSha256", "artifacts"}, key)
+    if replay["metadata"] != metadata or replay["manifestSha256"] != hashlib.sha256(text.encode()).hexdigest():
+        fail(f"{generation} replay report does not match its exact bundle")
+    if not isinstance(replay["artifacts"], list) or len(replay["artifacts"]) != 8:
+        fail(f"{generation} replay must report exactly eight artifact records")
+    if {(item["mode"], item["case"]): item for item in replay["artifacts"]} != artifacts:
+        fail(f"{generation} replay artifact report is incomplete or duplicated")
+
+
+def check_measured_artifacts(report, report_path):
+    directory = report.get("evidenceDirectory")
+    if not isinstance(directory, str) or re.fullmatch(r"measurement-[0-9]+-[0-9]+", directory) is None:
+        fail("invalid measured evidence directory")
+    root = report_path.parent / directory
+    try:
+        if not stat.S_ISDIR(root.lstat().st_mode):
+            fail("measured evidence directory must not be a symlink")
+    except OSError as error:
+        fail(f"measured evidence directory is missing: {error}")
+    suffix = dynamic_suffix(host_target_name())
+    endings = {
+        "candidateNative": "native", "currentClang": "clang",
+        "replayV011Clang": "replay-v011-clang", "replayV010Clang": "replay-v010-clang",
+    }
+    records = report.get("measuredArtifacts")
+    if not isinstance(records, list) or len(records) != 32:
+        fail("report must retain exactly thirty-two scalar measured artifact records")
+    seen = set()
+    sizes = {}
+    for item in records:
+        exact_keys(item, {"case", "mode", "channel", "file", "bytes", "sha256"}, "measured artifact")
+        case, mode, channel = item["case"], item["mode"], item["channel"]
+        identity = mode, case, channel
+        if (case not in SCALAR_CASES or mode not in {"checked", "unchecked"}
+                or channel not in endings or identity in seen):
+            fail("unknown or duplicate measured artifact")
+        expected = f"{case}-{mode}-{endings[channel]}{suffix}"
+        if item["file"] != expected:
+            fail("measured artifact filename escapes its exact identity")
+        verify_file(root / expected, item["bytes"], item["sha256"], "measured artifact")
+        seen.add(identity)
+        sizes[identity] = item["bytes"]
+    return root, sizes
+
+
+def check_stream(record, prefix, field, count=20):
+    samples = stable_samples(record.get(prefix + "SamplesNs"), f"{field} {prefix}SamplesNs", count)
+    median = positive(record.get(prefix + "MedianNs"), f"{field} {prefix}MedianNs")
+    if median != upper_median(samples):
+        fail(f"{field} {prefix} median does not match its sample array")
+    return median
+
+
+def load_v010(path):
+    if file_digest(path) != V010_MANIFEST_SHA256:
+        fail("frozen manifest SHA-256 does not match accepted V0.10")
     with path.open("rb") as source:
         manifest = tomllib.load(source)
-    if manifest.get("schema_version") != 2:
-        fail("v0.10 baseline manifest schema_version must be 2")
-    if manifest.get("commit") != BASELINE_COMMIT:
-        fail("v0.10 baseline manifest commit does not match the pinned identity")
-    if manifest.get("compiler_identity") != BASELINE_COMPILER_IDENTITY:
-        fail("v0.10 baseline manifest compiler identity does not match")
-    if manifest.get("llvm_version") != BASELINE_LLVM_VERSION:
-        fail("v0.10 baseline manifest LLVM version does not match")
-    entries = manifest.get("runtime")
-    if not isinstance(entries, list) or not entries:
-        fail("v0.10 baseline manifest must contain runtime entries")
-    runtime: dict[tuple[str, str, str, str], tuple[int, int]] = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            fail("v0.10 baseline manifest contains a malformed runtime entry")
-        identity = tuple(entry.get(field) for field in ("target", "cpu", "mode", "case"))
-        if not all(isinstance(value, str) for value in identity):
-            fail("v0.10 baseline runtime identity must contain strings")
-        key = (identity[0], identity[1], identity[2], identity[3])
+    if (manifest.get("schema_version") != 2 or manifest.get("commit") != V010_COMMIT
+            or manifest.get("compiler_identity") != V010_COMPILER
+            or manifest.get("llvm_version") != LLVM_VERSION):
+        fail("V0.10 baseline identity is not pinned")
+    runtime = {}
+    for row in manifest.get("runtime", []):
+        key = row["target"], row["cpu"], row["mode"], row["case"]
         if key in runtime:
-            fail(f"duplicate v0.10 baseline runtime entry {key}")
-        native = entry.get("median_ns")
-        clang = entry.get("clang_median_ns")
-        if type(native) is not int or native <= 0 or type(clang) is not int or clang <= 0:
-            fail(f"v0.10 baseline runtime entry {key} must contain positive integer medians")
-        runtime[key] = (native, clang)
-    return runtime
+            fail("duplicate V0.10 runtime baseline")
+        runtime[key] = row["median_ns"], row["clang_median_ns"]
+    return manifest, runtime
 
 
-def check_baseline_identity(report: dict[str, object]) -> None:
+def check_baseline_identity(report, manifest):
     baseline = report.get("baselineV010")
-    if not isinstance(baseline, dict) or baseline.get("commit") != BASELINE_COMMIT:
-        fail("baselineV010 must name the pinned v0.10 commit")
+    source_digests = {key.removeprefix("source_digest_"): value for key, value in manifest.items()
+                      if key.startswith("source_digest_")}
     expected = {
-        "compilerIdentity": BASELINE_COMPILER_IDENTITY,
-        "llvmVersion": BASELINE_LLVM_VERSION,
-        "target": host_target_name(),
-        "harness": BASELINE_HARNESS,
-        "statistics": BASELINE_STATISTICS,
+        "commit": V010_COMMIT, "compilerIdentity": V010_COMPILER,
+        "llvmVersion": LLVM_VERSION, "target": host_target_name(),
+        "harness": manifest["harness"], "statistics": manifest["statistics"],
+        "sourceDigestCount": len(source_digests), "sourceDigests": source_digests,
     }
-    for field, value in expected.items():
-        if baseline.get(field) != value:
-            fail(f"baselineV010 {field} does not match the pinned identity")
-    if baseline.get("sourceDigestCount") != len(BASELINE_SOURCE_DIGESTS):
-        fail("baselineV010 must cover every pinned source digest")
-    digests = baseline.get("sourceDigests")
-    if digests != BASELINE_SOURCE_DIGESTS:
-        fail("baselineV010 sourceDigests do not match the exact pinned corpus")
+    if baseline != expected:
+        fail("baselineV010 identity/corpus does not match the frozen manifest")
 
 
-def check_case(
-    case: object,
-    mode: str,
-    expected_baseline: tuple[int, int],
-) -> tuple[str, float, float, bool, float]:
-    if not isinstance(case, dict) or not isinstance(case.get("name"), str):
-        fail(f"{mode} suite contains a malformed case")
-    name = case["name"]
-    if case.get("referenceEquivalent") is not True:
-        fail(f"{mode}/{name} did not prove reference equivalence")
-    native = positive_number(case.get("nativeMedianNs"), f"{mode}/{name} nativeMedianNs")
-    clang = positive_number(case.get("clangCMedianNs"), f"{mode}/{name} clangCMedianNs")
-    positive_number(case.get("v010MedianNs"), f"{mode}/{name} v010MedianNs")
-    positive_number(
-        case.get("v010ClangMedianNs"), f"{mode}/{name} v010ClangMedianNs"
-    )
-    if case.get("v010MedianNs") != expected_baseline[0]:
-        fail(f"{mode}/{name} v010MedianNs does not match the frozen manifest")
-    if case.get("v010ClangMedianNs") != expected_baseline[1]:
-        fail(f"{mode}/{name} v010ClangMedianNs does not match the frozen manifest")
-    native_samples = stable_samples(
-        case.get("nativeSamplesNs"), f"{mode}/{name} nativeSamplesNs"
-    )
-    clang_samples = stable_samples(
-        case.get("clangCSamplesNs"), f"{mode}/{name} clangCSamplesNs"
-    )
-    if native != upper_median(native_samples):
-        fail(f"{mode}/{name} nativeMedianNs does not match its sample array")
-    if clang != upper_median(clang_samples):
-        fail(f"{mode}/{name} clangCMedianNs does not match its sample array")
-    replay_medians = []
-    for stream in ("replayNative", "replayClang"):
-        replay_median = positive_number(case.get(stream + "MedianNs"), f"{mode}/{name} {stream}MedianNs")
-        replay_samples = stable_samples(case.get(stream + "SamplesNs"), f"{mode}/{name} {stream}SamplesNs")
-        if replay_median != upper_median(replay_samples):
-            fail(f"{mode}/{name} {stream}MedianNs does not match its sample array")
-        replay_medians.append(replay_median)
-    check_order(case.get("warmupOrder"), 3, f"{mode}/{name} warmup order")
-    check_order(case.get("sampleOrder"), 20, f"{mode}/{name} sample order")
-    for field in (
-        "nativeCompileNs",
-        "clangCCompileNs",
-        "nativeColdNs",
-        "clangCColdNs",
-        "peakMemoryBytes",
-        "nativeArtifactBytes",
-        "clangCArtifactBytes",
-        "batchIterations",
-    ):
-        positive_number(case.get(field), f"{mode}/{name} {field}")
-    if type(case.get("batchIterations")) is not int or case["batchIterations"] != 20_000_000:
-        fail(f"{mode}/{name} batchIterations must be exactly 20000000")
-    if type(case.get("result")) is not int or not -(2**63) <= case["result"] < 2**63:
-        fail(f"{mode}/{name} must report a validated i64 result")
-    if native / clang > 1.10:
-        fail(f"{mode}/{name} is more than 10% slower than strict Clang C O3")
-    normalized_baseline_ratio = (native / clang) / (replay_medians[0] / replay_medians[1])
-    if normalized_baseline_ratio > 1.08:
-        fail(f"{mode}/{name} regressed more than 8% from pinned v0.10")
-    proof_loop = case.get("proofLoop") is True
-    return name, clang / native, normalized_baseline_ratio, proof_loop, native
-
-
-def check_optimizer(report: dict[str, object], baseline_manifest: pathlib.Path) -> None:
-    baseline = tomllib.loads(baseline_manifest.read_text(encoding="utf-8"))
-    expected = {row["case"]: row["median_ns"] for row in baseline["optimizer"]
-                if row["target"] == host_target_name()}
-    comparisons = report.get("optimizerComparisons")
-    if not isinstance(comparisons, list) or not comparisons:
-        fail("optimizerComparisons must be a non-empty array")
-    ratios = []
-    names = set()
-    for comparison in comparisons:
-        if not isinstance(comparison, dict) or not isinstance(comparison.get("case"), str):
-            fail("optimizerComparisons contains a malformed case")
-        name = comparison["case"]
-        if name in names:
-            fail(f"duplicate optimizer comparison {name}")
-        names.add(name)
-        kir = positive_number(comparison.get("kirMedianNs"), f"optimizer/{name} kirMedianNs")
-        mir = positive_number(
-            comparison.get("v010MirMedianNs"), f"optimizer/{name} v010MirMedianNs"
-        )
-        if mir != expected.get(name):
-            fail(f"optimizer/{name} v010MirMedianNs does not match the frozen manifest")
-        ratio = kir / mir
-        if ratio > 3.0:
-            fail(f"optimizer/{name} exceeds the 3x individual v0.10 MIR limit")
-        ratios.append(ratio)
-    if names != OPTIMIZER_CASE_NAMES:
-        fail("optimizerComparisons must cover the exact frozen optimizer corpus")
-    suite_median = statistics.median(ratios)
-    if suite_median > 2.0:
-        fail("KIR optimizer suite-median time exceeds 2x pinned v0.10 MIR")
-    print(
-        f"optimizer: v0.10 suite-median ratio {suite_median:.4f}, "
-        f"{len(ratios)} case(s)"
-    )
-
-
-def check(path: pathlib.Path, baseline_manifest: pathlib.Path) -> None:
-    report = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=strict_json_object)
-    baseline_runtime = load_runtime_baseline(baseline_manifest)
-    if not isinstance(report, dict) or report.get("schemaVersion") != 6:
-        fail("performance report schemaVersion must be 6")
-    if report.get("candidateVersion") != "0.11.0":
-        fail("candidateVersion must identify the 0.11.0 candidate")
-    if report.get("samplingProtocol") != "rotating-eight-channel-v1":
-        fail("sampling protocol must be rotating-eight-channel-v1")
-    if report.get("channelNames") != CHANNEL_NAMES:
-        fail("sampling channel names/order do not match the pinned protocol")
-    if report.get("fastMath") is not False:
-        fail("fast-math references are forbidden")
-    if report.get("cpuPolicy") != "baseline":
-        fail("the release performance gate requires the portable baseline CPU policy")
-    if report.get("clangVersion") != BASELINE_LLVM_VERSION:
-        fail("clangVersion must match the pinned Clang 22.1.8 oracle")
-    if type(report.get("warmup")) is not int or report.get("warmup") != 3:
-        fail("warmup must match the pinned value 3")
-    if (
-        type(report.get("sampleRepetitions")) is not int
-        or report.get("sampleRepetitions") != 7
-    ):
-        fail("sampleRepetitions must match the pinned value 7")
-    check_baseline_identity(report)
-
+def check_scalar(report, runtime_baseline, sizes):
     suites = report.get("suites")
-    if not isinstance(suites, list):
-        fail("suites must be an array")
-    modes: dict[str, list[object]] = {}
+    if not isinstance(suites, list) or len(suites) != 2:
+        fail("checked and unchecked scalar suites must be reported separately")
+    modes = {}
+    proof = {}
+    results = {}
     for suite in suites:
-        if not isinstance(suite, dict) or suite.get("mode") not in ("checked", "unchecked"):
-            fail("every suite must have checked or unchecked mode")
+        if not isinstance(suite, dict) or set(suite) != {"mode", "cases"}:
+            fail("malformed scalar suite")
         mode = suite["mode"]
-        if mode in modes or not isinstance(suite.get("cases"), list) or not suite["cases"]:
-            fail(f"duplicate or empty {mode} suite")
-        modes[mode] = suite["cases"]
-    if set(modes) != {"checked", "unchecked"}:
-        fail("checked and unchecked suites must be reported separately")
-
-    names_by_mode: dict[str, set[str]] = {}
-    proof_times: dict[str, dict[str, float]] = {"checked": {}, "unchecked": {}}
-    for mode, cases in modes.items():
-        clang_ratios = []
-        baseline_ratios = []
+        if mode not in {"checked", "unchecked"} or mode in modes or not isinstance(suite["cases"], list):
+            fail("duplicate or malformed scalar suite")
         names = set()
-        for case in cases:
-            if not isinstance(case, dict) or not isinstance(case.get("name"), str):
-                fail(f"{mode} suite contains a malformed case")
-            baseline_key = (host_target_name(), "baseline", mode, case["name"])
-            expected_baseline = baseline_runtime.get(baseline_key)
-            if expected_baseline is None:
-                fail(f"v0.10 baseline manifest is missing runtime {baseline_key}")
-            name, clang_ratio, baseline_ratio, proof_loop, native = check_case(
-                case, mode, expected_baseline
-            )
-            if name in names:
-                fail(f"duplicate {mode}/{name} case")
+        clang_ratios = []
+        v011_ratios = []
+        v010_ratios = []
+        for case in suite["cases"]:
+            required = {
+                "name", "referenceEquivalent", "nativeCompileNs", "clangCCompileNs",
+                "nativeColdNs", "clangCColdNs", "nativeMedianNs", "clangCMedianNs",
+                "v010MedianNs", "v010ClangMedianNs", "proofLoop", "nativeSamplesNs",
+                "clangCSamplesNs", "peakMemoryBytes", "nativeArtifactBytes",
+                "clangCArtifactBytes", "batchIterations", "result",
+                "replayV011NativeMedianNs", "replayV011ClangMedianNs",
+                "replayV011NativeSamplesNs", "replayV011ClangSamplesNs",
+                "replayV010NativeMedianNs", "replayV010ClangMedianNs",
+                "replayV010NativeSamplesNs", "replayV010ClangSamplesNs",
+                "warmupOrder", "sampleOrder",
+            }
+            exact_keys(case, required, f"scalar {mode} case")
+            name = case["name"]
+            if name not in SCALAR_CASES or name in names or case["referenceEquivalent"] is not True:
+                fail("scalar suites must cover the exact equivalent corpus without duplicates")
             names.add(name)
-            clang_ratios.append(clang_ratio)
-            baseline_ratios.append(baseline_ratio)
-            if proof_loop:
-                proof_times[mode][name] = native
-        names_by_mode[mode] = names
-        clang_mean = geometric_mean(clang_ratios, f"{mode} Clang ratios")
-        if clang_mean < 0.95:
-            fail(f"{mode} geometric-mean throughput is below 95% of strict Clang C O3")
-        baseline_mean = geometric_mean(baseline_ratios, f"{mode} baseline ratios")
-        if baseline_mean > 1.03:
-            fail(f"{mode} geometric-mean runtime regressed more than 3% from pinned v0.10")
-        print(
-            f"{mode}: Clang mean {clang_mean:.4f}, v0.10 ratio {baseline_mean:.4f}, "
-            f"{len(cases)} case(s)"
-        )
-    if names_by_mode["checked"] != names_by_mode["unchecked"]:
-        fail("checked and unchecked suites must cover identical kernels")
-    if any(names != RUNTIME_CASE_NAMES for names in names_by_mode.values()):
-        fail("checked and unchecked suites must cover the exact frozen runtime corpus")
-    results = [{case["name"]: case["result"] for case in cases} for cases in modes.values()]
-    if results[0] != results[1]:
-        fail("checked and unchecked results must match on the same inputs")
-    expected_proof_loops = {"proof_loop"}
-    if any(set(times) != expected_proof_loops for times in proof_times.values()):
-        fail("checked and unchecked suites must identify the exact proof-loop corpus")
-    proof_ratios = [
-        proof_times["unchecked"][name] / checked
-        for name, checked in proof_times["checked"].items()
-    ]
-    proof_mean = geometric_mean(proof_ratios, "proof-loop ratios")
-    if proof_mean < 0.97:
+            field = f"scalar {mode}/{name}"
+            values = {prefix: check_stream(case, prefix, field) for prefix in [
+                "native", "clangC", "replayV011Native", "replayV011Clang",
+                "replayV010Native", "replayV010Clang",
+            ]}
+            check_order(case["warmupOrder"], 12, 3, f"{field} warmup order")
+            check_order(case["sampleOrder"], 12, 20, f"{field} sample order")
+            for key in ["nativeCompileNs", "clangCCompileNs", "nativeColdNs", "clangCColdNs",
+                        "peakMemoryBytes", "nativeArtifactBytes", "clangCArtifactBytes"]:
+                positive(case[key], f"{field} {key}")
+            if case["batchIterations"] != 20_000_000 or type(case["result"]) is not int:
+                fail(f"{field} must use the exact batch and validated integer result")
+            historical = runtime_baseline.get((host_target_name(), "baseline", mode, name))
+            if historical != (case["v010MedianNs"], case["v010ClangMedianNs"]):
+                fail(f"{field} historical medians do not match the frozen manifest")
+            if case["nativeArtifactBytes"] != sizes[mode, name, "candidateNative"] or case["clangCArtifactBytes"] != sizes[mode, name, "currentClang"]:
+                fail(f"{field} artifact size does not match retained evidence")
+            if values["native"] / values["clangC"] > 1.10:
+                fail(f"{field} is more than 10% slower than strict Clang")
+            clang_ratios.append(values["clangC"] / values["native"])
+            for generation in ["V011", "V010"]:
+                ratio = (values["native"] / values["clangC"]) / (
+                    values[f"replay{generation}Native"] / values[f"replay{generation}Clang"]
+                )
+                if ratio > 1.08:
+                    fail(f"{field} regressed more than 8% from pinned {generation.lower()}")
+                (v011_ratios if generation == "V011" else v010_ratios).append(ratio)
+            if case["proofLoop"] is True:
+                if name != "proof_loop":
+                    fail("proof-loop corpus contains a wrong case")
+                proof[mode] = values["native"]
+            results[mode, name] = case["result"]
+        if names != SCALAR_CASES:
+            fail("scalar suites do not cover the exact frozen corpus")
+        if geometric_mean(clang_ratios, field) < .95:
+            fail(f"{mode} scalar geometric-mean throughput is below 95% of Clang")
+        if geometric_mean(v011_ratios, field) > 1.03:
+            fail(f"{mode} scalar geometric-mean regression exceeds 3% from v0.11")
+        if geometric_mean(v010_ratios, field) > 1.03:
+            fail(f"{mode} scalar geometric-mean regression exceeds 3% from v0.10")
+        modes[mode] = names
+    if set(proof) != {"checked", "unchecked"} or proof["unchecked"] / proof["checked"] < .97:
         fail("checked proof-loop throughput is below 97% of unchecked")
-    print(f"proof-loop: checked/unchecked throughput {proof_mean:.4f}")
-    check_optimizer(report, baseline_manifest)
-    check_replay(report, path)
+    for name in SCALAR_CASES:
+        if results["checked", name] != results["unchecked", name]:
+            fail("checked and unchecked scalar results differ")
 
 
-def main() -> int:
-    if len(sys.argv) not in (2, 3):
-        print(
-            f"usage: {pathlib.Path(sys.argv[0]).name} <results.json> "
-            "[baseline.toml]",
-            file=sys.stderr,
-        )
+def check_oracle_identity(report):
+    identity = report.get("oracleIdentity")
+    expected_keys = {"manifestSha256", "clangVersion", "rustVersion", "fastMath", "contraction",
+                     "differentialAudit", "ubAudit"}
+    exact_keys(identity, expected_keys, "oracleIdentity")
+    if (identity["manifestSha256"] != ORACLE_MANIFEST_SHA256
+            or identity["clangVersion"] != LLVM_VERSION or identity["rustVersion"] != RUST_VERSION
+            or identity["fastMath"] is not False or identity["contraction"] is not False
+            or identity["differentialAudit"] is not True or identity["ubAudit"] is not True):
+        fail("oracle identity requires pinned compilers, strict math, differential and UB audit")
+
+
+def check_oracle_artifacts(report, root):
+    records = report.get("oracleArtifacts")
+    expected_count = 2 * 3 * (len(VECTOR_CASES) + len(DOMAIN_CASES))
+    if not isinstance(records, list) or len(records) != expected_count:
+        fail("oracle artifact evidence is incomplete")
+    suffix = dynamic_suffix(host_target_name())
+    seen = set()
+    for item in records:
+        exact_keys(item, {"suite", "case", "mode", "channel", "file", "bytes", "sha256"}, "oracle artifact")
+        suite, case, mode, channel = item["suite"], item["case"], item["mode"], item["channel"]
+        valid_channels = {"candidate", "cSimd", "rustSimd"} if suite == "vector" else {"candidate", "cGeneric", "rustGeneric"}
+        valid_cases = VECTOR_CASES if suite == "vector" else DOMAIN_CASES
+        identity = suite, case, mode, channel
+        expected = f"{suite}-{case}-{mode}-{channel}{suffix}"
+        if (suite not in {"vector", "domain"} or case not in valid_cases
+                or mode not in {"checked", "unchecked"} or channel not in valid_channels
+                or identity in seen or item["file"] != expected):
+            fail("unknown, duplicate, or escaping oracle artifact")
+        verify_file(root / expected, item["bytes"], item["sha256"], "oracle artifact")
+        seen.add(identity)
+
+
+def check_oracle_suites(report, key, names, prefixes, domain):
+    suites = report.get(key)
+    if not isinstance(suites, list) or len(suites) != 2:
+        fail(f"{key} must report checked and unchecked separately")
+    mode_results = {}
+    for suite in suites:
+        if not isinstance(suite, dict) or set(suite) != {"mode", "cases"}:
+            fail(f"malformed {key}")
+        mode = suite["mode"]
+        if mode not in {"checked", "unchecked"} or mode in mode_results:
+            fail(f"duplicate {key} mode")
+        seen = set()
+        ratios = []
+        results = {}
+        for case in suite["cases"]:
+            required = {"name", "referenceEquivalent", "validDomain", "resultDigest",
+                        "batchIterations", "warmupOrder", "sampleOrder"}
+            required |= {prefix + suffix for prefix in prefixes
+                         for suffix in ["MedianNs", "SamplesNs"]}
+            exact_keys(case, required, f"{key} case")
+            name = case["name"]
+            if (name not in names or name in seen or case["referenceEquivalent"] is not True
+                    or case["validDomain"] is not True):
+                fail(f"{key} does not cover its exact valid corpus")
+            seen.add(name)
+            hash_value(case["resultDigest"], f"{key}/{name} result digest")
+            if case["batchIterations"] != 20_000_000:
+                fail(f"{key}/{name} batch identity is wrong")
+            check_order(case["warmupOrder"], 3, 3, f"{key}/{name} warmup order")
+            check_order(case["sampleOrder"], 3, 20, f"{key}/{name} sample order")
+            values = {prefix: check_stream(case, prefix, f"{key}/{mode}/{name}") for prefix in prefixes}
+            oracle = min(values[prefixes[1]], values[prefixes[2]])
+            throughput = oracle / values[prefixes[0]]
+            if not domain and throughput < .90:
+                fail(f"{key}/{mode}/{name} is below 90% of its faster SIMD oracle")
+            ratios.append(throughput)
+            results[name] = case["resultDigest"]
+        if seen != names:
+            fail(f"{key} corpus is incomplete")
+        mean = geometric_mean(ratios, key)
+        if domain and mean < 1.05:
+            fail(f"{key} does not exceed generic oracles by 5%")
+        if not domain and mean < .95:
+            fail(f"{key} geometric-mean throughput is below 95% of SIMD oracles")
+        mode_results[mode] = results
+    if mode_results["checked"] != mode_results["unchecked"]:
+        fail(f"{key} checked and unchecked results differ")
+
+
+def check_size_and_compile(report):
+    expected = {(mode, case) for mode in ["checked", "unchecked"] for case in VECTOR_CASES}
+    sizes = report.get("artifactSizeComparisons")
+    if not isinstance(sizes, list):
+        fail("artifactSizeComparisons must be an array")
+    seen = set()
+    candidate_total = replay_total = 0
+    for row in sizes:
+        exact_keys(row, {"case", "mode", "sourceSha256", "candidateBytes", "replayV011Bytes"}, "size comparison")
+        identity = row["mode"], row["case"]
+        if identity not in expected or identity in seen:
+            fail("duplicate or unknown size comparison")
+        seen.add(identity)
+        hash_value(row["sourceSha256"], "size source")
+        candidate = positive(row["candidateBytes"], "candidate size")
+        replay = positive(row["replayV011Bytes"], "replay size")
+        if candidate / replay > 2.5:
+            fail("artifact size exceeds the 2.5x individual limit")
+        candidate_total += candidate
+        replay_total += replay
+    if seen != expected:
+        fail("artifact size corpus is incomplete")
+    if candidate_total / replay_total > 1.35:
+        fail("aggregate artifact size grows more than 35%")
+
+    rows = report.get("compileTimeComparisons")
+    if not isinstance(rows, list):
+        fail("compileTimeComparisons must be an array")
+    seen = set()
+    ratios = []
+    for row in rows:
+        required = {"case", "mode", "sourceSha256", "candidateMedianNs", "candidateSamplesNs",
+                    "replayV011MedianNs", "replayV011SamplesNs", "warmupOrder", "sampleOrder"}
+        exact_keys(row, required, "compile-time comparison")
+        identity = row["mode"], row["case"]
+        if identity not in expected or identity in seen:
+            fail("duplicate or unknown compile-time comparison")
+        seen.add(identity)
+        hash_value(row["sourceSha256"], "compile-time source")
+        check_order(row["warmupOrder"], 2, 3, "compile-time warmup order")
+        check_order(row["sampleOrder"], 2, 15, "compile-time sample order")
+        candidate = check_stream(row, "candidate", "compile-time", 15)
+        replay = check_stream(row, "replayV011", "compile-time", 15)
+        ratio = candidate / replay
+        if ratio > 2:
+            fail("source-to-object compile time exceeds the 2x individual limit")
+        ratios.append(ratio)
+    if seen != expected:
+        fail("compile-time corpus is incomplete")
+    if geometric_mean(ratios, "compile time") > 1.5:
+        fail("source-to-object compile-time geometric mean exceeds 1.5")
+
+
+def check_optimizer(report, manifest):
+    expected = {row["case"]: row["median_ns"] for row in manifest["optimizer"]
+                if row["target"] == host_target_name()}
+    rows = report.get("optimizerComparisons")
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        fail("optimizer comparison corpus is incomplete")
+    seen = set()
+    ratios = []
+    for row in rows:
+        exact_keys(row, {"case", "kirMedianNs", "v010MirMedianNs"}, "optimizer comparison")
+        name = row["case"]
+        if name in seen or row["v010MirMedianNs"] != expected.get(name):
+            fail("optimizer comparison does not match frozen corpus")
+        seen.add(name)
+        ratio = positive(row["kirMedianNs"], "KIR optimizer time") / positive(row["v010MirMedianNs"], "MIR optimizer time")
+        if ratio > 3:
+            fail("KIR optimizer exceeds the 3x individual limit")
+        ratios.append(ratio)
+    if set(expected) != seen or statistics.median(ratios) > 2:
+        fail("KIR optimizer suite-median exceeds the 2x limit")
+
+
+def check(path: pathlib.Path, baseline_manifest: pathlib.Path):
+    report = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=strict_json_object)
+    top_keys = {
+        "schemaVersion", "candidateVersion", "cpuPolicy", "fastMath", "clangVersion",
+        "rustVersion", "warmup", "sampleRepetitions", "samplingProtocol", "channelNames",
+        "targetProfile", "runtimeReplayV011", "runtimeReplayV010", "evidenceDirectory",
+        "measuredArtifacts", "suites", "vectorSuites", "domainFactSuites", "oracleIdentity",
+        "oracleArtifacts", "artifactSizeComparisons", "compileTimeComparisons", "baselineV010",
+        "optimizerComparisons",
+    }
+    exact_keys(report, top_keys, "performance report")
+    if report["schemaVersion"] != 7:
+        fail("performance report schemaVersion must be 7")
+    if report["candidateVersion"] != "0.12.0":
+        fail("candidateVersion must identify the 0.12.0 candidate")
+    if report["cpuPolicy"] != "baseline":
+        fail("release performance requires baseline CPU policy")
+    if report["fastMath"] is not False:
+        fail("fast-math is forbidden")
+    if report["clangVersion"] != LLVM_VERSION:
+        fail("Clang identity must be 22.1.8")
+    if report["rustVersion"] != RUST_VERSION:
+        fail("Rust identity must be 1.90.0")
+    if report["warmup"] != 3 or report["sampleRepetitions"] != 7:
+        fail("warmup/sampleRepetitions do not match the pinned schedule")
+    if report["samplingProtocol"] != "rotating-twelve-channel-v1" or report["channelNames"] != CHANNEL_NAMES:
+        fail("sampling protocol or channel order is not pinned")
+    exact_keys(report["targetProfile"], {"digest", "costSchema", "proofSchema", "budgetSchema"}, "target profile")
+    hash_value(report["targetProfile"]["digest"], "target profile digest")
+    if any(report["targetProfile"][name] != 1 for name in ["costSchema", "proofSchema", "budgetSchema"]):
+        fail("target profile schema identities must be version 1")
+    manifest, runtime = load_v010(baseline_manifest)
+    check_baseline_identity(report, manifest)
+    check_replay(report, "runtimeReplayV011", "v011", path)
+    check_replay(report, "runtimeReplayV010", "v010", path)
+    evidence_root, sizes = check_measured_artifacts(report, path)
+    check_scalar(report, runtime, sizes)
+    check_oracle_identity(report)
+    check_oracle_artifacts(report, evidence_root)
+    check_oracle_suites(report, "vectorSuites", VECTOR_CASES,
+                        ["candidate", "cSimd", "rustSimd"], False)
+    check_oracle_suites(report, "domainFactSuites", DOMAIN_CASES,
+                        ["candidate", "cGeneric", "rustGeneric"], True)
+    check_size_and_compile(report)
+    check_optimizer(report, manifest)
+
+
+def main():
+    if len(sys.argv) not in {2, 3}:
+        print(f"usage: {pathlib.Path(sys.argv[0]).name} <results.json> [v0_10_baseline.toml]", file=sys.stderr)
         return 2
-    baseline_manifest = (
-        pathlib.Path(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_BASELINE_MANIFEST
-    )
+    baseline = pathlib.Path(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_BASELINE_MANIFEST
     try:
-        check(pathlib.Path(sys.argv[1]), baseline_manifest)
-    except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, ValueError) as error:
+        check(pathlib.Path(sys.argv[1]), baseline)
+    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"native performance gate failed: {error}", file=sys.stderr)
         return 1
     print("native performance gate passed")

@@ -584,11 +584,13 @@ fn kir_o1_sccp_should_materialize_constant_block_parameters_and_repair_edges() {
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let module = result.artifact.as_ref().expect("verified artifact");
         assert!(
-            module.functions[0].blocks.iter().all(|block| block
-                .params
+            module.functions[0]
+                .blocks
                 .iter()
-                .all(|param| param.type_node
-                    != calckernel::MirType::Primitive(calckernel::MirPrimitiveTypeName::I32))),
+                .all(|block| block.params.iter().all(|param| param.type_node
+                    != calckernel::KirValueType::Scalar(calckernel::MirType::Primitive(
+                        calckernel::MirPrimitiveTypeName::I32
+                    )))),
             "constant phi definitions must disappear:\n{}",
             print_kir_module(module)
         );

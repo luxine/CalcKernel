@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    MirBinaryOp, MirCompareOp, MirModule, MirPrimitiveTypeName, MirRuntimeIntrinsic, MirType,
-    MirUnaryOp,
+    KirLaneType, KirValueType, MirBinaryOp, MirCompareOp, MirModule, MirPrimitiveTypeName,
+    MirRuntimeIntrinsic, MirType, MirUnaryOp,
 };
 
 use super::{
@@ -80,6 +80,27 @@ impl<'context> TypeRegistry<'context> {
                 .get(name)
                 .copied()
                 .ok_or_else(|| lowering_error(format!("unknown MIR struct type '{name}'"))),
+        }
+    }
+
+    pub(super) fn get_kir(
+        &self,
+        type_node: &KirValueType,
+    ) -> Result<NativeType<'context>, NativeError> {
+        match type_node {
+            KirValueType::Scalar(type_node) => self.get(type_node),
+            KirValueType::FixedVector { lane, lanes } => {
+                NativeType::fixed_vector(self.lane(*lane), u32::from(*lanes))
+            }
+            KirValueType::Mask { lanes } => NativeType::fixed_vector(self.i1, u32::from(*lanes)),
+        }
+    }
+
+    pub(super) const fn lane(&self, lane: KirLaneType) -> NativeType<'context> {
+        match lane {
+            KirLaneType::I32 | KirLaneType::U32 => self.i32,
+            KirLaneType::I64 | KirLaneType::U64 => self.i64,
+            KirLaneType::F64 => self.f64,
         }
     }
 }

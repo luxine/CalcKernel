@@ -142,6 +142,11 @@ generic guessed cost。
 不支持的 width 记录为 Unavailable，不能省略 key。Mask 使用相同的四种 lane-count candidate。
 Probe universe 是 schema 上限，不承诺每个 target 支持每个 width。
 
+由于 `Mask { lanes }` 有意不携带 scalar lane type，mask-only operation cost 统一使用 `i32`
+lane tag 作为 canonical schema sentinel。所有非 sentinel 的 `MaskNot` key 都是
+`Unavailable`；bridge 针对真实 fixed `i1` mask type 查询 legalization 与 cost，而不是针对
+`i32` vector。
+
 每个 entry 还记录 LLVM type-legalization part count 与 legalized type identity。Part count
 非法，或 legalized form 被 scalarize/不受支持时，该 operation 为 Unavailable。TTI operation
 cost 已包含 target lowering，CK 不会再次乘 legalization part count。Invalid cost、低于零
@@ -169,8 +174,10 @@ KIR v2 增加封闭的 splat、contiguous load/store、arithmetic、unary、comp
 受支持 cast、lane extract 与精确 modular integer reduction 指令族。Vector binary operation 是
 既有 Add、Sub、Mul、Div 与 Mod，并受 source type、arithmetic semantics 与 target profile 限制。
 其中 f64 Mod 仍然非法，integer Div/Mod 必须同时具有 no-failure proof 和明确 legal target
-operation。Vector unary Neg 遵守既有 numeric semantics；logical mask Not 是唯一 mask unary
-operation，可表示 comparison 后的 source bool negation，但不会创建 vector bool lane type。
+operation。每个 checked integer vector binary 与 checked integer vector negate 也必须携带
+no-failure proof；infallible 或 strict-float operation 不能携带该 proof。Vector unary Neg
+遵守既有 numeric semantics；logical mask Not 是唯一 mask unary operation，可表示 comparison
+后的 source bool negation，但不会创建 vector bool lane type，也不能携带 no-failure proof。
 受支持 vector cast 精确为既有 i32-to-f64 与 u32-to-f64。每个 vector memory operation 记录
 region、Memory SSA input/output、lane type/count、byte footprint、known alignment 与 required
 alignment。0.12 没有 gather、scatter、masked memory、vector call 或 shuffle。SLP 只允许
@@ -284,6 +291,19 @@ KirOptimizationAuditState 拥有冻结的 proposer/checker budget ledger、单�
 accepted/rejected counter、stable explanation 与 budget fallback。Audit state 只能 append/debit，
 绝不随 KIR rollback。
 
+Verification 与 analysis cache 只能在精确 structural identity 下缩短耗时。Immutable target
+profile 会缓存完整 validation 结果；copy-on-write mutation 必须清除该结果。Changed pass 后，
+每个发生变化的 function 都完整重验，精确未变化的 function 可复用既有 structural verdict，
+同时仍执行 module-wide function/block/instruction/value/region/memory identity uniqueness 与
+完整 fact/proof/rewrite verifier。Dominance 只能按其实际依赖的 ordered block/successor CFG
+复用，并扣除完全相同的确定性 analysis budget。仅用于 discovery 的 loop descriptor 可以省略
+cryptographic CFG digest，但任何已 materialize 的 proposal 或 certificate 必须重新计算完整
+digest。若 discovery 已证明 specialization、vector/SLP 与 unroll candidate set 都为空，pass
+manager 可直接记录 verified no-op stage，而不分配 speculative program-state copy。No-op
+frontier 只有在中间 pass 未改变 induction structure，且每组缓存 descriptor 仍保留精确 function
+identity 时，才能复用前序 discovery-only loop descriptor；否则必须重算 analysis。以上规则均
+不得改变 candidate、checker、budget、cost、profitability 或 benchmark threshold。
+
 Proposal 与 checker step 在执行时直接扣 outer audit ledger；rejection、复用 specialization 或
 未获胜 frontier candidate 都不退款。Audit record 使用 transaction 前稳定的 source/KIR
 identity、kind、VF 与 UF 标识 candidate，绝不引用 trial-only ID。Candidate 按 function 与
@@ -336,6 +356,11 @@ block boundary 或 certificate dependency。
 首版 SLP 支持 splat、lane-wise arithmetic、comparison、cast、select 与 contiguous load/store。
 它不做 speculative predication、arbitrary shuffle synthesis、horizontal f64 operation 或
 partial vector call。被拒绝的 pack 保持全部 scalar instruction 不变。
+
+同一 function、block 与 root 上相互重叠的 residual SLP alternative 必须基于同一个 immutable
+pre-state，按稳定递增 key 提案并独立检查。Winner 依次选择绝对 modeled cost reduction 最大、
+transformed cost 更低、code shape 更小、stable key 更小的有效方案。其余有效方案仍计费并记录为
+non-winner，且只能提交一个 winner，避免先出现的窄 pack 破坏收益更高的宽 pack。
 
 ## 受控展开
 
@@ -569,7 +594,9 @@ rotating-three-channel-v1：candidate CK、pinned C 与 pinned Rust。每轮有�
 二十个 sample row；第 r 行按 r % 3 轮换三个 channel。所有 channel 在同一进程、相同输入上
 运行，使用相同的每 sample 七次调用、固定 batch identity 与 upper-median statistic，并记录
 每个实际 order 与 sample。Generic domain-fact gate 使用 pinned generic Clang/Rust artifact
-替换 hand-SIMD artifact。
+替换 hand-SIMD artifact。每个 dynamic library 只在 correctness、warm-up 与 sampled batch 之前
+打开一次并解析一次 typed kernel entry；计时 batch 只能调用缓存入口，dynamic symbol lookup 与
+逐调用 string dispatch 必须位于计时区外。
 
 Release gate 为累积门槛：
 

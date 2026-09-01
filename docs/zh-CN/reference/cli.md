@@ -1,4 +1,4 @@
-# `ckc` 0.11 CLI 参考
+# `ckc` 0.12 CLI 参考
 
 [English](../../reference/cli.md)
 
@@ -12,7 +12,7 @@ text output 写 stdout，另有说明时除外。
 | --- | --- |
 | `ckc check <file>` | Parse 与 type-check，不生成 artifact。 |
 | `ckc emit-mir <file>` | 输出 deterministic MIR。 |
-| `ckc emit-kir <file>` | 输出 deterministic verified internal KIR。 |
+| `ckc emit-kir <file>` | 输出 deterministic verified internal KIR v2。 |
 | `ckc emit-c <file> --out <file.c>` | 只生成 C source 与 header。 |
 | `ckc emit-wat <file>` / `emit-wasm` | 生成 textual/binary WebAssembly。 |
 | `ckc emit-llvm <file>` | 生成 host triple 的 verified LLVM IR。 |
@@ -37,7 +37,10 @@ archiver，Native build 不留下 `.c` 或 `.ll` intermediate。`emit-c` 永不�
 - `--out`/`-o` 选择输出，`--header` 选择 C header。
 - `--overflow` 与 `--bounds` 接受 `unchecked|checked`，默认 unchecked。
 - `--opt-level 0|1|2|3` 和 `-O0`–`-O3` 控制 KIR/LLVM；执行命令默认 O3，inspection 默认 O0。
-- `--cpu baseline|native` 用于 build；baseline 为 portable default，run 使用 host CPU。
+- `--consumer inspection|c|wasm|native-library|native-executable` 为 `emit-kir` 选择精确
+  target profile；inspection 是 scalar、target-independent 默认值。
+- `--cpu baseline|native` 用于 build 与 Native `emit-kir`；baseline 为 portable build 默认值，
+  run 使用 host CPU。`emit-kir` 只有显式选择 Native consumer 后才接受 `--cpu`。
 - `--target <host-triple>` 只接受规范化后等于当前 host triple 的目标；不支持 cross compile。
 - `--no-cache` 令 run 绕过 persistent cache 的读写。
 - `--print-facts`、`--print-effect-summaries`、`--explain-optimization` 输出
@@ -66,8 +69,9 @@ object 与 SHA-256 integrity digest。`--no-cache` 绕过读写。Corruption、u
 permission、symlink replacement 或 unparseable object 视为 miss。Same-user cache 仍属于 user
 trust boundary，不是 security sandbox。
 
-0.11 cache/codegen identity 使用 KIR v1，并包含 consumer、mode、contract sanitizer 等；
-0.10 object 不会被复用。
+0.12 使用 KIR v2 与 `CKCOBJ02` manifest schema 3。Key 包含 contract sanitizer、consumer
+root、checked mode、规范化 `KirTargetProfile` digest、cost/proof schema identity、target/CPU
+policy 与 optimization budget；0.11 及更早 object fail closed，不会被复用。
 
 Root 为 Linux 的 `$XDG_CACHE_HOME/ckc` 或 `$HOME/.cache/ckc`、macOS 的
 `$HOME/Library/Caches/ckc`、Windows 的 `%LOCALAPPDATA%\CalcKernel\cache`。缺少 required base

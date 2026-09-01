@@ -26,6 +26,9 @@
 15. `python3 scripts/check-native-performance.py target/ckc-perf/results.json`
 
 两架构报告都必须满足设计中的全部 cumulative threshold，且 schema/digest/sample/order 完整。
+Optimizer latency remediation 还必须通过 exact-profile memoization invalidation、CFG-only dominance
+identity/budget debit、incremental module-global identity collision、no-op frontier loop-analysis
+function-identity fallback 与 unreported mutation 测试；不得以减少 verifier/checker 覆盖来通过门槛。
 
 ## CI 必须通过
 

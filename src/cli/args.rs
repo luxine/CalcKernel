@@ -1,4 +1,4 @@
-use calckernel::{BoundsMode, OverflowMode};
+use calckernel::{BoundsMode, KirConsumer, OverflowMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArtifactKind {
@@ -26,6 +26,44 @@ impl ArtifactKind {
 pub(super) enum CpuPolicy {
     Baseline,
     Native,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EmitKirConsumer {
+    Inspection,
+    C,
+    WebAssembly,
+    NativeLibrary,
+    NativeExecutable,
+}
+
+impl EmitKirConsumer {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "inspection" => Ok(Self::Inspection),
+            "c" => Ok(Self::C),
+            "wasm" => Ok(Self::WebAssembly),
+            "native-library" => Ok(Self::NativeLibrary),
+            "native-executable" => Ok(Self::NativeExecutable),
+            _ => Err(format!(
+                "Invalid value for --consumer: {value}. Expected 'inspection', 'c', 'wasm', 'native-library', or 'native-executable'."
+            )),
+        }
+    }
+
+    pub(super) const fn kir_consumer(self) -> KirConsumer {
+        match self {
+            Self::Inspection => KirConsumer::Inspection,
+            Self::C => KirConsumer::C,
+            Self::WebAssembly => KirConsumer::WebAssembly,
+            Self::NativeLibrary => KirConsumer::NativeLibrary,
+            Self::NativeExecutable => KirConsumer::NativeExecutable,
+        }
+    }
+
+    const fn is_native(self) -> bool {
+        matches!(self, Self::NativeLibrary | Self::NativeExecutable)
+    }
 }
 
 impl CpuPolicy {
@@ -70,6 +108,7 @@ pub(super) struct ParsedArgs {
     pub(super) target: Option<String>,
     pub(super) kind: Option<ArtifactKind>,
     pub(super) cpu: Option<CpuPolicy>,
+    pub(super) consumer: Option<EmitKirConsumer>,
     pub(super) header: Option<String>,
     pub(super) no_cache: bool,
     pub(super) print_facts: bool,
@@ -90,6 +129,7 @@ impl ParsedArgs {
             target: None,
             kind: None,
             cpu: None,
+            consumer: None,
             header: None,
             no_cache: false,
             print_facts: false,
@@ -152,6 +192,15 @@ impl ParsedArgs {
                         args, index, "--cpu",
                     )?)?);
                 }
+                "--consumer" => {
+                    require_allowed(command, "--consumer")?;
+                    index += 1;
+                    parsed.consumer = Some(EmitKirConsumer::parse(require_long_flag_value(
+                        args,
+                        index,
+                        "--consumer",
+                    )?)?);
+                }
                 "--header" => {
                     require_allowed(command, "--header")?;
                     index += 1;
@@ -193,6 +242,17 @@ impl ParsedArgs {
         }
         if parsed.sanitize_contracts && command == "build-llvm" {
             return Err("Option --sanitize-contracts is not valid for 'build-llvm'.".to_string());
+        }
+        if command == "emit-kir" {
+            let consumer = parsed.consumer.unwrap_or(EmitKirConsumer::Inspection);
+            if parsed.cpu.is_some() && !consumer.is_native() {
+                return Err(
+                    "Option --cpu is valid only with a Native emit-kir consumer.".to_string(),
+                );
+            }
+            if consumer.is_native() && parsed.cpu.is_none() {
+                parsed.cpu = Some(CpuPolicy::Baseline);
+            }
         }
         Ok(parsed)
     }
@@ -263,7 +323,8 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
         ),
         "--target" => matches!(command, "emit-llvm" | "build" | "build-llvm"),
         "--kind" => matches!(command, "build" | "build-llvm"),
-        "--cpu" => command == "build",
+        "--cpu" => matches!(command, "build" | "emit-kir"),
+        "--consumer" => command == "emit-kir",
         "--header" => command == "emit-c",
         "--no-cache" => command == "run",
         "--inspection" => matches!(
@@ -360,7 +421,7 @@ pub(super) fn usage() -> &'static str {
         "  ckc check <file>\n",
         "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-kir <file> [--out <kir-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
+        "  ckc emit-kir <file> [--out <kir-file>] [--consumer <inspection|c|wasm|native-library|native-executable>] [--cpu <baseline|native>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
         "  ckc emit-llvm <file> [--out <ll-file>] [--target <host-triple>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
@@ -375,6 +436,8 @@ pub(super) fn usage() -> &'static str {
         "  --bounds <unchecked|checked>      Slice bounds mode. Default: unchecked.\n",
         "  -o <file>                         Alias for --out <file>.\n",
         "  --opt-level <0|1|2|3>            KIR and backend optimization level.\n",
+        "  --consumer <consumer>             Consumer profile for emit-kir. Default: inspection.\n",
+        "  --cpu <baseline|native>            CPU policy for build or Native emit-kir.\n",
         "  -O0, -O1, -O2, -O3              Alias for --opt-level.\n",
         "  --print-facts                   Print deterministic verified KIR facts to stderr.\n",
         "  --print-effect-summaries        Print deterministic effect summaries to stderr.\n",

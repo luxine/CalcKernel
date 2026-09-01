@@ -209,6 +209,7 @@ mod tests {
         assert_eq!(before.params, after.params);
         assert_eq!(before.regions, after.regions);
         assert_eq!(before.initial_memory, after.initial_memory);
+        assert_eq!(before.vector_regions, after.vector_regions);
         assert_eq!(before.blocks.len(), after.blocks.len());
         for (old, new) in before.blocks.iter().zip(&after.blocks) {
             assert_eq!(old.id, new.id);

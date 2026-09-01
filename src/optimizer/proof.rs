@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use crate::{BlockId, FactId, InstructionId, ProofId, ValueId};
+use crate::{BlockId, FactId, InstructionId, LoopId, MirCompareOp, ProofId, ValueId};
 
 use super::{FactUseSite, ScalarFailure, ScalarInterval};
 
@@ -119,6 +119,24 @@ pub enum ProofStep {
         pairs: Vec<(ValueId, ValueId)>,
         definitions: Vec<InstructionId>,
     },
+    CanonicalLoop {
+        loop_id: LoopId,
+        cfg_digest: String,
+        header: BlockId,
+        preheader: BlockId,
+        latch: BlockId,
+        blocks: Vec<BlockId>,
+        exits: Vec<BlockId>,
+    },
+    LoopTripCount {
+        canonical_loop: ProofStepId,
+        induction: ValueId,
+        start: String,
+        step: String,
+        bound: ValueId,
+        comparison: MirCompareOp,
+        iterations: u64,
+    },
     GuardSafety {
         condition_instruction: InstructionId,
         premises: Vec<ProofStepId>,
@@ -133,7 +151,9 @@ impl ProofStep {
             | Self::FactLeaf { .. }
             | Self::Constant { .. }
             | Self::LoopInvariant { .. }
-            | Self::InductionEquality { .. } => Vec::new(),
+            | Self::InductionEquality { .. }
+            | Self::CanonicalLoop { .. } => Vec::new(),
+            Self::LoopTripCount { canonical_loop, .. } => vec![*canonical_loop],
             Self::CopyTransfer { input, .. } => vec![*input],
             Self::PhiJoin { inputs, .. }
             | Self::BooleanTransfer { inputs, .. }
@@ -222,7 +242,11 @@ impl ProofCertificate {
                 | ProofStep::FactLeaf { .. }
                 | ProofStep::Constant { .. }
                 | ProofStep::LoopInvariant { .. }
-                | ProofStep::InductionEquality { .. } => {}
+                | ProofStep::InductionEquality { .. }
+                | ProofStep::CanonicalLoop { .. } => {}
+                ProofStep::LoopTripCount { canonical_loop, .. } => {
+                    *canonical_loop = mapping[canonical_loop];
+                }
             }
             steps.push(step);
         }
@@ -288,7 +312,9 @@ impl ProofArena {
                 | ProofStep::FactLeaf { .. }
                 | ProofStep::ContractRange { .. }
                 | ProofStep::PhiJoin { .. }
-                | ProofStep::BooleanPhiJoin { .. } => &[],
+                | ProofStep::BooleanPhiJoin { .. }
+                | ProofStep::CanonicalLoop { .. }
+                | ProofStep::LoopTripCount { .. } => &[],
             })
             .copied()
             .collect()
@@ -309,6 +335,11 @@ impl ProofArena {
                 }
                 ProofStep::InductionEquality { pairs, .. } => {
                     values.extend(pairs.iter().flat_map(|(left, right)| [*left, *right]))
+                }
+                ProofStep::LoopTripCount {
+                    induction, bound, ..
+                } => {
+                    values.extend([*induction, *bound]);
                 }
                 _ => {}
             }
@@ -542,6 +573,48 @@ fn print_step(step: &ProofStep) -> String {
                 .map(|id| format!("i{}", id.index()))
                 .collect::<Vec<_>>()
                 .join(","),
+        ),
+        ProofStep::CanonicalLoop {
+            loop_id,
+            cfg_digest,
+            header,
+            preheader,
+            latch,
+            blocks,
+            exits,
+        } => format!(
+            "canonical-loop loop{} digest={} header=b{} preheader=b{} latch=b{} blocks=[{}] exits=[{}]",
+            loop_id.index(),
+            cfg_digest,
+            header.index(),
+            preheader.index(),
+            latch.index(),
+            blocks
+                .iter()
+                .map(|block| format!("b{}", block.index()))
+                .collect::<Vec<_>>()
+                .join(","),
+            exits
+                .iter()
+                .map(|block| format!("b{}", block.index()))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        ProofStep::LoopTripCount {
+            canonical_loop,
+            induction,
+            start,
+            step,
+            bound,
+            comparison,
+            iterations,
+        } => format!(
+            "loop-trip step{} v{} start={} step={} bound=v{} comparison={comparison:?} iterations={iterations}",
+            canonical_loop.index(),
+            induction.index(),
+            start,
+            step,
+            bound.index()
         ),
         ProofStep::GuardSafety {
             condition_instruction,

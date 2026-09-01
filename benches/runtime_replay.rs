@@ -7,10 +7,16 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-pub const BASELINE_COMMIT: &str = "df816502876fba41676f9ebc190e4fadd18cd5a5";
-pub const BASELINE_COMPILER: &str = "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)";
-pub const BASELINE_MANIFEST_SHA256: &str =
+pub const V010_BASELINE_COMMIT: &str = "df816502876fba41676f9ebc190e4fadd18cd5a5";
+pub const V010_BASELINE_COMPILER: &str =
+    "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)";
+pub const V010_BASELINE_MANIFEST_SHA256: &str =
     "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3";
+pub const V011_BASELINE_COMMIT: &str = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d";
+pub const V011_BASELINE_COMPILER: &str =
+    "calckernel 0.11.0 (80c0acf6bb5d65e4d9d40352b9501ea32b79f43d)";
+pub const V011_BASELINE_MANIFEST_SHA256: &str =
+    "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e";
 pub const RUNTIME_CASES: [&str; 4] = [
     "branch_mix",
     "integer_accumulate",
@@ -18,36 +24,57 @@ pub const RUNTIME_CASES: [&str; 4] = [
     "remainder_chain",
 ];
 
-pub fn sampling_round(round: usize) -> [usize; 8] {
-    std::array::from_fn(|offset| (round % 8 + offset) % 8)
+#[allow(dead_code)]
+pub fn sampling_round(round: usize) -> [usize; 12] {
+    rotating_round(round)
 }
 
 #[derive(Debug)]
-pub struct RuntimeSamples {
-    pub warmup_order: Vec<[usize; 8]>,
-    pub sample_order: Vec<[usize; 8]>,
-    pub channels: [Vec<u128>; 8],
+pub struct RuntimeSamples<const CHANNELS: usize> {
+    pub warmup_order: Vec<[usize; CHANNELS]>,
+    pub sample_order: Vec<[usize; CHANNELS]>,
+    pub channels: [Vec<u128>; CHANNELS],
 }
 
 pub fn sample_channels<E>(
     warmup: usize,
     iterations: usize,
+    call: impl FnMut(usize, bool) -> Result<u128, E>,
+) -> Result<RuntimeSamples<12>, E> {
+    sample_rotating_channels(warmup, iterations, call)
+}
+
+pub fn sample_three_channels<E>(
+    warmup: usize,
+    iterations: usize,
+    call: impl FnMut(usize, bool) -> Result<u128, E>,
+) -> Result<RuntimeSamples<3>, E> {
+    sample_rotating_channels(warmup, iterations, call)
+}
+
+fn rotating_round<const CHANNELS: usize>(round: usize) -> [usize; CHANNELS] {
+    std::array::from_fn(|offset| (round % CHANNELS + offset) % CHANNELS)
+}
+
+fn sample_rotating_channels<E, const CHANNELS: usize>(
+    warmup: usize,
+    iterations: usize,
     mut call: impl FnMut(usize, bool) -> Result<u128, E>,
-) -> Result<RuntimeSamples, E> {
+) -> Result<RuntimeSamples<CHANNELS>, E> {
     let mut result = RuntimeSamples {
         warmup_order: Vec::new(),
         sample_order: Vec::new(),
         channels: std::array::from_fn(|_| Vec::with_capacity(iterations)),
     };
     for round in 0..warmup {
-        let order = sampling_round(round);
+        let order = rotating_round(round);
         for channel in order {
             call(channel, true)?;
         }
         result.warmup_order.push(order);
     }
     for round in 0..iterations {
-        let order = sampling_round(round);
+        let order = rotating_round(round);
         for channel in order {
             result.channels[channel].push(call(channel, false)?);
         }
@@ -65,14 +92,60 @@ pub struct ReplayArtifact {
     pub sha256: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct RuntimeReplay {
+    pub generation: ReplayGeneration,
     pub metadata: BTreeMap<String, String>,
     pub artifacts: Vec<ReplayArtifact>,
     pub manifest_sha256: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayGeneration {
+    V010,
+    V011,
+}
+
+impl ReplayGeneration {
+    const fn header(self) -> &'static str {
+        match self {
+            Self::V010 => "ckc-v010-runtime-replay\t1",
+            Self::V011 => "ckc-v011-runtime-replay\t1",
+        }
+    }
+
+    pub const fn compiler_file(self) -> &'static str {
+        match self {
+            Self::V010 => "ckc-v010",
+            Self::V011 => "ckc-v011",
+        }
+    }
+
+    const fn commit(self) -> &'static str {
+        match self {
+            Self::V010 => V010_BASELINE_COMMIT,
+            Self::V011 => V011_BASELINE_COMMIT,
+        }
+    }
+
+    const fn compiler_identity(self) -> &'static str {
+        match self {
+            Self::V010 => V010_BASELINE_COMPILER,
+            Self::V011 => V011_BASELINE_COMPILER,
+        }
+    }
+
+    const fn manifest_sha256(self) -> &'static str {
+        match self {
+            Self::V010 => V010_BASELINE_MANIFEST_SHA256,
+            Self::V011 => V011_BASELINE_MANIFEST_SHA256,
+        }
+    }
+}
+
 pub struct ExpectedReplay<'a> {
+    pub generation: ReplayGeneration,
     pub target: &'a str,
     pub cpu: &'a str,
     pub recipe_sha256: &'a str,
@@ -95,8 +168,11 @@ fn named_digest(mut entries: Vec<(&str, String)>) -> String {
 pub fn recipe_digest(repo: &Path) -> Result<String, String> {
     let entries = [
         "scripts/prepare-performance-replay.py",
+        "scripts/audit-performance-oracles.py",
         "benches/runtime_replay.rs",
         "benches/ckc_perf.rs",
+        "benches/vector_perf.rs",
+        "benches/oracles/manifest.toml",
     ]
     .into_iter()
     .map(|name| Ok((name, sha256_file(&repo.join(name))?)))
@@ -104,7 +180,7 @@ pub fn recipe_digest(repo: &Path) -> Result<String, String> {
     Ok(named_digest(entries))
 }
 
-pub fn adapter_set_digest(repo: &Path) -> Result<String, String> {
+pub fn v010_adapter_set_digest(repo: &Path) -> Result<String, String> {
     const ADAPTERS: [(&str, &str); 4] = [
         (
             "benches/baselines/v0_10_linux_cpp_runtime_harness.patch",
@@ -123,7 +199,8 @@ pub fn adapter_set_digest(repo: &Path) -> Result<String, String> {
             "316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e",
         ),
     ];
-    if sha256_file(&repo.join("benches/baselines/v0_10_compiler.toml"))? != BASELINE_MANIFEST_SHA256
+    if sha256_file(&repo.join("benches/baselines/v0_10_compiler.toml"))?
+        != V010_BASELINE_MANIFEST_SHA256
     {
         return Err("the frozen V0.10 baseline manifest has changed".into());
     }
@@ -136,6 +213,15 @@ pub fn adapter_set_digest(repo: &Path) -> Result<String, String> {
         entries.push((name, actual));
     }
     Ok(named_digest(entries))
+}
+
+pub fn v011_adapter_set_digest(repo: &Path) -> Result<String, String> {
+    if sha256_file(&repo.join("benches/baselines/v0_11_compiler.toml"))?
+        != V011_BASELINE_MANIFEST_SHA256
+    {
+        return Err("the frozen V0.11 baseline manifest has changed".into());
+    }
+    Ok(named_digest(Vec::new()))
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {
@@ -226,7 +312,7 @@ pub fn load_replay(bundle: &Path, expected: &ExpectedReplay<'_>) -> Result<Runti
     let text = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("read replay manifest: {error}"))?;
     let mut lines = text.lines();
-    if lines.next() != Some("ckc-v010-runtime-replay\t1") {
+    if lines.next() != Some(expected.generation.header()) {
         return Err("unsupported replay manifest schema".into());
     }
     let suffix = match expected.target {
@@ -274,14 +360,17 @@ pub fn load_replay(bundle: &Path, expected: &ExpectedReplay<'_>) -> Result<Runti
         return Err("replay manifest must contain every identity and exact case/mode".into());
     }
     for (field, value) in [
-        ("commit", BASELINE_COMMIT),
-        ("compilerIdentity", BASELINE_COMPILER),
+        ("commit", expected.generation.commit()),
+        ("compilerIdentity", expected.generation.compiler_identity()),
         ("llvmVersion", "22.1.8"),
         ("target", expected.target),
         ("cpuPolicy", expected.cpu),
         ("recipeSha256", expected.recipe_sha256),
         ("adapterSetSha256", expected.adapter_set_sha256),
-        ("baselineManifestSha256", BASELINE_MANIFEST_SHA256),
+        (
+            "baselineManifestSha256",
+            expected.generation.manifest_sha256(),
+        ),
         ("llvmComponentSha256", expected.llvm_component_sha256),
     ] {
         if metadata[field] != value {
@@ -299,7 +388,7 @@ pub fn load_replay(bundle: &Path, expected: &ExpectedReplay<'_>) -> Result<Runti
         check_hash(&metadata[field])?;
     }
     verify_file(
-        &root.join("ckc-v010"),
+        &root.join(expected.generation.compiler_file()),
         positive_size(&metadata["compilerBytes"])?,
         &metadata["compilerSha256"],
     )?;
@@ -307,6 +396,7 @@ pub fn load_replay(bundle: &Path, expected: &ExpectedReplay<'_>) -> Result<Runti
         verify_file(&artifact.path, artifact.bytes, &artifact.sha256)?;
     }
     Ok(RuntimeReplay {
+        generation: expected.generation,
         metadata,
         artifacts: artifacts.into_values().collect(),
         manifest_sha256: format!("{:x}", Sha256::digest(text.as_bytes())),

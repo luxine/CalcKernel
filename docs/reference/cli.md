@@ -1,4 +1,4 @@
-# `ckc` 0.11 CLI Reference
+# `ckc` 0.12 CLI Reference
 
 [简体中文](../zh-CN/reference/cli.md)
 
@@ -13,7 +13,7 @@ requested textual output use stdout unless stated otherwise.
 | --- | --- |
 | `ckc check <file>` | Parse and type-check; no artifact. |
 | `ckc emit-mir <file>` | Deterministic MIR on stdout or in `--out`. |
-| `ckc emit-kir <file>` | Deterministic verified internal KIR on stdout or in `--out`. |
+| `ckc emit-kir <file>` | Deterministic verified internal KIR v2 on stdout or in `--out`. |
 | `ckc emit-c <file> --out <file.c>` | C source and sibling or explicit header; source-only. |
 | `ckc emit-wat <file>` / `emit-wasm` | Textual or binary WebAssembly. |
 | `ckc emit-llvm <file>` | Verified textual LLVM IR for the host triple. |
@@ -44,8 +44,12 @@ no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
   unchecked.
 - `--opt-level 0|1|2|3` and `-O0` through `-O3` select one KIR/LLVM level.
   `run`, `build`, and `build-llvm` default to O3; inspection commands to O0.
-- `--cpu baseline|native` applies to `build`; baseline is the portable default.
-  `run` uses the host CPU.
+- `--consumer inspection|c|wasm|native-library|native-executable` selects the
+  exact `emit-kir` target profile; inspection is the scalar target-independent
+  default.
+- `--cpu baseline|native` applies to `build` and Native `emit-kir`; baseline is
+  the portable build default. `run` uses the host CPU. Native `emit-kir`
+  requires an explicit Native consumer before `--cpu` is accepted.
 - `--target <host-triple>` is accepted by Native inspection/build commands only
   when it normalizes to the detected host triple; cross-compilation is rejected.
 - `--no-cache` makes `run` bypass persistent cache reads and writes.
@@ -84,9 +88,11 @@ unsafe ownership/permissions, a symlink replacement, or an unparseable object
 is a miss, never executable input. The same-user cache remains inside the
 user's trust boundary and is not a security sandbox.
 
-CalcKernel 0.11 uses a KIR v1 code-generation/cache identity. Contract
-sanitization, consumer roots, and mode-specific KIR are part of the key; 0.10
-objects cannot be reused under the 0.11 compiler.
+CalcKernel 0.12 uses KIR v2 and `CKCOBJ02` manifest schema 3. Contract
+sanitization, consumer roots, checked modes, the canonical `KirTargetProfile`
+digest, cost/proof schema identities, target/CPU policy, and optimization
+budgets are part of the key. 0.11 and older objects fail closed and cannot be
+reused under the 0.12 compiler.
 
 Roots are `$XDG_CACHE_HOME/ckc` or `$HOME/.cache/ckc` on Linux,
 `$HOME/Library/Caches/ckc` on macOS, and

@@ -299,7 +299,9 @@ fn propose_with_contracts(
                         continue;
                     };
                     if param.type_node
-                        == crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+                        == crate::KirValueType::Scalar(crate::MirType::Primitive(
+                            crate::MirPrimitiveTypeName::Bool,
+                        ))
                     {
                         if booleans.contains_key(&param.value) {
                             continue;
@@ -336,7 +338,7 @@ fn propose_with_contracts(
                         worklist.value_changed(param.value);
                         continue;
                     }
-                    if IntegerType::from_mir(&param.type_node).is_none() {
+                    if IntegerType::from_kir(&param.type_node).is_none() {
                         continue;
                     }
                     let inputs = edges
@@ -483,7 +485,7 @@ fn propose_with_contracts(
                         worklist.value_changed(result.value);
                         continue;
                     }
-                    let Some(ty) = IntegerType::from_mir(&result.type_node) else {
+                    let Some(ty) = IntegerType::from_kir(&result.type_node) else {
                         continue;
                     };
                     let value = match &instruction.kind {

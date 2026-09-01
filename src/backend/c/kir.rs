@@ -116,8 +116,8 @@ impl KirCFunctionLayout {
                 (param.value, layout)
             })
             .collect();
-        let values = value_types(function)
-            .into_keys()
+        let values = value_ids(function)
+            .into_iter()
             .map(|value| (value, allocator.allocate(&format!("ck_v{}", value.index()))))
             .collect();
         let return_pointer = allocator.allocate("ck_return");
@@ -182,6 +182,7 @@ pub fn emit_c_kir_module_with_contracts(
     module: &KirModule,
     contracts: Option<&ContractFactSet>,
 ) -> Result<String, String> {
+    reject_vector_values(module, "C")?;
     if let Some(runtime) = module
         .functions
         .iter()
@@ -310,11 +311,15 @@ fn collect_slice_types(module: &KirModule) -> Vec<MirType> {
         collect_slices(&function.return_type, &mut result);
         for block in &function.blocks {
             for param in &block.params {
-                collect_slices(&param.type_node, &mut result);
+                if let Some(type_node) = param.type_node.as_scalar() {
+                    collect_slices(type_node, &mut result);
+                }
             }
             for instruction in &block.instructions {
                 for kir_result in &instruction.results {
-                    collect_slices(&kir_result.type_node, &mut result);
+                    if let Some(type_node) = kir_result.type_node.as_scalar() {
+                        collect_slices(type_node, &mut result);
+                    }
                 }
             }
         }
@@ -663,7 +668,7 @@ fn instruction_lines(
             result(0),
             context
                 .module_layout
-                .type_name(&instruction.results[0].type_node),
+                .type_name(scalar_type(&instruction.results[0].type_node)),
             value(*source)
         )],
         KirInstructionKind::CheckCondition { kind, args } => {
@@ -751,6 +756,22 @@ fn instruction_lines(
         KirInstructionKind::RuntimeCall { .. } => {
             return Err("C KIR artifact cannot lower native runtime calls".to_string());
         }
+        KirInstructionKind::VersionPredicate { .. } => {
+            return Err("C KIR artifact cannot lower Native version predicates".to_string());
+        }
+        KirInstructionKind::VectorSplat { .. }
+        | KirInstructionKind::VectorLoad { .. }
+        | KirInstructionKind::VectorStore { .. }
+        | KirInstructionKind::VectorBinary { .. }
+        | KirInstructionKind::VectorUnary { .. }
+        | KirInstructionKind::VectorCompare { .. }
+        | KirInstructionKind::VectorSelect { .. }
+        | KirInstructionKind::VectorCast { .. }
+        | KirInstructionKind::VectorInsert { .. }
+        | KirInstructionKind::VectorExtract { .. }
+        | KirInstructionKind::VectorReduce { .. } => {
+            unreachable!("vector KIR must be rejected before C instruction lowering")
+        }
     })
 }
 
@@ -833,7 +854,7 @@ fn unary_lines(
             "{overflow} = __builtin_sub_overflow(({})0, {operand}, &{target});",
             context
                 .module_layout
-                .type_name(&instruction.results[0].type_node)
+                .type_name(scalar_type(&instruction.results[0].type_node))
         )];
     }
     vec![format!(
@@ -981,7 +1002,7 @@ fn edge_lines(
     for (index, (param, argument)) in target.params.iter().zip(&edge.args).enumerate() {
         lines.push(format!(
             "  {} ck_edge_{}_{} = {};",
-            module_layout.type_name(&param.type_node),
+            module_layout.type_name(scalar_type(&param.type_node)),
             edge.target.index(),
             index,
             function_layout.value(*argument)
@@ -1009,15 +1030,67 @@ fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
             block
                 .params
                 .iter()
-                .map(|param| (param.value, param.type_node.clone()))
+                .map(|param| (param.value, scalar_type(&param.type_node).clone()))
                 .chain(block.instructions.iter().flat_map(|instruction| {
                     instruction
                         .results
                         .iter()
-                        .map(|result| (result.value, result.type_node.clone()))
+                        .map(|result| (result.value, scalar_type(&result.type_node).clone()))
                 }))
         }))
         .collect()
+}
+
+fn value_ids(function: &KirFunction) -> BTreeSet<ValueId> {
+    function
+        .params
+        .iter()
+        .map(|param| param.value)
+        .chain(function.blocks.iter().flat_map(|block| {
+            block.params.iter().map(|param| param.value).chain(
+                block
+                    .instructions
+                    .iter()
+                    .flat_map(|instruction| instruction.results.iter().map(|result| result.value)),
+            )
+        }))
+        .collect()
+}
+
+fn scalar_type(type_node: &KirValueType) -> &MirType {
+    type_node
+        .as_scalar()
+        .expect("vector KIR must be rejected before C layout")
+}
+
+fn reject_vector_values(module: &KirModule, backend: &str) -> Result<(), String> {
+    let vector = module
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .find_map(|block| {
+            block
+                .params
+                .iter()
+                .map(|param| (&param.type_node, None))
+                .chain(block.instructions.iter().flat_map(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .map(move |result| (&result.type_node, Some(instruction.id)))
+                }))
+                .find(|(type_node, _)| type_node.as_scalar().is_none())
+        });
+    if let Some((_, instruction)) = vector {
+        let location = instruction.map_or_else(
+            || "block parameter".to_string(),
+            |id| format!("instruction i{}", id.index()),
+        );
+        return Err(format!(
+            "{backend} KIR backend cannot lower vector value at {location}"
+        ));
+    }
+    Ok(())
 }
 
 fn c_place(place: &KirPlace, function_layout: &KirCFunctionLayout) -> String {

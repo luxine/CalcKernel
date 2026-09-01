@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 const KEY_MAGIC: &[u8] = b"CKC-CACHE-KEY\0";
-const KEY_SCHEMA: u32 = 2;
+const KEY_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::cli) struct CacheKeyInput {
@@ -18,6 +18,10 @@ pub(in crate::cli) struct CacheKeyInput {
     pub(in crate::cli) bounds_mode: u8,
     pub(in crate::cli) kir_contract_version: u32,
     pub(in crate::cli) sanitizer_mode: u8,
+    pub(in crate::cli) target_profile_digest: String,
+    pub(in crate::cli) vector_cost_model_schema: u32,
+    pub(in crate::cli) vector_proof_schema: u32,
+    pub(in crate::cli) vector_budget_identity: String,
     pub(in crate::cli) cpu: String,
     pub(in crate::cli) features: String,
     pub(in crate::cli) codegen_contract: String,
@@ -44,9 +48,17 @@ pub(super) fn canonical_key_bytes(input: &CacheKeyInput) -> Vec<u8> {
     field(&mut output, 14, input.codegen_contract.as_bytes());
     field(&mut output, 15, &input.kir_contract_version.to_be_bytes());
     field(&mut output, 16, &[input.sanitizer_mode]);
+    field(&mut output, 17, input.target_profile_digest.as_bytes());
+    field(
+        &mut output,
+        18,
+        &input.vector_cost_model_schema.to_be_bytes(),
+    );
+    field(&mut output, 19, &input.vector_proof_schema.to_be_bytes());
     for (index, hash) in input.runtime_sha256.iter().enumerate() {
         field(&mut output, 20 + index as u16, hash.as_bytes());
     }
+    field(&mut output, 30, input.vector_budget_identity.as_bytes());
     output
 }
 
@@ -86,6 +98,10 @@ mod tests {
             bounds_mode: 0,
             kir_contract_version: 1,
             sanitizer_mode: 0,
+            target_profile_digest: "31".repeat(32),
+            vector_cost_model_schema: 1,
+            vector_proof_schema: 1,
+            vector_budget_identity: "vector-budget-schema=1;growth=20".to_string(),
             cpu: "apple-m1".to_string(),
             features: "+aes,+crc,+neon".to_string(),
             codegen_contract: "strict-fp;entry-v1;native-cpu".to_string(),
@@ -103,10 +119,10 @@ mod tests {
     fn canonical_key_should_have_one_exact_architecture_independent_vector() {
         let input = vector();
         let bytes = canonical_key_bytes(&input);
-        assert!(bytes.starts_with(b"CKC-CACHE-KEY\0\0\0\0\x02"));
+        assert!(bytes.starts_with(b"CKC-CACHE-KEY\0\0\0\0\x03"));
         assert_eq!(
             cache_key_hex(&input),
-            "a4c1e6f5eb4483e703ae81f19ecb0982d6c631c941a05fce76b86e90a50d59c2"
+            "2aef2877444ba674f0cfdace6dcbe14f5e00c6efea586a921c323ad8b54575ec"
         );
     }
 
@@ -135,6 +151,13 @@ mod tests {
         changed!(bounds_mode, 1);
         changed!(kir_contract_version, 2);
         changed!(sanitizer_mode, 1);
+        changed!(target_profile_digest, "32".repeat(32));
+        changed!(vector_cost_model_schema, 2);
+        changed!(vector_proof_schema, 2);
+        changed!(
+            vector_budget_identity,
+            "vector-budget-schema=2;growth=20".to_string()
+        );
         changed!(cpu, "generic".to_string());
         changed!(features, "+neon".to_string());
         changed!(

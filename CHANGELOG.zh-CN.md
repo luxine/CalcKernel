@@ -2,6 +2,26 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.12.0 - 尚未发布
+
+- 新增 KIR v2 fixed-vector/mask instruction，以及由固定 LLVM 22.1.8 导出的确定性
+  Native `KirTargetProfile` capability/cost 数据。
+- 新增 transactional、由独立 checker 验证的 O3 specialization、受控 full/partial
+  unroll、SLP 与 Loop SIMD frontier，并提供单调 analysis budget 和稳定 optimization
+  explanation。
+- 新增 integer/strict element-wise f64 arithmetic、supported cast、pure compare/select
+  diamond、splat 与 contiguous memory 的 unit-stride Loop SIMD；strict f64 保持逐元素
+  顺序且不启用 fast math。
+- 新增以原 scalar loop 为 fallback 的 total runtime alias versioning、scalar epilogue，
+  以及精确 unchecked modular u32 add/multiply reduction。Checked failure、effect、
+  unsupported recurrence/scan、C 与 WebAssembly 仍保持 scalar。
+- Private LLVM bridge 更新到 ABI 3，KIR identity 更新为 `kir-v2`，Native object cache
+  更新为 `CKCOBJ02` key/manifest schema 3；public Native C ABI 1、Runtime ABI 2、source
+  syntax、diagnostic 与 checked first-error behavior 保持不变。
+- 新增 KIR/pre-LLVM/object structural evidence、fixed-seed O0/O3 differential、mutation、
+  target-feature containment 与 schema-7 performance gate 输入。PGO/multiversioning 和
+  Auto-Tuning 仍是未来工作。
+
 ## 0.11.0 - 尚未发布
 
 - 新增显式 `unsafe fn` contract，支持 affine range requirement、`multiple_of`、

@@ -1,8 +1,10 @@
 use calckernel::{
     ContractFactSet, KirBoundsMode, KirBuildConfig, KirConsumer, KirFailureKind,
     KirInstructionKind, KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, SourceFile,
-    analyze_natural_loops, build_kir_module, check, import_contract_facts, lower_to_mir,
-    print_kir_module, run_kir_pass_pipeline,
+    TotalVersionPredicate, ValueId, VersionPredicateConjunct, analyze_affine_loop_accesses,
+    analyze_canonical_loops, analyze_loop_dependences, analyze_natural_loops, build_kir_module,
+    canonicalize_kir_loops, check, import_contract_facts, lower_to_mir, print_kir_module,
+    run_kir_pass_pipeline, validate_canonical_loop_analysis,
 };
 
 use crate::generated::fixed_seed_kernel_program;
@@ -61,7 +63,9 @@ fn kir_o3_pipeline_should_use_the_exact_verified_pass_order() {
         vec![
             "cfg-canonicalize",
             "sccp-range",
+            "loop-simplify",
             "check-elimination",
+            "specialization-frontier",
             "effect-aware-inline",
             "memory-ssa-refine",
             "gvn",
@@ -70,15 +74,34 @@ fn kir_o3_pipeline_should_use_the_exact_verified_pass_order() {
             "sccp-range-post-inline",
             "check-elimination-post-inline",
             "natural-loop-analysis",
+            "loop-legality-analysis",
             "licm",
             "induction-simplify",
             "sccp-range-post-loop",
             "check-elimination-post-loop",
+            "loop-vector-frontier",
+            "loop-optimization-frontier",
+            "residual-slp-frontier",
             "dead-code-elimination",
             "cleanup",
         ]
     );
     assert!(result.records.iter().all(|record| record.verified));
+    assert!(result.audit.attempts().is_empty());
+    for frontier in [
+        "specialization-frontier",
+        "loop-vector-frontier",
+        "loop-optimization-frontier",
+        "residual-slp-frontier",
+    ] {
+        let record = result
+            .records
+            .iter()
+            .find(|record| record.name == frontier)
+            .expect("O3 empty frontier record");
+        assert!(!record.changed);
+        assert!(record.verified);
+    }
 }
 
 #[test]
@@ -513,6 +536,20 @@ fn loop_licm_should_hoist_only_modular_pure_invariants() {
         "the invariant multiply, not only its constants, must move:\n{}",
         print_kir_module(result.artifact.as_ref().expect("artifact"))
     );
+}
+
+#[test]
+fn canonical_loop_analysis_should_retain_natural_loop_statistics_for_pipeline_reuse() {
+    let (kir, _) = build(
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; while i < n { i = i + 1; } return i; }",
+        KirOverflowMode::Unchecked,
+    );
+    let function = &kir.functions[0];
+    let natural = analyze_natural_loops(function);
+    let canonical = analyze_canonical_loops(function);
+
+    assert_eq!(canonical.natural_loop_count as usize, natural.loops.len());
+    assert_eq!(canonical.induction_count as usize, natural.inductions.len());
 }
 
 #[test]
@@ -963,4 +1000,514 @@ fn generated_loop_fixed_seed_should_validate_identically_at_every_level() {
             }
         }
     }
+}
+
+#[test]
+fn loop_simplify_should_form_one_preheader_latch_dedicated_exits_and_lcssa() {
+    let (mut module, _) = build_with_modes(
+        r#"
+        export fn scan(values: slice<u32>, n: u32) -> u32 {
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < n {
+            if i == 2 { i = i + 1; continue; }
+            if i == 7 { break; }
+            total = total + values[i];
+            i = i + 1;
+          }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+
+    let first = canonicalize_kir_loops(&mut module).expect("loop simplify");
+    assert!(first.changed, "continue must require a single-latch bridge");
+    assert!(first.fallbacks.is_empty(), "{:?}", first.fallbacks);
+    assert!(calckernel::validate_kir_module(&module).errors.is_empty());
+    let analysis = analyze_canonical_loops(&module.functions[0]);
+    assert!(analysis.fallbacks.is_empty(), "{analysis:?}");
+    assert_eq!(analysis.loops.len(), 1);
+    let descriptor = &analysis.loops[0];
+    assert!(descriptor.preheader.is_some());
+    assert!(descriptor.latch.is_some());
+    assert!(descriptor.dedicated_exits);
+    assert!(descriptor.lcssa);
+    assert!(descriptor.innermost);
+    validate_canonical_loop_analysis(&module.functions[0], &analysis).expect("fresh descriptor");
+
+    let stable = analysis.clone();
+    let second = canonicalize_kir_loops(&mut module).expect("idempotent loop simplify");
+    assert!(!second.changed);
+    assert_eq!(analyze_canonical_loops(&module.functions[0]), stable);
+}
+
+#[test]
+fn loop_descriptor_should_be_nested_deterministic_and_invalidated_by_cfg_mutation() {
+    let (mut module, _) = build_with_modes(
+        r#"
+        export fn nested(n: u32) -> u32 {
+          let i: u32 = 0;
+          let j: u32 = 0;
+          let total: u32 = 0;
+          while i < n {
+            j = 0;
+            while j < n { total = total + j; j = j + 1; }
+            i = i + 1;
+          }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut module).expect("loop simplify");
+    let analysis = analyze_canonical_loops(&module.functions[0]);
+    assert_eq!(analysis.loops.len(), 2);
+    assert!(
+        analysis
+            .loops
+            .iter()
+            .any(|item| item.depth == 2 && item.innermost)
+    );
+    assert!(
+        analysis
+            .loops
+            .iter()
+            .any(|item| item.depth == 1 && !item.innermost)
+    );
+    validate_canonical_loop_analysis(&module.functions[0], &analysis).expect("fresh descriptor");
+
+    let header = analysis.loops[0].header;
+    let block = module.functions[0]
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == header)
+        .expect("header");
+    let calckernel::KirTerminator::Branch { then_edge, .. } = &mut block.terminator else {
+        panic!("loop header branch")
+    };
+    then_edge.args.swap(0, 1);
+    let error = validate_canonical_loop_analysis(&module.functions[0], &analysis)
+        .expect_err("stale CFG descriptor");
+    assert!(error.contains("stale"), "{error}");
+}
+
+#[test]
+fn loop_descriptor_should_distinguish_zero_exact_runtime_and_noncountable_trips() {
+    for (start, bound, expected) in [("0", "8", Some(8_u64)), ("8", "8", Some(0_u64))] {
+        let source = format!(
+            "export fn count() -> u32 {{ let i: u32 = {start}; while i < {bound} {{ i = i + 1; }} return i; }}"
+        );
+        let (mut module, _) = build_with_modes(
+            &source,
+            KirOverflowMode::Unchecked,
+            KirBoundsMode::Unchecked,
+        );
+        canonicalize_kir_loops(&mut module).expect("loop simplify");
+        let loops = analyze_canonical_loops(&module.functions[0]);
+        match (&loops.loops[0].trip_count, expected) {
+            (calckernel::LoopTripCount::Zero, Some(0)) => {}
+            (calckernel::LoopTripCount::Exact { iterations }, Some(expected)) => {
+                assert_eq!(*iterations, expected)
+            }
+            (actual, _) => panic!("unexpected trip classification: {actual:?}"),
+        }
+    }
+
+    let (mut runtime, _) = build_with_modes(
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; while i < n { i = i + 1; } return i; }",
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut runtime).expect("loop simplify");
+    let loops = analyze_canonical_loops(&runtime.functions[0]);
+    assert!(matches!(
+        loops.loops[0].trip_count,
+        calckernel::LoopTripCount::Runtime { .. }
+    ));
+
+    let (mut noncountable, _) = build_with_modes(
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; while i <= n { i = i + 1; } return i; }",
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut noncountable).expect("loop simplify");
+    let loops = analyze_canonical_loops(&noncountable.functions[0]);
+    assert!(matches!(
+        loops.loops[0].trip_count,
+        calckernel::LoopTripCount::Unknown
+    ));
+    assert!(
+        loops.fallbacks.iter().any(|fallback| {
+            fallback.reason == calckernel::LoopFallbackReason::NonCountableTrip
+        })
+    );
+}
+
+#[test]
+fn loop_descriptor_budget_exhaustion_should_return_one_stable_scalar_fallback() {
+    let (module, _) = build_with_modes(
+        "export fn count(n: u32) -> u32 { let i: u32 = 0; while i < n { i = i + 1; } return i; }",
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    let analysis = calckernel::analyze_canonical_loops_with_config(
+        &module.functions[0],
+        calckernel::ScalarAnalysisConfig::with_max_steps(0),
+    );
+    assert!(analysis.loops.is_empty());
+    assert!(analysis.budget_exhausted);
+    assert_eq!(
+        analysis.fallbacks[0].reason.stable_name(),
+        "fixed-loop-budget-exhausted"
+    );
+}
+
+#[test]
+fn affine_access_should_extract_unit_stride_bias_alignment_and_reject_nonunit_groups() {
+    let (mut module, _) = build_with_modes(
+        r#"
+        export fn affine(input: slice<u32>, output: slice<u32>, n: u32) -> void {
+          let i: u32 = 0;
+          while i < n {
+            output[i] = input[i + 1];
+            output[i + i] = input[n - i];
+            i = i + 1;
+          }
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut module).expect("loop simplify");
+    let loops = analyze_canonical_loops(&module.functions[0]);
+    let descriptor = loops
+        .loops
+        .iter()
+        .find(|item| item.innermost)
+        .expect("loop");
+    let accesses = analyze_affine_loop_accesses(&module.functions[0], descriptor, None)
+        .expect("affine accesses");
+
+    assert!(
+        accesses.accesses.iter().any(|access| {
+            access.unit_stride && access.bias.to_string() == "1" && access.vector_group_eligible
+        }),
+        "{accesses:?}"
+    );
+    assert!(
+        accesses.accesses.iter().any(|access| {
+            access.coefficient.to_string() == "2" && !access.vector_group_eligible
+        }),
+        "{accesses:?}"
+    );
+    assert!(
+        accesses.accesses.iter().any(|access| {
+            access.coefficient.to_string() == "-1" && !access.vector_group_eligible
+        }),
+        "{accesses:?}"
+    );
+    assert!(
+        accesses
+            .accesses
+            .iter()
+            .all(|access| access.element_bytes == 4)
+    );
+
+    let (mut aligned, contracts) = build_with_modes(
+        r#"
+        export unsafe fn aligned(a: slice<u32>, n: u32) -> u32
+        contract { requires aligned(a.data, 32); effects read(a); }
+        {
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < n { total = total + a[i]; i = i + 1; }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut aligned).expect("loop simplify");
+    let loops = analyze_canonical_loops(&aligned.functions[0]);
+    let accesses = analyze_affine_loop_accesses(
+        &aligned.functions[0],
+        &loops.loops[0],
+        contracts.as_ref().map(ContractFactSet::facts),
+    )
+    .expect("aligned access");
+    assert!(
+        accesses
+            .accesses
+            .iter()
+            .all(|access| access.base_alignment >= 32 && access.known_alignment >= 4),
+        "{accesses:?}"
+    );
+
+    let (mut subslice, _) = build_with_modes(
+        r#"
+        export fn windowed(input: slice<u32>, n: u32) -> u32 {
+          let window: slice<u32> = input[1..n];
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < window.len { total = total + window[i]; i = i + 1; }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut subslice).expect("loop simplify");
+    let loops = analyze_canonical_loops(&subslice.functions[0]);
+    let accesses = analyze_affine_loop_accesses(&subslice.functions[0], &loops.loops[0], None)
+        .expect("subslice access");
+    assert!(
+        accesses
+            .accesses
+            .iter()
+            .any(|access| access.slice_interval.is_some()),
+        "{accesses:?}"
+    );
+}
+
+#[test]
+fn dependence_should_classify_noalias_dependent_and_runtime_guarded_write_pairs() {
+    let (mut module, contracts) = build_with_modes(
+        r#"
+        export unsafe fn classify(a: slice<u32>, b: slice<u32>, n: u32) -> void
+        contract { requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i]; i = i + 1; }
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut module).expect("loop simplify");
+    let loops = analyze_canonical_loops(&module.functions[0]);
+    let report = analyze_loop_dependences(
+        &module.functions[0],
+        &loops.loops[0],
+        contracts.as_ref().map(ContractFactSet::facts),
+    )
+    .expect("dependence report");
+    assert!(
+        report
+            .pairs
+            .iter()
+            .any(|pair| { pair.kind == calckernel::LoopDependenceKind::Independent })
+    );
+
+    let (mut unknown, _) = build_with_modes(
+        r#"
+        export fn classify(a: slice<u32>, b: slice<u32>, n: u32) -> void {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i]; i = i + 1; }
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut unknown).expect("loop simplify");
+    let loops = analyze_canonical_loops(&unknown.functions[0]);
+    let report = analyze_loop_dependences(&unknown.functions[0], &loops.loops[0], None)
+        .expect("unknown dependence report");
+    assert!(report.pairs.iter().any(|pair| {
+        pair.kind == calckernel::LoopDependenceKind::RuntimeGuarded && pair.predicate.is_some()
+    }));
+
+    let (mut same, _) = build_with_modes(
+        r#"
+        export fn shift(a: slice<u32>, n: u32) -> void {
+          let i: u32 = 0;
+          while i < n { a[i + 1] = a[i]; i = i + 1; }
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut same).expect("loop simplify");
+    let loops = analyze_canonical_loops(&same.functions[0]);
+    let report = analyze_loop_dependences(&same.functions[0], &loops.loops[0], None)
+        .expect("dependent report");
+    assert!(
+        report
+            .pairs
+            .iter()
+            .any(|pair| { pair.kind == calckernel::LoopDependenceKind::Dependent })
+    );
+
+    let (mut reduction, _) = build_with_modes(
+        r#"
+        export fn sum(a: slice<u32>, n: u32) -> u32 {
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < n { total = total + a[i]; i = i + 1; }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut reduction).expect("loop simplify");
+    let loops = analyze_canonical_loops(&reduction.functions[0]);
+    let report = analyze_loop_dependences(&reduction.functions[0], &loops.loops[0], None)
+        .expect("reduction report");
+    assert_eq!(report.reductions.len(), 1, "{report:?}");
+    assert_eq!(report.reductions[0].operation, calckernel::MirBinaryOp::Add);
+
+    let (mut reads, _) = build_with_modes(
+        r#"
+        export fn reads(a: slice<u32>, b: slice<u32>, n: u32) -> u32 {
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < n { total = total + a[i] + b[i]; i = i + 1; }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut reads).expect("loop simplify");
+    let loops = analyze_canonical_loops(&reads.functions[0]);
+    let report = analyze_loop_dependences(&reads.functions[0], &loops.loops[0], None)
+        .expect("read/read report");
+    assert!(
+        report
+            .pairs
+            .iter()
+            .any(|pair| pair.kind == calckernel::LoopDependenceKind::ReadRead)
+    );
+
+    let (mut raw, _) = build_with_modes(
+        r#"
+        export fn raw(a: ptr<u32>, b: ptr<u32>, n: u32) -> void {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i]; i = i + 1; }
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut raw).expect("loop simplify");
+    let loops = analyze_canonical_loops(&raw.functions[0]);
+    let report = analyze_loop_dependences(&raw.functions[0], &loops.loops[0], None)
+        .expect("raw pointer report");
+    assert!(report.pairs.iter().any(|pair| {
+        pair.kind == calckernel::LoopDependenceKind::Unknown && pair.predicate.is_none()
+    }));
+}
+
+#[test]
+fn dependence_ordered_effect_should_preserve_scalar_first_error_and_print_order() {
+    for source in [
+        "export fn noisy(n: u32) -> void { let i: u32 = 0; while i < n { print_u32(i); i = i + 1; } }",
+        "export fn checked(a: slice<u32>, n: u32) -> u32 { let i: u32 = 0; let total: u32 = 0; while i < n { total = total + a[i]; i = i + 1; } return total; }",
+    ] {
+        let (mut module, _) = build(source, KirOverflowMode::Checked);
+        canonicalize_kir_loops(&mut module).expect("loop simplify");
+        let loops = analyze_canonical_loops(&module.functions[0]);
+        let descriptor = loops
+            .loops
+            .iter()
+            .find(|item| item.innermost)
+            .expect("loop");
+        let legality = calckernel::analyze_loop_legality(&module.functions[0], descriptor, None)
+            .expect("legality");
+        assert!(!legality.eligible, "{legality:?}");
+        assert!(
+            legality
+                .fallback_reasons
+                .iter()
+                .any(|reason| { *reason == calckernel::LoopFallbackReason::OrderedEffect }),
+            "{legality:?}"
+        );
+    }
+}
+
+#[test]
+fn version_predicate_should_be_total_bounded_and_false_on_target_width_overflow() {
+    let left = ValueId::from_index(0);
+    let right = ValueId::from_index(1);
+    let count = ValueId::from_index(2);
+    let predicate = TotalVersionPredicate {
+        address_bits: 32,
+        conjuncts: vec![VersionPredicateConjunct::AddressIntervalsDisjoint {
+            left,
+            left_count: count,
+            left_element_bytes: 4,
+            right,
+            right_count: count,
+            right_element_bytes: 4,
+        }],
+    };
+    predicate.validate().expect("closed predicate");
+
+    let values = std::collections::BTreeMap::from([(left, 0_u64), (right, 64), (count, 8)]);
+    assert!(predicate.evaluate(&values));
+    let overlapping = std::collections::BTreeMap::from([(left, 0_u64), (right, 16), (count, 8)]);
+    assert!(!predicate.evaluate(&overlapping));
+    let overflow =
+        std::collections::BTreeMap::from([(left, u64::from(u32::MAX) - 3), (right, 0), (count, 2)]);
+    assert!(!predicate.evaluate(&overflow));
+    let multiply_overflow = TotalVersionPredicate {
+        address_bits: 64,
+        conjuncts: vec![VersionPredicateConjunct::AddressIntervalsDisjoint {
+            left,
+            left_count: count,
+            left_element_bytes: 2,
+            right,
+            right_count: count,
+            right_element_bytes: 2,
+        }],
+    };
+    let multiply_overflow_values =
+        std::collections::BTreeMap::from([(left, 0), (right, 1), (count, u64::MAX)]);
+    assert!(!multiply_overflow.evaluate(&multiply_overflow_values));
+    let empty = std::collections::BTreeMap::from([
+        (left, u64::from(u32::MAX)),
+        (right, u64::from(u32::MAX)),
+        (count, 0),
+    ]);
+    assert!(
+        predicate.evaluate(&empty),
+        "zero footprint forms no end address"
+    );
+
+    let scalar_predicates = TotalVersionPredicate {
+        address_bits: 64,
+        conjuncts: vec![
+            VersionPredicateConjunct::TripThreshold {
+                trip_count: count,
+                minimum: 8,
+            },
+            VersionPredicateConjunct::Divisible {
+                value: count,
+                divisor: 4,
+            },
+            VersionPredicateConjunct::PowerOfTwoAlignment {
+                address: left,
+                alignment: 32,
+            },
+        ],
+    };
+    assert!(
+        scalar_predicates.evaluate(&std::collections::BTreeMap::from([(left, 64), (count, 8),]))
+    );
+    assert!(
+        !scalar_predicates.evaluate(&std::collections::BTreeMap::from([(left, 68), (count, 8),]))
+    );
+    assert!(!scalar_predicates.evaluate(&std::collections::BTreeMap::new()));
+
+    let mut too_many = predicate.clone();
+    too_many.conjuncts = (0..5)
+        .map(|_| VersionPredicateConjunct::TripThreshold {
+            trip_count: count,
+            minimum: 1,
+        })
+        .collect();
+    assert!(too_many.validate().is_err());
 }

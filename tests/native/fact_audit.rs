@@ -1,12 +1,14 @@
 use calckernel::{
-    EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
-    KirOverflowMode, KirSanitizerMode, LLVM_BRIDGE_ABI_VERSION, NativeContext,
-    NativeFactAuditReport, NativeModule, NativeOptimizationLevel, NativeStage,
-    NativeStrengtheningKind, NativeTarget, SourceFile, build_kir_module, check,
-    import_contract_facts, lower_native_kir_module, lower_to_mir,
-    native_fact_audit_test_inject_untracked, native_fact_audit_test_inject_untracked_flag,
-    run_kir_pass_pipeline,
+    EmitLlvmOptions, KirArithmeticSemantics, KirBoundsMode, KirBuildConfig, KirConsumer,
+    KirInstructionKind, KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, KirTargetProfile,
+    LLVM_BRIDGE_ABI_VERSION, NativeContext, NativeCpu, NativeFactAuditReport, NativeModule,
+    NativeOptimizationLevel, NativeStage, NativeStrengtheningKind, NativeTarget, ProofId,
+    SourceFile, build_kir_module, check, import_contract_facts, lower_native_kir_module,
+    lower_to_mir, native_fact_audit_test_inject_untracked,
+    native_fact_audit_test_inject_untracked_flag, run_kir_pass_pipeline,
 };
+
+use super::vector_llvm::vector_module;
 
 fn audited_kir(source: &str) -> (String, NativeFactAuditReport) {
     let checked = check(&SourceFile::new("fact-audit.ck", source));
@@ -41,7 +43,7 @@ fn audited_kir(source: &str) -> (String, NativeFactAuditReport) {
 
 #[test]
 fn fact_audit_typestate_should_run_between_verify_and_optimize() {
-    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 2);
+    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 3);
     let context = NativeContext::new().expect("context");
     let target = NativeTarget::host().expect("target");
     let verified = NativeModule::empty(&context)
@@ -253,4 +255,96 @@ fn fact_audit_should_map_removed_overflow_guard_proof_to_nsw() {
             .any(|property| { property.kind == NativeStrengtheningKind::Assume })
     );
     assert_eq!(report.proof_sources, 2);
+}
+
+#[test]
+fn fact_audit_vector_alignment_mutation_should_fail_before_llvm_optimization() {
+    let context = NativeContext::new().expect("context");
+    let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
+    let mut result = run_kir_pass_pipeline(vector_module(&target), KirOptimizationLevel::O0, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let artifact = result.artifact.as_mut().expect("verified vector artifact");
+    let load = artifact.functions[0].blocks[0]
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.kind {
+            KirInstructionKind::VectorLoad { access, .. } => Some(access),
+            _ => None,
+        })
+        .expect("vector load");
+    load.required_alignment = 8;
+
+    let error = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+        .expect_err("post-verification alignment strengthening must fail");
+    assert!(
+        error.message.contains("changed after verification"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn fact_audit_vector_missing_no_failure_proof_should_withhold_the_artifact() {
+    let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
+    let mut module = vector_module(&target);
+    let KirInstructionKind::VectorBinary {
+        semantics,
+        no_failure_proof,
+        ..
+    } = &mut module.functions[0].blocks[0].instructions[2].kind
+    else {
+        unreachable!()
+    };
+    *semantics = KirArithmeticSemantics::Checked;
+    *no_failure_proof = Some(ProofId::from_index(999));
+
+    let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O0, None);
+    assert!(result.artifact.is_none());
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|message| message.contains("missing vector no-failure proof")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn fact_audit_stale_vector_profile_should_fail_before_llvm_optimization() {
+    let context = NativeContext::new().expect("context");
+    let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
+    let mut result = run_kir_pass_pipeline(vector_module(&target), KirOptimizationLevel::O0, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let native_target = NativeTarget::host_with_cpu(NativeCpu::Native).expect("native target");
+    result
+        .artifact
+        .as_mut()
+        .expect("verified vector artifact")
+        .profile = native_target
+        .kir_profile(KirConsumer::NativeLibrary)
+        .expect("native target profile");
+
+    let error = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+        .expect_err("stale exact target profile must fail");
+    assert!(error.message.contains("does not match"), "{error:?}");
+}
+
+#[test]
+fn fact_audit_unprofiled_vector_operation_should_fail_before_llvm_optimization() {
+    let context = NativeContext::new().expect("context");
+    let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
+    let mut result = run_kir_pass_pipeline(vector_module(&target), KirOptimizationLevel::O0, None);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result
+        .artifact
+        .as_mut()
+        .expect("verified vector artifact")
+        .profile = KirTargetProfile::for_consumer(KirConsumer::NativeLibrary);
+
+    let error = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+        .expect_err("vector operation without an exact profile must fail");
+    assert!(
+        error.message.contains("changed after verification"),
+        "{error:?}"
+    );
 }

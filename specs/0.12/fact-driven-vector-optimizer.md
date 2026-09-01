@@ -171,6 +171,11 @@ not by omitting the key. Masks use the same four lane-count candidates. This
 probe universe is a schema limit, not a promise that every target supports every
 width.
 
+Because 'Mask { lanes }' deliberately has no scalar lane type, mask-only
+operation costs use the 'i32' lane tag as a canonical schema sentinel. Every
+non-sentinel 'MaskNot' key is 'Unavailable'; the bridge queries legalization and
+cost against the actual fixed 'i1' mask type rather than an 'i32' vector.
+
 Every entry also records LLVM's type-legalization part count and legalized type
 identity. An invalid part count or scalarized/unsupported legalized form makes
 the operation unavailable. The TTI operation cost already models its lowering,
@@ -206,15 +211,17 @@ and exact modular integer reduction. Vector binary operations are the existing
 'Add', 'Sub', 'Mul', 'Div', and 'Mod' operations, restricted by the source type,
 arithmetic semantics, and target profile. In particular, f64 'Mod' remains
 invalid, and integer 'Div'/'Mod' requires both a no-failure proof and an
-explicitly legal target operation. Vector unary 'Neg' follows the existing
+explicitly legal target operation. Every checked integer vector binary and
+checked integer vector negate also carries a no-failure proof; an infallible or
+strict-float operation cannot carry one. Vector unary 'Neg' follows the existing
 numeric semantics; logical mask 'Not' is the only mask unary operation and can
 represent source bool negation after comparison. It does not create a vector
-bool lane type. Supported vector casts are exactly the existing i32-to-f64 and
-u32-to-f64 casts. Each vector memory operation records its region, Memory SSA
-input/output, lane type/count, byte footprint, known alignment, and required
-alignment. There is no gather, scatter, masked memory, vector call, or shuffle
-in 0.12. SLP permits only source-order identity packing and emits no lane
-permutation.
+bool lane type or carry a no-failure proof. Supported vector casts are exactly
+the existing i32-to-f64 and u32-to-f64 casts. Each vector memory operation
+records its region, Memory SSA input/output, lane type/count, byte footprint,
+known alignment, and required alignment. There is no gather, scatter, masked
+memory, vector call, or shuffle in 0.12. SLP permits only source-order identity
+packing and emits no lane permutation.
 
 A vector load/store footprint is exactly the union of the scalar bytes mapped
 to its lanes. Neither KIR nor Native lowering may widen it across a slice end,
@@ -346,6 +353,24 @@ the monotonic attempt sequence, accepted/rejected counters, stable explanations,
 and budget fallbacks. Audit state is append/debit only and never rolls back with
 KIR.
 
+Verification and analysis caches may reduce latency only under exact structural
+identities. An immutable target profile memoizes its complete validation result;
+copy-on-write mutation clears that result. After a changed pass, every changed
+function is fully revalidated, exact unchanged functions reuse their prior
+structural verdict, and module-wide function/block/instruction/value/region/
+memory identity uniqueness plus the complete fact/proof/rewrite verifier still
+run. Dominance reuse is keyed only by the ordered block/successor CFG on which
+dominance depends and re-debits the identical deterministic analysis budget.
+Discovery-only loop descriptors may omit the cryptographic CFG digest, but any
+materialized proposal or certificate recomputes the full digest. If discovery
+proves that specialization, vector/SLP, and unroll candidate sets are empty, the
+pass manager records verified no-op stages without allocating a speculative
+program-state copy. A no-op frontier may reuse the preceding discovery-only loop
+descriptors only while no intervening pass changes induction structure and each
+cached descriptor set retains the exact function identity; otherwise it
+recomputes the analysis. None of these rules changes a candidate, checker,
+budget, cost, profitability, or benchmark threshold.
+
 Proposal and checker steps debit the outer audit ledger as they execute; a
 rejection, reused specialization, or non-winning frontier candidate receives no
 refund. Audit records identify a candidate by its pre-transaction source/KIR
@@ -411,6 +436,14 @@ The initial SLP set supports splats, lane-wise arithmetic, comparisons, casts,
 selects, and contiguous load/store. It does not perform speculative predication,
 arbitrary shuffle synthesis, horizontal f64 operations, or partial vector
 calls. A rejected pack leaves all scalar instructions unchanged.
+
+Overlapping residual SLP alternatives with the same function, block, and root
+are proposed and independently checked from one immutable pre-state in stable
+ascending key order. The winner is the valid alternative with the greatest
+absolute modeled cost reduction, then lower transformed cost, smaller code
+shape, and stable key. Every other valid alternative is charged and recorded as
+a non-winner; exactly one winner may commit. This prevents an earlier narrow
+pack from destroying a more profitable wider pack.
 
 ## Controlled unrolling
 
@@ -693,7 +726,11 @@ uses three warm-up rows and twenty sample rows; row r rotates the three channels
 by 'r % 3'. All channels run in one process on identical inputs with the same
 seven calls per sample, fixed batch identity, and upper-median statistic. Every
 actual order and sample is recorded. The generic domain-fact gate substitutes
-the pinned generic Clang and Rust artifacts for the hand-SIMD artifacts.
+the pinned generic Clang and Rust artifacts for the hand-SIMD artifacts. Each
+dynamic library is opened and its typed kernel entry is resolved exactly once
+before correctness, warm-up, or sampled batches. The timed batch performs only
+calls through that cached entry; dynamic symbol lookup and per-call string
+dispatch are outside the timing region.
 
 The release gates are cumulative:
 

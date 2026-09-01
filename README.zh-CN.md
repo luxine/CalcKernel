@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-Rust CalcKernel 0.11.0 发布 `native ckc`：一个可自包含运行的 CK computation-kernel
+Rust CalcKernel 0.12.0 发布 `native ckc`：一个可自包含运行的 CK computation-kernel
 语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
 仓库同时保留可检查的 C 与 WebAssembly emitter。
 
@@ -18,6 +18,9 @@ Rust CalcKernel 0.11.0 发布 `native ckc`：一个可自包含运行的 CK comp
 - 内嵌 LLVM 22.1.8 codegen 和进程内 LLD 的
   `ckc build --kind executable|dynamic|static|object`。
 - Object/static/dynamic library 共用 generated-header Native C ABI。
+- 基于 target profile、由独立 checker 验证的 O3 optimizer，支持 transactional
+  specialization、受控 unroll、SLP、Loop SIMD、runtime alias versioning、strict-f64
+  vector 与精确 modular integer reduction。
 - Source-only C 与 portable WAT/WASM 输出。
 - 面向 macOS、Linux、Windows 的 AArch64/x86-64 六个零工具链 release archive。
 
@@ -28,7 +31,8 @@ WebAssembly root 可达的 print 会被拒绝。
 ## Pipeline
 
 ```text
-.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR
+.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR v2
+                                 -> target-profiled transactional optimizer
                                       +-> C source/header
                                       +-> WAT/WASM
                                       +-> structural LLVM -> object
@@ -45,6 +49,8 @@ WebAssembly root 可达的 print 会被拒绝。
 ckc --version --verbose
 ckc check examples/core/scalar.ck
 ckc emit-kir examples/core/scalar.ck --print-facts
+ckc emit-kir examples/core/scalar.ck --emit-kir-consumer native-library \
+  --cpu baseline --explain-optimization
 ckc run examples/native/hello.ck
 ckc build examples/native/hello.ck --kind executable --out /tmp/hello
 ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
@@ -100,11 +106,14 @@ cargo build --release --features native-toolchain --locked
 Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
 发布见 [release policy](docs/zh-CN/project/release.md)。
 
-CalcKernel 0.11.0 保持 public Native C ABI version 1；private LLVM bridge 与
-contract-aware runtime ABI 更新为 version 2。Native cache 使用 KIR v1 code-generation
-identity，因此不会与 0.10 cache entry 混用。
-已接受的 0.10.0 source boundary 与 migration 保留在
+CalcKernel 0.12.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
+LLVM bridge 为 ABI 3，KIR 使用 `kir-v2` identity，Native object cache 使用
+`CKCOBJ02` 及 key/manifest schema 3。旧 0.11 cache entry 会 fail closed，不会与 0.12
+artifact 混用。已接受的 0.11.0 与 0.10.0 source boundary 保留在
 [兼容性策略](docs/zh-CN/project/compatibility.md)中。
+
+PGO remains 0.13。Runtime multiversioning 留到 0.13。Auto-Tuning remains 0.14；0.12 不宣称这些未来
+optimization 已实现。
 
 ## 内存边界
 

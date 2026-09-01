@@ -7,3 +7,5 @@ mod bench;
 mod oracle_fixtures;
 #[path = "performance/runtime_replay.rs"]
 mod runtime_replay;
+#[path = "performance/vector_oracles.rs"]
+mod vector_oracles;

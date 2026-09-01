@@ -2,9 +2,10 @@ use std::{fs, path::Path, process::Command};
 
 use calckernel::{
     EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
-    KirOverflowMode, KirSanitizerMode, NativeContext, NativeOptimizationLevel, NativeTarget,
-    SourceFile, build_kir_module, check, emit_c_kir_module_with_contracts, import_contract_facts,
-    link_native_dynamic_library, lower_native_kir_module, lower_to_mir, run_kir_pass_pipeline,
+    KirOverflowMode, KirSanitizerMode, NativeContext, NativeCpu, NativeOptimizationLevel,
+    NativeTarget, SourceFile, build_kir_module, build_kir_module_with_profile, check,
+    emit_c_kir_module_with_contracts, import_contract_facts, link_native_dynamic_library,
+    lower_native_kir_module, lower_to_mir, run_kir_pass_pipeline,
 };
 
 use crate::generated::{GeneratedKernelCase, fixed_seed_kernel_program};
@@ -33,6 +34,72 @@ export fn checked_order(items: slice<i64>, index: u32, value: i64) -> i64 {
   return items[index] + value;
 }
 export fn quotient(value: i64, divisor: i64) -> i64 { return value / divisor; }
+"#;
+
+const VECTOR_SOURCE: &str = r#"
+export unsafe fn map_u32(a: slice<u32>, b: slice<u32>, n: u32) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] + 7; i = i + 1; }
+}
+
+export fn copy_unknown(a: slice<u32>, b: slice<u32>, n: u32) -> void {
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] + 1; i = i + 1; }
+}
+
+export unsafe fn map_f64(a: slice<f64>, b: slice<f64>, n: u32, factor: f64) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] * factor; i = i + 1; }
+}
+
+export unsafe fn map_f64_div(
+  a: slice<f64>, b: slice<f64>, n: u32, divisor: f64
+) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = -a[i] / divisor; i = i + 1; }
+}
+
+export unsafe fn map_cast(a: slice<u32>, b: slice<f64>, n: u32) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = u32_to_f64(a[i]); i = i + 1; }
+}
+
+export unsafe fn map_diamond(
+  a: slice<u32>, b: slice<u32>, n: u32, pivot: u32
+) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n {
+    let x: u32 = a[i];
+    let selected: u32 = 0;
+    if x < pivot { selected = x + 1; } else { selected = x - 1; }
+    b[i] = selected;
+    i = i + 1;
+  }
+}
+
+export fn sum_u32(a: slice<u32>, n: u32) -> u32 {
+  let i: u32 = 0;
+  let total: u32 = 0;
+  while i < n { total = total + a[i]; i = i + 1; }
+  return total;
+}
+
+export fn product_u32(a: slice<u32>, n: u32) -> u32 {
+  let i: u32 = 0;
+  let total: u32 = 1;
+  while i < n { total = total * a[i]; i = i + 1; }
+  return total;
+}
 "#;
 
 #[repr(C)]
@@ -262,6 +329,318 @@ fn generated_native_kernels_should_match_o0_at_o1_through_o3_in_every_supported_
     }
 
     fs::remove_dir_all(root).expect("remove generated differential directory");
+}
+
+#[test]
+fn differential_vector_loop_should_match_o0_for_zero_short_exact_remainder_and_overlap_fallback() {
+    let root = std::env::temp_dir().join(format!(
+        "ckc-native-vector-differential-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir(&root).expect("create vector differential directory");
+    let o0_path = compile_vector_library(
+        &root,
+        KirOptimizationLevel::O0,
+        NativeOptimizationLevel::O0,
+        "o0",
+    );
+    let o3_path = compile_vector_library(
+        &root,
+        KirOptimizationLevel::O3,
+        NativeOptimizationLevel::O3,
+        "o3",
+    );
+    let o0 = DynamicLibrary::open(&o0_path);
+    let o3 = DynamicLibrary::open(&o3_path);
+    type Map = unsafe extern "C" fn(*mut u32, u32, *mut u32, u32, u32);
+    for len in [0_u32, 3, 8, 9, 16, 19, 31] {
+        let input = std::array::from_fn::<_, 32, _>(|index| {
+            u32::try_from(index)
+                .unwrap()
+                .wrapping_mul(17)
+                .wrapping_add(5)
+        });
+        let mut baseline = [0_u32; 32];
+        let mut vector = [0_u32; 32];
+        let baseline_map: Map = unsafe { o0.symbol("map_u32") };
+        let vector_map: Map = unsafe { o3.symbol("map_u32") };
+        unsafe {
+            baseline_map(
+                input.as_ptr().cast_mut(),
+                input.len() as u32,
+                baseline.as_mut_ptr(),
+                baseline.len() as u32,
+                len,
+            );
+            vector_map(
+                input.as_ptr().cast_mut(),
+                input.len() as u32,
+                vector.as_mut_ptr(),
+                vector.len() as u32,
+                len,
+            );
+        }
+        assert_eq!(vector, baseline, "len={len}");
+        for index in 0..usize::try_from(len).unwrap() {
+            assert_eq!(vector[index], input[index].wrapping_add(7), "len={len}");
+        }
+    }
+
+    let mut baseline_overlap = std::array::from_fn::<_, 16, _>(|index| index as u32 + 1);
+    let mut vector_overlap = baseline_overlap;
+    let baseline_copy: Map = unsafe { o0.symbol("copy_unknown") };
+    let vector_copy: Map = unsafe { o3.symbol("copy_unknown") };
+    let disjoint_input = std::array::from_fn::<_, 16, _>(|index| index as u32 + 11);
+    let mut baseline_disjoint = [0_u32; 16];
+    let mut vector_disjoint = [0_u32; 16];
+    unsafe {
+        baseline_copy(
+            disjoint_input.as_ptr().cast_mut(),
+            16,
+            baseline_disjoint.as_mut_ptr(),
+            16,
+            16,
+        );
+        vector_copy(
+            disjoint_input.as_ptr().cast_mut(),
+            16,
+            vector_disjoint.as_mut_ptr(),
+            16,
+            16,
+        );
+    }
+    assert_eq!(vector_disjoint, baseline_disjoint);
+    unsafe {
+        baseline_copy(
+            baseline_overlap.as_mut_ptr(),
+            15,
+            baseline_overlap.as_mut_ptr().add(1),
+            15,
+            12,
+        );
+        vector_copy(
+            vector_overlap.as_mut_ptr(),
+            15,
+            vector_overlap.as_mut_ptr().add(1),
+            15,
+            12,
+        );
+    }
+    assert_eq!(vector_overlap, baseline_overlap);
+
+    type MapF64 = unsafe extern "C" fn(*mut f64, u32, *mut f64, u32, u32, f64);
+    let baseline_f64: MapF64 = unsafe { o0.symbol("map_f64") };
+    let vector_f64: MapF64 = unsafe { o3.symbol("map_f64") };
+    let baseline_f64_div: MapF64 = unsafe { o0.symbol("map_f64_div") };
+    let vector_f64_div: MapF64 = unsafe { o3.symbol("map_f64_div") };
+    for len in [0_u32, 3, 4, 5, 16, 19, 31] {
+        let input = std::array::from_fn::<_, 32, _>(|index| index as f64 * 0.25 - 2.75);
+        let mut baseline = [0.0_f64; 32];
+        let mut vector = [0.0_f64; 32];
+        unsafe {
+            baseline_f64(
+                input.as_ptr().cast_mut(),
+                32,
+                baseline.as_mut_ptr(),
+                32,
+                len,
+                1.75,
+            );
+            vector_f64(
+                input.as_ptr().cast_mut(),
+                32,
+                vector.as_mut_ptr(),
+                32,
+                len,
+                1.75,
+            );
+        }
+        assert_eq!(
+            vector.map(f64::to_bits),
+            baseline.map(f64::to_bits),
+            "strict f64 len={len}"
+        );
+        let mut baseline_div = [0.0_f64; 32];
+        let mut vector_div = [0.0_f64; 32];
+        unsafe {
+            baseline_f64_div(
+                input.as_ptr().cast_mut(),
+                32,
+                baseline_div.as_mut_ptr(),
+                32,
+                len,
+                1.75,
+            );
+            vector_f64_div(
+                input.as_ptr().cast_mut(),
+                32,
+                vector_div.as_mut_ptr(),
+                32,
+                len,
+                1.75,
+            );
+        }
+        assert_eq!(
+            vector_div.map(f64::to_bits),
+            baseline_div.map(f64::to_bits),
+            "strict f64 unary/divide len={len}"
+        );
+    }
+
+    type MapCast = unsafe extern "C" fn(*mut u32, u32, *mut f64, u32, u32);
+    let baseline_cast: MapCast = unsafe { o0.symbol("map_cast") };
+    let vector_cast: MapCast = unsafe { o3.symbol("map_cast") };
+    type MapDiamond = unsafe extern "C" fn(*mut u32, u32, *mut u32, u32, u32, u32);
+    let baseline_diamond: MapDiamond = unsafe { o0.symbol("map_diamond") };
+    let vector_diamond: MapDiamond = unsafe { o3.symbol("map_diamond") };
+    for len in [0_u32, 3, 8, 9, 16, 19, 31] {
+        let input = std::array::from_fn::<_, 32, _>(|index| {
+            u32::try_from(index)
+                .unwrap()
+                .wrapping_mul(17)
+                .wrapping_add(5)
+        });
+        let mut baseline_cast_output = [0.0_f64; 32];
+        let mut vector_cast_output = [0.0_f64; 32];
+        let mut baseline_diamond_output = [0_u32; 32];
+        let mut vector_diamond_output = [0_u32; 32];
+        unsafe {
+            baseline_cast(
+                input.as_ptr().cast_mut(),
+                32,
+                baseline_cast_output.as_mut_ptr(),
+                32,
+                len,
+            );
+            vector_cast(
+                input.as_ptr().cast_mut(),
+                32,
+                vector_cast_output.as_mut_ptr(),
+                32,
+                len,
+            );
+            baseline_diamond(
+                input.as_ptr().cast_mut(),
+                32,
+                baseline_diamond_output.as_mut_ptr(),
+                32,
+                len,
+                200,
+            );
+            vector_diamond(
+                input.as_ptr().cast_mut(),
+                32,
+                vector_diamond_output.as_mut_ptr(),
+                32,
+                len,
+                200,
+            );
+        }
+        assert_eq!(
+            vector_cast_output.map(f64::to_bits),
+            baseline_cast_output.map(f64::to_bits),
+            "cast len={len}"
+        );
+        assert_eq!(
+            vector_diamond_output, baseline_diamond_output,
+            "diamond len={len}"
+        );
+    }
+
+    type Reduce = unsafe extern "C" fn(*mut u32, u32, u32) -> u32;
+    let baseline_sum: Reduce = unsafe { o0.symbol("sum_u32") };
+    let vector_sum: Reduce = unsafe { o3.symbol("sum_u32") };
+    let baseline_product: Reduce = unsafe { o0.symbol("product_u32") };
+    let vector_product: Reduce = unsafe { o3.symbol("product_u32") };
+    let reduction_input = std::array::from_fn::<_, 32, _>(|index| {
+        u32::try_from(index)
+            .unwrap()
+            .wrapping_mul(3)
+            .wrapping_add(1)
+    });
+    for len in [0_u32, 3, 8, 9, 16, 19, 31] {
+        let baseline_sum_value =
+            unsafe { baseline_sum(reduction_input.as_ptr().cast_mut(), 32, len) };
+        let vector_sum_value = unsafe { vector_sum(reduction_input.as_ptr().cast_mut(), 32, len) };
+        assert_eq!(vector_sum_value, baseline_sum_value, "sum len={len}");
+        let baseline_product_value =
+            unsafe { baseline_product(reduction_input.as_ptr().cast_mut(), 32, len) };
+        let vector_product_value =
+            unsafe { vector_product(reduction_input.as_ptr().cast_mut(), 32, len) };
+        assert_eq!(
+            vector_product_value, baseline_product_value,
+            "product len={len}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove vector differential directory");
+}
+
+fn compile_vector_library(
+    root: &Path,
+    kir_level: KirOptimizationLevel,
+    native_level: NativeOptimizationLevel,
+    name: &str,
+) -> std::path::PathBuf {
+    let checked = check(&SourceFile::new("vector-differential.ck", VECTOR_SOURCE));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("vector differential MIR");
+    let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
+    let profile = target
+        .kir_profile(KirConsumer::NativeLibrary)
+        .expect("vector target profile");
+    let kir = build_kir_module_with_profile(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+        profile,
+    )
+    .expect("vector differential KIR");
+    let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
+        .expect("vector differential facts");
+    let result = run_kir_pass_pipeline(kir, kir_level, Some(&contracts));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    if kir_level == KirOptimizationLevel::O3 {
+        assert_eq!(
+            result.stats.vectorized_loops, 8,
+            "{:?}",
+            result.analysis_fallbacks
+        );
+    }
+    let context = NativeContext::new().expect("native context");
+    let optimized =
+        lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+            .expect("lower vector differential")
+            .verify()
+            .expect("verify vector differential")
+            .audit()
+            .expect("audit vector differential")
+            .optimize(&target, native_level)
+            .expect("optimize vector differential");
+    let object = target
+        .emit_object(optimized)
+        .expect("emit vector differential object");
+    let library = link_native_dynamic_library(
+        &object,
+        &[
+            "map_u32".to_string(),
+            "copy_unknown".to_string(),
+            "map_f64".to_string(),
+            "map_f64_div".to_string(),
+            "map_cast".to_string(),
+            "map_diamond".to_string(),
+            "sum_u32".to_string(),
+            "product_u32".to_string(),
+        ],
+    )
+    .expect("link vector differential library");
+    let path = root.join(format!("vector-{name}{}", dynamic_suffix()));
+    fs::write(&path, library.as_bytes()).expect("write vector differential library");
+    path
 }
 
 unsafe fn observe_generated(

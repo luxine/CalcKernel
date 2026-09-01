@@ -1,9 +1,9 @@
 use num_bigint::BigInt;
 
 use crate::{
-    FactId, InstructionId, KirArithmeticSemantics, KirCheckConditionKind, KirFunction,
-    KirInstruction, KirInstructionKind, KirModule, KirTerminator, MirBinaryOp, MirUnaryOp, ProofId,
-    ValueId, compute_kir_dominators,
+    BlockId, FactId, InstructionId, KirArithmeticSemantics, KirCheckConditionKind, KirFunction,
+    KirInstruction, KirInstructionKind, KirModule, KirTerminator, LoopId, MirBinaryOp,
+    MirCompareOp, MirUnaryOp, ProofId, ValueId, compute_kir_dominators,
 };
 
 use super::{
@@ -340,6 +340,12 @@ enum CheckedStep {
     Boolean(ValueId, bool, ScalarProofScope),
     GuardSafety,
     InductionEquality,
+    CanonicalLoop {
+        loop_id: LoopId,
+        header: BlockId,
+        blocks: Vec<BlockId>,
+    },
+    LoopTripCount,
 }
 
 #[derive(Debug, Clone)]
@@ -642,7 +648,9 @@ fn check_step(
                 .position(|param| {
                     param.value == *value
                         && param.type_node
-                            == crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+                            == crate::KirValueType::Scalar(crate::MirType::Primitive(
+                                crate::MirPrimitiveTypeName::Bool,
+                            ))
                 })
                 .ok_or_else(|| prefix("boolean phi parameter is missing or not bool"))?;
             let edges = predecessor_edges(function, *block);
@@ -729,6 +737,63 @@ fn check_step(
                 ));
             }
             Ok(CheckedStep::InductionEquality)
+        }
+        ProofStep::CanonicalLoop {
+            loop_id,
+            cfg_digest,
+            header,
+            preheader,
+            latch,
+            blocks,
+            exits,
+        } => {
+            if proof.use_site.block != *header
+                || !canonical_loop_claim_matches(
+                    function, *loop_id, cfg_digest, *header, *preheader, *latch, blocks, exits,
+                )
+            {
+                return Err(prefix(
+                    "canonical loop claim does not match the current CFG",
+                ));
+            }
+            Ok(CheckedStep::CanonicalLoop {
+                loop_id: *loop_id,
+                header: *header,
+                blocks: blocks.clone(),
+            })
+        }
+        ProofStep::LoopTripCount {
+            canonical_loop,
+            induction,
+            start,
+            step,
+            bound,
+            comparison,
+            iterations,
+        } => {
+            let Some(CheckedStep::CanonicalLoop {
+                loop_id,
+                header,
+                blocks,
+            }) = checked.get(canonical_loop.index() as usize)
+            else {
+                return Err(prefix("trip count premise is not a canonical loop"));
+            };
+            if !loop_trip_count_claim_matches(
+                function,
+                *loop_id,
+                *header,
+                blocks,
+                *induction,
+                start,
+                step,
+                *bound,
+                *comparison,
+                *iterations,
+            ) {
+                return Err(prefix("trip count claim does not match the canonical loop"));
+            }
+            Ok(CheckedStep::LoopTripCount)
         }
         ProofStep::GuardSafety {
             condition_instruction,
@@ -844,7 +909,9 @@ fn checked_scalar<'a>(
             CheckedStep::Fact(..)
             | CheckedStep::Boolean(..)
             | CheckedStep::GuardSafety
-            | CheckedStep::InductionEquality,
+            | CheckedStep::InductionEquality
+            | CheckedStep::CanonicalLoop { .. }
+            | CheckedStep::LoopTripCount,
         ) => Err(prefix("step dependency is not a scalar claim")),
         None => Err(prefix("step dependency is missing")),
     }
@@ -958,7 +1025,7 @@ fn guard_safety_matches(
             let Some(type_node) = instruction
                 .results
                 .first()
-                .and_then(|result| super::IntegerType::from_mir(&result.type_node))
+                .and_then(|result| super::IntegerType::from_kir(&result.type_node))
             else {
                 return false;
             };
@@ -979,7 +1046,7 @@ fn guard_safety_matches(
             let Some(type_node) = instruction
                 .results
                 .first()
-                .and_then(|result| super::IntegerType::from_mir(&result.type_node))
+                .and_then(|result| super::IntegerType::from_kir(&result.type_node))
             else {
                 return false;
             };
@@ -1435,22 +1502,25 @@ pub(crate) fn verify_ssa_forwarding(
         function
             .params
             .iter()
-            .map(|param| (param.value, &param.type_node))
-            .chain(function.blocks.iter().flat_map(|block| {
-                block
-                    .params
+            .find(|param| param.value == value)
+            .map(|param| crate::KirValueType::Scalar(param.type_node.clone()))
+            .or_else(|| {
+                function
+                    .blocks
                     .iter()
-                    .map(|param| (param.value, &param.type_node))
-            }))
-            .chain(function.blocks.iter().flat_map(|block| {
-                block.instructions.iter().flat_map(|instruction| {
-                    instruction
-                        .results
-                        .iter()
-                        .map(|result| (result.value, &result.type_node))
-                })
-            }))
-            .find_map(|(candidate, ty)| (candidate == value).then_some(ty))
+                    .flat_map(|block| &block.params)
+                    .find(|param| param.value == value)
+                    .map(|param| param.type_node.clone())
+            })
+            .or_else(|| {
+                function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .flat_map(|instruction| &instruction.results)
+                    .find(|result| result.value == value)
+                    .map(|result| result.type_node.clone())
+            })
     };
     type_of(value).is_some()
         && type_of(value) == type_of(source)
@@ -1476,7 +1546,7 @@ fn constant_matches_claim(instruction: &KirInstruction, claim: &ScalarClaim) -> 
         return false;
     };
     let (Some(type_node), Ok(value)) = (
-        super::IntegerType::from_mir(&result.type_node),
+        super::IntegerType::from_kir(&result.type_node),
         value.parse::<BigInt>(),
     ) else {
         return false;
@@ -1517,7 +1587,7 @@ fn binary_transfer_matches(
     let Some(result) = instruction.results.first() else {
         return false;
     };
-    let Some(type_node) = super::IntegerType::from_mir(&result.type_node) else {
+    let Some(type_node) = super::IntegerType::from_kir(&result.type_node) else {
         return false;
     };
     if left.value != expected_left || right.value != expected_right || claim.value != result.value {
@@ -1557,7 +1627,10 @@ fn boolean_transfer_matches(
         return false;
     };
     if result.value != value
-        || result.type_node != crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+        || result.type_node
+            != crate::KirValueType::Scalar(crate::MirType::Primitive(
+                crate::MirPrimitiveTypeName::Bool,
+            ))
         || instruction.effect.is_some()
         || instruction.memory.is_some()
     {
@@ -1600,7 +1673,7 @@ fn copy_transfer_matches(
     let [result] = instruction.results.as_slice() else {
         return false;
     };
-    let Some(ty) = super::IntegerType::from_mir(&result.type_node) else {
+    let Some(ty) = super::IntegerType::from_kir(&result.type_node) else {
         return false;
     };
     value == input.value
@@ -1630,7 +1703,7 @@ fn phi_join_matches(
     else {
         return false;
     };
-    let Some(ty) = super::IntegerType::from_mir(&block.params[index].type_node) else {
+    let Some(ty) = super::IntegerType::from_kir(&block.params[index].type_node) else {
         return false;
     };
     let edges = predecessor_edges(function, block.id);
@@ -1681,7 +1754,10 @@ fn integer_comparison_matches(
         return false;
     };
     if result.value != value
-        || result.type_node != crate::MirType::Primitive(crate::MirPrimitiveTypeName::Bool)
+        || result.type_node
+            != crate::KirValueType::Scalar(crate::MirType::Primitive(
+                crate::MirPrimitiveTypeName::Bool,
+            ))
         || left.value != left_id
         || right.value != right_id
         || value_integer_type(function, right_id) != Some(ty)
@@ -1874,7 +1950,7 @@ fn loop_invariant_matches(
         .filter(|(predecessor, _)| dominators.dominates(header, *predecessor))
         .collect::<Vec<_>>();
     if backedges.is_empty()
-        || super::IntegerType::from_mir(&result.type_node) != Some(type_node)
+        || super::IntegerType::from_kir(&result.type_node) != Some(type_node)
         || backedges
             .iter()
             .any(|(_, edge)| edge.args.get(phi_index) != Some(&result.value))
@@ -2069,6 +2145,287 @@ fn induction_equality_matches(
     expected_definitions.into_iter().collect::<Vec<_>>() == definitions
 }
 
+#[allow(clippy::too_many_arguments)]
+fn canonical_loop_claim_matches(
+    function: &KirFunction,
+    loop_id: LoopId,
+    cfg_digest: &str,
+    header: BlockId,
+    preheader: BlockId,
+    latch: BlockId,
+    blocks: &[BlockId],
+    exits: &[BlockId],
+) -> bool {
+    if cfg_digest != super::loop_cfg_digest(function)
+        || blocks.is_empty()
+        || !blocks.windows(2).all(|pair| pair[0] < pair[1])
+        || !exits.windows(2).all(|pair| pair[0] < pair[1])
+    {
+        return false;
+    }
+    let block_set = blocks
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if !block_set.contains(&header) || !block_set.contains(&latch) || block_set.contains(&preheader)
+    {
+        return false;
+    }
+    let Some(preheader_block) = function.blocks.iter().find(|block| block.id == preheader) else {
+        return false;
+    };
+    let Some(latch_block) = function.blocks.iter().find(|block| block.id == latch) else {
+        return false;
+    };
+    if !matches!(&preheader_block.terminator, KirTerminator::Jump { edge } if edge.target == header)
+        || !matches!(&latch_block.terminator, KirTerminator::Jump { edge } if edge.target == header)
+    {
+        return false;
+    }
+    let incoming = predecessor_edges(function, header);
+    if incoming
+        .iter()
+        .filter(|(source, _)| !block_set.contains(source))
+        .map(|(source, _)| *source)
+        .collect::<Vec<_>>()
+        != [preheader]
+        || incoming
+            .iter()
+            .filter(|(source, _)| block_set.contains(source))
+            .map(|(source, _)| *source)
+            .collect::<Vec<_>>()
+            != [latch]
+    {
+        return false;
+    }
+    let dominators = compute_kir_dominators(function);
+    if blocks
+        .iter()
+        .any(|block| !dominators.dominates(header, *block))
+    {
+        return false;
+    }
+    let mut rebuilt = std::collections::BTreeSet::from([header, latch]);
+    let mut pending = vec![latch];
+    while let Some(block) = pending.pop() {
+        if block == header {
+            continue;
+        }
+        for (predecessor, _) in predecessor_edges(function, block) {
+            if rebuilt.insert(predecessor) && predecessor != header {
+                pending.push(predecessor);
+            }
+        }
+    }
+    if rebuilt != block_set {
+        return false;
+    }
+    let rebuilt_exits = blocks
+        .iter()
+        .flat_map(|block| {
+            function
+                .blocks
+                .iter()
+                .find(|candidate| candidate.id == *block)
+                .into_iter()
+                .flat_map(|block| successor_ids_for_proof(&block.terminator))
+        })
+        .filter(|target| !block_set.contains(target))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if rebuilt_exits != exits
+        || exits.iter().any(|exit| {
+            predecessor_edges(function, *exit)
+                .iter()
+                .any(|(source, _)| !block_set.contains(source))
+        })
+    {
+        return false;
+    }
+    let mut headers = function
+        .blocks
+        .iter()
+        .flat_map(|block| {
+            successor_ids_for_proof(&block.terminator)
+                .into_iter()
+                .filter(|target| dominators.dominates(*target, block.id))
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    headers.sort_unstable();
+    headers.get(loop_id.index() as usize) == Some(&header)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn loop_trip_count_claim_matches(
+    function: &KirFunction,
+    _loop_id: LoopId,
+    header: BlockId,
+    blocks: &[BlockId],
+    induction: ValueId,
+    start: &str,
+    step: &str,
+    bound: ValueId,
+    comparison: MirCompareOp,
+    iterations: u64,
+) -> bool {
+    let (Ok(start), Ok(step)) = (start.parse::<BigInt>(), step.parse::<BigInt>()) else {
+        return false;
+    };
+    if !((comparison == MirCompareOp::Lt && step == BigInt::from(1))
+        || (comparison == MirCompareOp::Gt && step == BigInt::from(-1)))
+    {
+        return false;
+    }
+    let Some(header_block) = function.blocks.iter().find(|block| block.id == header) else {
+        return false;
+    };
+    let Some(index) = header_block
+        .params
+        .iter()
+        .position(|param| param.value == induction)
+    else {
+        return false;
+    };
+    let KirTerminator::Branch { condition, .. } = header_block.terminator else {
+        return false;
+    };
+    let Some(condition) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction.results.first().map(|result| result.value) == Some(condition)
+        })
+    else {
+        return false;
+    };
+    let KirInstructionKind::Compare { op, left, right } = condition.kind else {
+        return false;
+    };
+    let (actual_comparison, actual_bound) = if left == induction {
+        (op, right)
+    } else if right == induction {
+        (reverse_comparison_for_proof(op), left)
+    } else {
+        return false;
+    };
+    if actual_comparison != comparison || !forwarded_from(function, actual_bound, bound) {
+        return false;
+    }
+    let block_set = blocks
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let incoming = predecessor_edges(function, header);
+    let Some(entry_value) = incoming
+        .iter()
+        .find(|(source, _)| !block_set.contains(source))
+        .and_then(|(_, edge)| edge.args.get(index))
+        .copied()
+    else {
+        return false;
+    };
+    if resolve_constant(function, entry_value).as_ref() != Some(&start) {
+        return false;
+    }
+    let Some(backedge_value) = incoming
+        .iter()
+        .find(|(source, _)| block_set.contains(source))
+        .and_then(|(_, edge)| edge.args.get(index))
+        .copied()
+    else {
+        return false;
+    };
+    let Some(leaves) = forwarding_leaves(function, backedge_value, None) else {
+        return false;
+    };
+    if leaves.is_empty()
+        || leaves.iter().any(|value| {
+            let Some(instruction) = defining_instruction_for_proof(function, *value) else {
+                return true;
+            };
+            let KirInstructionKind::Binary {
+                op, left, right, ..
+            } = instruction.kind
+            else {
+                return true;
+            };
+            let amount = if forwarded_from(function, left, induction) {
+                resolve_constant(function, right).map(|amount| match op {
+                    MirBinaryOp::Add => amount,
+                    MirBinaryOp::Sub => -amount,
+                    _ => BigInt::from(0),
+                })
+            } else if op == MirBinaryOp::Add && forwarded_from(function, right, induction) {
+                resolve_constant(function, left)
+            } else {
+                None
+            };
+            amount.as_ref() != Some(&step)
+        })
+    {
+        return false;
+    }
+    let Some(bound_value) = resolve_constant(function, bound) else {
+        return false;
+    };
+    let distance = if comparison == MirCompareOp::Lt {
+        bound_value - start
+    } else {
+        start - bound_value
+    };
+    let expected = if distance <= BigInt::from(0) {
+        0
+    } else if let Ok(value) = distance.to_string().parse::<u64>() {
+        value
+    } else {
+        return false;
+    };
+    expected == iterations
+}
+
+fn defining_instruction_for_proof(
+    function: &KirFunction,
+    value: ValueId,
+) -> Option<&KirInstruction> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == value)
+        })
+}
+
+fn successor_ids_for_proof(terminator: &KirTerminator) -> Vec<BlockId> {
+    match terminator {
+        KirTerminator::Return { .. } => Vec::new(),
+        KirTerminator::Jump { edge } => vec![edge.target],
+        KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } => vec![then_edge.target, else_edge.target],
+    }
+}
+
+fn reverse_comparison_for_proof(comparison: MirCompareOp) -> MirCompareOp {
+    match comparison {
+        MirCompareOp::Eq => MirCompareOp::Eq,
+        MirCompareOp::Ne => MirCompareOp::Ne,
+        MirCompareOp::Lt => MirCompareOp::Gt,
+        MirCompareOp::Le => MirCompareOp::Ge,
+        MirCompareOp::Gt => MirCompareOp::Lt,
+        MirCompareOp::Ge => MirCompareOp::Le,
+    }
+}
+
 fn predecessor_edges(
     function: &KirFunction,
     target: crate::BlockId,
@@ -2111,11 +2468,18 @@ fn resolve_constant(function: &KirFunction, value: ValueId) -> Option<BigInt> {
 }
 
 fn value_integer_type(function: &KirFunction, value: ValueId) -> Option<super::IntegerType> {
-    function
+    if let Some(type_node) = function
         .params
         .iter()
-        .map(|param| (param.value, &param.type_node))
-        .chain(function.blocks.iter().flat_map(|block| {
+        .find(|param| param.value == value)
+        .and_then(|param| super::IntegerType::from_mir(&param.type_node))
+    {
+        return Some(type_node);
+    }
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| {
             block
                 .params
                 .iter()
@@ -2126,10 +2490,10 @@ fn value_integer_type(function: &KirFunction, value: ValueId) -> Option<super::I
                         .iter()
                         .map(|result| (result.value, &result.type_node))
                 }))
-        }))
+        })
         .find_map(|(candidate, type_node)| {
             (candidate == value)
-                .then(|| super::IntegerType::from_mir(type_node))
+                .then(|| super::IntegerType::from_kir(type_node))
                 .flatten()
         })
 }

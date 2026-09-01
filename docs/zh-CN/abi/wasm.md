@@ -1,4 +1,4 @@
-# CalcKernel 0.11 WebAssembly ABI
+# CalcKernel 0.12 WebAssembly ABI
 
 [English](../../abi/wasm.md)
 
@@ -21,5 +21,5 @@ multi-value return 保持同一顺序。
 WASM 只接受 `--overflow unchecked` 与 `--bounds unchecked`；任一 checked selection 在
 输出前 rejected，不插入隐式 slice guard 或 trap。C/Native checked status ABI 不属于本 ABI。
 
-WebAssembly 0.11 没有 runtime print；export root 可达的 print 被拒绝。Internal `main`
+WebAssembly 0.12 没有 runtime print；export root 可达的 print 被拒绝。Internal `main`
 不会创建 WASI 或 browser entry。

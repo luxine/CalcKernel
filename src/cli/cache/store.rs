@@ -981,6 +981,10 @@ mod tests {
             bounds_mode: 0,
             kir_contract_version: 1,
             sanitizer_mode: 0,
+            target_profile_digest: "31".repeat(32),
+            vector_cost_model_schema: 1,
+            vector_proof_schema: 1,
+            vector_budget_identity: "vector-budget-schema=1;growth=20".to_string(),
         }
     }
 

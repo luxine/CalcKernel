@@ -22,7 +22,8 @@ oracle、domain-fact suite、artifact size/source-to-object compile-time gate，
 3. 扩展 replay preparer/loader RED：exact commit `80c0acf...`、真实 `ckc 0.11.0`、LLVM/target/
    recipe/source/adapter/artifact bytes+SHA；symlink/path escape/duplicate/mutation 拒绝。
 4. 写 rotating-3 RED：candidate/C SIMD/Rust SIMD，checked/unchecked 分开；generic domain gate 用
-   pinned generic C/Rust；precondition manifest/differential/UB audit 缺一失败。
+   pinned generic C/Rust；precondition manifest/differential/UB audit 缺一失败；dynamic symbol 与
+   typed signature 在 runner 构造时只解析一次，计时循环不得执行 symbol/string dispatch。
 5. 写 vector/domain threshold RED：每 kernel >=90% faster oracle、geo >=95%，domain geo >5%；
    精确等号边界、一个 invalid competitor、geomean counterexample。
 6. 写 scalar regression RED：相对 actual v0.11 replay geo <=3%、individual <=8%，既有 0.10/
@@ -32,7 +33,11 @@ oracle、domain-fact suite、artifact size/source-to-object compile-time gate，
 8. 写 x86-64/AArch64 corpus 与 C/Rust oracle，实现 map/zip、f64、integer transform、modular
    reduction、SLP、runtime noalias、specialization，memory/compute bound 都有；先 correctness/UB，
    后测时。
-9. 更新 CI 为 quality、native-integration、六 native hosts、两 performance jobs；上传完整 evidence，
+9. 若 optimizer latency gate 失败，只允许优化精确 structural cache、重复 analysis 与
+   candidate-free transaction allocation；changed function、module-global identity、fact/proof/rewrite
+   verification、deterministic budget debit 与 materialized certificate digest 均不得省略。前序
+   loop descriptor 只可在 induction structure 未改变且 function identity 精确匹配时复用。
+10. 更新 CI 为 quality、native-integration、六 native hosts、两 performance jobs；上传完整 evidence，
    不把 diagnostic job 替换 gate。
 
 ## 执行策略

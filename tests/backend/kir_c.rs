@@ -866,3 +866,80 @@ fn kir_c_induction_simplification_should_preserve_wrap_break_and_first_error() {
         }
     }
 }
+
+#[test]
+fn scalar_unroll_c_should_match_o0_for_full_and_partial_exact_remainder() {
+    let source = r#"
+        export fn full() -> u32 {
+          let i: u32 = 0; let total: u32 = 0;
+          while i < 8 { total = total + i; i = i + 1; }
+          return total;
+        }
+        export fn partial() -> u32 {
+          let i: u32 = 0; let total: u32 = 0;
+          while i < 11 { total = total + i; i = i + 1; }
+          return total;
+        }
+    "#;
+    let harness = r#"
+        int main(void) {
+          if (full() != 28) return 1;
+          if (partial() != 55) return 2;
+          return 0;
+        }
+    "#;
+    for level in [KirOptimizationLevel::O0, KirOptimizationLevel::O3] {
+        let kir = optimized_kir(
+            source,
+            level,
+            KirOverflowMode::Unchecked,
+            KirBoundsMode::Unchecked,
+        );
+        assert!(
+            kir.functions
+                .iter()
+                .all(|function| function.vector_regions.is_empty())
+        );
+        compile_and_run(&emit_c_kir_module(&kir).expect("scalar unroll C"), harness);
+    }
+}
+
+#[test]
+fn loop_simd_portable_c_should_remain_scalar_and_match_o0() {
+    let source = r#"
+        export unsafe fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void
+        contract { requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i] + 7; i = i + 1; }
+        }
+    "#;
+    let harness = r#"
+        int main(void) {
+          uint32_t input[16]; uint32_t output[16] = {0};
+          for (uint32_t i = 0; i < 16; ++i) input[i] = i * 3;
+          map(input, 16, output, 16, 16);
+          for (uint32_t i = 0; i < 16; ++i) {
+            if (output[i] != input[i] + 7) return 1;
+          }
+          return 0;
+        }
+    "#;
+    for level in [KirOptimizationLevel::O0, KirOptimizationLevel::O3] {
+        let kir = optimized_kir(
+            source,
+            level,
+            KirOverflowMode::Unchecked,
+            KirBoundsMode::Unchecked,
+        );
+        assert!(
+            kir.functions
+                .iter()
+                .all(|function| function.vector_regions.is_empty())
+        );
+        compile_and_run(
+            &emit_c_kir_module(&kir).expect("scalar loop SIMD C"),
+            harness,
+        );
+    }
+}

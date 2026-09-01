@@ -1,4 +1,4 @@
-# Getting Started with CalcKernel 0.11
+# Getting Started with CalcKernel 0.12
 
 [简体中文](../zh-CN/guides/getting-started.md)
 

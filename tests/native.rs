@@ -26,6 +26,8 @@ mod llvm_ir;
 mod object;
 #[path = "native/ownership.rs"]
 mod ownership;
+#[path = "native/profile.rs"]
+mod profile;
 #[path = "native/run.rs"]
 mod run;
 #[path = "native/runtime.rs"]
@@ -36,6 +38,8 @@ mod runtime_support;
 mod static_prefix;
 #[path = "support/mod.rs"]
 mod support;
+#[path = "native/vector_llvm.rs"]
+mod vector_llvm;
 
 #[path = "support/generated.rs"]
 mod generated;

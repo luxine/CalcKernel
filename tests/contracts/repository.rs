@@ -22,11 +22,11 @@ fn repository_should_preserve_v0_10_as_compatibility_history() {
 }
 
 #[test]
-fn repository_should_declare_v0_11_everywhere() {
+fn repository_should_declare_v0_12_everywhere() {
     let cargo = read("Cargo.toml");
     let lock = read("Cargo.lock");
-    assert!(cargo.contains("version = \"0.11.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.11.0\""));
+    assert!(cargo.contains("version = \"0.12.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.12.0\""));
     for path in [
         "README.md",
         "README.zh-CN.md",
@@ -35,7 +35,43 @@ fn repository_should_declare_v0_11_everywhere() {
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.11.0"), "{path} must name 0.11.0");
+        assert!(read(path).contains("0.12.0"), "{path} must name 0.12.0");
+    }
+}
+
+#[test]
+fn v0_12_compatibility_manifest_should_cover_optimizer_and_v0_11_boundary() {
+    let manifest = read("tests/fixtures/compatibility/v0_12/manifest.toml");
+    assert!(manifest.contains("release = \"0.12.0\""));
+    for id in [
+        "kir-v2-target-profile",
+        "transactional-optimizer",
+        "loop-simd-versioning",
+        "specialization-unroll-slp",
+        "native-cache-v3",
+        "v0-11-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.12 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.12 compatibility evidence does not resolve: {evidence}"
+            );
+        }
     }
 }
 
@@ -106,6 +142,14 @@ fn v0_11_compatibility_manifest_should_cover_new_contracts_and_executable_eviden
             );
         }
     }
+}
+
+#[test]
+fn v0_11_compatibility_sources_should_parse_at_the_frozen_boundary() {
+    let path = "tests/fixtures/compatibility/v0_11/contracts.ck";
+    let source = SourceFile::new(path, read(path));
+    let result = check(&source);
+    assert_eq!(result.diagnostics, [], "{path} must remain accepted");
 }
 
 #[test]

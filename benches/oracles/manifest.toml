@@ -1,0 +1,104 @@
+schema_version = 1
+clang_version = "22.1.8"
+rust_version = "1.90.0"
+fast_math = false
+contraction = false
+builtin_library_calls = false
+sampling_protocol = "rotating-three-channel-v1"
+dispatch_protocol = "cached-typed-entry-v1"
+warmup_rows = 3
+sample_rows = 20
+sample_calls = 7
+batch_iterations = 20000000
+differential_audit = true
+ub_audit = true
+
+[[source]]
+language = "c11"
+source = "benches/oracles/c/vector_oracle.c"
+sha256 = "d5d873334a9070a3b415fd88cc78842d4bc6b6eebcd3bfbd2a4c90fc4f4d1501"
+
+[[source]]
+language = "rust2021"
+source = "benches/oracles/rust/vector_oracle.rs"
+sha256 = "22f80de2daf8c5fd515ada45cc3b16f0e11b0d1bc56217ae74ed95d0d2d7eb8e"
+
+[[kernel]]
+name = "map_u32"
+suite = "vector"
+oracle_case = 1
+ck_source = "benches/oracles/fixtures/map_u32.ck"
+ck_sha256 = "e9c5a60146eecdea795985a700f4fd55b0e1ee6e8acb1dc81848f3e6364c0a5e"
+valid_domain = "map_u32: disjoint 4000-element a/out buffers; n=4000; every input is in 1..=1000002; output is input+7 without overflow"
+
+[[kernel]]
+name = "zip_u32"
+suite = "vector"
+oracle_case = 2
+ck_source = "benches/oracles/fixtures/zip_u32.ck"
+ck_sha256 = "96ec127ce03d5f3a3b283d42bc068927b2440b72428aec91a6fe9eef96b4bf25"
+valid_domain = "zip_u32: pairwise-disjoint 4000-element a/b/out buffers; n=4000; every input is in 1..=1000002; every pairwise sum fits u32"
+
+[[kernel]]
+name = "strict_f64"
+suite = "vector"
+oracle_case = 3
+ck_source = "benches/oracles/fixtures/strict_f64.ck"
+ck_sha256 = "0addbf751946a70ced260b39e005fc9159a6e2760dd2bdcd0832e641b311f803"
+valid_domain = "strict_f64: disjoint 4000-element finite-normal a/out buffers; n=4000; factor=1.0009765625; no contraction or fast math"
+
+[[kernel]]
+name = "integer_cast"
+suite = "vector"
+oracle_case = 4
+ck_source = "benches/oracles/fixtures/integer_cast.ck"
+ck_sha256 = "2b9189cedfeba34ffe34c3d557ba80cef1131071c618d7f5afc5b3fd497cb851"
+valid_domain = "integer_cast: disjoint 4000-element a/out buffers; n=4000; every input is <=1000002"
+
+[[kernel]]
+name = "modular_reduction"
+suite = "vector"
+oracle_case = 5
+ck_source = "benches/oracles/fixtures/modular_reduction.ck"
+ck_sha256 = "4d212c9bcfc4064a8ce631a3721f4cca8005d148288ab545fb2e6ba31bfa477c"
+valid_domain = "modular_reduction: 4000-element input; n=4000; every input is in 1..=1000002 and the exact sum fits u32"
+
+[[kernel]]
+name = "slp_quad"
+suite = "vector"
+oracle_case = 6
+ck_source = "benches/oracles/fixtures/slp_quad.ck"
+ck_sha256 = "c5154b032cedee685a5b2067ffabfa80cef70573585f2ad32c44c611ffca9b0b"
+valid_domain = "slp_quad: three pairwise-disjoint buffers with at least 4 elements; exactly four wrapping or checked pairwise sums are written; every input is in 1..=1000002 so checked addition succeeds"
+
+[[kernel]]
+name = "runtime_noalias"
+suite = "vector"
+oracle_case = 7
+ck_source = "benches/oracles/fixtures/runtime_noalias.ck"
+ck_sha256 = "2d22901b3611640f41a91a5266e2ac82f1d71c0007ffa73fd7a6de161fd553ed"
+valid_domain = "runtime_noalias: disjoint 4000-element a/out buffers selected from the legal uncontracted domain; n=4000; every input is in 1..=1000002; output is input+11"
+
+[[kernel]]
+name = "specialized_length"
+suite = "vector"
+oracle_case = 8
+ck_source = "benches/oracles/fixtures/specialized_length.ck"
+ck_sha256 = "e40010c5cba6303fc0f04dbc2dd16db82521a35b23da1b388f2f920e401d0461"
+valid_domain = "specialized_length: disjoint 4000-element a/out buffers; every input is in 1..=1000002; output is input+13; exported call specializes internal n=4000"
+
+[[kernel]]
+name = "contract_noalias"
+suite = "domain"
+oracle_case = 9
+ck_source = "benches/oracles/fixtures/contract_noalias.ck"
+ck_sha256 = "a155724e8b695cdb08b49a777234d292ced4151d2712494427d83baea7b567b4"
+valid_domain = "contract_noalias: disjoint buffers with at least 16 elements; n=16; every input is in 1..=1000002; output is input+17; generic oracles retain only signature facts"
+
+[[kernel]]
+name = "contract_fixed_length"
+suite = "domain"
+oracle_case = 10
+ck_source = "benches/oracles/fixtures/contract_fixed_length.ck"
+ck_sha256 = "95cdb760da2cde7aa03d52a7cbe4255846b33c800a06c12fe399edb37e08c5e8"
+valid_domain = "contract_fixed_length: disjoint buffers with at least 16 elements; n=16; every input is in 1..=1000002; output is input+17; generic oracles retain dynamic n"

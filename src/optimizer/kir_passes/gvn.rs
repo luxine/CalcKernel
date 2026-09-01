@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::{
-    BlockId, KirArithmeticSemantics, KirInstructionKind, KirModule, KirTerminator, MirBinaryOp,
-    MirCastOp, MirCompareOp, MirType, MirUnaryOp, ValueId, compute_kir_dominators,
+    BlockId, KirArithmeticSemantics, KirInstructionKind, KirModule, KirTerminator, KirValueType,
+    MirBinaryOp, MirCastOp, MirCompareOp, MirUnaryOp, ValueId, compute_kir_dominators,
 };
 
 use super::rewrite::replace_value_uses_batch;
@@ -23,12 +23,12 @@ enum Expression<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ExpressionKey<'a> {
-    type_node: &'a MirType,
+    type_node: &'a KirValueType,
     expression: Expression<'a>,
 }
 
 fn expression_key<'a>(
-    type_node: &'a MirType,
+    type_node: &'a KirValueType,
     kind: &'a KirInstructionKind,
     canonical: &BTreeMap<ValueId, ValueId>,
 ) -> Option<ExpressionKey<'a>> {
@@ -396,7 +396,8 @@ mod tests {
             MirType::Slice(Box::new(MirType::Primitive(MirPrimitiveTypeName::I32))),
             MirType::Struct("a\":b".into()),
             MirType::Void,
-        ];
+        ]
+        .map(KirValueType::Scalar);
         let mut old_to_new = BTreeMap::new();
         let mut new_to_old = std::collections::HashMap::new();
         for type_node in &types {

@@ -4,6 +4,8 @@
 /build/llvm/
 /npm/bin/
 *.tmp
+__pycache__/
+*.py[cod]
 .understand-anything
 /.worktrees/
 /Ai_repository/

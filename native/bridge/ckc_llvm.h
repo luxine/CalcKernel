@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CKC_LLVM_BRIDGE_ABI_VERSION 2u
+#define CKC_LLVM_BRIDGE_ABI_VERSION 3u
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +49,22 @@ typedef struct CkcLlvmFactAuditCounts {
     uint64_t parameter_noalias;
     uint64_t assume_count;
 } CkcLlvmFactAuditCounts;
+
+typedef struct CkcLlvmTargetProfileQuery {
+    uint32_t operation;
+    uint32_t lane;
+    uint32_t lanes;
+    uint32_t semantics;
+    uint32_t alignment;
+} CkcLlvmTargetProfileQuery;
+
+typedef struct CkcLlvmTargetProfileResult {
+    uint32_t available;
+    uint32_t cost;
+    uint32_t legalization_parts;
+    uint32_t maximum_interleave_factor;
+    CkcLlvmOwnedBytes legalized_type;
+} CkcLlvmTargetProfileResult;
 
 #if defined(__cplusplus)
 static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
@@ -207,6 +223,13 @@ int32_t ckc_llvm_target_cpu(CkcLlvmTarget *target,
 int32_t ckc_llvm_target_features(CkcLlvmTarget *target,
                                  CkcLlvmOwnedBytes *out,
                                  CkcLlvmError *error);
+int32_t ckc_llvm_target_layout(CkcLlvmTarget *target,
+                               uint32_t *pointer_width_bits,
+                               uint32_t *little_endian,
+                               CkcLlvmError *error);
+int32_t ckc_llvm_target_profile_query(
+    CkcLlvmTarget *target, const CkcLlvmTargetProfileQuery *query,
+    CkcLlvmTargetProfileResult *out, CkcLlvmError *error);
 int32_t ckc_llvm_module_optimize(CkcLlvmModule *module,
                                  CkcLlvmTarget *target,
                                  uint32_t opt_level,
@@ -233,6 +256,8 @@ int32_t ckc_llvm_type_slice(CkcLlvmContext *context, CkcLlvmType **out,
                             CkcLlvmError *error);
 int32_t ckc_llvm_type_array(CkcLlvmType *element, uint32_t count,
                             CkcLlvmType **out, CkcLlvmError *error);
+int32_t ckc_llvm_type_fixed_vector(CkcLlvmType *element, uint32_t count,
+                                   CkcLlvmType **out, CkcLlvmError *error);
 int32_t ckc_llvm_type_struct(CkcLlvmContext *context,
                              CkcLlvmType *const *fields,
                              size_t field_count, CkcLlvmType **out,
@@ -302,6 +327,18 @@ int32_t ckc_llvm_builder_store_scoped_alias(
     const uint32_t *alias_scopes, size_t alias_scope_count,
     const uint32_t *noalias_scopes, size_t noalias_scope_count,
     CkcLlvmError *error);
+int32_t ckc_llvm_builder_vector_load(CkcLlvmBuilder *builder,
+                                     CkcLlvmType *type,
+                                     CkcLlvmValue *pointer,
+                                     uint32_t alignment,
+                                     CkcLlvmBytes name,
+                                     CkcLlvmValue **out,
+                                     CkcLlvmError *error);
+int32_t ckc_llvm_builder_vector_store(CkcLlvmBuilder *builder,
+                                      CkcLlvmValue *value,
+                                      CkcLlvmValue *pointer,
+                                      uint32_t alignment,
+                                      CkcLlvmError *error);
 int32_t ckc_llvm_const_int(CkcLlvmType *type, CkcLlvmBytes text,
                            CkcLlvmValue **out, CkcLlvmError *error);
 int32_t ckc_llvm_const_float(CkcLlvmType *type, CkcLlvmBytes text,
@@ -355,6 +392,31 @@ int32_t ckc_llvm_builder_select(CkcLlvmBuilder *builder,
                                 CkcLlvmValue *else_value,
                                 CkcLlvmBytes name, CkcLlvmValue **out,
                                 CkcLlvmError *error);
+int32_t ckc_llvm_builder_vector_splat(CkcLlvmBuilder *builder,
+                                      uint32_t lanes,
+                                      CkcLlvmValue *scalar,
+                                      CkcLlvmBytes name,
+                                      CkcLlvmValue **out,
+                                      CkcLlvmError *error);
+int32_t ckc_llvm_builder_vector_insert(CkcLlvmBuilder *builder,
+                                       CkcLlvmValue *vector,
+                                       CkcLlvmValue *scalar,
+                                       uint32_t lane_index,
+                                       CkcLlvmBytes name,
+                                       CkcLlvmValue **out,
+                                       CkcLlvmError *error);
+int32_t ckc_llvm_builder_vector_extract(CkcLlvmBuilder *builder,
+                                        CkcLlvmValue *vector,
+                                        uint32_t lane_index,
+                                        CkcLlvmBytes name,
+                                        CkcLlvmValue **out,
+                                        CkcLlvmError *error);
+int32_t ckc_llvm_builder_vector_reduce(CkcLlvmBuilder *builder,
+                                       uint32_t reduction,
+                                       CkcLlvmValue *vector,
+                                       CkcLlvmBytes name,
+                                       CkcLlvmValue **out,
+                                       CkcLlvmError *error);
 int32_t ckc_llvm_builder_assume(CkcLlvmBuilder *builder,
                                 CkcLlvmValue *condition,
                                 CkcLlvmError *error);

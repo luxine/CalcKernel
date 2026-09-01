@@ -2,10 +2,10 @@
 
 [English](../../project/roadmap.md)
 
-本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.11 兼容策略](compatibility.md)。
+本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.12 兼容策略](compatibility.md)。
 
-- Source SIMD type、target-specific superword/vector cost model、PGO 与 auto-tuning 只通过
-  独立评审的未来 contract 加入。
+- Source SIMD type 与更丰富的 target-specific vector facility 只通过独立评审的未来
+  contract 加入。PGO remains 0.13。Auto-Tuning remains 0.14。
 - 强化 target-specific LLVM calling convention 与 data-layout reporting。
 - 只以未来明确 versioned ABI addition 的方式评估 WASM checked bounds/status。
 - 改进 debug/source mapping 与 artifact introspection。

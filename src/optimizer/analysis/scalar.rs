@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, error::Error, fmt};
 use num_bigint::BigInt;
 
 use crate::{
-    BlockId, KirArithmeticSemantics, KirFunction, KirInstructionKind, KirTerminator, MirBinaryOp,
-    MirCompareOp, MirPrimitiveTypeName, MirType, ValueId,
+    BlockId, KirArithmeticSemantics, KirFunction, KirInstructionKind, KirTerminator, KirValueType,
+    MirBinaryOp, MirCompareOp, MirPrimitiveTypeName, MirType, ValueId,
 };
 
 use super::super::facts::{
@@ -33,6 +33,14 @@ impl IntegerType {
             MirType::Primitive(MirPrimitiveTypeName::U32) => Some(Self::U32),
             MirType::Primitive(MirPrimitiveTypeName::U64) => Some(Self::U64),
             _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_kir(type_node: &KirValueType) -> Option<Self> {
+        match type_node {
+            KirValueType::Scalar(type_node) => Self::from_mir(type_node),
+            KirValueType::FixedVector { .. } | KirValueType::Mask { .. } => None,
         }
     }
 
@@ -583,7 +591,7 @@ pub fn analyze_scalar_function(
         edge_values = refinements.clone();
         for block in &function.blocks {
             for (index, param) in block.params.iter().enumerate() {
-                let Some(type_node) = IntegerType::from_mir(&param.type_node) else {
+                let Some(type_node) = IntegerType::from_kir(&param.type_node) else {
                     continue;
                 };
                 let incoming = incoming_values(&incoming_edges, block.id, index)
@@ -625,7 +633,7 @@ pub fn analyze_scalar_function(
                 let Some(result) = instruction.results.first() else {
                     continue;
                 };
-                let Some(type_node) = IntegerType::from_mir(&result.type_node) else {
+                let Some(type_node) = IntegerType::from_kir(&result.type_node) else {
                     continue;
                 };
                 if !has_scalar_transfer(&instruction.kind) {
@@ -653,7 +661,7 @@ pub fn analyze_scalar_function(
         edge_values = refinements.clone();
         for block in &function.blocks {
             for (index, param) in block.params.iter().enumerate() {
-                let Some(type_node) = IntegerType::from_mir(&param.type_node) else {
+                let Some(type_node) = IntegerType::from_kir(&param.type_node) else {
                     continue;
                 };
                 let incoming = incoming_values(&incoming_edges, block.id, index)
@@ -691,7 +699,7 @@ pub fn analyze_scalar_function(
                 let Some(result) = instruction.results.first() else {
                     continue;
                 };
-                let Some(type_node) = IntegerType::from_mir(&result.type_node) else {
+                let Some(type_node) = IntegerType::from_kir(&result.type_node) else {
                     continue;
                 };
                 if !has_scalar_transfer(&instruction.kind) {
@@ -1027,22 +1035,24 @@ fn collect_integer_types(function: &KirFunction) -> BTreeMap<ValueId, IntegerTyp
     function
         .params
         .iter()
-        .map(|param| (param.value, &param.type_node))
+        .filter_map(|param| {
+            IntegerType::from_mir(&param.type_node).map(|type_node| (param.value, type_node))
+        })
         .chain(function.blocks.iter().flat_map(|block| {
             block
                 .params
                 .iter()
-                .map(|param| (param.value, &param.type_node))
+                .filter_map(|param| {
+                    IntegerType::from_kir(&param.type_node)
+                        .map(|type_node| (param.value, type_node))
+                })
                 .chain(block.instructions.iter().flat_map(|instruction| {
-                    instruction
-                        .results
-                        .iter()
-                        .map(|result| (result.value, &result.type_node))
+                    instruction.results.iter().filter_map(|result| {
+                        IntegerType::from_kir(&result.type_node)
+                            .map(|type_node| (result.value, type_node))
+                    })
                 }))
         }))
-        .filter_map(|(value, type_node)| {
-            IntegerType::from_mir(type_node).map(|type_node| (value, type_node))
-        })
         .collect()
 }
 

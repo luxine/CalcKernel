@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Rust CalcKernel 0.11.0 ships `native ckc`, a self-contained command-line
+Rust CalcKernel 0.12.0 ships `native ckc`, a self-contained command-line
 compiler for the CK computation-kernel language. Release binaries compile, link,
 and run native CK without an external compiler toolchain. The repository also
 retains inspectable C and WebAssembly source/binary emitters.
@@ -20,6 +20,9 @@ retains inspectable C and WebAssembly source/binary emitters.
 - `ckc build --kind executable|dynamic|static|object` using embedded LLVM
   22.1.8 code generation and in-process LLD.
 - One generated-header Native C ABI for object, static, and dynamic libraries.
+- A target-profiled, independently checked O3 optimizer with transactional
+  specialization, controlled unrolling, SLP, Loop SIMD, runtime alias
+  versioning, strict-f64 vectors, and exact modular integer reductions.
 - Source-only C output and portable WAT/WASM output.
 - Six zero-toolchain release archives for macOS, Linux, and Windows on AArch64
   and x86-64.
@@ -32,7 +35,8 @@ effects are rejected from library, C, and WebAssembly roots.
 ## Pipeline
 
 ```text
-.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR
+.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR v2
+                                 -> target-profiled transactional optimizer
                                       +-> C source/header
                                       +-> WAT/WASM
                                       +-> structural LLVM -> object
@@ -50,6 +54,8 @@ test oracle.
 ckc --version --verbose
 ckc check examples/core/scalar.ck
 ckc emit-kir examples/core/scalar.ck --print-facts
+ckc emit-kir examples/core/scalar.ck --emit-kir-consumer native-library \
+  --cpu baseline --explain-optimization
 ckc run examples/native/hello.ck
 ckc build examples/native/hello.ck --kind executable --out /tmp/hello
 ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
@@ -110,12 +116,15 @@ cargo build --release --features native-toolchain --locked
 Release policy, platform audits, performance gates, archive names, and immutable
 GitHub Release publication are defined in [docs/project/release.md](docs/project/release.md).
 
-CalcKernel 0.11.0 keeps the public Native C ABI at version 1. It changes the
-private LLVM bridge and contract-aware runtime ABI to version 2; cached native
-objects therefore use the KIR v1 code-generation identity and cannot alias 0.10
-cache entries.
-The accepted 0.10.0 source boundary and migration are retained in the
+CalcKernel 0.12.0 keeps the public Native C ABI at version 1 and Runtime ABI at
+version 2. The private LLVM bridge is ABI 3, KIR uses the `kir-v2` identity, and
+the Native object cache uses `CKCOBJ02` with key/manifest schema 3. Old 0.11
+cache entries fail closed instead of aliasing a 0.12 artifact.
+The accepted 0.11.0 and 0.10.0 source boundaries are retained in the
 [compatibility policy](docs/project/compatibility.md).
+
+PGO remains 0.13. Runtime multiversioning also remains 0.13.
+Auto-Tuning remains 0.14. CalcKernel 0.12 does not claim those future optimizations.
 
 ## Memory boundary
 

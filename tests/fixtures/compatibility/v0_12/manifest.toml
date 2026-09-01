@@ -1,0 +1,32 @@
+schema = 1
+release = "0.12.0"
+
+[[change]]
+id = "kir-v2-target-profile"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/native/profile.rs:target_profile_should_be_complete_canonical_and_target_bound"
+
+[[change]]
+id = "transactional-optimizer"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/optimizer/transaction.rs:transaction_acceptance_should_swap_the_complete_verified_state_once"
+
+[[change]]
+id = "loop-simd-versioning"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/optimizer/vectorize.rs:loop_simd_unknown_alias_should_emit_one_total_runtime_predicate_and_scalar_fallback"
+
+[[change]]
+id = "specialization-unroll-slp"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/optimizer/slp.rs:unroll_slp_transaction_should_commit_or_rollback_both_halves_atomically"
+
+[[change]]
+id = "native-cache-v3"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/native/cache.rs:cache_schema_should_use_v3_identity_and_reject_ckcobj01_entries"
+
+[[change]]
+id = "v0-11-source-compatibility"
+fixture = "tests/fixtures/compatibility/v0_11/contracts.ck"
+evidence = "tests/contracts/repository.rs:v0_11_compatibility_sources_should_parse_at_the_frozen_boundary"

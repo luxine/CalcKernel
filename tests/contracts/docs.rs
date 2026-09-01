@@ -92,12 +92,12 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() {
+fn v0_12_docs_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribution() {
     let required_by_file = [
         (
             "docs/reference/language.md",
             &[
-                "CalcKernel 0.11",
+                "CalcKernel 0.12",
                 "fn main() -> void",
                 "fn main() -> i32",
                 "print_i32",
@@ -122,12 +122,16 @@ fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() 
                 "host triple",
                 "emit-kir",
                 "--sanitize-contracts",
+                "--consumer",
+                "--cpu",
+                "--explain-optimization",
+                "CKCOBJ02",
             ][..],
         ),
         (
             "docs/reference/mir.md",
             &[
-                "CalcKernel 0.11",
+                "CalcKernel 0.12",
                 "entry",
                 "runtime effect",
                 "print",
@@ -146,7 +150,9 @@ fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() 
                 "JITLink",
                 "RuntimeDyld",
                 "fact audit",
-                "KIR v1",
+                "KIR v2",
+                "bridge ABI 3",
+                "KirTargetProfile",
             ][..],
         ),
         (
@@ -171,15 +177,25 @@ fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() 
         ),
         (
             "docs/project/compatibility.md",
-            &["0.11.x", "0.10.0", "0.9.0", "build-llvm", "Native C ABI"][..],
+            &["0.12.x", "0.11.0", "0.10.0", "build-llvm", "Native C ABI"][..],
         ),
         (
             "docs/guides/performance.md",
-            &["95%", "10%", "3%", "8%", "97%", "2x", "3x", "Clang 22.1.8"][..],
+            &[
+                "schema 7",
+                "95%",
+                "10%",
+                "3%",
+                "8%",
+                "97%",
+                "2x",
+                "3x",
+                "Clang 22.1.8",
+            ][..],
         ),
         (
             "docs/project/release.md",
-            &["0.11.0", "native-toolchain", "ckc licenses", "six archives"][..],
+            &["0.12.0", "native-toolchain", "ckc licenses", "six archives"][..],
         ),
     ];
     for (path, required) in required_by_file {
@@ -195,7 +211,7 @@ fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() 
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.11.0"), "{path} must identify 0.11.0");
+        assert!(read(path).contains("0.12.0"), "{path} must identify 0.12.0");
     }
 
     let language = read("docs/reference/language.md");
@@ -230,7 +246,34 @@ fn v0_11_docs_should_freeze_language_cli_mir_kir_abi_runtime_and_distribution() 
 }
 
 #[test]
-fn v0_11_docs_should_define_canonical_slice_and_mode_contracts() {
+fn v0_12_docs_should_describe_only_the_implemented_optimizer_boundary() {
+    for path in [
+        "docs/compiler/architecture.md",
+        "docs/zh-CN/compiler/architecture.md",
+    ] {
+        let text = read(path);
+        for required in [
+            "KirTargetProfile",
+            "specialization",
+            "Loop SIMD",
+            "SLP",
+            "transaction",
+            "C",
+            "WebAssembly",
+        ] {
+            assert!(text.contains(required), "{path} must contain {required:?}");
+        }
+    }
+    for path in ["README.md", "docs/guides/performance.md"] {
+        let text = read(path);
+        for required in ["PGO remains 0.13", "Auto-Tuning remains 0.14"] {
+            assert!(text.contains(required), "{path} must contain {required:?}");
+        }
+    }
+}
+
+#[test]
+fn v0_12_docs_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
         "C and Native support optional `--bounds checked` guards for slice indexing and"

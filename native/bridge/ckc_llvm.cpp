@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -45,6 +46,7 @@
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/ModuleSummaryAnalysis.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Object/Archive.h>
 #include <llvm/Object/ArchiveWriter.h>
@@ -57,6 +59,7 @@
 #include <llvm/Support/Error.h>
 #include <llvm/Support/Alignment.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/MathExtras.h>
 #include <llvm/Support/ModRef.h>
 #include <llvm/Support/Process.h>
 #include <llvm/Support/TargetSelect.h>
@@ -132,6 +135,9 @@ struct CkcLlvmTarget {
     std::unique_ptr<llvm::TargetMachine> value;
     std::string cpu;
     std::string features;
+    std::unique_ptr<llvm::LLVMContext> profile_context;
+    std::unique_ptr<llvm::Module> profile_module;
+    llvm::Function *profile_function = nullptr;
 };
 
 struct CkcLlvmJit {
@@ -1098,6 +1104,213 @@ int32_t invalid(CkcLlvmError *error, std::string_view message) noexcept {
     return set_error(error, CKC_LLVM_INVALID_ARGUMENT, message);
 }
 
+llvm::Type *profile_lane_type(llvm::LLVMContext &context, uint32_t lane) {
+    switch (lane) {
+    case 1:
+    case 3:
+        return llvm::Type::getInt32Ty(context);
+    case 2:
+    case 4:
+        return llvm::Type::getInt64Ty(context);
+    case 5:
+        return llvm::Type::getDoubleTy(context);
+    default:
+        return nullptr;
+    }
+}
+
+llvm::Type *profile_value_type(llvm::LLVMContext &context, uint32_t lane,
+                               uint32_t lanes) {
+    llvm::Type *element = profile_lane_type(context, lane);
+    if (element == nullptr || lanes == 0) {
+        return nullptr;
+    }
+    if (lanes == 1) {
+        return element;
+    }
+    return llvm::FixedVectorType::get(element, lanes);
+}
+
+llvm::InstructionCost profile_operation_cost(
+    const llvm::TargetTransformInfo &tti,
+    const CkcLlvmTargetProfileQuery &query, llvm::Type *value_type) {
+    using TTI = llvm::TargetTransformInfo;
+    constexpr auto kind = TTI::TCK_RecipThroughput;
+    const bool floating = query.lane == 5;
+    const bool unsigned_integer = query.lane == 3 || query.lane == 4;
+    auto *vector_type = llvm::dyn_cast<llvm::VectorType>(value_type);
+    llvm::Type *mask_type = llvm::Type::getInt1Ty(value_type->getContext());
+    if (query.lanes != 1) {
+        mask_type = llvm::FixedVectorType::get(mask_type, query.lanes);
+    }
+    switch (query.operation) {
+    case 1: // splat
+        if (vector_type == nullptr) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getShuffleCost(TTI::SK_Broadcast, vector_type, vector_type,
+                                  {}, kind);
+    case 2: // add
+        return tti.getArithmeticInstrCost(
+            floating ? llvm::Instruction::FAdd : llvm::Instruction::Add,
+            value_type, kind);
+    case 3: // subtract
+        return tti.getArithmeticInstrCost(
+            floating ? llvm::Instruction::FSub : llvm::Instruction::Sub,
+            value_type, kind);
+    case 4: // multiply
+        return tti.getArithmeticInstrCost(
+            floating ? llvm::Instruction::FMul : llvm::Instruction::Mul,
+            value_type, kind);
+    case 5: // divide
+        return tti.getArithmeticInstrCost(
+            floating ? llvm::Instruction::FDiv
+                     : (unsigned_integer ? llvm::Instruction::UDiv
+                                         : llvm::Instruction::SDiv),
+            value_type, kind);
+    case 6: // remainder
+        if (floating) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getArithmeticInstrCost(
+            unsigned_integer ? llvm::Instruction::URem
+                             : llvm::Instruction::SRem,
+            value_type, kind);
+    case 7: // negate
+        return tti.getArithmeticInstrCost(
+            floating ? llvm::Instruction::FSub : llvm::Instruction::Sub,
+            value_type, kind);
+    case 8: // mask not
+        if (query.lane != 1) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getArithmeticInstrCost(llvm::Instruction::Xor, mask_type,
+                                          kind);
+    case 9: // bit and
+    case 10: // bit or
+    case 11: // bit xor
+        if (floating) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getArithmeticInstrCost(
+            query.operation == 9   ? llvm::Instruction::And
+            : query.operation == 10 ? llvm::Instruction::Or
+                                    : llvm::Instruction::Xor,
+            value_type, kind);
+    case 12: // shift left
+    case 13: // shift right
+        if (floating) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getArithmeticInstrCost(
+            query.operation == 12
+                ? llvm::Instruction::Shl
+                : (unsigned_integer ? llvm::Instruction::LShr
+                                    : llvm::Instruction::AShr),
+            value_type, kind);
+    case 14: // compare
+        return tti.getCmpSelInstrCost(
+            floating ? llvm::Instruction::FCmp : llvm::Instruction::ICmp,
+            value_type, mask_type,
+            floating ? llvm::CmpInst::FCMP_OLT
+                     : (unsigned_integer ? llvm::CmpInst::ICMP_ULT
+                                         : llvm::CmpInst::ICMP_SLT),
+            kind);
+    case 15: // select
+        return tti.getCmpSelInstrCost(llvm::Instruction::Select, value_type,
+                                      mask_type, llvm::CmpInst::BAD_ICMP_PREDICATE,
+                                      kind);
+    case 16: { // i32/u32 to f64 cast
+        if (query.lane != 1 && query.lane != 3) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        llvm::Type *destination = profile_value_type(
+            value_type->getContext(), 5, query.lanes);
+        return tti.getCastInstrCost(
+            query.lane == 1 ? llvm::Instruction::SIToFP
+                            : llvm::Instruction::UIToFP,
+            destination, value_type, TTI::CastContextHint::None, kind);
+    }
+    case 17: // insert
+    case 18: // extract
+        if (vector_type == nullptr) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getVectorInstrCost(
+            query.operation == 17 ? llvm::Instruction::InsertElement
+                                  : llvm::Instruction::ExtractElement,
+            vector_type, kind, 0);
+    case 19: // load
+    case 20: // store
+        if (query.alignment == 0 || !llvm::isPowerOf2_32(query.alignment)) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getMemoryOpCost(
+            query.operation == 19 ? llvm::Instruction::Load
+                                  : llvm::Instruction::Store,
+            value_type, llvm::Align(query.alignment), 0, kind);
+    case 21: // reduce add
+        if (vector_type == nullptr || floating) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getArithmeticReductionCost(llvm::Instruction::Add,
+                                              vector_type, std::nullopt, kind);
+    case 22: // reduce min
+    case 23: { // reduce max
+        if (vector_type == nullptr || floating) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        llvm::Intrinsic::ID id;
+        if (query.operation == 22) {
+            id = unsigned_integer ? llvm::Intrinsic::vector_reduce_umin
+                                  : llvm::Intrinsic::vector_reduce_smin;
+        } else {
+            id = unsigned_integer ? llvm::Intrinsic::vector_reduce_umax
+                                  : llvm::Intrinsic::vector_reduce_smax;
+        }
+        return tti.getMinMaxReductionCost(id, vector_type, {}, kind);
+    }
+    case 24: // branch
+        return tti.getCFInstrCost(llvm::Instruction::Br, kind);
+    case 25: // runtime predicate = compare plus branch
+        return tti.getCmpSelInstrCost(
+                   floating ? llvm::Instruction::FCmp
+                            : llvm::Instruction::ICmp,
+                   value_type, mask_type,
+                   floating ? llvm::CmpInst::FCMP_OLT
+                            : (unsigned_integer ? llvm::CmpInst::ICMP_ULT
+                                                : llvm::CmpInst::ICMP_SLT),
+                   kind) +
+               tti.getCFInstrCost(llvm::Instruction::Br, kind);
+    case 26: // reduce multiply
+        if (vector_type == nullptr || floating) {
+            return llvm::InstructionCost::getInvalid();
+        }
+        return tti.getArithmeticReductionCost(llvm::Instruction::Mul,
+                                              vector_type, std::nullopt, kind);
+    default:
+        return llvm::InstructionCost::getInvalid();
+    }
+}
+
+std::string profile_legalized_type(llvm::Type *value_type, uint32_t lanes,
+                                   uint32_t parts) {
+    llvm::Type *legalized = value_type;
+    if (lanes > 1 && parts > 1) {
+        if (parts >= lanes || lanes % parts != 0 || lanes / parts <= 1) {
+            return {};
+        }
+        auto *vector_type = llvm::cast<llvm::VectorType>(value_type);
+        legalized = llvm::FixedVectorType::get(vector_type->getElementType(),
+                                               lanes / parts);
+    }
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    legalized->print(stream);
+    stream.flush();
+    return text;
+}
+
 } // namespace
 
 extern "C" int32_t ckc_llvm_bridge_info(CkcLlvmBridgeInfo *out,
@@ -1314,6 +1527,21 @@ extern "C" int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
         target->value = std::move(*target_machine);
         target->cpu = target->value->getTargetCPU().str();
         target->features = target->value->getTargetFeatureString().str();
+        target->profile_context = std::make_unique<llvm::LLVMContext>();
+        target->profile_module = std::make_unique<llvm::Module>(
+            "ckc.target.profile", *target->profile_context);
+        target->profile_module->setTargetTriple(
+            target->value->getTargetTriple());
+        target->profile_module->setDataLayout(
+            target->value->createDataLayout());
+        auto *profile_function_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(*target->profile_context), false);
+        target->profile_function = llvm::Function::Create(
+            profile_function_type, llvm::GlobalValue::InternalLinkage,
+            "__ck_target_profile_probe", *target->profile_module);
+        target->profile_function->addFnAttr("target-cpu", target->cpu);
+        target->profile_function->addFnAttr("target-features",
+                                            target->features);
         *out = target.release();
         return CKC_LLVM_OK;
     } catch (const std::exception &exception) {
@@ -1349,6 +1577,98 @@ extern "C" int32_t ckc_llvm_target_features(CkcLlvmTarget *target,
                    ? CKC_LLVM_OK
                    : set_error(error, CKC_LLVM_OUT_OF_MEMORY,
                                "allocating LLVM target features failed");
+    });
+}
+
+extern "C" int32_t ckc_llvm_target_layout(CkcLlvmTarget *target,
+                                             uint32_t *pointer_width_bits,
+                                             uint32_t *little_endian,
+                                             CkcLlvmError *error) {
+    return guarded(error, "reading LLVM target layout", [&] {
+        if (target == nullptr || target->value == nullptr ||
+            pointer_width_bits == nullptr || little_endian == nullptr) {
+            return invalid(error, "LLVM target layout input or output is null");
+        }
+        const llvm::DataLayout layout = target->value->createDataLayout();
+        *pointer_width_bits = layout.getPointerSizeInBits();
+        *little_endian = layout.isLittleEndian() ? 1u : 0u;
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_target_profile_query(
+    CkcLlvmTarget *target, const CkcLlvmTargetProfileQuery *query,
+    CkcLlvmTargetProfileResult *out, CkcLlvmError *error) {
+    return guarded(error, "querying LLVM target profile", [&] {
+        if (target == nullptr || target->value == nullptr ||
+            target->profile_context == nullptr ||
+            target->profile_module == nullptr ||
+            target->profile_function == nullptr || query == nullptr ||
+            out == nullptr) {
+            return invalid(error,
+                           "LLVM target profile input or output is null");
+        }
+        out->available = 0;
+        out->cost = 0;
+        out->legalization_parts = 0;
+        out->maximum_interleave_factor = 1;
+        clear_bytes(&out->legalized_type);
+        if (query->lanes == 0 || query->lanes > 16 || query->alignment > 64) {
+            return invalid(error, "LLVM target profile query is out of range");
+        }
+
+        llvm::LLVMContext &context = *target->profile_context;
+        const llvm::TargetTransformInfo tti =
+            target->value->getTargetTransformInfo(*target->profile_function);
+        llvm::Type *value_type =
+            profile_value_type(context, query->lane, query->lanes);
+        if (value_type == nullptr) {
+            return invalid(error, "LLVM target profile lane is invalid");
+        }
+        llvm::Type *legalization_type = value_type;
+        if (query->operation == 16) {
+            legalization_type = profile_value_type(context, 5, query->lanes);
+        } else if (query->operation == 8) {
+            llvm::Type *mask_element = llvm::Type::getInt1Ty(context);
+            legalization_type = query->lanes == 1
+                                    ? mask_element
+                                    : llvm::FixedVectorType::get(mask_element,
+                                                                 query->lanes);
+        }
+        const unsigned parts = tti.getNumberOfParts(legalization_type);
+        const unsigned interleave = tti.getMaxInterleaveFactor(
+            llvm::ElementCount::getFixed(query->lanes));
+        out->maximum_interleave_factor = std::max(1u, interleave);
+        if (parts == 0 || parts > std::numeric_limits<uint32_t>::max()) {
+            return CKC_LLVM_OK;
+        }
+        const std::string legalized =
+            profile_legalized_type(legalization_type, query->lanes, parts);
+        if (legalized.empty()) {
+            return CKC_LLVM_OK;
+        }
+        const llvm::InstructionCost cost =
+            profile_operation_cost(tti, *query, value_type);
+        if (!cost.isValid()) {
+            return CKC_LLVM_OK;
+        }
+        const int64_t numeric = cost.getValue();
+        if (numeric < 0 ||
+            static_cast<uint64_t>(numeric) >
+                std::numeric_limits<uint32_t>::max()) {
+            return CKC_LLVM_OK;
+        }
+        if (!copy_bytes(legalized, &out->legalized_type)) {
+            return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                             "allocating LLVM legalized type failed");
+        }
+        out->available = 1;
+        // CK's closed cost model never treats emitted structural work as free.
+        // LLVM legitimately reports zero-throughput inserts/extracts on some
+        // targets, so normalize those legal operations to one structural unit.
+        out->cost = static_cast<uint32_t>(std::max<int64_t>(1, numeric));
+        out->legalization_parts = parts;
+        return CKC_LLVM_OK;
     });
 }
 
@@ -1666,6 +1986,23 @@ extern "C" int32_t ckc_llvm_type_array(CkcLlvmType *element, uint32_t count,
             return invalid(error, "array type input or output is invalid");
         }
         *out = bridge_type(llvm::ArrayType::get(llvm_type(element), count));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_type_fixed_vector(CkcLlvmType *element,
+                                                 uint32_t count,
+                                                 CkcLlvmType **out,
+                                                 CkcLlvmError *error) {
+    return guarded(error, "creating LLVM fixed vector type", [&] {
+        if (element == nullptr || out == nullptr || count < 2 || count > 16) {
+            return invalid(error, "LLVM fixed vector type input is invalid");
+        }
+        llvm::Type *lane = llvm_type(element);
+        if (!lane->isIntegerTy() && !lane->isDoubleTy()) {
+            return invalid(error, "LLVM fixed vector lane type is invalid");
+        }
+        *out = bridge_type(llvm::FixedVectorType::get(lane, count));
         return CKC_LLVM_OK;
     });
 }
@@ -2083,6 +2420,40 @@ extern "C" int32_t ckc_llvm_builder_store_scoped_alias(
     });
 }
 
+extern "C" int32_t ckc_llvm_builder_vector_load(
+    CkcLlvmBuilder *builder, CkcLlvmType *type, CkcLlvmValue *pointer,
+    uint32_t alignment, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM vector load", [&] {
+        if (builder == nullptr || builder->value == nullptr || type == nullptr ||
+            pointer == nullptr || out == nullptr || alignment == 0 ||
+            !llvm::isPowerOf2_32(alignment) ||
+            !llvm_type(type)->isVectorTy()) {
+            return invalid(error, "LLVM vector load input is invalid");
+        }
+        *out = bridge_value(builder->value->CreateAlignedLoad(
+            llvm_type(type), llvm_value(pointer), llvm::Align(alignment),
+            borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_vector_store(
+    CkcLlvmBuilder *builder, CkcLlvmValue *value, CkcLlvmValue *pointer,
+    uint32_t alignment, CkcLlvmError *error) {
+    return guarded(error, "building LLVM vector store", [&] {
+        if (builder == nullptr || builder->value == nullptr || value == nullptr ||
+            pointer == nullptr || alignment == 0 ||
+            !llvm::isPowerOf2_32(alignment) ||
+            !llvm_value(value)->getType()->isVectorTy()) {
+            return invalid(error, "LLVM vector store input is invalid");
+        }
+        builder->value->CreateAlignedStore(llvm_value(value), llvm_value(pointer),
+                                           llvm::Align(alignment));
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_const_int(CkcLlvmType *type,
                                          CkcLlvmBytes text,
                                          CkcLlvmValue **out,
@@ -2352,6 +2723,102 @@ extern "C" int32_t ckc_llvm_builder_select(
         *out = bridge_value(builder->value->CreateSelect(
             llvm_value(condition), llvm_value(then_value),
             llvm_value(else_value), borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_vector_splat(
+    CkcLlvmBuilder *builder, uint32_t lanes, CkcLlvmValue *scalar,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM vector splat", [&] {
+        if (builder == nullptr || builder->value == nullptr || scalar == nullptr ||
+            out == nullptr || lanes < 2 || lanes > 16) {
+            return invalid(error, "LLVM vector splat input is invalid");
+        }
+        *out = bridge_value(builder->value->CreateVectorSplat(
+            lanes, llvm_value(scalar), borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_vector_insert(
+    CkcLlvmBuilder *builder, CkcLlvmValue *vector, CkcLlvmValue *scalar,
+    uint32_t lane_index, CkcLlvmBytes name, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM vector insert", [&] {
+        auto *value = llvm_value(vector);
+        auto *vector_type = value == nullptr
+                                ? nullptr
+                                : llvm::dyn_cast<llvm::FixedVectorType>(
+                                      value->getType());
+        if (builder == nullptr || builder->value == nullptr ||
+            vector_type == nullptr || scalar == nullptr || out == nullptr ||
+            lane_index >= vector_type->getNumElements()) {
+            return invalid(error, "LLVM vector insert input is invalid");
+        }
+        *out = bridge_value(builder->value->CreateInsertElement(
+            value, llvm_value(scalar), lane_index, borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_vector_extract(
+    CkcLlvmBuilder *builder, CkcLlvmValue *vector, uint32_t lane_index,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM vector extract", [&] {
+        auto *value = llvm_value(vector);
+        auto *vector_type = value == nullptr
+                                ? nullptr
+                                : llvm::dyn_cast<llvm::FixedVectorType>(
+                                      value->getType());
+        if (builder == nullptr || builder->value == nullptr ||
+            vector_type == nullptr || out == nullptr ||
+            lane_index >= vector_type->getNumElements()) {
+            return invalid(error, "LLVM vector extract input is invalid");
+        }
+        *out = bridge_value(builder->value->CreateExtractElement(
+            value, lane_index, borrowed_string(name)));
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_builder_vector_reduce(
+    CkcLlvmBuilder *builder, uint32_t reduction, CkcLlvmValue *vector,
+    CkcLlvmBytes name, CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "building LLVM vector reduction", [&] {
+        auto *value = llvm_value(vector);
+        if (builder == nullptr || builder->value == nullptr || value == nullptr ||
+            !value->getType()->isIntOrIntVectorTy() ||
+            !value->getType()->isVectorTy() || out == nullptr) {
+            return invalid(error, "LLVM vector reduction input is invalid");
+        }
+        llvm::Value *result = nullptr;
+        switch (reduction) {
+        case 1:
+            result = builder->value->CreateAddReduce(value);
+            break;
+        case 2:
+            result = builder->value->CreateIntMinReduce(value, true);
+            break;
+        case 3:
+            result = builder->value->CreateIntMinReduce(value, false);
+            break;
+        case 4:
+            result = builder->value->CreateIntMaxReduce(value, true);
+            break;
+        case 5:
+            result = builder->value->CreateIntMaxReduce(value, false);
+            break;
+        case 6:
+            result = builder->value->CreateMulReduce(value);
+            break;
+        default:
+            return invalid(error, "unknown LLVM vector reduction");
+        }
+        if (auto *instruction = llvm::dyn_cast<llvm::Instruction>(result)) {
+            instruction->setName(borrowed_string(name));
+        }
+        *out = bridge_value(result);
         return CKC_LLVM_OK;
     });
 }

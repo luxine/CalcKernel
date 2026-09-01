@@ -50,6 +50,10 @@ impl<'context> NativeType<'context> {
         ffi::type_array(element.handle, count).map(Self::from_handle)
     }
 
+    pub(super) fn fixed_vector(element: Self, count: u32) -> Result<Self, NativeError> {
+        ffi::type_fixed_vector(element.handle, count).map(Self::from_handle)
+    }
+
     pub(super) fn literal_struct(
         context: &'context NativeContext,
         fields: &[Self],
@@ -371,6 +375,32 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
         )
     }
 
+    pub(super) fn vector_load(
+        &mut self,
+        type_node: NativeType<'context>,
+        pointer: NativeValue<'module>,
+        alignment: u32,
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_vector_load(
+            self.handle,
+            type_node.handle(),
+            pointer.handle,
+            alignment,
+            name,
+        )
+        .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn vector_store(
+        &mut self,
+        value: NativeValue<'module>,
+        pointer: NativeValue<'module>,
+        alignment: u32,
+    ) -> Result<(), NativeError> {
+        ffi::builder_vector_store(self.handle, value.handle, pointer.handle, alignment)
+    }
+
     pub(super) fn const_int(
         &self,
         type_node: NativeType<'context>,
@@ -525,6 +555,47 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
             name,
         )
         .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn vector_splat(
+        &mut self,
+        lanes: u32,
+        scalar: NativeValue<'module>,
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_vector_splat(self.handle, lanes, scalar.handle, name)
+            .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn vector_insert(
+        &mut self,
+        vector: NativeValue<'module>,
+        scalar: NativeValue<'module>,
+        lane_index: u32,
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_vector_insert(self.handle, vector.handle, scalar.handle, lane_index, name)
+            .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn vector_extract(
+        &mut self,
+        vector: NativeValue<'module>,
+        lane_index: u32,
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_vector_extract(self.handle, vector.handle, lane_index, name)
+            .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn vector_reduce(
+        &mut self,
+        reduction: u32,
+        vector: NativeValue<'module>,
+        name: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::builder_vector_reduce(self.handle, reduction, vector.handle, name)
+            .map(NativeValue::from_handle)
     }
 
     pub(super) fn assume(&mut self, condition: NativeValue<'module>) -> Result<(), NativeError> {

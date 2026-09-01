@@ -284,12 +284,15 @@ fn native_runtime_harness_should_define_strict_equivalent_differential_measureme
 fn native_runtime_harness_should_prepare_validate_interleave_and_retain_replay_evidence() {
     let harness = fs::read_to_string(repo_root().join("benches/ckc_perf.rs")).unwrap();
     for required in [
+        "CKC_V011_RUNTIME_BUNDLE",
         "CKC_V010_RUNTIME_BUNDLE",
         "load_replay(",
         "prepare_native_case(",
         "sample_channels(",
-        "replay_native_samples_ns",
-        "replay_clang_samples_ns",
+        "replay_v011_native_samples_ns",
+        "replay_v011_clang_samples_ns",
+        "replay_v010_native_samples_ns",
+        "replay_v010_clang_samples_ns",
         "warmup_order",
         "sample_order",
         "measured_artifacts",
@@ -314,12 +317,47 @@ fn native_runtime_harness_should_prepare_validate_interleave_and_retain_replay_e
 }
 
 #[test]
+fn schema_seven_harness_should_measure_vector_domain_size_and_compile_time_corpora() {
+    let root = repo_root();
+    let harness = fs::read_to_string(root.join("benches/ckc_perf.rs")).unwrap();
+    let vector = fs::read_to_string(root.join("benches/vector_perf.rs")).unwrap();
+    let replay = fs::read_to_string(root.join("benches/runtime_replay.rs")).unwrap();
+    let combined = format!("{harness}\n{vector}\n{replay}");
+    for required in [
+        "\\\"schemaVersion\\\": 7",
+        "rotating-twelve-channel-v1",
+        "rotating-three-channel-v1",
+        "targetProfile",
+        "runtimeReplayV011",
+        "runtimeReplayV010",
+        "vectorSuites",
+        "domainFactSuites",
+        "oracleIdentity",
+        "oracleArtifacts",
+        "artifactSizeComparisons",
+        "compileTimeComparisons",
+        "sample_three_channels",
+        "KirTargetProfile",
+        "build_kir_module_with_profile",
+        "audit-performance-oracles.py",
+        "ckc-v011",
+        "--kind",
+        "object",
+    ] {
+        assert!(
+            combined.contains(required),
+            "schema 7 producer must contain {required:?}"
+        );
+    }
+}
+
+#[test]
 fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds() {
     let output = Command::new("python3")
         .arg("-B")
         .arg(repo_root().join("tests/performance/runtime_gate_test.py"))
         .output()
-        .expect("run schema-6 checker regression suite");
+        .expect("run schema-7 checker regression suite");
     assert!(
         output.status.success(),
         "{}\n{}",

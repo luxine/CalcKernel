@@ -3,9 +3,9 @@ use calckernel::{
     FactUseSite, FunctionId, InstructionId, KirBoundsMode, KirBuildConfig, KirConsumer,
     KirInstructionKind, KirOverflowMode, KirSanitizerMode, ProofArena, ProofStep, ProofStepId,
     ScalarAnalysisConfig, ScalarClaim, ScalarFailure, ScalarInterval, SourceFile, ValueId,
-    analyze_scalar_function, build_kir_module, check, import_contract_facts, lower_to_mir,
-    materialize_scalar_facts, print_fact_arena, print_proof_arena, verify_fact_arena,
-    verify_proof_arena, verify_scalar_analysis_result,
+    analyze_canonical_loops, analyze_scalar_function, build_kir_module, canonicalize_kir_loops,
+    check, import_contract_facts, lower_to_mir, materialize_scalar_facts, print_fact_arena,
+    print_proof_arena, verify_fact_arena, verify_proof_arena, verify_scalar_analysis_result,
 };
 use num_bigint::BigInt;
 
@@ -512,7 +512,9 @@ fn proof_checker_should_reject_invalid_loop_invariant_and_budget_identity() {
         .find(|param| {
             matches!(
                 param.type_node,
-                calckernel::MirType::Primitive(calckernel::MirPrimitiveTypeName::U32)
+                calckernel::KirValueType::Scalar(calckernel::MirType::Primitive(
+                    calckernel::MirPrimitiveTypeName::U32
+                ))
             )
         })
         .expect("u32 loop phi")
@@ -604,4 +606,63 @@ fn mutation_non_dominating_fact_should_be_rejected() {
         verify_proof_arena(&kir, &facts, None, &proofs, 0).errors[0].message,
         "proof0 step0 fact does not dominate the proof use"
     );
+}
+
+#[test]
+fn loop_proof_should_recompute_canonical_shape_and_exact_trip_count() {
+    let (_, mut kir) =
+        build("export fn count() -> u32 { let i: u32 = 0; while i < 8 { i = i + 1; } return i; }");
+    canonicalize_kir_loops(&mut kir).expect("loop simplify");
+    let analysis = analyze_canonical_loops(&kir.functions[0]);
+    let descriptor = &analysis.loops[0];
+    let calckernel::LoopTripCount::Exact { iterations } = descriptor.trip_count else {
+        panic!("exact trip")
+    };
+    let induction = descriptor.induction.as_ref().expect("induction");
+    let mut proofs = ProofArena::new(0);
+    let proof_id = proofs
+        .try_insert(
+            FactUseSite {
+                function: kir.functions[0].id,
+                block: descriptor.header,
+                instruction: None,
+                contract_instance: None,
+            },
+            vec![
+                ProofStep::CanonicalLoop {
+                    loop_id: descriptor.id,
+                    cfg_digest: analysis.cfg_digest.clone(),
+                    header: descriptor.header,
+                    preheader: descriptor.preheader.expect("preheader"),
+                    latch: descriptor.latch.expect("latch"),
+                    blocks: descriptor.blocks.clone(),
+                    exits: descriptor.exits.clone(),
+                },
+                ProofStep::LoopTripCount {
+                    canonical_loop: ProofStepId::from_index(0),
+                    induction: induction.value,
+                    start: induction.start.to_string(),
+                    step: induction.step.to_string(),
+                    bound: induction.bound,
+                    comparison: induction.comparison,
+                    iterations,
+                },
+            ],
+            ProofStepId::from_index(1),
+        )
+        .expect("loop certificate");
+    assert!(
+        verify_proof_arena(&kir, &FactArena::new(0), None, &proofs, 0)
+            .errors
+            .is_empty()
+    );
+
+    let ProofStep::LoopTripCount { iterations, .. } =
+        &mut proofs.get_mut(proof_id).expect("proof").steps[1]
+    else {
+        unreachable!()
+    };
+    *iterations += 1;
+    let errors = verify_proof_arena(&kir, &FactArena::new(0), None, &proofs, 0).errors;
+    assert!(errors[0].message.contains("trip count"), "{errors:?}");
 }

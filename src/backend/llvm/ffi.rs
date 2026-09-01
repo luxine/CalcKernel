@@ -2,7 +2,7 @@ use std::{ptr, ptr::NonNull, slice};
 
 use super::error::{NativeError, NativeStage};
 
-pub const LLVM_BRIDGE_ABI_VERSION: u32 = 2;
+pub const LLVM_BRIDGE_ABI_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
@@ -135,6 +135,35 @@ pub(super) struct CkcLlvmFactAuditCounts {
     pub alias_scope: u64,
     pub parameter_noalias: u64,
     pub assume_count: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CkcLlvmTargetProfileQuery {
+    pub operation: u32,
+    pub lane: u32,
+    pub lanes: u32,
+    pub semantics: u32,
+    pub alignment: u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+struct CkcLlvmTargetProfileResult {
+    available: u32,
+    cost: u32,
+    legalization_parts: u32,
+    maximum_interleave_factor: u32,
+    legalized_type: CkcLlvmOwnedBytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BridgeTargetProfileResult {
+    pub available: bool,
+    pub cost: u32,
+    pub legalization_parts: u32,
+    pub maximum_interleave_factor: u32,
+    pub legalized_type: String,
 }
 
 impl CkcLlvmError {
@@ -302,6 +331,18 @@ unsafe extern "C" {
         out: *mut CkcLlvmOwnedBytes,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_target_layout(
+        target: *mut CkcLlvmTarget,
+        pointer_width_bits: *mut u32,
+        little_endian: *mut u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_target_profile_query(
+        target: *mut CkcLlvmTarget,
+        query: *const CkcLlvmTargetProfileQuery,
+        out: *mut CkcLlvmTargetProfileResult,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_module_optimize(
         module: *mut CkcLlvmModule,
         target: *mut CkcLlvmTarget,
@@ -352,6 +393,12 @@ unsafe extern "C" {
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_type_array(
+        element: *mut CkcLlvmType,
+        count: u32,
+        out: *mut *mut CkcLlvmType,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_type_fixed_vector(
         element: *mut CkcLlvmType,
         count: u32,
         out: *mut *mut CkcLlvmType,
@@ -476,6 +523,22 @@ unsafe extern "C" {
         noalias_scope_count: usize,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_builder_vector_load(
+        builder: *mut CkcLlvmBuilder,
+        type_node: *mut CkcLlvmType,
+        pointer: *mut CkcLlvmValue,
+        alignment: u32,
+        name: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_vector_store(
+        builder: *mut CkcLlvmBuilder,
+        value: *mut CkcLlvmValue,
+        pointer: *mut CkcLlvmValue,
+        alignment: u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_const_int(
         type_node: *mut CkcLlvmType,
         text: CkcLlvmBytes,
@@ -577,6 +640,39 @@ unsafe extern "C" {
         condition: *mut CkcLlvmValue,
         then_value: *mut CkcLlvmValue,
         else_value: *mut CkcLlvmValue,
+        name: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_vector_splat(
+        builder: *mut CkcLlvmBuilder,
+        lanes: u32,
+        scalar: *mut CkcLlvmValue,
+        name: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_vector_insert(
+        builder: *mut CkcLlvmBuilder,
+        vector: *mut CkcLlvmValue,
+        scalar: *mut CkcLlvmValue,
+        lane_index: u32,
+        name: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_vector_extract(
+        builder: *mut CkcLlvmBuilder,
+        vector: *mut CkcLlvmValue,
+        lane_index: u32,
+        name: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_builder_vector_reduce(
+        builder: *mut CkcLlvmBuilder,
+        reduction: u32,
+        vector: *mut CkcLlvmValue,
         name: CkcLlvmBytes,
         out: *mut *mut CkcLlvmValue,
         error: *mut CkcLlvmError,
@@ -822,6 +918,47 @@ pub(super) fn target_features(target: NonNull<CkcLlvmTarget>) -> Result<String, 
     })
 }
 
+pub(super) fn target_layout(target: NonNull<CkcLlvmTarget>) -> Result<(u32, bool), NativeError> {
+    let mut pointer_width_bits = 0;
+    let mut little_endian = 0;
+    status_call(NativeStage::Target, |error| unsafe {
+        ckc_llvm_target_layout(
+            target.as_ptr(),
+            &mut pointer_width_bits,
+            &mut little_endian,
+            error,
+        )
+    })?;
+    Ok((pointer_width_bits, little_endian != 0))
+}
+
+pub(super) fn target_profile_query(
+    target: NonNull<CkcLlvmTarget>,
+    query: CkcLlvmTargetProfileQuery,
+) -> Result<BridgeTargetProfileResult, NativeError> {
+    let mut out = CkcLlvmTargetProfileResult {
+        available: 0,
+        cost: 0,
+        legalization_parts: 0,
+        maximum_interleave_factor: 1,
+        legalized_type: CkcLlvmOwnedBytes::empty(),
+    };
+    let mut error = CkcLlvmError::empty();
+    let status =
+        unsafe { ckc_llvm_target_profile_query(target.as_ptr(), &query, &mut out, &mut error) };
+    let legalized_type = take_vec(&mut out.legalized_type);
+    if status != 0 {
+        return Err(take_error(NativeStage::Target, status, &mut error));
+    }
+    Ok(BridgeTargetProfileResult {
+        available: out.available != 0,
+        cost: out.cost,
+        legalization_parts: out.legalization_parts,
+        maximum_interleave_factor: out.maximum_interleave_factor,
+        legalized_type: parse_utf8(legalized_type)?,
+    })
+}
+
 pub(super) fn module_optimize(
     module: NonNull<CkcLlvmModule>,
     target: NonNull<CkcLlvmTarget>,
@@ -918,6 +1055,15 @@ pub(super) fn type_array(
 ) -> Result<NonNull<CkcLlvmType>, NativeError> {
     handle_call(NativeStage::Module, |out, error| unsafe {
         ckc_llvm_type_array(element.as_ptr(), count, out, error)
+    })
+}
+
+pub(super) fn type_fixed_vector(
+    element: NonNull<CkcLlvmType>,
+    count: u32,
+) -> Result<NonNull<CkcLlvmType>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_type_fixed_vector(element.as_ptr(), count, out, error)
     })
 }
 
@@ -1163,6 +1309,43 @@ pub(super) fn builder_store_scoped_alias(
     })
 }
 
+pub(super) fn builder_vector_load(
+    builder: NonNull<CkcLlvmBuilder>,
+    type_node: NonNull<CkcLlvmType>,
+    pointer: NonNull<CkcLlvmValue>,
+    alignment: u32,
+    name: &str,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_builder_vector_load(
+            builder.as_ptr(),
+            type_node.as_ptr(),
+            pointer.as_ptr(),
+            alignment,
+            CkcLlvmBytes::new(name),
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn builder_vector_store(
+    builder: NonNull<CkcLlvmBuilder>,
+    value: NonNull<CkcLlvmValue>,
+    pointer: NonNull<CkcLlvmValue>,
+    alignment: u32,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_builder_vector_store(
+            builder.as_ptr(),
+            value.as_ptr(),
+            pointer.as_ptr(),
+            alignment,
+            error,
+        )
+    })
+}
+
 pub(super) fn const_int(
     type_node: NonNull<CkcLlvmType>,
     text: &str,
@@ -1376,6 +1559,80 @@ pub(super) fn builder_select(
             condition.as_ptr(),
             then_value.as_ptr(),
             else_value.as_ptr(),
+            CkcLlvmBytes::new(name),
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn builder_vector_splat(
+    builder: NonNull<CkcLlvmBuilder>,
+    lanes: u32,
+    scalar: NonNull<CkcLlvmValue>,
+    name: &str,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_builder_vector_splat(
+            builder.as_ptr(),
+            lanes,
+            scalar.as_ptr(),
+            CkcLlvmBytes::new(name),
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn builder_vector_insert(
+    builder: NonNull<CkcLlvmBuilder>,
+    vector: NonNull<CkcLlvmValue>,
+    scalar: NonNull<CkcLlvmValue>,
+    lane_index: u32,
+    name: &str,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_builder_vector_insert(
+            builder.as_ptr(),
+            vector.as_ptr(),
+            scalar.as_ptr(),
+            lane_index,
+            CkcLlvmBytes::new(name),
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn builder_vector_extract(
+    builder: NonNull<CkcLlvmBuilder>,
+    vector: NonNull<CkcLlvmValue>,
+    lane_index: u32,
+    name: &str,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_builder_vector_extract(
+            builder.as_ptr(),
+            vector.as_ptr(),
+            lane_index,
+            CkcLlvmBytes::new(name),
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn builder_vector_reduce(
+    builder: NonNull<CkcLlvmBuilder>,
+    reduction: u32,
+    vector: NonNull<CkcLlvmValue>,
+    name: &str,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_builder_vector_reduce(
+            builder.as_ptr(),
+            reduction,
+            vector.as_ptr(),
             CkcLlvmBytes::new(name),
             out,
             error,

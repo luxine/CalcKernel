@@ -37,6 +37,24 @@ pub fn lower_native_kir_module<'context>(
         .artifact
         .as_ref()
         .ok_or_else(|| lowering_error("KIR pipeline has no verified artifact"))?;
+    let evidence = validate_kir_optimization_evidence(
+        kir,
+        result.contract_facts.as_ref(),
+        &result.proofs,
+        &result.eliminated_guards,
+        result.proofs.generation(),
+    );
+    if !evidence.errors.is_empty() {
+        return Err(lowering_error(format!(
+            "KIR artifact changed after verification: {}",
+            evidence
+                .errors
+                .iter()
+                .map(|error| error.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
     if !matches!(
         kir.config.consumer,
         KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
@@ -44,6 +62,16 @@ pub fn lower_native_kir_module<'context>(
         return Err(lowering_error(
             "native LLVM lowering requires a native KIR consumer",
         ));
+    }
+    if kir.profile.vector_operations_enabled() {
+        let expected = target.kir_profile(kir.config.consumer)?;
+        if kir.profile.digest_hex() != expected.digest_hex() {
+            return Err(lowering_error(format!(
+                "KIR target profile does not match the lowering TargetMachine: artifact={}, target={}",
+                kir.profile.digest_hex(),
+                expected.digest_hex()
+            )));
+        }
     }
     if let Some(requested) = options.target_triple.as_deref() {
         let actual = target.triple()?;
@@ -730,12 +758,12 @@ fn collect_wrap_proofs(module: &KirModule, result: &KirPassManagerResult) -> Wra
             continue;
         };
         let kind = match instruction.results.first().map(|result| &result.type_node) {
-            Some(MirType::Primitive(MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64)) => {
-                NativeStrengtheningKind::NoUnsignedWrap
-            }
-            Some(MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::I64)) => {
-                NativeStrengtheningKind::NoSignedWrap
-            }
+            Some(KirValueType::Scalar(MirType::Primitive(
+                MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::U64,
+            ))) => NativeStrengtheningKind::NoUnsignedWrap,
+            Some(KirValueType::Scalar(MirType::Primitive(
+                MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::I64,
+            ))) => NativeStrengtheningKind::NoSignedWrap,
             _ => continue,
         };
         proofs.insert(
@@ -922,9 +950,9 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
     }
 
     fn allocate_values(&mut self) -> Result<(), NativeError> {
-        for (value, type_node) in value_types(self.function) {
+        for (value, type_node) in kir_value_types(self.function) {
             let pointer = self.builder.alloca(
-                self.types.get(&type_node)?,
+                self.types.get_kir(&type_node)?,
                 &format!("v{}.addr", value.index()),
             )?;
             self.storage.insert(value, Storage { pointer });
@@ -1411,21 +1439,21 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         match &instruction.kind {
             KirInstructionKind::Undef { .. } => {
                 let result = &instruction.results[0];
-                let value = self.builder.undef(self.types.get(&result.type_node)?)?;
+                let value = self.builder.undef(self.types.get_kir(&result.type_node)?)?;
                 self.store(result.value, value)
             }
             KirInstructionKind::ConstInt { value } => {
                 let result = &instruction.results[0];
                 let value = self
                     .builder
-                    .const_int(self.types.get(&result.type_node)?, value)?;
+                    .const_int(self.types.get_kir(&result.type_node)?, value)?;
                 self.store(result.value, value)
             }
             KirInstructionKind::ConstFloat { value } => {
                 let result = &instruction.results[0];
                 let value = self
                     .builder
-                    .const_float(self.types.get(&result.type_node)?, value)?;
+                    .const_float(self.types.get_kir(&result.type_node)?, value)?;
                 self.store(result.value, value)
             }
             KirInstructionKind::ConstBool { value } => {
@@ -1470,7 +1498,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                 let name = self.name("cast");
                 let value =
                     self.builder
-                        .cast(op, value, self.types.get(&result.type_node)?, &name)?;
+                        .cast(op, value, self.types.get_kir(&result.type_node)?, &name)?;
                 self.store(result.value, value)
             }
             KirInstructionKind::CheckCondition { kind, args } => {
@@ -1504,10 +1532,10 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                 let (alias_scopes, noalias_scopes) = self.alias_metadata(place)?;
                 let value = if alias_scopes.is_empty() && noalias_scopes.is_empty() {
                     self.builder
-                        .load(self.types.get(&result.type_node)?, pointer, &name)?
+                        .load(self.types.get_kir(&result.type_node)?, pointer, &name)?
                 } else {
                     self.builder.load_scoped_alias(
-                        self.types.get(&result.type_node)?,
+                        self.types.get_kir(&result.type_node)?,
                         pointer,
                         &alias_scopes,
                         &noalias_scopes,
@@ -1548,6 +1576,150 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             KirInstructionKind::Subslice { slice, start, end } => {
                 self.subslice(instruction, *slice, *start, *end)
             }
+            KirInstructionKind::VersionPredicate { predicate } => {
+                let value = self.version_predicate(predicate)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorSplat { scalar, .. } => {
+                let scalar = self.load(*scalar)?;
+                let lanes = vector_lanes(&instruction.results[0].type_node)?;
+                let name = self.name("vector.splat");
+                let value = self.builder.vector_splat(u32::from(lanes), scalar, &name)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorLoad { access, .. } => {
+                let pointer = self.vector_access_pointer(access)?;
+                let result = &instruction.results[0];
+                let name = self.name("vector.load");
+                let value = self.builder.vector_load(
+                    self.types.get_kir(&result.type_node)?,
+                    pointer,
+                    u32::from(access.required_alignment),
+                    &name,
+                )?;
+                self.store(result.value, value)
+            }
+            KirInstructionKind::VectorStore { access, value, .. } => {
+                let pointer = self.vector_access_pointer(access)?;
+                let value = self.load(*value)?;
+                self.builder
+                    .vector_store(value, pointer, u32::from(access.required_alignment))
+            }
+            KirInstructionKind::VectorBinary {
+                op, left, right, ..
+            } => {
+                let (lane, _) = fixed_vector_type(&instruction.results[0].type_node)?;
+                let left = self.load(*left)?;
+                let right = self.load(*right)?;
+                let name = self.name("vector.binary");
+                let value = self
+                    .builder
+                    .binary(vector_binary_op(*op, lane), left, right, &name)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorUnary { op, operand, .. } => {
+                let operand = self.load(*operand)?;
+                let bridge_op = match op {
+                    KirVectorUnaryOp::MaskNot => super::ffi::BridgeUnaryOp::Not,
+                    KirVectorUnaryOp::Negate => {
+                        let (lane, _) = fixed_vector_type(&instruction.results[0].type_node)?;
+                        if lane == KirLaneType::F64 {
+                            super::ffi::BridgeUnaryOp::FNeg
+                        } else {
+                            super::ffi::BridgeUnaryOp::Neg
+                        }
+                    }
+                };
+                let name = self.name("vector.unary");
+                let value = self.builder.unary(bridge_op, operand, &name)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorCompare {
+                op, left, right, ..
+            } => {
+                let (lane, _) = self.fixed_vector_value_type(*left)?;
+                let left = self.load(*left)?;
+                let right = self.load(*right)?;
+                let name = self.name("vector.compare");
+                let value = self.builder.compare(
+                    compare_op(*op, &lane_mir_type(lane)),
+                    left,
+                    right,
+                    &name,
+                )?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorSelect {
+                mask,
+                when_true,
+                when_false,
+                ..
+            } => {
+                let mask = self.load(*mask)?;
+                let when_true = self.load(*when_true)?;
+                let when_false = self.load(*when_false)?;
+                let name = self.name("vector.select");
+                let value = self.builder.select(mask, when_true, when_false, &name)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorCast { op, value, .. } => {
+                let value = self.load(*value)?;
+                let bridge_op = match op {
+                    KirVectorCastOp::I32ToF64 => BridgeCastOp::Sitofp,
+                    KirVectorCastOp::U32ToF64 => BridgeCastOp::Uitofp,
+                };
+                let result = &instruction.results[0];
+                let name = self.name("vector.cast");
+                let value = self.builder.cast(
+                    bridge_op,
+                    value,
+                    self.types.get_kir(&result.type_node)?,
+                    &name,
+                )?;
+                self.store(result.value, value)
+            }
+            KirInstructionKind::VectorInsert {
+                vector,
+                scalar,
+                lane_index,
+                ..
+            } => {
+                let vector = self.load(*vector)?;
+                let scalar = self.load(*scalar)?;
+                let name = self.name("vector.insert");
+                let value =
+                    self.builder
+                        .vector_insert(vector, scalar, u32::from(*lane_index), &name)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorExtract {
+                vector, lane_index, ..
+            } => {
+                let vector = self.load(*vector)?;
+                let name = self.name("vector.extract");
+                let value = self
+                    .builder
+                    .vector_extract(vector, u32::from(*lane_index), &name)?;
+                self.store(instruction.results[0].value, value)
+            }
+            KirInstructionKind::VectorReduce { op, vector, .. } => {
+                let (lane, _) = self.fixed_vector_value_type(*vector)?;
+                let reduction = match (op, lane) {
+                    (KirVectorReductionOp::ModularAdd, _) => 1,
+                    (KirVectorReductionOp::ModularMultiply, _) => 6,
+                    (KirVectorReductionOp::ModularMin, KirLaneType::I32 | KirLaneType::I64) => 2,
+                    (KirVectorReductionOp::ModularMin, KirLaneType::U32 | KirLaneType::U64) => 3,
+                    (KirVectorReductionOp::ModularMax, KirLaneType::I32 | KirLaneType::I64) => 4,
+                    (KirVectorReductionOp::ModularMax, KirLaneType::U32 | KirLaneType::U64) => 5,
+                    (_, KirLaneType::F64) => {
+                        return Err(lowering_error("f64 vector reduction is unsupported"));
+                    }
+                };
+                let vector = self.load(*vector)?;
+                let name = self.name("vector.reduce");
+                let value = self.builder.vector_reduce(reduction, vector, &name)?;
+                self.store(instruction.results[0].value, value)
+            }
             KirInstructionKind::Call {
                 function_name,
                 args,
@@ -1571,7 +1743,10 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
     ) -> Result<(), NativeError> {
         let left_value = self.load(left)?;
         let right_value = self.load(right)?;
-        let type_node = &instruction.results[0].type_node;
+        let type_node = instruction.results[0]
+            .type_node
+            .as_scalar()
+            .ok_or_else(|| lowering_error("scalar binary produced a vector value"))?;
         if semantics == KirArithmeticSemantics::Checked
             && instruction.results.len() == 2
             && self
@@ -1618,6 +1793,195 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         self.store(instruction.results[0].value, value)
     }
 
+    fn version_predicate(
+        &mut self,
+        predicate: &KirVersionPredicate,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let mut combined = None;
+        for conjunct in &predicate.conjuncts {
+            let condition = match conjunct {
+                KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
+                    let value = self.load(*value)?;
+                    let minimum = self
+                        .builder
+                        .const_int(self.types.i32, &minimum.to_string())?;
+                    let name = self.name("version.trip");
+                    self.builder
+                        .compare(BridgeCompareOp::IcmpUge, value, minimum, &name)?
+                }
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                    left,
+                    left_count,
+                    left_element_bytes,
+                    right,
+                    right_count,
+                    right_element_bytes,
+                } => self.version_disjoint_intervals(
+                    predicate.address_bits,
+                    *left,
+                    *left_count,
+                    *left_element_bytes,
+                    *right,
+                    *right_count,
+                    *right_element_bytes,
+                )?,
+            };
+            combined = Some(if let Some(previous) = combined {
+                self.bool_and(previous, condition, "version.and")?
+            } else {
+                condition
+            });
+        }
+        combined.ok_or_else(|| lowering_error("version predicate has no conjuncts"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn version_disjoint_intervals(
+        &mut self,
+        address_bits: u8,
+        left: ValueId,
+        left_count: ValueId,
+        left_element_bytes: u32,
+        right: ValueId,
+        right_count: ValueId,
+        right_element_bytes: u32,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let left_slice = self.load(left)?;
+        let right_slice = self.load(right)?;
+        let name = self.name("version.left.data");
+        let left_pointer = self.builder.extract_value(left_slice, 0, &name)?;
+        let name = self.name("version.right.data");
+        let right_pointer = self.builder.extract_value(right_slice, 0, &name)?;
+        let name = self.name("version.left.address");
+        let left_address =
+            self.builder
+                .cast(BridgeCastOp::PtrToInt, left_pointer, self.types.i64, &name)?;
+        let name = self.name("version.right.address");
+        let right_address =
+            self.builder
+                .cast(BridgeCastOp::PtrToInt, right_pointer, self.types.i64, &name)?;
+        let left_count32 = self.load(left_count)?;
+        let right_count32 = self.load(right_count)?;
+        let name = self.name("version.left.count");
+        let left_count64 =
+            self.builder
+                .cast(BridgeCastOp::Zext, left_count32, self.types.i64, &name)?;
+        let name = self.name("version.right.count");
+        let right_count64 =
+            self.builder
+                .cast(BridgeCastOp::Zext, right_count32, self.types.i64, &name)?;
+        let left_width = self
+            .builder
+            .const_int(self.types.i64, &left_element_bytes.to_string())?;
+        let right_width = self
+            .builder
+            .const_int(self.types.i64, &right_element_bytes.to_string())?;
+        let name = self.name("version.left.bytes");
+        let left_bytes =
+            self.builder
+                .binary(BridgeBinaryOp::Mul, left_count64, left_width, &name)?;
+        let name = self.name("version.right.bytes");
+        let right_bytes =
+            self.builder
+                .binary(BridgeBinaryOp::Mul, right_count64, right_width, &name)?;
+        let name = self.name("version.left.end");
+        let left_end = self
+            .builder
+            .binary(BridgeBinaryOp::Add, left_address, left_bytes, &name)?;
+        let name = self.name("version.right.end");
+        let right_end =
+            self.builder
+                .binary(BridgeBinaryOp::Add, right_address, right_bytes, &name)?;
+        let name = self.name("version.left.no-wrap");
+        let left_no_wrap =
+            self.builder
+                .compare(BridgeCompareOp::IcmpUge, left_end, left_address, &name)?;
+        let name = self.name("version.right.no-wrap");
+        let right_no_wrap =
+            self.builder
+                .compare(BridgeCompareOp::IcmpUge, right_end, right_address, &name)?;
+        let maximum = if address_bits == 32 {
+            u32::MAX.to_string()
+        } else {
+            u64::MAX.to_string()
+        };
+        let maximum = self.builder.const_int(self.types.i64, &maximum)?;
+        let name = self.name("version.left.in-range");
+        let left_in_range =
+            self.builder
+                .compare(BridgeCompareOp::IcmpUle, left_end, maximum, &name)?;
+        let name = self.name("version.right.in-range");
+        let right_in_range =
+            self.builder
+                .compare(BridgeCompareOp::IcmpUle, right_end, maximum, &name)?;
+        let left_valid = self.bool_and(left_no_wrap, left_in_range, "version.left.valid")?;
+        let right_valid = self.bool_and(right_no_wrap, right_in_range, "version.right.valid")?;
+        let valid = self.bool_and(left_valid, right_valid, "version.address.valid")?;
+        let name = self.name("version.left.before-right");
+        let left_before_right =
+            self.builder
+                .compare(BridgeCompareOp::IcmpUle, left_end, right_address, &name)?;
+        let name = self.name("version.right.before-left");
+        let right_before_left =
+            self.builder
+                .compare(BridgeCompareOp::IcmpUle, right_end, left_address, &name)?;
+        let disjoint = self.bool_or(left_before_right, right_before_left, "version.disjoint")?;
+        let zero = self.builder.const_int(self.types.i32, "0")?;
+        let name = self.name("version.left.empty");
+        let left_empty =
+            self.builder
+                .compare(BridgeCompareOp::IcmpEq, left_count32, zero, &name)?;
+        let name = self.name("version.right.empty");
+        let right_empty =
+            self.builder
+                .compare(BridgeCompareOp::IcmpEq, right_count32, zero, &name)?;
+        let empty = self.bool_or(left_empty, right_empty, "version.empty")?;
+        let separated_or_empty = self.bool_or(empty, disjoint, "version.safe-interval")?;
+        self.bool_and(valid, separated_or_empty, "version.total")
+    }
+
+    fn bool_and(
+        &mut self,
+        left: NativeValue<'module>,
+        right: NativeValue<'module>,
+        prefix: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let false_value = self.builder.const_bool(false)?;
+        let name = self.name(prefix);
+        self.builder.select(left, right, false_value, &name)
+    }
+
+    fn bool_or(
+        &mut self,
+        left: NativeValue<'module>,
+        right: NativeValue<'module>,
+        prefix: &str,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let true_value = self.builder.const_bool(true)?;
+        let name = self.name(prefix);
+        self.builder.select(left, true_value, right, &name)
+    }
+
+    fn vector_access_pointer(
+        &mut self,
+        access: &KirVectorMemoryAccess,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        let slice = self.load(access.slice)?;
+        let name = self.name("vector.slice.data");
+        let data = self.builder.extract_value(slice, 0, &name)?;
+        let start = self.load(access.start)?;
+        let start_type = self.type_of(access.start)?.clone();
+        let index = self.index_to_i64(start, &start_type)?;
+        let name = self.name("vector.slice.index");
+        self.builder
+            .gep(self.types.lane(access.lane), data, &[index], &name)
+    }
+
+    fn fixed_vector_value_type(&self, value: ValueId) -> Result<(KirLaneType, u16), NativeError> {
+        let type_node = self.value_type_of(value)?;
+        fixed_vector_type(&type_node)
+    }
+
     fn unary(
         &mut self,
         instruction: &KirInstruction,
@@ -1626,7 +1990,10 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         semantics: KirArithmeticSemantics,
     ) -> Result<(), NativeError> {
         let operand = self.load(operand)?;
-        let type_node = &instruction.results[0].type_node;
+        let type_node = instruction.results[0]
+            .type_node
+            .as_scalar()
+            .ok_or_else(|| lowering_error("scalar unary produced a vector value"))?;
         if semantics == KirArithmeticSemantics::Checked
             && instruction.results.len() == 2
             && self
@@ -2046,10 +2413,10 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
 
     fn load(&mut self, value: ValueId) -> Result<NativeValue<'module>, NativeError> {
         let storage = self.storage(value)?;
-        let type_node = self.type_of(value)?.clone();
+        let type_node = self.value_type_of(value)?.clone();
         let name = self.name("load");
         self.builder
-            .load(self.types.get(&type_node)?, storage.pointer, &name)
+            .load(self.types.get_kir(&type_node)?, storage.pointer, &name)
     }
 
     fn store(&mut self, value: ValueId, native: NativeValue<'module>) -> Result<(), NativeError> {
@@ -2061,6 +2428,32 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             .get(&value)
             .copied()
             .ok_or_else(|| lowering_error(format!("missing KIR storage for v{}", value.index())))
+    }
+
+    fn value_type_of(&self, value: ValueId) -> Result<KirValueType, NativeError> {
+        self.function
+            .params
+            .iter()
+            .find(|param| param.value == value)
+            .map(|param| KirValueType::Scalar(param.type_node.clone()))
+            .or_else(|| {
+                self.function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.params)
+                    .find(|param| param.value == value)
+                    .map(|param| param.type_node.clone())
+            })
+            .or_else(|| {
+                self.function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .flat_map(|instruction| &instruction.results)
+                    .find(|result| result.value == value)
+                    .map(|result| result.type_node.clone())
+            })
+            .ok_or_else(|| lowering_error(format!("unknown KIR value v{}", value.index())))
     }
 
     fn type_of(&self, value: ValueId) -> Result<&MirType, NativeError> {
@@ -2075,7 +2468,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                     .iter()
                     .flat_map(|block| &block.params)
                     .find(|param| param.value == value)
-                    .map(|param| &param.type_node)
+                    .and_then(|param| param.type_node.as_scalar())
             })
             .or_else(|| {
                 self.function
@@ -2084,9 +2477,14 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                     .flat_map(|block| &block.instructions)
                     .flat_map(|instruction| &instruction.results)
                     .find(|result| result.value == value)
-                    .map(|result| &result.type_node)
+                    .and_then(|result| result.type_node.as_scalar())
             })
-            .ok_or_else(|| lowering_error(format!("unknown KIR value v{}", value.index())))
+            .ok_or_else(|| {
+                lowering_error(format!(
+                    "KIR value v{} is unknown or is not scalar",
+                    value.index()
+                ))
+            })
     }
 }
 
@@ -2208,6 +2606,35 @@ fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
             block
                 .params
                 .iter()
+                .filter_map(|param| {
+                    param
+                        .type_node
+                        .as_scalar()
+                        .cloned()
+                        .map(|type_node| (param.value, type_node))
+                })
+                .chain(block.instructions.iter().flat_map(|instruction| {
+                    instruction.results.iter().filter_map(|result| {
+                        result
+                            .type_node
+                            .as_scalar()
+                            .cloned()
+                            .map(|type_node| (result.value, type_node))
+                    })
+                }))
+        }))
+        .collect()
+}
+
+fn kir_value_types(function: &KirFunction) -> BTreeMap<ValueId, KirValueType> {
+    function
+        .params
+        .iter()
+        .map(|param| (param.value, KirValueType::Scalar(param.type_node.clone())))
+        .chain(function.blocks.iter().flat_map(|block| {
+            block
+                .params
+                .iter()
                 .map(|param| (param.value, param.type_node.clone()))
                 .chain(block.instructions.iter().flat_map(|instruction| {
                     instruction
@@ -2217,6 +2644,51 @@ fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
                 }))
         }))
         .collect()
+}
+
+fn vector_lanes(type_node: &KirValueType) -> Result<u16, NativeError> {
+    match type_node {
+        KirValueType::FixedVector { lanes, .. } | KirValueType::Mask { lanes } => Ok(*lanes),
+        KirValueType::Scalar(_) => Err(lowering_error("KIR value is not a vector")),
+    }
+}
+
+fn fixed_vector_type(type_node: &KirValueType) -> Result<(KirLaneType, u16), NativeError> {
+    match type_node {
+        KirValueType::FixedVector { lane, lanes } => Ok((*lane, *lanes)),
+        KirValueType::Scalar(_) | KirValueType::Mask { .. } => {
+            Err(lowering_error("KIR value is not a fixed lane vector"))
+        }
+    }
+}
+
+const fn lane_mir_type(lane: KirLaneType) -> MirType {
+    MirType::Primitive(match lane {
+        KirLaneType::I32 => MirPrimitiveTypeName::I32,
+        KirLaneType::I64 => MirPrimitiveTypeName::I64,
+        KirLaneType::U32 => MirPrimitiveTypeName::U32,
+        KirLaneType::U64 => MirPrimitiveTypeName::U64,
+        KirLaneType::F64 => MirPrimitiveTypeName::F64,
+    })
+}
+
+const fn vector_binary_op(op: KirVectorBinaryOp, lane: KirLaneType) -> BridgeBinaryOp {
+    let floating = matches!(lane, KirLaneType::F64);
+    let unsigned = matches!(lane, KirLaneType::U32 | KirLaneType::U64);
+    match (op, floating, unsigned) {
+        (KirVectorBinaryOp::Add, true, _) => BridgeBinaryOp::FAdd,
+        (KirVectorBinaryOp::Subtract, true, _) => BridgeBinaryOp::FSub,
+        (KirVectorBinaryOp::Multiply, true, _) => BridgeBinaryOp::FMul,
+        (KirVectorBinaryOp::Divide, true, _) => BridgeBinaryOp::FDiv,
+        (KirVectorBinaryOp::Add, false, _) => BridgeBinaryOp::Add,
+        (KirVectorBinaryOp::Subtract, false, _) => BridgeBinaryOp::Sub,
+        (KirVectorBinaryOp::Multiply, false, _) => BridgeBinaryOp::Mul,
+        (KirVectorBinaryOp::Divide, false, false) => BridgeBinaryOp::SDiv,
+        (KirVectorBinaryOp::Divide, false, true) => BridgeBinaryOp::UDiv,
+        (KirVectorBinaryOp::Remainder, false, false) => BridgeBinaryOp::SRem,
+        (KirVectorBinaryOp::Remainder, false, true) => BridgeBinaryOp::URem,
+        (KirVectorBinaryOp::Remainder, true, _) => BridgeBinaryOp::FDiv,
+    }
 }
 
 fn kir_place_type(place: &KirPlace) -> &MirType {

@@ -1,99 +1,93 @@
 # CalcKernel Benchmark Report Schemas
 
-`cargo bench --bench ckc_perf` writes a general compiler-stage summary and a
-strict Native performance report. Their schema versions are independent.
+`cargo bench --bench ckc_perf` writes a general compiler-stage summary and,
+with `native-toolchain`, a strict Native release report. The two schema numbers
+are independent.
 
 ## General benchmark summary — schema 1
 
-The optional general outputs are `build/perf/latest.summary.json` and
-`build/perf/latest.summary.md`. JSON contains `schemaVersion: 1`, command,
-generation time, host target, warm-up/iteration counts, and results. Each result
-records case, compiler task/stage, samples, minimum, median, p95, mean, and
-output units. Markdown presents the same values.
+`build/perf/latest.summary.json` and `build/perf/latest.summary.md` record the
+command and `schemaVersion: 1`, generation time, host target,
+warm-up/iteration counts, case/task/stage, all samples, minimum, upper median,
+p95, mean, and output units.
 
-## Native runtime and optimizer gate — schema 6
+## Frozen 0.11 compatibility report — schema 6
 
-With `--features native-toolchain`, the harness writes
-`target/ckc-perf/results.json` with `schemaVersion: 6`. Top-level identity
-includes CPU policy, `fastMath: false`, Clang 22.1.8, target/host, warm-up,
-sampling/batching/statistic configuration, non-empty `checked` and `unchecked`
-suites, a proof-loop comparison, optimizer timing, `baselineV010`, and a verified
-`runtimeReplay` identity with compiler/bundle/recipe/artifact hashes and the exact
-eight-channel rotating sampling schedule.
+The replayed 0.11 compiler's historical Native report used `schemaVersion: 6`,
+`baselineV010`, `runtimeReplay`, `CKC_V010_RUNTIME_BUNDLE`, checked and unchecked
+streams, `sourceDigests`, `v010ClangMedianNs`, and the
+`replayV010Native/replayClang` Clang-normalized comparison. These names remain
+part of the replay audit boundary, but a schema-6 report cannot satisfy the
+current 0.12 release gate.
 
-`candidateVersion` is `0.11.0`; `samplingProtocol` is
-`rotating-eight-channel-v1`. `channelNames`, in index order, is
-`candidateNativeUnchecked`, `candidateNativeChecked`, `currentClangUnchecked`,
-`currentClangChecked`, `replayNativeUnchecked`, `replayNativeChecked`,
-`replayClangUnchecked`, `replayClangChecked`. Each case's `warmupOrder` has three
-rows and `sampleOrder` twenty rows; row `r` is `[(r + i) % 8 for i in 0..8]`.
-The report records the executed schedule, not a duration-dependent ordering.
+## Native runtime and optimizer gate — schema 7
 
-`runtimeReplay` contains `metadata` (the twelve exact string fields from the
-version-1 `replay.tsv` bundle), `manifestSha256`, and eight `artifacts` records.
-Each record has `case`, `mode`, fixed-basename `file`, positive integer `bytes`,
-and lowercase `sha256`. The checker independently binds the recipe, four adapters,
-frozen manifest and installed LLVM component manifest, and hashes the actual
-`ckc-v010` compiler and eight files selected by `CKC_V010_RUNTIME_BUNDLE`.
-`CKC_LLVM_PREFIX` must identify the same pinned installation used to prepare/run.
-Hashes provide integrity, not authentication of an arbitrary untrusted bundle;
-the fixed-checkout preparation log supplies the auditable source provenance.
+`target/ckc-perf/results.json` is a fail-closed `schemaVersion: 7` object for
+candidate `0.12.0`. Unknown, missing, duplicate, malformed, non-finite, unstable,
+or non-positive fields fail. It pins baseline CPU, strict floating semantics,
+Clang 22.1.8, Rust 1.90.0, the canonical Native `KirTargetProfile` digest,
+cost/proof/budget schema 1, actual artifacts, source/recipe/component digests,
+and the exact schedules described below.
 
-`evidenceDirectory` is the report-relative `measurement-<pid>-<timestamp>`
-directory. `measuredArtifacts` contains exactly 24 records with the above artifact
-fields plus `channel` (`candidateNative`, `currentClang` or `replayClang`). These
-are the actual measured libraries, retained even if the gate fails; the eight
-V0.10 Native libraries remain in the replay bundle. Escaping paths, symlinked
-files, empty artifacts, duplicates and size/digest mismatches are rejected.
+### Scalar regression
 
-Every runtime case records semantic equivalence, compile/cold-run duration,
-repeated Native and Clang sample arrays and medians, frozen V0.10 Native and
-Clang medians (`v010MedianNs` and `v010ClangMedianNs`) as unchanged historical
-provenance, actual replay Native/Clang sample arrays and medians, peak memory,
-artifact size/hashes, batch iterations, and validated result. Both versions and
-safety modes are sampled in the same process on identical inputs. Checked and unchecked suites use the
-same exact four-case runtime corpus. `optimizerComparisons` uses the exact six
-entries from `benches/cases/native-cases.tsv`; omitting a case is a hard failure.
+`rotating-twelve-channel-v1` runs candidate Native, current frozen Clang C,
+replayed 0.11 Native/Clang, and retained 0.10 Native/Clang, each in unchecked and
+checked mode. Channel order is the top-level `channelNames` array. There are
+three warm-up rows and twenty sample rows; row `r` is every channel starting at
+`r % 12`. Each stored sample is the minimum of seven calls over the fixed
+20,000,000-item batch, and each stored median is the upper median.
 
-The replay timing fields are `replayNativeSamplesNs`, `replayClangSamplesNs`,
-`replayNativeMedianNs` and `replayClangMedianNs`. All four stream arrays per mode
-must contain twenty finite positive timings with the declared upper median.
-The fixed batch is `20000000`; checked/unchecked `result` values must agree.
-The checker also matches `v010MirMedianNs` against the frozen optimizer entry,
-not a caller-provided denominator. Unknown historical schema versions cannot pass.
+`runtimeReplayV011` pins commit
+`80c0acf6bb5d65e4d9d40352b9501ea32b79f43d`; `runtimeReplayV010` pins
+`df816502876fba41676f9ebc190e4fadd18cd5a5`. Each contains the exact twelve
+metadata fields, manifest SHA-256, and eight checked/unchecked artifacts.
+Compiler, manifest, recipe, adapters, LLVM component, source diff, artifact
+bytes and hashes are independently revalidated. Symlinks, path escapes,
+duplicates, substitutions, and historical-number fallbacks fail.
 
-`baselineV010` must identify commit
-`df816502876fba41676f9ebc190e4fadd18cd5a5`, compiler `calckernel 0.10.0`, LLVM,
-target/CPU/mode, harness/statistics identity, `sourceDigestCount`, and exact
-lowercase SHA-256 `sourceDigests` for every runtime, optimizer, and frozen V0.10
-C-oracle source. Candidate Native code and the frozen oracle are measured on the
-same worker alongside the independently built, pinned V0.10 Native artifacts.
-Historical ratios do not substitute for those replay samples. The candidate must not regenerate the oracle through its own C
-backend, which could mask a shared frontend or KIR regression. Any identity,
-set, or digest mismatch rejects the report.
+`measuredArtifacts` retains exactly 32 scalar libraries in the report-relative
+fresh evidence directory: candidate/current-Clang/replay-0.11-Clang/
+replay-0.10-Clang for four cases and two modes. Replay Native artifacts stay in
+their independently built bundles.
 
-`scripts/check-native-performance.py` is the normative schema 6 reader. It
-requires the exact pinned identities and portable baseline CPU policy,
-loads the repository schema-2 baseline manifest and rejects any reported
-`v010MedianNs` or `v010ClangMedianNs` that differs from its target/mode/case
-entry. It validates the replay bundle and actual library files, exact sampling
-order, three warm-up rounds, twenty samples, seven calls per sample and a
-twenty-million-input batch. It recomputes every upper median from its stable
-sample array. The runtime baseline ratio is
-`(candidateNative/currentClang)/(replayV010Native/replayClang)`, not a cross-worker
-ratio using historical times. It requires at
-least 95% Native/Clang geometric-mean throughput,
-at most 10% individual Native/Clang regression, at most 3% geometric and 8%
-individual Clang-normalized 0.11/0.10 runtime regression, at least 97% checked/unchecked
-proof-loop throughput, and a median KIR/0.10-MIR optimizer ratio of at most 2x
-for the suite and 3x individually.
+The cumulative scalar gates are: at least 95% geometric-mean throughput versus
+current Clang, at most 10% individual regression, at most 3% geometric-mean and
+8% individual Clang-normalized regression versus each real 0.11 and 0.10
+replay, and at least 97% checked/unchecked proof-loop throughput. The retained
+KIR/0.10 MIR optimizer gate remains 2x suite median and 3x individual.
 
-Prepare the bundle with `scripts/prepare-performance-replay.py` and select it
-with `CKC_V010_RUNTIME_BUNDLE`. Missing, modified or incorrectly identified replay
-evidence is an error, never a fallback to frozen numbers. The exact V0.10 source,
-four existing adapters and baseline manifest remain unchanged. Schema-5 reports
-remain historical evidence but cannot satisfy the schema-6 release gate.
+### Vector and domain-fact suites
 
-Changing a field, equivalence rule, source, baseline, statistic, or threshold
-requires coordinated review of the harness, checker, guide, tests, and CI. A
-threshold must never be changed merely to make a failing candidate pass.
+`vectorSuites` covers exactly map, zip, strict `f64`, integer cast, modular
+reduction, SLP, runtime no-alias versioning, and fixed-length specialization.
+`domainFactSuites` covers no-alias and fixed-length contract advantages. Both
+separate checked and unchecked modes and use `rotating-three-channel-v1` with
+three warm-up rows, twenty sample rows, seven calls per sample, identical input,
+the fixed batch, and upper medians.
+
+Vector channels are candidate/C SIMD/Rust SIMD. Every item must reach 90% of
+the faster oracle and the per-mode geometric mean must reach 95%. Domain
+channels substitute generic C/Rust, and candidate geometric mean must exceed
+the faster generic oracle by 5%. Checked and unchecked result digests must
+match. `oracleIdentity` pins the manifest, compiler versions, strict math,
+differential audit, and UB audit. `oracleArtifacts` retains all 60 actual
+libraries with exact suite/case/mode/channel names, bytes, and SHA-256.
+
+### Object size and source-to-object time
+
+`artifactSizeComparisons` contains both modes of every vector fixture compiled
+from the same source by candidate and replayed 0.11 into relocatable objects.
+Aggregate candidate growth is at most 35%; no item exceeds 2.5x.
+
+`compileTimeComparisons` uses fresh output paths, no artifact cache, three
+alternating warm-up pairs, fifteen alternating measured pairs, and upper
+medians. Candidate/replayed-0.11 source-to-object time is at most 1.5x in
+geometric mean and 2x individually.
+
+Prepare both replay bundles with `scripts/prepare-performance-replay.py`, select
+them through `CKC_V011_RUNTIME_BUNDLE` and `CKC_V010_RUNTIME_BUNDLE`, build the
+candidate release compiler, then run the benchmark and
+`scripts/check-native-performance.py`. Changing a source, identity, manifest,
+statistic, corpus, exclusion, or threshold is a reviewed contract change; a
+failing candidate never authorizes weakening this schema.

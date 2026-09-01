@@ -1,8 +1,8 @@
-# CalcKernel 0.11 Native LLVM and C ABI
+# CalcKernel 0.12 Native LLVM and C ABI
 
 [简体中文](../zh-CN/abi/llvm.md)
 
-CalcKernel 0.11 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
+CalcKernel 0.12 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
 checked C++ bridge, verified before and after optimization, emitted as object
 bytes by the host TargetMachine, and linked in process with LLD. `emit-llvm`
 prints this verified module for inspection.
@@ -41,10 +41,24 @@ Audit failure stops before bridge invocation. Valid facts may become LLVM
 `noalias`, `readonly`/`writeonly`, alignment, range, alias-scope, loop, or
 vectorization information; the bridge never invents a stronger fact.
 
+The module's canonical `KirTargetProfile` is queried from LLVM 22.1.8 for the
+exact host target and CPU policy before optimization. It closes the fixed
+operation universe, vector lane legality, alignment, and integer structural
+costs used by CK's independent cost checker. Its digest is revalidated at the
+Rust/C++ boundary and enters object/cache identity. A target, feature, query,
+or digest mismatch stops before LLVM IR construction.
+
 CK integers map to equal-width LLVM integers, `f64` to `double`, bool to `i1`,
 pointers to opaque `ptr`, structs to declaration-order LLVM structs, and void
 returns to LLVM `void`. Signedness selects compare, divide, remainder, and
 integer-to-float operations. No fast-math flags are enabled.
+
+KIR v2 fixed vectors lower structurally to equal-width LLVM vectors. Vector
+loads/stores, strict arithmetic, casts, compares/selects, and modular integer
+add/multiply reductions are emitted only after the KIR independent checker has
+closed lane mapping, operation equivalence, fallback identity, target legality,
+and cost/budget proofs. LLVM optimization may further improve that valid module,
+but cannot be the source of CK safety or alias claims.
 
 Stored `slice<T>` is `{ ptr, i32 }`. Internal calls preserve its data/length
 pair and internal aggregate returns. Checked modes use explicit control flow and
@@ -57,10 +71,11 @@ explicit or natural completion uses `ret void`.
 These forms are compiler internals, not the public library ABI. The independent
 0.9 textual LLVM export-shape promise is retired.
 
-The public Native C ABI remains version 1 in 0.11. The private LLVM bridge ABI
-is version 2, the contract-aware runtime ABI is version 2, and native cache and
-code-generation identity use KIR v1. These private identities intentionally
-invalidate incompatible 0.10 objects without changing foreign-call signatures.
+The public Native C ABI remains version 1 in 0.12. The private LLVM bridge ABI 3
+replaces bridge ABI 2, the contract-aware runtime ABI remains version 2, and native cache
+and code-generation identity use KIR v2 plus `CKCOBJ02` manifest schema 3.
+These private identities intentionally invalidate incompatible 0.11 and older
+objects without changing foreign-call signatures.
 
 ## Native C ABI
 
@@ -139,5 +154,5 @@ not an RWX fallback. The internal audit rejects mixed capability tuples and
 proves relocation, final code/data permissions, and instruction-cache
 finalization for both paths.
 
-ORC is not a public embeddable API in 0.11. `emit-llvm` is host-only diagnostic
+ORC is not a public embeddable API in 0.12. `emit-llvm` is host-only diagnostic
 output and does not promise a stable external LLVM ABI.

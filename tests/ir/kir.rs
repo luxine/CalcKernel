@@ -1,10 +1,11 @@
 use calckernel::{
     BlockId, FactId, FunctionId, InstructionId, KirArithmeticSemantics, KirBlock, KirBoundsMode,
     KirBuildConfig, KirConsumer, KirFailureKind, KirFunction, KirInstruction, KirInstructionKind,
-    KirModule, KirOverflowMode, KirResult, KirSanitizerMode, KirTerminator, MemoryRegionId,
-    MemoryVersionId, MirArtifactConsumer, MirPrimitiveTypeName, MirType, ProofId, SourceFile,
-    ValueId, build_kir_module, check, lower_to_mir, prepare_artifact_for_consumer,
-    print_kir_module, validate_kir_module,
+    KirModule, KirOverflowMode, KirProfileLayout, KirResult, KirSanitizerMode, KirTargetIdentity,
+    KirTargetProfile, KirTerminator, KirValueType, MemoryRegionId, MemoryVersionId,
+    MirArtifactConsumer, MirPrimitiveTypeName, MirType, ProofId, SourceFile, ValueId,
+    build_kir_module, check, lower_to_mir, prepare_artifact_for_consumer, print_kir_module,
+    validate_kir_module,
 };
 
 use std::collections::BTreeSet;
@@ -26,9 +27,110 @@ fn build(source_text: &str, build_config: KirBuildConfig) -> KirModule {
 }
 
 #[test]
+fn vector_type_scalar_migration_should_wrap_only_internal_ssa_values() {
+    let module = build(
+        "export fn add(left: i32, right: i32) -> i32 { return left + right; }",
+        config(),
+    );
+    let function = &module.functions[0];
+    assert_eq!(
+        function.params[0].type_node,
+        MirType::Primitive(MirPrimitiveTypeName::I32)
+    );
+    assert_eq!(
+        function.return_type,
+        MirType::Primitive(MirPrimitiveTypeName::I32)
+    );
+    for block in &function.blocks {
+        for param in &block.params {
+            assert!(matches!(param.type_node, KirValueType::Scalar(_)));
+        }
+        for instruction in &block.instructions {
+            for result in &instruction.results {
+                assert!(matches!(result.type_node, KirValueType::Scalar(_)));
+            }
+        }
+    }
+}
+
+#[test]
+fn profile_portable_consumers_should_have_complete_deterministic_schema_one_identity() {
+    let cases = [
+        (
+            KirTargetProfile::inspection(),
+            KirTargetIdentity::Inspection,
+            KirProfileLayout::PortableUnknown,
+        ),
+        (
+            KirTargetProfile::portable_c(),
+            KirTargetIdentity::PortableC,
+            KirProfileLayout::PortableUnknown,
+        ),
+        (
+            KirTargetProfile::webassembly(),
+            KirTargetIdentity::WebAssembly,
+            KirProfileLayout::Known {
+                pointer_width_bits: 32,
+                little_endian: true,
+            },
+        ),
+    ];
+    for (profile, identity, layout) in cases {
+        assert_eq!(profile.schema_version(), 1);
+        assert_eq!(profile.target_identity(), &identity);
+        assert_eq!(profile.layout(), layout);
+        assert!(!profile.vector_operations_enabled());
+        assert!(profile.cost_entry_count() > 100);
+        assert_eq!(profile.canonical_bytes(), profile.canonical_bytes());
+        assert_eq!(profile.digest_hex().len(), 64);
+        assert!(
+            profile
+                .digest_hex()
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+        assert_eq!(profile.validate(), Ok(()));
+    }
+    assert_eq!(
+        KirTargetProfile::inspection(),
+        KirTargetProfile::inspection()
+    );
+    assert_ne!(
+        KirTargetProfile::inspection().digest_hex(),
+        KirTargetProfile::portable_c().digest_hex()
+    );
+    assert_ne!(
+        KirTargetProfile::portable_c().digest_hex(),
+        KirTargetProfile::webassembly().digest_hex()
+    );
+}
+
+#[test]
+fn kir_v2_profile_binding_should_print_and_reject_a_consumer_mismatch() {
+    let module = build("export fn answer() -> i32 { return 42; }", config());
+    let text = print_kir_module(&module);
+    assert!(text.starts_with("kir-v2 consumer=inspection "), "{text}");
+    assert!(text.contains("profile-schema=1"), "{text}");
+    assert!(
+        text.contains(&format!("profile-sha256={}", module.profile.digest_hex())),
+        "{text}"
+    );
+
+    let mut mismatched = module;
+    mismatched.profile = KirTargetProfile::portable_c();
+    let errors = validate_kir_module(&mismatched).errors;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0].message,
+        "KIR target profile consumer does not match module consumer"
+    );
+}
+
+#[test]
 fn kir_model_and_printer_should_include_complete_module_identity() {
     let module = KirModule {
         config: config(),
+        profile: KirTargetProfile::inspection(),
         entry: None,
         structs: Vec::new(),
         functions: Vec::new(),
@@ -36,7 +138,10 @@ fn kir_model_and_printer_should_include_complete_module_identity() {
 
     assert_eq!(
         print_kir_module(&module),
-        "kir consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled\n"
+        format!(
+            "kir-v2 consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled profile-schema=1 profile-sha256={}\n",
+            module.profile.digest_hex()
+        )
     );
 }
 
@@ -44,6 +149,7 @@ fn kir_model_and_printer_should_include_complete_module_identity() {
 fn kir_printer_should_be_byte_deterministic_for_identical_model() {
     let module = KirModule {
         config: config(),
+        profile: KirTargetProfile::inspection(),
         entry: None,
         structs: Vec::new(),
         functions: Vec::new(),
@@ -69,6 +175,7 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
     let i32_type = MirType::Primitive(MirPrimitiveTypeName::I32);
     let module = KirModule {
         config: config(),
+        profile: KirTargetProfile::inspection(),
         entry: None,
         structs: Vec::new(),
         functions: vec![KirFunction {
@@ -79,6 +186,7 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
             return_type: i32_type.clone(),
             regions: Vec::new(),
             initial_memory: Vec::new(),
+            vector_regions: Vec::new(),
             blocks: vec![KirBlock {
                 id: BlockId::from_index(0),
                 label: "bb0".to_string(),
@@ -88,7 +196,7 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
                     id: InstructionId::from_index(0),
                     results: vec![KirResult {
                         value: ValueId::from_index(0),
-                        type_node: i32_type,
+                        type_node: i32_type.into(),
                     }],
                     kind: KirInstructionKind::ConstInt {
                         value: "42".to_string(),
@@ -107,13 +215,16 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
 
     assert_eq!(
         print_kir_module(&module),
-        concat!(
-            "kir consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled\n",
-            "\nexport fn f0 answer() -> i32 {\n",
-            "bb0 b0():\n",
-            "  i0 v0: i32 = const_int 42\n",
-            "  return v0 [effect 0]\n",
-            "}\n",
+        format!(
+            concat!(
+                "kir-v2 consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled profile-schema=1 profile-sha256={}\n",
+                "\nexport fn f0 answer() -> i32 {{\n",
+                "bb0 b0():\n",
+                "  i0 v0: i32 = const_int 42\n",
+                "  return v0 [effect 0]\n",
+                "}}\n",
+            ),
+            module.profile.digest_hex()
         )
     );
 }

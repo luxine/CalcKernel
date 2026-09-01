@@ -257,6 +257,76 @@ fn kir_wasm_o3_canonical_proof_loop_should_consume_guard_free_kir() {
     );
 }
 
+#[test]
+fn scalar_unroll_wasm_should_match_o0_for_full_and_partial_exact_remainder() {
+    let source = r#"
+        export fn full() -> u32 {
+          let i: u32 = 0; let total: u32 = 0;
+          while i < 8 { total = total + i; i = i + 1; }
+          return total;
+        }
+        export fn partial() -> u32 {
+          let i: u32 = 0; let total: u32 = 0;
+          while i < 11 { total = total + i; i = i + 1; }
+          return total;
+        }
+    "#;
+    let runner = r#"
+        import fs from "node:fs";
+        const bytes = fs.readFileSync(process.argv[2]);
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        if (instance.exports.full() !== 28) process.exit(1);
+        if (instance.exports.partial() !== 55) process.exit(2);
+    "#;
+    for (level, numeric) in [(KirOptimizationLevel::O0, 0), (KirOptimizationLevel::O3, 3)] {
+        let kir = optimized_kir(source, level);
+        assert!(
+            kir.functions
+                .iter()
+                .all(|function| function.vector_regions.is_empty())
+        );
+        let wasm = emit_wasm_kir_module(&kir, EmitWasmOptions { opt_level: numeric })
+            .expect("scalar unroll WASM");
+        run_wasm(&wasm, runner);
+    }
+}
+
+#[test]
+fn loop_simd_portable_wasm_should_remain_scalar_and_match_o0() {
+    let source = r#"
+        export unsafe fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void
+        contract { requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i] + 7; i = i + 1; }
+        }
+    "#;
+    let runner = r#"
+        import fs from "node:fs";
+        const bytes = fs.readFileSync(process.argv[2]);
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        const memory = new Uint32Array(instance.exports.memory.buffer);
+        const input = 256 / 4;
+        const output = 512 / 4;
+        for (let i = 0; i < 16; ++i) memory[input + i] = i * 3;
+        instance.exports.map(256, 16, 512, 16, 16);
+        for (let i = 0; i < 16; ++i) {
+          if (memory[output + i] !== memory[input + i] + 7) process.exit(1);
+        }
+    "#;
+    for (level, numeric) in [(KirOptimizationLevel::O0, 0), (KirOptimizationLevel::O3, 3)] {
+        let kir = optimized_kir(source, level);
+        assert!(
+            kir.functions
+                .iter()
+                .all(|function| function.vector_regions.is_empty())
+        );
+        let wasm = emit_wasm_kir_module(&kir, EmitWasmOptions { opt_level: numeric })
+            .expect("scalar loop SIMD WASM");
+        run_wasm(&wasm, runner);
+    }
+}
+
 fn run_wasm(wasm: &[u8], runner_source: &str) {
     let temp = temp_dir("kir_wasm_matrix");
     fs::create_dir_all(&temp).expect("create temp dir");

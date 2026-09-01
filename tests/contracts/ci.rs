@@ -128,6 +128,12 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
         "arch: x86-64",
         "arch: AArch64",
         "profile: oracle",
+        "CKC_V011_RUNTIME_BUNDLE",
+        "CKC_V010_RUNTIME_BUNDLE",
+        "--baseline 0.10",
+        "scripts/audit-performance-oracles.py",
+        "cargo build --release --features native-toolchain --locked",
+        "CKC_CANDIDATE_COMPILER",
         "--case proof",
         "--cpu baseline",
         "scripts/check-native-performance.py",
@@ -150,6 +156,18 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
         );
     }
     assert_actions_are_commit_pinned(&workflow, "daily CI");
+    assert_eq!(
+        workflow.matches("- arch:").count(),
+        2,
+        "schema 7 requires exactly two stable performance architectures"
+    );
+    assert_eq!(
+        workflow.matches("- name: darwin-").count()
+            + workflow.matches("- name: linux-").count()
+            + workflow.matches("- name: win32-").count(),
+        6,
+        "the six host matrix plus quality/native/two performance jobs forms ten required jobs"
+    );
 }
 
 #[test]

@@ -23,6 +23,7 @@ fn adapt_unchecked_kir(module: &KirModule) -> Result<MirModule, String> {
     {
         return Err("WebAssembly KIR backend accepts only unchecked KIR".to_string());
     }
+    reject_vector_values(module)?;
     Ok(MirModule {
         entry: module.entry.clone(),
         structs: module.structs.clone(),
@@ -190,6 +191,22 @@ fn adapt_instruction(
         KirInstructionKind::RuntimeCall { .. } => {
             return Err("WebAssembly KIR cannot lower native runtime calls".to_string());
         }
+        KirInstructionKind::VersionPredicate { .. } => {
+            return Err("WebAssembly KIR cannot lower Native version predicates".to_string());
+        }
+        KirInstructionKind::VectorSplat { .. }
+        | KirInstructionKind::VectorLoad { .. }
+        | KirInstructionKind::VectorStore { .. }
+        | KirInstructionKind::VectorBinary { .. }
+        | KirInstructionKind::VectorUnary { .. }
+        | KirInstructionKind::VectorCompare { .. }
+        | KirInstructionKind::VectorSelect { .. }
+        | KirInstructionKind::VectorCast { .. }
+        | KirInstructionKind::VectorInsert { .. }
+        | KirInstructionKind::VectorExtract { .. }
+        | KirInstructionKind::VectorReduce { .. } => {
+            unreachable!("vector KIR must be rejected before WebAssembly adaptation")
+        }
     })
 }
 
@@ -255,7 +272,7 @@ fn append_edge_block(
         instructions.push(MirInstruction::Move {
             target: MirValue::Temp {
                 name: format!("edge_{}_{}", label, index),
-                type_node: target.type_node.clone(),
+                type_node: scalar_type(&target.type_node).clone(),
             },
             value: mir_value(*argument, types, params),
         });
@@ -265,7 +282,7 @@ fn append_edge_block(
             target: mir_value(target.value, types, params),
             value: MirValue::Temp {
                 name: format!("edge_{}_{}", label, index),
-                type_node: target.type_node.clone(),
+                type_node: scalar_type(&target.type_node).clone(),
             },
         });
     }
@@ -362,15 +379,40 @@ fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
             block
                 .params
                 .iter()
-                .map(|param| (param.value, param.type_node.clone()))
+                .map(|param| (param.value, scalar_type(&param.type_node).clone()))
                 .chain(block.instructions.iter().flat_map(|instruction| {
                     instruction
                         .results
                         .iter()
-                        .map(|result| (result.value, result.type_node.clone()))
+                        .map(|result| (result.value, scalar_type(&result.type_node).clone()))
                 }))
         }))
         .collect()
+}
+
+fn scalar_type(type_node: &KirValueType) -> &MirType {
+    type_node
+        .as_scalar()
+        .expect("vector KIR must be rejected before WebAssembly adaptation")
+}
+
+fn reject_vector_values(module: &KirModule) -> Result<(), String> {
+    if module
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| {
+            block.params.iter().map(|param| &param.type_node).chain(
+                block.instructions.iter().flat_map(|instruction| {
+                    instruction.results.iter().map(|result| &result.type_node)
+                }),
+            )
+        })
+        .any(|type_node| type_node.as_scalar().is_none())
+    {
+        return Err("WebAssembly KIR backend cannot lower vector values".to_string());
+    }
+    Ok(())
 }
 
 fn local_name(value: ValueId) -> String {

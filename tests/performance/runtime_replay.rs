@@ -6,37 +6,58 @@ use sha2::{Digest, Sha256};
 mod replay_api;
 
 use replay_api::{
-    BASELINE_COMMIT, BASELINE_COMPILER, BASELINE_MANIFEST_SHA256, ExpectedReplay, RUNTIME_CASES,
-    load_replay,
+    ExpectedReplay, RUNTIME_CASES, ReplayGeneration, V010_BASELINE_COMMIT, V010_BASELINE_COMPILER,
+    V010_BASELINE_MANIFEST_SHA256, V011_BASELINE_COMMIT, V011_BASELINE_COMPILER,
+    V011_BASELINE_MANIFEST_SHA256, load_replay,
 };
 
 struct Bundle {
     root: PathBuf,
     manifest: String,
+    generation: ReplayGeneration,
 }
 
 #[test]
 fn replay_sampling_should_rotate_every_channel_once_and_balance_positions() {
-    let mut positions = [[0; 8]; 8];
+    let mut positions = [[0; 12]; 12];
     for round in 0..20 {
         let order = replay_api::sampling_round(round);
-        assert_eq!(order, std::array::from_fn(|offset| (round + offset) % 8));
+        assert_eq!(order, std::array::from_fn(|offset| (round + offset) % 12));
         let mut sorted = order;
         sorted.sort();
-        assert_eq!(sorted, [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(sorted, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         for (position, channel) in order.into_iter().enumerate() {
             positions[channel][position] += 1;
         }
-        assert_eq!(replay_api::sampling_round(round + 8), order);
+        assert_eq!(replay_api::sampling_round(round + 12), order);
     }
     assert!(
         positions
             .into_iter()
             .flatten()
-            .all(|count| matches!(count, 2 | 3))
+            .all(|count| matches!(count, 1 | 2))
     );
     // An arbitrary investigation round must not overflow the schedule arithmetic.
-    assert_eq!(replay_api::sampling_round(usize::MAX)[0], usize::MAX % 8);
+    assert_eq!(replay_api::sampling_round(usize::MAX)[0], usize::MAX % 12);
+}
+
+#[test]
+fn oracle_sampling_should_rotate_three_channels_with_the_same_fail_fast_contract() {
+    let mut calls = Vec::new();
+    let samples = replay_api::sample_three_channels(3, 20, |channel, warmup| {
+        calls.push((channel, warmup));
+        Ok::<_, ()>(calls.len() as u128)
+    })
+    .unwrap();
+    assert_eq!(samples.warmup_order.len(), 3);
+    assert_eq!(samples.sample_order.len(), 20);
+    for (round, order) in samples.warmup_order.iter().enumerate() {
+        assert_eq!(*order, std::array::from_fn(|offset| (round + offset) % 3));
+    }
+    for (round, order) in samples.sample_order.iter().enumerate() {
+        assert_eq!(*order, std::array::from_fn(|offset| (round + offset) % 3));
+    }
+    assert!(samples.channels.iter().all(|channel| channel.len() == 20));
 }
 
 #[test]
@@ -77,7 +98,7 @@ fn replay_sampling_should_execute_and_record_the_exact_warmup_and_sample_order()
         )
         .collect::<Vec<_>>();
     assert_eq!(calls, expected_calls);
-    for channel in 0..8 {
+    for channel in 0..12 {
         let expected_values = calls
             .iter()
             .enumerate()
@@ -90,7 +111,7 @@ fn replay_sampling_should_execute_and_record_the_exact_warmup_and_sample_order()
 
 #[test]
 fn replay_sampling_should_stop_immediately_on_any_warmup_or_timed_error() {
-    for failing_call in [1, 24, 25, 184] {
+    for failing_call in [1, 36, 37, 276] {
         let mut calls = 0;
         let result = replay_api::sample_channels(3, 20, |_, _| {
             calls += 1;
@@ -106,13 +127,27 @@ fn replay_sampling_should_stop_immediately_on_any_warmup_or_timed_error() {
 }
 
 impl Bundle {
-    fn new() -> Self {
+    fn new(generation: ReplayGeneration) -> Self {
         let root = super::support::temp::temp_dir("ckc-replay-loader-test");
         fs::create_dir(&root).expect("create owned fixture");
         let compiler = b"fixture compiler bytes (never executed)";
-        fs::write(root.join("ckc-v010"), compiler).unwrap();
+        fs::write(root.join(generation.compiler_file()), compiler).unwrap();
+        let (header, commit, identity, manifest_digest) = match generation {
+            ReplayGeneration::V010 => (
+                "ckc-v010-runtime-replay",
+                V010_BASELINE_COMMIT,
+                V010_BASELINE_COMPILER,
+                V010_BASELINE_MANIFEST_SHA256,
+            ),
+            ReplayGeneration::V011 => (
+                "ckc-v011-runtime-replay",
+                V011_BASELINE_COMMIT,
+                V011_BASELINE_COMPILER,
+                V011_BASELINE_MANIFEST_SHA256,
+            ),
+        };
         let mut manifest = format!(
-            "ckc-v010-runtime-replay\t1\ncommit\t{BASELINE_COMMIT}\ncompilerIdentity\t{BASELINE_COMPILER}\ncompilerSha256\t{:x}\ncompilerBytes\t{}\nllvmVersion\t22.1.8\ntarget\tlinux-x86_64\ncpuPolicy\tbaseline\nrecipeSha256\t{}\nadapterSetSha256\t{}\nsourceDiffSha256\t{}\nbaselineManifestSha256\t{BASELINE_MANIFEST_SHA256}\n",
+            "{header}\t1\ncommit\t{commit}\ncompilerIdentity\t{identity}\ncompilerSha256\t{:x}\ncompilerBytes\t{}\nllvmVersion\t22.1.8\ntarget\tlinux-x86_64\ncpuPolicy\tbaseline\nrecipeSha256\t{}\nadapterSetSha256\t{}\nsourceDiffSha256\t{}\nbaselineManifestSha256\t{manifest_digest}\n",
             Sha256::digest(compiler),
             compiler.len(),
             "a".repeat(64),
@@ -133,13 +168,18 @@ impl Bundle {
             }
         }
         fs::write(root.join("replay.tsv"), &manifest).unwrap();
-        Self { root, manifest }
+        Self {
+            root,
+            manifest,
+            generation,
+        }
     }
 
     fn load(&self) -> Result<replay_api::RuntimeReplay, String> {
         load_replay(
             &self.root,
             &ExpectedReplay {
+                generation: self.generation,
                 target: "linux-x86_64",
                 cpu: "baseline",
                 recipe_sha256: &"a".repeat(64),
@@ -170,20 +210,22 @@ impl Drop for Bundle {
 
 #[test]
 fn replay_loader_should_accept_the_exact_complete_hashed_bundle() {
-    let bundle = Bundle::new();
-    let replay = bundle.load().expect("valid bundle before dynamic loading");
-    assert_eq!(replay.artifacts.len(), 8);
-    assert_eq!(replay.metadata["commit"], BASELINE_COMMIT);
-    assert_eq!(
-        replay.manifest_sha256,
-        format!("{:x}", Sha256::digest(bundle.manifest.as_bytes()))
-    );
-    for artifact in &replay.artifacts {
-        assert!(RUNTIME_CASES.contains(&artifact.case.as_str()));
-        assert!(matches!(artifact.mode.as_str(), "checked" | "unchecked"));
-        let bytes = fs::read(&artifact.path).unwrap();
-        assert_eq!(artifact.bytes, bytes.len() as u64);
-        assert_eq!(artifact.sha256, format!("{:x}", Sha256::digest(bytes)));
+    for generation in [ReplayGeneration::V010, ReplayGeneration::V011] {
+        let bundle = Bundle::new(generation);
+        let replay = bundle.load().expect("valid bundle before dynamic loading");
+        assert_eq!(replay.generation, generation);
+        assert_eq!(replay.artifacts.len(), 8);
+        assert_eq!(
+            replay.manifest_sha256,
+            format!("{:x}", Sha256::digest(bundle.manifest.as_bytes()))
+        );
+        for artifact in &replay.artifacts {
+            assert!(RUNTIME_CASES.contains(&artifact.case.as_str()));
+            assert!(matches!(artifact.mode.as_str(), "checked" | "unchecked"));
+            let bytes = fs::read(&artifact.path).unwrap();
+            assert_eq!(artifact.bytes, bytes.len() as u64);
+            assert_eq!(artifact.sha256, format!("{:x}", Sha256::digest(bytes)));
+        }
     }
 }
 
@@ -210,21 +252,31 @@ print(module.named_digest((f"benches/baselines/{name}", digest) for name, digest
     let values = text.lines().collect::<Vec<_>>();
     assert_eq!(values.len(), 2);
     assert_eq!(replay_api::recipe_digest(root).unwrap(), values[0]);
-    assert_eq!(replay_api::adapter_set_digest(root).unwrap(), values[1]);
+    assert_eq!(
+        replay_api::v010_adapter_set_digest(root).unwrap(),
+        values[1]
+    );
+    assert_eq!(
+        replay_api::v011_adapter_set_digest(root).unwrap(),
+        format!("{:x}", Sha256::digest([]))
+    );
 }
 
 #[test]
 fn replay_loader_should_reject_identity_schema_and_record_mutations() {
     let mutations = [
         ("ckc-v010-runtime-replay\t1", "ckc-v010-runtime-replay\t2"),
-        (BASELINE_COMMIT, "0000000000000000000000000000000000000000"),
+        (
+            V010_BASELINE_COMMIT,
+            "0000000000000000000000000000000000000000",
+        ),
         ("calckernel 0.10.0", "calckernel 0.11.0"),
         ("llvmVersion\t22.1.8", "llvmVersion\t22.1.7"),
         ("target\tlinux-x86_64", "target\tlinux-aarch64"),
         ("cpuPolicy\tbaseline", "cpuPolicy\tnative"),
         ("recipeSha256\t", "unrecognizedField\t"),
         (
-            BASELINE_MANIFEST_SHA256,
+            V010_BASELINE_MANIFEST_SHA256,
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         ),
         ("sourceDiffSha256\t", "sourceDiffSha256\tINVALID"),
@@ -237,12 +289,12 @@ fn replay_loader_should_reject_identity_schema_and_record_mutations() {
         ("branch_mix-unchecked.so", "/tmp/branch_mix-unchecked.so"),
     ];
     for (from, to) in mutations {
-        let bundle = Bundle::new();
+        let bundle = Bundle::new(ReplayGeneration::V010);
         bundle.change(from, to);
         assert!(bundle.load().is_err(), "must reject {from:?} -> {to:?}");
     }
     for field in ["recipeSha256", "adapterSetSha256", "llvmComponentSha256"] {
-        let bundle = Bundle::new();
+        let bundle = Bundle::new(ReplayGeneration::V010);
         let old = match field {
             "recipeSha256" => 'a',
             "adapterSetSha256" => 'b',
@@ -256,7 +308,7 @@ fn replay_loader_should_reject_identity_schema_and_record_mutations() {
     }
     for prefix in ["commit\t", "artifact\tunchecked\tbranch_mix\t"] {
         for duplicate in [false, true] {
-            let bundle = Bundle::new();
+            let bundle = Bundle::new(ReplayGeneration::V010);
             let line = bundle
                 .manifest
                 .lines()
@@ -279,13 +331,13 @@ fn replay_loader_should_reject_identity_schema_and_record_mutations() {
 #[test]
 fn replay_loader_should_reject_missing_changed_and_redirected_files() {
     for file in ["replay.tsv", "ckc-v010", "proof_loop-checked.so"] {
-        let bundle = Bundle::new();
+        let bundle = Bundle::new(ReplayGeneration::V010);
         fs::remove_file(bundle.root.join(file)).unwrap();
         assert!(bundle.load().is_err(), "missing {file}");
     }
     for file in ["ckc-v010", "proof_loop-checked.so"] {
         for same_size in [false, true] {
-            let bundle = Bundle::new();
+            let bundle = Bundle::new(ReplayGeneration::V010);
             let mut bytes = fs::read(bundle.root.join(file)).unwrap();
             if same_size {
                 bytes[0] ^= 1;
@@ -301,7 +353,7 @@ fn replay_loader_should_reject_missing_changed_and_redirected_files() {
     }
     #[cfg(unix)]
     {
-        let bundle = Bundle::new();
+        let bundle = Bundle::new(ReplayGeneration::V010);
         let library = bundle.root.join("proof_loop-checked.so");
         let moved = bundle.root.join("redirected.so");
         fs::rename(&library, &moved).unwrap();

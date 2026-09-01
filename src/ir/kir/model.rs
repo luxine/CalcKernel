@@ -5,6 +5,8 @@ use crate::{
     MirUnaryOp,
 };
 
+use super::{KirLaneType, KirTargetProfile};
+
 macro_rules! define_id {
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -32,6 +34,8 @@ define_id!(MemoryRegionId);
 define_id!(MemoryVersionId);
 define_id!(FactId);
 define_id!(ProofId);
+define_id!(VectorRegionId);
+define_id!(LoopId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KirConsumer {
@@ -71,6 +75,7 @@ pub struct KirBuildConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KirModule {
     pub config: KirBuildConfig,
+    pub profile: KirTargetProfile,
     pub entry: Option<MirEntryPoint>,
     pub structs: Vec<MirStruct>,
     pub functions: Vec<KirFunction>,
@@ -85,7 +90,14 @@ pub struct KirFunction {
     pub return_type: MirType,
     pub regions: Vec<KirMemoryRegion>,
     pub initial_memory: Vec<KirInitialMemory>,
+    pub vector_regions: Vec<KirVectorRegion>,
     pub blocks: Vec<KirBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KirVectorRegion {
+    pub id: VectorRegionId,
+    pub blocks: Vec<BlockId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,7 +151,7 @@ pub struct KirBlock {
 pub struct KirBlockParam {
     pub value: ValueId,
     pub slot: String,
-    pub type_node: MirType,
+    pub type_node: KirValueType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,7 +172,35 @@ pub struct KirInstruction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KirResult {
     pub value: ValueId,
-    pub type_node: MirType,
+    pub type_node: KirValueType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum KirValueType {
+    Scalar(MirType),
+    FixedVector { lane: KirLaneType, lanes: u16 },
+    Mask { lanes: u16 },
+}
+
+impl KirValueType {
+    #[must_use]
+    pub const fn scalar(type_node: MirType) -> Self {
+        Self::Scalar(type_node)
+    }
+
+    #[must_use]
+    pub const fn as_scalar(&self) -> Option<&MirType> {
+        match self {
+            Self::Scalar(type_node) => Some(type_node),
+            Self::FixedVector { .. } | Self::Mask { .. } => None,
+        }
+    }
+}
+
+impl From<MirType> for KirValueType {
+    fn from(type_node: MirType) -> Self {
+        Self::Scalar(type_node)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,6 +281,134 @@ pub enum KirInstructionKind {
         intrinsic: MirRuntimeIntrinsic,
         args: Vec<ValueId>,
     },
+    VersionPredicate {
+        predicate: KirVersionPredicate,
+    },
+    VectorSplat {
+        scalar: ValueId,
+        region: VectorRegionId,
+    },
+    VectorLoad {
+        access: KirVectorMemoryAccess,
+        region: VectorRegionId,
+    },
+    VectorStore {
+        access: KirVectorMemoryAccess,
+        value: ValueId,
+        region: VectorRegionId,
+    },
+    VectorBinary {
+        op: KirVectorBinaryOp,
+        left: ValueId,
+        right: ValueId,
+        semantics: KirArithmeticSemantics,
+        no_failure_proof: Option<ProofId>,
+        region: VectorRegionId,
+    },
+    VectorUnary {
+        op: KirVectorUnaryOp,
+        operand: ValueId,
+        semantics: KirArithmeticSemantics,
+        no_failure_proof: Option<ProofId>,
+        region: VectorRegionId,
+    },
+    VectorCompare {
+        op: MirCompareOp,
+        left: ValueId,
+        right: ValueId,
+        region: VectorRegionId,
+    },
+    VectorSelect {
+        mask: ValueId,
+        when_true: ValueId,
+        when_false: ValueId,
+        region: VectorRegionId,
+    },
+    VectorCast {
+        op: KirVectorCastOp,
+        value: ValueId,
+        region: VectorRegionId,
+    },
+    VectorInsert {
+        vector: ValueId,
+        scalar: ValueId,
+        lane_index: u16,
+        region: VectorRegionId,
+    },
+    VectorExtract {
+        vector: ValueId,
+        lane_index: u16,
+        region: VectorRegionId,
+    },
+    VectorReduce {
+        op: KirVectorReductionOp,
+        vector: ValueId,
+        semantics: KirArithmeticSemantics,
+        region: VectorRegionId,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KirVersionPredicate {
+    pub address_bits: u8,
+    pub conjuncts: Vec<KirVersionPredicateConjunct>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KirVersionPredicateConjunct {
+    TripThreshold {
+        value: ValueId,
+        minimum: u32,
+    },
+    AddressIntervalsDisjoint {
+        left: ValueId,
+        left_count: ValueId,
+        left_element_bytes: u32,
+        right: ValueId,
+        right_count: ValueId,
+        right_element_bytes: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KirVectorBinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KirVectorUnaryOp {
+    Negate,
+    MaskNot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KirVectorCastOp {
+    I32ToF64,
+    U32ToF64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KirVectorReductionOp {
+    ModularAdd,
+    ModularMultiply,
+    ModularMin,
+    ModularMax,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KirVectorMemoryAccess {
+    pub slice: ValueId,
+    pub start: ValueId,
+    pub end: ValueId,
+    pub lane: KirLaneType,
+    pub lanes: u16,
+    pub byte_footprint: u32,
+    pub known_alignment: u16,
+    pub required_alignment: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -71,7 +71,26 @@ pub fn build_kir_module(
     module: &MirModule,
     config: KirBuildConfig,
 ) -> Result<KirModule, KirBuildError> {
+    build_kir_module_with_profile(
+        module,
+        config,
+        KirTargetProfile::for_consumer(config.consumer),
+    )
+}
+
+#[must_use = "KIR construction errors must be handled"]
+pub fn build_kir_module_with_profile(
+    module: &MirModule,
+    config: KirBuildConfig,
+    profile: KirTargetProfile,
+) -> Result<KirModule, KirBuildError> {
     validate_build_config(config)?;
+    profile.validate().map_err(KirBuildError::new)?;
+    if profile.consumer() != config.consumer {
+        return Err(KirBuildError::new(
+            "KIR target profile consumer does not match module consumer",
+        ));
+    }
     let artifact = prepare_artifact_for_consumer(module, mir_consumer(config.consumer))
         .map_err(|error| KirBuildError::new(error.message))?;
     let mut ids = KirIds::default();
@@ -82,6 +101,7 @@ pub fn build_kir_module(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(KirModule {
         config,
+        profile,
         entry: artifact.entry,
         structs: artifact.structs,
         functions,
@@ -196,7 +216,7 @@ fn build_function(
             id: ids.instruction(),
             results: vec![KirResult {
                 value,
-                type_node: local.type_node.clone(),
+                type_node: local.type_node.clone().into(),
             }],
             kind: KirInstructionKind::Undef {
                 slot: local.name.clone(),
@@ -226,7 +246,7 @@ fn build_function(
             id: ids.instruction(),
             results: vec![KirResult {
                 value,
-                type_node: mir_value_type(&constant).clone(),
+                type_node: mir_value_type(&constant).clone().into(),
             }],
             kind,
             memory: None,
@@ -251,7 +271,7 @@ fn build_function(
                 .map(|(_, slot, type_node)| KirBlockParam {
                     value: ids.value(),
                     slot: slot.clone(),
-                    type_node: type_node.clone(),
+                    type_node: type_node.clone().into(),
                 })
                 .collect()
         })
@@ -331,6 +351,7 @@ fn build_function(
         return_type: function.return_type.clone(),
         regions,
         initial_memory,
+        vector_regions: Vec::new(),
         blocks,
     })
 }
@@ -432,11 +453,11 @@ impl InstructionBuilder<'_> {
                         results: vec![
                             KirResult {
                                 value: result,
-                                type_node: mir_value_type(target).clone(),
+                                type_node: mir_value_type(target).clone().into(),
                             },
                             KirResult {
                                 value: overflow,
-                                type_node: bool_type(),
+                                type_node: bool_type().into(),
                             },
                         ],
                         kind: KirInstructionKind::Unary {
@@ -523,11 +544,11 @@ impl InstructionBuilder<'_> {
                                 results: vec![
                                     KirResult {
                                         value: result,
-                                        type_node: mir_value_type(target).clone(),
+                                        type_node: mir_value_type(target).clone().into(),
                                     },
                                     KirResult {
                                         value: overflow,
-                                        type_node: bool_type(),
+                                        type_node: bool_type().into(),
                                     },
                                 ],
                                 kind: KirInstructionKind::Binary {
@@ -652,7 +673,7 @@ impl InstructionBuilder<'_> {
                     id: ids.instruction(),
                     results: vec![KirResult {
                         value: result,
-                        type_node: mir_value_type(target).clone(),
+                        type_node: mir_value_type(target).clone().into(),
                     }],
                     kind: KirInstructionKind::Load {
                         place: Box::new(place),
@@ -816,7 +837,7 @@ impl InstructionBuilder<'_> {
                     values.insert(value_name(target), value);
                     vec![KirResult {
                         value,
-                        type_node: mir_value_type(target).clone(),
+                        type_node: mir_value_type(target).clone().into(),
                     }]
                 });
                 let output = ids.memory();
@@ -871,7 +892,7 @@ fn define_instruction_result(
         id: ids.instruction(),
         results: vec![KirResult {
             value,
-            type_node: mir_value_type(target).clone(),
+            type_node: mir_value_type(target).clone().into(),
         }],
         kind,
         memory: None,
@@ -969,7 +990,7 @@ fn push_check_condition(
         id: ids.instruction(),
         results: vec![KirResult {
             value: condition,
-            type_node: bool_type(),
+            type_node: bool_type().into(),
         }],
         kind: KirInstructionKind::CheckCondition { kind, args },
         memory: None,

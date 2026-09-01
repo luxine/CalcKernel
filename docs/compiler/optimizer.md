@@ -1,4 +1,4 @@
-# CalcKernel 0.11 Fact-Driven Optimizer
+# CalcKernel 0.12 Fact-Driven Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -23,6 +23,14 @@ or remap affected evidence. Invalid or stale evidence is a compiler error.
 Verification-cache reuse compares the complete KIR, proofs, guard-rewrite records,
 and contract facts with the last verified state in both debug and release builds.
 A pass's `changed = false` declaration alone never authorizes reuse.
+For a changed module, exact unchanged functions may reuse their prior structural
+verdict while changed functions are fully checked and module-global identity plus
+all fact/proof/rewrite validation still runs. Immutable profile validation and
+CFG-only dominance results are memoized; dominance cache hits debit the same
+deterministic analysis budget. Candidate-free discovery bypasses only speculative
+state allocation, never a candidate, checker, certificate digest, or final verifier.
+No-op frontiers reuse discovery-only loop descriptors only across passes that
+preserve induction structure and only when the cached function identity matches.
 
 ## Pipelines
 
@@ -31,8 +39,52 @@ A pass's `changed = false` declaration alone never authorizes reuse.
   `check-elimination`, `dead-code-elimination`, and `cleanup`.
 - O2 adds `effect-aware-inline`, `memory-ssa-refine`, `gvn`,
   `load-forwarding`, `dead-store-elimination`, then reruns range/check cleanup.
-- O3 adds `natural-loop-analysis`, conservative `licm`, `induction-simplify`,
-  post-loop range/check elimination, DCE, and cleanup.
+- O3 first normalizes loops and runs the bounded specialization frontier, then
+  adds `natural-loop-analysis`, legality/dependence analysis, conservative
+  `licm`, `induction-simplify`, post-loop range/check elimination, the mutually
+  exclusive Loop SIMD/unroll/loop-SLP frontier, residual straight-line SLP,
+  DCE, and cleanup.
+
+Every KIR module carries a canonical `KirTargetProfile`. Inspection, portable
+C, WebAssembly, Native library, and Native executable profiles identify their
+consumer, target, CPU policy, operation availability and exact fixed-width
+costs. Missing, zero, stale, or target-mismatched answers reject optimization;
+the optimizer never substitutes host folklore. The profile digest, cost/proof
+schema identities, and optimizer budgets are object-affecting cache inputs.
+C and WebAssembly profiles disable Vector KIR in 0.12.
+
+Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
+the complete candidate module, proof/fact state, and audit-budget delta are
+prepared without mutating the accepted pre-state. A separate checker validates
+the exact rewrite, semantics, proof roots, target legality, cost, growth, and
+budget charge. Acceptance atomically swaps module and audit state; ordinary
+rejection or exhaustion leaves both byte-for-byte unchanged. Candidate keys,
+tie-breaking, fallback reasons, and `--explain-optimization` output are stable.
+
+Specialization is internal and bounded by callee/clone/module limits. It only
+uses verified constant arguments and separately scoped trusted-contract facts;
+recursive SCCs, indirect calls, checked or sanitizer modes, and observable
+effect changes are rejected. Clone identity is deterministic and never exported.
+
+Loop SIMD accepts canonical single-latch loops whose accesses, dependence graph,
+strict operation semantics, and target profile all close. It supports direct
+load/store maps, strict `f64` arithmetic including unary negate and divide,
+supported integer-to-`f64` casts, pure compare/select diamonds, and unchecked
+modular integer add/multiply reductions. It emits a fixed-width vector body plus
+an ordered scalar epilogue. Unknown aliasing may produce one total overflow-safe
+non-overlap predicate guarding a byte-for-byte scalar fallback; more complex
+predicates remain scalar. Checked or sanitizer modes, floating/checked reductions,
+scans, gather/scatter, vector calls, masked memory, shuffles, and unsupported
+alignment/operations remain scalar.
+
+Unroll considers factors 2 and 4, preserving exact trip partition and scalar
+remainder semantics. SLP packs only isomorphic, independent, adjacent scalar
+operations in source order; it cannot invent shuffle or masked-memory support.
+Loop SIMD, loop SLP, and unroll are priced over the same immutable loop scope and
+only one winner commits. A vector candidate must beat the scalar cost by at least
+20% at its conservative trip threshold; exact shorter trips stay scalar. The
+aggregate O3 growth ceiling and proposer/checker work budgets apply across all
+0.12 speculative transforms, including rejected alternatives and clones.
 
 Integer constant propagation also runs in guard-free functions. It rewrites
 modular arithmetic, integer copies and comparisons, including consumers of
@@ -179,8 +231,9 @@ LLVM. C emits portable hints only when their complete preconditions hold. Native
 performs a pre-LLVM fact audit and rejects injected or stale metadata.
 
 Performance gates compare identical algorithms, safety modes, data, hardware,
-CPU policy, and strict semantics. Native must meet the pinned Clang thresholds,
-0.11 may regress no more than the recorded limits from exact 0.10, canonical
-checked proof loops must approach unchecked throughput, and KIR optimization
-latency is bounded against the 0.10 MIR optimizer. Thresholds never authorize
-weaker semantics or invalid contract-domain inputs.
+CPU policy, and strict semantics. Schema 7 compares 0.12 Native with pinned
+Clang and hand-written C/Rust SIMD oracles, and replays exact 0.11 at commit
+`80c0acf6bb5d65e4d9d40352b9501ea32b79f43d`. Canonical checked proof loops must
+approach unchecked throughput; optimization time, code size, memory, and cache
+behavior have separate gates. PGO remains 0.13. Auto-Tuning remains 0.14.
+Thresholds never authorize weaker semantics or invalid contract-domain inputs.

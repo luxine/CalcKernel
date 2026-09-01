@@ -1,8 +1,8 @@
-# CalcKernel 0.11.0 Documentation
+# CalcKernel 0.12.0 Documentation
 
 [简体中文](zh-CN/index.md)
 
-These documents describe the current 0.11.0 product contract. Git history,
+These documents describe the current 0.12.0 product contract. Git history,
 rather than release-tree planning documents, records design and implementation
 history.
 
@@ -31,7 +31,8 @@ history.
 
 ## Project
 
-- [Compatibility](project/compatibility.md) — normative authority for `0.11.x` and 0.10 migration.
+- [Compatibility](project/compatibility.md) — normative `0.12.x` authority and
+  retained 0.11/0.10 migration boundaries.
 - [Release](project/release.md) and [checklist](project/release-checklist.md)
 - [Conventions](project/conventions.md)
 - [Roadmap](project/roadmap.md) — non-normative future possibilities.

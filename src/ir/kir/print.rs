@@ -5,11 +5,13 @@ use super::*;
 #[must_use]
 pub fn print_kir_module(module: &KirModule) -> String {
     let mut output = format!(
-        "kir consumer={} overflow={} bounds={} sanitizer={}\n",
+        "kir-v2 consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}\n",
         print_consumer(module.config.consumer),
         print_overflow_mode(module.config.overflow_mode),
         print_bounds_mode(module.config.bounds_mode),
         print_sanitizer_mode(module.config.sanitizer_mode),
+        module.profile.schema_version(),
+        module.profile.digest_hex(),
     );
     if let Some(entry) = &module.entry {
         output.push_str(&format!(
@@ -83,7 +85,7 @@ fn print_kir_block(block: &KirBlock) -> String {
                 "v{} {}: {}",
                 param.value.index(),
                 param.slot,
-                print_mir_type(&param.type_node)
+                print_kir_value_type(&param.type_node)
             )
         })
         .collect::<Vec<_>>()
@@ -153,7 +155,7 @@ fn print_kir_instruction(instruction: &KirInstruction) -> String {
             format!(
                 "v{}: {}",
                 result.value.index(),
-                print_mir_type(&result.type_node)
+                print_kir_value_type(&result.type_node)
             )
         })
         .collect::<Vec<_>>()
@@ -229,6 +231,152 @@ fn print_kir_instruction(instruction: &KirInstruction) -> String {
         KirInstructionKind::RuntimeCall { intrinsic, args } => {
             format!("runtime_call {intrinsic:?}({})", print_values(args))
         }
+        KirInstructionKind::VersionPredicate { predicate } => format!(
+            "version_predicate bits={} {}",
+            predicate.address_bits,
+            predicate
+                .conjuncts
+                .iter()
+                .map(|conjunct| match conjunct {
+                    KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
+                        format!("trip(v{}>={minimum})", value.index())
+                    }
+                    KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                        left,
+                        left_count,
+                        left_element_bytes,
+                        right,
+                        right_count,
+                        right_element_bytes,
+                    } => format!(
+                        "disjoint(v{}[v{}*{}],v{}[v{}*{}])",
+                        left.index(),
+                        left_count.index(),
+                        left_element_bytes,
+                        right.index(),
+                        right_count.index(),
+                        right_element_bytes
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join("&&")
+        ),
+        KirInstructionKind::VectorSplat { scalar, region } => {
+            format!("vector_splat v{} [vr{}]", scalar.index(), region.index())
+        }
+        KirInstructionKind::VectorLoad { access, region } => format!(
+            "vector_load {} [vr{}]",
+            print_vector_access(access),
+            region.index()
+        ),
+        KirInstructionKind::VectorStore {
+            access,
+            value,
+            region,
+        } => format!(
+            "vector_store {}, v{} [vr{}]",
+            print_vector_access(access),
+            value.index(),
+            region.index()
+        ),
+        KirInstructionKind::VectorBinary {
+            op,
+            left,
+            right,
+            semantics,
+            no_failure_proof,
+            region,
+        } => format!(
+            "vector_{:?}.{} v{}, v{} [proof={} vr{}]",
+            op,
+            print_arithmetic_semantics(*semantics),
+            left.index(),
+            right.index(),
+            no_failure_proof
+                .map_or_else(|| "none".to_string(), |proof| format!("p{}", proof.index())),
+            region.index()
+        )
+        .to_ascii_lowercase(),
+        KirInstructionKind::VectorUnary {
+            op,
+            operand,
+            semantics,
+            no_failure_proof,
+            region,
+        } => format!(
+            "vector_{:?}.{} v{} [proof={} vr{}]",
+            op,
+            print_arithmetic_semantics(*semantics),
+            operand.index(),
+            no_failure_proof
+                .map_or_else(|| "none".to_string(), |proof| format!("p{}", proof.index())),
+            region.index()
+        )
+        .to_ascii_lowercase(),
+        KirInstructionKind::VectorCompare {
+            op,
+            left,
+            right,
+            region,
+        } => format!(
+            "vector_compare_{op:?} v{}, v{} [vr{}]",
+            left.index(),
+            right.index(),
+            region.index()
+        )
+        .to_ascii_lowercase(),
+        KirInstructionKind::VectorSelect {
+            mask,
+            when_true,
+            when_false,
+            region,
+        } => format!(
+            "vector_select v{}, v{}, v{} [vr{}]",
+            mask.index(),
+            when_true.index(),
+            when_false.index(),
+            region.index()
+        ),
+        KirInstructionKind::VectorCast { op, value, region } => format!(
+            "vector_cast_{op:?} v{} [vr{}]",
+            value.index(),
+            region.index()
+        )
+        .to_ascii_lowercase(),
+        KirInstructionKind::VectorInsert {
+            vector,
+            scalar,
+            lane_index,
+            region,
+        } => format!(
+            "vector_insert v{}, v{}, lane={} [vr{}]",
+            vector.index(),
+            scalar.index(),
+            lane_index,
+            region.index()
+        ),
+        KirInstructionKind::VectorExtract {
+            vector,
+            lane_index,
+            region,
+        } => format!(
+            "vector_extract v{}, lane={} [vr{}]",
+            vector.index(),
+            lane_index,
+            region.index()
+        ),
+        KirInstructionKind::VectorReduce {
+            op,
+            vector,
+            semantics,
+            region,
+        } => format!(
+            "vector_reduce_{op:?}.{} v{} [vr{}]",
+            print_arithmetic_semantics(*semantics),
+            vector.index(),
+            region.index()
+        )
+        .to_ascii_lowercase(),
     };
     let mut suffix = String::new();
     if let Some(memory) = &instruction.memory {
@@ -253,6 +401,39 @@ fn print_kir_instruction(instruction: &KirInstruction) -> String {
             instruction.id.index()
         )
     }
+}
+
+fn print_kir_value_type(type_node: &KirValueType) -> String {
+    match type_node {
+        KirValueType::Scalar(type_node) => print_mir_type(type_node),
+        KirValueType::FixedVector { lane, lanes } => {
+            format!("vector<{lane:?}, {lanes}>").to_ascii_lowercase()
+        }
+        KirValueType::Mask { lanes } => format!("mask<{lanes}>"),
+    }
+}
+
+fn print_arithmetic_semantics(semantics: KirArithmeticSemantics) -> &'static str {
+    match semantics {
+        KirArithmeticSemantics::Modular => "modular",
+        KirArithmeticSemantics::Checked => "checked",
+        KirArithmeticSemantics::StrictFloat => "strict",
+    }
+}
+
+fn print_vector_access(access: &KirVectorMemoryAccess) -> String {
+    format!(
+        "slice=v{} start=v{} end=v{} lane={:?} lanes={} bytes={} align={}/{}",
+        access.slice.index(),
+        access.start.index(),
+        access.end.index(),
+        access.lane,
+        access.lanes,
+        access.byte_footprint,
+        access.known_alignment,
+        access.required_alignment
+    )
+    .to_ascii_lowercase()
 }
 
 fn print_values(values: &[ValueId]) -> String {

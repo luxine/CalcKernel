@@ -85,6 +85,31 @@ fn cache_entries(root: &Path) -> Vec<PathBuf> {
     entries
 }
 
+#[test]
+fn cache_schema_should_use_v3_identity_and_reject_ckcobj01_entries() {
+    let fixture = Fixture::new("fn main() -> i32 { return 0; }");
+    assert_eq!(fixture.run(&[]).status.code(), Some(0));
+    let entry = cache_entries(&fixture.cache_root()).remove(0);
+    let bytes = fs::read(&entry).expect("read cache v3 entry");
+    assert!(bytes.starts_with(b"CKCOBJ02"));
+
+    let mut old = bytes;
+    old[..8].copy_from_slice(b"CKCOBJ01");
+    fs::write(&entry, old).expect("install legacy cache magic");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&entry, fs::Permissions::from_mode(0o600))
+            .expect("protect legacy entry");
+    }
+    assert_eq!(fixture.run(&[]).status.code(), Some(0));
+    assert!(
+        fs::read(&entry)
+            .expect("read repaired cache entry")
+            .starts_with(b"CKCOBJ02")
+    );
+}
+
 fn assert_successful_program(output: &Output) {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(output.stdout, b"42\n");

@@ -1,4 +1,4 @@
-# Native `ckc` 0.11 Release Policy
+# Native `ckc` 0.12 Release Policy
 
 [简体中文](../zh-CN/project/release.md)
 
@@ -64,7 +64,7 @@ that final publish job.
 
 Release tags are annotated `vMAJOR.MINOR.PATCH` tags and are never moved. A
 published Release or asset is never overwritten. If a defect is discovered
-after `v0.11.0`, fix it in a new patch release such as `v0.11.1`. The 0.11.0
+after `v0.12.0`, fix it in a new patch release such as `v0.12.1`. The 0.12.0
 release consists of six archives and their six checksum sidecars; publication
 is all-or-nothing.
 

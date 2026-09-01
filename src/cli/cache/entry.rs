@@ -1,8 +1,8 @@
 use sha2::{Digest, Sha256};
 
-const ENTRY_MAGIC: &[u8; 8] = b"CKCOBJ01";
+const ENTRY_MAGIC: &[u8; 8] = b"CKCOBJ02";
 const MANIFEST_MAGIC: &[u8] = b"CKC-MANIFEST\0";
-const MANIFEST_SCHEMA: u32 = 2;
+const MANIFEST_SCHEMA: u32 = 3;
 const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 
@@ -23,6 +23,10 @@ pub(in crate::cli) struct CacheManifest {
     pub(in crate::cli) bounds_mode: u8,
     pub(in crate::cli) kir_contract_version: u32,
     pub(in crate::cli) sanitizer_mode: u8,
+    pub(in crate::cli) target_profile_digest: String,
+    pub(in crate::cli) vector_cost_model_schema: u32,
+    pub(in crate::cli) vector_proof_schema: u32,
+    pub(in crate::cli) vector_budget_identity: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -121,6 +125,8 @@ fn encode_manifest(manifest: &CacheManifest) -> Result<Vec<u8>, &'static str> {
         &manifest.cpu,
         &manifest.features,
         &manifest.codegen_contract,
+        &manifest.target_profile_digest,
+        &manifest.vector_budget_identity,
     ] {
         write_string(&mut output, value)?;
     }
@@ -132,6 +138,8 @@ fn encode_manifest(manifest: &CacheManifest) -> Result<Vec<u8>, &'static str> {
     output.push(manifest.bounds_mode);
     output.extend_from_slice(&manifest.kir_contract_version.to_be_bytes());
     output.push(manifest.sanitizer_mode);
+    output.extend_from_slice(&manifest.vector_cost_model_schema.to_be_bytes());
+    output.extend_from_slice(&manifest.vector_proof_schema.to_be_bytes());
     if output.len() > MAX_MANIFEST_BYTES {
         return Err("cache manifest exceeds size limit");
     }
@@ -161,6 +169,8 @@ fn decode_manifest(bytes: &[u8]) -> Result<CacheManifest, &'static str> {
     let cpu = reader.string()?;
     let features = reader.string()?;
     let codegen_contract = reader.string()?;
+    let target_profile_digest = reader.string()?;
+    let vector_budget_identity = reader.string()?;
     let native_abi = reader.u32()?;
     let runtime_abi = reader.u32()?;
     let bridge_abi = reader.u32()?;
@@ -169,6 +179,8 @@ fn decode_manifest(bytes: &[u8]) -> Result<CacheManifest, &'static str> {
     let bounds_mode = reader.u8()?;
     let kir_contract_version = reader.u32()?;
     let sanitizer_mode = reader.u8()?;
+    let vector_cost_model_schema = reader.u32()?;
+    let vector_proof_schema = reader.u32()?;
     if reader.offset != bytes.len() || !valid_key(&key) {
         return Err("cache manifest has trailing or invalid data");
     }
@@ -188,6 +200,10 @@ fn decode_manifest(bytes: &[u8]) -> Result<CacheManifest, &'static str> {
         bounds_mode,
         kir_contract_version,
         sanitizer_mode,
+        target_profile_digest,
+        vector_cost_model_schema,
+        vector_proof_schema,
+        vector_budget_identity,
     })
 }
 
@@ -269,6 +285,10 @@ mod tests {
             bounds_mode: 0,
             kir_contract_version: 1,
             sanitizer_mode: 0,
+            target_profile_digest: "31".repeat(32),
+            vector_cost_model_schema: 1,
+            vector_proof_schema: 1,
+            vector_budget_identity: "vector-budget-schema=1;growth=20".to_string(),
         }
     }
 

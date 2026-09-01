@@ -1,4 +1,4 @@
-# CalcKernel 0.11 Fact-Driven Optimizer
+# CalcKernel 0.12 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -19,6 +19,13 @@ CFG/inlining/loop 改动必须显式 invalidate 或 remap evidence；stale evide
 Debug 与 release 构建复用 verification cache 前，都将完整 KIR、proof、guard rewrite
 record 与 contract fact 和上一已验证状态逐项比较。仅有 pass 的 `changed = false` 声明
 不能授权复用验证结果。
+对于 changed module，精确未变化的 function 可以复用既有 structural verdict，但 changed
+function 仍完整检查，并继续执行 module-global identity 与全部 fact/proof/rewrite validation。
+Immutable profile validation 与仅由 CFG 决定的 dominance result 可以缓存；dominance cache hit
+仍扣除相同的确定性 analysis budget。Candidate-free discovery 只省略 speculative state
+allocation，绝不省略 candidate、checker、certificate digest 或 final verifier。No-op frontier
+只有跨越保持 induction structure 的 pass 且缓存 function identity 精确匹配时，才复用
+discovery-only loop descriptor。
 
 ## Pipeline
 
@@ -27,8 +34,42 @@ record 与 contract fact 和上一已验证状态逐项比较。仅有 pass 的 
   `dead-code-elimination`、`cleanup`。
 - O2：增加 `effect-aware-inline`、`memory-ssa-refine`、`gvn`、
   `load-forwarding`、`dead-store-elimination`，然后重跑 range/check cleanup。
-- O3：增加 `natural-loop-analysis`、保守 `licm`、induction analysis、post-loop
-  range/check elimination、DCE 与 cleanup。
+- O3：先规范化循环并运行有界 specialization frontier，再增加
+  `natural-loop-analysis`、legality/dependence analysis、保守 `licm`、
+  `induction-simplify`、post-loop range/check elimination、互斥的 Loop SIMD/unroll/
+  loop-SLP frontier、residual straight-line SLP、DCE 与 cleanup。
+
+每个 KIR module 都携带规范化 `KirTargetProfile`。Inspection、portable C、WebAssembly、
+Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
+availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
+优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
+budget 都进入 object/cache identity。0.12 的 C/WebAssembly profile 禁用 Vector KIR。
+
+Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
+module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
+独立 checker 核验精确改写、语义、proof root、target legality、cost、growth 与 budget charge。
+接受时原子交换 module/audit state；普通拒绝或预算耗尽时二者逐字节不变。Candidate key、
+tie-break、fallback reason 与 `--explain-optimization` 输出均稳定。
+
+Specialization 是 internal 且受 callee/clone/module 上限约束。它只使用已验证 constant argument
+与单独 scoped trusted-contract fact；recursive SCC、indirect call、checked/sanitizer mode 以及
+observable effect 变化都拒绝。Clone identity 确定且永不 export。
+
+Loop SIMD 只接受 access、dependence graph、strict operation semantics 与 target profile 全部
+闭合的 canonical single-latch loop。支持直接 load/store map、包含 unary negate/divide 的
+strict `f64` 算术、受支持的 integer-to-`f64` cast、pure compare/select diamond，以及 unchecked
+modular integer add/multiply reduction。结果为 fixed-width vector body 加保持顺序的 scalar
+epilogue。Alias 未知时可生成一个 total、overflow-safe non-overlap predicate，保护逐字节一致
+的 scalar fallback；更复杂 predicate 保持 scalar。Checked/sanitizer mode、floating/checked
+reduction、scan、gather/scatter、vector call、masked memory、shuffle 及不支持的
+alignment/operation 都保持 scalar。
+
+Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainder 语义。SLP 只按 source
+order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
+memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
+提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
+保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.12
+speculative transform，包括被拒绝的 alternative 与 clone。
 
 整数常量传播也处理无 guard 的函数，实际改写 modular arithmetic、整数 Copy 和比较，
 包括所有输入边均为同一常量的 block parameter 的消费者。每次事务先针对不可变的改写前

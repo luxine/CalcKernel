@@ -1,8 +1,8 @@
-# CalcKernel 0.11 Native LLVM 与 C ABI
+# CalcKernel 0.12 Native LLVM 与 C ABI
 
 [English](../../abi/llvm.md)
 
-CalcKernel 0.11 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
+CalcKernel 0.12 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
 optimization 前后验证，由 host TargetMachine 生成 object bytes，并在进程内用 LLD 链接。
 `emit-llvm` 输出该 verified module 供 inspection。
 
@@ -30,6 +30,11 @@ range、effect 与 proof dependency；失败发生在 bridge invocation 前。�
 LLVM `noalias`、`readonly`/`writeonly`、alignment、range、alias-scope、loop/vectorization
 information，bridge 不会自行加强 fact。
 
+Module 的规范化 `KirTargetProfile` 在优化前按精确 host target/CPU policy 查询 LLVM
+22.1.8。它闭合固定 operation universe、vector lane legality、alignment 与 CK 独立 cost
+checker 使用的 integer structural cost。Rust/C++ boundary 会重新验证其 digest，digest 进入
+object/cache identity。Target、feature、query 或 digest 不匹配时在 LLVM IR 构造前终止。
+
 CK integer 映射为同宽 LLVM integer，`f64` 为 `double`，bool 为 `i1`，pointer 为 opaque
 `ptr`，struct 保持 field 顺序，void return 为 LLVM `void`。Natural void function 使用
 `define void`，targetless call 使用 `call void`，完成时使用 `ret void`。Stored `slice<T>` 为
@@ -38,9 +43,15 @@ CK integer 映射为同宽 LLVM integer，`f64` 为 `double`，bool 为 `i1`，p
 compiler internal form，不是 public library ABI；0.9 的独立 textual LLVM export-shape promise
 已退出。
 
-0.11 的 public Native C ABI 保持 version 1；private LLVM bridge ABI 与 contract-aware
-runtime ABI 为 version 2，native cache/codegen identity 使用 KIR v1。这会使 incompatible
-0.10 object 失效，但不改变 foreign-call signature。
+KIR v2 fixed vector 结构化 lowering 为等宽 LLVM vector。只有 KIR 独立 checker 已闭合 lane
+mapping、operation equivalence、fallback identity、target legality 与 cost/budget proof 后，才
+输出 vector load/store、strict arithmetic、cast、compare/select 及 modular integer add/multiply
+reduction。LLVM optimization 可以继续改进合法 module，但不是 CK safety 或 alias claim 的来源。
+
+0.12 的 public Native C ABI 保持 version 1；private LLVM bridge ABI 3 替代 bridge ABI 2，
+contract-aware runtime ABI 保持 version 2，native cache/codegen identity 使用 KIR v2 与
+`CKCOBJ02` manifest schema 3。这会使 incompatible 0.11 及更早 object 失效，但不改变
+foreign-call signature。
 
 Native object/static/dynamic 通过 generated header 暴露唯一 Native C ABI。每个 public source
 function 由 export thunk 包装 internal natural function；thunk 实现 target ABI classification、
@@ -90,4 +101,4 @@ protection 时使用 `MAP_JIT`，在线程级 writable/non-executable 与 readab
 再逐 segment 以页保护 finalization 为 RX 或 R/NX。后者不是 RWX fallback。Internal audit
 拒绝混合 capability tuple，并为两条路径验证 relocation、最终 code/data permission 与
 instruction-cache finalization。
-0.11 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。
+0.12 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。

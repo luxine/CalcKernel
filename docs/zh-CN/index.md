@@ -1,8 +1,8 @@
-# CalcKernel 0.11.0 文档
+# CalcKernel 0.12.0 文档
 
 [English](../index.md)
 
-这些文档描述当前 0.11.0 产品契约。设计和实施历史由 Git history 保留，不在 release tree 中
+这些文档描述当前 0.12.0 产品契约。设计和实施历史由 Git history 保留，不在 release tree 中
 保留 planning document。
 
 ## 语言与命令
@@ -30,7 +30,7 @@
 
 ## Project
 
-- [兼容性](project/compatibility.md) — `0.11.x` 与 0.10 migration 的规范性权威。
+- [兼容性](project/compatibility.md) — `0.12.x` 规范性权威及保留的 0.11/0.10 migration boundary。
 - [Release](project/release.md) 与 [checklist](project/release-checklist.md)
 - [约定](project/conventions.md)
 - [Roadmap](project/roadmap.md) — 非规范的未来可能性。
