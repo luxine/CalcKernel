@@ -51,6 +51,9 @@ The release has five connected deliverables:
 - Instrumentation is present only in a profile-generation artifact. A final
   profile-use artifact contains no counters, profile writer, output path, or
   profile collection dependency.
+- Final profiles are terminal aggregates. Schema 1 merge accepts completed raw
+  shards only, so one recorded run cannot be hidden inside overlapping nested
+  aggregates and counted twice.
 - `--cpu multiversion` is explicit. It keeps one ABI-compatible baseline and
   emits at most two profitable enhanced variants per eligible root. Ordinary
   `baseline` and `native` policies retain their 0.12 meanings.
@@ -181,10 +184,13 @@ must exercise a representative workload from its own `main()`. Libraries and
 multiple workloads use the explicit path and a user-owned host/test harness:
 
 ```text
+mkdir profiles
+
 ckc build kernels.ck --kind dynamic --out kernels-profiled \
   --pgo-generate profiles/ --cpu multiversion
 
-# One or more host/test runs load kernels-profiled and exercise real workloads.
+# One or more host/test runs load kernels-profiled, exercise real workloads,
+# quiesce CK calls, and invoke the generated ck_profile_flush_* control entry.
 
 ckc pgo merge profiles/ --out kernels.ckprof
 
@@ -204,11 +210,26 @@ The CLI contract is:
 - `--pgo-generate <directory>` and `--pgo-use <file>` are mutually exclusive;
 - profile generation rejects O0/O1 and uses its fixed generation pipeline;
 - profile use accepts O2/O3, while `--cpu multiversion` requires O3;
+- `--pgo-generate` is accepted only by Native `build` for executable, dynamic,
+  and static artifacts. Object generation is rejected because an unlinked
+  object has no defined process/library lifetime or flush owner;
+- `--pgo-use` is accepted by Native `build` and Native `emit-kir`.
+  `--cpu multiversion --kind object` is rejected in 0.13 because
+  the dispatcher and variants are separate audited modules and schema 1 does
+  not define a multi-object bundle or cross-platform partial-link product.
+  Single-version baseline/native profile-use objects remain supported;
 - `--cpu` becomes `baseline|native|multiversion` for Native `build` and Native
   `emit-kir`; portable consumers reject `native` and `multiversion` as today;
 - `ckc pgo build` accepts only executable input with a valid `main()` and
   defaults to O3; libraries use the explicit workflow;
 - `--profile-out` defaults to `<out>.ckprof` and cannot alias the final artifact;
+- `<directory>` for `--pgo-generate` must already exist, must be a real
+  directory, and must have no symlink or reparse-point component. The compiler
+  resolves it
+  against its build-time current directory, normalizes and validates the
+  absolute path, and embeds that path only in the temporary generation
+  artifact. The operational path is excluded from profile, final-artifact, and
+  cache identity;
 - generation with `--cpu multiversion` binds the intended target-set identity
   but executes one instrumented baseline implementation; it does not train by
   dispatching among already optimized variants;
@@ -301,6 +322,13 @@ before allocation.
 A loop observation greater than `u32::MAX` is placed in the final bucket and
 sets a trip-saturation flag. It is not truncated into a smaller bucket.
 
+A saturated counter or histogram is never used to establish confidence or
+profitability. The affected site is `unknown`; if a saturated value participates
+in a spanning-tree equation, every reconstructed edge depending on it is also
+`unknown`. An unsaturated equation that does not reconstruct to one
+non-negative, internally consistent count is a malformed shard/profile. These
+rules are checked again after merge and before profile application.
+
 ## Instrumentation and collection runtime
 
 The canonical profile topology is frozen before instrumentation. Function
@@ -317,13 +345,33 @@ without the required atomic primitive rejects generation rather than emitting
 racy instrumentation. Counter storage is private, non-exported, and separate
 from CK-visible memory.
 
-Each normal process or library unload writes one new shard. It writes a unique
-temporary file in the selected directory, flushes and validates the bytes, then
-atomically renames it to a completed `.ckprof-part` name without overwriting an
-existing entry. Concurrent processes never update the same file. Abnormal
-termination may leave a temporary file but cannot damage a completed shard;
-automatic mode fails on the abnormal child, while directory merge ignores
-recognized temporary names and reports their count.
+An instrumented executable's compiler-owned entry wrapper writes one shard
+after `main()` returns normally and before the process returns to the OS. The
+automatic workflow accepts that shard only when the child itself exits zero.
+An abnormal termination may leave a temporary file but cannot damage a
+completed shard, and automatic mode fails on the abnormal child.
+
+An instrumented static or dynamic library instead adds one
+instrumentation-only C control entry named
+`ck_profile_flush_<first-128-bit-profile-identity-hex>() -> i32` to its
+generated header
+and, where applicable, its temporary export/import table. The host must quiesce
+calls into that library and invoke the entry before unlinking or unloading it.
+The first call snapshots the counters and writes exactly one shard; later calls
+are idempotent and return the same success or failure status. Library unload
+hooks and `DllMain` perform no profile I/O, so a write failure is synchronously
+observable by the host. Return zero means a validated completed shard was
+published; a stable nonzero instrumentation status means no completed shard was
+published by that library instance. The control entry, its symbol, and its
+runtime are
+absent from every ordinary or profile-use artifact and are outside public
+Native ABI versioning.
+
+Shard publication uses a unique temporary file in the selected directory,
+flushes and validates the bytes, then atomically renames it to a completed
+`.ckprof-part` name without overwriting an existing entry. Concurrent processes
+never update the same file. Directory merge ignores recognized temporary names
+and reports their count.
 
 The runtime never sends telemetry or opens a network connection. A profile can
 still reveal aggregate control-flow behavior and must be treated as a build
@@ -332,12 +380,15 @@ intentionally recorded.
 
 ## Merge, inspection, and weighting semantics
 
-`ckc pgo merge` accepts completed `.ckprof-part` shards and final `.ckprof`
-profiles. It scans explicit files and one level of explicit directories, sorts
-inputs by canonical content identity, validates all bytes and identities,
-rejects symlinks, duplicate run IDs, and duplicate final-profile digests, then
-performs saturating addition. A directory is not followed recursively. A
-duplicate input is an error rather than an accidental double weight.
+`ckc pgo merge` accepts completed `.ckprof-part` shards only. A final `.ckprof`
+is a terminal aggregate and is rejected as merge input in schema 1. The command
+scans explicit shard files and one level of explicit directories, sorts inputs
+by canonical content identity, validates all bytes and identities, rejects
+symlinks and duplicate run IDs, then performs saturating addition. A directory
+is not followed recursively. A duplicate input is an error rather than an
+accidental double weight. Reweighting requires retaining and selecting the raw
+shards again; nested or overlapping aggregate profiles cannot silently count a
+run twice.
 
 Counts are summed exactly. There is no hidden per-run normalization or inferred
 importance: a workload executed ten times contributes ten executions. Users
@@ -372,15 +423,41 @@ for at least 1 percent of module work unless it is the only eligible root.
 Sites below confidence retain the ordinary static optimizer decision. Changing
 any threshold advances the profile-contract and cache identities.
 
+Every profile-weighted proposal exposes a closed set of observed outcome
+classes and immutable integer target costs. For `N` observations, a guarded
+proposal is compared without division using
+`guard_cost*N + sum(class_count*selected_class_cost)` against
+`sum(class_count*baseline_class_cost)`. Miss classes include the full generic
+fallback cost. A histogram class uses its inclusive upper endpoint as the
+schema-fixed representative (`u32::MAX` for the final bucket). The checker must
+prove the candidate's integer outcome-cost formula is monotone nondecreasing
+inside that bucket or refuse to profile-weight that candidate; no sampled value
+is invented. All products and sums saturate at `u128::MAX`, any saturation
+chooses the baseline, ratios are compared by checked cross multiplication, and
+ties or fractional ambiguity round toward the baseline. The independent
+checker recomputes this arithmetic from profile records and target costs rather
+than trusting proposal totals. If a saturated site contributes to a function's
+dynamic-work estimate, that function is not eligible as a PGO-hot root.
+
 ## PGO-guided optimizations
 
 At O2, validated counts may affect only non-duplicating decisions:
 
 - CFG successor order, branch weights, hot/cold section placement, and function
   layout;
-- LLVM frequency metadata emitted from the exact verified KIR-to-LLVM mapping
-  after the O2 inlining frontier; and
+- LLVM frequency metadata emitted from an exact verified post-O2 mapping only
+  after the complete profile-blind default O2 LLVM IR pipeline; and
 - backend block placement and scheduling choices that preserve the KIR graph.
+
+The O2 phase boundary is closed: lowering initially emits no profile summary,
+entry count, branch weight, hot/cold attribute, or other profile-derived LLVM
+metadata. LLVM runs the complete default O2 IR pipeline profile-blind. CK then
+validates a bridge-produced map for surviving functions and blocks, attaches
+metadata only to exact mapped survivors, and runs no further LLVM IR transform
+that can clone, delete, inline, vectorize, unroll, or rewrite CFG. Only
+section/function ordering and the machine codegen layout/scheduling tail may
+consume the metadata. An unmapped survivor stays unweighted. This boundary,
+not a pass name or an assumed inlining frontier, defines O2 permission.
 
 At O3, the same data can additionally affect existing verified transformations:
 
@@ -536,21 +613,23 @@ verification and feature containment disassembly.
 
 CK converts validated edge/function counts into LLVM branch weights, entry
 counts, hot/cold attributes, and internal profile summaries only after checking
-the exact KIR-to-LLVM block/function map. LLVM may use them for code layout,
-inlining, vectorization cleanup, scheduling, and instruction selection, but it
-does not receive authority to weaken CK alias, bounds, failure, or floating
-semantics.
+the exact KIR-to-LLVM block/function map. At O2 their visibility is limited to
+the post-IR layout/codegen tail defined above. At O3 LLVM may additionally use
+them for inlining, vectorization cleanup, and other O3 transforms. Neither mode
+gives LLVM authority to weaken CK alias, bounds, failure, or floating semantics.
 
 The Native bridge gains target machines for explicit feature levels, normalized
 runtime-predicate descriptions, profile metadata attachment, and per-module
 feature audits. Every queried cost and operation remains subject to the 0.12
 closed target-profile validation rules.
 
-Final executable, dynamic, static, and object artifacts remain self-contained
-under the existing system-runtime policy. A profile-use or ordinary artifact
-must not import a CK profile writer, LLVM profile runtime, compiler library, or
-new non-system shared library. Instrumented artifacts contain only the private
-CK collection runtime required for their temporary purpose.
+Final executable, dynamic, static, and supported single-version object
+artifacts remain self-contained under the existing system-runtime policy.
+Multiversion final artifacts are executable, dynamic, or static; the rejected
+single-object combination is not silently repackaged. A profile-use or ordinary
+artifact must not import a CK profile writer, LLVM profile runtime, compiler
+library, or new non-system shared library. Instrumented artifacts contain only
+the private CK collection runtime required for their temporary purpose.
 
 ## Compatibility, schemas, and cache identity
 
@@ -631,12 +710,14 @@ thresholds:
    differential, mutation, performance, and six-host contract remains green.
 2. Golden and mutation tests cover canonical profile bytes, site stability,
    comment/format reuse, every identity mismatch, hash collision handling,
-   malformed lengths/tags/order/digests, duplicate shards, saturation, resource
-   limits, and deterministic merge/JSON inspection.
+   malformed lengths/tags/order/digests, duplicate shards,
+   final-as-merge-input rejection, counter/equation saturation, resource limits,
+   and deterministic merge/JSON inspection.
 3. Instrumentation tests prove exact function/edge/loop/length/constant counts
-   for normal, early return, break/continue, checked failure, recursion,
-   multi-threaded host calls, multiple processes, normal unload, write failure,
-   and abnormal termination.
+   for normal executable exit, early return, break/continue, checked failure,
+   recursion, multi-threaded host calls, multiple processes, host-quiesced
+   library flush, repeat-flush idempotence, unload-without-I/O, write failure
+   propagation, and abnormal termination.
 4. Differential tests compare ordinary O0, ordinary O3, generate execution,
    PGO O2/O3, baseline, each forced test-only compatible variant, and production
    dispatch over training, held-out, and adversarial non-training inputs.
@@ -644,17 +725,23 @@ thresholds:
    footprints, change first-error precedence, reorder print/effects, enable fast
    math, forge a KIR mapping, exceed a code budget, or select an unsupported
    feature variant.
-6. Object and disassembly audits prove baseline/thunks contain no optional ISA,
-   each variant contains only its declared features, variant/runtime symbols are
-   hidden, final use artifacts contain no profile runtime, and public ABI/header
-   bytes remain stable.
+6. Artifact-matrix, object, and disassembly audits prove rejected generation
+   and multiversion-object combinations fail before output, baseline/thunks
+   contain no optional ISA, each variant contains only its declared features,
+   variant/runtime symbols are hidden, final use artifacts contain no profile
+   runtime, and ordinary/profile-use public ABI/header bytes remain stable. The
+   generation-only flush declaration must be present only in its temporary
+   instrumentation header.
 7. Runtime dispatch tests cover concurrent first calls, stable public addresses,
    exactly-once capability caching, ordered per-root selection, query failure,
    baseline-only targets, and real hardware selection where available.
 8. Reproducibility tests build and merge in different directory, shard, map, and
    process orders and require byte-identical final profiles and unsigned
    artifacts.
-9. The exact final candidate SHA passes quality, Native integration, all six
+9. O2 phase-boundary mutation tests inject profile-favored inline/vector/CFG
+   opportunities and prove the default LLVM O2 IR result is profile-blind while
+   post-IR layout metadata remains effective.
+10. The exact final candidate SHA passes quality, Native integration, all six
    Native hosts, and fixed x86-64/AArch64 performance acceptance.
 
 ## Performance, size, and compile-time contract
