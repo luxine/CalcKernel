@@ -539,7 +539,7 @@ fn native_bootstrap_should_save_verified_release_before_building_oracle() {
 }
 
 #[test]
-fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassing_the_gate() {
+fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_bypassing_the_gate() {
     let workflow = read(".github/workflows/ci.yml");
     let performance = workflow
         .split("  performance:")
@@ -550,6 +550,7 @@ fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassi
     assert!(performance.contains("inputs.performance_diagnostics == true"));
     assert!(performance.contains("if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)"));
     assert!(performance.contains("fetch-depth: 0"));
+    assert!(performance.contains("CKC_V011_RUNTIME_BUNDLE:"));
     assert!(performance.contains("CKC_V010_RUNTIME_BUNDLE:"));
     let prepare = performance
         .find("python3 scripts/prepare-performance-replay.py")
@@ -558,6 +559,10 @@ fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassi
         .find("cargo bench --features native-toolchain")
         .unwrap();
     assert!(prepare < timing);
+    assert!(performance.contains("target/performance-runtime-replay-v011/ckc-v011"));
+    assert!(performance.contains("target/performance-runtime-replay-v011/replay.tsv"));
+    assert!(performance.contains("target/performance-runtime-replay-v011/preparation.log"));
+    assert!(performance.contains("target/performance-runtime-replay-v011/*.so"));
     assert!(performance.contains("target/performance-runtime-replay/ckc-v010"));
     assert!(performance.contains("target/performance-runtime-replay/replay.tsv"));
     assert!(performance.contains("target/performance-runtime-replay/preparation.log"));
@@ -570,9 +575,14 @@ fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassi
     for required in [
         "lscpu --json",
         "sha256sum",
+        "CKC_V011_RUNTIME_BUNDLE",
         "CKC_V010_RUNTIME_BUNDLE",
         "measuredArtifacts",
-        "runtimeReplay",
+        "runtimeReplayV011",
+        "runtimeReplayV010",
+        "replayV011Native",
+        "replayV010Native",
+        ": > \"$diagnostic_out/whole-library-sha256.txt\"",
         "objdump",
     ] {
         assert!(
@@ -583,6 +593,10 @@ fn performance_failures_should_keep_same_worker_v010_diagnostics_without_bypassi
     assert!(
         !script.contains("check-native-performance.py"),
         "diagnostics must not replace the required gate"
+    );
+    assert!(
+        !script.contains("report[\"runtimeReplay\"]"),
+        "schema 7 diagnostics must not read the removed schema 6 replay field"
     );
     for forbidden in [
         "cargo bench",

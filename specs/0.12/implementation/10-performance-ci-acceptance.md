@@ -30,6 +30,11 @@ Optimizer latency remediation 还必须通过 exact-profile memoization invalida
 identity/budget debit、incremental module-global identity collision、no-op frontier loop-analysis
 function-identity fallback 与 unreported mutation 测试；不得以减少 verifier/checker 覆盖来通过门槛。
 
+性能失败或显式 diagnostic 模式还必须在同一 worker 对 schema 7 报告中的 48 个 scalar 动态库
+逐一核对整库 SHA 并反汇编：32 个 candidate/current/replay-Clang measured artifacts、8 个 v0.11
+replay Native artifacts、8 个 v0.10 replay Native artifacts。诊断不得重新构建、重新计时、读取旧
+`runtimeReplay` 字段或替代 required performance gate；重复执行不得把上一轮哈希追加进本轮证据。
+
 ## CI 必须通过
 
 - exact candidate SHA 的 quality、native integration、六 host、x86-64/AArch64 performance 共十
