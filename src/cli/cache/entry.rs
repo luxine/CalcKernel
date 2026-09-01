@@ -4,9 +4,9 @@ use calckernel::{
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-const ENTRY_MAGIC: &[u8; 8] = b"CKCOBJ03";
+pub(in crate::cli) const ENTRY_MAGIC: &[u8; 8] = b"CKCOBJ03";
 const MANIFEST_MAGIC: &[u8] = b"CKC-MANIFEST\0";
-const MANIFEST_SCHEMA: u32 = 4;
+pub(in crate::cli) const MANIFEST_SCHEMA: u32 = 4;
 const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 const BUNDLE_MAGIC: &[u8; 8] = b"CKCBND01";

@@ -2,6 +2,27 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.13.0 - Release candidate
+
+- 新增确定性的 CK 自有 `CKPART01` shard 与 `CKPROF01` workload profile，提供安全的
+  directory collection、canonical merge/inspect，以及 transactional `ckc pgo build` 工作流。
+- 新增 non-proof profile analysis、由独立 checker 验证的 O2 late machine layout，以及
+  O3 guarded specialization、inline、unroll、SLP 与 Loop SIMD。Profile 只能影响收益判断，
+  不能建立安全事实。
+- 新增显式 `--cpu multiversion` Native build：包含 portable baseline、受预算约束且已验证的
+  feature variant、baseline-safe process-local detector、稳定 public thunk，以及
+  executable/dynamic/static named-object assembly。
+- 新增真实 library generation workflow 与 full-identity `ck_profile_flush_*` control symbol；
+  最终 profile-use artifact 不包含 counter、profile path、writer 或 generation runtime。
+- Private LLVM bridge 更新到 ABI 4、KIR 更新到 v3、Native object cache 更新到
+  `CKCOBJ03` key/manifest schema 4。Public Native C ABI 1 与 Runtime ABI 2 保持不变，
+  0.12 source 与 observable semantics 继续兼容。
+- 新增闭合的 profile/target/dispatch/cache identity、corruption/mutation test、transactional
+  multi-file output 与 release-candidate audit。正式发布前仍必须通过 schema-8 performance
+  与 exact-SHA CI。
+- Auto-Tuning、indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍属于
+  0.14 或更晚的未来工作。
+
 ## 0.12.0 - 尚未发布
 
 - 新增 KIR v2 fixed-vector/mask instruction，以及由固定 LLVM 22.1.8 导出的确定性

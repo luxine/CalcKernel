@@ -81,7 +81,10 @@ pub use multiversion::{
     NativeMultiversionObject, NativeMultiversionObjectBundle, NativeMultiversionObjectRole,
     NativeMultiversionTargetSet, emit_native_multiversion_objects,
 };
-pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices};
+pub use notices::{
+    EmbeddedNotice, NATIVE_ABI_VERSION, NATIVE_CACHE_ENTRY_MAGIC, NATIVE_CACHE_KEY_SCHEMA,
+    NATIVE_CACHE_MANIFEST_SCHEMA, RUNTIME_ABI_VERSION, embedded_notices,
+};
 #[cfg(feature = "native-toolchain")]
 pub use object::{NativeObject, OptimizedNativeModule};
 #[cfg(feature = "native-toolchain")]

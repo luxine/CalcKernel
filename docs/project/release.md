@@ -1,9 +1,14 @@
-# Native `ckc` 0.12 Release Policy
+# Native `ckc` 0.13 Release Policy
 
 [简体中文](../zh-CN/project/release.md)
 
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
+
+The 0.13.0 version in a feature branch is a release candidate, not a published
+Release. No tag or GitHub Release may be created until schema-8 x86-64/AArch64
+performance and the exact candidate-SHA ten-job CI are complete. Re-recording
+evidence after a code or contract change requires rerunning the affected gates.
 
 Repository text checks out with LF endings on every host. Vendored provenance
 files retain their original bytes without Git newline conversion; hash checks
@@ -22,6 +27,10 @@ uses a separate pinned Clang oracle prefix.
 Distribution builds use the target-minimal `release` profile, which
 excludes Clang, and always run `cargo build --release --features
 native-toolchain --locked`.
+The distributed compiler archive embeds the private generation/dispatch runtime
+objects and their required notices so it can build every supported artifact,
+but generated user artifacts remain self-contained and gain no new external
+runtime dependency.
 
 Both macOS CI hosts and release artifact jobs explicitly ad-hoc sign the actual
 compiler with hardened runtime and the repository's sole allow-JIT entitlement
@@ -64,7 +73,7 @@ that final publish job.
 
 Release tags are annotated `vMAJOR.MINOR.PATCH` tags and are never moved. A
 published Release or asset is never overwritten. If a defect is discovered
-after `v0.12.0`, fix it in a new patch release such as `v0.12.1`. The 0.12.0
+after `v0.13.0`, fix it in a new patch release such as `v0.13.1`. The 0.13.0
 release consists of six archives and their six checksum sidecars; publication
 is all-or-nothing.
 

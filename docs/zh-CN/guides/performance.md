@@ -1,90 +1,74 @@
-# CalcKernel 0.12 性能指南
+# CalcKernel 0.13 性能指南
 
 [English](../../guides/performance.md)
 
-CalcKernel 0.12 使用严格 performance report schema 7。Release measurement 在稳定 x86-64
-与 AArch64 worker 上运行 portable baseline artifact，保持 strict floating-point 与 safety
-semantics，并固定 compiler、source、target、规范化 `KirTargetProfile`、cost/proof schema、
-optimizer budget、CK/oracle artifact、sampling schedule 与全部 source digest。除非另行评审并
-冻结 hardware identity，native-policy result 只作诊断。
+CalcKernel 0.13 使用 fail-closed performance report schema 8。正式 release 必须具有固定
+x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
+Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
+hardware/capability manifest、compiler/oracle/source/recipe digest、training/held-out corpus、
+profile shard/final profile、target set、variant object、artifact bytes、sample order 与全部 raw sample。
 
-Scalar regression baseline 是 commit
-`80c0acf6bb5d65e4d9d40352b9501ea32b79f43d` 独立构建的 0.11.0 compiler；其 compiler、
-Native artifact、独立 C oracle、recipe 与 digest 和既有 0.10 optimizer replay 一并保留。
-C compiler oracle 固定为 Clang 22.1.8，Rust SIMD oracle 固定为 Rust 1.90.0。
+Ordinary regression 的精确 replay 是 CalcKernel 0.12 commit
+`1c2596da11242704cc6d875e969fc45cf58ea21d`。Clang/Rust PGO oracle 使用与 CK 相同的
+training/evaluation split 和 source-level precondition，禁用 fast math/contraction，并通过
+differential 与 undefined-behavior audit。Training data 不作为 held-out timing evidence；
+correctness 另含 adversarial corpus。
 
-## Runtime protocol
+## Sampling protocol
 
-Scalar regression 使用 `rotating-twelve-channel-v1`：candidate Native、current Clang、replayed
-0.11 Native/Clang 与 replayed 0.10 Native/Clang，各含 checked/unchecked mode。十二条 stream
-在同一进程、相同输入上运行；使用三行 rotating warm-up、二十行 rotating sample、每 sample
-七次调用、固定 batch identity 与 upper-median statistic。Schema 7 保存每个实际 order、sample、
-median、artifact digest 与 result；缺失 stream 不得回退到历史数值。
-
-Vector 与 domain-fact suite 对 checked/unchecked CK 分别使用
-`rotating-three-channel-v1`。Vector run 轮换 candidate CK、pinned hand-written C+SIMD 与
-pinned hand-written Rust+SIMD；domain-fact run 改用未获得 CK-only contract 的 generic Clang
-O3/Rust O3 source。每轮均在同一进程使用相同输入、三行 warm-up、二十行 sample、每 sample
-七次调用、固定 batching 与 upper median。
-
-Hand-written oracle 使用 architecture-specific baseline flag，禁用 fast math/contraction，且
-不得使用 CK baseline profile 不具备的 CPU feature。它们获得 source language 可表达的全部
-等价 precondition，并须在固定 declared valid domain 上通过 differential 与 undefined-behavior
-audit。缺失、无效或测量后排除 competitor 都会使 gate 失败。
+全部 timed channel 使用相同 source mode、input、batch、process 与 CPU policy。Dynamic load、
+symbol lookup 与 dispatch resolution 在 steady-state timing 前完成，report 证明 resolver 只执行
+一次。Channel 使用固定 rotating warm-up/sample schedule，保留实际 order/sample，采用 upper
+median，并执行闭合 stability rule。Stability failure 使 evidence 无效，不允许任意重跑或删 case。
+缺少、unknown、extra 或不匹配的 report field、digest、stream、tier、capability 都使 checker 失败。
 
 ## 累积 release gate
 
-- 保留既有 Native/current-Clang 与 0.10 replay gate：Native throughput 至少达到 Clang
-  geometric mean 的 95%，单项最多慢 10%；checked proof loop 至少达到 unchecked 的 97%；
-  KIR optimizer latency 相对固定 0.10 MIR optimizer 的 suite median 不超过 2x、单项不超过 3x。
-- 每个架构与 safety mode 上，CK 至少达到各 vector kernel 中较快有效 C/Rust SIMD oracle
-  geometric mean 的 95%，每个 kernel 至少达到自身 oracle 的 90%。
-- Domain-fact suite 上，CK 在每个架构至少超过较快 generic Clang/Rust oracle geometric
-  mean 的 5%。
-- Unchanged scalar corpus 相对 independently replayed 0.11 的 geometric mean 最多慢 3%，
-  单项最多慢 8%。
-- Native object size 相对 replayed 0.11 aggregate 增长不超过 35%，单项不超过 2.5x。
-  Baseline O3 source-to-object compile time 的 candidate/replay geometric mean 不超过 1.5，
-  单项 ratio 不超过 2。
+- 0.13 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
+  2%，单项不超过 5%。
+- PGO use 相对相同 0.13 ordinary CPU policy：geometric-mean improvement 至少 5%，held-out
+  单项 slowdown 不超过 3%；固定 instrumentation corpus 上 generation execution 不超过 ordinary 5x。
+- Eligible multiversion dispatch 相对 portable baseline：geometric-mean improvement 至少 8%，
+  单项 slowdown 不超过 3%；dispatch 至少达到 selected-direct geometric mean 的 98%，单项
+  最多慢 5%。
+- Combined PGO+multiversion 相对较快的对应 PGO-only/multiversion-only channel，geometric
+  mean 最多慢 2%，单项最多慢 5%。
+- Combined CK 至少达到较快等价 Clang/Rust PGO geometric mean 的 95%，每个 accepted
+  kernel 至少达到 90%。
+- PGO/multiversion/combined source-to-object geometric-mean ratio 不超过 ordinary 的
+  1.5x/2.5x/3.5x，单项不超过 2x/3x/4x；artifact aggregate 不超过 1.25x/2x/2x，
+  单项不超过 1.5x/2.5x/2.5x；distributed `ckc` archive 相对 exact 0.12 最多增长 15%。
+- 保留全部 0.12 累积 gate：Native 至少达到 pinned Clang geometric mean 的 95%，单项最多
+  慢 10%，checked proof loop 至少达到 unchecked 的 97%，vector/domain gate 保持，optimizer
+  latency 保持既有 suite 2x、单项 3x 上限。
 
-Runtime throughput、optimizer latency、source-to-object time、object size、memory、cold/warm
-run 与 cache behavior 是分离指标。任何 threshold 都不允许削弱 diagnostic、evaluation order、
-modular integer、strict float、checked first-error order、print order、semantic MIR、ABI 或
-contract domain。
+Runtime throughput、generation overhead、source-to-object time、artifact/compiler archive size、
+memory、cold/warm execution 与 cache behavior 是分离指标。任何 threshold 都不能削弱 diagnostic、
+evaluation order、modular integer、strict float、checked first-error、print/effect order、semantic
+MIR、public ABI 或 contract domain。
 
-## 执行与证据保留
+## 命令与证据
 
-稳定 worker 测量前先运行本地 schema/unit check：
+昂贵的稳定 worker 测量前先运行本地 schema/checker/correctness check：
+
+通用 harness 入口为 `cargo bench --bench ckc_perf`，输出
+`build/perf/latest.summary.json` 与 `build/perf/latest.summary.md`。Native 与 PGO
+测量再增加下面所示的 feature 和 task selector。
 
 ```sh
-cargo bench --bench ckc_perf
 cargo test --locked --test performance -- --nocapture
 python3 -m unittest discover -s tests/performance -p '*_test.py'
-python3 scripts/prepare-performance-replay.py --out target/ckc-perf/v011-replay
-python3 scripts/prepare-performance-replay.py --baseline 0.10 --out target/ckc-perf/v010-replay
-export CKC_V011_RUNTIME_BUNDLE="$PWD/target/ckc-perf/v011-replay"
-export CKC_V010_RUNTIME_BUNDLE="$PWD/target/ckc-perf/v010-replay"
-cargo build --release --features native-toolchain --locked
-export CKC_CANDIDATE_COMPILER="$PWD/target/release/ckc"
 cargo bench --features native-toolchain --bench ckc_perf -- \
   --case proof --task check --cpu baseline
-python3 scripts/check-native-performance.py target/ckc-perf/results.json
+cargo bench --features native-toolchain --bench pgo_perf -- \
+  --task collect --out target/ckc-perf/v0.13-results.json
+python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json
 ```
 
-通用 compiler-stage benchmark 写入 `build/perf/latest.summary.json` 与
-`build/perf/latest.summary.md`；这些 summary 不能替代严格 schema 7 release report。
+Report 在独立 checker 读取前 canonicalize 并 hash；benchmark 本身不能宣称通过。Diagnostic
+只检查实际 report/artifact，不重建或重新计时 required gate。修改 source、corpus、profile、
+target/capability、oracle precondition、threshold、statistic、exclusion 或 checker 均属于需评审
+contract change。
 
-每份 replay preparation 都需要独立的全新 owned output directory、完整 Git history、Rust 1.90.0 与 pinned
-LLVM/Clang 22.1.8。Replay bundle/report 保留 compiler/oracle bytes、recipe/adapter、source
-manifest、measurement directory、实际 schedule/sample array、target-profile/artifact digest 与
-preparation log。缺失或修改文件、symlink/path escape、identity mismatch、quick run、unknown
-field 或 sample 不完整均为 hard error。
-
-Vector corpus 包含 contiguous map/zip、strict element-wise `f64`、integer transform、target-
-legal modular integer reduction、SLP、runtime no-alias versioning，以及暴露 fixed slice length
-的 specialization，并覆盖 memory/compute-bound case。Size 使用 link 前成对 relocatable object；
-compile-time 使用 fresh path、disabled cache、三对交替 warm-up、十五对 measured pair 与 upper
-median。
-
-修改 source、compiler identity、threshold、statistic、target profile、oracle precondition 或
-exclusion rule 属于需评审的 contract change。PGO remains 0.13。Auto-Tuning remains 0.14。
+PGO 与受限 multiversioning 只有在这些 gate 通过后才随 0.13 交付。Auto-Tuning remains 0.14；
+indirect-call promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。

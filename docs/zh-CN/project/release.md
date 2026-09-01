@@ -1,9 +1,13 @@
-# 原生 `ckc` 0.12 发布策略
+# 原生 `ckc` 0.13 发布策略
 
 [English](../../project/release.md)
 
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
+
+Feature branch 中的 0.13.0 identity 是 release candidate，不是已发布 Release。只有 schema-8
+x86-64/AArch64 performance 与 exact candidate-SHA 十作业 CI 全部完成后才可创建 tag 或
+GitHub Release。代码或 contract 变化后重新记录 evidence，必须重跑受影响 gate。
 
 仓库文本在所有 host 上都以 LF 换行 checkout。Vendor provenance 文件保留上游原始字节，
 不经 Git 换行转换；hash 校验始终比较精确字节，不通过规范化输入来接受不匹配。
@@ -17,6 +21,8 @@ cache。该 identity 还覆盖所有参与编译的 native runtime 与 platform-
 prefix；发行构建使用排除 Clang 的
 target-minimal `release` profile，并始终执行 `cargo build --release --features
 native-toolchain --locked`。
+Distributed compiler archive 内嵌构建全部受支持 artifact 所需的 private generation/dispatch
+runtime object 与 notice；生成的 user artifact 仍保持 self-contained，不增加外部 runtime dependency。
 
 macOS CI host 与 release artifact job 都必须在严格签名审计前，给实际 compiler 显式添加
 ad-hoc hardened-runtime 签名，且只使用仓库唯一 allow-JIT entitlement。打包的是这个已签名
@@ -50,6 +56,6 @@ run 验证完整的六个 archive 与六个 checksum；若 Release 已存在则�
 publish job 具有 repository write permission。
 
 Release tag 是 annotated `vMAJOR.MINOR.PATCH`，永不移动。Published Release 或
-asset 不覆盖；若 `v0.12.0` 之后发现缺陷，发布 `v0.12.1` 等新 patch version。0.12.0
+asset 不覆盖；若 `v0.13.0` 之后发现缺陷，发布 `v0.13.1` 等新 patch version。0.13.0
 发布由六个 archive 和对应六个 checksum sidecar 组成，必须 all-or-nothing 发布。
 [发布清单](release-checklist.md)是必须完成的 sign-off record。

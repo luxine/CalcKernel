@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 const KEY_MAGIC: &[u8] = b"CKC-CACHE-KEY\0";
-const KEY_SCHEMA: u32 = 4;
+pub(in crate::cli) const KEY_SCHEMA: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::cli) struct CacheKeyInput {

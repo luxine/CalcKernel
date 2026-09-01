@@ -118,6 +118,28 @@ fn native_acceptance_artifact_set_should_cover_every_audited_kind() {
     write_native_acceptance_artifact_set(&root);
 }
 
+#[test]
+fn native_release_candidate_stage10_set_should_include_private_runtime_closure() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/native-acceptance/v0.13-stage-10");
+    write_native_acceptance_artifact_set(&root);
+    let suffix = if NativePlatform::host() == NativePlatform::Windows {
+        "obj"
+    } else {
+        "o"
+    };
+    assert!(
+        root.join("runtime")
+            .join(format!("profile_runtime.{suffix}"))
+            .is_file()
+    );
+    assert!(
+        root.join("runtime")
+            .join(format!("dispatch_runtime.{suffix}"))
+            .is_file()
+    );
+}
+
 pub(super) fn write_native_acceptance_artifact_set(root: &Path) {
     let runtime_dir = root.join("runtime");
     fs::create_dir_all(&runtime_dir).expect("create native acceptance directory");
@@ -201,6 +223,11 @@ pub(super) fn write_native_acceptance_artifact_set(root: &Path) {
             "dispatch_runtime",
             env!("CKC_DISPATCH_RUNTIME_OBJECT"),
             env!("CKC_DISPATCH_RUNTIME_SHA256"),
+        ),
+        (
+            "profile_runtime",
+            env!("CKC_PROFILE_RUNTIME_OBJECT"),
+            env!("CKC_PROFILE_RUNTIME_SHA256"),
         ),
     ];
     let suffix = if platform == NativePlatform::Windows {

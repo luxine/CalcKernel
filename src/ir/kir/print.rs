@@ -2,10 +2,14 @@ use crate::print_mir_type;
 
 use super::*;
 
+/// Stable textual and in-memory KIR contract version for the current compiler.
+pub const KIR_FORMAT_VERSION: u32 = 3;
+
 #[must_use]
 pub fn print_kir_module(module: &KirModule) -> String {
     let mut output = format!(
-        "kir-v3 consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}\n",
+        "kir-v{} consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}\n",
+        KIR_FORMAT_VERSION,
         print_consumer(module.config.consumer),
         print_overflow_mode(module.config.overflow_mode),
         print_bounds_mode(module.config.bounds_mode),

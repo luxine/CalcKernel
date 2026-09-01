@@ -26,6 +26,8 @@ pub fn embedded_dispatch_runtime_object() -> &'static [u8] {
 
 pub const NATIVE_PROFILE_RUNTIME_SHA256: &str = env!("CKC_PROFILE_RUNTIME_SHA256");
 pub const NATIVE_DISPATCH_RUNTIME_SHA256: &str = env!("CKC_DISPATCH_RUNTIME_SHA256");
+pub const NATIVE_PROFILE_RUNTIME_SCHEMA: u32 = 1;
+pub const NATIVE_DISPATCH_RUNTIME_SCHEMA: u32 = 1;
 
 #[cfg(target_os = "windows")]
 pub(crate) fn embedded_windows_import_library() -> &'static [u8] {

@@ -583,11 +583,35 @@ pub(super) fn run_version(args: &[String]) -> Result<(), String> {
 
     println!("Native ABI: {}", calckernel::NATIVE_ABI_VERSION);
     println!("Runtime ABI: {}", calckernel::RUNTIME_ABI_VERSION);
+    println!("KIR: {}", calckernel::KIR_FORMAT_VERSION);
+    println!(
+        "CK profile: CKPART01/CKPROF01 schema {}",
+        calckernel::CK_PROFILE_FORMAT_SCHEMA
+    );
+    println!(
+        "Native cache: {} key schema {} manifest schema {}",
+        calckernel::NATIVE_CACHE_ENTRY_MAGIC,
+        calckernel::NATIVE_CACHE_KEY_SCHEMA,
+        calckernel::NATIVE_CACHE_MANIFEST_SCHEMA
+    );
     #[cfg(feature = "native-toolchain")]
     {
         let info = calckernel::bridge_info().map_err(|error| error.to_string())?;
         let jit = calckernel::NativeJit::new().map_err(|error| error.to_string())?;
         println!("LLVM: {}", info.llvm_version);
+        println!("LLVM bridge ABI: {}", calckernel::LLVM_BRIDGE_ABI_VERSION);
+        println!(
+            "Multiversion target set schema: {}",
+            calckernel::KIR_MULTIVERSION_TARGET_SET_SCHEMA
+        );
+        println!(
+            "Profile runtime schema: {}",
+            calckernel::NATIVE_PROFILE_RUNTIME_SCHEMA
+        );
+        println!(
+            "Dispatch runtime schema: {}",
+            calckernel::NATIVE_DISPATCH_RUNTIME_SCHEMA
+        );
         println!(
             "LLVM manifest SHA-256: {}",
             env!("CKC_LLVM_MANIFEST_SHA256")

@@ -1,4 +1,4 @@
-# CalcKernel 0.12 MIR and KIR Boundary
+# CalcKernel 0.13 MIR and KIR Boundary
 
 [简体中文](../zh-CN/reference/mir.md)
 
@@ -46,7 +46,7 @@ and malformed terminators. All blocks are terminated before backend lowering.
 
 Textual MIR follows source-derived declaration, local, block, instruction,
 operand, and terminator order. It contains no path, time, address, or hash-map
-order. `emit-mir` remains semantic and byte-stable for the 0.12 line regardless
+order. `emit-mir` remains semantic and byte-stable for the 0.13 line regardless
 of `-O`; optimization no longer creates a second MIR product path.
 
 KIR uses scalar SSA, explicit block parameters, region Memory SSA, facts,
@@ -56,6 +56,6 @@ and is the sole target-neutral optimized input to all backends. `emit-kir`
 prints deterministic inspection text and may also print fact/effect/proof
 evidence. KIR is a private compiler format with no cross-version text guarantee.
 
-The semantic MIR textual format is compatible within `0.12.x`; a breaking grammar or meaning
+The semantic MIR textual format is compatible within `0.13.x`; a breaking grammar or meaning
 change requires a later minor release and migration note under the project
 [compatibility policy](../project/compatibility.md).

@@ -1,4 +1,4 @@
-# CalcKernel 0.12 Fact-Driven Optimizer
+# CalcKernel 0.13 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -39,11 +39,33 @@ discovery-only loop descriptor。
   `induction-simplify`、post-loop range/check elimination、互斥的 Loop SIMD/unroll/
   loop-SLP frontier、residual straight-line SLP、DCE 与 cleanup。
 
+## Workload profile 权限
+
+CK workload profile 是 immutable non-proof input，只能排序 candidate 与估算 work，不能建立
+range、alias、alignment、effect、bounds、dominance 或 checked-failure safety。CFG rewrite 后
+的 profile mapping 只有在闭合 record 被不调用 proposer 的 checker 重新核验时才保留；unknown、
+saturated、inconsistent、overflowed 或 low-confidence observation 均回退 ordinary baseline。
+
+O2 先运行完整 ordinary machine pipeline。Profile-on/off 在 `CkLateProfileLayout` 前逐字节
+一致；该 late pass 只能改变 block/trace order，以及执行闭合 allowlist 中的 required target
+repair。它不提供 LLVM profile metadata，也不能改变 non-terminator instruction。
+
+O3 让 inline、value/length specialization、unroll、SLP、Loop SIMD 的每项 proposal 从 same
+immutable pre-state 开始。独立 checker 重算 legality、proof dependency、profile benefit、
+static cost、growth、profile mapping 与 shared budget。一个 transaction 同时发布 candidate
+module、proof/fact state、mapping 与 audit ledger，或全部回滚；被拒 proposal 与耗尽搜索不退款。
+
+Multiversion planning 同样让 baseline 与全部 enhanced variant 从 same pre-state 开始。
+Eligible exported root 必须达到闭合的 profile benefit 下限；每个 target variant 都重跑 normal
+verifier、fact audit、target-feature audit 与 object audit。Cross-variant LTO 禁止，因此 enhanced
+assumption 不能强化 baseline 或 sibling variant。baseline-safe dispatcher 只选择已验证的兼容
+variant，不改变 public semantics。
+
 每个 KIR module 都携带规范化 `KirTargetProfile`。Inspection、portable C、WebAssembly、
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.12 的 C/WebAssembly profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.13 的 C/WebAssembly profile 禁用 Vector KIR。
 
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
@@ -68,7 +90,7 @@ Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainde
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
 提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
-保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.12
+保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.13
 speculative transform，包括被拒绝的 alternative 与 clone。
 
 整数常量传播也处理无 guard 的函数，实际改写 modular arithmetic、整数 Copy 和比较，
@@ -167,5 +189,9 @@ Possible checked failure 和 runtime print 是 ordered effect，不能无证明�
 拒绝 injected 或 stale metadata。
 
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
-下比较 Clang、精确 0.10、checked/unchecked proof loop 与 optimizer latency。阈值不能成为
-弱化语义或使用 contract domain 外输入的理由。
+下使用 schema 8 比较 0.13 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
+hand-written SIMD oracle，并 replay exact 0.12 commit
+`1c2596da11242704cc6d875e969fc45cf58ea21d`。Correctness、optimization time、generation
+overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
+在 0.13 交付；Auto-Tuning remains 0.14，indirect calls、scalable KIR 与 adaptive JIT PGO
+仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。

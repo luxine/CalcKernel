@@ -23,7 +23,9 @@ fn repository_should_preserve_v0_10_as_compatibility_history() {
 
 #[test]
 fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_history() {
-    assert!(read("src/ir/kir/print.rs").contains("kir-v3 consumer="));
+    let printer = read("src/ir/kir/print.rs");
+    assert!(printer.contains("KIR_FORMAT_VERSION: u32 = 3"));
+    assert!(printer.contains("kir-v{} consumer="));
     assert!(read("src/cli/commands.rs").contains("kir-v3;strict-fp"));
     assert!(
         read("tests/fixtures/compatibility/v0_12/manifest.toml")
@@ -32,11 +34,11 @@ fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_histo
 }
 
 #[test]
-fn repository_should_declare_v0_12_everywhere() {
+fn repository_should_declare_v0_13_everywhere() {
     let cargo = read("Cargo.toml");
     let lock = read("Cargo.lock");
-    assert!(cargo.contains("version = \"0.12.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.12.0\""));
+    assert!(cargo.contains("version = \"0.13.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.13.0\""));
     for path in [
         "README.md",
         "README.zh-CN.md",
@@ -45,7 +47,7 @@ fn repository_should_declare_v0_12_everywhere() {
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.12.0"), "{path} must name 0.12.0");
+        assert!(read(path).contains("0.13.0"), "{path} must name 0.13.0");
     }
 }
 
@@ -80,6 +82,42 @@ fn v0_12_compatibility_manifest_should_cover_optimizer_and_v0_11_boundary() {
             assert!(
                 read(path).contains(&format!("fn {test_name}")),
                 "0.12 compatibility evidence does not resolve: {evidence}"
+            );
+        }
+    }
+}
+
+#[test]
+fn v0_13_compatibility_manifest_should_cover_pgo_multiversion_and_v0_12_boundary() {
+    let manifest = read("tests/fixtures/compatibility/v0_13/manifest.toml");
+    assert!(manifest.contains("release = \"0.13.0\""));
+    for id in [
+        "profile-schema1",
+        "kir-v3-profile-sites",
+        "pgo-transactions",
+        "multiversion-dispatch",
+        "native-cache-v4",
+        "v0-12-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.13 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.13 compatibility evidence does not resolve: {evidence}"
             );
         }
     }

@@ -4,6 +4,13 @@ pub const NATIVE_ABI_VERSION: u32 = 1;
 /// Version of the no-heap executable runtime ABI contract.
 pub const RUNTIME_ABI_VERSION: u32 = 2;
 
+/// Current private Native cache entry identity reported by every compiler build.
+pub const NATIVE_CACHE_ENTRY_MAGIC: &str = "CKCOBJ03";
+/// Current private Native cache-key schema.
+pub const NATIVE_CACHE_KEY_SCHEMA: u32 = 4;
+/// Current private Native cache-manifest schema.
+pub const NATIVE_CACHE_MANIFEST_SCHEMA: u32 = 4;
+
 /// One notice embedded into every `ckc` binary.
 #[derive(Debug, Clone, Copy)]
 pub struct EmbeddedNotice {
@@ -72,6 +79,14 @@ pub const fn embedded_notices() -> &'static [EmbeddedNotice] {
         EmbeddedNotice {
             name: "Ryu floating-point conversion (Boost-1.0 option)",
             bytes: include_bytes!("../../../native/runtime/vendor/ryu/LICENSE-Boost"),
+        },
+        EmbeddedNotice {
+            name: "CK profile runtime provenance",
+            bytes: include_bytes!("../../../native/profile_runtime/provenance.toml"),
+        },
+        EmbeddedNotice {
+            name: "CK dispatch runtime provenance",
+            bytes: include_bytes!("../../../native/dispatch_runtime/provenance.toml"),
         },
     ]
 }

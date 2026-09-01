@@ -1,4 +1,4 @@
-# CalcKernel 0.12 WebAssembly ABI
+# CalcKernel 0.13 WebAssembly ABI
 
 [简体中文](../zh-CN/abi/wasm.md)
 
@@ -31,5 +31,5 @@ WASM accepts `--overflow unchecked` and `--bounds unchecked`; either checked
 selection is rejected before output. No implicit slice guard or trap is added.
 The C/Native checked status ABI is not part of this ABI.
 
-WebAssembly has no 0.12 runtime printing. A reachable print from an exported
+WebAssembly has no 0.13 runtime printing. A reachable print from an exported
 root is rejected. An internal `main` does not create a WASI or browser entry.

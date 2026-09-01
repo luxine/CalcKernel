@@ -38,6 +38,7 @@ pub use generation::{
     profile_histogram_bucket,
 };
 pub use identity::{
+    CK_PROFILE_CONTRACT_SCHEMA, CK_PROFILE_FORMAT_SCHEMA, CK_PROFILE_INSPECTION_SCHEMA,
     CK_PROFILE_MAX_BYTES, CK_PROFILE_MAX_CANDIDATES, CK_PROFILE_MAX_SHARDS, CK_PROFILE_MAX_SITES,
     CkCompilerProfileIdentity, CkModuleProfileIdentity, CkProfileContract, CkProfileCpuPolicy,
     CkProfileEndianness, CkProfileIdentity, CkProfileModes, CkProfileObjectFormat,

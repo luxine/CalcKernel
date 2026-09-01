@@ -1,0 +1,32 @@
+schema = 1
+release = "0.13.0"
+
+[[change]]
+id = "profile-schema1"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/profile/format.rs:profile_format_schema1_wire_digests_should_match_golden_vectors"
+
+[[change]]
+id = "kir-v3-profile-sites"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/contracts/repository.rs:kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_history"
+
+[[change]]
+id = "pgo-transactions"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/optimizer/pgo.rs:pgo_pipeline_should_validate_profile_before_profile_weighted_o3"
+
+[[change]]
+id = "multiversion-dispatch"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/native/multiversion_dispatch.rs:multiversion_dispatch_should_be_baseline_stable_and_namespaced"
+
+[[change]]
+id = "native-cache-v4"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/native/cache.rs:cache_schema_should_use_v4_identity_and_reject_ckcobj02_entries"
+
+[[change]]
+id = "v0-12-source-compatibility"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/compatibility.rs:compatibility_v0_12_sources_and_public_runtime_contracts_should_remain_accepted"

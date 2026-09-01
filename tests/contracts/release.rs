@@ -100,17 +100,17 @@ fn v0_10_release_identity_should_remain_in_compatibility_history() {
 }
 
 #[test]
-fn v0_12_release_candidate_identity_should_be_consistent_everywhere() {
+fn release_v0_13_candidate_identity_should_be_consistent_everywhere() {
     let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
     let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
-    assert!(cargo.contains("version = \"0.12.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.12.0\""));
+    assert!(cargo.contains("version = \"0.13.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.13.0\""));
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .arg("--version")
         .output()
         .expect("run ckc --version");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.12.0");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.13.0");
     for path in [
         "README.md",
         "README.zh-CN.md",
@@ -120,8 +120,8 @@ fn v0_12_release_candidate_identity_should_be_consistent_everywhere() {
         assert!(
             fs::read_to_string(repo_root().join(path))
                 .unwrap_or_else(|error| panic!("read {path}: {error}"))
-                .contains("0.12.0"),
-            "{path} must identify 0.12.0"
+                .contains("0.13.0"),
+            "{path} must identify 0.13.0"
         );
     }
     assert_eq!(calckernel::NATIVE_ABI_VERSION, 1);
@@ -130,9 +130,19 @@ fn v0_12_release_candidate_identity_should_be_consistent_everywhere() {
     assert_eq!(calckernel::LLVM_BRIDGE_ABI_VERSION, 4);
 }
 
+#[test]
+fn release_v0_13_notices_should_cover_private_profile_and_dispatch_runtimes() {
+    let names = calckernel::embedded_notices()
+        .iter()
+        .map(|notice| notice.name)
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"CK profile runtime provenance"));
+    assert!(names.contains(&"CK dispatch runtime provenance"));
+}
+
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn v0_12_verbose_identity_should_report_frozen_public_and_updated_private_abis() {
+fn release_v0_13_verbose_identity_should_report_frozen_public_and_updated_private_contracts() {
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .args(["--version", "--verbose"])
         .output()
@@ -140,9 +150,15 @@ fn v0_12_verbose_identity_should_report_frozen_public_and_updated_private_abis()
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("verbose version is UTF-8");
     for required in [
-        "ckc 0.12.0",
+        "ckc 0.13.0",
         "Native ABI: 1",
         "Runtime ABI: 2",
+        "KIR: 3",
+        "LLVM bridge ABI: 4",
+        "CK profile: CKPART01/CKPROF01 schema 1",
+        "Native cache: CKCOBJ03 key schema 4 manifest schema 4",
+        "Multiversion target set schema: 1",
+        "Dispatch runtime schema: 1",
         "LLVM: 22.1.8",
         "Target:",
         "Code generator:",

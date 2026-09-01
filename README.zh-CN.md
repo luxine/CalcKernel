@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-Rust CalcKernel 0.12.0 发布 `native ckc`：一个可自包含运行的 CK computation-kernel
+Rust CalcKernel 0.13.0 发布 `native ckc`：一个可自包含运行的 CK computation-kernel
 语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
 仓库同时保留可检查的 C 与 WebAssembly emitter。
 
@@ -21,6 +21,10 @@ Rust CalcKernel 0.12.0 发布 `native ckc`：一个可自包含运行的 CK comp
 - 基于 target profile、由独立 checker 验证的 O3 optimizer，支持 transactional
   specialization、受控 unroll、SLP、Loop SIMD、runtime alias versioning、strict-f64
   vector 与精确 modular integer reduction。
+- CK 自有 `CKPART01`/`CKPROF01` profile generation、merge、inspection，以及通过显式
+  `ckc pgo` / `--pgo-*` workflow 进行的 non-proof PGO application。
+- 显式 Native `--cpu multiversion` build，包含 portable baseline、已验证的受限 variant、
+  baseline-safe one-time dispatch 与 executable/dynamic/static artifact 中的稳定 ABI thunk。
 - Source-only C 与 portable WAT/WASM 输出。
 - 面向 macOS、Linux、Windows 的 AArch64/x86-64 六个零工具链 release archive。
 
@@ -31,8 +35,10 @@ WebAssembly root 可达的 print 会被拒绝。
 ## Pipeline
 
 ```text
-.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR v2
+.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR v3
+                                 -> optional CK workload profile (non-proof)
                                  -> target-profiled transactional optimizer
+                                 -> optional verified CPU variants + dispatcher
                                       +-> C source/header
                                       +-> WAT/WASM
                                       +-> structural LLVM -> object
@@ -49,18 +55,24 @@ WebAssembly root 可达的 print 会被拒绝。
 ckc --version --verbose
 ckc check examples/core/scalar.ck
 ckc emit-kir examples/core/scalar.ck --print-facts
-ckc emit-kir examples/core/scalar.ck --emit-kir-consumer native-library \
+ckc emit-kir examples/core/scalar.ck --consumer native-library \
   --cpu baseline --explain-optimization
 ckc run examples/native/hello.ck
 ckc build examples/native/hello.ck --kind executable --out /tmp/hello
 ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
+ckc pgo build examples/native/hello.ck --out /tmp/hello-pgo \
+  --profile-out /tmp/hello.ckprof
+ckc build examples/core/scalar.ck --kind static --cpu multiversion \
+  --pgo-use /tmp/scalar.ckprof --out /tmp/libscalar.a
 ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
 ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
 ckc licenses
 ```
 
-`run` 与 `build` 默认 O3；Native build 默认 release target 的 portable CPU baseline，
-`--cpu native` 为 opt-in。`build-llvm` 仅保留为 dynamic/object Native build 的 deprecated alias。
+`run` 与 `build` 默认 O3。只有显式使用 `pgo` command 或 `--pgo-*` option 才启用 PGO；
+普通开发不会训练或读取 profile。Native build 默认 portable CPU baseline，`--cpu native`
+与 `--cpu multiversion` 均为显式选择。`build-llvm` 是 deprecated alias，不提供 PGO 或
+multiversion behavior。
 
 ## 从源码构建
 
@@ -106,14 +118,14 @@ cargo build --release --features native-toolchain --locked
 Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
 发布见 [release policy](docs/zh-CN/project/release.md)。
 
-CalcKernel 0.12.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
-LLVM bridge 为 ABI 3，KIR 使用 `kir-v2` identity，Native object cache 使用
-`CKCOBJ02` 及 key/manifest schema 3。旧 0.11 cache entry 会 fail closed，不会与 0.12
-artifact 混用。已接受的 0.11.0 与 0.10.0 source boundary 保留在
+CalcKernel 0.13.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
+LLVM bridge 为 ABI 4，KIR 使用 `kir-v3` identity，Native object cache 使用
+`CKCOBJ03` 及 key/manifest schema 4。旧 0.12/0.11 private cache entry 会 fail closed，
+不会与 0.13 artifact 混用。已接受的 0.12.0、0.11.0 与 0.10.0 source boundary 保留在
 [兼容性策略](docs/zh-CN/project/compatibility.md)中。
 
-PGO remains 0.13。Runtime multiversioning 留到 0.13。Auto-Tuning remains 0.14；0.12 不宣称这些未来
-optimization 已实现。
+PGO 与受限 runtime multiversioning 已在 0.13 实现。Auto-Tuning remains 0.14；
+indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍是未来工作。
 
 ## 内存边界
 

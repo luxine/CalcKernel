@@ -52,7 +52,8 @@ pub use llvm::{
     test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
 };
 pub use llvm::{
-    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
+    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, NATIVE_CACHE_ENTRY_MAGIC,
+    NATIVE_CACHE_KEY_SCHEMA, NATIVE_CACHE_MANIFEST_SCHEMA, RUNTIME_ABI_VERSION, embedded_notices,
 };
 #[cfg(feature = "native-toolchain")]
 pub use native_abi::{
@@ -62,7 +63,8 @@ pub use native_abi::{
 };
 #[cfg(feature = "native-toolchain")]
 pub use native_runtime::{
-    NATIVE_DISPATCH_RUNTIME_SHA256, NATIVE_PROFILE_RUNTIME_SHA256, embedded_dispatch_runtime_object,
+    NATIVE_DISPATCH_RUNTIME_SCHEMA, NATIVE_DISPATCH_RUNTIME_SHA256, NATIVE_PROFILE_RUNTIME_SCHEMA,
+    NATIVE_PROFILE_RUNTIME_SHA256, embedded_dispatch_runtime_object,
 };
 pub use wasm::{EmitWasmOptions, emit_wasm_kir_module, emit_wat_kir_module};
 
