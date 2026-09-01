@@ -450,25 +450,6 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         import_contract_facts(&kir, &checked.checked_program, 0).expect("loop SIMD contracts");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(result.errors.is_empty(), "{:?}", result.errors);
-    if cfg!(target_arch = "x86_64") {
-        assert_eq!(
-            result.stats.vectorized_loops, 0,
-            "{:?}",
-            result.analysis_fallbacks
-        );
-        assert!(result.analysis_fallbacks.iter().any(|fallback| {
-            fallback.pass == "loop-simd"
-                && fallback.reason == "vector-profitability-threshold-not-met"
-        }));
-        let kir = print_kir_module(
-            result
-                .artifact
-                .as_ref()
-                .expect("scalar strict f64 fallback artifact"),
-        );
-        assert!(!kir.contains("vector_divide"), "{kir}");
-        return;
-    }
     assert_eq!(
         result.stats.vectorized_loops, 1,
         "{:?}",
@@ -666,6 +647,25 @@ fn vector_loop_simd_strict_f64_unary_divide_should_lower_without_reassociation()
         .expect("strict f64 unary/divide SIMD contracts");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(result.errors.is_empty(), "{:?}", result.errors);
+    if cfg!(target_arch = "x86_64") {
+        assert_eq!(
+            result.stats.vectorized_loops, 0,
+            "{:?}",
+            result.analysis_fallbacks
+        );
+        assert!(result.analysis_fallbacks.iter().any(|fallback| {
+            fallback.pass == "loop-simd"
+                && fallback.reason == "vector-profitability-threshold-not-met"
+        }));
+        let kir = print_kir_module(
+            result
+                .artifact
+                .as_ref()
+                .expect("scalar strict f64 fallback artifact"),
+        );
+        assert!(!kir.contains("vector_divide"), "{kir}");
+        return;
+    }
     assert_eq!(
         result.stats.vectorized_loops, 1,
         "{:?}",

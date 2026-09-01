@@ -23,6 +23,8 @@ Windows 对应审核由 exact-SHA CI 的 PowerShell scripts 完成。
 
 - Cargo/lock/compiler/current docs 为 0.12.0；无残留“0.11 current”或误称 PGO/autotune 已完成。
 - Native ABI=1、Runtime ABI=2、bridge ABI=3、KIR v2、cache `CKCOBJ02`/schema 3。
+- x86-64 MSVC floating Native DLL 的 `_fltused` closure 不依赖 CRT，生成 object 与 runtime
+  copy 可合并且不进入 export/public ABI。
 - v0.11 compatibility fixtures 在 source/observable/public ABI 范围通过；旧 cache/bridge identity
   明确拒绝。
 - 双语 current docs、CLI help、release policy、workflow asset names 一致。

@@ -5,8 +5,9 @@
 
 #if defined(_MSC_VER)
 /* MSVC references this marker for floating-point translation units even when
-   no CRT floating-point helper is used. The freestanding runtime owns it. */
-int _fltused = 0;
+   no CRT floating-point helper is used. Generated CK objects and the
+   freestanding runtime both own coalescible copies so DLLs remain CRT-free. */
+__declspec(selectany) int _fltused = 0;
 #endif
 
 static uint64_t f64_bits(double value) {

@@ -27,6 +27,8 @@
 
 - Accepted kernel 在 optimized KIR 和 pre-LLVM IR 都有预期 vector op；object disassembly 有
   pinned arch 的真实 SIMD，三层证据缺一不可。
+- x86-64 MSVC f64 vector object 自带 non-exported coalescible `_fltused`，纯 Native DLL 在
+  `/nodefaultlib` 下成功链接；与 embedded runtime 的 `selectany` 副本共同链接时无 duplicate。
 - Accepted subset 由固定 target profile 和未降低的 20% 门槛决定；六 host 必须断言各自精确
   subset。合法但不盈利的 x86-64 strict-f64 division / horizontal multiply reduction 必须以
   稳定 `vector-profitability-threshold-not-met` 保持 scalar，不能被测试强制接受。

@@ -30,9 +30,11 @@
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/Comdat.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Instructions.h>
@@ -1440,6 +1442,23 @@ extern "C" int32_t ckc_llvm_module_configure(
         module->value->setTargetTriple(target->value->getTargetTriple());
         module->value->setDataLayout(target->value->createDataLayout());
         module->value->setSourceFileName(borrowed_string(source_file_name));
+        const auto &triple = target->value->getTargetTriple();
+        const bool needs_fltused = triple.isWindowsMSVCEnvironment() &&
+                                   triple.getArch() == llvm::Triple::x86_64;
+        if (needs_fltused &&
+            module->value->getNamedGlobal("_fltused") == nullptr) {
+            auto *type = llvm::Type::getInt32Ty(module->value->getContext());
+            auto *helper = new llvm::GlobalVariable(
+                *module->value, type, false,
+                llvm::GlobalValue::WeakODRLinkage,
+                llvm::ConstantInt::get(type, 0), "_fltused");
+            auto *comdat = module->value->getOrInsertComdat("_fltused");
+            comdat->setSelectionKind(llvm::Comdat::Any);
+            helper->setComdat(comdat);
+            helper->setDSOLocal(true);
+            helper->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            helper->setAlignment(llvm::Align(4));
+        }
         return CKC_LLVM_OK;
     });
 }

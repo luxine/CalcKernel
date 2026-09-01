@@ -439,6 +439,31 @@ fn windows_freestanding_runtime_should_close_optimizer_generated_memory_helpers(
 }
 
 #[test]
+fn windows_floating_objects_should_own_one_coalescible_fltused_definition() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "isWindowsMSVCEnvironment()",
+        "llvm::GlobalValue::WeakODRLinkage",
+        "getOrInsertComdat(\"_fltused\")",
+        "llvm::Comdat::Any",
+        "setAlignment(llvm::Align(4))",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "MSVC object lowering must retain the coalescible compiler helper contract {required:?}"
+        );
+    }
+
+    let format_float = read("native/runtime/common/format_float.c");
+    assert!(
+        format_float.contains("__declspec(selectany) int _fltused = 0;"),
+        "the embedded runtime copy must coalesce with the generated object definition"
+    );
+    let provenance = read("native/runtime/provenance.toml");
+    assert!(provenance.contains("compiler_helpers = [\"_fltused\"]"));
+}
+
+#[test]
 fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runtime() {
     let bootstrap = read("scripts/bootstrap-llvm.ps1");
     for required in [

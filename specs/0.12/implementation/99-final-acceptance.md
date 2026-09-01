@@ -58,6 +58,8 @@ required job、旧日志、历史数值或 lowered threshold。
 - [ ] 每个 accepted vector kernel 同时有 optimized KIR vector、pre-LLVM vector 和 pinned object
   SIMD disassembly 证据；不能由 LLVM 自发 vectorization 代签。
 - [ ] baseline/native correctness 与 feature containment 在六 host 通过。
+- [ ] x86-64 MSVC f64 Native DLL 在 `/nodefaultlib` 下由生成 object 的 coalescible `_fltused`
+  闭包成功链接；与 runtime 副本共同链接无 duplicate、无新 export 或 Runtime ABI 漂移。
 
 ## F. 性能、尺寸与编译耗时
 

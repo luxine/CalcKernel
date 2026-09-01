@@ -612,6 +612,14 @@ The bridge ABI advances because it gains normalized target cost/capability
 queries and vector construction operations. LLVM remains pinned to 22.1.8 for
 0.12 unless a separate reviewed toolchain change proves equivalent contracts.
 
+On x86-64 MSVC, LLVM emits an undefined `_fltused` reference for every module
+that contains floating-point operations. Each generated CK COFF module therefore
+owns one non-exported `weak_odr`/COMDAT-any zero definition, and the embedded
+freestanding runtime owns an equivalent `selectany` copy. The definitions
+coalesce when both objects are linked, while a floating-point Native library can
+link without the CRT or any runtime object. This is a compiler-support closure,
+not a public CK symbol or a Runtime ABI addition.
+
 ### C and WebAssembly
 
 Their 0.12 target profiles disable vector KIR. They continue from verified

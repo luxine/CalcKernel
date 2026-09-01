@@ -500,6 +500,12 @@ vector fact 与现有 alias、range、alignment strengthening 一样，在 LLVM 
 Bridge ABI 因新增 normalized target cost/capability query 与 vector construction operation 而
 升级。除非独立评审的 toolchain change 证明等价契约，0.12 继续固定 LLVM 22.1.8。
 
+在 x86-64 MSVC 上，LLVM 会为任何包含 floating-point operation 的 module 生成未定义
+`_fltused` 引用。因此每个 CK 生成的 COFF module 都拥有一个不导出的 `weak_odr`/
+COMDAT-any 零定义，embedded freestanding runtime 也保留等价 `selectany` 副本；两种 object
+共同链接时会合并，而只含 floating-point 的 Native library 无需 CRT 或 runtime object 即可
+链接。这属于 compiler-support closure，不是 public CK symbol，也不增加 Runtime ABI。
+
 ### C 与 WebAssembly
 
 它们的 0.12 target profile 禁用 Vector KIR，继续消费 verified scalar KIR，并可获得
