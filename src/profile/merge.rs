@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 
 use super::CkProfileError;
 use super::format::{
-    CkProfile, CkProfileCounter, CkProfileCounterRecord, CkProfileShard, parse_profile_shard,
-    serialize_profile, serialize_profile_shard,
+    CkProfile, CkProfileCounter, CkProfileCounterRecord, CkProfileShard, parse_profile,
+    parse_profile_shard, serialize_profile, serialize_profile_shard,
 };
 use super::identity::{CK_PROFILE_MAX_BYTES, CK_PROFILE_MAX_SHARDS};
 
@@ -135,6 +135,25 @@ pub fn merge_profile_inputs(paths: &[PathBuf]) -> Result<CkProfileMergeOutput, C
 /// Returns a stable path or I/O error when the output path is not safe to use.
 pub fn validate_profile_output_path(path: &Path) -> Result<(), CkProfileError> {
     reject_symlink_components(path)
+}
+
+/// Reads one terminal `.ckprof` through the same no-follow and resource-limit
+/// boundary used by merge inputs.
+///
+/// # Errors
+///
+/// Rejects non-terminal names, symbolic components, non-files, oversized input,
+/// and every parser validation failure.
+pub fn read_profile_input(path: &Path) -> Result<(CkProfile, Vec<u8>), CkProfileError> {
+    reject_symlink_components(path)?;
+    if !is_final_profile_name(path) {
+        return Err(CkProfileError::UnsupportedMergeInput(
+            path.display().to_string(),
+        ));
+    }
+    let bytes = read_no_follow(path)?;
+    let profile = parse_profile(&bytes)?;
+    Ok((profile, bytes))
 }
 
 fn scan_input(

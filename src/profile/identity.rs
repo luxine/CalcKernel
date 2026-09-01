@@ -254,25 +254,133 @@ impl CkProfileIdentity {
                 }
             };
         }
+        macro_rules! digest_mismatch {
+            ($path:literal, $expected:expr, $actual:expr) => {
+                if $expected != $actual {
+                    return Some(($path, hex(&$expected), hex(&$actual)));
+                }
+            };
+        }
         mismatch!(
             "compiler.packageVersion",
             self.compiler.package_version,
             observed.compiler.package_version
         );
-        mismatch!(
+        digest_mismatch!(
             "compiler.sourceIdentity",
             self.compiler.source_identity,
             observed.compiler.source_identity
         );
-        mismatch!(
+        digest_mismatch!(
             "compiler.profileRuntimeIdentity",
             self.compiler.profile_runtime_identity,
             observed.compiler.profile_runtime_identity
         );
-        mismatch!("module", self.module, observed.module);
-        mismatch!("schemas", self.schemas, observed.schemas);
-        mismatch!("target", self.target, observed.target);
-        mismatch!("modes", self.modes, observed.modes);
+        digest_mismatch!(
+            "module.semanticGraphDigest",
+            self.module.semantic_graph_digest,
+            observed.module.semantic_graph_digest
+        );
+        digest_mismatch!(
+            "module.preProfileKirDigest",
+            self.module.pre_profile_kir_digest,
+            observed.module.pre_profile_kir_digest
+        );
+        digest_mismatch!(
+            "module.siteTableDigest",
+            self.module.site_table_digest,
+            observed.module.site_table_digest
+        );
+        mismatch!(
+            "schemas.language",
+            self.schemas.language,
+            observed.schemas.language
+        );
+        mismatch!(
+            "schemas.nativeAbi",
+            self.schemas.native_abi,
+            observed.schemas.native_abi
+        );
+        mismatch!(
+            "schemas.runtimeAbi",
+            self.schemas.runtime_abi,
+            observed.schemas.runtime_abi
+        );
+        mismatch!("schemas.kir", self.schemas.kir, observed.schemas.kir);
+        mismatch!("schemas.proof", self.schemas.proof, observed.schemas.proof);
+        mismatch!(
+            "schemas.costModel",
+            self.schemas.cost_model,
+            observed.schemas.cost_model
+        );
+        mismatch!(
+            "schemas.targetProfile",
+            self.schemas.target_profile,
+            observed.schemas.target_profile
+        );
+        mismatch!(
+            "schemas.llvmBridge",
+            self.schemas.llvm_bridge,
+            observed.schemas.llvm_bridge
+        );
+        mismatch!("schemas.cache", self.schemas.cache, observed.schemas.cache);
+        mismatch!("target.triple", self.target.triple, observed.target.triple);
+        mismatch!(
+            "target.pointerWidth",
+            self.target.pointer_width,
+            observed.target.pointer_width
+        );
+        mismatch!(
+            "target.endianness",
+            self.target.endianness,
+            observed.target.endianness
+        );
+        mismatch!(
+            "target.objectFormat",
+            self.target.object_format,
+            observed.target.object_format
+        );
+        mismatch!("target.osAbi", self.target.os_abi, observed.target.os_abi);
+        digest_mismatch!(
+            "target.targetSetDigest",
+            self.target.target_set_digest,
+            observed.target.target_set_digest
+        );
+        mismatch!(
+            "modes.overflowChecked",
+            self.modes.overflow_checked,
+            observed.modes.overflow_checked
+        );
+        mismatch!(
+            "modes.boundsChecked",
+            self.modes.bounds_checked,
+            observed.modes.bounds_checked
+        );
+        mismatch!(
+            "modes.strictFloat",
+            self.modes.strict_float,
+            observed.modes.strict_float
+        );
+        mismatch!(
+            "modes.sanitizer",
+            self.modes.sanitizer,
+            observed.modes.sanitizer
+        );
+        mismatch!(
+            "modes.topology",
+            self.modes.topology,
+            observed.modes.topology
+        );
+        mismatch!(
+            "modes.optimizationFamily",
+            self.modes.optimization_family,
+            observed.modes.optimization_family
+        );
+        mismatch!(
+            "modes.cpuPolicy",
+            self.modes.cpu_policy,
+            observed.modes.cpu_policy
+        );
         mismatch!("contract", self.contract, observed.contract);
         None
     }

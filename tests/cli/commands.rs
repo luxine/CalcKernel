@@ -273,7 +273,7 @@ fn pgo_cli_should_reject_terminal_profile_as_merge_input_without_output() {
 
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn pgo_build_should_train_and_commit_profile_and_artifact_together() {
+fn pgo_build_use_should_train_validate_and_commit_profile_and_artifact_together() {
     use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform, parse_profile};
 
     let (dir, source) =
@@ -306,6 +306,97 @@ fn pgo_build_should_train_and_commit_profile_and_artifact_together() {
         .output()
         .expect("run final pgo artifact");
     assert_eq!(executed.status.code(), Some(0));
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_use_should_validate_real_profile_explain_analysis_and_preserve_off_bytes() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) =
+        fixture("fn main() -> i32 { let i: u32 = 0; while i < 8 { i = i + 1; } return 0; }");
+    let dir = fs::canonicalize(dir).expect("canonical PGO use fixture");
+    let trained = dir.join("trained");
+    let profile = dir.join("trained.ckprof");
+    let training = run_empty_path([
+        os("pgo"),
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&trained),
+        os("--profile-out"),
+        os(&profile),
+    ]);
+    assert_eq!(training.code, Some(0), "{}", training.stderr);
+
+    let ordinary_base = dir.join("ordinary");
+    let ordinary = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&ordinary_base),
+        os("-O3"),
+    ]);
+    assert_eq!(ordinary.code, Some(0), "{}", ordinary.stderr);
+    let use_base = dir.join("use");
+    let applied = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&use_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("--explain-optimization"),
+        os("-O3"),
+    ]);
+    assert_eq!(applied.code, Some(0), "{}", applied.stderr);
+    assert!(applied.stderr.contains("===== PROFILE ANALYSIS ====="));
+    assert!(applied.stderr.contains("proof-authority=false"));
+    let ordinary_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &ordinary_base,
+    )
+    .primary;
+    let use_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &use_base,
+    )
+    .primary;
+    assert_eq!(
+        fs::read(&ordinary_path).expect("ordinary artifact"),
+        fs::read(&use_path).expect("profile-use artifact"),
+        "stage 04 analysis must not change code generation"
+    );
+
+    let changed = dir.join("changed.ck");
+    fs::write(&changed, "fn main() -> i32 { return 1; }").expect("changed source");
+    let prior = fs::read(&use_path).expect("prior use artifact");
+    let rejected = run_empty_path([
+        os("build"),
+        os(&changed),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&use_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("-O3"),
+    ]);
+    assert_eq!(rejected.code, Some(1));
+    assert!(
+        rejected
+            .stderr
+            .contains("profile identity mismatch at module.semanticGraphDigest"),
+        "{}",
+        rejected.stderr
+    );
+    assert_eq!(fs::read(use_path).expect("preserved use artifact"), prior);
 }
 
 #[cfg(feature = "native-toolchain")]

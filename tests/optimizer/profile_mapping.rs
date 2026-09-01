@@ -1,7 +1,9 @@
 use calckernel::{
-    CkProfileKirMode, KirBoundsMode, KirBuildConfig, KirConsumer, KirOverflowMode,
+    CkImmutableProfileAnalysis, CkProfileAnalysis, CkProfileAnalyzedSite, CkProfileKirMode,
+    CkProfileObservation, KirBoundsMode, KirBuildConfig, KirConsumer, KirOverflowMode,
     KirSanitizerMode, ProofArena, SourceFile, build_kir_module, check, lower_to_mir,
-    prepare_ck_profile_kir, validate_profile_mapping_for_optimizer,
+    prepare_ck_profile_kir, validate_profile_analysis_for_optimizer,
+    validate_profile_mapping_for_optimizer,
 };
 
 #[test]
@@ -32,6 +34,48 @@ fn profile_mapping_optimizer_verifier_should_not_import_annotations_into_proofs(
     );
     assert_eq!(proofs, before);
     assert!(proofs.proofs().is_empty());
+}
+
+#[test]
+fn profile_analysis_optimizer_boundary_should_keep_observations_out_of_proofs() {
+    let checked = check(&SourceFile::new(
+        "profile-analysis.ck",
+        "export fn kernel(n: u32) -> u32 { if n == 0 { return 1; } return n; }",
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let module = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    let plan = prepare_ck_profile_kir(&module, CkProfileKirMode::Use).expect("profile use plan");
+    let analysis = CkImmutableProfileAnalysis::new(CkProfileAnalysis {
+        identity_digest: [7; 32],
+        sites: plan
+            .sites
+            .iter()
+            .cloned()
+            .map(|descriptor| CkProfileAnalyzedSite {
+                descriptor,
+                observation: CkProfileObservation::Scalar(256),
+            })
+            .collect(),
+        functions: Vec::new(),
+    });
+    let proofs = ProofArena::new(0);
+    let before = proofs.clone();
+
+    assert_eq!(
+        validate_profile_analysis_for_optimizer(&plan, &analysis, &proofs),
+        Ok(())
+    );
+    assert_eq!(proofs, before);
 }
 
 #[test]

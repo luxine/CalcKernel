@@ -1,3 +1,5 @@
+#[path = "profile/application.rs"]
+mod application;
 #[path = "profile/format.rs"]
 mod format;
 #[path = "profile/generation.rs"]

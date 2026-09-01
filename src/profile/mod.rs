@@ -1,5 +1,8 @@
 //! CK-owned workload profile identities, wire formats, merge, and inspection.
 
+mod analysis;
+mod apply;
+mod cost;
 mod format;
 mod generation;
 mod identity;
@@ -10,6 +13,20 @@ use std::path::Path;
 
 use thiserror::Error;
 
+pub use analysis::{
+    CkProfileAnalysis, CkProfileAnalyzedSite, CkProfileFunctionWork, CkProfileObservation,
+    CkProfileUnknownReason, CkProfileWorkTerm, profile_is_cold, profile_ratio_at_least,
+    profile_site_dominant_outcome,
+};
+pub use apply::{
+    CkProfileMappingTransfer, CkProfileTransferEntry, CkTransferredProfileCounter, apply_profile,
+    transfer_profile_counts,
+};
+pub use cost::{
+    CkAffineCostFormula, CkProfileCostClass, CkProfileCostDecision, CkProfileCostDomain,
+    CkProfileCostProposal, CkSignedMagnitude, profile_histogram_bucket_range,
+    verify_profile_cost_proposal,
+};
 pub use format::{
     CkProfile, CkProfileCounter, CkProfileCounterRecord, CkProfileShard, CkProfileSiteDescriptor,
     CkProfileSiteId, CkProfileSiteKind, parse_profile, parse_profile_shard,
@@ -29,7 +46,8 @@ pub use identity::{
 };
 pub use inspect::{inspect_profile_json, inspect_profile_text};
 pub use merge::{
-    CkProfileMergeOutput, merge_profile_inputs, merge_profile_shards, validate_profile_output_path,
+    CkProfileMergeOutput, merge_profile_inputs, merge_profile_shards, read_profile_input,
+    validate_profile_output_path,
 };
 
 /// A stable validation or I/O failure in the CK profile subsystem.
@@ -107,6 +125,15 @@ pub enum CkProfileError {
     /// Counters do not match the authoritative site descriptor table.
     #[error("profile counter table does not match its site table")]
     CounterTableMismatch,
+    /// A parsed profile is not compatible with the canonical use topology.
+    #[error("profile application failed: {0}")]
+    Application(&'static str),
+    /// A CFG count-transfer record is absent or malformed.
+    #[error("profile mapping transfer is invalid: {0}")]
+    MappingTransfer(&'static str),
+    /// Checked integer analysis could not represent the required value.
+    #[error("profile arithmetic overflow in {0}")]
+    ArithmeticOverflow(&'static str),
     /// A symbolic site ID names more than one descriptor.
     #[error("profile site identifier collision")]
     SiteIdCollision,

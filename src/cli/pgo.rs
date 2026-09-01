@@ -190,6 +190,9 @@ fn run_native_build_workflow(
             merged.profile.merged_shards
         ));
     }
+    let temporary_profile = temporary.path.join("training.ckprof");
+    fs::write(&temporary_profile, &merged.profile_bytes)
+        .map_err(|error| format_open_file_error(&temporary_profile, error))?;
 
     let mut final_args = vec![
         input.to_string(),
@@ -198,6 +201,8 @@ fn run_native_build_workflow(
         "--kind".to_string(),
         "executable".to_string(),
         "-O3".to_string(),
+        "--pgo-use".to_string(),
+        path_argument(&temporary_profile)?,
     ];
     append_profile_build_modes(parsed, &mut final_args);
     let final_build = ParsedArgs::parse("build", &final_args)?;
@@ -228,7 +233,7 @@ fn run_native_build_workflow(
     println!("OK: completed CK profile training and final O3 build");
     println!("Wrote {}", destination.display());
     println!("Wrote {}", profile_destination.display());
-    println!("Profile application: unweighted O3 lifecycle skeleton (stage 03)");
+    println!("Profile application: validated immutable analysis (stage 04)");
     Ok(())
 }
 

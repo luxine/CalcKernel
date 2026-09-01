@@ -15,17 +15,20 @@ use super::cache::{self, CacheKeyInput, CacheManifest};
 use super::{args::*, output::*};
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    CkCompilerProfileIdentity, CkModuleProfileIdentity, CkProfileContract, CkProfileCpuPolicy,
-    CkProfileEndianness, CkProfileIdentity, CkProfileKirMode, CkProfileModes,
-    CkProfileObjectFormat, CkProfileOptimizationFamily, CkProfileSchemaIdentity,
-    CkProfileTargetIdentity, CkProfileTopology, EmitLlvmOptions, NATIVE_PROFILE_RUNTIME_SHA256,
-    NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu, NativeHeaderMode,
-    NativeObject, NativeOptimizationLevel, NativePlatform, NativeProfileGeneration, NativeTarget,
-    anchor_profile_directory, create_native_profile_generation_static_archive,
-    create_native_static_archive, emit_native_header, emit_native_profile_generation_header,
-    link_native_dynamic_library, link_native_executable,
-    link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
-    lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
+    CkCompilerProfileIdentity, CkImmutableProfileAnalysis, CkModuleProfileIdentity,
+    CkProfileAnalysis, CkProfileContract, CkProfileCpuPolicy, CkProfileEndianness, CkProfileEvent,
+    CkProfileIdentity, CkProfileKirMode, CkProfileModes, CkProfileObjectFormat,
+    CkProfileObservation, CkProfileOptimizationFamily, CkProfileSchemaIdentity,
+    CkProfileTargetIdentity, CkProfileTopology, CkProfileWorkTerm, EmitLlvmOptions,
+    NATIVE_PROFILE_RUNTIME_SHA256, NativeArtifactKind, NativeArtifactPaths, NativeContext,
+    NativeCpu, NativeHeaderMode, NativeObject, NativeOptimizationLevel, NativePlatform,
+    NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
+    create_native_profile_generation_static_archive, create_native_static_archive,
+    emit_native_header, emit_native_profile_generation_header, link_native_dynamic_library,
+    link_native_executable, link_native_profile_generation_dynamic_library,
+    link_native_profile_generation_executable, lower_native_kir_module,
+    lower_native_profile_generation_module, prepare_ck_profile_kir, read_profile_input,
+    validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
@@ -358,11 +361,6 @@ fn emit_kir_inspection(
 
 pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "emit-kir")?;
-    if args.pgo_use.is_some() {
-        return Err(
-            "profile use is unavailable until CK profile application is implemented.".to_string(),
-        );
-    }
     let consumer = args
         .consumer
         .unwrap_or(EmitKirConsumer::Inspection)
@@ -416,6 +414,28 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         false,
         args,
     )?;
+    #[cfg(feature = "native-toolchain")]
+    if args.pgo_use.is_some() {
+        let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
+        let cpu = match cpu_policy {
+            CpuPolicy::Baseline | CpuPolicy::Multiversion => NativeCpu::Baseline,
+            CpuPolicy::Native => NativeCpu::Native,
+        };
+        let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
+        let analysis = prepare_profile_application(
+            &checked.checked_program,
+            args,
+            ProfileApplicationRequest {
+                target: &target,
+                consumer,
+                overflow_mode,
+                bounds_mode,
+                opt_level,
+                cpu_policy,
+            },
+        )?;
+        emit_profile_analysis(&analysis, args)?;
+    }
     write_or_print(
         args.out.as_deref(),
         &print_kir_module(
@@ -732,11 +752,6 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     if args.pgo_generate.is_some() {
         return run_profile_generation_build(args);
     }
-    if args.pgo_use.is_some() {
-        return Err(
-            "Profile use is unavailable until profile application is implemented.".to_string(),
-        );
-    }
     let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
     let overflow_mode = parse_overflow_mode(args)?;
     let bounds_mode = parse_bounds_mode(args)?;
@@ -756,7 +771,8 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     } else {
         KirConsumer::NativeLibrary
     };
-    let cpu = match args.cpu.unwrap_or(CpuPolicy::Baseline) {
+    let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
+    let cpu = match cpu_policy {
         CpuPolicy::Baseline => NativeCpu::Baseline,
         CpuPolicy::Native => NativeCpu::Native,
         CpuPolicy::Multiversion => {
@@ -767,6 +783,24 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         }
     };
     let target = NativeTarget::host_with_cpu(cpu).map_err(|error| error.to_string())?;
+    let profile_analysis = args
+        .pgo_use
+        .as_ref()
+        .map(|_| {
+            prepare_profile_application(
+                &checked.checked_program,
+                args,
+                ProfileApplicationRequest {
+                    target: &target,
+                    consumer,
+                    overflow_mode,
+                    bounds_mode,
+                    opt_level,
+                    cpu_policy,
+                },
+            )
+        })
+        .transpose()?;
     let compiled = compile_kir(
         &checked.checked_program,
         KirCompilationTarget {
@@ -783,6 +817,9 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         args.sanitize_contracts,
         args,
     )?;
+    if let Some(analysis) = &profile_analysis {
+        emit_profile_analysis(analysis, args)?;
+    }
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
     let lowered = lower_native_kir_module(
@@ -941,6 +978,7 @@ fn run_profile_generation_build(args: &ParsedArgs) -> Result<(), String> {
         overflow_mode,
         bounds_mode,
         args,
+        true,
     )?;
     let anchor =
         anchor_profile_directory(&absolutize(directory)).map_err(|error| error.to_string())?;
@@ -1064,6 +1102,7 @@ fn compile_profile_generation_kir(
     overflow_mode: OverflowMode,
     bounds_mode: BoundsMode,
     args: &ParsedArgs,
+    emit_inspection: bool,
 ) -> Result<CompiledProfileGeneration, String> {
     let semantic_mir = lower_to_mir(program).map_err(|error| error.to_string())?;
     let semantic_graph_digest = hash_domain(
@@ -1106,12 +1145,158 @@ fn compile_profile_generation_kir(
             result.errors.join("; ")
         ));
     }
-    emit_kir_inspection(program, &result, args)?;
+    if emit_inspection {
+        emit_kir_inspection(program, &result, args)?;
+    }
     Ok(CompiledProfileGeneration {
         result,
         plan,
         semantic_graph_digest,
     })
+}
+
+#[cfg(feature = "native-toolchain")]
+struct ProfileApplicationRequest<'a> {
+    target: &'a NativeTarget,
+    consumer: KirConsumer,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+    cpu_policy: CpuPolicy,
+}
+
+#[cfg(feature = "native-toolchain")]
+fn prepare_profile_application(
+    program: &CheckedProgram,
+    args: &ParsedArgs,
+    request: ProfileApplicationRequest<'_>,
+) -> Result<CkProfileAnalysis, String> {
+    let target_profile = request
+        .target
+        .kir_profile(request.consumer)
+        .map_err(|error| error.to_string())?;
+    let compiled = compile_profile_generation_kir(
+        program,
+        request.consumer,
+        target_profile,
+        request.overflow_mode,
+        request.bounds_mode,
+        args,
+        false,
+    )?;
+    let identity = profile_generation_identity(
+        request.target,
+        &compiled,
+        request.overflow_mode,
+        request.bounds_mode,
+        request.opt_level,
+        request.cpu_policy,
+        request.consumer,
+    )?;
+    let profile_path = absolutize(
+        args.pgo_use
+            .as_deref()
+            .ok_or_else(|| "profile use path is missing".to_string())?,
+    );
+    let (profile, _) = read_profile_input(&profile_path).map_err(|error| error.to_string())?;
+    let work_terms = profile_work_terms(&compiled.plan)?;
+    let analysis = apply_profile(&profile, &identity, &compiled.plan.sites, &work_terms)
+        .map_err(|error| error.to_string())?;
+    let use_plan = prepare_ck_profile_kir(&compiled.plan.module, CkProfileKirMode::Use)
+        .map_err(|error| error.to_string())?;
+    let immutable = CkImmutableProfileAnalysis::new(analysis.clone());
+    validate_profile_analysis_for_optimizer(&use_plan, &immutable, &compiled.result.proofs)?;
+    Ok(analysis)
+}
+
+#[cfg(feature = "native-toolchain")]
+fn profile_work_terms(
+    plan: &calckernel::CkProfileKirPlan,
+) -> Result<Vec<CkProfileWorkTerm>, String> {
+    plan.annotations
+        .iter()
+        .filter_map(|annotation| match annotation.event {
+            CkProfileEvent::FunctionEntry { function, .. } => Some((annotation, function)),
+            _ => None,
+        })
+        .map(|(annotation, function)| {
+            let function = plan
+                .module
+                .functions
+                .iter()
+                .find(|candidate| candidate.id == function)
+                .ok_or_else(|| "profile work term names an unknown function".to_string())?;
+            let units = function
+                .blocks
+                .iter()
+                .try_fold(0u64, |total, block| {
+                    let instructions = u64::try_from(block.instructions.len())
+                        .map_err(|_| "profile work term is too large".to_string())?;
+                    total
+                        .checked_add(instructions.saturating_add(1))
+                        .ok_or_else(|| "profile work term overflow".to_string())
+                })?
+                .max(1);
+            Ok(CkProfileWorkTerm {
+                site_id: annotation.site_id,
+                function_digest: annotation.descriptor.function_digest,
+                static_cost_units: units,
+            })
+        })
+        .collect()
+}
+
+#[cfg(feature = "native-toolchain")]
+fn emit_profile_analysis(analysis: &CkProfileAnalysis, args: &ParsedArgs) -> Result<(), String> {
+    if !args.explain_optimization {
+        return Ok(());
+    }
+    let known = analysis
+        .sites
+        .iter()
+        .filter(|site| !matches!(site.observation, CkProfileObservation::Unknown(_)))
+        .count();
+    let mut text = format!(
+        "===== PROFILE ANALYSIS =====\nidentity={} coverage={}/{} proof-authority=false\n",
+        digest_hex(&analysis.identity_digest),
+        known,
+        analysis.sites.len()
+    );
+    for site in &analysis.sites {
+        let status = match site.observation {
+            CkProfileObservation::Unknown(reason) => format!("unknown:{reason:?}"),
+            _ => format!(
+                "known:observations={}",
+                site.observation.total().unwrap_or(0)
+            ),
+        };
+        text.push_str(&format!(
+            "site={} status={status}\n",
+            digest_hex(&site.descriptor.id.0)
+        ));
+    }
+    for function in &analysis.functions {
+        text.push_str(&format!(
+            "function={} work={} rank={} hot-root={}\n",
+            digest_hex(&function.function_digest),
+            function
+                .dynamic_work
+                .map_or_else(|| "unknown".to_string(), |value| value.to_string()),
+            function
+                .rank
+                .map_or_else(|| "none".to_string(), |value| value.to_string()),
+            function.hot_root
+        ));
+    }
+    io::stderr()
+        .lock()
+        .write_all(text.as_bytes())
+        .map_err(|error| format!("failed to write profile analysis: {error}"))
+}
+
+#[cfg(feature = "native-toolchain")]
+fn digest_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(feature = "native-toolchain")]
