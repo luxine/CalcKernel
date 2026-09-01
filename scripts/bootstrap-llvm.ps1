@@ -220,6 +220,14 @@ foreach ($item in $runtimeSources) {
 $runtimeHashes = $runtimeObjects | ForEach-Object {
     (Get-FileHash -LiteralPath (Join-Path $runtimeDir $_) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
+$profileRuntimeObject = "profile_runtime.obj"
+$profileRuntimeSource = Join-Path $repoRoot "native/profile_runtime/profile_runtime.c"
+$profileRuntimePath = Join-Path $runtimeDir $profileRuntimeObject
+$profileRuntimeInclude = Join-Path $repoRoot "native/profile_runtime/include"
+$profileRuntimeRoot = Join-Path $repoRoot "native/profile_runtime"
+& cl.exe /nologo /c /TC /std:c11 /O2 /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
+if ($LASTEXITCODE -ne 0) { throw "profile runtime compilation failed: $profileRuntimeSource" }
+$profileRuntimeHash = (Get-FileHash -LiteralPath $profileRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runtimeJitSupport = $null
 $runtimeJitSupportHash = $null
 if ($Target -ceq "x86_64-pc-windows-msvc") {
@@ -262,6 +270,9 @@ $manifest = @(
     "system_libraries = $(Format-TomlArray $systemLibraries)",
     "runtime_objects = $(Format-TomlArray $runtimeObjects)",
     "runtime_sha256 = $(Format-TomlArray $runtimeHashes)",
+    "profile_runtime_schema = 1",
+    "profile_runtime_object = `"$profileRuntimeObject`"",
+    "profile_runtime_sha256 = `"$profileRuntimeHash`"",
     "runtime_platform_import = `"$runtimeImport`"",
     "runtime_platform_import_sha256 = `"$runtimeImportHash`""
 )

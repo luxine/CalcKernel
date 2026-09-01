@@ -17,6 +17,7 @@ use super::{
     },
     module::NativeModule,
     names::llvm_source_file_name,
+    profile_generation::NativeProfileGeneration,
     target::NativeTarget,
 };
 
@@ -25,6 +26,27 @@ pub fn lower_native_kir_module<'context>(
     context: &'context NativeContext,
     target: &NativeTarget,
     result: &KirPassManagerResult,
+    options: &EmitLlvmOptions,
+) -> Result<NativeModule<'context>, NativeError> {
+    lower_native_kir_module_inner(context, target, result, None, options)
+}
+
+/// Lowers one canonical generation plan with CK-owned instrumentation.
+pub fn lower_native_profile_generation_module<'context>(
+    context: &'context NativeContext,
+    target: &NativeTarget,
+    result: &KirPassManagerResult,
+    profile: &NativeProfileGeneration,
+    options: &EmitLlvmOptions,
+) -> Result<NativeModule<'context>, NativeError> {
+    lower_native_kir_module_inner(context, target, result, Some(profile), options)
+}
+
+fn lower_native_kir_module_inner<'context>(
+    context: &'context NativeContext,
+    target: &NativeTarget,
+    result: &KirPassManagerResult,
+    profile_generation: Option<&NativeProfileGeneration>,
     options: &EmitLlvmOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
     if !result.errors.is_empty() {
@@ -80,6 +102,9 @@ pub fn lower_native_kir_module<'context>(
                 "requested target triple '{requested}' does not match native target '{actual}'"
             )));
         }
+    }
+    if let Some(profile) = profile_generation {
+        validate_native_profile_generation(kir, profile)?;
     }
 
     let shape = mir_shape(kir);
@@ -183,6 +208,9 @@ pub fn lower_native_kir_module<'context>(
     };
     {
         let types = TypeRegistry::new(context, &shape)?;
+        let profile_runtime = profile_generation
+            .map(|profile| add_native_profile_support(context, &module, &types, profile))
+            .transpose()?;
         let status = status_abi(kir);
         let mut functions = HashMap::new();
         for (kir_function, mir_function) in kir.functions.iter().zip(&shape.functions) {
@@ -246,16 +274,356 @@ pub fn lower_native_kir_module<'context>(
             structs: &shape.structs,
             status_abi: status,
             facts: &lowering_facts,
+            profile: profile_runtime.as_ref(),
         };
         for function in &kir.functions {
             lower_function(context, &module, function, &environment)?;
         }
         add_export_thunks(context, &module, target, &shape, &types, &functions, status)?;
         if kir.config.consumer == KirConsumer::NativeExecutable {
-            add_entry_wrapper(context, &module, &shape, &types, &functions, status)?;
+            add_entry_wrapper(
+                context,
+                &module,
+                &shape,
+                &types,
+                &functions,
+                status,
+                profile_runtime
+                    .as_ref()
+                    .map(|profile| profile.flush_control),
+            )?;
         }
     }
     Ok(module)
+}
+
+#[derive(Debug, Clone)]
+struct NativeProfileLoop {
+    site: u32,
+    function: FunctionId,
+    header: BlockId,
+    latches: Vec<BlockId>,
+    exits: Vec<(BlockId, BlockId)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NativeProfileCandidate {
+    site: u32,
+    observed: ValueId,
+    candidate: i64,
+}
+
+struct NativeProfileRuntime<'module> {
+    ensure: NativeFunction<'module>,
+    increment: NativeFunction<'module>,
+    observe_u32: NativeFunction<'module>,
+    observe_trip: NativeFunction<'module>,
+    candidate_i64: NativeFunction<'module>,
+    flush_control: NativeFunction<'module>,
+    entries: BTreeMap<FunctionId, u32>,
+    edges: BTreeMap<(FunctionId, BlockId, BlockId), u32>,
+    loops: Vec<NativeProfileLoop>,
+    slice_lengths: BTreeMap<(FunctionId, InstructionId), (u32, ValueId)>,
+    candidates: BTreeMap<(FunctionId, InstructionId), NativeProfileCandidate>,
+}
+
+fn validate_native_profile_generation(
+    kir: &KirModule,
+    profile: &NativeProfileGeneration,
+) -> Result<(), NativeError> {
+    if profile.plan.mode != CkProfileKirMode::Generate {
+        return Err(lowering_error(
+            "native profile generation requires generate-mode KIR",
+        ));
+    }
+    validate_ck_profile_kir_plan(&profile.plan)
+        .map_err(|error| lowering_error(error.to_string()))?;
+    if profile.plan.module != *kir {
+        return Err(lowering_error(
+            "profile generation plan does not match the verified KIR artifact",
+        ));
+    }
+    if profile.identity.module.pre_profile_kir_digest != profile.plan.pre_profile_kir_digest
+        || profile.identity.module.site_table_digest != profile.plan.site_table_digest
+    {
+        return Err(lowering_error(
+            "profile identity does not match the generation topology",
+        ));
+    }
+    let expected_runtime = decode_profile_runtime_identity()?;
+    if profile.identity.compiler.profile_runtime_identity != expected_runtime {
+        return Err(lowering_error("profile runtime identity is stale"));
+    }
+    let topology = match kir.config.consumer {
+        KirConsumer::NativeExecutable => CkProfileTopology::NativeExecutable,
+        KirConsumer::NativeLibrary => CkProfileTopology::NativeLibrary,
+        KirConsumer::C | KirConsumer::WebAssembly | KirConsumer::Inspection => {
+            return Err(lowering_error(
+                "profile generation requires a Native consumer",
+            ));
+        }
+    };
+    if profile.identity.modes.topology != topology || profile.identity.modes.sanitizer {
+        return Err(lowering_error(
+            "profile identity consumer or sanitizer mode is incompatible",
+        ));
+    }
+    profile
+        .identity
+        .digest()
+        .map_err(|error| lowering_error(error.to_string()))?;
+    Ok(())
+}
+
+fn decode_profile_runtime_identity() -> Result<[u8; 32], NativeError> {
+    let text = crate::backend::native_runtime::NATIVE_PROFILE_RUNTIME_SHA256.as_bytes();
+    if text.len() != 64 {
+        return Err(lowering_error("profile runtime digest is malformed"));
+    }
+    let mut output = [0; 32];
+    for (index, byte) in output.iter_mut().enumerate() {
+        let high = decode_hex_nibble(text[index * 2])?;
+        let low = decode_hex_nibble(text[index * 2 + 1])?;
+        *byte = high << 4 | low;
+    }
+    Ok(output)
+}
+
+fn decode_hex_nibble(byte: u8) -> Result<u8, NativeError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        _ => Err(lowering_error("profile runtime digest is malformed")),
+    }
+}
+
+fn add_native_profile_support<'module, 'context>(
+    context: &'context NativeContext,
+    module: &'module NativeModule<'context>,
+    types: &TypeRegistry<'context>,
+    profile: &NativeProfileGeneration,
+) -> Result<NativeProfileRuntime<'module>, NativeError> {
+    let template =
+        create_profile_shard_template(profile.identity.clone(), profile.plan.sites.clone())
+            .map_err(|error| lowering_error(error.to_string()))?;
+    let directory_text = profile
+        .directory
+        .path
+        .to_str()
+        .ok_or_else(|| lowering_error("profile generation directory is not canonical UTF-8"))?;
+    if directory_text.as_bytes().contains(&0) {
+        return Err(lowering_error("profile generation directory contains NUL"));
+    }
+    let mut directory_bytes = directory_text.as_bytes().to_vec();
+    directory_bytes.push(0);
+    let shard = module.add_global_bytes("__ck_profile_shard", &template.bytes, true, 8)?;
+    let counter_offsets = module.add_global_u32_array(
+        "__ck_profile_counter_offsets",
+        &template.counter_offsets,
+        4,
+    )?;
+    let site_first =
+        module.add_global_u32_array("__ck_profile_site_first", &template.site_first_counters, 4)?;
+    let site_counts = module.add_global_u32_array(
+        "__ck_profile_site_counts",
+        &template.site_counter_counts,
+        4,
+    )?;
+    let site_saturation = module.add_global_u32_array(
+        "__ck_profile_site_saturation",
+        &template.site_saturation_offsets,
+        4,
+    )?;
+    let directory =
+        module.add_global_bytes("__ck_profile_directory", &directory_bytes, false, 1)?;
+    let initialize = module.add_function(
+        "__ck_profile_initialize",
+        types.i32,
+        &[
+            types.pointer,
+            types.i64,
+            types.pointer,
+            types.i32,
+            types.pointer,
+            types.pointer,
+            types.pointer,
+            types.i32,
+            types.i32,
+            types.i32,
+            types.i32,
+            types.pointer,
+            types.i32,
+            types.i64,
+            types.i64,
+        ],
+        true,
+    )?;
+    let increment =
+        module.add_function("__ck_profile_increment", types.void, &[types.i32], true)?;
+    let observe_u32 = module.add_function(
+        "__ck_profile_observe_u32",
+        types.void,
+        &[types.i32, types.i32],
+        true,
+    )?;
+    let observe_trip = module.add_function(
+        "__ck_profile_observe_trip",
+        types.void,
+        &[types.i32, types.i64],
+        true,
+    )?;
+    let candidate_i64 = module.add_function(
+        "__ck_profile_candidate_i64",
+        types.void,
+        &[types.i32, types.i64, types.i64],
+        true,
+    )?;
+    let runtime_flush = module.add_function("__ck_profile_flush", types.i32, &[], true)?;
+
+    let ensure = module.add_function("__ck_profile_ensure", types.i32, &[], false)?;
+    let entry = ensure.append_block("entry")?;
+    let mut builder = NativeBuilder::new(context, module)?;
+    builder.position(entry)?;
+    let constants = [
+        template.bytes.len().to_string(),
+        template.counter_offsets.len().to_string(),
+        template.site_first_counters.len().to_string(),
+        template.run_id_offset.to_string(),
+        template.overflow_flag_offset.to_string(),
+        template.digest_offset.to_string(),
+        directory_text.len().to_string(),
+        profile.directory.identity.first.to_string(),
+        profile.directory.identity.second.to_string(),
+    ];
+    let shard_length = builder.const_int(types.i64, &constants[0])?;
+    let counter_count = builder.const_int(types.i32, &constants[1])?;
+    let site_count = builder.const_int(types.i32, &constants[2])?;
+    let run_id_offset = builder.const_int(types.i32, &constants[3])?;
+    let overflow_flag_offset = builder.const_int(types.i32, &constants[4])?;
+    let digest_offset = builder.const_int(types.i32, &constants[5])?;
+    let directory_length = builder.const_int(types.i32, &constants[6])?;
+    let identity_first = builder.const_int(types.i64, &constants[7])?;
+    let identity_second = builder.const_int(types.i64, &constants[8])?;
+    let status = builder.call(
+        initialize,
+        &[
+            shard,
+            shard_length,
+            counter_offsets,
+            counter_count,
+            site_first,
+            site_counts,
+            site_saturation,
+            site_count,
+            run_id_offset,
+            overflow_flag_offset,
+            digest_offset,
+            directory,
+            directory_length,
+            identity_first,
+            identity_second,
+        ],
+        "ck.profile.init.status",
+    )?;
+    builder.return_value(status)?;
+
+    let flush_name = profile
+        .flush_symbol()
+        .map_err(|error| lowering_error(error.to_string()))?;
+    let flush_control = module.add_function(&flush_name, types.i32, &[], true)?;
+    let entry = flush_control.append_block("entry")?;
+    let failed = flush_control.append_block("initialization.failed")?;
+    let ready = flush_control.append_block("ready")?;
+    let mut builder = NativeBuilder::new(context, module)?;
+    builder.position(entry)?;
+    let status = builder.call(ensure, &[], "ck.profile.ensure.status")?;
+    let zero = builder.const_int(types.i32, "0")?;
+    let rejected = builder.compare(
+        BridgeCompareOp::IcmpNe,
+        status,
+        zero,
+        "ck.profile.ensure.failed",
+    )?;
+    builder.cond_branch(rejected, failed, ready)?;
+    builder.position(failed)?;
+    builder.return_value(status)?;
+    builder.position(ready)?;
+    let status = builder.call(runtime_flush, &[], "ck.profile.flush.status")?;
+    builder.return_value(status)?;
+
+    let mut runtime = NativeProfileRuntime {
+        ensure,
+        increment,
+        observe_u32,
+        observe_trip,
+        candidate_i64,
+        flush_control,
+        entries: BTreeMap::new(),
+        edges: BTreeMap::new(),
+        loops: Vec::new(),
+        slice_lengths: BTreeMap::new(),
+        candidates: BTreeMap::new(),
+    };
+    for (site, annotation) in profile.plan.annotations.iter().enumerate() {
+        let site = u32::try_from(site).map_err(|_| lowering_error("profile site overflow"))?;
+        match &annotation.event {
+            CkProfileEvent::FunctionEntry { function, .. } => {
+                runtime.entries.insert(*function, site);
+            }
+            CkProfileEvent::Edge { function, from, to } => {
+                runtime.edges.insert((*function, *from, *to), site);
+            }
+            CkProfileEvent::LoopTrip {
+                function,
+                header,
+                latches,
+                exits,
+                ..
+            } => runtime.loops.push(NativeProfileLoop {
+                site,
+                function: *function,
+                header: *header,
+                latches: latches.clone(),
+                exits: exits.clone(),
+            }),
+            CkProfileEvent::SliceLength {
+                function,
+                instruction,
+                value,
+                ..
+            } => {
+                runtime
+                    .slice_lengths
+                    .insert((*function, *instruction), (site, *value));
+            }
+            CkProfileEvent::CandidateConstant {
+                function,
+                instruction,
+                observed,
+                ..
+            } => {
+                let CkProfileSiteKind::CandidateConstant { candidates, .. } =
+                    &annotation.descriptor.kind
+                else {
+                    return Err(lowering_error("candidate profile descriptor is invalid"));
+                };
+                let [candidate] = candidates.as_slice() else {
+                    return Err(lowering_error(
+                        "native candidate instrumentation requires one canonical candidate",
+                    ));
+                };
+                runtime.candidates.insert(
+                    (*function, *instruction),
+                    NativeProfileCandidate {
+                        site,
+                        observed: *observed,
+                        candidate: *candidate,
+                    },
+                );
+            }
+        }
+    }
+    Ok(runtime)
 }
 
 struct NativeKirFacts<'a> {
@@ -272,6 +640,7 @@ struct KirLoweringEnvironment<'module, 'context, 'a> {
     structs: &'a [MirStruct],
     status_abi: bool,
     facts: &'a NativeKirFacts<'a>,
+    profile: Option<&'a NativeProfileRuntime<'module>>,
 }
 
 type ScopedAliasFactMap = BTreeMap<FunctionId, Vec<(FactId, ValueId, ValueId)>>;
@@ -858,6 +1227,8 @@ struct KirFunctionLowerer<'module, 'context, 'a> {
     storage: BTreeMap<ValueId, Storage<'module>>,
     guard_conditions: HashSet<ValueId>,
     facts: &'a NativeKirFacts<'a>,
+    profile: Option<&'a NativeProfileRuntime<'module>>,
+    loop_storage: BTreeMap<u32, Storage<'module>>,
     temporary: u32,
 }
 
@@ -902,11 +1273,15 @@ fn lower_function<'module, 'context>(
             })
             .collect(),
         facts: environment.facts,
+        profile: environment.profile,
+        loop_storage: BTreeMap::new(),
         temporary: 0,
     };
     lowerer.builder.position(entry)?;
     lowerer.allocate_values()?;
+    lowerer.allocate_profile_loop_counters()?;
     lowerer.store_parameters()?;
+    lowerer.emit_profile_function_entry()?;
     lowerer.emit_contract_checks()?;
     lowerer.emit_contract_assumes()?;
     let Some(first) = function.blocks.first() else {
@@ -929,6 +1304,7 @@ fn lower_function<'module, 'context>(
         lowerer.current_block = Some(native_block);
         for instruction in &block.instructions {
             lowerer.instruction(instruction)?;
+            lowerer.emit_profile_instruction(instruction)?;
         }
         lowerer.terminator(block.id, &block.terminator)?;
     }
@@ -956,6 +1332,102 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                 &format!("v{}.addr", value.index()),
             )?;
             self.storage.insert(value, Storage { pointer });
+        }
+        Ok(())
+    }
+
+    fn allocate_profile_loop_counters(&mut self) -> Result<(), NativeError> {
+        let sites = self
+            .profile
+            .map(|profile| {
+                profile
+                    .loops
+                    .iter()
+                    .filter(|event| event.function == self.function.id)
+                    .map(|event| event.site)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for site in sites {
+            let pointer = self
+                .builder
+                .alloca(self.types.i64, &format!("ck.profile.loop.{site}"))?;
+            let zero = self.builder.const_int(self.types.i64, "0")?;
+            self.builder.store(zero, pointer)?;
+            self.loop_storage.insert(site, Storage { pointer });
+        }
+        Ok(())
+    }
+
+    fn emit_profile_function_entry(&mut self) -> Result<(), NativeError> {
+        let Some(profile) = self.profile else {
+            return Ok(());
+        };
+        let ensure = profile.ensure;
+        let increment = profile.increment;
+        let site = profile.entries.get(&self.function.id).copied();
+        let _ = self.builder.call(ensure, &[], "ck.profile.ensure.status")?;
+        if let Some(site) = site {
+            let site = self.builder.const_int(self.types.i32, &site.to_string())?;
+            let _ = self.builder.call(increment, &[site], "")?;
+        }
+        Ok(())
+    }
+
+    fn emit_profile_instruction(
+        &mut self,
+        instruction: &KirInstruction,
+    ) -> Result<(), NativeError> {
+        let Some(profile) = self.profile else {
+            return Ok(());
+        };
+        let slice = profile
+            .slice_lengths
+            .get(&(self.function.id, instruction.id))
+            .copied();
+        let candidate = profile
+            .candidates
+            .get(&(self.function.id, instruction.id))
+            .copied();
+        let observe = profile.observe_u32;
+        let candidate_function = profile.candidate_i64;
+        if let Some((site, value)) = slice {
+            let site = self.builder.const_int(self.types.i32, &site.to_string())?;
+            let value = self.load(value)?;
+            let _ = self.builder.call(observe, &[site, value], "")?;
+        }
+        if let Some(candidate) = candidate {
+            let site = self
+                .builder
+                .const_int(self.types.i32, &candidate.site.to_string())?;
+            let observed_type = self.type_of(candidate.observed)?.clone();
+            let observed = self.load(candidate.observed)?;
+            let observed = match observed_type {
+                MirType::Primitive(MirPrimitiveTypeName::I32) => {
+                    let name = self.name("ck.profile.candidate.i64");
+                    self.builder
+                        .cast(BridgeCastOp::Sext, observed, self.types.i64, &name)?
+                }
+                MirType::Primitive(MirPrimitiveTypeName::U32) => {
+                    let name = self.name("ck.profile.candidate.u64");
+                    self.builder
+                        .cast(BridgeCastOp::Zext, observed, self.types.i64, &name)?
+                }
+                MirType::Primitive(MirPrimitiveTypeName::I64 | MirPrimitiveTypeName::U64) => {
+                    observed
+                }
+                _ => {
+                    return Err(lowering_error(
+                        "candidate profile observation is not an integer",
+                    ));
+                }
+            };
+            let expected = self
+                .builder
+                .const_int(self.types.i64, &candidate.candidate.to_string())?;
+            let _ = self
+                .builder
+                .call(candidate_function, &[site, observed, expected], "")?;
         }
         Ok(())
     }
@@ -2169,7 +2641,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
 
     fn terminator(
         &mut self,
-        _source: BlockId,
+        source: BlockId,
         terminator: &KirTerminator,
     ) -> Result<(), NativeError> {
         match terminator {
@@ -2192,9 +2664,9 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                 }
             }
             KirTerminator::Jump { edge } => {
-                let source = self.current_block()?;
-                let target = self.edge_block(edge)?;
-                self.builder.position(source)?;
+                let native_source = self.current_block()?;
+                let target = self.edge_block(source, edge)?;
+                self.builder.position(native_source)?;
                 self.builder.branch(target)
             }
             KirTerminator::Branch {
@@ -2203,17 +2675,21 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                 else_edge,
             } => {
                 let condition = self.load(*condition)?;
-                let source = self.current_block()?;
-                let then_block = self.edge_block(then_edge)?;
-                self.builder.position(source)?;
-                let else_block = self.edge_block(else_edge)?;
-                self.builder.position(source)?;
+                let native_source = self.current_block()?;
+                let then_block = self.edge_block(source, then_edge)?;
+                self.builder.position(native_source)?;
+                let else_block = self.edge_block(source, else_edge)?;
+                self.builder.position(native_source)?;
                 self.builder.cond_branch(condition, then_block, else_block)
             }
         }
     }
 
-    fn edge_block(&mut self, edge: &KirEdge) -> Result<NativeBlock<'module>, NativeError> {
+    fn edge_block(
+        &mut self,
+        source: BlockId,
+        edge: &KirEdge,
+    ) -> Result<NativeBlock<'module>, NativeError> {
         let values = edge
             .args
             .iter()
@@ -2231,8 +2707,61 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         for (param, value) in target.params.iter().zip(values) {
             self.store(param.value, value)?;
         }
+        self.emit_profile_edge(source, edge.target)?;
         self.builder.branch(self.block(edge.target)?)?;
         Ok(edge_block)
+    }
+
+    fn emit_profile_edge(&mut self, source: BlockId, target: BlockId) -> Result<(), NativeError> {
+        let Some(profile) = self.profile else {
+            return Ok(());
+        };
+        let loop_events = profile
+            .loops
+            .iter()
+            .filter(|event| event.function == self.function.id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let observe_trip = profile.observe_trip;
+        let increment = profile.increment;
+        let edge_site = profile
+            .edges
+            .get(&(self.function.id, source, target))
+            .copied();
+        for event in loop_events {
+            let storage =
+                self.loop_storage.get(&event.site).copied().ok_or_else(|| {
+                    lowering_error("profile loop event has no local trip counter")
+                })?;
+            if event.latches.contains(&source) && target == event.header {
+                let value =
+                    self.builder
+                        .load(self.types.i64, storage.pointer, "ck.profile.loop.trip")?;
+                let one = self.builder.const_int(self.types.i64, "1")?;
+                let value =
+                    self.builder
+                        .binary(BridgeBinaryOp::Add, value, one, "ck.profile.loop.next")?;
+                self.builder.store(value, storage.pointer)?;
+            }
+            if event.exits.contains(&(source, target)) {
+                let value = self.builder.load(
+                    self.types.i64,
+                    storage.pointer,
+                    "ck.profile.loop.completed",
+                )?;
+                let site = self
+                    .builder
+                    .const_int(self.types.i32, &event.site.to_string())?;
+                let _ = self.builder.call(observe_trip, &[site, value], "")?;
+                let zero = self.builder.const_int(self.types.i64, "0")?;
+                self.builder.store(zero, storage.pointer)?;
+            }
+        }
+        if let Some(site) = edge_site {
+            let site = self.builder.const_int(self.types.i32, &site.to_string())?;
+            let _ = self.builder.call(increment, &[site], "")?;
+        }
+        Ok(())
     }
 
     fn current_block(&self) -> Result<NativeBlock<'module>, NativeError> {

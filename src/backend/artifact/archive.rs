@@ -1,6 +1,9 @@
 use std::{marker::PhantomData, ptr::NonNull, rc::Rc};
 
-use crate::backend::llvm::{NativeError, NativeObject, ffi};
+use crate::backend::{
+    llvm::{NativeError, NativeObject, NativeTarget, ffi},
+    native_runtime::embedded_profile_runtime_object,
+};
 
 /// Unique owner of a deterministic, LLVM-validated static archive.
 #[derive(Debug)]
@@ -62,5 +65,21 @@ pub fn create_native_static_archive(object: &NativeObject) -> Result<NativeArchi
         super::NativePlatform::Darwin => ffi::BridgeArchiveKind::Darwin,
         super::NativePlatform::Windows => ffi::BridgeArchiveKind::Coff,
     };
-    ffi::archive_create(object.shared_handle(), kind).map(NativeArchive::from_handle)
+    ffi::archive_create(&[object.shared_handle()], kind).map(NativeArchive::from_handle)
+}
+
+/// Creates a generation-only archive with the module and private collector as
+/// separate, indexed object members.
+pub fn create_native_profile_generation_static_archive(
+    target: &NativeTarget,
+    object: &NativeObject,
+) -> Result<NativeArchive, NativeError> {
+    let runtime = target.parse_cached_object(embedded_profile_runtime_object())?;
+    let kind = match super::NativePlatform::host() {
+        super::NativePlatform::Linux => ffi::BridgeArchiveKind::Gnu,
+        super::NativePlatform::Darwin => ffi::BridgeArchiveKind::Darwin,
+        super::NativePlatform::Windows => ffi::BridgeArchiveKind::Coff,
+    };
+    ffi::archive_create(&[object.shared_handle(), runtime.shared_handle()], kind)
+        .map(NativeArchive::from_handle)
 }

@@ -30,6 +30,8 @@ mod object;
 #[cfg(feature = "native-toolchain")]
 mod passes;
 #[cfg(feature = "native-toolchain")]
+mod profile_generation;
+#[cfg(feature = "native-toolchain")]
 mod target;
 #[cfg(feature = "native-toolchain")]
 mod verify;
@@ -50,7 +52,7 @@ pub use ffi::{
 #[cfg(feature = "native-toolchain")]
 pub use jit::{NativeJit, NativeJitMemoryAudit, OrcObjectLayer};
 #[cfg(feature = "native-toolchain")]
-pub use kir_lower::lower_native_kir_module;
+pub use kir_lower::{lower_native_kir_module, lower_native_profile_generation_module};
 #[cfg(feature = "native-toolchain")]
 pub use module::NativeModule;
 pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices};
@@ -58,6 +60,8 @@ pub use notices::{EmbeddedNotice, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embed
 pub use object::{NativeObject, OptimizedNativeModule};
 #[cfg(feature = "native-toolchain")]
 pub use passes::NativeOptimizationLevel;
+#[cfg(feature = "native-toolchain")]
+pub use profile_generation::NativeProfileGeneration;
 #[cfg(feature = "native-toolchain")]
 pub use target::{NativeCpu, NativeTarget};
 #[cfg(feature = "native-toolchain")]

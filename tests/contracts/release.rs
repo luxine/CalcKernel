@@ -127,7 +127,7 @@ fn v0_12_release_candidate_identity_should_be_consistent_everywhere() {
     assert_eq!(calckernel::NATIVE_ABI_VERSION, 1);
     assert_eq!(calckernel::RUNTIME_ABI_VERSION, 2);
     #[cfg(feature = "native-toolchain")]
-    assert_eq!(calckernel::LLVM_BRIDGE_ABI_VERSION, 3);
+    assert_eq!(calckernel::LLVM_BRIDGE_ABI_VERSION, 4);
 }
 
 #[cfg(feature = "native-toolchain")]

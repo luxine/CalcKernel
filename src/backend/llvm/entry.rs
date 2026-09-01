@@ -20,6 +20,7 @@ pub(super) fn add_entry_wrapper<'module, 'context>(
     types: &TypeRegistry<'context>,
     implementations: &HashMap<String, NativeFunction<'module>>,
     checked: bool,
+    profile_flush: Option<NativeFunction<'module>>,
 ) -> Result<(), NativeError> {
     let entry = mir.entry.as_ref().ok_or_else(|| {
         entry_error("standalone native executable requires fn main() -> void or i32")
@@ -44,8 +45,14 @@ pub(super) fn add_entry_wrapper<'module, 'context>(
             },
         )?;
         return if entry.result == MirEntryResult::Void {
+            if let Some(flush) = profile_flush {
+                let status = builder.call(flush, &[], "ck.profile.flush.status")?;
+                return builder.return_value(status);
+            }
             let zero = builder.const_int(types.i32, "0")?;
             builder.return_value(zero)
+        } else if let Some(flush) = profile_flush {
+            return_zero_or_flush(&mut builder, main, types, result, flush)
         } else {
             builder.return_value(result)
         };
@@ -74,11 +81,42 @@ pub(super) fn add_entry_wrapper<'module, 'context>(
     builder.position(success_block)?;
     if let Some(pointer) = result_pointer {
         let result = builder.load(types.i32, pointer, "ck.exit")?;
-        builder.return_value(result)
+        if let Some(flush) = profile_flush {
+            return_zero_or_flush(&mut builder, main, types, result, flush)
+        } else {
+            builder.return_value(result)
+        }
+    } else if let Some(flush) = profile_flush {
+        let status = builder.call(flush, &[], "ck.profile.flush.status")?;
+        builder.return_value(status)
     } else {
         let zero = builder.const_int(types.i32, "0")?;
         builder.return_value(zero)
     }
+}
+
+fn return_zero_or_flush<'module, 'context>(
+    builder: &mut NativeBuilder<'module, 'context>,
+    main: NativeFunction<'module>,
+    types: &TypeRegistry<'context>,
+    result: super::builder::NativeValue<'module>,
+    flush: NativeFunction<'module>,
+) -> Result<(), NativeError> {
+    let zero = builder.const_int(types.i32, "0")?;
+    let nonzero = builder.compare(
+        BridgeCompareOp::IcmpNe,
+        result,
+        zero,
+        "ck.profile.main.nonzero",
+    )?;
+    let return_result = main.append_block("profile.skip.nonzero")?;
+    let flush_block = main.append_block("profile.flush.zero")?;
+    builder.cond_branch(nonzero, return_result, flush_block)?;
+    builder.position(return_result)?;
+    builder.return_value(result)?;
+    builder.position(flush_block)?;
+    let status = builder.call(flush, &[], "ck.profile.flush.status")?;
+    builder.return_value(status)
 }
 
 fn entry_error(message: impl Into<String>) -> NativeError {

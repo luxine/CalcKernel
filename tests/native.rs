@@ -28,6 +28,8 @@ mod object;
 mod ownership;
 #[path = "native/profile.rs"]
 mod profile;
+#[path = "native/profile_generation.rs"]
+mod profile_generation;
 #[path = "native/run.rs"]
 mod run;
 #[path = "native/runtime.rs"]

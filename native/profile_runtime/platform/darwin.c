@@ -1,0 +1,153 @@
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+extern void arc4random_buf(void *buffer, size_t length);
+extern int renameatx_np(int from, const char *from_name, int to,
+                        const char *to_name, unsigned int flags);
+
+#ifndef RENAME_EXCL
+#define RENAME_EXCL 0x00000004u
+#endif
+
+static void *__ck_profile_platform_allocate(uint64_t length) {
+  if (length == 0u || length > (uint64_t)SIZE_MAX) {
+    return (void *)0;
+  }
+  void *memory = mmap((void *)0, (size_t)length, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANON, -1, 0);
+  return memory == MAP_FAILED ? (void *)0 : memory;
+}
+
+static int32_t __ck_profile_platform_random(uint8_t output[16]) {
+  arc4random_buf(output, 16u);
+  return CKC_PROFILE_PLATFORM_OK;
+}
+
+static int ck_profile_open_directory(const uint8_t *path, uint32_t length) {
+  if (length < 2u || path[0] != '/' || path[length] != 0u) {
+    return -1;
+  }
+  int current = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  uint32_t offset = 1u;
+  while (current >= 0 && offset < length) {
+    while (offset < length && path[offset] == '/') {
+      ++offset;
+    }
+    if (offset == length) {
+      break;
+    }
+    char component[256];
+    uint32_t count = 0;
+    while (offset < length && path[offset] != '/') {
+      if (count == 255u) {
+        close(current);
+        return -1;
+      }
+      component[count++] = (char)path[offset++];
+    }
+    component[count] = 0;
+    if ((count == 1u && component[0] == '.') ||
+        (count == 2u && component[0] == '.' && component[1] == '.')) {
+      close(current);
+      return -1;
+    }
+    const int next = openat(current, component,
+                            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    close(current);
+    current = next;
+  }
+  return current;
+}
+
+static char ck_profile_hex(uint8_t nibble) {
+  return (char)(nibble < 10u ? '0' + nibble : 'a' + nibble - 10u);
+}
+
+static void ck_profile_names(const uint8_t run_id[16], char temporary[49],
+                             char completed[53]) {
+  static const char temporary_prefix[] = ".ck-profile-";
+  static const char completed_prefix[] = "ck-";
+  for (uint32_t index = 0; index < sizeof(temporary_prefix) - 1u; ++index) {
+    temporary[index] = temporary_prefix[index];
+  }
+  for (uint32_t index = 0; index < sizeof(completed_prefix) - 1u; ++index) {
+    completed[index] = completed_prefix[index];
+  }
+  for (uint32_t index = 0; index < 16u; ++index) {
+    const char high = ck_profile_hex((uint8_t)(run_id[index] >> 4u));
+    const char low = ck_profile_hex((uint8_t)(run_id[index] & 15u));
+    temporary[12u + index * 2u] = high;
+    temporary[13u + index * 2u] = low;
+    completed[3u + index * 2u] = high;
+    completed[4u + index * 2u] = low;
+  }
+  temporary[44] = '.';
+  temporary[45] = 't';
+  temporary[46] = 'm';
+  temporary[47] = 'p';
+  temporary[48] = 0;
+  static const char suffix[] = ".ckprof-part";
+  for (uint32_t index = 0; index < sizeof(suffix); ++index) {
+    completed[35u + index] = suffix[index];
+  }
+}
+
+static int32_t __ck_profile_platform_publish(
+    const uint8_t *directory, uint32_t directory_length,
+    uint64_t identity_first, uint64_t identity_second,
+    const uint8_t run_id[16], const uint8_t *bytes, uint64_t length) {
+  const int directory_fd =
+      ck_profile_open_directory(directory, directory_length);
+  if (directory_fd < 0) {
+    return CKC_PROFILE_PLATFORM_ERROR;
+  }
+  struct stat metadata;
+  if (fstat(directory_fd, &metadata) != 0 ||
+      (uint64_t)metadata.st_dev != identity_first ||
+      (uint64_t)metadata.st_ino != identity_second) {
+    close(directory_fd);
+    return CKC_PROFILE_PLATFORM_ERROR;
+  }
+  char temporary[49];
+  char completed[53];
+  ck_profile_names(run_id, temporary, completed);
+  const int file = openat(directory_fd, temporary,
+                          O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                          0600);
+  if (file < 0) {
+    close(directory_fd);
+    return CKC_PROFILE_PLATFORM_COLLISION;
+  }
+  uint64_t offset = 0;
+  int failed = 0;
+  while (offset < length) {
+    const size_t request =
+        length - offset > (uint64_t)SIZE_MAX ? SIZE_MAX : (size_t)(length - offset);
+    const ssize_t written = write(file, bytes + offset, request);
+    if (written <= 0) {
+      failed = 1;
+      break;
+    }
+    offset += (uint64_t)written;
+  }
+  if (!failed && fsync(file) != 0) {
+    failed = 1;
+  }
+  if (close(file) != 0) {
+    failed = 1;
+  }
+  if (!failed && renameatx_np(directory_fd, temporary, directory_fd, completed,
+                               RENAME_EXCL) != 0) {
+    failed = 1;
+  }
+  if (!failed && fsync(directory_fd) != 0) {
+    failed = 1;
+  }
+  if (failed) {
+    (void)unlinkat(directory_fd, temporary, 0);
+  }
+  close(directory_fd);
+  return failed ? CKC_PROFILE_PLATFORM_ERROR : CKC_PROFILE_PLATFORM_OK;
+}

@@ -184,6 +184,11 @@ fi
   "$ckc_repo_root/native/runtime/common/format_float.c" -o "$ckc_runtime_dir/format_float.o"
 "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
   "$ckc_repo_root/native/runtime/vendor/ryu/d2s.c" -o "$ckc_runtime_dir/ryu.o"
+"$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -std=c11 -fno-builtin \
+  -I"$ckc_repo_root/native/profile_runtime/include" \
+  -I"$ckc_repo_root/native/profile_runtime" -c \
+  "$ckc_repo_root/native/profile_runtime/profile_runtime.c" \
+  -o "$ckc_runtime_dir/profile_runtime.o"
 if [[ "$ckc_target" == *-apple-darwin ]]; then
   "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
     "$ckc_repo_root/native/runtime/darwin/process.c" -o "$ckc_runtime_dir/platform.o"
@@ -200,6 +205,11 @@ for ckc_runtime_object in "${ckc_runtime_objects[@]}"; do
     ckc_runtime_hashes+=("$(shasum -a 256 "$ckc_runtime_dir/$ckc_runtime_object" | awk '{print $1}')")
   fi
 done
+if command -v sha256sum >/dev/null 2>&1; then
+  ckc_profile_runtime_hash="$(sha256sum "$ckc_runtime_dir/profile_runtime.o" | awk '{print $1}')"
+else
+  ckc_profile_runtime_hash="$(shasum -a 256 "$ckc_runtime_dir/profile_runtime.o" | awk '{print $1}')"
+fi
 
 toml_array() {
   local ckc_first=true
@@ -234,6 +244,9 @@ mkdir -p "$ckc_prefix/share/ckc"
   toml_array "${ckc_runtime_objects[@]}"
   printf '\nruntime_sha256 = '
   toml_array "${ckc_runtime_hashes[@]}"
+  printf '\nprofile_runtime_schema = 1\n'
+  printf 'profile_runtime_object = "profile_runtime.o"\n'
+  printf 'profile_runtime_sha256 = "%s"\n' "$ckc_profile_runtime_hash"
   printf '\n'
 } > "$ckc_prefix/share/ckc/llvm-build.toml"
 

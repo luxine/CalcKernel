@@ -5,5 +5,7 @@ install-name:    '/usr/lib/libSystem.B.dylib'
 current-version: 1356
 exports:
   - targets:         [ x86_64-macos, arm64-macos ]
-    symbols:         [ __exit, _fcntl, _signal, _write, dyld_stub_binder ]
+    symbols:         [ __exit, _arc4random_buf, _close, _fcntl, _fstat, _fsync,
+                       _mmap, _open, _openat, _renameatx_np, _signal, _unlinkat,
+                       _write, dyld_stub_binder ]
 ...

@@ -1,5 +1,7 @@
 #[path = "profile/format.rs"]
 mod format;
+#[path = "profile/generation.rs"]
+mod generation;
 #[path = "profile/inspection.rs"]
 mod inspection;
 #[path = "profile/merge.rs"]

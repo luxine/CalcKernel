@@ -16,6 +16,12 @@ pub(crate) fn embedded_jit_objects() -> Vec<&'static [u8]> {
     objects
 }
 
+pub(crate) fn embedded_profile_runtime_object() -> &'static [u8] {
+    include_bytes!(env!("CKC_PROFILE_RUNTIME_OBJECT"))
+}
+
+pub const NATIVE_PROFILE_RUNTIME_SHA256: &str = env!("CKC_PROFILE_RUNTIME_SHA256");
+
 #[cfg(target_os = "windows")]
 pub(crate) fn embedded_windows_import_library() -> &'static [u8] {
     include_bytes!(env!("CKC_RUNTIME_PLATFORM_IMPORT"))

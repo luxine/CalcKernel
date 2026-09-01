@@ -2,7 +2,7 @@ use std::{ptr, ptr::NonNull, slice};
 
 use super::error::{NativeError, NativeStage};
 
-pub const LLVM_BRIDGE_ABI_VERSION: u32 = 3;
+pub const LLVM_BRIDGE_ABI_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
@@ -438,6 +438,25 @@ unsafe extern "C" {
         function: *mut CkcLlvmFunction,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_module_add_global_bytes(
+        module: *mut CkcLlvmModule,
+        name: CkcLlvmBytes,
+        bytes: *const u8,
+        byte_count: usize,
+        mutable_storage: u32,
+        alignment: u32,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_add_global_u32_array(
+        module: *mut CkcLlvmModule,
+        name: CkcLlvmBytes,
+        values: *const u32,
+        value_count: usize,
+        alignment: u32,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_function_param(
         function: *mut CkcLlvmFunction,
         index: usize,
@@ -725,7 +744,8 @@ unsafe extern "C" {
     fn ckc_llvm_object_data(object: *const CkcLlvmObject) -> *const u8;
     fn ckc_llvm_object_dispose(object: *mut CkcLlvmObject);
     fn ckc_llvm_archive_create(
-        object: *const CkcLlvmObject,
+        objects: *const *const CkcLlvmObject,
+        object_count: usize,
         kind: u32,
         out: *mut *mut CkcLlvmArchive,
         error: *mut CkcLlvmError,
@@ -736,9 +756,11 @@ unsafe extern "C" {
     fn ckc_llvm_archive_has_symbol_index(archive: *const CkcLlvmArchive) -> u32;
     fn ckc_llvm_archive_dispose(archive: *mut CkcLlvmArchive);
     fn ckc_lld_link_shared(
-        object_path: CkcLlvmBytes,
+        object_paths: *const CkcLlvmBytes,
+        object_count: usize,
         output_path: CkcLlvmBytes,
         import_library_path: CkcLlvmBytes,
+        platform_input_path: CkcLlvmBytes,
         exports: *const CkcLlvmBytes,
         export_count: usize,
         error: *mut CkcLlvmError,
@@ -1133,6 +1155,46 @@ pub(super) fn module_preserve_function(
 ) -> Result<(), NativeError> {
     status_call(NativeStage::Module, |error| unsafe {
         ckc_llvm_module_preserve_function(module.as_ptr(), function.as_ptr(), error)
+    })
+}
+
+pub(super) fn module_add_global_bytes(
+    module: NonNull<CkcLlvmModule>,
+    name: &str,
+    bytes: &[u8],
+    mutable_storage: bool,
+    alignment: u32,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_module_add_global_bytes(
+            module.as_ptr(),
+            CkcLlvmBytes::new(name),
+            bytes.as_ptr(),
+            bytes.len(),
+            u32::from(mutable_storage),
+            alignment,
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn module_add_global_u32_array(
+    module: NonNull<CkcLlvmModule>,
+    name: &str,
+    values: &[u32],
+    alignment: u32,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_module_add_global_u32_array(
+            module.as_ptr(),
+            CkcLlvmBytes::new(name),
+            values.as_ptr(),
+            values.len(),
+            alignment,
+            out,
+            error,
+        )
     })
 }
 
@@ -1756,15 +1818,26 @@ pub(in crate::backend) enum BridgeArchiveKind {
 }
 
 pub(in crate::backend) fn archive_create(
-    object: NonNull<CkcLlvmObject>,
+    objects: &[NonNull<CkcLlvmObject>],
     kind: BridgeArchiveKind,
 ) -> Result<NonNull<CkcLlvmArchive>, NativeError> {
+    let objects = objects
+        .iter()
+        .map(|object| object.as_ptr().cast_const())
+        .collect::<Vec<_>>();
     let mut handle = ptr::null_mut();
     let mut error = CkcLlvmError::empty();
     // SAFETY: The object remains live, the kind is allowlisted, and both
     // out-pointers refer to initialized writable storage.
-    let status =
-        unsafe { ckc_llvm_archive_create(object.as_ptr(), kind as u32, &mut handle, &mut error) };
+    let status = unsafe {
+        ckc_llvm_archive_create(
+            objects.as_ptr(),
+            objects.len(),
+            kind as u32,
+            &mut handle,
+            &mut error,
+        )
+    };
     handle_result(NativeStage::Archive, status, handle, &mut error)
 }
 
@@ -1794,20 +1867,27 @@ pub(in crate::backend) unsafe fn archive_dispose(handle: NonNull<CkcLlvmArchive>
 }
 
 pub(in crate::backend) fn lld_link_shared(
-    object_path: &str,
+    object_paths: &[String],
     output_path: &str,
     import_library_path: &str,
+    platform_input_path: &str,
     exports: &[String],
 ) -> Result<(), NativeError> {
+    let object_paths = object_paths
+        .iter()
+        .map(|path| CkcLlvmBytes::new(path))
+        .collect::<Vec<_>>();
     let export_bytes = exports
         .iter()
         .map(|name| CkcLlvmBytes::new(name))
         .collect::<Vec<_>>();
     status_call(NativeStage::Link, |error| unsafe {
         ckc_lld_link_shared(
-            CkcLlvmBytes::new(object_path),
+            object_paths.as_ptr(),
+            object_paths.len(),
             CkcLlvmBytes::new(output_path),
             CkcLlvmBytes::new(import_library_path),
+            CkcLlvmBytes::new(platform_input_path),
             export_bytes.as_ptr(),
             export_bytes.len(),
             error,

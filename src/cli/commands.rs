@@ -15,11 +15,20 @@ use super::cache::{self, CacheKeyInput, CacheManifest};
 use super::{args::*, output::*};
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    EmitLlvmOptions, NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu,
-    NativeHeaderMode, NativeObject, NativeOptimizationLevel, NativePlatform, NativeTarget,
-    create_native_static_archive, emit_native_header, link_native_dynamic_library,
-    link_native_executable, lower_native_kir_module,
+    CkCompilerProfileIdentity, CkModuleProfileIdentity, CkProfileContract, CkProfileCpuPolicy,
+    CkProfileEndianness, CkProfileIdentity, CkProfileKirMode, CkProfileModes,
+    CkProfileObjectFormat, CkProfileOptimizationFamily, CkProfileSchemaIdentity,
+    CkProfileTargetIdentity, CkProfileTopology, EmitLlvmOptions, NATIVE_PROFILE_RUNTIME_SHA256,
+    NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu, NativeHeaderMode,
+    NativeObject, NativeOptimizationLevel, NativePlatform, NativeProfileGeneration, NativeTarget,
+    anchor_profile_directory, create_native_profile_generation_static_archive,
+    create_native_static_archive, emit_native_header, emit_native_profile_generation_header,
+    link_native_dynamic_library, link_native_executable,
+    link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
+    lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
 };
+#[cfg(feature = "native-toolchain")]
+use sha2::{Digest, Sha256};
 
 #[cfg(feature = "native-toolchain")]
 pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, String> {
@@ -720,10 +729,12 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
 pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
-    if args.pgo_generate.is_some() || args.pgo_use.is_some() {
+    if args.pgo_generate.is_some() {
+        return run_profile_generation_build(args);
+    }
+    if args.pgo_use.is_some() {
         return Err(
-            "PGO build modes are unavailable until profile generation and use are implemented."
-                .to_string(),
+            "Profile use is unavailable until profile application is implemented.".to_string(),
         );
     }
     let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
@@ -875,6 +886,356 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         println!("{}", path.display());
     }
     Ok(())
+}
+
+#[cfg(feature = "native-toolchain")]
+struct CompiledProfileGeneration {
+    result: KirPassManagerResult,
+    plan: calckernel::CkProfileKirPlan,
+    semantic_graph_digest: [u8; 32],
+}
+
+#[cfg(feature = "native-toolchain")]
+fn run_profile_generation_build(args: &ParsedArgs) -> Result<(), String> {
+    let input = require_input(args, "build")?;
+    let out = require_out(args, "build")?;
+    let directory = args
+        .pgo_generate
+        .as_deref()
+        .expect("generation build requires a directory");
+    let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
+    if kind == ArtifactKind::Object {
+        return Err("Profile generation does not support --kind object.".to_string());
+    }
+    let overflow_mode = parse_overflow_mode(args)?;
+    let bounds_mode = parse_bounds_mode(args)?;
+    let opt_level = parse_opt_level(args)?;
+    let (source, checked) = check_file(input)?;
+    if !checked.diagnostics.is_empty() {
+        return Err(format_diagnostics(&source, &checked.diagnostics));
+    }
+    if kind == ArtifactKind::Executable && checked.checked_program.entry.is_none() {
+        return Err(
+            "standalone native executable requires fn main() -> void or i32; no output was created"
+                .to_string(),
+        );
+    }
+    let consumer = if kind == ArtifactKind::Executable {
+        KirConsumer::NativeExecutable
+    } else {
+        KirConsumer::NativeLibrary
+    };
+    let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
+    let target_cpu = match cpu_policy {
+        CpuPolicy::Baseline | CpuPolicy::Multiversion => NativeCpu::Baseline,
+        CpuPolicy::Native => NativeCpu::Native,
+    };
+    let target = NativeTarget::host_with_cpu(target_cpu).map_err(|error| error.to_string())?;
+    let target_profile = target
+        .kir_profile(consumer)
+        .map_err(|error| error.to_string())?;
+    let compiled = compile_profile_generation_kir(
+        &checked.checked_program,
+        consumer,
+        target_profile,
+        overflow_mode,
+        bounds_mode,
+        args,
+    )?;
+    let anchor =
+        anchor_profile_directory(&absolutize(directory)).map_err(|error| error.to_string())?;
+    let identity = profile_generation_identity(
+        &target,
+        &compiled,
+        overflow_mode,
+        bounds_mode,
+        opt_level,
+        cpu_policy,
+        consumer,
+    )?;
+    let generation = NativeProfileGeneration::new(compiled.plan.clone(), identity, anchor);
+    let flush_symbol = generation
+        .flush_symbol()
+        .map_err(|error| error.to_string())?;
+    let context = NativeContext::new().map_err(|error| error.to_string())?;
+    let lowered = lower_native_profile_generation_module(
+        &context,
+        &target,
+        &compiled.result,
+        &generation,
+        &EmitLlvmOptions {
+            source_file_name: Some(input.to_string()),
+            target_triple: args.target.clone(),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let optimized = lowered
+        .verify()
+        .map_err(|error| error.to_string())?
+        .audit()
+        .map_err(|error| error.to_string())?
+        .optimize(&target, NativeOptimizationLevel::O2)
+        .map_err(|error| error.to_string())?;
+    let object = target
+        .emit_object(optimized)
+        .map_err(|error| error.to_string())?;
+    let artifact_kind = match kind {
+        ArtifactKind::Executable => NativeArtifactKind::Executable,
+        ArtifactKind::Dynamic => NativeArtifactKind::Dynamic,
+        ArtifactKind::Static => NativeArtifactKind::Static,
+        ArtifactKind::Object => unreachable!("generation object rejected above"),
+    };
+    let paths = NativeArtifactPaths::new(NativePlatform::host(), artifact_kind, &absolutize(out));
+    let header = (!matches!(kind, ArtifactKind::Executable)).then(|| {
+        annotate_unsafe_contracts(
+            &emit_native_profile_generation_header(
+                &compiled.plan.module,
+                if kind == ArtifactKind::Dynamic {
+                    NativeHeaderMode::Dynamic
+                } else {
+                    NativeHeaderMode::StaticOrObject
+                },
+                &flush_symbol,
+            ),
+            &checked.checked_program,
+        )
+    });
+    let mut exports = compiled
+        .plan
+        .module
+        .functions
+        .iter()
+        .filter(|function| function.exported)
+        .map(|function| function.name.clone())
+        .collect::<Vec<_>>();
+    exports.push(flush_symbol.clone());
+    let (primary, import_library) = match kind {
+        ArtifactKind::Executable => (
+            link_native_profile_generation_executable(&object)
+                .map_err(|error| error.to_string())?
+                .as_bytes()
+                .to_vec(),
+            None,
+        ),
+        ArtifactKind::Static => (
+            create_native_profile_generation_static_archive(&target, &object)
+                .map_err(|error| error.to_string())?
+                .as_bytes()
+                .to_vec(),
+            None,
+        ),
+        ArtifactKind::Dynamic => {
+            let library = link_native_profile_generation_dynamic_library(&object, &exports)
+                .map_err(|error| error.to_string())?;
+            (
+                library.as_bytes().to_vec(),
+                library.import_library().map(<[u8]>::to_vec),
+            )
+        }
+        ArtifactKind::Object => unreachable!("generation object rejected above"),
+    };
+    let mut transaction = OutputTransaction::new();
+    if kind == ArtifactKind::Executable {
+        transaction.stage_executable(paths.primary.clone(), &primary)?;
+    } else {
+        transaction.stage(paths.primary.clone(), &primary)?;
+    }
+    if let (Some(path), Some(header)) = (&paths.header, header.as_deref()) {
+        transaction.stage(path.clone(), header.as_bytes())?;
+    }
+    if let (Some(path), Some(bytes)) = (&paths.import_library, import_library.as_deref()) {
+        transaction.stage(path.clone(), bytes)?;
+    }
+    transaction.commit()?;
+    println!(
+        "OK: built native profile-generation {}",
+        artifact_kind_name(artifact_kind)
+    );
+    println!("{}", paths.primary.display());
+    println!("Profile flush: {flush_symbol}");
+    Ok(())
+}
+
+#[cfg(feature = "native-toolchain")]
+fn compile_profile_generation_kir(
+    program: &CheckedProgram,
+    consumer: KirConsumer,
+    profile: KirTargetProfile,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    args: &ParsedArgs,
+) -> Result<CompiledProfileGeneration, String> {
+    let semantic_mir = lower_to_mir(program).map_err(|error| error.to_string())?;
+    let semantic_graph_digest = hash_domain(
+        b"CK-SEMANTIC-MODULE-GRAPH\0",
+        print_mir_module(&semantic_mir).as_bytes(),
+    );
+    let config = KirBuildConfig {
+        consumer,
+        overflow_mode: match overflow_mode {
+            OverflowMode::Unchecked => KirOverflowMode::Unchecked,
+            OverflowMode::Checked => KirOverflowMode::Checked,
+        },
+        bounds_mode: match bounds_mode {
+            BoundsMode::Unchecked => KirBoundsMode::Unchecked,
+            BoundsMode::Checked => KirBoundsMode::Checked,
+        },
+        sanitizer_mode: KirSanitizerMode::Disabled,
+    };
+    let initial = build_kir_module_with_profile(&semantic_mir, config, profile)
+        .map_err(|error| error.to_string())?;
+    let contracts =
+        import_contract_facts(&initial, program, 0).map_err(|error| error.to_string())?;
+    let prepared = run_kir_pass_pipeline(initial, KirOptimizationLevel::O1, Some(&contracts));
+    if !prepared.errors.is_empty() {
+        return Err(format!(
+            "KIR generation preparation failed: {}",
+            prepared.errors.join("; ")
+        ));
+    }
+    let canonical = prepared
+        .artifact
+        .as_ref()
+        .ok_or_else(|| "KIR generation preparation produced no artifact".to_string())?;
+    let plan = prepare_ck_profile_kir(canonical, CkProfileKirMode::Generate)
+        .map_err(|error| error.to_string())?;
+    let result = run_kir_pass_pipeline(plan.module.clone(), KirOptimizationLevel::O0, None);
+    if !result.errors.is_empty() {
+        return Err(format!(
+            "instrumented KIR verification failed: {}",
+            result.errors.join("; ")
+        ));
+    }
+    emit_kir_inspection(program, &result, args)?;
+    Ok(CompiledProfileGeneration {
+        result,
+        plan,
+        semantic_graph_digest,
+    })
+}
+
+#[cfg(feature = "native-toolchain")]
+fn profile_generation_identity(
+    target: &NativeTarget,
+    compiled: &CompiledProfileGeneration,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+    cpu_policy: CpuPolicy,
+    consumer: KirConsumer,
+) -> Result<CkProfileIdentity, String> {
+    let triple = target.triple().map_err(|error| error.to_string())?;
+    let cpu = target.cpu().map_err(|error| error.to_string())?;
+    let features = target.features().map_err(|error| error.to_string())?;
+    let mut target_set = Vec::new();
+    target_set.extend_from_slice(triple.as_bytes());
+    target_set.push(0);
+    target_set.extend_from_slice(cpu.as_bytes());
+    target_set.push(0);
+    target_set.extend_from_slice(features.as_bytes());
+    target_set.push(match cpu_policy {
+        CpuPolicy::Baseline => 1,
+        CpuPolicy::Native => 2,
+        CpuPolicy::Multiversion => 3,
+    });
+    Ok(CkProfileIdentity {
+        compiler: CkCompilerProfileIdentity {
+            package_version: env!("CARGO_PKG_VERSION").to_string(),
+            source_identity: compiler_source_identity(),
+            profile_runtime_identity: parse_hex_digest(NATIVE_PROFILE_RUNTIME_SHA256)?,
+        },
+        module: CkModuleProfileIdentity {
+            semantic_graph_digest: compiled.semantic_graph_digest,
+            pre_profile_kir_digest: compiled.plan.pre_profile_kir_digest,
+            site_table_digest: compiled.plan.site_table_digest,
+        },
+        schemas: CkProfileSchemaIdentity {
+            language: 1,
+            native_abi: calckernel::NATIVE_ABI_VERSION,
+            runtime_abi: calckernel::RUNTIME_ABI_VERSION,
+            kir: 3,
+            proof: 3,
+            cost_model: 3,
+            target_profile: 1,
+            llvm_bridge: calckernel::LLVM_BRIDGE_ABI_VERSION,
+            cache: 4,
+        },
+        target: CkProfileTargetIdentity {
+            triple,
+            pointer_width: usize::BITS as u8,
+            endianness: if cfg!(target_endian = "little") {
+                CkProfileEndianness::Little
+            } else {
+                CkProfileEndianness::Big
+            },
+            object_format: match NativePlatform::host() {
+                NativePlatform::Linux => CkProfileObjectFormat::Elf,
+                NativePlatform::Darwin => CkProfileObjectFormat::MachO,
+                NativePlatform::Windows => CkProfileObjectFormat::Coff,
+            },
+            os_abi: match NativePlatform::host() {
+                NativePlatform::Linux => "linux-gnu",
+                NativePlatform::Darwin => "darwin",
+                NativePlatform::Windows => "windows-msvc",
+            }
+            .to_string(),
+            target_set_digest: hash_domain(b"CK-PROFILE-TARGET-SET\0", &target_set),
+        },
+        modes: CkProfileModes {
+            overflow_checked: overflow_mode == OverflowMode::Checked,
+            bounds_checked: bounds_mode == BoundsMode::Checked,
+            strict_float: true,
+            sanitizer: false,
+            topology: if consumer == KirConsumer::NativeExecutable {
+                CkProfileTopology::NativeExecutable
+            } else {
+                CkProfileTopology::NativeLibrary
+            },
+            optimization_family: if opt_level == 2 {
+                CkProfileOptimizationFamily::O2
+            } else {
+                CkProfileOptimizationFamily::O3
+            },
+            cpu_policy: match cpu_policy {
+                CpuPolicy::Baseline => CkProfileCpuPolicy::Baseline,
+                CpuPolicy::Native => CkProfileCpuPolicy::Native,
+                CpuPolicy::Multiversion => CkProfileCpuPolicy::Multiversion,
+            },
+        },
+        contract: CkProfileContract::schema1(),
+    })
+}
+
+#[cfg(feature = "native-toolchain")]
+fn compiler_source_identity() -> [u8; 32] {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(env!("CKC_LLVM_MANIFEST_SHA256").as_bytes());
+    bytes.extend_from_slice(&calckernel::LLVM_BRIDGE_ABI_VERSION.to_be_bytes());
+    hash_domain(b"CK-COMPILER-SOURCE-IDENTITY\0", &bytes)
+}
+
+#[cfg(feature = "native-toolchain")]
+fn parse_hex_digest(text: &str) -> Result<[u8; 32], String> {
+    if text.len() != 64 {
+        return Err("profile runtime digest is malformed".to_string());
+    }
+    let mut output = [0; 32];
+    for (index, byte) in output.iter_mut().enumerate() {
+        let pair = &text[index * 2..index * 2 + 2];
+        *byte = u8::from_str_radix(pair, 16)
+            .map_err(|_| "profile runtime digest is malformed".to_string())?;
+    }
+    Ok(output)
+}
+
+#[cfg(feature = "native-toolchain")]
+fn hash_domain(domain: &[u8], bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    hasher.finalize().into()
 }
 
 #[cfg(feature = "native-toolchain")]

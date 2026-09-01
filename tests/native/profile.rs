@@ -28,7 +28,7 @@ fn target_profile_should_be_complete_canonical_and_target_bound() {
         first.producer_identity(),
         (
             Some("LLVM 22.1.8 TCK_RecipThroughput"),
-            Some("ckc-llvm-bridge-abi-3")
+            Some("ckc-llvm-bridge-abi-4")
         )
     );
     assert_eq!(

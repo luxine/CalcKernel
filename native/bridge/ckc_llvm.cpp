@@ -2113,6 +2113,52 @@ extern "C" int32_t ckc_llvm_module_add_function(
     });
 }
 
+extern "C" int32_t ckc_llvm_module_add_global_bytes(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint8_t *bytes,
+    size_t byte_count, uint32_t mutable_storage, uint32_t alignment,
+    CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "adding LLVM byte global", [&] {
+        if (module == nullptr || module->value == nullptr || out == nullptr ||
+            byte_count == 0 || bytes == nullptr || alignment == 0 ||
+            !llvm::isPowerOf2_32(alignment)) {
+            return invalid(error, "LLVM byte global input or output is invalid");
+        }
+        auto initializer = llvm::ConstantDataArray::get(
+            module->value->getContext(), llvm::ArrayRef<uint8_t>(bytes, byte_count));
+        auto *global = new llvm::GlobalVariable(
+            *module->value, initializer->getType(), mutable_storage == 0,
+            llvm::GlobalValue::InternalLinkage, initializer, borrowed_string(name));
+        global->setAlignment(llvm::Align(alignment));
+        global->setUnnamedAddr(mutable_storage == 0
+                                   ? llvm::GlobalValue::UnnamedAddr::Global
+                                   : llvm::GlobalValue::UnnamedAddr::None);
+        *out = bridge_value(global);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_add_global_u32_array(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint32_t *values,
+    size_t value_count, uint32_t alignment, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "adding LLVM u32 global", [&] {
+        if (module == nullptr || module->value == nullptr || out == nullptr ||
+            value_count == 0 || values == nullptr || alignment == 0 ||
+            !llvm::isPowerOf2_32(alignment)) {
+            return invalid(error, "LLVM u32 global input or output is invalid");
+        }
+        auto initializer = llvm::ConstantDataArray::get(
+            module->value->getContext(), llvm::ArrayRef<uint32_t>(values, value_count));
+        auto *global = new llvm::GlobalVariable(
+            *module->value, initializer->getType(), true,
+            llvm::GlobalValue::InternalLinkage, initializer, borrowed_string(name));
+        global->setAlignment(llvm::Align(alignment));
+        global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        *out = bridge_value(global);
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_module_preserve_function(
     CkcLlvmModule *module, CkcLlvmFunction *function,
     CkcLlvmError *error) {
@@ -3027,12 +3073,12 @@ extern "C" void ckc_llvm_object_dispose(CkcLlvmObject *object) {
     delete object;
 }
 
-extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
-                                             uint32_t kind,
+extern "C" int32_t ckc_llvm_archive_create(
+    const CkcLlvmObject *const *objects, size_t object_count, uint32_t kind,
                                              CkcLlvmArchive **out,
                                              CkcLlvmError *error) {
     clear_error(error);
-    if (object == nullptr || object->bytes.empty() || out == nullptr) {
+    if (objects == nullptr || object_count == 0 || out == nullptr) {
         return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                          "LLVM archive input or output is null");
     }
@@ -3054,14 +3100,26 @@ extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
                              "unknown LLVM archive kind");
         }
 
-        const llvm::StringRef object_bytes(
-            reinterpret_cast<const char *>(object->bytes.data()),
-            object->bytes.size());
-        auto object_buffer = llvm::MemoryBuffer::getMemBufferCopy(
-            object_bytes, "ck_module.o");
-        llvm::NewArchiveMember member(object_buffer->getMemBufferRef());
-        member.MemberName = "ck_module.o";
-        const llvm::NewArchiveMember members[] = {std::move(member)};
+        std::vector<std::unique_ptr<llvm::MemoryBuffer>> buffers;
+        std::vector<llvm::NewArchiveMember> members;
+        buffers.reserve(object_count);
+        members.reserve(object_count);
+        for (size_t index = 0; index < object_count; ++index) {
+            if (objects[index] == nullptr || objects[index]->bytes.empty()) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "LLVM archive contains an empty object");
+            }
+            const llvm::StringRef object_bytes(
+                reinterpret_cast<const char *>(objects[index]->bytes.data()),
+                objects[index]->bytes.size());
+            const std::string member_name =
+                index == 0 ? "ck_module.o" : "ck_profile_runtime.o";
+            buffers.push_back(
+                llvm::MemoryBuffer::getMemBufferCopy(object_bytes, member_name));
+            llvm::NewArchiveMember member(buffers.back()->getMemBufferRef());
+            member.MemberName = member_name;
+            members.push_back(std::move(member));
+        }
         auto written = llvm::writeArchiveToBuffer(
             members, llvm::SymtabWritingMode::NormalSymtab, archive_kind,
             true, false, [](llvm::Error warning) { llvm::consumeError(std::move(warning)); });
@@ -3082,9 +3140,9 @@ extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
         if (child_error) {
             return set_llvm_error(error, std::move(child_error));
         }
-        if (member_count != 1 || !(*parsed)->hasSymbolTable()) {
+        if (member_count != object_count || !(*parsed)->hasSymbolTable()) {
             return set_error(error, CKC_LLVM_INTERNAL_ERROR,
-                             "LLVM produced an invalid one-member indexed archive");
+                             "LLVM produced an invalid indexed archive");
         }
 
         auto archive = std::make_unique<CkcLlvmArchive>();
@@ -3126,14 +3184,15 @@ extern "C" void ckc_llvm_archive_dispose(CkcLlvmArchive *archive) {
 }
 
 extern "C" int32_t ckc_lld_link_shared(
-    CkcLlvmBytes object_path_bytes, CkcLlvmBytes output_path_bytes,
-    CkcLlvmBytes import_library_path_bytes, const CkcLlvmBytes *exports,
+    const CkcLlvmBytes *object_path_bytes, size_t object_count,
+    CkcLlvmBytes output_path_bytes, CkcLlvmBytes import_library_path_bytes,
+    CkcLlvmBytes platform_input_path_bytes, const CkcLlvmBytes *exports,
     size_t export_count, CkcLlvmError *error) {
     clear_error(error);
     try {
-        auto object_path = checked_path(object_path_bytes, "LLD object path");
-        if (!object_path) {
-            return set_llvm_error(error, object_path.takeError());
+        if (object_count == 0 || object_path_bytes == nullptr) {
+            return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                             "LLD shared object list is empty");
         }
         auto output_path = checked_path(output_path_bytes, "LLD output path");
         if (!output_path) {
@@ -3143,8 +3202,17 @@ extern "C" int32_t ckc_lld_link_shared(
             return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                              "LLD export list is null");
         }
-        if (auto validation = validate_link_input(*object_path)) {
-            return set_llvm_error(error, std::move(validation));
+        std::vector<std::string> object_paths;
+        object_paths.reserve(object_count);
+        for (size_t index = 0; index < object_count; ++index) {
+            auto object_path = checked_path(object_path_bytes[index], "LLD object path");
+            if (!object_path) {
+                return set_llvm_error(error, object_path.takeError());
+            }
+            if (auto validation = validate_link_input(*object_path)) {
+                return set_llvm_error(error, std::move(validation));
+            }
+            object_paths.push_back(std::move(*object_path));
         }
 
         std::vector<std::string> arguments;
@@ -3212,7 +3280,17 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("-o");
         arguments.emplace_back(*output_path);
 #endif
-        arguments.emplace_back(*object_path);
+        arguments.insert(arguments.end(), object_paths.begin(), object_paths.end());
+        if (object_count > 1) {
+#if defined(CKC_LLD_DARWIN) || defined(CKC_LLD_COFF)
+            auto platform_input = checked_path(platform_input_path_bytes,
+                                               "LLD shared platform input path");
+            if (!platform_input) {
+                return set_llvm_error(error, platform_input.takeError());
+            }
+            arguments.emplace_back(*platform_input);
+#endif
+        }
 
         std::vector<const char *> raw_arguments;
         raw_arguments.reserve(arguments.size());

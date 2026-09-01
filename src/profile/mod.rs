@@ -1,6 +1,7 @@
 //! CK-owned workload profile identities, wire formats, merge, and inspection.
 
 mod format;
+mod generation;
 mod identity;
 mod inspect;
 mod merge;
@@ -13,6 +14,11 @@ pub use format::{
     CkProfile, CkProfileCounter, CkProfileCounterRecord, CkProfileShard, CkProfileSiteDescriptor,
     CkProfileSiteId, CkProfileSiteKind, parse_profile, parse_profile_shard,
     profile_site_table_digest, serialize_profile, serialize_profile_shard,
+};
+pub use generation::{
+    CK_PROFILE_NO_WIRE_OFFSET, CkProfileDirectoryAnchor, CkProfileDirectoryIdentity,
+    CkProfileShardTemplate, anchor_profile_directory, create_profile_shard_template,
+    profile_histogram_bucket,
 };
 pub use identity::{
     CK_PROFILE_MAX_BYTES, CK_PROFILE_MAX_CANDIDATES, CK_PROFILE_MAX_SHARDS, CK_PROFILE_MAX_SITES,

@@ -7,7 +7,9 @@ use std::{
 
 use crate::backend::{
     llvm::{NativeError, NativeObject, NativeStage, ffi},
-    native_runtime::{embedded_runtime_objects, embedded_windows_import_library},
+    native_runtime::{
+        embedded_profile_runtime_object, embedded_runtime_objects, embedded_windows_import_library,
+    },
 };
 
 /// Validated outputs produced by the in-process, allowlisted LLD driver.
@@ -54,6 +56,22 @@ pub fn link_native_dynamic_library(
     object: &NativeObject,
     export_names: &[String],
 ) -> Result<NativeDynamicLibrary, NativeError> {
+    link_dynamic_library(object, export_names, false)
+}
+
+/// Links a temporary generation library with the private collection runtime.
+pub fn link_native_profile_generation_dynamic_library(
+    object: &NativeObject,
+    export_names: &[String],
+) -> Result<NativeDynamicLibrary, NativeError> {
+    link_dynamic_library(object, export_names, true)
+}
+
+fn link_dynamic_library(
+    object: &NativeObject,
+    export_names: &[String],
+    profile_generation: bool,
+) -> Result<NativeDynamicLibrary, NativeError> {
     validate_exports(export_names)?;
     let staging = LinkStaging::create()?;
     let platform = super::NativePlatform::host();
@@ -68,14 +86,25 @@ pub fn link_native_dynamic_library(
     });
     let import_path = staging.path.join("module.lib");
     fs::write(&object_path, object.as_bytes()).map_err(link_io_error)?;
+    let mut object_paths = vec![path_text(&object_path)?.to_string()];
+    if profile_generation {
+        let runtime_path = staging.path.join(match platform {
+            super::NativePlatform::Windows => "profile-runtime.obj",
+            _ => "profile-runtime.o",
+        });
+        fs::write(&runtime_path, embedded_profile_runtime_object()).map_err(link_io_error)?;
+        object_paths.push(path_text(&runtime_path)?.to_string());
+    }
+    let platform_input_path = stage_platform_input(&staging, platform, profile_generation)?;
     ffi::lld_link_shared(
-        path_text(&object_path)?,
+        &object_paths,
         path_text(&output_path)?,
         if platform == super::NativePlatform::Windows {
             path_text(&import_path)?
         } else {
             "unused"
         },
+        path_text(&platform_input_path)?,
         export_names,
     )?;
     let bytes = fs::read(&output_path).map_err(link_io_error)?;
@@ -93,6 +122,20 @@ pub fn link_native_dynamic_library(
 /// Links one verified entry-bearing program with the five embedded runtime
 /// objects and the single allowlisted platform import description.
 pub fn link_native_executable(object: &NativeObject) -> Result<NativeExecutable, NativeError> {
+    link_executable(object, false)
+}
+
+/// Links a temporary generation executable with the private collection runtime.
+pub fn link_native_profile_generation_executable(
+    object: &NativeObject,
+) -> Result<NativeExecutable, NativeError> {
+    link_executable(object, true)
+}
+
+fn link_executable(
+    object: &NativeObject,
+    profile_generation: bool,
+) -> Result<NativeExecutable, NativeError> {
     let staging = LinkStaging::create()?;
     let platform = super::NativePlatform::host();
     let object_extension = if platform == super::NativePlatform::Windows {
@@ -110,6 +153,13 @@ pub fn link_native_executable(object: &NativeObject) -> Result<NativeExecutable,
         fs::write(&path, bytes).map_err(link_io_error)?;
         object_paths.push(path_text(&path)?.to_string());
     }
+    if profile_generation {
+        let path = staging
+            .path
+            .join(format!("profile-runtime.{object_extension}"));
+        fs::write(&path, embedded_profile_runtime_object()).map_err(link_io_error)?;
+        object_paths.push(path_text(&path)?.to_string());
+    }
     let output_path = staging
         .path
         .join(if platform == super::NativePlatform::Windows {
@@ -117,7 +167,26 @@ pub fn link_native_executable(object: &NativeObject) -> Result<NativeExecutable,
         } else {
             "program"
         });
-    let platform_input_path = match platform {
+    let platform_input_path = stage_platform_input(&staging, platform, true)?;
+    ffi::lld_link_executable(
+        &object_paths,
+        path_text(&output_path)?,
+        path_text(&platform_input_path)?,
+    )?;
+    Ok(NativeExecutable {
+        bytes: fs::read(output_path).map_err(link_io_error)?,
+    })
+}
+
+fn stage_platform_input(
+    staging: &LinkStaging,
+    platform: super::NativePlatform,
+    required: bool,
+) -> Result<PathBuf, NativeError> {
+    if !required {
+        return Ok(staging.path.join("unused"));
+    }
+    match platform {
         super::NativePlatform::Darwin => {
             let path = staging.path.join("libSystem.tbd");
             fs::write(
@@ -128,23 +197,15 @@ pub fn link_native_executable(object: &NativeObject) -> Result<NativeExecutable,
                 )),
             )
             .map_err(link_io_error)?;
-            path
+            Ok(path)
         }
         super::NativePlatform::Windows => {
             let path = staging.path.join("kernel32.lib");
             fs::write(&path, embedded_windows_import_library()).map_err(link_io_error)?;
-            path
+            Ok(path)
         }
-        super::NativePlatform::Linux => staging.path.join("unused"),
-    };
-    ffi::lld_link_executable(
-        &object_paths,
-        path_text(&output_path)?,
-        path_text(&platform_input_path)?,
-    )?;
-    Ok(NativeExecutable {
-        bytes: fs::read(output_path).map_err(link_io_error)?,
-    })
+        super::NativePlatform::Linux => Ok(staging.path.join("unused")),
+    }
 }
 
 fn validate_exports(exports: &[String]) -> Result<(), NativeError> {

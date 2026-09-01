@@ -288,6 +288,33 @@ impl NativeModule<'_> {
     ) -> Result<(), NativeError> {
         ffi::module_preserve_function(self.shared_handle(), function.handle())
     }
+
+    pub(super) fn add_global_bytes<'module>(
+        &'module self,
+        name: &str,
+        bytes: &[u8],
+        mutable_storage: bool,
+        alignment: u32,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::module_add_global_bytes(
+            self.shared_handle(),
+            name,
+            bytes,
+            mutable_storage,
+            alignment,
+        )
+        .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn add_global_u32_array<'module>(
+        &'module self,
+        name: &str,
+        values: &[u32],
+        alignment: u32,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::module_add_global_u32_array(self.shared_handle(), name, values, alignment)
+            .map(NativeValue::from_handle)
+    }
 }
 
 pub(super) struct NativeBuilder<'module, 'context> {

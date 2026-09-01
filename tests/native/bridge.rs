@@ -8,7 +8,7 @@ fn bridge_should_report_the_private_abi_version() {
     let info = bridge_info().expect("read linked LLVM bridge metadata");
 
     assert_eq!(info.abi_version, LLVM_BRIDGE_ABI_VERSION);
-    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 3);
+    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 4);
     assert_eq!(NATIVE_ABI_VERSION, 1);
     assert_eq!(RUNTIME_ABI_VERSION, 2);
 }

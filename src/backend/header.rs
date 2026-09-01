@@ -17,6 +17,23 @@ pub fn emit_native_header(module: &KirModule, mode: NativeHeaderMode) -> String 
     emit_c_kir_header_with_mode(module, mode == NativeHeaderMode::Dynamic)
 }
 
+/// Emits the temporary generation header with its one explicit flush control
+/// entry. This declaration never appears in ordinary or profile-use headers.
+#[must_use]
+pub fn emit_native_profile_generation_header(
+    module: &KirModule,
+    mode: NativeHeaderMode,
+    flush_symbol: &str,
+) -> String {
+    let mut header = emit_native_header(module, mode);
+    let close = "\n#ifdef __cplusplus\n}\n#endif\n";
+    let offset = header
+        .rfind(close)
+        .expect("native header always closes its C linkage block");
+    header.insert_str(offset, &format!("\nCK_API int32_t {flush_symbol}(void);\n"));
+    header
+}
+
 /// Prepends deterministic, ABI-neutral comments for exported unsafe contracts.
 ///
 /// Slice parameters use their flattened C ABI spellings (`name_data` and

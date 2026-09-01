@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CKC_LLVM_BRIDGE_ABI_VERSION 3u
+#define CKC_LLVM_BRIDGE_ABI_VERSION 4u
 
 #ifdef __cplusplus
 extern "C" {
@@ -278,6 +278,14 @@ int32_t ckc_llvm_module_add_function(CkcLlvmModule *module,
                                      uint32_t exported,
                                      CkcLlvmFunction **out,
                                      CkcLlvmError *error);
+int32_t ckc_llvm_module_add_global_bytes(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint8_t *bytes,
+    size_t byte_count, uint32_t mutable_storage, uint32_t alignment,
+    CkcLlvmValue **out, CkcLlvmError *error);
+int32_t ckc_llvm_module_add_global_u32_array(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint32_t *values,
+    size_t value_count, uint32_t alignment, CkcLlvmValue **out,
+    CkcLlvmError *error);
 int32_t ckc_llvm_module_preserve_function(CkcLlvmModule *module,
                                           CkcLlvmFunction *function,
                                           CkcLlvmError *error);
@@ -448,8 +456,8 @@ int32_t ckc_llvm_target_parse_object(CkcLlvmTarget *target,
 size_t ckc_llvm_object_size(const CkcLlvmObject *object);
 const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object);
 void ckc_llvm_object_dispose(CkcLlvmObject *object);
-int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
-                                uint32_t kind,
+int32_t ckc_llvm_archive_create(const CkcLlvmObject *const *objects,
+                                size_t object_count, uint32_t kind,
                                 CkcLlvmArchive **out,
                                 CkcLlvmError *error);
 size_t ckc_llvm_archive_size(const CkcLlvmArchive *archive);
@@ -457,9 +465,11 @@ const uint8_t *ckc_llvm_archive_data(const CkcLlvmArchive *archive);
 size_t ckc_llvm_archive_member_count(const CkcLlvmArchive *archive);
 uint32_t ckc_llvm_archive_has_symbol_index(const CkcLlvmArchive *archive);
 void ckc_llvm_archive_dispose(CkcLlvmArchive *archive);
-int32_t ckc_lld_link_shared(CkcLlvmBytes object_path,
+int32_t ckc_lld_link_shared(const CkcLlvmBytes *object_paths,
+                            size_t object_count,
                             CkcLlvmBytes output_path,
                             CkcLlvmBytes import_library_path,
+                            CkcLlvmBytes platform_input_path,
                             const CkcLlvmBytes *exports,
                             size_t export_count,
                             CkcLlvmError *error);

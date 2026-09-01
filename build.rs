@@ -41,6 +41,7 @@ fn main() {
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.cpp");
     println!("cargo::rerun-if-changed=native/bridge/ckc_llvm.h");
     println!("cargo::rerun-if-changed=native/runtime");
+    println!("cargo::rerun-if-changed=native/profile_runtime");
     println!("cargo::rerun-if-changed=third_party");
     println!("cargo::rerun-if-changed=THIRD_PARTY_NOTICES.md");
     println!("cargo::rerun-if-changed=Cargo.lock");
@@ -142,6 +143,17 @@ fn validate_third_party_provenance() {
         &runtime,
         "license_files",
         "license_sha256",
+    );
+    let profile_runtime = read_required(
+        &root.join("native/profile_runtime/provenance.toml"),
+        "profile runtime provenance",
+    );
+    require_manifest_value(&profile_runtime, "profile_runtime_schema", "1");
+    validate_file_hashes(
+        &root.join("native/profile_runtime"),
+        &profile_runtime,
+        "runtime_files",
+        "runtime_source_sha256",
     );
     for component in ["LLVM 22.1.8", "LLD 22.1.8", "BLAKE3", "regex", "Ryu"] {
         assert!(
@@ -343,6 +355,36 @@ fn configure_native_toolchain(target: &str) {
         );
         println!("cargo::rustc-env=CKC_RUNTIME_SHA256_{index}={actual_hash}");
     }
+    require_manifest_value(&text, "profile_runtime_schema", "1");
+    let profile_runtime_name = manifest_scalar(&text, "profile_runtime_object")
+        .expect("native runtime manifest is missing profile_runtime_object");
+    assert!(
+        profile_runtime_name.ends_with(expected_suffix)
+            && !profile_runtime_name.contains('/')
+            && !profile_runtime_name.contains('\\'),
+        "invalid profile runtime object name: {profile_runtime_name}"
+    );
+    let expected_profile_runtime_hash = manifest_scalar(&text, "profile_runtime_sha256")
+        .expect("native runtime manifest is missing profile_runtime_sha256");
+    let profile_runtime_path = runtime_dir.join(profile_runtime_name);
+    let profile_runtime_bytes = fs::read(&profile_runtime_path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read profile runtime object {}: {error}",
+            profile_runtime_path.display()
+        )
+    });
+    let profile_runtime_hash = format!("{:x}", Sha256::digest(&profile_runtime_bytes));
+    assert_eq!(
+        profile_runtime_hash,
+        expected_profile_runtime_hash,
+        "profile runtime object hash mismatch for {}",
+        profile_runtime_path.display()
+    );
+    println!(
+        "cargo::rustc-env=CKC_PROFILE_RUNTIME_OBJECT={}",
+        profile_runtime_path.display()
+    );
+    println!("cargo::rustc-env=CKC_PROFILE_RUNTIME_SHA256={profile_runtime_hash}");
     if target.ends_with("-msvc") {
         let name = manifest_scalar(&text, "runtime_platform_import")
             .expect("native Windows runtime manifest is missing runtime_platform_import");

@@ -481,6 +481,12 @@ fn encode_sites(sites: &[CkProfileSiteDescriptor]) -> Result<Vec<u8>, CkProfileE
     Ok(output)
 }
 
+pub(super) fn encode_sites_for_runtime(
+    sites: &[CkProfileSiteDescriptor],
+) -> Result<Vec<u8>, CkProfileError> {
+    encode_sites(sites)
+}
+
 fn decode_sites(bytes: &[u8]) -> Result<Vec<CkProfileSiteDescriptor>, CkProfileError> {
     let mut cursor = WireCursor::new(bytes);
     let count = cursor.read_u32()?;
@@ -582,6 +588,12 @@ fn encode_counters(counters: &[CkProfileCounterRecord]) -> Result<Vec<u8>, CkPro
         }
     }
     Ok(output)
+}
+
+pub(super) fn encode_counters_for_runtime(
+    counters: &[CkProfileCounterRecord],
+) -> Result<Vec<u8>, CkProfileError> {
+    encode_counters(counters)
 }
 
 fn decode_counters(bytes: &[u8]) -> Result<Vec<CkProfileCounterRecord>, CkProfileError> {

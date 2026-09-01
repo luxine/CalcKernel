@@ -273,6 +273,86 @@ fn pgo_cli_should_reject_terminal_profile_as_merge_input_without_output() {
 
 #[cfg(feature = "native-toolchain")]
 #[test]
+fn pgo_build_should_train_and_commit_profile_and_artifact_together() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform, parse_profile};
+
+    let (dir, source) =
+        fixture("fn main() -> i32 { let i: u32 = 0; while i < 6 { i = i + 1; } return 0; }");
+    let dir = fs::canonicalize(dir).expect("canonical PGO output fixture");
+    let base = dir.join("trained");
+    let profile = dir.join("trained.ckprof");
+    let output = run_empty_path([
+        os("pgo"),
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&base),
+        os("--profile-out"),
+        os(&profile),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let artifact = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &base,
+    )
+    .primary;
+    assert!(artifact.is_file());
+    let parsed = parse_profile(&fs::read(&profile).expect("read final profile"))
+        .expect("parse final profile");
+    assert_eq!(parsed.completed_runs, 1);
+    let executed = Command::new(artifact)
+        .env("PATH", "")
+        .output()
+        .expect("run final pgo artifact");
+    assert_eq!(executed.status.code(), Some(0));
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_build_should_preserve_prior_outputs_when_training_returns_nonzero() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture("fn main() -> i32 { return 7; }");
+    let dir = fs::canonicalize(dir).expect("canonical PGO output fixture");
+    let base = dir.join("trained");
+    let artifact = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &base,
+    )
+    .primary;
+    let profile = dir.join("trained.ckprof");
+    fs::write(&artifact, b"prior-artifact").expect("seed prior artifact");
+    fs::write(&profile, b"prior-profile").expect("seed prior profile");
+
+    let output = run_empty_path([
+        os("pgo"),
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&base),
+        os("--profile-out"),
+        os(&profile),
+    ]);
+    assert_eq!(output.code, Some(1));
+    assert!(
+        output.stderr.contains("exited with status 7"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(
+        fs::read(&artifact).expect("read prior artifact"),
+        b"prior-artifact"
+    );
+    assert_eq!(
+        fs::read(&profile).expect("read prior profile"),
+        b"prior-profile"
+    );
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
 fn emit_llvm_should_render_verified_structural_module_and_accept_checked_modes() {
     let (_, source) = fixture(
         "export fn read(items: slice<i32>, index: u32, delta: i32) -> i32 { return items[index] + delta; }",
