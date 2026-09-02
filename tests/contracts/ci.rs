@@ -257,7 +257,7 @@ fn performance_ci_should_select_a_case_from_the_benchmark_manifest() {
         .find("cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json")
         .expect("performance CI must preserve its raw report");
     let gate = workflow
-        .find("python3 scripts/check-native-performance.py target/ckc-perf/results.json")
+        .find("python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json")
         .expect("performance CI must run the strict checker");
     assert!(
         preserve < gate,
@@ -550,6 +550,7 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
     assert!(performance.contains("inputs.performance_diagnostics == true"));
     assert!(performance.contains("if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)"));
     assert!(performance.contains("fetch-depth: 0"));
+    assert!(performance.contains("CKC_V012_RUNTIME_BUNDLE:"));
     assert!(performance.contains("CKC_V011_RUNTIME_BUNDLE:"));
     assert!(performance.contains("CKC_V010_RUNTIME_BUNDLE:"));
     let prepare = performance
@@ -575,6 +576,7 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
     for required in [
         "lscpu --json",
         "sha256sum",
+        "CKC_V012_RUNTIME_BUNDLE",
         "CKC_V011_RUNTIME_BUNDLE",
         "CKC_V010_RUNTIME_BUNDLE",
         "measuredArtifacts",
@@ -584,6 +586,9 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
         "replayV010Native",
         ": > \"$diagnostic_out/whole-library-sha256.txt\"",
         "objdump",
+        "v0.13-results.json",
+        "schema8-files.tsv",
+        "v012-replay-sha256.txt",
     ] {
         assert!(
             script.contains(required),
@@ -610,4 +615,91 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
             "diagnostic must inspect the actual measured files: {forbidden}"
         );
     }
+}
+
+#[test]
+fn ci_should_execute_the_exact_v013_schema_eight_candidate_contract() {
+    let workflow = read(".github/workflows/ci.yml");
+    let quality = workflow
+        .split("  native-integration:")
+        .next()
+        .expect("quality job");
+    for required in [
+        "cargo test --locked --test performance -- --nocapture",
+        "python3 -B -m unittest discover -s tests/performance -p '*_test.py'",
+        "cargo test --locked --test contracts ci_ -- --nocapture",
+        "cargo test --release --locked --lib verifier_cache_",
+        "docs/project/release-checklist.md",
+    ] {
+        assert!(quality.contains(required), "quality must own {required:?}");
+    }
+
+    let integration = workflow
+        .split("  native-integration:")
+        .nth(1)
+        .expect("native integration job")
+        .split("  native-hosts:")
+        .next()
+        .expect("native integration boundary");
+    for required in [
+        "profile_generation_",
+        "profile_merge_",
+        "pgo_build_use_should_train_validate_and_commit_profile_and_artifact_together",
+        "target/native-acceptance/v0.13-final",
+    ] {
+        assert!(
+            integration.contains(required),
+            "native integration must execute {required:?}"
+        );
+    }
+
+    let hosts = workflow
+        .split("  native-hosts:")
+        .nth(1)
+        .expect("native host matrix")
+        .split("  performance:")
+        .next()
+        .expect("native host boundary");
+    for required in [
+        "variant_feature_target_profiles_should_be_explicit_and_contained",
+        "multiversion_dispatch_",
+        "multiversion_artifact_",
+        "capability-${{ matrix.name }}",
+    ] {
+        assert!(
+            hosts.contains(required),
+            "native hosts must own {required:?}"
+        );
+    }
+
+    let performance = workflow
+        .split("  performance:")
+        .nth(1)
+        .expect("performance job");
+    for required in [
+        "CKC_V012_RUNTIME_BUNDLE:",
+        "--baseline 0.12",
+        "scripts/audit-performance-oracles.py --pgo",
+        "target/ckc-perf/results-baseline.json",
+        "python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json",
+        "--bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json",
+        "python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json",
+        "target/performance-runtime-replay-v012/ckc-v012",
+        "target/performance-runtime-replay-v012/ckc-v012-distribution.tar.gz",
+    ] {
+        assert!(
+            performance.contains(required),
+            "performance workers must own {required:?}"
+        );
+    }
+    let schema7 = performance
+        .find("python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json")
+        .expect("cumulative schema-7 gate");
+    let schema8 = performance
+        .find("--bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json")
+        .expect("schema-8 producer");
+    assert!(
+        schema7 < schema8,
+        "schema 7 must pass before schema 8 starts"
+    );
 }

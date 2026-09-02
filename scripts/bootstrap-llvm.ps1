@@ -128,6 +128,18 @@ $configure = @(
     "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
 )
+if ($Profile -eq "oracle") {
+    $configure += @(
+        "-DLLVM_ENABLE_RUNTIMES=compiler-rt",
+        "-DCOMPILER_RT_BUILD_BUILTINS=OFF",
+        "-DCOMPILER_RT_BUILD_SANITIZERS=OFF",
+        "-DCOMPILER_RT_BUILD_XRAY=OFF",
+        "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF",
+        "-DCOMPILER_RT_BUILD_MEMPROF=OFF",
+        "-DCOMPILER_RT_BUILD_ORC=OFF",
+        "-DCOMPILER_RT_BUILD_PROFILE=ON"
+    )
+}
 & cmake @configure
 if ($LASTEXITCODE -ne 0) { throw "LLVM CMake configuration failed" }
 Assert-MsvcCompileCommands -Path (Join-Path $binaryDir "compile_commands.json")
@@ -174,6 +186,18 @@ if ($Profile -eq "release" -and (Test-Path -LiteralPath $clang)) {
 }
 if ($Profile -eq "oracle" -and -not (Test-Path -LiteralPath $clang -PathType Leaf)) {
     throw "oracle prefix is missing Clang"
+}
+if ($Profile -eq "oracle") {
+    $profdata = Join-Path $Prefix "bin/llvm-profdata.exe"
+    if (-not (Test-Path -LiteralPath $profdata -PathType Leaf)) {
+        throw "oracle prefix is missing llvm-profdata"
+    }
+    $profileRuntime = Get-ChildItem -LiteralPath (Join-Path $Prefix "lib/clang") -Recurse -File |
+        Where-Object { $_.Name -like "clang_rt.profile*.lib" -or $_.Name -like "libclang_rt.profile*.a" } |
+        Select-Object -First 1
+    if ($null -eq $profileRuntime) {
+        throw "oracle prefix is missing the pinned compiler-rt profile runtime"
+    }
 }
 
 $components = @("core", "native", "orcjit", "nativecodegen", "lto")

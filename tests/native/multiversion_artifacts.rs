@@ -85,6 +85,7 @@ fn object_bundle(source: &str, consumer: KirConsumer) -> NativeMultiversionObjec
         &targets,
         &request,
         &bundle,
+        None,
         &EmitLlvmOptions::default(),
     )
     .expect("object bundle")

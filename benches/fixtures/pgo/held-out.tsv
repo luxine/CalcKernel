@@ -1,0 +1,7 @@
+ckc-pgo-inputs	1	held-out
+# case	record	length	seed-or-salt	parameter
+branch-layout	held-branch-prime	12289	31	3
+call-constant-length	held-fixed-4000	4000	37	13
+trip-unroll-simd	held-map-3967	3967	41	0
+memory-bound	held-zip-4000	4000	43	0
+compute-bound	held-f64-3989	3989	47	1.0009765625

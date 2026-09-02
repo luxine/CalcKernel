@@ -69,12 +69,26 @@ PGO measurements add the feature and task selectors shown below.
 ```sh
 cargo test --locked --test performance -- --nocapture
 python3 -m unittest discover -s tests/performance -p '*_test.py'
+python3 scripts/prepare-performance-replay.py --baseline 0.12 \
+  --out target/performance-runtime-replay-v012
+python3 scripts/prepare-performance-replay.py --baseline 0.11 \
+  --out target/performance-runtime-replay-v011
+python3 scripts/prepare-performance-replay.py --baseline 0.10 \
+  --out target/performance-runtime-replay
 cargo bench --features native-toolchain --bench ckc_perf -- \
   --case proof --task check --cpu baseline
+cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
+python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json
 cargo bench --features native-toolchain --bench pgo_perf -- \
   --task collect --out target/ckc-perf/v0.13-results.json
 python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json
 ```
+
+The Native commands require the pinned `CKC_LLVM_PREFIX`, `CKC_CLANG_ORACLE`,
+`CKC_CANDIDATE_COMPILER`, `CKC_V012_RUNTIME_BUNDLE`,
+`CKC_V011_RUNTIME_BUNDLE`, and `CKC_V010_RUNTIME_BUNDLE` paths. The same worker
+must produce and check both reports; a copied or cross-worker schema-7 report is
+not release evidence.
 
 The report is canonicalized and hashed before the independent checker reads it.
 The benchmark cannot declare itself passing. Diagnostics inspect only the actual

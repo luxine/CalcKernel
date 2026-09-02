@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import importlib.util
 import os
 import pathlib
 import platform
@@ -16,6 +17,7 @@ import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "benches/oracles/manifest.toml"
+PGO_MANIFEST = REPO / "benches/oracles/pgo/manifest.toml"
 
 
 def digest(path: pathlib.Path) -> str:
@@ -170,15 +172,96 @@ def audit(clang: str) -> None:
                 compare_kernel(c, rust, ubsan, kernel["name"], checked)
 
 
+def load_pgo_measurement_module():
+    specification = importlib.util.spec_from_file_location(
+        "ckc_pgo_measurement", REPO / "scripts/measure-v013-performance.py"
+    )
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def audit_pgo(clang: str) -> None:
+    measurement = load_pgo_measurement_module()
+    clang_version = subprocess.run([clang, "--version"], text=True, capture_output=True, check=True).stdout
+    rust_version = subprocess.run(["rustc", "+1.90.0", "--version"], text=True, capture_output=True, check=True).stdout
+    if "clang version 22.1.8" not in clang_version:
+        raise ValueError("CKC_CLANG_ORACLE must be Clang 22.1.8")
+    if not rust_version.startswith("rustc 1.90.0 "):
+        raise ValueError(f"PGO oracle compiler must be rustc 1.90.0, got {rust_version.strip()}")
+    with PGO_MANIFEST.open("rb") as source:
+        manifest = tomllib.load(source)
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("clang_version") != "22.1.8"
+        or manifest.get("rust_version") != "1.90.0"
+        or manifest.get("fast_math") is not False
+        or manifest.get("contraction") is not False
+    ):
+        raise ValueError("PGO oracle manifest identity is not closed")
+    for entry in manifest.get("source", []):
+        if digest(REPO / entry["path"]) != entry["sha256"]:
+            raise ValueError(f"PGO oracle source digest mismatch: {entry['path']}")
+    cases = {case["name"]: case for case in measurement.parse_cases()}
+    if set(cases) != {entry["name"] for entry in manifest.get("case", [])}:
+        raise ValueError("PGO oracle case manifest is incomplete")
+    splits = {
+        name: measurement.parse_split(name)
+        for name in ["training", "held-out", "adversarial"]
+    }
+    with tempfile.TemporaryDirectory(prefix="ckc-pgo-oracle-audit-") as temporary:
+        root = pathlib.Path(temporary)
+        for entry in manifest["case"]:
+            case = cases[entry["name"]]
+            c = root / f"{case['name']}-c{measurement.dynamic_suffix()}"
+            ubsan = root / f"{case['name']}-ubsan{measurement.dynamic_suffix()}"
+            rust = root / f"{case['name']}-rust{measurement.dynamic_suffix()}"
+            c_common = [
+                clang, "-std=c11", "-O3", "-march=native", "-fno-fast-math",
+                "-ffp-contract=off", "-fno-builtin",
+                f"-DCK_PGO_ORACLE_CASE={entry['oracle_case']}",
+                REPO / "benches/oracles/pgo/c/pgo_oracle.c",
+            ]
+            measurement.command_output(c_common + measurement.oracle_link_flags(c))
+            measurement.command_output(
+                c_common
+                + ["-fsanitize=undefined", "-fno-sanitize-recover=all",
+                   "-fsanitize-trap=undefined"]
+                + measurement.oracle_link_flags(ubsan)
+            )
+            rust_common = [
+                "rustc", "+1.90.0", "--edition", "2024", "--crate-type", "cdylib",
+                "-Awarnings", "-C", "opt-level=3", "-C", "target-cpu=native",
+                "-C", "panic=abort", "-C", "llvm-args=-fp-contract=off",
+                "--cfg", f'oracle_case="{case["name"]}"',
+                REPO / "benches/oracles/pgo/rust/pgo_oracle.rs", "-o", rust,
+            ]
+            measurement.command_output(rust_common)
+            for split in splits.values():
+                for record in split.get(case["name"], []):
+                    results = {
+                        measurement.Kernel(library, case, record).result_digest()
+                        for library in [c, ubsan, rust]
+                    }
+                    if len(results) != 1:
+                        raise ValueError(
+                            f"PGO oracle differential mismatch for {case['name']}/{record['record']}"
+                        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--clang", default=os.environ.get("CKC_CLANG_ORACLE"))
+    parser.add_argument("--pgo", action="store_true", help="audit the schema-8 PGO oracle corpus")
     args = parser.parse_args()
     if not args.clang:
         print("oracle audit failed: CKC_CLANG_ORACLE is required", file=sys.stderr)
         return 1
     try:
-        audit(args.clang)
+        if args.pgo:
+            audit_pgo(args.clang)
+        else:
+            audit(args.clang)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"oracle audit failed: {error}", file=sys.stderr)
         return 1

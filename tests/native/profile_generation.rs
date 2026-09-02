@@ -203,6 +203,64 @@ fn profile_generation_library_flush_should_be_exactly_once_concurrent_and_sticky
     fs::remove_dir_all(root).expect("remove generation fixture");
 }
 
+#[cfg(unix)]
+#[test]
+fn profile_generation_single_latch_loop_should_publish_exact_batched_edge_count() {
+    use std::ffi::CString;
+
+    let (root, input) = fixture(
+        "export unsafe fn kernel(out: slice<u32>, n: u32) -> void\n\
+         contract { requires n <= out.len; effects write(out); }\n\
+         { let i: u32 = 0; while i < n { i = i + 1; }\n\
+           if n > 0 { out[0] = i; } }",
+    );
+    let paths = build_library(&root, &input, true);
+    let header = fs::read_to_string(paths.header.expect("generation header"))
+        .expect("read generation header");
+    let flush_name = flush_symbol(&header);
+    unsafe {
+        let path_text = paths.primary.to_string_lossy().into_owned();
+        let path = CString::new(path_text.as_bytes()).expect("library path");
+        let handle = dlopen(path.as_ptr(), 2);
+        assert!(!handle.is_null(), "dlopen generation library");
+        let kernel_name = CString::new("kernel").expect("kernel symbol");
+        let kernel_address = dlsym(handle, kernel_name.as_ptr());
+        assert!(!kernel_address.is_null(), "dlsym kernel");
+        let kernel: unsafe extern "C" fn(*mut u32, u32, u32) = std::mem::transmute(kernel_address);
+        let mut output = [0_u32; 4000];
+        for _ in 0..4 {
+            kernel(
+                output.as_mut_ptr(),
+                output.len() as u32,
+                output.len() as u32,
+            );
+        }
+        assert_eq!(output[0], 4000);
+
+        let flush_name = CString::new(flush_name).expect("flush symbol");
+        let flush_address = dlsym(handle, flush_name.as_ptr());
+        assert!(!flush_address.is_null(), "dlsym flush");
+        let flush: unsafe extern "C" fn() -> i32 = std::mem::transmute(flush_address);
+        assert_eq!(flush(), 0);
+        assert_eq!(dlclose(handle), 0);
+    }
+    let shards = completed_shards(&root.join("library-shards"));
+    assert_eq!(shards.len(), 1, "completed shards: {shards:?}");
+    let shard = parse_profile_shard(&fs::read(&shards[0]).expect("read completed shard"))
+        .expect("parse completed shard");
+    assert!(
+        shard
+            .counters
+            .iter()
+            .any(|record| { matches!(record.counter, CkProfileCounter::Scalar(16_000)) })
+    );
+    assert!(shard.counters.iter().any(|record| match &record.counter {
+        CkProfileCounter::Histogram { buckets, .. } => buckets[13] == 4,
+        _ => false,
+    }));
+    fs::remove_dir_all(root).expect("remove generation fixture");
+}
+
 #[test]
 fn profile_generation_ordinary_library_should_contain_no_generation_control_or_runtime() {
     let (root, input) = fixture("export fn answer() -> i32 { return 42; }");

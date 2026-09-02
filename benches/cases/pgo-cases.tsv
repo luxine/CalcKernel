@@ -1,0 +1,9 @@
+ckc-pgo-cases	1
+# name	source	abi	pgo-sensitive	multiversion-eligible	x86-tier	aarch64-tier	batch-calls
+# Closed eligible target universe: x86-64-v3, x86-64-v4, aarch64-sve, aarch64-sve2.
+# Input partitions are pinned separately as training, held-out, and adversarial TSV files.
+branch-layout	benches/fixtures/pgo/branch_layout.ck	slice-branch-u64	true	false	x86-64-v3	aarch64-sve	16
+call-constant-length	benches/fixtures/pgo/call_constant_length.ck	slice-fixed-u32	true	true	x86-64-v3	aarch64-sve	16
+trip-unroll-simd	benches/oracles/fixtures/map_u32.ck	slice-map-u32	true	true	x86-64-v3	aarch64-sve	16
+memory-bound	benches/oracles/fixtures/zip_u32.ck	slice-zip-u32	false	true	x86-64-v4	aarch64-sve2	16
+compute-bound	benches/fixtures/pgo/compute_bound.ck	slice-f64	true	true	x86-64-v4	aarch64-sve2	16

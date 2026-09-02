@@ -1292,6 +1292,51 @@ fn run_native_vector_frontier(
             .into_iter()
             .filter(|candidate| (candidate.function, candidate.header) == loop_identity)
             .collect::<Vec<_>>();
+        let profile_scalar_reason = pgo.and_then(|profile| {
+            let below_every_vector_threshold = |maximum: u32| {
+                loop_candidates
+                    .iter()
+                    .all(|candidate| maximum < candidate.minimum_trip)
+            };
+            if profile
+                .loop_maximum_trip(loop_identity.0, loop_identity.1)
+                .is_some_and(below_every_vector_threshold)
+            {
+                return Some("profile-short-trip-retains-scalar");
+            }
+            loop_candidates.first().and_then(|candidate| {
+                profile
+                    .slice_length_maximum(state.module(), candidate.function, candidate.bound)
+                    .filter(|maximum| below_every_vector_threshold(*maximum))
+                    .map(|_| "profile-short-slice-retains-scalar")
+            })
+        });
+        if let Some(profile_scalar_reason) = profile_scalar_reason {
+            for candidate in loop_candidates {
+                let charge = CandidateBudgetCharge::single(
+                    candidate.function,
+                    candidate.predicted_cost.scalar.saturating_add(8),
+                    candidate
+                        .predicted_cost
+                        .scalar
+                        .saturating_mul(2)
+                        .saturating_add(16),
+                );
+                audit.record_noncommitting_attempt(
+                    candidate.key,
+                    charge,
+                    CandidateDisposition::NonWinner,
+                    profile_scalar_reason,
+                )?;
+            }
+            result.scalar_fallbacks = result.scalar_fallbacks.saturating_add(1);
+            result.fallbacks.push(KirAnalysisFallback {
+                function: loop_identity.0,
+                pass: "loop-simd".to_string(),
+                reason: profile_scalar_reason.to_string(),
+            });
+            continue;
+        }
         let mut vector_alternatives = Vec::new();
         for candidate in loop_candidates {
             let prepared = match kir_passes::materialize_vectorization_trial(state, &candidate) {

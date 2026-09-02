@@ -172,7 +172,11 @@ pub fn recipe_digest(repo: &Path) -> Result<String, String> {
         "benches/runtime_replay.rs",
         "benches/ckc_perf.rs",
         "benches/vector_perf.rs",
+        "benches/pgo_perf.rs",
+        "benches/cases/pgo-cases.tsv",
+        "scripts/measure-v013-performance.py",
         "benches/oracles/manifest.toml",
+        "benches/oracles/pgo/manifest.toml",
     ]
     .into_iter()
     .map(|name| Ok((name, sha256_file(&repo.join(name))?)))

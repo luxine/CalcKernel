@@ -2789,6 +2789,11 @@ extern "C" int32_t ckc_llvm_function_set_profile(
         }
         if (cold != 0) {
             value->addFnAttr(llvm::Attribute::Cold);
+            // CK has already rejected size-increasing inline materialization
+            // for a checked profile-cold call path. Preserve that verified
+            // decision across LLVM's independent inliner while retaining the
+            // complete generic function as the semantic fallback.
+            value->addFnAttr(llvm::Attribute::NoInline);
         }
         return CKC_LLVM_OK;
     });

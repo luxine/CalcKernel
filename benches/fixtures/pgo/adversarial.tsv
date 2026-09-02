@@ -1,0 +1,8 @@
+ckc-pgo-inputs	1	adversarial
+# case	record	length	seed-or-salt	parameter
+branch-layout	adversarial-zero	0	53	9
+branch-layout	adversarial-one	1	59	9
+call-constant-length	adversarial-fixed	4000	61	17
+trip-unroll-simd	adversarial-empty	0	67	0
+memory-bound	adversarial-empty	0	71	0
+compute-bound	adversarial-empty	0	73	1.0009765625

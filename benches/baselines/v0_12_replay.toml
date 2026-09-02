@@ -1,0 +1,14 @@
+schema_version = 1
+version = "0.12.0"
+commit = "1c2596da11242704cc6d875e969fc45cf58ea21d"
+compiler_identity = "calckernel 0.12.0 (1c2596da11242704cc6d875e969fc45cf58ea21d)"
+llvm_version = "22.1.8"
+rust_version = "1.90.0"
+cpu_policy = "baseline"
+
+[source_digests]
+branch-layout = "bb7ab8a6f45c32be20c7e1b205841a04dbc9aa472329fb9706623e37e7be75e5"
+call-constant-length = "7de1578c15469dcbce0a52cebae8bc04120bae69937710f3bec94034daf10938"
+trip-unroll-simd = "e9c5a60146eecdea795985a700f4fd55b0e1ee6e8acb1dc81848f3e6364c0a5e"
+memory-bound = "96ec127ce03d5f3a3b283d42bc068927b2440b72428aec91a6fe9eef96b4bf25"
+compute-bound = "273d820dba3f7ef6f14aa014149ee9ddde3e1511d486f3b68a6d5e275bab78d3"

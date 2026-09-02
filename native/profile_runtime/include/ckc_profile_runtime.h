@@ -27,6 +27,7 @@ CKC_PROFILE_HIDDEN int32_t __ck_profile_initialize(
     uint32_t digest_offset, const uint8_t *directory, uint32_t directory_length,
     uint64_t directory_identity_first, uint64_t directory_identity_second);
 CKC_PROFILE_HIDDEN void __ck_profile_increment(uint32_t site_index);
+CKC_PROFILE_HIDDEN void __ck_profile_add(uint32_t site_index, uint64_t value);
 CKC_PROFILE_HIDDEN void __ck_profile_observe(uint32_t site_index,
                                              uint32_t bucket_index);
 CKC_PROFILE_HIDDEN void __ck_profile_observe_u32(uint32_t site_index,

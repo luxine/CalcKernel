@@ -7,8 +7,8 @@ use crate::{
     CkProfileKirPlan, CkProfileObservation, CkProfileSiteId, ContractFactSet, FunctionId,
     InstructionId, KirConsumer, KirInstructionKind, KirModule, KirOptimizationLevel,
     KirPassManagerResult, KirPassRecord, KirSanitizerMode, KirTerminator, MirCompareOp, ProofArena,
-    profile_histogram_bucket_range, profile_site_dominant_outcome, validate_ck_profile_kir_plan,
-    validate_profile_analysis_for_optimizer,
+    ValueId, profile_histogram_bucket_range, profile_site_dominant_outcome,
+    validate_ck_profile_kir_plan, validate_profile_analysis_for_optimizer,
 };
 
 /// Closed profile-guided decision families. None of these records are safety facts.
@@ -105,6 +105,139 @@ impl CkPgoOptimizerPlan {
             .iter()
             .find(|hint| hint.function == function && hint.header == header)
             .map(|hint| hint.minimum_trip)
+    }
+
+    #[must_use]
+    pub(crate) fn loop_maximum_trip(&self, function: FunctionId, header: BlockId) -> Option<u32> {
+        self.loop_hints
+            .iter()
+            .find(|hint| hint.function == function && hint.header == header)
+            .map(|hint| hint.maximum_trip)
+    }
+
+    /// Returns the conservative upper end of a dominant slice-length bucket
+    /// only when the checked profile site still names the instruction that
+    /// defines this exact SSA loop bound. This can rank profitability, but it
+    /// never proves a bound or removes the generic scalar path.
+    #[must_use]
+    pub(crate) fn slice_length_maximum(
+        &self,
+        module: &KirModule,
+        function: FunctionId,
+        bound: ValueId,
+    ) -> Option<u32> {
+        let body = module
+            .functions
+            .iter()
+            .find(|candidate| candidate.id == function)?;
+        self.value_hints.iter().find_map(|hint| {
+            if hint.function != function
+                || !self.decisions.iter().any(|decision| {
+                    decision.site_id == hint.site_id
+                        && decision.accepted
+                        && decision.kind == CkPgoDecisionKind::SliceLength
+                })
+            {
+                return None;
+            }
+            let mut instructions = body
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter(|instruction| instruction.id == hint.instruction);
+            let instruction = instructions.next()?;
+            if instructions.next().is_some()
+                || !matches!(instruction.kind, KirInstructionKind::SliceLen { .. })
+                || instruction.results.first().map(|result| result.value) != Some(bound)
+            {
+                return None;
+            }
+            profile_histogram_bucket_range(hint.selected_class).map(|(_minimum, maximum)| maximum)
+        })
+    }
+
+    /// Returns whether `block` is the direct successor of an exact profiled
+    /// branch whose observed share is within the frozen schema-1 cold limit.
+    /// This is profitability guidance only: the block remains the generic
+    /// semantic fallback and is never treated as unreachable.
+    #[must_use]
+    pub(crate) fn block_is_profile_cold(
+        &self,
+        module: &KirModule,
+        function: FunctionId,
+        block: BlockId,
+    ) -> bool {
+        let Some(function_body) = module
+            .functions
+            .iter()
+            .find(|candidate| candidate.id == function)
+        else {
+            return false;
+        };
+        let cold_basis_points = u128::from(CkProfileContract::schema1().cold_basis_points);
+        self.branches.iter().any(|profile| {
+            if profile.function != function {
+                return false;
+            }
+            let Some(branch_block) = function_body
+                .blocks
+                .iter()
+                .find(|candidate| candidate.id == profile.block)
+            else {
+                return false;
+            };
+            let KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } = &branch_block.terminator
+            else {
+                return false;
+            };
+            let (target, count) = if then_edge.target == block {
+                (then_edge.target, profile.then_count)
+            } else if else_edge.target == block {
+                (else_edge.target, profile.else_count)
+            } else {
+                return false;
+            };
+            let total = u128::from(profile.then_count) + u128::from(profile.else_count);
+            target == block && total != 0 && u128::from(count) * 10_000 <= total * cold_basis_points
+        })
+    }
+
+    /// Returns whether every remaining direct call to `callee` is contained in
+    /// a checked profile-cold block. At least one call is required. The result
+    /// can guide LLVM placement/inlining, but never removes the callee.
+    #[must_use]
+    #[cfg_attr(not(feature = "native-toolchain"), allow(dead_code))]
+    pub(crate) fn function_is_profile_cold(&self, module: &KirModule, callee: FunctionId) -> bool {
+        let Some(callee_name) = module
+            .functions
+            .iter()
+            .find(|function| function.id == callee)
+            .map(|function| function.name.as_str())
+        else {
+            return false;
+        };
+        let mut found = false;
+        for caller in &module.functions {
+            for block in &caller.blocks {
+                for instruction in &block.instructions {
+                    if matches!(
+                        &instruction.kind,
+                        KirInstructionKind::Call { function_name, .. }
+                            if function_name == callee_name
+                    ) {
+                        found = true;
+                        if !self.block_is_profile_cold(module, caller.id, block.id) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        found
     }
 }
 
@@ -228,22 +361,27 @@ pub fn validate_pgo_plan_for_kir(
         }
     }
     for branch in &plan.branches {
-        let block = module
+        let function = module
             .functions
             .iter()
             .find(|function| function.id == branch.function)
-            .and_then(|function| {
-                function
-                    .blocks
-                    .iter()
-                    .find(|block| block.id == branch.block)
-            })
-            .ok_or_else(|| "PGO metadata names a missing branch block".to_string())?;
-        let instruction = block
-            .instructions
+            .ok_or_else(|| "PGO metadata names a missing branch function".to_string())?;
+        let block = function
+            .blocks
             .iter()
-            .find(|instruction| instruction.id == branch.instruction)
+            .find(|block| block.id == branch.block)
+            .ok_or_else(|| "PGO metadata names a missing branch block".to_string())?;
+        let mut instructions = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(|instruction| instruction.id == branch.instruction);
+        let instruction = instructions
+            .next()
             .ok_or_else(|| "PGO metadata names a missing compare".to_string())?;
+        if instructions.next().is_some() {
+            return Err("PGO metadata compare mapping is ambiguous".to_string());
+        }
         let condition = instruction
             .results
             .first()
@@ -270,6 +408,23 @@ pub fn validate_pgo_plan_for_kir(
         }
     }
     Ok(())
+}
+
+/// Projects checked workload guidance onto one independently materialized KIR
+/// module, conservatively dropping every site whose exact mapping is absent.
+/// This lets separately lowered multiversion modules retain valid PGO guidance
+/// without guessing mappings for functions outside their closed root.
+pub fn project_pgo_plan_for_kir(
+    module: &KirModule,
+    plan: &CkPgoOptimizerPlan,
+) -> Result<CkPgoOptimizerPlan, String> {
+    if plan.audit_digest != optimizer_plan_digest(plan) {
+        return Err("PGO metadata audit digest mismatch".to_string());
+    }
+    let mut projected = plan.clone();
+    reconcile_profile_mappings(module, &mut projected);
+    validate_pgo_plan_for_kir(module, &projected)?;
+    Ok(projected)
 }
 
 fn validate_profile_boundary(
@@ -927,35 +1082,42 @@ fn reconcile_profile_mappings(module: &KirModule, plan: &mut CkPgoOptimizerPlan)
 }
 
 fn exact_branch_mapping(module: &KirModule, profile: &CkPgoBranchProfile) -> bool {
-    let Some(block) = module
+    let Some(function) = module
         .functions
         .iter()
         .find(|function| function.id == profile.function)
-        .and_then(|function| {
-            function
-                .blocks
-                .iter()
-                .find(|block| block.id == profile.block)
-        })
     else {
         return false;
     };
-    let Some(condition) = block
-        .instructions
+    let Some(block) = function
+        .blocks
         .iter()
-        .find(|instruction| instruction.id == profile.instruction)
+        .find(|block| block.id == profile.block)
+    else {
+        return false;
+    };
+    let mut instructions = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| instruction.id == profile.instruction);
+    let Some(condition) = instructions
+        .next()
         .and_then(|instruction| instruction.results.first())
         .map(|result| result.value)
     else {
         return false;
     };
-    matches!(
-        block.terminator,
-        KirTerminator::Branch {
-            condition: branch_condition,
-            ..
-        } if branch_condition == condition
-    )
+    if instructions.next().is_some() {
+        return false;
+    }
+    let Some(branch_condition) = (match &block.terminator {
+        KirTerminator::Branch { condition, .. } => Some(*condition),
+        KirTerminator::Return { .. } | KirTerminator::Jump { .. } => None,
+    }) else {
+        return false;
+    };
+    condition == branch_condition
 }
 
 fn optimizer_plan_digest(plan: &CkPgoOptimizerPlan) -> [u8; 32] {

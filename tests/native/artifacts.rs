@@ -140,6 +140,24 @@ fn native_release_candidate_stage10_set_should_include_private_runtime_closure()
     );
 }
 
+#[test]
+fn native_final_acceptance_set_should_include_private_runtime_closure() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/native-acceptance/v0.13-final");
+    write_native_acceptance_artifact_set(&root);
+    let suffix = if NativePlatform::host() == NativePlatform::Windows {
+        "obj"
+    } else {
+        "o"
+    };
+    for stem in ["profile_runtime", "dispatch_runtime"] {
+        assert!(
+            root.join("runtime")
+                .join(format!("{stem}.{suffix}"))
+                .is_file()
+        );
+    }
+}
+
 pub(super) fn write_native_acceptance_artifact_set(root: &Path) {
     let runtime_dir = root.join("runtime");
     fs::create_dir_all(&runtime_dir).expect("create native acceptance directory");

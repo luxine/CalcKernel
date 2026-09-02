@@ -137,7 +137,10 @@ int32_t __ck_profile_initialize(
   return status;
 }
 
-static void ck_profile_increment_cell(uint32_t index) {
+static void ck_profile_add_cell(uint32_t index, uint64_t value) {
+  if (value == 0u) {
+    return;
+  }
   if (atomic_load_explicit(&ck_profile_initialize_state,
                            memory_order_acquire) != 2u ||
       index >= ck_profile_state.counter_count) {
@@ -150,9 +153,16 @@ static void ck_profile_increment_cell(uint32_t index) {
       atomic_store_explicit(&ck_profile_overflowed, 1u, memory_order_relaxed);
       return;
     }
+    const uint64_t next = value > UINT64_MAX - observed
+                              ? UINT64_MAX
+                              : observed + value;
     if (atomic_compare_exchange_weak_explicit(
-            counter, &observed, observed + 1u, memory_order_relaxed,
+            counter, &observed, next, memory_order_relaxed,
             memory_order_relaxed)) {
+      if (next == UINT64_MAX) {
+        atomic_store_explicit(&ck_profile_overflowed, 1u,
+                              memory_order_relaxed);
+      }
       return;
     }
   }
@@ -160,7 +170,13 @@ static void ck_profile_increment_cell(uint32_t index) {
 
 void __ck_profile_increment(uint32_t site_index) {
   if (site_index < ck_profile_state.site_count) {
-    ck_profile_increment_cell(ck_profile_state.site_first[site_index]);
+    ck_profile_add_cell(ck_profile_state.site_first[site_index], 1u);
+  }
+}
+
+void __ck_profile_add(uint32_t site_index, uint64_t value) {
+  if (site_index < ck_profile_state.site_count) {
+    ck_profile_add_cell(ck_profile_state.site_first[site_index], value);
   }
 }
 
@@ -172,8 +188,8 @@ void __ck_profile_observe(uint32_t site_index, uint32_t bucket_index) {
   if (bucket_index >= count) {
     bucket_index = count - 1u;
   }
-  ck_profile_increment_cell(ck_profile_state.site_first[site_index] +
-                            bucket_index);
+  ck_profile_add_cell(ck_profile_state.site_first[site_index] + bucket_index,
+                      1u);
 }
 
 static uint32_t ck_profile_histogram_bucket(uint32_t value) {

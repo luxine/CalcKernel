@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Prepare an independently built pinned V0.11 or retained V0.10 replay bundle."""
+"""Prepare an independently built pinned V0.12, V0.11, or retained V0.10 replay bundle."""
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import os
 import pathlib
 import platform
@@ -12,8 +14,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 
+V012_COMMIT = "1c2596da11242704cc6d875e969fc45cf58ea21d"
+V012_MANIFEST_SHA256 = "4f96c75f28f92dfb493ef944bca42b14a096363623e7d22b7a7390bb2d02bb13"
 BASELINE_COMMIT = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
 BASELINE_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
 V010_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
@@ -31,8 +36,20 @@ RECIPE_FILES = (
     "benches/runtime_replay.rs",
     "benches/ckc_perf.rs",
     "benches/vector_perf.rs",
+    "benches/pgo_perf.rs",
+    "benches/cases/pgo-cases.tsv",
+    "scripts/measure-v013-performance.py",
     "benches/oracles/manifest.toml",
+    "benches/oracles/pgo/manifest.toml",
 )
+
+V012_SOURCES = {
+    "branch-layout": "benches/fixtures/pgo/branch_layout.ck",
+    "call-constant-length": "benches/fixtures/pgo/call_constant_length.ck",
+    "trip-unroll-simd": "benches/oracles/fixtures/map_u32.ck",
+    "memory-bound": "benches/oracles/fixtures/zip_u32.ck",
+    "compute-bound": "benches/fixtures/pgo/compute_bound.ck",
+}
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -41,6 +58,17 @@ def sha256_file(path: pathlib.Path) -> str:
 
 
 def baseline_identity(version: str) -> dict:
+    if version == "0.12":
+        return {
+            "version": version,
+            "commit": V012_COMMIT,
+            "manifest": "v0_12_replay.toml",
+            "manifestSha256": V012_MANIFEST_SHA256,
+            "compiler": "ckc-v012",
+            "header": "ckc-v012-runtime-replay",
+            "runtimeAbi": "2",
+            "adapters": (),
+        }
     if version == "0.11":
         return {
             "version": version,
@@ -66,7 +94,7 @@ def baseline_identity(version: str) -> dict:
     raise ValueError(f"unsupported replay baseline {version!r}")
 
 
-def validate_pins(repo: pathlib.Path, version: str = "0.11") -> dict:
+def validate_pins(repo: pathlib.Path, version: str = "0.12") -> dict:
     identity = baseline_identity(version)
     baseline = repo / "benches/baselines"
     manifest_path = baseline / identity["manifest"]
@@ -80,6 +108,11 @@ def validate_pins(repo: pathlib.Path, version: str = "0.11") -> dict:
         if sha256_file(baseline / name) != digest:
             raise ValueError(f"pinned replay adapter has changed: {name}")
     source_digests = manifest.get("source_digests", manifest)
+    if version == "0.12":
+        for case, relative in V012_SOURCES.items():
+            if sha256_file(repo / relative) != source_digests.get(case):
+                raise ValueError(f"pinned replay CK source has changed: {case}")
+        return manifest
     for case in RUNTIME_CASES:
         source = repo / "tests/fixtures/performance/native" / f"{case}.ck"
         expected = source_digests.get(case, manifest.get(f"source_digest_{case}"))
@@ -96,7 +129,7 @@ def validate_pins(repo: pathlib.Path, version: str = "0.11") -> dict:
 
 
 def validate_compiler_output(
-    text: str, target: str, manifest_sha256: str, version: str = "0.11"
+    text: str, target: str, manifest_sha256: str, version: str = "0.12"
 ) -> None:
     identity = baseline_identity(version)
     lines = text.splitlines()
@@ -115,8 +148,11 @@ def validate_compiler_output(
         "LLVM manifest SHA-256": manifest_sha256,
         "Target": target,
     }
-    if set(fields) != set(expected) | {"Code generator", "ORC object layer"}:
+    required = set(expected) | {"Code generator", "ORC object layer"}
+    if version in {"0.10", "0.11"} and set(fields) != required:
         raise ValueError("incomplete or unknown verbose compiler identity")
+    if version == "0.12" and not required.issubset(fields):
+        raise ValueError("incomplete verbose compiler identity")
     for field, value in expected.items():
         if fields[field] != value:
             raise ValueError(f"replay compiler {field} does not match pinned identity")
@@ -133,6 +169,23 @@ def recipe_digest(repo: pathlib.Path) -> str:
     return named_digest((name, sha256_file(repo / name)) for name in RECIPE_FILES)
 
 
+def deterministic_archive(output: pathlib.Path, files: list[tuple[str, pathlib.Path]]) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for name, source in sorted(files):
+            data = source.read_bytes()
+            entry = tarfile.TarInfo(name)
+            entry.size = len(data)
+            entry.mtime = 0
+            entry.uid = entry.gid = 0
+            entry.uname = entry.gname = ""
+            entry.mode = 0o755 if name.endswith("/ckc") else 0o644
+            archive.addfile(entry, io.BytesIO(data))
+    with output.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+            compressed.write(buffer.getvalue())
+
+
 def host_identity() -> tuple[str, str, str]:
     os_name = {"Linux": "linux", "Darwin": "macos"}.get(platform.system())
     arch = {"x86_64": "x86_64", "amd64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}.get(platform.machine().lower())
@@ -143,7 +196,7 @@ def host_identity() -> tuple[str, str, str]:
     return target, triple, ".so" if os_name == "linux" else ".dylib"
 
 
-def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.11") -> None:
+def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> None:
     repo = repo.resolve()
     out = out.absolute()
     if os.path.lexists(out):
@@ -226,20 +279,31 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.11") -> Non
         compiler_digest = sha256_file(compiler)
         shutil.copy2(compiler, out / identity["compiler"])
         artifacts = []
-        for mode in ("unchecked", "checked"):
-            for case in RUNTIME_CASES:
-                fixture = repo / "tests/fixtures/performance/native" / f"{case}.ck"
-                source_digests = manifest.get("source_digests", manifest)
-                expected_source = source_digests.get(case, manifest.get(f"source_digest_{case}"))
-                if sha256_file(fixture) != expected_source:
-                    raise ValueError(f"runtime source changed during preparation: {case}")
-                filename = f"{case}-{mode}{suffix}"
-                library = out / filename
-                run([compiler, "build", fixture, "--kind", "dynamic", "--out", library,
-                     "-O3", "--cpu", "baseline", "--overflow", mode, "--bounds", mode], source)
-                if not library.is_file() or library.is_symlink() or library.stat().st_size == 0:
-                    raise ValueError(f"baseline did not emit a nonempty library: {filename}")
-                artifacts.append((mode, case, filename, str(library.stat().st_size), sha256_file(library)))
+        if version == "0.12":
+            archive = out / "ckc-v012-distribution.tar.gz"
+            deterministic_archive(
+                archive,
+                [
+                    ("ckc-v0.12/ckc", out / identity["compiler"]),
+                    ("ckc-v0.12/LICENSE", source / "LICENSE"),
+                    ("ckc-v0.12/THIRD_PARTY_NOTICES.md", source / "THIRD_PARTY_NOTICES.md"),
+                ],
+            )
+        else:
+            for mode in ("unchecked", "checked"):
+                for case in RUNTIME_CASES:
+                    fixture = repo / "tests/fixtures/performance/native" / f"{case}.ck"
+                    source_digests = manifest.get("source_digests", manifest)
+                    expected_source = source_digests.get(case, manifest.get(f"source_digest_{case}"))
+                    if sha256_file(fixture) != expected_source:
+                        raise ValueError(f"runtime source changed during preparation: {case}")
+                    filename = f"{case}-{mode}{suffix}"
+                    library = out / filename
+                    run([compiler, "build", fixture, "--kind", "dynamic", "--out", library,
+                         "-O3", "--cpu", "baseline", "--overflow", mode, "--bounds", mode], source)
+                    if not library.is_file() or library.is_symlink() or library.stat().st_size == 0:
+                        raise ValueError(f"baseline did not emit a nonempty library: {filename}")
+                    artifacts.append((mode, case, filename, str(library.stat().st_size), sha256_file(library)))
         if source_state() != original_state:
             raise ValueError("baseline source changed after applying the exact approved adapters")
         validate_pins(repo, identity["version"])
@@ -262,9 +326,14 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.11") -> Non
             "sourceDiffSha256": original_state[1],
             "baselineManifestSha256": identity["manifestSha256"],
         }
-        records = [f"{identity['header']}\t1"]
+        records = [f"{identity['header']}\t{2 if version == '0.12' else 1}"]
         records.extend(f"{name}\t{value}" for name, value in metadata.items())
         records.extend("artifact\t" + "\t".join(artifact) for artifact in artifacts)
+        if version == "0.12":
+            records.append(
+                "distributionArchive\tckc-v012-distribution.tar.gz\t"
+                f"{archive.stat().st_size}\t{sha256_file(archive)}"
+            )
         (out / "replay.tsv").write_text("\n".join(records) + "\n", encoding="utf-8", newline="\n")
     print(f"Prepared pinned V{identity['version']} replay bundle: {out}", flush=True)
 
@@ -272,7 +341,7 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.11") -> Non
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=pathlib.Path, help="new owned bundle output directory")
-    parser.add_argument("--baseline", choices=("0.11", "0.10"), default="0.11")
+    parser.add_argument("--baseline", choices=("0.12", "0.11", "0.10"), default="0.12")
     args = parser.parse_args()
     try:
         prepare(pathlib.Path(__file__).resolve().parents[1], args.out, args.baseline)

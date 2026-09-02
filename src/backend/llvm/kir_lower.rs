@@ -305,8 +305,10 @@ fn lower_native_kir_module_inner<'context>(
         .map(|plan| {
             plan.functions
                 .iter()
-                .filter(|profile| profile.confident)
-                .map(|profile| (profile.function, profile))
+                .filter_map(|profile| {
+                    let cold = plan.function_is_profile_cold(kir, profile.function);
+                    (profile.confident || cold).then_some((profile.function, (profile, cold)))
+                })
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
@@ -420,8 +422,8 @@ fn lower_native_kir_module_inner<'context>(
                 &params,
                 false,
             )?;
-            if let Some(profile) = pgo_functions.get(&kir_function.id) {
-                handle.set_profile(profile.entries, profile.hot, false)?;
+            if let Some((profile, cold)) = pgo_functions.get(&kir_function.id) {
+                handle.set_profile(profile.entries, profile.hot, *cold)?;
             }
             for attribute in contract_attributes
                 .get(&kir_function.id)
@@ -502,6 +504,7 @@ struct NativeProfileCandidate {
 struct NativeProfileRuntime<'module> {
     ensure: NativeFunction<'module>,
     increment: NativeFunction<'module>,
+    add: NativeFunction<'module>,
     observe_u32: NativeFunction<'module>,
     observe_trip: NativeFunction<'module>,
     candidate_i64: NativeFunction<'module>,
@@ -646,6 +649,12 @@ fn add_native_profile_support<'module, 'context>(
     )?;
     let increment =
         module.add_function("__ck_profile_increment", types.void, &[types.i32], true)?;
+    let add = module.add_function(
+        "__ck_profile_add",
+        types.void,
+        &[types.i32, types.i64],
+        true,
+    )?;
     let observe_u32 = module.add_function(
         "__ck_profile_observe_u32",
         types.void,
@@ -740,6 +749,7 @@ fn add_native_profile_support<'module, 'context>(
     let mut runtime = NativeProfileRuntime {
         ensure,
         increment,
+        add,
         observe_u32,
         observe_trip,
         candidate_i64,
@@ -2921,10 +2931,12 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             .collect::<Vec<_>>();
         let observe_trip = profile.observe_trip;
         let increment = profile.increment;
+        let add = profile.add;
         let edge_site = profile
             .edges
             .get(&(self.function.id, source, target))
             .copied();
+        let mut aggregate_edge = false;
         for event in loop_events {
             let storage =
                 self.loop_storage.get(&event.site).copied().ok_or_else(|| {
@@ -2939,6 +2951,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                     self.builder
                         .binary(BridgeBinaryOp::Add, value, one, "ck.profile.loop.next")?;
                 self.builder.store(value, storage.pointer)?;
+                aggregate_edge |= event.latches.len() == 1 && edge_site.is_some();
             }
             if event.exits.contains(&(source, target)) {
                 let value = self.builder.load(
@@ -2950,11 +2963,24 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                     .builder
                     .const_int(self.types.i32, &event.site.to_string())?;
                 let _ = self.builder.call(observe_trip, &[site, value], "")?;
+                if event.latches.len() == 1 {
+                    let latch = event.latches[0];
+                    if let Some(edge_site) = profile
+                        .edges
+                        .get(&(self.function.id, latch, event.header))
+                        .copied()
+                    {
+                        let edge_site = self
+                            .builder
+                            .const_int(self.types.i32, &edge_site.to_string())?;
+                        let _ = self.builder.call(add, &[edge_site, value], "")?;
+                    }
+                }
                 let zero = self.builder.const_int(self.types.i64, "0")?;
                 self.builder.store(zero, storage.pointer)?;
             }
         }
-        if let Some(site) = edge_site {
+        if let Some(site) = edge_site.filter(|_| !aggregate_edge) {
             let site = self.builder.const_int(self.types.i32, &site.to_string())?;
             let _ = self.builder.call(increment, &[site], "")?;
         }

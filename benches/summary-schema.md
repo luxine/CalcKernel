@@ -91,3 +91,68 @@ candidate release compiler, then run the benchmark and
 `scripts/check-native-performance.py`. Changing a source, identity, manifest,
 statistic, corpus, exclusion, or threshold is a reviewed contract change; a
 failing candidate never authorizes weakening this schema.
+
+## PGO and multiversion release gate — schema 8
+
+`target/ckc-perf/v0.13-results.json` is the fail-closed `schemaVersion: 8`
+report for candidate `0.13.0`. It embeds the independently checked schema-7
+report above, so schema 8 extends rather than replaces every 0.12 cumulative
+gate. The report binds the exact candidate SHA and compiler bytes; exact 0.12
+commit `1c2596da11242704cc6d875e969fc45cf58ea21d`, compiler, replay manifest, and
+deterministic distribution archive; LLVM/Clang 22.1.8 and its compiler-rt
+profile runtime; Rust 1.90.0; host hardware; and a canonical enhanced-tier
+capability manifest. Missing enhanced hardware is a failed required gate, not a
+skipped or baseline-only result.
+
+The workload is the closed five-case manifest in `benches/cases/pgo-cases.tsv`:
+branch/layout, call/constant/length, trip/unroll/SIMD, memory-bound, and
+compute-bound. Canonically hashed training, held-out, and adversarial inputs
+remain disjoint. Training alone produces two raw CK shards and two final CK
+profiles per case (baseline and multiversion); timing uses held-out inputs only;
+all three splits pass CK/Clang-PGO/Rust-PGO differential correctness before
+timing. The PGO oracle manifest pins the C11 and Rust 2024 source bytes, strict
+floating policy, safety preconditions, and UB audit.
+
+`rotating-eight-channel-v1` interleaves ordinary 0.13, exact 0.12 replay, CK PGO,
+CK multiversion, CK combined PGO+multiversion, selected-direct CK, Clang PGO,
+and Rust PGO. Dynamic loading, symbol lookup, and dispatch resolution are
+outside steady timing. Three warm-up rows and twenty sample rows are retained;
+each sample is the minimum of seven equal batches and each result uses the upper
+median. At least 80% of a stream must be within 25% of its median. Instability
+invalidates the complete evidence and never permits selective reruns.
+
+The frozen throughput limits are: ordinary geometric/individual slowdown
+versus exact 0.12 at most 2%/5%; CK PGO geometric improvement at least 5% with
+at most 3% individual slowdown; eligible dispatch geometric improvement at
+least 8% with at most 3% individual slowdown, and at least 98% selected-direct
+geometric throughput with at most 5% individual slowdown; combined geometric/
+individual slowdown versus the faster CK mode at most 2%/5%; and combined CK
+at least 95% of the faster Clang/Rust PGO geometric throughput and 90% for each
+accepted kernel. Generation execution is at most 5x ordinary.
+
+PGO/multiversion/combined source-to-object geometric ratios are at most
+1.5x/2.5x/3.5x ordinary and individual ratios at most 2x/3x/4x. Their aggregate
+artifact ratios are at most 1.25x/2x/2x and individual ratios at most
+1.5x/2.5x/2.5x. The canonical candidate distribution archive is at most 15%
+larger than the exact 0.12 archive. Every shard, profile, target set, variant,
+sample order, raw sample, compiler, archive, recipe, source, and capability is
+retained with exact bytes and SHA-256.
+
+Prepare exact 0.12, 0.11, and 0.10 bundles explicitly, build the candidate,
+pass schema 7, then collect and independently check schema 8:
+
+```sh
+python3 scripts/prepare-performance-replay.py --baseline 0.12 --out target/performance-runtime-replay-v012
+python3 scripts/prepare-performance-replay.py --baseline 0.11 --out target/performance-runtime-replay-v011
+python3 scripts/prepare-performance-replay.py --baseline 0.10 --out target/performance-runtime-replay
+cargo bench --features native-toolchain --bench ckc_perf -- --case proof --task check --cpu baseline
+cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
+python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json
+cargo bench --features native-toolchain --bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json
+python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json
+```
+
+The commands require the repository-pinned `CKC_LLVM_PREFIX`,
+`CKC_CLANG_ORACLE`, `CKC_CANDIDATE_COMPILER`, and corresponding replay bundle
+environment variables. A benchmark only writes raw evidence; only the
+independent checker may declare it accepted.

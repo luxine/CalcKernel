@@ -1,8 +1,9 @@
 use crate::{
-    EmitLlvmOptions, FunctionId, KirConsumer, KirMultiversionBundle,
+    CkPgoOptimizerPlan, EmitLlvmOptions, FunctionId, KirConsumer, KirMultiversionBundle,
     KirMultiversionPlanningRequest, KirMultiversionPlatform, KirMultiversionTargetSet,
     KirMultiversionTargetTier, KirMultiversionTierId, KirOptimizationLevel,
-    check_kir_multiversion_bundle, materialized_tier, run_kir_pass_pipeline,
+    check_kir_multiversion_bundle, materialized_tier, project_pgo_plan_for_kir,
+    run_kir_pass_pipeline,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -249,6 +250,7 @@ pub fn emit_native_multiversion_objects(
     targets: &NativeMultiversionTargetSet,
     request: &KirMultiversionPlanningRequest,
     bundle: &KirMultiversionBundle,
+    pgo: Option<&CkPgoOptimizerPlan>,
     options: &EmitLlvmOptions,
 ) -> Result<NativeMultiversionObjectBundle, NativeError> {
     check_kir_multiversion_bundle(request, bundle).map_err(error)?;
@@ -260,7 +262,7 @@ pub fn emit_native_multiversion_objects(
     let baseline_target = targets
         .target(KirMultiversionTierId::Baseline)
         .ok_or_else(|| error("multiversion baseline TargetMachine is missing"))?;
-    let baseline_result =
+    let mut baseline_result =
         run_kir_pass_pipeline(bundle.baseline.clone(), KirOptimizationLevel::O0, None);
     if !baseline_result.errors.is_empty() {
         return Err(error(format!(
@@ -268,6 +270,9 @@ pub fn emit_native_multiversion_objects(
             baseline_result.errors.join("; ")
         )));
     }
+    baseline_result.pgo = pgo
+        .map(|plan| project_pgo_plan_for_kir(&bundle.baseline, plan).map_err(error))
+        .transpose()?;
     let baseline = baseline_target.emit_object(
         lower_native_multiversion_baseline_module(
             context,
@@ -292,7 +297,7 @@ pub fn emit_native_multiversion_objects(
             let target = targets
                 .target(variant.tier)
                 .ok_or_else(|| error("multiversion variant TargetMachine is missing"))?;
-            let result =
+            let mut result =
                 run_kir_pass_pipeline(variant.module.clone(), KirOptimizationLevel::O0, None);
             if !result.errors.is_empty() {
                 return Err(error(format!(
@@ -300,6 +305,9 @@ pub fn emit_native_multiversion_objects(
                     result.errors.join("; ")
                 )));
             }
+            result.pgo = pgo
+                .map(|plan| project_pgo_plan_for_kir(&variant.module, plan).map_err(error))
+                .transpose()?;
             let object = target.emit_object(
                 lower_native_multiversion_variant_module(
                     context, target, &result, variant, options,

@@ -156,6 +156,7 @@ fn multiversion_dispatch_named_objects_should_remain_separate_and_canonical() {
         &targets,
         &request,
         &bundle,
+        None,
         &EmitLlvmOptions::default(),
     )
     .expect("separate named objects");

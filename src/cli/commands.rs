@@ -1187,6 +1187,7 @@ fn run_multiversion_planning_build(
             &targets,
             &request,
             &bundle,
+            compiled.result.pgo.as_ref(),
             &EmitLlvmOptions {
                 source_file_name: None,
                 target_triple: args.target.clone(),

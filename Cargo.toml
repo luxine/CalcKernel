@@ -23,6 +23,11 @@ name = "ckc_perf"
 path = "benches/ckc_perf.rs"
 harness = false
 
+[[bench]]
+name = "pgo_perf"
+path = "benches/pgo_perf.rs"
+harness = false
+
 [dependencies]
 num-bigint = "0.4"
 sha2 = "0.10"

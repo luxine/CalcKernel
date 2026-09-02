@@ -56,9 +56,17 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Gate performance schemas and mutation contracts without LLVM
+        run: cargo test --locked --test performance -- --nocapture
+      - name: Gate independent fail-closed performance checkers
+        run: python3 -B -m unittest discover -s tests/performance -p '*_test.py'
+      - name: Gate the exact ten-job CI contract
+        run: cargo test --locked --test contracts ci_ -- --nocapture
       - run: cargo test --locked
       - name: Reject false pass preservation in the release verifier
         run: cargo test --release --locked --lib verifier_cache_
+      - name: Require release documentation inputs
+        run: test -s docs/project/release-checklist.md && test -s docs/guides/performance.md && test -s docs/zh-CN/guides/performance.md
       - run: cargo build --release --locked
       - run: ./target/release/ckc --help
       - run: ./target/release/ckc check examples/core/scalar.ck
@@ -85,11 +93,21 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --all-features --locked
+      - name: Execute real profile generation runtime paths
+        run: cargo test --all-features --locked --test native profile_generation_ -- --nocapture
+      - name: Execute canonical raw-shard merge paths
+        run: cargo test --all-features --locked --test profile profile_merge_ -- --nocapture
+      - name: Execute real generate, merge, profile-use, and final artifact transaction
+        run: cargo test --all-features --locked --test cli pgo_build_use_should_train_validate_and_commit_profile_and_artifact_together -- --nocapture
       - run: cargo build --release --features native-toolchain --locked
       - name: Build native audit fixtures
         run: cargo test --all-features --locked --test native artifacts
+      - name: Build final 0.13 native audit fixture closure
+        run: cargo test --all-features --locked --test native native_final_acceptance_set_should_include_private_runtime_closure
       - name: Audit native artifacts and dependencies
-        run: scripts/audit-native-artifact.sh target/native-acceptance
+        run: |
+          scripts/audit-native-artifact.sh target/native-acceptance
+          scripts/audit-native-artifact.sh target/native-acceptance/v0.13-final
       - name: Audit JIT memory permissions
         run: scripts/audit-jit-memory.sh target/release/ckc
       - name: Test bridge ownership under ASan and UBSan
@@ -152,6 +170,19 @@ jobs:
         env:
           RUST_BACKTRACE: 1
         run: cargo test --all-features --locked --test native -- --nocapture
+      - name: Record target, fallback, detector, and named-object capability evidence
+        run: |
+          mkdir -p target/capability
+          cargo test --all-features --locked --test native variant_feature_target_profiles_should_be_explicit_and_contained -- --nocapture 2>&1 | tee 'target/capability/${{ matrix.name }}.log'
+          cargo test --all-features --locked --test native multiversion_dispatch_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
+          cargo test --all-features --locked --test native multiversion_artifact_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
+      - name: Upload host capability contract evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: capability-${{ matrix.name }}
+          path: target/capability/${{ matrix.name }}.log
+          if-no-files-found: error
       - name: Diagnose failed Darwin native suite
         if: failure() && runner.os == 'macOS' && steps.native-suite.outcome == 'failure'
         continue-on-error: true
@@ -203,6 +234,7 @@ jobs:
   performance:
     name: performance (${{ matrix.arch }})
     env:
+      CKC_V012_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay-v012
       CKC_V011_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay-v011
       CKC_V010_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay
       CKC_CANDIDATE_COMPILER: ${{ github.workspace }}/target/release/ckc
@@ -231,19 +263,25 @@ jobs:
           profile: oracle
       - name: Build exact candidate compiler used by size and compile-time gates
         run: cargo build --release --features native-toolchain --locked
-      - name: Audit pinned C and Rust vector oracles
-        run: python3 -B scripts/audit-performance-oracles.py
+      - name: Audit pinned C, Rust, PGO, differential, and UB oracle contracts
+        run: |
+          python3 -B scripts/audit-performance-oracles.py
+          python3 -B scripts/audit-performance-oracles.py --pgo
+      - name: Prepare independently built exact 0.12 compiler replay
+        run: python3 scripts/prepare-performance-replay.py --baseline 0.12 --out "$CKC_V012_RUNTIME_BUNDLE"
       - name: Prepare independently built pinned 0.11 compiler replay
-        run: python3 scripts/prepare-performance-replay.py --out "$CKC_V011_RUNTIME_BUNDLE"
+        run: python3 scripts/prepare-performance-replay.py --baseline 0.11 --out "$CKC_V011_RUNTIME_BUNDLE"
       - name: Prepare retained independently built pinned 0.10 compiler replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.10 --out "$CKC_V010_RUNTIME_BUNDLE"
-      - name: Gate baseline CPU policy
+      - name: Gate cumulative schema 7 and schema 8 on the same stable worker
         id: performance-gate
         run: |
           mkdir -p target/ckc-perf
           cargo bench --features native-toolchain --bench ckc_perf -- --case proof --task check --cpu baseline 2>&1 | tee target/ckc-perf/benchmark.log
           cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
-          python3 scripts/check-native-performance.py target/ckc-perf/results.json 2>&1 | tee target/ckc-perf/checker.log
+          python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json 2>&1 | tee target/ckc-perf/checker-schema7.log
+          cargo bench --features native-toolchain --bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/benchmark-schema8.log
+          python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/checker-schema8.log
       - name: Diagnose performance on the same worker without replacing the failed gate
         if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
         timeout-minutes: 20
@@ -255,6 +293,10 @@ jobs:
           name: performance-${{ matrix.arch }}
           path: |
             target/ckc-perf/
+            target/performance-runtime-replay-v012/ckc-v012
+            target/performance-runtime-replay-v012/ckc-v012-distribution.tar.gz
+            target/performance-runtime-replay-v012/replay.tsv
+            target/performance-runtime-replay-v012/preparation.log
             target/performance-runtime-replay-v011/ckc-v011
             target/performance-runtime-replay-v011/replay.tsv
             target/performance-runtime-replay-v011/preparation.log

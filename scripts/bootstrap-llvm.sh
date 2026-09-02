@@ -74,8 +74,19 @@ case "$ckc_target" in
 esac
 
 ckc_projects="lld"
+ckc_runtime_args=()
 if [[ "$ckc_profile" == "oracle" ]]; then
   ckc_projects="clang;lld"
+  ckc_runtime_args=(
+    -DLLVM_ENABLE_RUNTIMES=compiler-rt
+    -DCOMPILER_RT_BUILD_BUILTINS=OFF
+    -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+    -DCOMPILER_RT_BUILD_XRAY=OFF
+    -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
+    -DCOMPILER_RT_BUILD_MEMPROF=OFF
+    -DCOMPILER_RT_BUILD_ORC=OFF
+    -DCOMPILER_RT_BUILD_PROFILE=ON
+  )
 fi
 
 ckc_platform_args=()
@@ -107,6 +118,7 @@ cmake -S "$ckc_build_dir/source/llvm" -B "$ckc_build_dir/build" -G Ninja \
   -DLLVM_INCLUDE_TESTS=OFF \
   -DLLVM_INCLUDE_BENCHMARKS=OFF \
   -DLLVM_INCLUDE_EXAMPLES=OFF \
+  "${ckc_runtime_args[@]}" \
   "${ckc_platform_args[@]}"
 
 if [[ -n "$ckc_jobs" ]]; then
@@ -136,6 +148,16 @@ fi
 if [[ "$ckc_profile" == "oracle" && ! -x "$ckc_prefix/bin/clang" ]]; then
   echo "oracle prefix is missing Clang" >&2
   exit 1
+fi
+if [[ "$ckc_profile" == "oracle" ]]; then
+  [[ -x "$ckc_prefix/bin/llvm-profdata" ]] || {
+    echo "oracle prefix is missing llvm-profdata" >&2
+    exit 1
+  }
+  if ! find "$ckc_prefix/lib/clang" -type f \( -name 'libclang_rt.profile*.a' -o -name 'clang_rt.profile*.lib' \) -print -quit | grep -q .; then
+    echo "oracle prefix is missing the pinned compiler-rt profile runtime" >&2
+    exit 1
+  fi
 fi
 
 ckc_components=(core native orcjit nativecodegen lto)

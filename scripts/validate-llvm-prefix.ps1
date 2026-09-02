@@ -115,5 +115,13 @@ if ($CkcProfile -eq "oracle") {
     if (-not (Test-Path -LiteralPath $clang -PathType Leaf)) { throw "missing Clang oracle" }
     $clangVersion = & $clang --version
     if ($LASTEXITCODE -ne 0 -or "$clangVersion" -notmatch '\bclang version 22\.1\.8\b') { throw "unexpected Clang oracle version" }
+    $profdataName = if ($isMsvc) { "llvm-profdata.exe" } else { "llvm-profdata" }
+    if (-not (Test-Path -LiteralPath (Join-Path $Prefix "bin/$profdataName") -PathType Leaf)) {
+        throw "missing llvm-profdata oracle tool"
+    }
+    $profileRuntime = Get-ChildItem -LiteralPath (Join-Path $Prefix "lib/clang") -Recurse -File |
+        Where-Object { $_.Name -like "clang_rt.profile*.lib" -or $_.Name -like "libclang_rt.profile*.a" } |
+        Select-Object -First 1
+    if ($null -eq $profileRuntime) { throw "missing compiler-rt profile runtime" }
 }
 Write-Output "LLVM prefix verified: $Target / $CkcProfile"
