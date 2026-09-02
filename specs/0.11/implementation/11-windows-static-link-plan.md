@@ -1105,7 +1105,7 @@ parser 在容器层拒绝额外 child，在 symbol 层用 brace depth 隔离 aux
 
 此前各 Task 中的“远程未签收”“等待矩阵”等措辞保留为当轮诊断记录，不覆盖本节。
 实现与证据候选 `202f950195b4d1160c60c0a518149617705910e3` 在 GitHub Actions run
-[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 完成同一 SHA
+[`33403148950`](https://github.com/luxine/CalcKernel/actions/runs/33403148950) 完成同一 SHA
 的完整十项矩阵。Windows x64 job `99524136536` 与 Windows ARM64 job `99524136649`
 均实际通过 fact `7/7`、Native `92/92`、CLI `22/22`、release compiler dependency audit、
 native artifact audit 和 JIT memory audit；job log SHA-256 分别为

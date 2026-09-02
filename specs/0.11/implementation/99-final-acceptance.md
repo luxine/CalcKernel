@@ -71,7 +71,7 @@
 ## 最终证据
 
 实现与证据候选 SHA `202f950195b4d1160c60c0a518149617705910e3` 已通过同 SHA workflow
-[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 的十项
+[`33403148950`](https://github.com/luxine/CalcKernel/actions/runs/33403148950) 的十项
 required jobs；详细 job ID、日志摘要与原生性能报告哈希见
 `11-release-candidate-acceptance.md` 的“最终同 SHA 验收”。两架构关键数值为：
 

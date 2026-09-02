@@ -514,8 +514,8 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
   新完整 recipe 构建或验收。Windows
   两架构的实际 bootstrap 路径包含新 recipe 前缀 `452e16daafeb9644`。随后从实时
   日志确认 release profile 的 compile-commands guard 通过：x64 共 2478 个、ARM64
-  共 2471 个 C/C++ 文件全部使用 `/MT`，分别见 [x64 实际记录](https://github.com/luxine/Rust_CalcKernel/actions/runs/33316188869/job/99269971157#step:4:295)
-  与 [ARM64 实际记录](https://github.com/luxine/Rust_CalcKernel/actions/runs/33316188869/job/99269971150#step:4:293)。
+  共 2471 个 C/C++ 文件全部使用 `/MT`，分别见 [x64 实际记录](https://github.com/luxine/CalcKernel/actions/runs/33316188869/job/99269971157#step:4:295)
+  与 [ARM64 实际记录](https://github.com/luxine/CalcKernel/actions/runs/33316188869/job/99269971150#step:4:293)。
   这不替代安装后 archive CRT、oracle profile、完整链接或 host suite；同 SHA 十项
   required jobs、两架构 MSVC 和总验收仍未签收。
 - AArch64 performance 的原 schema-6 checker 通过：unchecked Clang / 0.10 ratio
@@ -625,7 +625,7 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 
 ### I22 提交远程矩阵（`5895242`，最终取消，未整体通过）
 
-- [run 33302635528](https://github.com/luxine/Rust_CalcKernel/actions/runs/33302635528)
+- [run 33302635528](https://github.com/luxine/CalcKernel/actions/runs/33302635528)
   针对同一 `5895242cbd64b5212ecb61e24cb3ca1d43aa5502`，最终核实 7/10 必需项
   success：quality `99233477544`、native integration `99233477391`、Linux ARM
   `99233477579` / x64 `99233477538`、Darwin ARM `99233477589`、performance ARM
@@ -745,7 +745,7 @@ I20 本地已通过；`ae7a130` 的两个远程性能 job 已通过 I14/I19/I20 
 此前各 Ixx 段落中的“未签收”“等待最终矩阵”等措辞是对应执行轮次的时点记录，
 不覆盖本节的最终关闭结论。实现与证据候选提交
 `202f950195b4d1160c60c0a518149617705910e3` 在 GitHub Actions run
-[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950)
+[`33403148950`](https://github.com/luxine/CalcKernel/actions/runs/33403148950)
 上完成同一 SHA 的十项 required jobs，全部为 `success`：
 
 - native integration `99524136253`、quality `99524136515`；

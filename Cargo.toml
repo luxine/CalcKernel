@@ -4,6 +4,7 @@ version = "0.13.0"
 edition = "2024"
 license = "MIT"
 description = "Native compiler for the CK / CalcKernel computation language."
+repository = "https://github.com/luxine/CalcKernel"
 autobenches = false
 
 [features]

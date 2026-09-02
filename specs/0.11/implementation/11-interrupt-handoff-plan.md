@@ -136,6 +136,6 @@ if child > 0 {
 I23 的真实 SIGINT/process-group handoff、10 秒有限期限、owner kill/reap、public CLI
 自拉起与状态映射均已落地并通过本机与远端矩阵。实现与证据候选
 `202f950195b4d1160c60c0a518149617705910e3` 在 GitHub Actions run
-[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 的同 SHA
+[`33403148950`](https://github.com/luxine/CalcKernel/actions/runs/33403148950) 的同 SHA
 十项 required jobs 全部成功；没有用 sleep/retry 或 mock signal 降低验收。故本计划已签收，
 最终文档提交只需按总验收规则完成一次无 tracked 变更的同 SHA 复跑。
