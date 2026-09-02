@@ -889,6 +889,27 @@ fn linux_profile_runtime_hex_should_avoid_mixed_signedness_under_gcc_werror() {
 }
 
 #[test]
+fn tune_cli_host_runner_should_not_use_the_pinned_clang_oracle() {
+    let tune_cli = read("tests/cli/tune.rs");
+    let fixture = tune_cli
+        .split_once("fn tune_build_cold_then_warm_publishes_exact_decision_and_artifact() {")
+        .expect("tune CLI cold/warm fixture")
+        .1
+        .split_once("\n}")
+        .expect("tune CLI cold/warm fixture end")
+        .0;
+
+    assert!(
+        fixture.contains("Command::new(\"cc\")"),
+        "the host-libc runner fixture must use the host C driver so Darwin SDK discovery works"
+    );
+    assert!(
+        !fixture.contains("CKC_CLANG_ORACLE"),
+        "the sysroot-free pinned oracle must not compile a host-libc test runner"
+    );
+}
+
+#[test]
 fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi() {
     for path in [
         "native/dispatch_runtime/include/ckc_dispatch_runtime.h",

@@ -176,9 +176,8 @@ fn tune_build_cold_then_warm_publishes_exact_decision_and_artifact() {
         ),
     )
     .expect("runner source");
-    let cc = std::env::var_os("CKC_CLANG_ORACLE").unwrap_or_else(|| OsString::from("cc"));
     assert!(
-        Command::new(cc)
+        Command::new("cc")
             .args([runner_source.as_os_str(), "-o".as_ref(), runner.as_os_str()])
             .status()
             .expect("compile runner")
