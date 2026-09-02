@@ -173,13 +173,17 @@ destination. Schema 1 does not support a multi-directory output set. The decisio
 records the role, canonical logical name, staged byte digest, and physical size of
 the decision-independent primary, header, and import-library outputs that exist.
 
-Publication uses a sibling lock, journal, stage files, and backup files. Their
-names begin `.ckc-tune-` followed by the first 32 hexadecimal characters of
-`H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` from the decision schema. CK opens
-the lock and journal without following symbolic links
-or reparse points and holds an exclusive operating-system advisory lock throughout
-recovery and publication. The journal stores and verifies the full 32-byte output-
-set id; a prefix collision with another set is a hard error, never an alias.
+Publication uses one persistent sibling lock per canonical decision, artifact, or
+sidecar destination, plus a set journal, stage files, and backup files. A
+destination lock is named from the first 32 hexadecimal characters of
+`H("CK-TUNE-DESTINATION\0", canonical_path_bytes)`; the set journal is named from
+the same prefix of `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)`. CK opens every
+reserved file without following symbolic links or reparse points, acquires the
+complete overlap-closure of destination locks in canonical path-byte order, and
+holds it throughout recovery and publication. Lock files and journals store and
+verify their full 32-byte ids; a prefix collision is a hard error, never an alias.
+Consequently two commands that publish the same primary artifact but choose
+different explicit decision paths still serialize on the primary destination.
 
 The sole byte-, filename-, barrier-, phase-, and recovery-level authority is the
 shared normative attachment
@@ -622,14 +626,21 @@ unit-variant sets. Before compilation, candidate ordering is exactly:
 
 1. predicted dynamic cost in canonical cost-model units;
 2. predicted static cost in canonical cost-model units;
-3. predicted KIR code units;
+3. canonical `print_kir_module` byte length;
 4. number of non-baseline choices;
-5. alternative class and canonical order;
-6. plan digest.
+5. the unit-order vector of alternative-class enum values;
+6. the unit-order vector of `(unit id, variant id)` byte pairs;
+7. plan digest.
+
+These are whole-plan keys, never a sum of per-variant estimates. After every legal
+extension CK reapplies the complete plan to a fresh copy of the same pre-tune KIR,
+runs the canonical cost model over the resulting whole module, and computes the
+printed canonical KIR byte length with checked `u64` conversion. Failure or overflow
+is a compiler error. The expansion trace stores all three whole-plan metrics.
 
 Artifact bytes are unavailable before compilation and therefore never participate
-in this ranking. After compilation, actual artifact bytes replace predicted KIR
-code units in the same ordering for measured-finalist selection.
+in this ranking. After compilation, actual artifact bytes replace canonical KIR
+byte length in the same ordering for measured-finalist selection.
 
 The closed algorithm is:
 
@@ -808,7 +819,7 @@ Schema 1 requires these top-level tags in increasing order:
 | 5 | Decision sites, tuning units, alternatives, and candidate frontier |
 | 6 | Baseline and candidate plans, artifacts, rejections, correctness, and raw measurements |
 | 7 | Both validation rounds, selection result, and measured-profitability certificate |
-| 8 | Replay frontier, pre/post states, object graph, link recipe, and cache-reuse facts |
+| 8 | Replay frontier, pre/post states, chosen-code identity, object graph, link recipe, and cache-reuse facts |
 
 Nested records use the same increasing u16-tag/u32-length framing. Unsigned scalars
 are fixed-width big-endian; booleans are one canonical byte 0 or 1; strings are
@@ -895,9 +906,9 @@ tag 2, units at tag 3, and expansion trace at tag 4. Records are:
 | --- | --- |
 | Site | stable site id `D32`; class enum `U8`; root id `D32`; pre-state digest `D32`; canonical rank `U32` |
 | Unit | stable unit id `D32`; ordered site-id list; baseline state digest `D32`; ordered variant list |
-| UnitVariant | variant id `D32`; class enum `U8`; ordered choice list; predicted dynamic `U64`; predicted static `U64`; predicted KIR units `U64`; post-state digest `D32` |
+| UnitVariant | variant id `D32`; class enum `U8`; ordered choice list; isolated dynamic/static/KIR-byte estimates `U64`; post-state digest `D32` |
 | PlanChoice | unit id `D32`; variant id `D32`; class enum `U8`; pre-state `D32`; post-state `D32` |
-| Expansion | ordinal `U32`; parent plan `D32`; unit id `D32`; variant id `D32`; disposition enum `U8`; resulting plan `Opt<D32>`; diagnostic code `U16` |
+| Expansion | ordinal `U32`; parent plan `D32`; unit id `D32`; variant id `D32`; disposition enum `U8`; resulting plan `Opt<D32>`; diagnostic code `U16`; three optional whole-plan rank metrics |
 
 Top-level tag 6, `Candidates`, contains the baseline candidate at tag 1 and a list
 of non-baseline candidates in plan-digest order at tag 2. A candidate record has:
@@ -920,8 +931,9 @@ A measurement stream contains phase, round, case, plan, iterations, twenty order
 row records, and correctness digest. Each row contains its ordinal, permutation-key
 digest, exactly three raw nanosecond calls, and their minimum stored sample. Warmup
 calls are executed but not stored. A canonically timed-out candidate has no later
-streams and carries the exact timeout location; other missing streams make the
-decision incomplete and invalid.
+streams and carries the exact timeout location. The attachment's terminal-state
+matrix defines every intentionally unmeasured state; a stream required by that
+matrix may not be absent.
 
 Top-level tag 7, `Selection`, contains round-one and round-two summaries at tags 1
 and 2, the selected plan digest at tag 3, selection-reason enum at tag 4, and an
@@ -934,8 +946,8 @@ selection forbids one.
 Top-level tag 8, `Replay`, contains frontier, selected pre-state, selected post-state,
 object-graph, and link-recipe digests at tags 1..5; a role-sorted list of output
 records at tag 6; immutable compile and measurement CacheOrigin records at tags
-7..8; and the
-replay-result digest at tag 9. Each output record contains output-role enum, canonical
+7..8; the replay-result digest at tag 9; and the measurement-independent
+choice-identity digest at tag 10. Each output record contains output-role enum, canonical
 logical basename, staged byte digest, and physical size. The executable output set
 contains only primary; a dynamic output set additionally contains header and, on
 Windows, import library.
@@ -949,11 +961,12 @@ Closed enum values are:
 | case role | search=1, validation=2 |
 | alternative class | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
 | expansion disposition | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
-| candidate outcome | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
+| candidate outcome | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-nonwinner=7, selected=8 |
 | ordering phase | candidate-smoke=1, search-warmup=2, search-measured=3, validation-one-warmup=4, validation-one-measured=5, validation-two-warmup=6, validation-two-measured=7; only 3, 5, and 7 occur in stored streams |
 | selection reason | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
 | output role | primary=1, header=2, import-library=3 |
 | cache-origin kind | freshly-built=1, verified-local-hit=2 |
+| diagnostic code | none=0, legality-rejected=1, growth-rejected=2, artifact-size-rejected=3, candidate-timeout=4 |
 
 Collections are ordered by: cases by case id; sites, units, and variants by stable
 id; expansion records by ordinal; candidates with baseline first then plan digest;
@@ -995,6 +1008,7 @@ The file records:
 - both validation-round decisions;
 - the selected plan or the canonical baseline-selection reason;
 - the complete role-tagged staged output-set byte digests and physical sizes;
+- the measurement-independent chosen-code identity used across cold searches;
 - immutable compile and measurement cache-origin facts.
 
 Raw workload files, arbitrary runner stdout, secrets, and absolute paths are not
@@ -1135,6 +1149,7 @@ Text and JSON inspection expose:
   weighted scores;
 - both validation decisions and thresholds;
 - the selected plan or baseline reason;
+- the measurement-independent choice identity;
 - compile and measurement cache reuse;
 - final replay and object-graph verification.
 
@@ -1334,9 +1349,10 @@ the same protocol. Both use upper medians, retain raw times and command identiti
 and exclude tuning search. Artifact size uses the exact primary outputs paired with
 timing. Resource evidence retains standard-session wall time, peak compiler/tuner
 RSS, expansion/compile/finalist counts, and cache bytes. Determinism consists of two
-independent cold-cache sessions and one exact warm-cache session with decision,
-plan, object-graph, link-recipe, output-set, compile-count, and measurement-count
-comparisons.
+independent cold-cache sessions compared by measurement-independent choice identity,
+plan, object graph, link recipe, and published-content identity, plus one exact
+warm-cache reuse compared by decision and output bytes as well as zero compile and
+measurement counts. Genuine cold-session raw timings are preserved and may differ.
 
 `scripts/measure-v014-performance.py` only collects raw evidence.
 `scripts/check-native-performance.py` is the sole authority that accepts it and
@@ -1385,9 +1401,11 @@ Resource and determinism gates are:
 - a standard session completes within 30 minutes and its declared candidate bounds;
 - peak tuner compiler RSS is at most twice the matching ordinary compilation;
 - the tuning cache never exceeds its 4 GiB hard limit;
-- two cold runs select the same plan and object graph;
-- an exact warm-cache run compiles and measures zero candidates and reproduces the
-  same decision and artifact plan digest;
+- two cold runs have the same measurement-independent choice identity, plan,
+  object graph, link recipe, and published output content; their raw decision
+  digests may differ with genuine calibration and timing evidence;
+- an exact warm-cache reuse compiles and measures zero candidates and reproduces
+  the first cold run's decision and role-tagged output bytes exactly;
 - final artifacts contain no tuning runner, tuning symbol, runtime dispatch, or new
   runtime dependency.
 

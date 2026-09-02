@@ -154,12 +154,14 @@ Profile、声明输入或者另一目标形成别名。Schema 1 不支持跨目�
 记录存在的主输出、头文件和 Import Library 的角色、规范逻辑名称、暂存字节
 摘要与物理体积。
 
-发布使用同目录锁、Journal、Stage 与 Backup 文件。名称以 `.ckc-tune-` 加上
-决策 Schema 中 `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` 前 32 个
-十六进制字符开头。CK 打开锁和 Journal 时不得跟随符号链接或
-Reparse Point，并在恢复与发布全程持有操作系统排他 Advisory Lock。Journal
-存储并校验完整 32 字节输出集 id；与另一集合发生前缀碰撞属于硬错误，绝不视为
-同一集合。
+发布为每个规范决策、产物或 Sidecar 目标使用一个持久同目录锁，并使用集合
+Journal、Stage 与 Backup 文件。目标锁名称取
+`H("CK-TUNE-DESTINATION\0", canonical_path_bytes)` 前 32 个十六进制字符；
+集合 Journal 名称取 `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` 的同样
+前缀。CK 打开任何保留文件时不得跟随符号链接或 Reparse Point，按规范路径字节
+顺序取得完整重叠闭包中的全部目标锁，并在恢复与发布全程持有。锁文件与 Journal
+均存储并校验完整 32 字节 id；前缀碰撞属于硬错误，绝不视为同一对象。因此即使
+两个命令为同一主产物选择了不同显式决策路径，它们仍会在主目标锁上串行化。
 
 英中设计共用的规范附件
 [`publication-journal-1.md`](../publication-journal-1.md) 是唯一字节、文件名、
@@ -545,13 +547,19 @@ CK 在稳定调优单元和规范单元 Variant 集合上使用确定性 Beam Se
 
 1. 以规范成本模型单位表示的预测动态成本；
 2. 以规范成本模型单位表示的预测静态成本；
-3. 预测 KIR 代码单位；
+3. 规范 `print_kir_module` 字节长度；
 4. 非基线选择数量；
-5. 备选类别和规范顺序；
-6. 计划摘要。
+5. 按单元顺序排列的备选类别枚举向量；
+6. 按单元顺序排列的 `(unit id, variant id)` 字节对向量；
+7. 计划摘要。
+
+这些都是完整计划键，绝不把各 Variant 估计简单求和。每次合法扩展后，CK 在
+同一调优前 KIR 的全新副本上重新应用完整计划，对结果完整 Module 运行规范成本
+模型，并以经过检查的 `u64` 转换计算打印后规范 KIR 字节长度。失败或溢出属于
+编译器错误。展开追踪记录全部三个完整计划指标。
 
 编译前尚无产物字节数，因此它绝不参与该排名。编译后选择测量最终候选时，
-以实际产物字节数替代预测 KIR 代码单位，其余排序键不变。
+以实际产物字节数替代规范 KIR 字节长度，其余排序键不变。
 
 封闭算法为：
 
@@ -709,7 +717,7 @@ Schema 1 要求以下顶层 Tag 按升序且完整出现：
 | 5 | 决策点、调优单元、备选项与候选前沿 |
 | 6 | 基线和候选计划、产物、拒绝、正确性与原始测量 |
 | 7 | 两轮验证、选择结果与测量收益证书 |
-| 8 | 重放前沿、前后状态、目标图、链接配方与缓存复用事实 |
+| 8 | 重放前沿、前后状态、获选代码身份、目标图、链接配方与缓存复用事实 |
 
 嵌套记录使用相同的递增 u16 Tag/u32 长度 Framing。无符号标量使用固定宽度
 大端编码；布尔值只能是一个规范字节 0 或 1；字符串是带长度的有效 UTF-8；
@@ -790,9 +798,9 @@ Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`
 | --- | --- |
 | Site | 稳定 id `D32`；类别枚举 `U8`；根 id `D32`；前状态摘要 `D32`；规范排名 `U32` |
 | Unit | 稳定单元 id `D32`；有序 Site-id 列表；基线状态摘要 `D32`；有序 Variant 列表 |
-| UnitVariant | Variant id `D32`；类别枚举 `U8`；有序选择列表；预测动态 `U64`；预测静态 `U64`；预测 KIR 单位 `U64`；后状态摘要 `D32` |
+| UnitVariant | Variant id `D32`；类别枚举 `U8`；有序选择列表；孤立动态/静态/KIR 字节估计 `U64`；后状态摘要 `D32` |
 | PlanChoice | 单元 id `D32`；Variant id `D32`；类别 `U8`；前状态 `D32`；后状态 `D32` |
-| Expansion | 序号 `U32`；父计划 `D32`；单元 id `D32`；Variant id `D32`；处置枚举 `U8`；结果计划 `Opt<D32>`；诊断码 `U16` |
+| Expansion | 序号 `U32`；父计划 `D32`；单元 id `D32`；Variant id `D32`；处置枚举 `U8`；结果计划 `Opt<D32>`；诊断码 `U16`；三个可选完整计划排名指标 |
 
 顶层 Tag 6 `Candidates` 的 Tag 1 为基线候选，Tag 2 是按计划摘要排序的非
 基线候选列表。候选记录为：
@@ -814,7 +822,7 @@ Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`
 测量流包含阶段、轮次、用例、计划、迭代数、二十个有序行记录和正确性摘要。
 每行包含序号、排列键摘要、恰好三个原始纳秒调用以及其最小存储样本。预热
 调用执行但不存储。规范超时候选不包含后续流，并携带精确超时位置；其他流
-缺失都使决策不完整且无效。
+是否允许缺失只由附件的终态矩阵决定；矩阵要求的流不得缺失。
 
 顶层 Tag 7 `Selection` 的 Tag 1、2 为第一、第二轮摘要；Tag 3 为获选计划
 摘要；Tag 4 为选择原因枚举；Tag 5 为 `Opt<Certificate>`。每轮摘要包含用例
@@ -824,7 +832,8 @@ Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`
 
 顶层 Tag 8 `Replay` 的 Tag 1..5 为前沿、获选前状态、获选后状态、目标图和
 链接配方摘要；Tag 6 为按角色排序的输出记录；Tag 7..8 为不可变编译与测量
-CacheOrigin 记录；Tag 9 为重放结果摘要。每个输出记录包含输出角色枚举、规范逻辑
+CacheOrigin 记录；Tag 9 为重放结果摘要；Tag 10 为与测量无关的选择身份摘要。
+每个输出记录包含输出角色枚举、规范逻辑
 Basename、暂存字节摘要和物理体积。可执行输出集仅含主输出；动态输出集还含
 头文件，Windows 上再含 Import Library。
 
@@ -837,11 +846,12 @@ Basename、暂存字节摘要和物理体积。可执行输出集仅含主输出
 | 用例角色 | search=1, validation=2 |
 | 备选类别 | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
 | 展开处置 | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
-| 候选结果 | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
+| 候选结果 | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-nonwinner=7, selected=8 |
 | 顺序阶段 | candidate-smoke=1, search-warmup=2, search-measured=3, validation-one-warmup=4, validation-one-measured=5, validation-two-warmup=6, validation-two-measured=7；仅 3、5、7 出现在存储流 |
 | 选择原因 | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
 | 输出角色 | primary=1, header=2, import-library=3 |
 | 缓存来源类型 | freshly-built=1, verified-local-hit=2 |
+| 诊断码 | none=0, legality-rejected=1, growth-rejected=2, artifact-size-rejected=3, candidate-timeout=4 |
 
 集合顺序为：用例按 id；Site、Unit、Variant 按稳定 id；展开按序号；候选先
 基线再按计划摘要；计划选择按单元 id；流按阶段、轮、用例 id、计划摘要；流内
@@ -877,6 +887,7 @@ Schema 测试中；编码、解码、检查、重编码、截断、突变和跨�
 - 两轮验证决策；
 - 获选计划或者规范的基线选择原因；
 - 完整的带角色暂存输出集字节摘要与物理体积；
+- 跨冷搜索比较所用、与测量无关的获选代码身份；
 - 不可变的编译与测量缓存来源事实。
 
 原始工作负载文件、任意驱动 stdout、秘密和绝对路径不得存入规范身份。调优
@@ -994,6 +1005,7 @@ tune-use 仍然允许。
 - 校准、原始存储样本、中位数、稳定性、正确性摘要和加权得分；
 - 两轮验证决策和阈值；
 - 获选计划或者基线原因；
+- 与测量无关的选择身份；
 - 编译与测量缓存复用；
 - 最终重放和目标图验证。
 
@@ -1173,8 +1185,9 @@ tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对�
 首通道；v0.14 普通编译与精确 v0.13 普通编译使用同一协议。两者使用上中位数，
 保留原始时间与命令身份，并排除调优搜索。产物体积使用与计时配对的精确主输出。
 资源证据保留 standard 会话墙钟、编译器/调优器峰值 RSS、展开/编译/最终候选
-计数以及缓存字节。确定性证据包含两个独立冷缓存会话和一个精确热缓存会话，并
-比较决策、计划、目标图、链接配方、输出集、编译数和测量数。
+计数以及缓存字节。确定性证据以与测量无关的选择身份、计划、目标图、链接配方
+和发布内容身份比较两个独立冷缓存会话，再以决策与输出字节以及零编译/测量计数
+证明一次精确热缓存复用。真实冷会话的原始计时必须保留，并允许不同。
 
 `scripts/measure-v014-performance.py` 只收集原始证据；
 `scripts/check-native-performance.py` 是唯一验收权威，对任何缺失/未知键、身份
@@ -1218,8 +1231,10 @@ tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对�
 - standard 会话在 30 分钟及其声明候选限制内完成；
 - 调优器峰值编译器 RSS 不超过对应普通编译的两倍；
 - 调优缓存绝不超过 4 GiB 硬上限；
-- 两次冷运行选择相同计划和目标图；
-- 精确热缓存运行编译和测量零个候选，并复现相同决策和产物计划摘要；
+- 两次冷运行具有相同的测量无关选择身份、计划、目标图、链接配方和发布输出
+  内容；真实校准与计时证据可使原始决策摘要不同；
+- 精确热缓存复用编译和测量零个候选，并逐字复现第一次冷运行的决策和全部
+  带角色输出；
 - 最终产物不包含调优驱动程序、调优符号、运行时分派或新的运行时依赖。
 
 发布证据记录硬件、操作系统、编译器身份、原始样本、排除项和精确产物摘要。

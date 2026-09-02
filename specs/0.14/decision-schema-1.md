@@ -46,7 +46,7 @@ is at most 32 MiB.
 | 5 | `Frontier` | sites, units, variants, and expansion trace |
 | 6 | `Candidates` | baseline, trials, correctness, and raw samples |
 | 7 | `Selection` | two validation rounds and optional certificate |
-| 8 | `Replay` | plan replay, output set, and origin facts |
+| 8 | `Replay` | plan replay, chosen-code identity, output set, and origin facts |
 
 ## 3. Identity
 
@@ -194,15 +194,20 @@ List<Expansion,16384>`.
 `baselineStateDigest: D32`, and tag 4 `variants: List<UnitVariant,4>`.
 
 `UnitVariant` is tag 1 `variantId: D32`, tag 2 `class: U8 AlternativeClass`, tag 3
-`siteAlternatives: List<SiteAlternative,4096>`, tag 4 `predictedDynamic: U64`, tag
-5 `predictedStatic: U64`, tag 6 `predictedKirUnits: U64`, and tag 7
-`postStateDigest: D32`. `SiteAlternative` is tag 1 `siteId: D32`, tag 2
+`siteAlternatives: List<SiteAlternative,4096>`, tag 4 `isolatedDynamicEstimate: U64`, tag
+5 `isolatedStaticEstimate: U64`, tag 6 `isolatedKirBytes: U64`, and tag 7
+`postStateDigest: D32`. These isolated fields are diagnostics and variant-generation
+inputs, never plan-rank keys. `SiteAlternative` is tag 1 `siteId: D32`, tag 2
 `alternativeId: D32`, tag 3 `preStateDigest: D32`, tag 4 `postStateDigest: D32`.
 Across all units there are at most 256 variants.
 
 `Expansion` is tag 1 `ordinal: U32`, tag 2 `parentPlanDigest: D32`, tag 3 `unitId:
 D32`, tag 4 `variantId: D32`, tag 5 `disposition: U8 ExpansionDisposition`, tag 6
-`resultPlanDigest: Opt<D32>`, and tag 7 `diagnosticCode: U16`.
+`resultPlanDigest: Opt<D32>`, tag 7 `diagnosticCode: U16`, and tags 8..10
+`wholePlanDynamic/wholePlanStatic/wholePlanKirBytes: Opt<U64>`. Result digest and
+all three metrics are present exactly for `legal`; a duplicate has only its result
+digest; illegal and growth-rejected have neither. Diagnostic code is zero exactly
+for legal and duplicate.
 
 ## 8. Candidates and measurements
 
@@ -243,6 +248,32 @@ measured rows use calls 1..3. Row and round ranges must match the phase.
 A timed-out candidate has this record; all others forbid it. Across the baseline and
 32 trials there are at most 1,584 streams.
 
+The terminal state matrix is exact. `S` means one complete phase-3 stream for every
+search case; `V1` and `V2` mean complete phase-5 and phase-7 streams for every
+validation case. Baseline validation runs even when there are zero entrants.
+
+| Outcome | Correctness aggregate | Streams | Timeout | Diagnostic |
+| --- | --- | --- | --- | --- |
+| baseline | required over all cases | exactly S+V1+V2 | absent | 0 |
+| compiled-unmeasured | absent | empty | absent | 0 |
+| size-rejected | absent | empty | absent | artifact-size-rejected |
+| timed-out | present iff at least one smoke/stream case completed | exact canonical prefix of complete measured streams before the timed-out stream | required | candidate-timeout |
+| search-nonwinner | required over search cases | exactly S | absent | 0 |
+| validation-threshold | required over all cases | exactly S+V1+V2 | absent | 0 |
+| validation-nonwinner | required over all cases | exactly S+V1+V2 | absent | 0 |
+| selected | required over all cases | exactly S+V1+V2 | absent | 0 |
+
+A timed-out stream contributes no record even when earlier rows in that stream
+completed; its timeout record preserves the exact location. The candidate stores
+every complete measured stream preceding it in the Section 12 canonical stream
+order, including earlier streams of the same phase, and no later stream. A timeout
+in smoke or warmup therefore stores only measured streams completed before that
+phase. Any state/field combination outside this table or any missing/extra required
+stream is invalid. A validation entrant that passes a
+threshold but is not first in both rounds is `validation-nonwinner`; when different
+plans rank first, both remain nonwinners and Selection records
+`validation-disagreement`.
+
 ## 9. Selection
 
 `Selection` is tag 1 `roundOne: RoundSummary`, tag 2 `roundTwo: RoundSummary`, tag
@@ -275,6 +306,7 @@ Bool`, tag 5 `thresholdPassed: Bool`, tag 6 `pairedWins: U32`. `CaseMedian` is t
 | 7 | `compileOrigin` | `CacheOrigin` |
 | 8 | `measurementOrigin` | `CacheOrigin` |
 | 9 | `replayResultDigest` | `D32` |
+| 10 | `choiceIdentityDigest` | `D32` |
 
 `OutputIdentity` is tag 1 `role: U8 OutputRole`, tag 2 `logicalBasename: Text`, tag
 3 `contentDigest: D32`, tag 4 `contentBytes: U64`. Executable has primary only;
@@ -302,7 +334,7 @@ encoding. This rule removes concatenation and empty-value ambiguity.
 | site id | `CK-TUNE-SITE\0`; root id, class, canonical site ordinal, pre-state digest |
 | alternative id | `CK-TUNE-ALTERNATIVE\0`; site id, class, canonical choice payload `Bytes`, post-state digest |
 | unit id | `CK-TUNE-UNIT\0`; site-id list and baseline-state digest |
-| unit variant id | `CK-TUNE-UNIT-VARIANT\0`; unit id, class, site alternatives, three predicted costs, post-state digest |
+| unit variant id | `CK-TUNE-UNIT-VARIANT\0`; unit id, class, site alternatives, three isolated estimates, post-state digest |
 | plan digest | `CK-TUNE-PLAN\0`; unit-id-ordered `List<PlanChoice,64>`; the empty-plan digest is this same domain over the zero-count list |
 | candidate-space digest | `CK-TUNE-CANDIDATE-SPACE\0`; site-id-ordered sites and unit-id-ordered units, excluding the expansion trace |
 | frontier digest | `CK-TUNE-FRONTIER\0`; candidate-space digest plus ordinal-ordered expansion trace |
@@ -312,8 +344,10 @@ encoding. This rule removes concatenation and empty-value ambiguity.
 | session digest | `CK-TUNE-SESSION\0`; `SessionMaterial` below |
 | validation-round digest | `CK-TUNE-VALIDATION-ROUND\0`; complete `RoundSummary` record |
 | certificate digest | `CK-TUNE-CERTIFICATE\0`; complete `Certificate` record |
+| destination id | `CK-TUNE-DESTINATION\0`; canonical operational path `Bytes` |
 | output-set id | `CK-TUNE-OUTPUT-SET\0`; `OutputSetMaterial` below |
 | replay-result digest | `CK-TUNE-REPLAY-RESULT\0`; `ReplayResultMaterial` below |
+| choice-identity digest | `CK-TUNE-CHOICE\0`; `ChoiceIdentityMaterial` below |
 
 Within `UnitVariant`, `siteAlternatives` are sorted by `(siteId, alternativeId)`.
 The unit-variant digest uses that sorted list. All correctness observations for the
@@ -351,6 +385,17 @@ is journal-only, so the decision's prohibition on absolute `Text` remains intact
 and tag 7 the role-sorted `OutputIdentity` list. It excludes cache origin and local
 absolute paths.
 
+`ChoiceIdentityMaterial` is tag 1 the complete `Identity`, tag 2 `Contract`, tag 3
+the `Workload.manifestDigest`, tag 4 the `EnvironmentSeed` from `SessionMaterial`,
+tag 5 the frontier digest, tag 6 the selection reason, tag 7 the selected plan
+digest, and tags 8..9 the selected object-graph and link-recipe digests. It binds
+every input that may change the chosen code, while excluding calibration,
+correctness observations, raw samples, timeouts, cache origins, output paths,
+timestamps, logical basenames, and container/output bytes. Replay tag 10 must equal
+this derivation. It is
+the cross-session identity used to compare independent cold searches; the outer
+decision digest remains the identity for exact byte-for-byte warm reuse.
+
 The policy digest remains `H("CK-TUNE-POLICY\0", Contract tags 1..31)`. The outer
 decision digest remains the framing rule in Section 1.
 
@@ -363,11 +408,12 @@ decision digest remains the framing rule in Section 1.
 | `CaseRole` | search=1, validation=2 |
 | `AlternativeClass` | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
 | `ExpansionDisposition` | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
-| `CandidateOutcome` | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
+| `CandidateOutcome` | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-nonwinner=7, selected=8 |
 | `OrderingPhase` | candidate-smoke=1, search-warmup=2, search-measured=3, validation-one-warmup=4, validation-one-measured=5, validation-two-warmup=6, validation-two-measured=7 |
 | `SelectionReason` | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
 | `OutputRole` | primary=1, header=2, import-library=3 |
 | `CacheOriginKind` | freshly-built=1, verified-local-hit=2 |
+| `DiagnosticCode` | none=0, legality-rejected=1, growth-rejected=2, artifact-size-rejected=3, candidate-timeout=4 |
 
 Cases sort by id; sites, units, and variants by stable id; site alternatives by
 site id then alternative id; expansions by ordinal;

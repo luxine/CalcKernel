@@ -11,6 +11,19 @@ hexadecimal SHA-256 characters. A `FileIdentity` has exactly `path`, `bytes`, an
 `sha256`; `path` is repository-relative or evidence-directory-relative, never
 absolute or traversing, and resolves to a regular non-symlink file.
 
+Every digest introduced by this attachment uses the following unambiguous typed
+encoding. `U8/U32/U64` are fixed-width big-endian; `Text` is `U32 length` followed
+by UTF-8 bytes; `DigestBytes` is the 32 bytes decoded from a `Digest`; a list is
+`U32 count` followed by its elements; and a `FileIdentityValue` is path `Text`,
+bytes `U64`, then `DigestBytes`. A named record encodes its fields in the order
+stated here. Define:
+
+    P(domain, value...) = SHA-256(ASCII domain including its final NUL ||
+                                  typed encoding of each value)
+
+No digest in this attachment is a hash of informal concatenation or an
+implementation-dependent JSON serialization.
+
 ## 1. Closed top level
 
 The exact top-level keys are:
@@ -30,14 +43,26 @@ in `benches/baselines/v0_13_replay.toml`. `evidenceDirectory` matches
 ## 2. Identity objects
 
 `toolchain` has exactly `llvmVersion`, `clangVersion`, `rustVersion`,
-`componentManifestSha256`, and `clangProfileRuntimeSha256`. Versions are exactly
-`22.1.8`, `22.1.8`, and `1.90.0`; both digests match retained files.
+`componentManifest`, `clangBinary`, and `clangProfileRuntime`. Versions are exactly
+`22.1.8`, `22.1.8`, and `1.90.0`; the last three values are `FileIdentity` objects.
+Before
+report creation the collector copies the source component manifest to the fixed
+evidence path `toolchain/llvm-build.toml`, the resolved regular Clang executable to
+`toolchain/clang.bin`, and the discovered Clang profile runtime archive to
+`toolchain/clang-profile-runtime.bin`; those are the paths recorded in the three
+identities. The checker hashes all three retained files, requires the manifest to
+describe the pinned LLVM component build, requires the binary to report 22.1.8,
+and requires the runtime to equal the profile archive selected by that binary's
+`--print-file-name` query for the report target.
 
 `hardware` has exactly `target`, `arch`, `os`, `osBuild`, `kernel`, `cpuModel`,
 `logicalCpus`, `physicalCpus`, `numaNodes`, `features`, `requiredTier`,
 `availableTiers`, `osState`, and `capabilityDigest`. Feature and tier lists are
-sorted and unique. The digest is over the other fields in
-canonical JSON with domain `CK-V014-PERF-HARDWARE\0`. The x86-64 job requires
+sorted and unique. `capabilityDigest` is
+`P("CK-V014-PERF-HARDWARE\0", target Text, arch Text, os Text, osBuild Text,
+kernel Text, cpuModel Text, logicalCpus U32, physicalCpus U32, numaNodes U32,
+features List<Text>, requiredTier Text, availableTiers List<Text>, osState Text)`.
+The x86-64 job requires
 `requiredTier="x86-64-v4"`; the AArch64 job requires
 `requiredTier="aarch64-sve2"`. That tier must occur in `availableTiers` and all of
 its required features in `features`. Missing required hardware fails instead of
@@ -45,8 +70,11 @@ skipping.
 
 `recipe` has exactly `schema`, `files`, `digest`, and `thresholds`. `schema=1`.
 `files` is a path-sorted list of `FileIdentity` covering every path named in Section
-19.1 of the design; `digest` is the domain-separated digest of their path and SHA
-pairs. `thresholds` has exactly:
+19.1 of the design. `digest` is
+`P("CK-V014-PERF-RECIPE\0", schema U32, files List<FileIdentityValue>,
+thresholds List<ThresholdEntry>)`; `ThresholdEntry` is key `Text` then value `U64`,
+and all threshold keys are encoded in lexicographic UTF-8 order. `thresholds` has
+exactly:
 
 | Key | Value |
 | --- | ---: |
@@ -117,9 +145,10 @@ channel count from the fixed channel list. `split` is `release-held-out` or
 ## 4. Decisions and artifacts
 
 `tuningDecisions` is a case-name-sorted list of exactly seven objects with keys
-`case`, `file`, `decisionDigest`, `selectionReason`, `planDigest`,
+`case`, `file`, `decisionDigest`, `choiceIdentityDigest`, `selectionReason`,
+`planDigest`,
 `objectGraphDigest`, `linkRecipeDigest`, `certificateDigest`, and `outputRecords`.
-`file` is a `FileIdentity`; five digest fields are `Digest`, except
+`file` is a `FileIdentity`; six digest fields are `Digest`, except
 `certificateDigest` is either a `Digest` for `tuned` or JSON null for a baseline
 reason. `outputRecords` is a role-sorted list with exact keys `role`, `logicalName`,
 `bytes`, and `sha256`, and must equal the decoded decision and retained outputs.
@@ -168,13 +197,30 @@ throughput gate against the faster generic oracle.
 fifteen two-channel permutations with alternating first channel. Each samples list
 has 15 positive values, each median is ascending element 7. `commands` is an object
 with exactly the two channel keys; each value has exactly `argv`, `executable`,
-`inputs`, and `environmentDigest`, where `argv` is the exact string vector,
+`inputs`, `environment`, and `environmentDigest`, where `argv` is the exact string
+vector,
 `executable` is a `FileIdentity`, `inputs` is a path-sorted `FileIdentity` list, and
-`environmentDigest` is a `Digest`.
+`environment` is a name-sorted list of closed `EnvironmentEntry` objects. An entry
+has exactly `name`, `kind`, and `value`. `kind="literal"` makes `value` a `Text`;
+`kind="reference"` makes it a path-sorted nonempty list of already-retained
+`FileIdentity` objects that give the variable its semantic identity. Names are
+unique and are drawn only from `CKC_LLVM_PREFIX`,
+`CKC_CLANG_ORACLE`, `CKC_CANDIDATE_COMPILER`, `CKC_V013_REPLAY_BUNDLE`,
+`SystemRoot`, and `WINDIR`; absent names are omitted and every other inherited
+variable is cleared. Windows requires the last two literal entries. The exact
+reference mappings are: LLVM prefix to the three retained toolchain files; Clang
+oracle to `toolchain.clangBinary`; candidate compiler to `candidateBinary`; and a
+replay bundle to that bundle's manifest, compiler, archive, and accepted-report
+identities. A variable with no corresponding retained reference is invalid.
+`environmentDigest` is
+`P("CK-V014-PERF-COMMAND-ENV\0", environment List<EnvironmentEntryValue>)`,
+where an entry value is name `Text`, kind `U8` (literal=1, reference=2),
+then the kind's value using the typed encoding above.
 
 The first channel of compile warmup row 0 is the left-listed channel and alternates
 across all 18 rows without restarting at the measured boundary; the report retains
-the separated 3/15 orders. `artifactSize` is a case-name-sorted seven-row list with exactly `case`,
+the separated 3/15 orders. `artifactSize` is a case-name-sorted seven-row list with
+exactly `case`,
 `tunedPrimary`, and `baselinePrimary`; the latter two are `FileIdentity` and the
 ratio is at most 110/100. `archiveSize` has exactly `candidate` and `v013Replay`,
 both `FileIdentity`, with ratio at most 110/100.
@@ -189,11 +235,24 @@ frozen thresholds.
 ## 7. Determinism and correctness
 
 `determinism` is a case-name-sorted list of seven objects with exactly `case`,
-`coldOne`, `coldTwo`, and `warm`. Each run has exactly `decisionDigest`,
-`planDigest`, `objectGraphDigest`, `linkRecipeDigest`, `outputSetDigest`,
-`compiledCandidates`, and `measuredCandidates`. The two cold runs match all five
-digests. Warm matches them, has zero compiled/measured candidates, and reproduces
-the original decision bytes; immutable origin facts therefore do not change.
+`coldOne`, `coldTwo`, and `warm`. Each run has exactly `decision`, `outputs`,
+`decisionDigest`, `choiceIdentityDigest`, `planDigest`, `objectGraphDigest`,
+`linkRecipeDigest`, `outputContentDigest`, `compiledCandidates`, and
+`measuredCandidates`. `decision` is a retained `FileIdentity`; `outputs` is the
+complete role-sorted list defined for `tuningArtifacts`. The decision digest and
+decoded fields must match the retained decision. `outputContentDigest` is
+`P("CK-V014-PERF-OUTPUT-CONTENT\0", outputs List<OutputContentValue>)`, where each
+value is role `Text` (exactly `primary`, `header`, or `import-library`), bytes
+`U64`, then decoded SHA-256 `DigestBytes`; paths and the
+measurement-bearing decision file are deliberately excluded.
+
+The two independent cold-cache runs must match `choiceIdentityDigest`, plan,
+object-graph, link-recipe, and output-content digests. Each cold decision must be
+internally valid, but their `decisionDigest` values need not match because genuine
+calibration and raw measurement records are part of the decision. The warm run is
+an exact reuse of `coldOne`: it matches all six digests including `decisionDigest`,
+its retained decision and output files are byte-for-byte equal by role, it has zero
+compiled/measured candidates, and immutable origin facts do not change.
 
 `correctness` has exactly `search`, `validation`, `adversarial`,
 `releaseHeldOutDifferential`, `domainDifferential`, `oracleUbAudit`, `aliasAudit`,
