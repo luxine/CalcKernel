@@ -345,8 +345,8 @@ Expected: only `node_modules/` and `dist/` are ignored; source and manifest file
 Use the retained v0.10 worktree prefixes:
 
 ```bash
-export CKC_LLVM_PREFIX=/Users/lynn/code/Rust_CalcKernel/.worktrees/native-toolchain-0.10/build/llvm/prefix-i28-aarch64-apple-darwin-release
-export CKC_CLANG_ORACLE=/Users/lynn/code/Rust_CalcKernel/.worktrees/native-toolchain-0.10/build/llvm/prefix-i28-aarch64-apple-darwin-oracle/bin/clang
+export CKC_LLVM_PREFIX=/Users/lynn/code/Rust_CalcKernel/.worktrees/native-toolchain-0.10/build/llvm/prefix-aarch64-apple-darwin11-release
+export CKC_CLANG_ORACLE=/Users/lynn/code/Rust_CalcKernel/.worktrees/native-toolchain-0.10/build/llvm/prefix-aarch64-apple-darwin11-oracle/bin/clang
 export CALCKERNEL_TS_ROOT="$PWD/tests/oracles/typescript"
 ```
 
