@@ -7,15 +7,19 @@ Every JSON object rejects missing, duplicate, or unknown keys. JSON is UTF-8 wit
 lexicographically sorted keys, no insignificant whitespace, and one trailing LF.
 Integers are nonnegative JSON integers within `u64` unless a smaller range is
 stated. Timing values are positive nanoseconds. A `Digest` is exactly 64 lowercase
-hexadecimal SHA-256 characters. A `FileIdentity` has exactly `path`, `bytes`, and
-`sha256`; `path` is repository-relative or evidence-directory-relative, never
-absolute or traversing, and resolves to a regular non-symlink file.
+hexadecimal SHA-256 characters. A `FileIdentity` has exactly `root`, `path`,
+`bytes`, and `sha256`. `root` is exactly `repository` or `evidence`; `path` is
+relative to that one named root, never absolute or traversing, and resolves to a
+regular non-symlink file. The repository root is the clean candidate-SHA checkout;
+the evidence root is the real directory named by `evidenceDirectory`. Root order is
+repository then evidence, and every “path-sorted” list sorts by `(root,path)` UTF-8
+bytes. There is no fallback from one root to the other.
 
 Every digest introduced by this attachment uses the following unambiguous typed
 encoding. `U8/U32/U64` are fixed-width big-endian; `Text` is `U32 length` followed
 by UTF-8 bytes; `DigestBytes` is the 32 bytes decoded from a `Digest`; a list is
-`U32 count` followed by its elements; and a `FileIdentityValue` is path `Text`,
-bytes `U64`, then `DigestBytes`. A named record encodes its fields in the order
+`U32 count` followed by its elements; and a `FileIdentityValue` is root `U8`
+(repository=1, evidence=2), path `Text`, bytes `U64`, then `DigestBytes`. A named record encodes its fields in the order
 stated here. Define:
 
     P(domain, value...) = SHA-256(ASCII domain including its final NUL ||
@@ -31,7 +35,7 @@ The exact top-level keys are:
     schemaVersion, candidateVersion, candidateSha, v013ReplayCommit,
     evidenceDirectory, toolchain, hardware, recipe, candidateBinary,
     v013ReplayBundle, cumulativeSchemaEight, workload, tuningDecisions,
-    tuningArtifacts, sampling, cases, domainCases, tuneUseCompileTime,
+    tuningArtifacts, sampling, cases, validationCases, domainCases, tuneUseCompileTime,
     ordinaryCompileRegression, artifactSize, archiveSize, resourceUse,
     determinism, correctness
 
@@ -50,10 +54,15 @@ report creation the collector copies the source component manifest to the fixed
 evidence path `toolchain/llvm-build.toml`, the resolved regular Clang executable to
 `toolchain/clang.bin`, and the discovered Clang profile runtime archive to
 `toolchain/clang-profile-runtime.bin`; those are the paths recorded in the three
-identities. The checker hashes all three retained files, requires the manifest to
-describe the pinned LLVM component build, requires the binary to report 22.1.8,
-and requires the runtime to equal the profile archive selected by that binary's
-`--print-file-name` query for the report target.
+identities, all with `root="evidence"`. The checker hashes all three retained files,
+requires the manifest to describe the pinned LLVM component build, and requires the
+resolved `CKC_CLANG_ORACLE` executable to equal retained `clangBinary` and report
+22.1.8. It runs that original executable with the sole argument
+`--print-resource-dir`. Below the returned real directory it sorts regular
+non-symlink matches of
+`lib/**/libclang_rt.profile*.a` followed by matches of
+`lib/**/clang_rt.profile*.lib`; exactly one total match is required, and the
+retained runtime must equal it byte-for-byte.
 
 `hardware` has exactly `target`, `arch`, `os`, `osBuild`, `kernel`, `cpuModel`,
 `logicalCpus`, `physicalCpus`, `numaNodes`, `features`, `requiredTier`,
@@ -70,7 +79,7 @@ skipping.
 
 `recipe` has exactly `schema`, `files`, `digest`, and `thresholds`. `schema=1`.
 `files` is a path-sorted list of `FileIdentity` covering every path named in Section
-19.1 of the design. `digest` is
+19.1 of the design, all with `root="repository"`. `digest` is
 `P("CK-V014-PERF-RECIPE\0", schema U32, files List<FileIdentityValue>,
 thresholds List<ThresholdEntry>)`; `ThresholdEntry` is key `Text` then value `U64`,
 and all threshold keys are encoded in lexicographic UTF-8 order. `thresholds` has
@@ -100,11 +109,12 @@ ratio gates use arbitrary-precision product comparison, not floating point:
 `perf(A) >= p/q * perf(B)` uses `product(B_ns*q) >= product(A_ns*p)`; the domain
 gate uses strict `>`.
 
-`candidateBinary` and `cumulativeSchemaEight` are `FileIdentity` objects. The latter
+`candidateBinary` and `cumulativeSchemaEight` are evidence-root `FileIdentity`
+objects. The latter
 is exactly `results-schema8.json` and must independently pass the schema-8 checker.
 
 `v013ReplayBundle` has exactly `commit`, `manifest`, `compiler`, `archive`, and
-`schemaEight`; the last four are `FileIdentity`. Its commit and all identities must
+`schemaEight`; the last four are evidence-root `FileIdentity`. Its commit and all identities must
 equal `benches/baselines/v0_13_replay.toml`, and its schema-8 file independently
 passes before any schema-9 threshold is evaluated.
 
@@ -115,14 +125,19 @@ passes before any schema-9 threshold is evaluated.
 `cOracle`, and `rustOracle`. Scalar file members are `FileIdentity`; `sources` and
 `tuneManifests` are path-sorted `FileIdentity` lists of exactly seven and seven
 entries. Their file set and logical rows equal Section 19.1 exactly.
+Repository source, manifest, oracle, and input members use root `repository`; the
+built runner uses root `evidence`. Every timed artifact, decision, compiler binary,
+replay artifact, raw-sample file, and toolchain copy uses root `evidence`.
 
-`sampling` has exactly `mainProtocol`, `domainProtocol`, `mainChannels`,
-`domainChannels`, `warmupRows`, `sampleRows`, `callsPerSample`, `statistic`,
+`sampling` has exactly `mainProtocol`, `validationProtocol`, `domainProtocol`,
+`mainChannels`, `validationChannels`, `domainChannels`, `warmupRows`, `sampleRows`, `callsPerSample`, `statistic`,
 `stabilityPolicy`, and `rerunPolicy`. Values are exactly:
 
 - `mainProtocol="rotating-six-channel-v1"`;
+- `validationProtocol="rotating-three-channel-v1"`;
 - `domainProtocol="rotating-three-channel-v1"`;
 - main channels `[tuned,v014Ordinary,v013Ordinary,v013Pgo,cSimd,rustSimd]`;
+- validation channels `[tuned,v013Ordinary,v013Pgo]`;
 - domain channels `[tuned,genericC,genericRust]`;
 - warmups 3, samples 20, calls 7, statistic `minimum-then-upper-median`;
 - stability `at-least-80-percent-within-20-percent-of-upper-median`;
@@ -139,8 +154,8 @@ Every steady-state order uses this exact byte formula:
 
 Phase is 1 for warmup and 2 for measured rows; row is zero-based within its phase.
 The first eight digest bytes are a big-endian u64 and select a left rotation modulo
-channel count from the fixed channel list. `split` is `release-held-out` or
-`domain-release-held-out`. The stored order must equal this formula.
+channel count from the fixed channel list. `split` is `release-held-out`,
+`validation`, or `domain-release-held-out`. The stored order must equal this formula.
 
 ## 4. Decisions and artifacts
 
@@ -151,40 +166,78 @@ channel count from the fixed channel list. `split` is `release-held-out` or
 `file` is a `FileIdentity`; six digest fields are `Digest`, except
 `certificateDigest` is either a `Digest` for `tuned` or JSON null for a baseline
 reason. `outputRecords` is a role-sorted list with exact keys `role`, `logicalName`,
-`bytes`, and `sha256`, and must equal the decoded decision and retained outputs.
+`bytes`, and `sha256`. Every extracted scalar and output record must equal the
+decoded retained decision; none is trusted as an independent report assertion.
 
 `tuningArtifacts` is a case-name-sorted list of exactly seven objects with keys
 `case`, `decision`, and `outputs`; `decision` is a `FileIdentity`, and `outputs` is
-the complete role-sorted list of one, two, or three objects with exactly `role`,
-`path`, `bytes`, and `sha256`. Every identity equals `tuningDecisions`.
+the complete role-sorted list of one, two, or three `OutputArtifact` objects. An
+`OutputArtifact` has exactly `role` and `file`; role is `primary`, `header`, or
+`import-library`, and file is a `FileIdentity`. Every role/digest/size identity
+equals `tuningDecisions.outputRecords`; logical name equals the output file's
+basename. `tuningArtifacts.decision` equals `tuningDecisions.file` for the same
+case, including root and path.
 
 ## 5. Steady-state cases
 
-`cases` is a case-name-sorted list of exactly five `MainCase` objects. `domainCases`
-is a case-name-sorted list of exactly two `DomainCase` objects for
-`contract-fixed-length` and `contract-noalias`.
+`cases` is a case-name-sorted list of exactly five `MainCase` objects.
+`validationCases` is a case-name-sorted list of exactly seven `ValidationCase`
+objects, one for every tuning case. `domainCases` is a case-name-sorted list of
+exactly two `DomainCase` objects for `contract-fixed-length` and
+`contract-noalias`.
 
 A `MainCase` has exactly `case`, `eligible`, `source`, `input`, `decisionDigest`,
-`correctnessDigest`, `artifacts`, `warmupOrder`, `sampleOrder`, `samplesNs`, and
-`mediansNs`. `eligible` is true. `source` and `input` are `FileIdentity`;
+`correctnessDigest`, `correctnessDigests`, `artifacts`, `buildCommands`,
+`warmupOrder`, `sampleOrder`, `callsNs`, `samplesNs`, and `mediansNs`. `eligible`
+is true. `source` and `input` are `FileIdentity`;
 `artifacts` has exactly the six main-channel `FileIdentity` keys. `warmupOrder` is
 three channel permutations and `sampleOrder` is twenty channel permutations; each
 row contains every channel exactly once and equals the specified digest rotation.
-`samplesNs` has exactly six channel keys, each a list of 20 positive integers;
+`callsNs` has exactly six channel keys, each containing 20 rows of exactly seven
+positive integers in invocation order. `samplesNs` has exactly six channel keys,
+each a list of 20 positive integers equal to the row minima in `callsNs`;
 `mediansNs` has those keys and equals each list's ascending element 10. Every stream
-passes the 16-of-20 inclusive 80%..120% stability rule.
+passes the 16-of-20 inclusive 80%..120% stability rule. `correctnessDigests` has
+exactly the six channel keys and every value equals `correctnessDigest`.
+`buildCommands` has the six main-channel keys and `BuildCommand` values from
+Section 6.
 
-A `DomainCase` has the same keys and rules except `eligible` is absent,
-`buildCommands` is added, and all channel-shaped objects/orders use exactly the
-three domain channels. `buildCommands` has exactly the three channel keys and each
-value is the closed command object from Section 6. The tuned artifact and
-`decisionDigest` must equal the corresponding entries in `tuningArtifacts` and
-`tuningDecisions`. Each case's correctness digest agrees across all channels.
+A `ValidationCase` has exactly `case`, `source`, `input`, `decisionDigest`,
+`correctnessDigest`, `correctnessDigests`, `artifacts`, `buildCommands`,
+`warmupOrder`, `sampleOrder`, `callsNs`, `samplesNs`, and `mediansNs`.
+Channel-shaped values use the three validation
+channels and otherwise obey the same 3/20/7 rotation, upper-median, and stability
+rules. Its input is the case's manifest validation input, not release held-out.
+
+A `DomainCase` has exactly the same keys as `ValidationCase`, but all channel-shaped
+objects and orders use the three domain channels and the input is the domain
+release-held-out input. `buildCommands` has exactly the three domain-channel keys
+and closed `BuildCommand` values from Section 6. In both record types,
+`correctnessDigests` has exactly the applicable channel keys, all values equal
+`correctnessDigest`, `callsNs` contains every seven-call row, and `samplesNs`
+contains exactly their minima.
+
+For every MainCase, ValidationCase, and DomainCase, `decisionDigest` equals its
+same-name `tuningDecisions` row; `artifacts.tuned` is the primary file in the
+same-name `tuningArtifacts` row; every `buildCommands[channel].outputs` contains
+exactly the published output set for that channel; and its primary file equals
+`artifacts[channel]`. The tuned BuildCommand's complete output list equals
+`tuningArtifacts.outputs`, and its decision equals `tuningArtifacts.decision`;
+every other channel has a null decision. Every source/input identity occurs in both the build
+command inputs and the corresponding workload identity. These are mandatory
+foreign-key equalities, not collector conventions.
+
+For each of the seven case names, `tuningArtifacts.decision` and `.outputs` equal
+the `decision` and `outputs` of that case's `determinism.coldOne` record. The five
+main rows, all seven validation rows, and both domain rows therefore time that
+canonical first-cold output set through the foreign keys above.
 
 The main gates use release-held-out rows only. For every selected tuned case,
 `tuned/v013-faster` is at most 98/100; every case, including baseline selections,
 enters the five-case held-out geometric gate of at most 95/100; no validation or
-release-held-out ratio exceeds 102/100. Oracle throughput meets 98/100 geometric
+release-held-out ratio exceeds 102/100. Every validation case compares tuned time
+with the lower median of v0.13 ordinary and v0.13 PGO and is at most 102/100 of
+that faster comparator. Oracle throughput meets 98/100 geometric
 and 92/100 per case. The two domain cases jointly satisfy the strict 108/100
 throughput gate against the faster generic oracle.
 
@@ -196,41 +249,65 @@ throughput gate against the faster generic oracle.
 `sampleOrder`, `samplesNs`, `mediansNs`, and `commands`. Orders contain three and
 fifteen two-channel permutations with alternating first channel. Each samples list
 has 15 positive values, each median is ascending element 7. `commands` is an object
-with exactly the two channel keys; each value has exactly `argv`, `executable`,
-`inputs`, `environment`, and `environmentDigest`, where `argv` is the exact string
-vector,
+with exactly the two channel keys; each value is a `Command` with exactly `argv`,
+`workingDirectory`, `executable`, `inputs`, `environment`, and
+`environmentDigest`, where `argv` is the exact string vector,
+`workingDirectory` is exactly `repository`, argv contains no absolute or traversing
+path, and the process runs at the clean candidate-SHA repository root. Relative
+output arguments name locations below the evidence directory;
 `executable` is a `FileIdentity`, `inputs` is a path-sorted `FileIdentity` list, and
 `environment` is a name-sorted list of closed `EnvironmentEntry` objects. An entry
-has exactly `name`, `kind`, and `value`. `kind="literal"` makes `value` a `Text`;
-`kind="reference"` makes it a path-sorted nonempty list of already-retained
-`FileIdentity` objects that give the variable its semantic identity. Names are
+has exactly `name`, `value`, and `references`. `value` is the exact `Text` passed to
+the child process; `references` is a path-sorted list of already-retained
+`FileIdentity` objects that give any path-valued variable its semantic identity.
+Names are
 unique and are drawn only from `CKC_LLVM_PREFIX`,
 `CKC_CLANG_ORACLE`, `CKC_CANDIDATE_COMPILER`, `CKC_V013_REPLAY_BUNDLE`,
 `SystemRoot`, and `WINDIR`; absent names are omitted and every other inherited
-variable is cleared. Windows requires the last two literal entries. The exact
-reference mappings are: LLVM prefix to the three retained toolchain files; Clang
+variable is cleared. Windows requires the last two entries with empty references.
+The four `CKC_*` names require nonempty references. Their exact mappings are: LLVM
+prefix to the three retained toolchain files; Clang
 oracle to `toolchain.clangBinary`; candidate compiler to `candidateBinary`; and a
 replay bundle to that bundle's manifest, compiler, archive, and accepted-report
 identities. A variable with no corresponding retained reference is invalid.
+The checker resolves each path-valued `value`, verifies that it denotes the location
+described by its references, and rejects an unused, missing, or extra reference.
 `environmentDigest` is
 `P("CK-V014-PERF-COMMAND-ENV\0", environment List<EnvironmentEntryValue>)`,
-where an entry value is name `Text`, kind `U8` (literal=1, reference=2),
-then the kind's value using the typed encoding above.
+where an entry value is name `Text`, value `Text`, then references
+`List<FileIdentityValue>`.
+
+A `BuildCommand` has exactly `command`, `decision`, and `outputs`. `command` is the
+closed `Command` above. `decision` is the generated tuning-decision `FileIdentity`
+or JSON null for a nontuned channel. `outputs` is the complete role-sorted list of
+`OutputArtifact` objects produced by that invocation. An argv decision/output path
+and every generated sidecar must resolve to exactly those file identities; an
+unlisted generated file or an output without command provenance is invalid
+evidence. All MainCase,
+ValidationCase, and DomainCase `buildCommands` contain `BuildCommand`, while the
+compile-time `commands` contain `Command` because their per-iteration outputs are
+discarded and are not timed artifacts.
 
 The first channel of compile warmup row 0 is the left-listed channel and alternates
 across all 18 rows without restarting at the measured boundary; the report retains
 the separated 3/15 orders. `artifactSize` is a case-name-sorted seven-row list with
-exactly `case`,
-`tunedPrimary`, and `baselinePrimary`; the latter two are `FileIdentity` and the
-ratio is at most 110/100. `archiveSize` has exactly `candidate` and `v013Replay`,
+exactly `case`, `tunedPrimary`, `baselinePrimary`, and `baselineBuild`.
+`tunedPrimary` and `baselinePrimary` are `FileIdentity`; `baselineBuild` is a
+nontuned `BuildCommand` whose primary output equals `baselinePrimary` and whose
+decision is null. `tunedPrimary` equals the same-name `tuningArtifacts` primary.
+For the five main cases, `baselinePrimary` also equals
+`cases.artifacts.v014Ordinary`. The size ratio is at most 110/100.
+`archiveSize` has exactly `candidate` and `v013Replay`,
 both `FileIdentity`, with ratio at most 110/100.
 
 `resourceUse` has exactly `sessions` and `cacheHardLimitBytes`. The hard limit is
 4,294,967,296. `sessions` is a seven-row case-name-sorted list with exactly `case`,
-`budget`, `wallMs`, `peakRssBytes`, `ordinaryPeakRssBytes`, `expansions`,
+`decision`, `decisionDigest`, `budget`, `wallMs`, `peakRssBytes`,
+`ordinaryPeakRssBytes`, `expansions`,
 `compileAttempts`, `measuredFinalists`, `validationEntrants`, and `cacheBytes`.
-Budget is `standard`; all counts fit its preset; wall, RSS ratio, and cache meet the
-frozen thresholds.
+`decision` and `decisionDigest` equal the same-name `tuningDecisions` row. Budget is
+`standard`; all counts fit its preset; wall, RSS ratio, and cache meet the frozen
+thresholds.
 
 ## 7. Determinism and correctness
 
@@ -239,11 +316,13 @@ frozen thresholds.
 `decisionDigest`, `choiceIdentityDigest`, `planDigest`, `objectGraphDigest`,
 `linkRecipeDigest`, `outputContentDigest`, `compiledCandidates`, and
 `measuredCandidates`. `decision` is a retained `FileIdentity`; `outputs` is the
-complete role-sorted list defined for `tuningArtifacts`. The decision digest and
+complete role-sorted `OutputArtifact` list defined for `tuningArtifacts`. The decision
+digest and
 decoded fields must match the retained decision. `outputContentDigest` is
 `P("CK-V014-PERF-OUTPUT-CONTENT\0", outputs List<OutputContentValue>)`, where each
-value is role `Text` (exactly `primary`, `header`, or `import-library`), bytes
-`U64`, then decoded SHA-256 `DigestBytes`; paths and the
+value is role `Text` (exactly `primary`, `header`, or `import-library`), followed
+by the artifact file's bytes `U64` and decoded SHA-256 `DigestBytes`; roots, paths,
+and the
 measurement-bearing decision file are deliberately excluded.
 
 The two independent cold-cache runs must match `choiceIdentityDigest`, plan,
@@ -255,8 +334,18 @@ its retained decision and output files are byte-for-byte equal by role, it has z
 compiled/measured candidates, and immutable origin facts do not change.
 
 `correctness` has exactly `search`, `validation`, `adversarial`,
-`releaseHeldOutDifferential`, `domainDifferential`, `oracleUbAudit`, `aliasAudit`,
-and `featureAudit`, all boolean true.
+`validationDifferential`, `releaseHeldOutDifferential`, `domainDifferential`,
+`oracleUbAudit`, `aliasAudit`, and `featureAudit`, all boolean true.
+
+The checker does not trust these booleans. It derives search correctness from each
+decoded decision, and validation/release/domain differential correctness from the
+per-channel digests above. It then executes the recipe-pinned
+`scripts/audit-performance-oracles.py` directly, without a shell, from the clean
+candidate root against this report and its retained files; that audit must
+independently exercise the adversarial inputs and establish `adversarial`,
+`oracleUbAudit`, `aliasAudit`, and `featureAudit`. The command uses the same cleared
+environment and retained toolchain references defined in Section 6. A nonzero exit,
+unretained input, or disagreement with any true field invalidates the report.
 
 The collector only writes evidence. The independent checker reopens and hashes
 every retained file, validates every closed object and cardinality above, replays

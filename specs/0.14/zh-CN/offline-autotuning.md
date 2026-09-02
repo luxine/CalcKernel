@@ -154,20 +154,28 @@ Profile、声明输入或者另一目标形成别名。Schema 1 不支持跨目�
 记录存在的主输出、头文件和 Import Library 的角色、规范逻辑名称、暂存字节
 摘要与物理体积。
 
+每个调优目标叶名为 1..255 个 ASCII 字节，匹配
+`[A-Za-z0-9][A-Za-z0-9._-]*`，不是 `.`/`..`，不以 `.ckc-tune-` 开头，
+也不是 Windows 设备名或以点/空格结尾的名称。CK 不跟随链接地打开已经存在的
+共同父目录，并从平台适配器取得该精确目录的稳定卷/目录身份和查找大小写行为。
+适配器必须区分大小写敏感与 ASCII 大小写不敏感；未知、可变或不支持的等价性
+在暂存前失败。ASCII 限制排除 Unicode 规范化别名。全部别名检查、排序键和锁
+均使用父目录身份加精确或 ASCII 小写叶名键；已有目标还要按 Handle 身份复核。
+
 发布为每个规范决策、产物或 Sidecar 目标使用一个持久同目录锁，并使用集合
 Journal、Stage 与 Backup 文件。目标锁名称取
-`H("CK-TUNE-DESTINATION\0", canonical_path_bytes)` 前 32 个十六进制字符；
-集合 Journal 名称取 `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` 的同样
-前缀。CK 打开任何保留文件时不得跟随符号链接或 Reparse Point，按规范路径字节
+`H("CK-TUNE-DESTINATION\0", DestinationKeyMaterial)` 全部 64 个十六进制字符；
+集合 Journal 名称同样使用 `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` 的
+全部 64 个字符。CK 打开任何保留文件时不得跟随符号链接或 Reparse Point，按规范目标 id
 顺序取得完整重叠闭包中的全部目标锁，并在恢复与发布全程持有。锁文件与 Journal
-均存储并校验完整 32 字节 id；前缀碰撞属于硬错误，绝不视为同一对象。因此即使
+均存储并校验完整 32 字节 id；身份不匹配属于硬错误，绝不视为同一对象。因此即使
 两个命令为同一主产物选择了不同显式决策路径，它们仍会在主目标锁上串行化。
 
 英中设计共用的规范附件
 [`publication-journal-1.md`](../publication-journal-1.md) 是唯一字节、文件名、
 Barrier、阶段与恢复级权威；下述概览不能弱化或重排该协议。
 
-有界 Journal Schema 1 包含事务 id、输出集 id、阶段；按发布顺序 decision、
+有界 Journal Schema 1 包含事务 id、输出集 id、阶段和持久恢复方向；按发布顺序 decision、
 header、import-library、primary，对每个存在的目标，
 还包含目标、Stage 与 Backup 的 Basename、旧文件存在位、旧摘要、新摘要与新
 体积。阶段为 `Prepared=1`、`BackedUp=2`、`DecisionPublished=3`、
@@ -184,9 +192,10 @@ header、import-library、primary，对每个存在的目标，
    Journal，再 Flush 目录。
 
 目录 Flush 使用各平台有文档的最强等价机制，并由每个原生宿主恢复测试覆盖。
-任何已报告错误都必须在返回前回滚。重启恢复先计算所有目标、Stage 与 Backup
-摘要。阶段 1 至 4 回滚，除非一个与旧摘要不同的新主输出证明已经完成重命名；
-阶段 5、6 前滚；旧新主输出相同时按阶段判定。两者都必须幂等。无法解释或未
+锁和 Journal 最终名称只在完整字节 Flush 后原子暴露。主产物发布前的错误先
+持久切换方向再回滚；主产物发布时或之后则完成前滚。重启时先解析附件中完备的
+Active/Update/私有写入状态表，再计算全部目标、Stage 与 Backup 摘要。持久回滚
+方向永远继续回滚；否则由阶段与主产物身份选择规定的前滚或持久回滚路径。两者都必须幂等。无法解释或未
 记录的摘要组合是硬恢复错误，必须保留
 Journal 与全部证据，不得猜测；恢复成功前后续命令不得接触该集合。
 
@@ -261,8 +270,8 @@ Schema 1 只包含以下字段：
 | --- | --- | --- |
 | 根 | schema | 必需整数，恰好为 1 |
 | runner | path | 指向宿主格式原生可执行文件的必需 UTF-8 路径；它属于操作路径，不属于规范身份 |
-| runner | args | 最多 64 个 UTF-8 字符串的可选数组，默认空，编码总长度最多 64 KiB |
-| runner | inputs | 最多 64 个清单相对普通文件路径的可选数组，默认空；每个最多 1 GiB，总计最多 4 GiB |
+| runner | args | 最多 64 个 `Text` 字符串的可选数组，默认空；每项必须已经 NFC、无 NUL、最多 4,096 个 UTF-8 字节，总计最多 64 KiB |
+| runner | inputs | 最多 64 个清单相对普通文件 `Text` 路径的可选数组，默认空；每个路径必须已经 NFC、无 NUL且最多 4,096 个 UTF-8 字节；每个文件最多 1 GiB，总计最多 4 GiB |
 | runner | inherit_env | 最多 16 个匹配 [A-Za-z_][A-Za-z0-9_]* 的唯一名称，默认空 |
 | runner | timeout_ms | 100 至 120,000 的可选整数，默认 30,000 |
 | 每个 case 条目 | id | 符合上述语法和长度的必需唯一标识 |
@@ -296,6 +305,7 @@ Schema 1 只包含以下字段：
     weight = 2
     expected_digest = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
+驱动程序接收通过校验的精确 UTF-8 argv 字节；CK 不得在校验后再次规范化参数。
 驱动程序工作目录始终为 CK_TUNE_TEMP，清单不能覆盖它。资源输出限制由本规范
 固定，不是可配置的清单字段。
 
@@ -314,10 +324,16 @@ Primitive Framing，按以下顺序计算
 2. runner argv 字符串；
 3. 排序后的有效继承环境变量名称/值记录；
 4. timeout；
-5. 按 Manifest 顺序排列的输入记录，每项包含规范相对暂存路径、字节长度和
-   内容摘要；
-6. 按规范标识排序的 case 记录，每项包含 role、seed、weight 和期望摘要；
+5. 按 Manifest 顺序排列的 `ManifestInputMaterial`，Tag 1..3 依次包含逻辑
+   路径、内容摘要和字节长度；
+6. 按规范标识排序的 `ManifestCaseMaterial`，Tag 1..5 依次包含 case id、role、
+   seed、weight 和期望摘要；
 7. 不可变 runner 快照字节长度与内容摘要。
+
+精确 Material 记录及外层 Tag 只在
+[`decision-schema-1.md`](../decision-schema-1.md) 定义一次；此列表只是对齐
+概览。通过校验的逻辑路径在 `CK_TUNE_TEMP/inputs` 下原样使用，因此暂存路径
+字节与记录身份不会分歧。
 
 操作 Manifest 与 runner 绝对路径、TOML 空白/注释、时间戳、除可执行有效性
 外的文件权限以及临时路径均被排除。任何逻辑字段或内容字节变化都会使复用
@@ -466,17 +482,19 @@ Tag 18，是唯一测量顺序种子。
 冒烟使用 Phase 1、Round 0、Row 0、Call 1；候选与用例保持上述计划摘要和
 case-id 顺序，因此冒烟无需通道轮转。
 
-用例按 case-id 存储；通道依次为基线和按计划摘要升序排列的候选。每一行中，
-CK 计算：
-
-    H = SHA-256("CK-TUNE-ORDER\0" || session_digest ||
-               phase_u8 || round_u8 || row_u32_be || case_id)
-
-将前八个字节解释为大端 u64，对该用例的通道数取模，得到向左轮转量。用
-单字节 0xff 替代 case_id 的相同公式得到用例列表轮转量。Phase 值依次为：
+用例按 case-id 存储；通道依次为基线和按计划摘要升序排列的候选。每一行使用
+附件的规范类型编码计算
+`H("CK-TUNE-ORDER\0", sessionDigest D32, phase U8, round U8, row U32,
+caseId Text)`。将前八个字节解释为大端 u64，对该用例的通道数取模得到左轮转
+量，并将完整摘要存为该行 `permutationKey`。相同 Domain 和前四个类型值后接
+`Bytes([0xff])`，得到用例列表轮转量。Phase 值依次为：
 1 候选冒烟、2 搜索预热、3 搜索测量、4 验证一预热、5 验证一测量、
 6 验证二预热、7 验证二测量。验证外 round 为零，验证内为 1 或 2。被拒绝的通道槽位继续
 作为显式 skip，因此移除候选不能重排有利样本。
+
+候选超时时丢弃未完成流，但保留精确超时坐标。决策以规范顺序存储实际轮转
+调用计划中、在该坐标之前已经完成第二十行的全部流集合；该集合不要求是规范
+流顺序的前缀。检查器从 Session Digest 和超时坐标重新计算此集合。
 
 启动一次调用前，CK 要求会话墙钟至少还剩完整配置超时加固定 2,250 ms
 Containment 清理余量；否则不启动进程，直接以证据不完整中止。CK 绝不为了
@@ -498,6 +516,16 @@ CK 0.14 只能调优由 CK 事实推导且由 CK 拥有的有限备选项：
 
 每个决策点和备选项都具有规范、稳定的标识、前置条件摘要和顺序。追踪记录
 同时记录接受和拒绝的备选项。
+
+规范调优前快照是经过验证的 v0.13 O3 KIR：已完成 CFG 规范化、初始
+SCCP/范围分析、循环规范化和第一次必要检查消除，且正好位于专用化之前。
+候选重放的收益控制阶段顺序固定为：专用化、内联、短 slice/版本化、Loop
+SIMD、展开、SLP、布局。调优单元按 `(阶段, unit id)` 排序，单元内备选项按
+`(site id, alternative id)` 排序。既有必要分析、合法性检查、证明刷新与清理
+Pass 保留在 v0.13 的阶段位置，计划不得选择或抑制它们。布局选择在原生 Lowering
+前作为规范 KIR 元数据存在；后端仅在不变的固定 LLVM O3 流水线之后、目标文件
+发射前消费它。空计划采用未经改变的 v0.13 O3 收益决策，不改变普通编译和既有
+仅用于 O2 的 Late Layout 行为。
 
 ### 9.2 永不可调优
 
@@ -668,9 +696,21 @@ u64。
 3. 非基线选择更少；
 4. 计划摘要更小。
 
-获选计划必须在两轮中都合格并排名第一。如果两轮排名第一的计划不同，或者
-没有计划在两轮中都合格，CK 分别以规范原因 validation-disagreement 或
-validation-threshold 记录一次成功的基线决策。
+令 `Q1`、`Q2` 为第一轮和第二轮按排名排列的合格计划列表。选择严格按下述
+互斥且完备的表执行：
+
+| 条件 | 结果 |
+| --- | --- |
+| 不存在验证入围者 | 基线，`no-candidate` |
+| `Q1` 或 `Q2` 为空 | 基线，`validation-threshold` |
+| 两者非空且 `Q1[0] == Q2[0]` | 该计划，`tuned` |
+| 两者非空且 `Q1[0] != Q2[0]` | 基线，`validation-disagreement` |
+
+阈值结果下全部存续且完成验证的入围者结果均为 `validation-threshold`；分歧结果下
+全部入围者均为 `validation-nonwinner`；调优结果下共同胜者为 `selected`，其余
+入围者为 `validation-nonwinner`。no-candidate 行没有验证入围者结果，也不改写
+此前的 Trial 结果。
+超时入围者始终保留 `timed-out` 并从 `Q1`/`Q2` 排除，绝不被此表改写。
 
 CK 观察到不利结果后不得自行决定重跑。因此，证据稳定但没有选出计划时，
 生成一次成功的基线决策。
@@ -750,6 +790,10 @@ Schema 1 要求以下顶层 Tag 按升序且完整出现：
 可选状态、数值、边界与排序。下述内容仅是概览，不能覆盖该附件。必要字段恰好
 出现一次，只有 `Opt<T>` 字段可选；全部 `Text` 字段禁止绝对路径。
 
+公共 JSON 和稳定文本投影的精确契约由英中共用的规范附件
+[`inspection-schema-1.md`](../inspection-schema-1.md) 单独冻结；Renderer 不得
+发明、省略、本地化或者重排已经校验的决策数据。
+
 顶层 Tag 1 `Identity` 包含：
 
 | Tag | 类型 | 含义 |
@@ -787,7 +831,7 @@ Tag 和精确值由附件固定，并必须等于第 8、10、11 节。
 
 顶层 Tag 4 `Environment` 包含封闭测量 Tuple、计时器与调度证据，以及按用例
 id 排序的校准记录列表。每项校准记录迭代数、尝试数、接受与确认耗时以及
-Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`；不可得
+Overshoot，随后是派生 Session Digest 和本地测量缓存 Salt 摘要。不可得文本使用 `unavailable`；不可得
 数字宿主事实使用显式 absent
 可选状态。
 
@@ -796,9 +840,9 @@ Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`
 
 | 记录 | 按 Tag 顺序的必要字段 |
 | --- | --- |
-| Site | 稳定 id `D32`；类别枚举 `U8`；根 id `D32`；前状态摘要 `D32`；规范排名 `U32` |
+| Site | 稳定 id `D32`；类别枚举 `U8`；根 id `D32`；前状态摘要 `D32`；规范排名 `U32`；稳定根 Anchor |
 | Unit | 稳定单元 id `D32`；有序 Site-id 列表；基线状态摘要 `D32`；有序 Variant 列表 |
-| UnitVariant | Variant id `D32`；类别枚举 `U8`；有序选择列表；孤立动态/静态/KIR 字节估计 `U64`；后状态摘要 `D32` |
+| UnitVariant | Variant id `D32`；类别枚举 `U8`；带封闭类别 Payload 的有序选择；孤立动态/静态/KIR 字节估计 `U64`；后状态摘要 `D32` |
 | PlanChoice | 单元 id `D32`；Variant id `D32`；类别 `U8`；前状态 `D32`；后状态 `D32` |
 | Expansion | 序号 `U32`；父计划 `D32`；单元 id `D32`；Variant id `D32`；处置枚举 `U8`；结果计划 `Opt<D32>`；诊断码 `U16`；三个可选完整计划排名指标 |
 
@@ -818,6 +862,7 @@ Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`
 | 9 | List<Record> | 规范顺序的测量流 |
 | 10 | Record | 不可变编译 CacheOrigin |
 | 11 | Opt<Record> | 精确超时位置；仅 timed-out 结果要求存在 |
+| 12 | D32 | 实际主产物内容摘要 |
 
 测量流包含阶段、轮次、用例、计划、迭代数、二十个有序行记录和正确性摘要。
 每行包含序号、排列键摘要、恰好三个原始纳秒调用以及其最小存储样本。预热
@@ -854,15 +899,16 @@ Basename、暂存字节摘要和物理体积。可执行输出集仅含主输出
 | 诊断码 | none=0, legality-rejected=1, growth-rejected=2, artifact-size-rejected=3, candidate-timeout=4 |
 
 集合顺序为：用例按 id；Site、Unit、Variant 按稳定 id；展开按序号；候选先
-基线再按计划摘要；计划选择按单元 id；流按阶段、轮、用例 id、计划摘要；流内
+基线再按计划摘要；计划选择按应用阶段再按单元 id；流按阶段、轮、用例 id、计划摘要；流内
 行按序号；输出按角色。Text 比较和排序以编码后的 UTF-8 字节为准。
 
-仓库携带四个规范 Schema Fixture：
+仓库携带五个规范 Schema Fixture：
 
 - `tests/fixtures/tune/decision-schema1-framing.hex`；
 - `tests/fixtures/tune/decision-schema1-baseline.cktune`；
 - `tests/fixtures/tune/decision-schema1-tuned.cktune`；
-- `tests/fixtures/tune/decision-schema1-inspection.json`。
+- `tests/fixtures/tune/decision-schema1-inspection.json`；
+- `tests/fixtures/tune/decision-schema1-inspection.txt`。
 
 Framing Vector 覆盖全部标量/容器类型和两种可选状态。基线 Vector 有一个搜索
 与一个验证用例以及 `no-candidate`；调优 Vector 有一个单元、一个合法 Variant、
@@ -953,8 +999,8 @@ Vendor/Family/Model/Stepping、宿主可提供时的 Microcode、规范化 CPU �
 - 编译身份：代码身份加精确计划；
 - 测量身份：产物、驱动程序、工作负载、环境和策略。
 
-测量键还包含一个随机生成、以私有权限保存的本地缓存安装 Salt。Salt 不写入
-.cktune。因此，不能仅因为另一台机器报告相同 CPU 型号和操作系统 Tuple，
+测量键还包含一个随机生成、以私有权限保存的本地缓存安装 Salt。原始 Salt 不写入
+.cktune，但记录其域分离摘要以便重新推导缓存来源。因此，不能仅因为另一台机器报告相同 CPU 型号和操作系统 Tuple，
 就复用其原始测量；只要目标在其他方面精确兼容，移动决策文件后显式
 tune-use 仍然允许。
 
@@ -1009,8 +1055,9 @@ tune-use 仍然允许。
 - 编译与测量缓存复用；
 - 最终重放和目标图验证。
 
-JSON 使用检查 Schema 和稳定字段顺序。确定性输出不包含绝对路径、时间戳、
-临时标识、Hash Map 顺序或本地化文字。
+JSON 与默认文本使用
+[`inspection-schema-1.md`](../inspection-schema-1.md) 规定的精确字节和完整树
+遍历。确定性输出不包含绝对路径、时间戳、临时标识、Hash Map 顺序或本地化文字。
 
 tune-use 与 explain-optimization 组合时，每个获选项映射回其稳定决策点、
 静态预测、测量证据、保护和重放结果。
@@ -1153,30 +1200,36 @@ Oracle Manifest 固定 C11、Rust 2024、严格浮点行为、安全前置条件
     schemaVersion, candidateVersion, candidateSha, v013ReplayCommit,
     evidenceDirectory, toolchain, hardware, recipe, candidateBinary,
     v013ReplayBundle, cumulativeSchemaEight, workload, tuningDecisions,
-    tuningArtifacts, sampling, cases, domainCases, tuneUseCompileTime,
+    tuningArtifacts, sampling, cases, validationCases, domainCases, tuneUseCompileTime,
     ordinaryCompileRegression, artifactSize, archiveSize, resourceUse,
     determinism, correctness
 
 `schemaVersion` 为 9，`candidateVersion` 为 `0.14.0`。候选 SHA、编译器字节、
 精确 v0.13 Replay Commit 与 Archive、Schema 8 文件、固定 LLVM/Clang 22.1.8、
 Rust 1.90.0、驱动字节、Manifest、源码/输入字节、硬件、操作系统、CPU 特性、
-Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份。证据项必须是
-证据目录下的普通文件，不得有符号链接、路径穿越、缺失、重复或未知项。
+Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份。每个证据根条目
+必须是证据目录下的普通文件，不得有符号链接、路径穿越、缺失、重复或未知项；
+仓库根身份只能在干净的候选 Checkout 中解析。
 稳定 x86-64 Worker 必须具备 x86-64-v4；稳定 AArch64 Worker 必须具备 SVE2。
 缺少 Tier 属于门槛失败，绝不是 Workflow 可选择项。
 
 主用例计时使用 `rotating-six-channel-v1`，通道顺序严格为：`tuned`、
-`v014Ordinary`、`v013Ordinary`、`v013Pgo`、`cSimd`、`rustSimd`。领域计时
+`v014Ordinary`、`v013Ordinary`、`v013Pgo`、`cSimd`、`rustSimd`。验证计时
+使用 `rotating-three-channel-v1`，通道为 `tuned`、`v013Ordinary` 和
+`v013Pgo`。领域计时
 使用 `rotating-three-channel-v1`，顺序为 `tuned`、`genericC`、
-`genericRust`。两者执行三行不记录的预热、保留二十行测量；每个样本将每通道
+`genericRust`。三者都执行三行不记录的预热、保留二十行测量；每个样本将每通道
 调用七个等量批次并存最小值，结果使用上中位数。至少 16/20 样本必须位于中位
 数 80%..120% 闭区间。轮转由候选、用例、分区和行摘要导出。动态加载、符号
 解析、准备、调优搜索与驱动 I/O 不计入稳态计时。禁止选择性重跑。`.cktune`
 内部三调用决策证据与外部七调用发布样本彼此独立。
 
-每个主用例记录全部六个原始流及顺序、中位数、正确性摘要、源码/输入身份、
+每个主用例记录全部六个原始七调用流及顺序、逐行最小值、中位数、各通道正确性
+摘要、源码/输入身份、
 获选或基线决策、完整 `.cktune` 身份、全部产物身份、固定为 true 的 Eligibility
-位与发布留出结果。两个领域用例记录三通道的同类事实以及精确调优决策、输出
+位与发布留出结果。全部七个验证用例都在 Manifest 验证输入上记录 tuned、
+v0.13 ordinary 和 v0.13 PGO 原始七调用流及各通道正确性摘要；检查器选择更快的 v0.13 中位数并应用不变的
+102/100 上限。两个领域用例记录三通道的同类事实以及精确调优决策、输出
 集与三条构建命令。全部七个 `.cktune` 和完整带角色发布输出集复制进证据；其
 Schema、身份、证书/基线原因、计划、目标图、
 链接配方、测量与磁盘摘要均被独立检查。
@@ -1188,6 +1241,10 @@ tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对�
 计数以及缓存字节。确定性证据以与测量无关的选择身份、计划、目标图、链接配方
 和发布内容身份比较两个独立冷缓存会话，再以决策与输出字节以及零编译/测量计数
 证明一次精确热缓存复用。真实冷会话的原始计时必须保留，并允许不同。
+每个计时通道都携带封闭构建命令，并通过显式外键链连接其输出字节与调优
+决策/输出集或审计基线。规范调优决策/输出集就是第一次冷确定性运行；主/验证
+计时、产物体积、资源与热复用记录都引用同一保留身份，而不是互不绑定的副本。
+每个文件身份明确选择候选 SHA 仓库根或保留证据根。
 
 `scripts/measure-v014-performance.py` 只收集原始证据；
 `scripts/check-native-performance.py` 是唯一验收权威，对任何缺失/未知键、身份

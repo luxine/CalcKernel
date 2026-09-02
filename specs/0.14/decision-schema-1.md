@@ -27,6 +27,7 @@ types are:
 | `D32` | exactly 32 opaque bytes |
 | `Text` | `U32 length` then NFC-normalized valid UTF-8 bytes, no NUL, at most 4,096 bytes |
 | `Bytes` | `U32 length` then that many opaque bytes, at most 4,096 bytes |
+| `Blob32M` | digest-material only: `U64 length` then opaque bytes, at most 32 MiB; never a decision-file field |
 | `Record` | `U32 byte_length` then the record's increasing-tag TLV sequence |
 | `List<T,N>` | `U32 count`, at most `N`, followed by exactly that many `T` values |
 | `Opt<T>` | `U8(0)` or `U8(1)` followed by exactly one `T` |
@@ -142,17 +143,24 @@ Preset tuples `(beam, expansion, compile, finalist, entrant, wall-ms)` are quick
 | 7 | `inputs` | `List<InputIdentity,64>` |
 | 8 | `cases` | `List<CaseIdentity,16>` |
 
-`EnvironmentEntry` is tag 1 `name: Text`, tag 2 `value: Bytes`. Unix stores the
+`EnvironmentEntry` is tag 1 `name: Text`, tag 2 `value: Bytes`.
+`ManifestInputMaterial` and the wire-identical `InputIdentity` are tag 1
+`logicalPath: Text`, tag 2 `digest: D32`, tag 3 `bytes: U64`.
+`ManifestCaseMaterial` and the wire-identical `CaseIdentity` are tag 1 `id: Text`,
+tag 2 `role: U8 CaseRole`, tag 3 `seed: U64`, tag 4 `weight: U32`, and tag 5
+`expectedDigest: D32`.
+
+Every argv and logical-path `Text` value must already be NFC and at most 4,096
+UTF-8 bytes; non-NFC input is rejected rather than rewritten, and the accepted argv
+bytes are executed unchanged. Unix environment records store the
 exact non-NUL environment value bytes; Windows stores the exact value as UTF-8
 without normalization and rejects an unrepresentable value. Entries are sorted
 by Unix name bytes or Windows ASCII-case-folded name bytes and are unique under the
 same comparison. The count is the complete effective set: Windows inserts required
 `SystemRoot`/`WINDIR` records first, unions canonically spelled allowlist records,
-and rejects a total above 16. `InputIdentity` is tag 1 `logicalPath: Text`, tag 2 `digest: D32`,
-tag 3 `bytes: U64`; inputs preserve manifest order, one input is at most 1 GiB and
-their sum at most 4 GiB. `CaseIdentity` is tag 1 `id: Text`, tag 2 `role: U8
-CaseRole`, tag 3 `seed: U64`, tag 4 `weight: U32`, tag 5 `expectedDigest: D32`;
-cases are sorted by id bytes and include at least one role of each kind.
+and rejects a total above 16. Inputs preserve manifest order, one input is at most
+1 GiB and their sum at most 4 GiB. Cases are sorted by id bytes and include at least
+one role of each kind.
 
 ## 6. Environment
 
@@ -168,11 +176,16 @@ cases are sorted by id bytes and include at least one role of each kind.
 | 16 | `schedulingPolicy` | `Text` |
 | 17 | `calibrations` | `List<Calibration,16>` in case-id order |
 | 18 | `sessionDigest` | `D32`, derived by Section 11 |
+| 19 | `measurementCacheSaltDigest` | `D32` |
 
 Unavailable textual host facts are the literal `unavailable`; unavailable numeric
 facts use `Opt(0)`. `Calibration` is tag 1 `caseId: Text`, tag 2 `iterations: U64`,
 tag 3 `attempts: U32`, tag 4 `acceptedElapsedNs: U64`, tag 5
 `confirmationElapsedNs: U64`, tag 6 `overshoot: Bool`.
+`measurementCacheSaltDigest` is
+`H("CK-TUNE-MEASUREMENT-SALT\0", Blob32M(local installation salt))`; the salt is
+32 CSPRNG bytes stored with owner-only permissions outside the decision, while only
+this digest is recorded.
 
 ## 7. Frontier
 
@@ -189,6 +202,7 @@ List<Expansion,16384>`.
 | 3 | `rootId` | `D32` |
 | 4 | `preStateDigest` | `D32` |
 | 5 | `canonicalRank` | `U32` |
+| 6 | `rootAnchor` | `RootAnchor` |
 
 `Unit` is tag 1 `unitId: D32`, tag 2 `siteIds: List<D32,4096>`, tag 3
 `baselineStateDigest: D32`, and tag 4 `variants: List<UnitVariant,4>`.
@@ -198,8 +212,44 @@ List<Expansion,16384>`.
 5 `isolatedStaticEstimate: U64`, tag 6 `isolatedKirBytes: U64`, and tag 7
 `postStateDigest: D32`. These isolated fields are diagnostics and variant-generation
 inputs, never plan-rank keys. `SiteAlternative` is tag 1 `siteId: D32`, tag 2
-`alternativeId: D32`, tag 3 `preStateDigest: D32`, tag 4 `postStateDigest: D32`.
+`alternativeId: D32`, tag 3 `preStateDigest: D32`, tag 4 `postStateDigest: D32`,
+and tag 5 `payload: AlternativePayload`.
 Across all units there are at most 256 variants.
+
+A unit has one through four variants, its `siteIds` are sorted by site id, and all
+its variants and referenced sites have one `AlternativeClass`. The application
+phase derived from that class is specialization=1, inlining=2,
+short-slice/versioning=3, loop-SIMD=4, unrolling=5, SLP=6, and layout=7. Units are
+sorted by `(application phase, unitId)`; the phase is derived and is not an
+additional wire field.
+
+`RootAnchor` is tag 1 `functionSymbol: Text`, tag 2 `kind: U8 RootKind`, and tag 3
+`preorderOrdinal: U32`. The module anchor uses an empty symbol, kind module, and
+ordinal zero. Every other anchor names its containing stable ABI or internal
+function symbol and the zero-based preorder ordinal among nodes of the same kind in
+that function's canonical pre-tune KIR. Symbols are unique in one module, and an
+anchor must resolve exactly once.
+
+`AlternativePayload` is a closed discriminated record: tag 1 repeats the
+`AlternativeClass`, and tag 2 is exactly the corresponding class record below. All
+integer bounds are additionally constrained by target legality; values outside the
+listed structural bounds are noncanonical.
+
+| Class | Tag-2 record |
+| --- | --- |
+| inlining | tag 1 `calleeSymbol: Text`; tag 2 `action: U8 InliningAction` |
+| specialization | tag 1 `bindings: List<SpecializationBinding,16>` sorted by argument ordinal; tag 2 `guarded: Bool` |
+| unrolling | tag 1 `factor: U32`, a power of two from 2 through 64 |
+| loop-SIMD | tag 1 `vectorBits: U32`, a power of two from 64 through 2,048; tag 2 `interleave: U32` from 1 through 8; tag 3 `breakEvenIterations: U32` |
+| SLP | tag 1 `packWidth: U32` from 2 through 64; tag 2 `operandAnchors: List<RootAnchor,64>` in lane order |
+| short-slice/versioning | tag 1 `maximumLength: U32`; tag 2 `vectorBits: U32` under the loop-SIMD bound; tag 3 `interleave: U32` from 1 through 8 |
+| layout | tag 1 `scope: U8 LayoutScope`; tag 2 `rootOrder: List<D32,4096>` containing each affected root id exactly once |
+
+`SpecializationBinding` is tag 1 `argumentOrdinal: U32`, tag 2 `kind: U8
+SpecializationValueKind`, and tag 3 `bits: U128`. For u32/i32/f32-bits/length-u32
+the upper 96 bits are zero; for u64/i64/f64-bits the upper 64 bits are zero. Integer
+signedness is represented by `kind`, not sign extension. Duplicate ordinals are
+invalid.
 
 `Expansion` is tag 1 `ordinal: U32`, tag 2 `parentPlanDigest: D32`, tag 3 `unitId:
 D32`, tag 4 `variantId: D32`, tag 5 `disposition: U8 ExpansionDisposition`, tag 6
@@ -229,6 +279,7 @@ List<Candidate,32>`.
 | 9 | `streams` | `List<MeasurementStream,48>` |
 | 10 | `compileOrigin` | `CacheOrigin` |
 | 11 | `timeout` | `Opt<TimeoutRecord>` |
+| 12 | `primaryArtifactDigest` | `D32` |
 
 `PlanChoice` is tag 1 `unitId: D32`, tag 2 `variantId: D32`, tag 3 `class: U8
 AlternativeClass`, tag 4 `preStateDigest: D32`, tag 5 `postStateDigest: D32`.
@@ -240,6 +291,12 @@ List<MeasurementRow,20>`, and tag 7 `correctnessDigest: D32`. A complete stream 
 exactly 20 rows. `MeasurementRow` is tag 1 `ordinal: U32` (0..19), tag 2
 `permutationKey: D32`, tag 3 `callsNs: List<U64,3>` with exactly three positive
 values, and tag 4 `storedMinimumNs: U64`, equal to their minimum.
+
+Every `permutationKey` equals
+`H("CK-TUNE-ORDER\0", sessionDigest D32, phase U8, round U8, row U32,
+caseId Text)`. The separate case-list rotation uses the same domain and first four
+typed values followed by `Bytes([0xff])`; it is recomputed but not stored as a row
+key. Both rotations interpret the first eight digest bytes as a big-endian `u64`.
 
 `TimeoutRecord` is tag 1 `phase: U8 OrderingPhase` (1 through 7), tag 2 `round: U8`, tag 3
 `row: U32`, tag 4 `caseId: Text`, tag 5 `call: U8`, and tag 6 `elapsedNs: U64`.
@@ -257,22 +314,39 @@ validation case. Baseline validation runs even when there are zero entrants.
 | baseline | required over all cases | exactly S+V1+V2 | absent | 0 |
 | compiled-unmeasured | absent | empty | absent | 0 |
 | size-rejected | absent | empty | absent | artifact-size-rejected |
-| timed-out | present iff at least one smoke/stream case completed | exact canonical prefix of complete measured streams before the timed-out stream | required | candidate-timeout |
+| timed-out | present iff at least one smoke/stream case completed | exact set of complete measured streams before the recorded timeout | required | candidate-timeout |
 | search-nonwinner | required over search cases | exactly S | absent | 0 |
 | validation-threshold | required over all cases | exactly S+V1+V2 | absent | 0 |
 | validation-nonwinner | required over all cases | exactly S+V1+V2 | absent | 0 |
 | selected | required over all cases | exactly S+V1+V2 | absent | 0 |
 
 A timed-out stream contributes no record even when earlier rows in that stream
-completed; its timeout record preserves the exact location. The candidate stores
-every complete measured stream preceding it in the Section 12 canonical stream
-order, including earlier streams of the same phase, and no later stream. A timeout
-in smoke or warmup therefore stores only measured streams completed before that
-phase. Any state/field combination outside this table or any missing/extra required
-stream is invalid. A validation entrant that passes a
-threshold but is not first in both rounds is `validation-nonwinner`; when different
-plans rank first, both remain nonwinners and Selection records
-`validation-disagreement`.
+completed; its timeout record preserves the exact phase, round, row, case, and call.
+The checker recomputes the actual case/channel rotation from the session digest and
+stores, in Section 12's canonical stream order, the set of exactly those streams
+whose twentieth measured row completed before that coordinate. This set need not
+be a canonical prefix because the final row rotates case order. A timeout in smoke
+or warmup therefore stores only measured streams completed before that phase. Any
+state/field combination outside this table or any missing/extra completed stream is
+invalid. The selection-wide rules below, rather than a candidate-local guess,
+assign every completed validation entrant's terminal outcome.
+
+Candidate outcomes and `Selection.reason` obey this exact cross-record table. Let
+`Q1` and `Q2` be each round's `rankedPlanDigests` after filtering to stable records
+whose `thresholdPassed` is true and whose `pairedWins` is at least 16. The stored
+ranked lists must equal the deterministic rank of exactly those records.
+
+| Condition | Selection | Validation-entrant outcomes |
+| --- | --- | --- |
+| no validation entrants | empty-plan digest, no-candidate, no certificate | none; preserve earlier trial outcomes |
+| `Q1` or `Q2` empty | empty-plan digest, validation-threshold, no certificate | all surviving completed entrants validation-threshold |
+| both nonempty and first digests equal | common digest, tuned, required certificate | winner selected; all other surviving completed entrants validation-nonwinner |
+| both nonempty and first digests differ | empty-plan digest, validation-disagreement, no certificate | all surviving completed entrants validation-nonwinner |
+
+The no-entrant row takes precedence; the remaining rows require at least one
+entrant. No other combination is valid. The baseline candidate retains outcome `baseline`
+in every row of this table. A timed-out entrant is excluded from both Q lists and
+retains `timed-out` under every selection result.
 
 ## 9. Selection
 
@@ -287,6 +361,13 @@ baseline reason forbids it.
 Bool`, tag 5 `thresholdPassed: Bool`, tag 6 `pairedWins: U32`. `CaseMedian` is tag 1
 `caseId: Text`, tag 2 `baselineNs: U64`, tag 3 `candidateNs: U64`, tag 4
 `ratioQ32: U64`.
+
+Every stored `RoundPlan.stable` is true because instability aborts before a
+decision exists. `thresholdPassed` is true exactly when its aggregate ratio is at
+most 97/100 of `2^32`, every case ratio is at most 102/100 of `2^32`, and
+`pairedWins >= 16`; all comparisons use the checked integer rules in the main
+design. `rankedPlanDigests` contains exactly the passing plans in the stated
+validation rank, with no duplicate or omitted entrant.
 
 `Certificate` is tag 1 `planDigest: D32`, tag 2 `frontierDigest: D32`, tag 3
 `policyDigest: D32`, tag 4 `roundOneDigest: D32`, tag 5 `roundTwoDigest: D32`, tag
@@ -329,10 +410,13 @@ encoding. This rule removes concatenation and empty-value ambiguity.
 
 | Digest | Domain and canonical material |
 | --- | --- |
-| manifest | `CK-TUNE-MANIFEST\0`; `ManifestMaterial`: schema `U32(1)`, argv, effective environment, timeout, manifest-order inputs, case-id-order cases, runner bytes, runner digest at tags 1..8 |
+| manifest | `CK-TUNE-MANIFEST\0`; `ManifestMaterial`: tag 1 schema `U32(1)`, tag 2 argv `List<Text,64>`, tag 3 effective environment `List<EnvironmentEntry,16>`, tag 4 timeout `U32`, tag 5 manifest-order `List<ManifestInputMaterial,64>`, tag 6 case-id-order `List<ManifestCaseMaterial,16>`, tag 7 runner bytes `U64`, tag 8 runner digest `D32` |
 | target identity | `CK-TUNE-TARGET\0`; complete `TargetIdentity` record |
-| site id | `CK-TUNE-SITE\0`; root id, class, canonical site ordinal, pre-state digest |
-| alternative id | `CK-TUNE-ALTERNATIVE\0`; site id, class, canonical choice payload `Bytes`, post-state digest |
+| pre-tune KIR | `CK-TUNE-PRE-KIR\0`; schema `U32(1)` then canonical pre-tune whole-module `Blob32M`; stored as Identity tag 18 |
+| root id | `CK-TUNE-ROOT\0`; tag 1 pre-tune KIR digest, tag 2 complete `RootAnchor` |
+| KIR state | `CK-TUNE-KIR-STATE\0`; `KirStateMaterial` below |
+| site id | `CK-TUNE-SITE\0`; root id, class, canonical site ordinal, pre-state digest at tags 1..4 |
+| alternative id | `CK-TUNE-ALTERNATIVE\0`; site id, complete `AlternativePayload`, post-state digest at tags 1..3 |
 | unit id | `CK-TUNE-UNIT\0`; site-id list and baseline-state digest |
 | unit variant id | `CK-TUNE-UNIT-VARIANT\0`; unit id, class, site alternatives, three isolated estimates, post-state digest |
 | plan digest | `CK-TUNE-PLAN\0`; unit-id-ordered `List<PlanChoice,64>`; the empty-plan digest is this same domain over the zero-count list |
@@ -344,15 +428,63 @@ encoding. This rule removes concatenation and empty-value ambiguity.
 | session digest | `CK-TUNE-SESSION\0`; `SessionMaterial` below |
 | validation-round digest | `CK-TUNE-VALIDATION-ROUND\0`; complete `RoundSummary` record |
 | certificate digest | `CK-TUNE-CERTIFICATE\0`; complete `Certificate` record |
-| destination id | `CK-TUNE-DESTINATION\0`; canonical operational path `Bytes` |
+| destination id | `CK-TUNE-DESTINATION\0`; complete `DestinationKeyMaterial` below |
 | output-set id | `CK-TUNE-OUTPUT-SET\0`; `OutputSetMaterial` below |
 | replay-result digest | `CK-TUNE-REPLAY-RESULT\0`; `ReplayResultMaterial` below |
 | choice-identity digest | `CK-TUNE-CHOICE\0`; `ChoiceIdentityMaterial` below |
+| compile-cache key | `CK-TUNE-COMPILE-KEY\0`; `CompileCacheKeyMaterial` below |
+| compile-cache entry | `CK-TUNE-COMPILE-ENTRY\0`; `CompileCacheEntryMaterial` below |
+| measurement-cache key | `CK-TUNE-MEASUREMENT-KEY\0`; `MeasurementCacheKeyMaterial` below |
+| measurement-cache entry | `CK-TUNE-MEASUREMENT-ENTRY\0`; `MeasurementCacheEntryMaterial` below |
 
 Within `UnitVariant`, `siteAlternatives` are sorted by `(siteId, alternativeId)`.
 The unit-variant digest uses that sorted list. All correctness observations for the
 same case must agree; a candidate aggregate contains every distinct case it
 successfully executed. A profitability certificate requires all manifest cases.
+
+Every `Site.rootId` equals the root-id derivation from its retained anchor, and its
+pre-state equals the pre-tune state derivation. A `SiteAlternative.siteId` resolves
+to exactly one site, repeats that site's pre-state, has a payload class equal to the
+site and containing variant class, and has an alternative id equal to the stated
+derivation. Each unit's site ids are unique and its baseline state equals pre-tune
+state. Each variant lists exactly the alternatives it applies, and its id and
+post-state equal the isolated replay derivations. Each `PlanChoice` resolves to the
+named unit and one of its variants, repeats that variant's class, and obeys the
+sequential state equalities below.
+
+`KirStateMaterial` is tag 1 schema `U32(1)`, tag 2 canonical whole-module KIR as
+`Blob32M`. The bytes are exactly `print_kir_module` with the existing KIR schema's
+stable symbol order and without addresses, hash-map order, diagnostics, paths, or
+timestamps. Every site pre-state and every unit baseline state equals the digest of
+the unchanged pre-tune module. A site-alternative post-state is the digest after
+applying only that alternative to a fresh pre-tune module; a unit-variant post-state
+is after applying exactly its ordered site alternatives to a fresh module.
+
+The pre-tune module is the verified v0.13 O3 state after CFG canonicalization,
+initial SCCP/range analysis, loop canonicalization, and the first mandatory check
+elimination, but before specialization or any other profitability-controlled O3
+rewrite. A complete plan is applied by the fixed phase order specialization,
+inlining, short-slice/versioning, loop-SIMD, unrolling, SLP, then layout. Units sort
+by `(phase, unitId)` and alternatives within a unit sort by `(siteId,
+alternativeId)`. Between phases, the ordinary mandatory analysis, legality,
+cleanup, and proof-refresh passes run at their v0.13 positions; they are not plan
+choices. Layout choices attach canonical layout metadata to KIR before native
+lowering, and LLVM consumes it only after the fixed LLVM O3 pipeline and before
+object emission. Thus the canonical KIR contains the layout intent even though its
+machine-level effect is late. The empty plan executes the unmodified v0.13 O3
+decisions and never changes existing ordinary or O2 late-layout behavior.
+
+For a plan, choices are stored in the same `(phase, unitId)` application order.
+Each `PlanChoice.preStateDigest` is the full-module state immediately before the
+fixed pipeline reaches that chosen unit. Its `postStateDigest` is the state after
+applying the unit and then executing every deterministic ordinary decision and
+mandatory bridge pass up to, but not including, the next chosen unit; the final
+choice also executes the remaining KIR pipeline through canonical cleanup and
+layout-metadata attachment. The first pre-state equals Replay tag 2, adjacent
+post/pre-state digests are equal, and the last post-state equals Replay tag 3.
+For an empty plan, Replay tags 2 and 3 both equal the pre-tune state. The plan is
+always reapplied from a fresh pre-tune module; these equalities are independently
+recomputed rather than trusted.
 
 `ObjectGraphMaterial` is tag 1 `schema: U32(1)`, tag 2 `outputKind: U8`, tag 3
 `targetIdentityDigest: D32`, tag 4 `objects: List<ObjectIdentity,4096>`. Objects sort
@@ -372,13 +504,25 @@ not sorted.
 the complete `Frontier`, and tag 6 `BaselineSeed`. `BaselineSeed` is plan digest,
 object-graph digest, link-recipe digest, and primary bytes at tags 1..4. It excludes
 calibration records, correctness, measurements, cache facts, paths, timestamps, and
-destinations. Its result is stored as Environment tag 18.
+destinations, and the measurement-cache salt digest. Its result is stored as
+Environment tag 18.
 
-`OutputSetMaterial` is tag 1 output kind, tag 2 canonical decision path `Bytes`, and
-tag 3 a role-sorted list whose records contain output role and canonical destination
-path `Bytes`. Unix paths are exact non-NUL bytes; Windows paths are normalized
-absolute UTF-8 with invariant case-folding for comparison. This operational digest
-is journal-only, so the decision's prohibition on absolute `Text` remains intact.
+`ParentIdentity` is tag 1 `platform: U8` (posix=1, windows=2), tag 2 `volume: U128`,
+tag 3 `file: U128`, and tag 4 `lookup: U8` (case-sensitive=1,
+ascii-case-insensitive=2). POSIX stores unsigned device and inode values in the low
+64 bits with zero high bits. Windows stores volume serial in the low 64 bits and
+the full 128-bit directory file id. The parent is opened no-follow and these values
+come from that handle; an unavailable/unstable identity or unknown lookup behavior
+is a hard error.
+
+`DestinationKeyMaterial` is tag 1 the complete `ParentIdentity` and tag 2
+`lookupLeaf: Text`. Tune destinations use only the ASCII-safe leaf grammar in the
+main design. A case-sensitive parent stores exact leaf bytes; an ASCII-case-
+insensitive parent stores ASCII lowercase. `OutputSetMaterial` is tag 1 output kind,
+tag 2 decision destination id, and tag 3 a role-sorted list whose records contain
+output role and destination id. Duplicate detection, lock identity, journal
+membership, and output-set identity all use these same ids. This operational
+material is journal-only, so it does not put absolute paths in a decision `Text`.
 
 `ReplayResultMaterial` is tag 1 frontier digest, tag 2 selected plan digest, tags
 3..4 selected pre/post-state digests, tags 5..6 object-graph/link-recipe digests,
@@ -396,6 +540,27 @@ this derivation. It is
 the cross-session identity used to compare independent cold searches; the outer
 decision digest remains the identity for exact byte-for-byte warm reuse.
 
+`CompileCacheKeyMaterial` is tag 1 schema `U32(1)`, tag 2 the complete `Identity`,
+and tag 3 plan digest. `CompileCacheEntryMaterial` is tag 1 the compile-key digest,
+tag 2 primary-artifact digest, tag 3 primary-artifact bytes, tag 4 object-graph
+digest, and tag 5 link-recipe digest. Every candidate's `compileOrigin.keyDigest`
+and `entryDigest` equal these derivations from that candidate; `freshly-built` and
+`verified-local-hit` describe how the identical entry was obtained. Replay tag 7
+equals the compile origin of the selected candidate, including the baseline when
+the empty plan is selected. Replay output primary digest/bytes equal that candidate's
+primary-artifact digest/bytes; Replay object-graph/link-recipe digests equal the
+same candidate fields. A tuned certificate repeats the selected plan, object graph,
+link recipe, frontier, policy, validation-round, and all-case correctness digests.
+
+`MeasurementCacheKeyMaterial` is tag 1 schema `U32(1)`, tag 2 session digest, and
+tag 3 measurement-cache-salt digest. It is fully known before candidate execution.
+`MeasurementCacheEntryMaterial` is tag 1 that key digest, tag 2 the
+complete `Candidates` record, and tag 3 the complete `Selection` record. Replay
+tag 8 stores exactly those derived key/entry digests. Neither cache entry digest
+includes Replay, so the derivations are acyclic. All cache hits rehash and validate
+the entry before use; a mismatch is a miss followed by quarantine, never a partial
+hit.
+
 The policy digest remains `H("CK-TUNE-POLICY\0", Contract tags 1..31)`. The outer
 decision digest remains the framing rule in Section 1.
 
@@ -407,6 +572,10 @@ decision digest remains the framing rule in Section 1.
 | `Budget` | quick=1, standard=2, thorough=3 |
 | `CaseRole` | search=1, validation=2 |
 | `AlternativeClass` | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
+| `RootKind` | module=1, function=2, loop=3, block=4, instruction=5, call=6 |
+| `InliningAction` | force-inline=1, keep-out-of-line=2 |
+| `SpecializationValueKind` | u32=1, u64=2, i32=3, i64=4, f32-bits=5, f64-bits=6, length-u32=7 |
+| `LayoutScope` | block=1, function=2, section=3 |
 | `ExpansionDisposition` | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
 | `CandidateOutcome` | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-nonwinner=7, selected=8 |
 | `OrderingPhase` | candidate-smoke=1, search-warmup=2, search-measured=3, validation-one-warmup=4, validation-one-measured=5, validation-two-warmup=6, validation-two-measured=7 |
@@ -415,9 +584,10 @@ decision digest remains the framing rule in Section 1.
 | `CacheOriginKind` | freshly-built=1, verified-local-hit=2 |
 | `DiagnosticCode` | none=0, legality-rejected=1, growth-rejected=2, artifact-size-rejected=3, candidate-timeout=4 |
 
-Cases sort by id; sites, units, and variants by stable id; site alternatives by
-site id then alternative id; expansions by ordinal;
-trials by plan digest; choices by unit id; streams by phase, round, case id, and plan
+Cases sort by id; sites and variants by stable id; units and choices by
+`(application phase, unit id)`; site alternatives by site id then alternative id;
+expansions by ordinal;
+trials by plan digest; streams by phase, round, case id, and plan
 digest; rows by ordinal; validation plans by plan digest; and outputs by role. The
 baseline precedes all trials. Ordering compares digest bytes, integer values, or
 encoded UTF-8 bytes as applicable. Duplicate sort keys are invalid unless a record
@@ -433,8 +603,14 @@ The repository must freeze these before the format implementation passes:
   validation case, an empty frontier, and `no-candidate`;
 - `tests/fixtures/tune/decision-schema1-tuned.cktune` with one legal unit variant,
   all three measured phases, two agreeing rounds, and a certificate;
-- `tests/fixtures/tune/decision-schema1-inspection.json` for the tuned vector.
+- `tests/fixtures/tune/decision-schema1-inspection.json` for the tuned vector;
+- `tests/fixtures/tune/decision-schema1-inspection.txt` for the same tuned vector.
 
 The test source pins each fixture SHA-256. The same files drive encode, decode,
 inspect, re-encode byte equality, mutation, truncation, limit, and cross-endian
 tests. A golden vector change requires a future format schema.
+
+The exact public JSON and text inspection renderings are defined by
+[`inspection-schema-1.md`](inspection-schema-1.md). The inspection JSON fixture is
+not a substitute for that schema; it and the required text fixture are generated
+from the tuned decision vector and then frozen by digest.

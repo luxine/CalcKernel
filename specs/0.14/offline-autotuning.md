@@ -173,15 +173,27 @@ destination. Schema 1 does not support a multi-directory output set. The decisio
 records the role, canonical logical name, staged byte digest, and physical size of
 the decision-independent primary, header, and import-library outputs that exist.
 
+Every tune destination leaf is 1..255 ASCII bytes, matches
+`[A-Za-z0-9][A-Za-z0-9._-]*`, is neither `.` nor `..`, does not begin
+`.ckc-tune-`, and is not a Windows device name or a name with a trailing dot or
+space. CK opens the already-existing common parent directory no-follow and obtains
+its stable volume/directory identity and lookup case behavior from the platform
+adapter. The adapter must distinguish case-sensitive from ASCII-case-insensitive
+lookup for that exact directory; unknown, mutable, or unsupported equivalence fails
+before staging. Restricting leaves to ASCII removes Unicode normalization aliases.
+All alias checks, sort keys, and locks use the resulting parent-identity plus exact
+or ASCII-lowercase leaf key. Existing destinations are additionally checked by
+handle identity.
+
 Publication uses one persistent sibling lock per canonical decision, artifact, or
 sidecar destination, plus a set journal, stage files, and backup files. A
-destination lock is named from the first 32 hexadecimal characters of
-`H("CK-TUNE-DESTINATION\0", canonical_path_bytes)`; the set journal is named from
-the same prefix of `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)`. CK opens every
+destination lock is named from all 64 hexadecimal characters of
+`H("CK-TUNE-DESTINATION\0", DestinationKeyMaterial)`; the set journal is named from
+all 64 characters of `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)`. CK opens every
 reserved file without following symbolic links or reparse points, acquires the
-complete overlap-closure of destination locks in canonical path-byte order, and
+complete overlap-closure of destination locks in canonical destination-id order, and
 holds it throughout recovery and publication. Lock files and journals store and
-verify their full 32-byte ids; a prefix collision is a hard error, never an alias.
+verify their full 32-byte ids; an identity mismatch is a hard error, never an alias.
 Consequently two commands that publish the same primary artifact but choose
 different explicit decision paths still serialize on the primary destination.
 
@@ -191,6 +203,7 @@ shared normative attachment
 weaken or reorder that protocol.
 
 The bounded journal schema 1 contains the transaction id, output-set id, phase,
+durable recovery direction,
 and, in publication order decision, header, import-library, primary, for each
 present destination its destination, stage, and backup basename,
 old-presence bit, old digest, new digest, and new size. Its phases are `Prepared=1`,
@@ -212,11 +225,14 @@ old-presence bit, old digest, new digest, and new size. Its phases are `Prepared
    stages, remove the journal, and flush the directory.
 
 Directory flush uses the strongest documented platform equivalent and is covered
-by each native-host recovery test. On any reported error CK rolls back before
-returning. On restart, recovery first hashes every destination, stage, and backup.
-Phases 1 through 4 roll back unless a distinct new primary proves its rename;
-phases 5 and 6 roll forward, and an identical old/new primary uses the phase. Both
-operations are idempotent. An impossible or unrecorded digest combination is a hard recovery
+by each native-host recovery test. Lock and journal final names are atomically
+exposed only after their complete bytes are flushed. An error before primary
+publication durably switches direction and rolls back; at or after primary
+publication it completes roll-forward. On restart, recovery first resolves the
+attachment's exhaustive active/update/private-write table and hashes every
+destination, stage, and backup. Durable rollback always continues rollback;
+otherwise phases and primary identity select the specified roll-forward or durable
+rollback path. Both operations are idempotent. An impossible or unrecorded digest combination is a hard recovery
 error that preserves the journal and all evidence for diagnosis rather than
 guessing. A later command may not touch the set until recovery succeeds.
 
@@ -296,8 +312,8 @@ Schema 1 has exactly these fields:
 | --- | --- | --- |
 | root | schema | Required integer, exactly 1 |
 | runner | path | Required UTF-8 path to a host-format native executable; it is operational, not canonical identity |
-| runner | args | Optional array of at most 64 UTF-8 strings; default empty; total encoded bytes at most 64 KiB |
-| runner | inputs | Optional array of at most 64 manifest-relative regular-file paths; default empty; each at most 1 GiB and total at most 4 GiB |
+| runner | args | Optional array of at most 64 `Text` strings; default empty; each is already NFC, NUL-free, at most 4,096 UTF-8 bytes, and the total is at most 64 KiB |
+| runner | inputs | Optional array of at most 64 manifest-relative regular-file `Text` paths; default empty; each path is already NFC, NUL-free, and at most 4,096 UTF-8 bytes; each file is at most 1 GiB and their total at most 4 GiB |
 | runner | inherit_env | Optional array of at most 16 unique names matching [A-Za-z_][A-Za-z0-9_]*; default empty |
 | runner | timeout_ms | Optional integer from 100 through 120,000; default 30,000 |
 | each case entry | id | Required unique identifier with the syntax and length above |
@@ -331,9 +347,10 @@ A canonical example is:
     weight = 2
     expected_digest = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
-The runner working directory is always CK_TUNE_TEMP. The manifest cannot override
-it. Resource-output limits are fixed by this specification rather than configurable
-manifest fields.
+The runner receives the exact accepted UTF-8 argv bytes; CK never normalizes an
+argument after validation. The runner working directory is always CK_TUNE_TEMP.
+The manifest cannot override it. Resource-output limits are fixed by this
+specification rather than configurable manifest fields.
 
 ### 7.2 Paths and inputs
 
@@ -352,11 +369,16 @@ normative decision-schema attachment, in this order:
 2. runner argv strings;
 3. sorted effective inherited-environment name/value records;
 4. timeout;
-5. input records in manifest order, each containing its normalized relative staged
-   path, byte length, and content digest;
-6. case records in canonical identifier order, each containing role, seed, weight,
-   and expected digest;
+5. `ManifestInputMaterial` records in manifest order, each containing logical path,
+   content digest, and byte length at tags 1..3;
+6. `ManifestCaseMaterial` records in canonical identifier order, each containing
+   case id, role, seed, weight, and expected digest at tags 1..5;
 7. the immutable runner-snapshot byte length and content digest.
+
+The exact material records and outer tags are defined once in
+[`decision-schema-1.md`](decision-schema-1.md); this list is only an aligned
+overview. Accepted logical paths are used unchanged below `CK_TUNE_TEMP/inputs`, so
+the staged path bytes and recorded identity cannot diverge.
 
 The operational manifest and runner absolute paths, TOML whitespace/comments,
 timestamps, file permissions other than executable validity, and temporary paths
@@ -535,18 +557,23 @@ Smoke has phase 1, round 0, row 0, and call 1; candidates and cases retain the
 plan-digest and case-id order stated above, so smoke requires no channel rotation.
 
 Cases are stored in case-id order. Channels are stored as baseline followed by
-ascending plan digest. For each row, CK computes:
-
-    H = SHA-256("CK-TUNE-ORDER\0" || session_digest ||
-               phase_u8 || round_u8 || row_u32_be || case_id)
-
-The first eight bytes interpreted as a big-endian u64 select a left-rotation modulo
-the channel count for that case. The same formula with case_id replaced by the
-single byte 0xff selects the case-list rotation. Phase values are 1 candidate-smoke,
+ascending plan digest. For each row, CK computes
+`H("CK-TUNE-ORDER\0", sessionDigest D32, phase U8, round U8, row U32,
+caseId Text)` using the attachment's canonical typed encoding. The first eight
+bytes interpreted as a big-endian u64 select a left-rotation modulo the channel
+count for that case and are stored as the row's `permutationKey`. The same domain
+and first four typed values followed by `Bytes([0xff])` select the case-list
+rotation. Phase values are 1 candidate-smoke,
 2 search-warmup, 3 search-measured, 4 validation-1-warmup,
 5 validation-1-measured, 6 validation-2-warmup, and 7 validation-2-measured. round is zero outside
 validation and 1 or 2 inside it. Rejected channel slots remain explicit skips, so
 their removal cannot reorder favorable samples.
+
+If a candidate times out, the partial stream is discarded but the exact timeout
+coordinate is retained. The decision stores the canonically sorted set of every
+stream whose twentieth row completed earlier in the actual rotated invocation
+schedule; it is not required to be a prefix of canonical stream order. The checker
+recomputes this set from the session digest and timeout coordinate.
 
 Before starting an invocation, CK requires at least the complete configured
 timeout plus the fixed 2,250 ms containment-cleanup allowance to remain in the
@@ -571,6 +598,20 @@ by CK:
 
 Each decision site and alternative has a canonical stable identifier, precondition
 digest, and ordering. The trace records both accepted and rejected alternatives.
+
+The canonical pre-tune snapshot is the verified v0.13 O3 KIR after CFG
+canonicalization, initial SCCP/range analysis, loop canonicalization, and the first
+mandatory check elimination, immediately before specialization. Candidate replay
+uses one fixed profitability-controlled phase order: specialization, inlining,
+short-slice/versioning, loop-SIMD, unrolling, SLP, then layout. Tuning units sort by
+`(phase, unit id)` and a unit's alternatives sort by `(site id, alternative id)`.
+The existing mandatory analyses, legality checks, proof refreshes, and cleanup
+passes remain at their v0.13 positions between those phases and cannot be selected
+or suppressed by a plan. Layout choices are canonical KIR metadata before native
+lowering; the backend consumes that metadata after the unchanged fixed LLVM O3
+pipeline and before object emission. The empty plan uses the unmodified v0.13 O3
+profitability decisions and leaves ordinary compilation and the existing O2-only
+late-layout behavior unchanged.
 
 ### 9.2 Never tunable
 
@@ -767,10 +808,23 @@ Within each round, qualifying plans are ranked and ties are resolved by:
 3. fewer non-baseline choices;
 4. lower plan digest.
 
-The selected plan must qualify and rank first in both rounds. If the two rounds
-have different first-ranked plans, or no plan qualifies in both, CK records a
-successful baseline decision with the canonical reason validation-disagreement or
-validation-threshold, respectively.
+Let `Q1` and `Q2` be the ordered qualifying-plan lists for rounds 1 and 2. Selection
+is the following disjoint and exhaustive table, evaluated in order:
+
+| Predicate | Result |
+| --- | --- |
+| there are no validation entrants | baseline, `no-candidate` |
+| `Q1` or `Q2` is empty | baseline, `validation-threshold` |
+| both are nonempty and `Q1[0] == Q2[0]` | that plan, `tuned` |
+| both are nonempty and `Q1[0] != Q2[0]` | baseline, `validation-disagreement` |
+
+Under a threshold result every surviving completed validation entrant has candidate outcome
+`validation-threshold`. Under a disagreement all entrants are
+`validation-nonwinner`; under a tuned result the common winner is `selected` and
+every other entrant is `validation-nonwinner`. The no-candidate row has no
+validation-entrant outcomes and does not rewrite earlier trial outcomes. A timed-out
+entrant always retains `timed-out` and is absent from `Q1`/`Q2`; it is never
+rewritten by this table.
 
 CK performs no discretionary rerun after observing an unfavorable outcome. Stable
 evidence that selects no plan therefore produces a successful baseline decision.
@@ -855,6 +909,11 @@ below is explanatory and cannot override that attachment. A required field is
 present exactly once; only `Opt<T>` fields are optional; and absolute paths are
 forbidden in every `Text` field.
 
+The exact public JSON and stable text projections are separately frozen by the
+shared normative attachment
+[`inspection-schema-1.md`](inspection-schema-1.md). Neither renderer may invent,
+omit, localize, or reorder validated decision data.
+
 Top-level tag 1, `Identity`, contains:
 
 | Tag | Type | Meaning |
@@ -895,7 +954,8 @@ Top-level tag 3, `Workload`, contains:
 Top-level tag 4, `Environment`, contains the closed measurement tuple, timer and
 scheduling evidence, followed by a case-id-ordered calibration record list. Each
 calibration records iterations, attempts, accepted and confirmation elapsed times,
-and overshoot, followed by the derived session digest. Unavailable text uses
+and overshoot, followed by the derived session digest and local measurement-cache
+salt digest. Unavailable text uses
 `unavailable`; unavailable numeric host facts
 use their explicit absent optional state.
 
@@ -904,9 +964,9 @@ tag 2, units at tag 3, and expansion trace at tag 4. Records are:
 
 | Record | Required fields in tag order |
 | --- | --- |
-| Site | stable site id `D32`; class enum `U8`; root id `D32`; pre-state digest `D32`; canonical rank `U32` |
+| Site | stable site id `D32`; class enum `U8`; root id `D32`; pre-state digest `D32`; canonical rank `U32`; stable root anchor |
 | Unit | stable unit id `D32`; ordered site-id list; baseline state digest `D32`; ordered variant list |
-| UnitVariant | variant id `D32`; class enum `U8`; ordered choice list; isolated dynamic/static/KIR-byte estimates `U64`; post-state digest `D32` |
+| UnitVariant | variant id `D32`; class enum `U8`; ordered choices with closed class payloads; isolated dynamic/static/KIR-byte estimates `U64`; post-state digest `D32` |
 | PlanChoice | unit id `D32`; variant id `D32`; class enum `U8`; pre-state `D32`; post-state `D32` |
 | Expansion | ordinal `U32`; parent plan `D32`; unit id `D32`; variant id `D32`; disposition enum `U8`; resulting plan `Opt<D32>`; diagnostic code `U16`; three optional whole-plan rank metrics |
 
@@ -926,6 +986,7 @@ of non-baseline candidates in plan-digest order at tag 2. A candidate record has
 | 9 | List<Record> | measurement streams in canonical order |
 | 10 | Record | immutable compile CacheOrigin |
 | 11 | Opt<Record> | exact timeout location; required only for timed-out outcome |
+| 12 | D32 | actual primary-artifact content digest |
 
 A measurement stream contains phase, round, case, plan, iterations, twenty ordered
 row records, and correctness digest. Each row contains its ordinal, permutation-key
@@ -970,16 +1031,17 @@ Closed enum values are:
 
 Collections are ordered by: cases by case id; sites, units, and variants by stable
 id; expansion records by ordinal; candidates with baseline first then plan digest;
-plan choices by unit id; streams by phase, round, case id, and plan digest; stream
+plan choices by application phase then unit id; streams by phase, round, case id, and plan digest; stream
 rows by ordinal; and outputs by output role. Text comparisons and ordering operate
 on encoded UTF-8 bytes.
 
-The repository carries four normative schema fixtures:
+The repository carries five normative schema fixtures:
 
 - `tests/fixtures/tune/decision-schema1-framing.hex`;
 - `tests/fixtures/tune/decision-schema1-baseline.cktune`;
 - `tests/fixtures/tune/decision-schema1-tuned.cktune`;
-- `tests/fixtures/tune/decision-schema1-inspection.json`.
+- `tests/fixtures/tune/decision-schema1-inspection.json`;
+- `tests/fixtures/tune/decision-schema1-inspection.txt`.
 
 The framing vector covers every scalar/container type and both optional states. The
 baseline vector has one search and one validation case and `no-candidate`; the tuned
@@ -1087,7 +1149,8 @@ The cache separates:
 - measurement identity: artifact, harness, workload, environment, and policy.
 
 Measurement keys also contain a randomly generated local cache-installation salt
-stored with private permissions. The salt is not written to .cktune. Consequently,
+stored with private permissions. The raw salt is not written to .cktune, but its
+domain-separated digest is recorded so the cache origin can be rederived. Consequently,
 raw measurements are never reused merely because another machine reports the same
 CPU model and operating-system tuple; moving a decision file remains allowed for
 explicit tune-use on an otherwise exact compatible target.
@@ -1153,8 +1216,9 @@ Text and JSON inspection expose:
 - compile and measurement cache reuse;
 - final replay and object-graph verification.
 
-JSON uses the inspection schema and stable field ordering. Deterministic output does
-not contain absolute paths, timestamps, temporary identifiers, hash-map order, or
+JSON and default text use the exact bytes and complete-tree traversal in
+[`inspection-schema-1.md`](inspection-schema-1.md). Deterministic output does not
+contain absolute paths, timestamps, temporary identifiers, hash-map order, or
 localized prose.
 
 When tune-use is combined with explain-optimization, each selected choice maps back
@@ -1308,7 +1372,7 @@ top-level key set is exactly:
     schemaVersion, candidateVersion, candidateSha, v013ReplayCommit,
     evidenceDirectory, toolchain, hardware, recipe, candidateBinary,
     v013ReplayBundle, cumulativeSchemaEight, workload, tuningDecisions,
-    tuningArtifacts, sampling, cases, domainCases, tuneUseCompileTime,
+    tuningArtifacts, sampling, cases, validationCases, domainCases, tuneUseCompileTime,
     ordinaryCompileRegression, artifactSize, archiveSize, resourceUse,
     determinism, correctness
 
@@ -1316,15 +1380,18 @@ top-level key set is exactly:
 bytes, exact v0.13 replay commit and archive, schema 8 file, pinned LLVM/Clang
 22.1.8, Rust 1.90.0, runner bytes, manifests, source/input bytes, hardware,
 operating system, CPU features, recipe, artifacts, decisions, and every retained
-sample have size and SHA-256 identity. Evidence entries must be regular files below
-the evidence directory, with no symlink, traversal, missing, duplicate, or unknown
-entry. The stable x86-64 worker requires x86-64-v4; the stable AArch64 worker
+sample have size and SHA-256 identity. Every evidence-root entry must be a regular
+file below the evidence directory, with no symlink, traversal, missing, duplicate,
+or unknown entry; repository-root identities resolve only in the clean candidate
+checkout. The stable x86-64 worker requires x86-64-v4; the stable AArch64 worker
 requires SVE2. A missing tier is a failed gate, never workflow discretion.
 
 Main-case timing uses `rotating-six-channel-v1` with channels in this exact order:
 `tuned`, `v014Ordinary`, `v013Ordinary`, `v013Pgo`, `cSimd`, and `rustSimd`.
+Validation timing uses `rotating-three-channel-v1` with `tuned`, `v013Ordinary`,
+and `v013Pgo`.
 Domain timing uses `rotating-three-channel-v1` with `tuned`, `genericC`, and
-`genericRust`. Both protocols execute three unrecorded warmup rows, retain twenty
+`genericRust`. All three protocols execute three unrecorded warmup rows, retain twenty
 measured rows, call each channel seven equal batches per sample, store the minimum,
 and use the upper median. At least 16 of 20 samples must lie within inclusive
 80%..120% of that median. Rotation derives from the candidate, case, split, and row
@@ -1333,9 +1400,14 @@ are outside steady timing. There is no selective rerun. The internal `.cktune`
 three-invocation decision evidence remains separate from these external seven-call
 release samples.
 
-Each main case records all six raw streams and orders, medians, correctness digest,
+Each main case records all six raw seven-call streams and orders, their per-row
+minima, medians, per-channel correctness digests,
 source/input identities, selected or baseline decision, complete `.cktune` identity,
 all artifact identities, eligibility bit fixed true, and release-held-out result.
+Each of the seven validation cases records tuned, v0.13 ordinary, and v0.13 PGO raw
+seven-call streams and per-channel correctness digests on the manifest validation
+input; the checker chooses the faster v0.13
+median and applies the unchanged 102/100 ceiling.
 The two domain cases record the same facts for three streams plus their exact tuned
 decision, output set, and three build commands. All seven `.cktune` files and
 complete role-tagged published output sets are copied into evidence; their
@@ -1353,6 +1425,13 @@ independent cold-cache sessions compared by measurement-independent choice ident
 plan, object graph, link recipe, and published-content identity, plus one exact
 warm-cache reuse compared by decision and output bytes as well as zero compile and
 measurement counts. Genuine cold-session raw timings are preserved and may differ.
+Every timed channel carries a closed build command and an explicit foreign-key
+chain from its output bytes to the tuned decision/output set or audited baseline.
+The canonical tuning decision/output set is the first cold determinism run; main
+and validation timing, artifact-size, resource, and warm-reuse records reference
+that same retained identity rather than parallel unbound copies.
+Every file identity explicitly names either the candidate-SHA repository root or
+the retained evidence root.
 
 `scripts/measure-v014-performance.py` only collects raw evidence.
 `scripts/check-native-performance.py` is the sole authority that accepts it and
