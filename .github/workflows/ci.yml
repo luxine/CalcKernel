@@ -33,23 +33,20 @@ jobs:
     name: quality (no native toolchain)
     runs-on: ubuntu-24.04
     env:
-      CALCKERNEL_TS_ROOT: ${{ github.workspace }}/typescript-oracle
+      CALCKERNEL_TS_ROOT: ${{ github.workspace }}/tests/oracles/typescript
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: luxine/CalcKernel
-          ref: 5e989939d89d75056e5f3bea25f3bf7204d5529a
-          path: typescript-oracle
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20.19.5
       - run: corepack enable
       - run: corepack prepare pnpm@9.15.9 --activate
-      - run: pnpm install --frozen-lockfile
-        working-directory: typescript-oracle
+      - run: sha256sum --check SOURCE_MANIFEST.sha256
+        working-directory: tests/oracles/typescript
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: tests/oracles/typescript
       - run: pnpm build
-        working-directory: typescript-oracle
+        working-directory: tests/oracles/typescript
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.90.0

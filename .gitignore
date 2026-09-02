@@ -9,3 +9,5 @@ __pycache__/
 .understand-anything
 /.worktrees/
 /Ai_repository/
+/tests/oracles/typescript/node_modules/
+/tests/oracles/typescript/dist/

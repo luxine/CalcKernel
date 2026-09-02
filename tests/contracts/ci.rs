@@ -41,9 +41,11 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
         "quality:",
         "name: quality (no native toolchain)",
         "runs-on: ubuntu-24.04",
-        "repository: luxine/CalcKernel",
-        "ref: 5e989939d89d75056e5f3bea25f3bf7204d5529a",
         "corepack prepare pnpm@9.15.9 --activate",
+        "pnpm install --frozen-lockfile --ignore-scripts",
+        "working-directory: tests/oracles/typescript",
+        "sha256sum --check SOURCE_MANIFEST.sha256",
+        "pnpm build",
         "cargo fmt --check",
         "cargo clippy --all-targets --locked -- -D warnings",
         "cargo test --locked",
@@ -76,9 +78,18 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
         "optional TypeScript oracle configuration must not leak into native jobs"
     );
     assert!(
-        quality.contains("CALCKERNEL_TS_ROOT: ${{ github.workspace }}/typescript-oracle"),
-        "quality must configure the exact TypeScript oracle checkout it owns"
+        quality.contains("CALCKERNEL_TS_ROOT: ${{ github.workspace }}/tests/oracles/typescript"),
+        "quality must configure the exact repository-owned TypeScript oracle it owns"
     );
+    for forbidden in [
+        "repository: luxine/CalcKernel_retire",
+        "ref: 5e989939d89d75056e5f3bea25f3bf7204d5529a",
+    ] {
+        assert!(
+            !quality.contains(forbidden),
+            "quality must not depend on the renamed private oracle repository: {forbidden}"
+        );
+    }
     for forbidden in [
         "--all-features",
         "CKC_LLVM_PREFIX",
@@ -89,6 +100,60 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
             !quality.contains(forbidden),
             "fast quality job must remain LLVM-independent: {forbidden}"
         );
+    }
+}
+
+#[test]
+fn typescript_oracle_should_be_an_immutable_repository_fixture() {
+    let manifest = read("tests/oracles/typescript/package.json");
+    for required in [
+        "\"name\": \"calckernel\"",
+        "\"version\": \"0.8.0\"",
+        "\"packageManager\": \"pnpm@9.15.9\"",
+        "\"main\": \"./dist/src/index.js\"",
+        "\"ckc\": \"./dist/src/cli.js\"",
+        "\"wabt\": \"^1.0.39\"",
+    ] {
+        assert!(
+            manifest.contains(required),
+            "TypeScript oracle manifest must contain {required:?}"
+        );
+    }
+
+    let lock = read("tests/oracles/typescript/pnpm-lock.yaml");
+    for required in [
+        "wabt@1.0.39:",
+        "integrity: sha512-ba+dRL/75VQQY7RkU/CgriGbkoWAfS8TDyUlJfJhJ8KhtXgMl5dhNvoPNUcQ9IWRhW8u41glMSuZeTvsYq2rRg==",
+        "typescript@5.9.3:",
+        "integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+    ] {
+        assert!(
+            lock.contains(required),
+            "TypeScript oracle lockfile must contain {required:?}"
+        );
+    }
+
+    let provenance = read("tests/oracles/typescript/PROVENANCE.md");
+    for required in [
+        "luxine/CalcKernel_retire",
+        "5e989939d89d75056e5f3bea25f3bf7204d5529a",
+        "445743ef4d270ba7a26a5402243ce0bb606fb44b",
+        "SOURCE_MANIFEST.sha256",
+    ] {
+        assert!(
+            provenance.contains(required),
+            "TypeScript oracle provenance must contain {required:?}"
+        );
+    }
+
+    for required in [
+        "tests/oracles/typescript/src/cli.ts",
+        "tests/oracles/typescript/examples/scalar.ck",
+        "tests/oracles/typescript/bench/perf/fixtures/f64_kernels.ck",
+        "tests/oracles/typescript/tests/fixtures/f64_edges.ck",
+        "tests/oracles/typescript/SOURCE_MANIFEST.sha256",
+    ] {
+        assert!(repo_root().join(required).is_file(), "missing {required}");
     }
 }
 

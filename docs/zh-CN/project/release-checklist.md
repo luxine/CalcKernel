@@ -29,7 +29,10 @@
 - [ ] publish=false 的六平台 preview 为 green。
 - [ ] Annotated `vX.Y.Z` 指向精确 commit 且从未存在。
 - [ ] Workflow 在 artifact build 前验证 tag 等于 `v` 加 `Cargo.toml` version。
-- [ ] Release verification 自包含，不依赖可选的 TypeScript oracle checkout。
+- [ ] Quality 在执行所有 live differential gate 前，校验并构建
+  `tests/oracles/typescript` 中由仓库持有的 TypeScript oracle；其 provenance 固定为
+  [`luxine/CalcKernel_retire@5e989939`](https://github.com/luxine/CalcKernel_retire/commit/5e989939d89d75056e5f3bea25f3bf7204d5529a)。
+- [ ] Release verification 自包含，不依赖仅供测试的 TypeScript oracle。
 - [ ] Tag workflow 创建恰好六个 archive 与六个 SHA256 sidecar。
 - [ ] 所有 checksum 验证成功；解压后的 native-enabled binary 通过 version、licenses、run、build、dependency 与 JIT smoke。
 - [ ] 此 tag 尚无 Release；workflow 创建而不是覆盖 Release。

@@ -34,6 +34,9 @@ compile/archive size，且 schema/digest/sample/order/stability完整。
 - exact candidate SHA 的 quality、native integration、darwin-arm64、darwin-x64、linux-arm64、
   linux-x64、win32-arm64、win32-x64、x86-64 performance、AArch64 performance 共十个 required jobs
   全绿，无 skipped/continue-on-error/cancelled gate。
+- quality 必须先通过 `SOURCE_MANIFEST.sha256` 校验和 frozen lockfile 构建仓库内固定 TypeScript
+  oracle，再实际执行 C/WASM/CLI/fixture differential tests；不能访问私有退役仓库、替换成不兼容
+  registry artifact 或跳过 oracle-only tests。
 - performance workers 的 required enhanced tier/capability manifest存在；缺失不是 skip 条件。
 - workflow run head SHA 精确等于最终 candidate SHA；若为记录证据又提交，必须对新 SHA 重跑。
 

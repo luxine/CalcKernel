@@ -30,7 +30,11 @@ For a version `X.Y.Z`:
 - [ ] The manual six-platform release preview is green with publishing disabled.
 - [ ] The annotated tag `vX.Y.Z` points to that exact commit and has never existed before.
 - [ ] The workflow verifies that the tag equals `v` plus the `Cargo.toml` version before artifact builds.
-- [ ] Release verification is self-contained and does not require the optional TypeScript oracle checkout.
+- [ ] Quality verifies and builds the repository-owned TypeScript oracle in
+  `tests/oracles/typescript`, provenance-pinned to
+  [`luxine/CalcKernel_retire@5e989939`](https://github.com/luxine/CalcKernel_retire/commit/5e989939d89d75056e5f3bea25f3bf7204d5529a),
+  before running every live differential gate.
+- [ ] Release verification is self-contained and does not require the test-only TypeScript oracle.
 - [ ] The tag-triggered workflow creates exactly six archives and six SHA256 sidecars.
 - [ ] Every archive checksum verifies and each extracted native-enabled binary passes version, licenses, run, build, dependency, and JIT smoke checks.
 - [ ] No Release already exists for the tag; the workflow creates, rather than overwrites, it.

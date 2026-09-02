@@ -41,7 +41,10 @@ exact-SHA 十作业 CI。
     compute bound、v3/v4/SVE/SVE2 eligible；先 semantic/differential/UB/feature audit，后计时且不可测后排除。
 11. 更新 CI payload：quality 承担 schema/unit/mutation/docs/cache；Native integration 真走 generate/merge/
     use/final audit；六 host 走 ABI/fallback/detector/object；两 performance worker 发布 capability manifest
-    并执行完整 gate。required tier 缺失必须失败，不能 skip。
+    并执行完整 gate。quality 使用 `tests/oracles/typescript` 内 provenance/commit/tree/source-manifest
+    固定、lockfile 完整约束的测试专用 TypeScript oracle，在校验后本地构建并执行既有 live
+    C/WASM/CLI/fixture differential gate；不得依赖同 owner 私有仓库凭据或以移除 oracle 代替修复。
+    required tier 缺失必须失败，不能 skip。
 12. 本地先跑 schema/checker/correctness；稳定 worker执行昂贵 benchmark。失败先诊断实现/测量/环境，
     不改变 threshold/statistics/corpus/oracle。feature branch push 后显式 dispatch，间隔查询远程状态。
 

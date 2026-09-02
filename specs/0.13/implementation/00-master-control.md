@@ -107,5 +107,11 @@ acceptance bundle 与 CI artifact，不能把 run id/final SHA 回写进被测�
 - 远程缺陷：区分产品失败、runner/capability 失败与暂态基础设施失败；不得把 required job
   改为 optional 或用本地/旧 SHA 结果替代。
 
+阶段 11 的首个 exact-SHA run 因 GitHub 仓库从 `Rust_CalcKernel` 更名为 `CalcKernel`，与原
+TypeScript oracle 的旧仓库名发生碰撞，错误地在当前 Rust 仓库解析历史 commit。复诊记录见
+`specs/0.13/review/implementation-blocker-01.md`。闭环只把该固定提交的最小 oracle 源码与
+fixtures 固化到 `tests/oracles/typescript`，保留 lockfile、provenance 与 source manifest，并继续
+执行原有 live differential gate；语言/ABI、性能阈值、corpus 与十作业要求均不变。
+
 Native 阶段使用仓库固定 LLVM/Clang 22.1.8 prefix 与 Rust 1.90.0。若本机缺失 prefix，先按
 README/bootstrap manifest 恢复；阶段 03 之后的 Native acceptance 不能因此跳过。
