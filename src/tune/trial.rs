@@ -1,0 +1,135 @@
+use crate::{
+    KirVerifiedProgramState, TuningPlan, TuningSpace, apply_tuning_plan, check_tuning_plan,
+};
+
+use super::artifact::{
+    ArtifactIdentity, TuneArtifactBytes, TuneArtifactKind, derive_artifact_identity,
+};
+
+/// Byte package produced by the shared verified Native build pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneTrialBuildRequest {
+    kind: TuneArtifactKind,
+    bytes: TuneArtifactBytes,
+    object_graph: Vec<(String, Vec<u8>)>,
+    link_recipe: Vec<String>,
+}
+
+impl TuneTrialBuildRequest {
+    #[must_use]
+    pub fn new(
+        kind: TuneArtifactKind,
+        primary: Vec<u8>,
+        header: Option<Vec<u8>>,
+        import_library: Option<Vec<u8>>,
+        object_graph: Vec<(String, Vec<u8>)>,
+        link_recipe: Vec<String>,
+    ) -> Self {
+        Self {
+            kind,
+            bytes: TuneArtifactBytes {
+                primary,
+                header,
+                import_library,
+            },
+            object_graph,
+            link_recipe,
+        }
+    }
+
+    /// Imports bytes only from the shared verified Native packaging pipeline.
+    #[cfg(feature = "native-toolchain")]
+    pub fn from_verified_native_build(build: &crate::VerifiedNativeBuild) -> Result<Self, String> {
+        let kind = match build.kind() {
+            crate::NativeArtifactKind::Executable => TuneArtifactKind::Executable,
+            crate::NativeArtifactKind::Dynamic => TuneArtifactKind::Dynamic,
+            crate::NativeArtifactKind::Static | crate::NativeArtifactKind::Object => {
+                return Err(
+                    "offline tuning accepts only executable or dynamic artifacts".to_string(),
+                );
+            }
+        };
+        Ok(Self::new(
+            kind,
+            build.primary().to_vec(),
+            build.header().map(<[u8]>::to_vec),
+            build.import_library().map(<[u8]>::to_vec),
+            build.object_graph().to_vec(),
+            build.link_recipe().to_vec(),
+        ))
+    }
+}
+
+/// A verified tuning artifact that deliberately has no publication conversion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonPublishableTuneTrial {
+    plan: TuningPlan,
+    post_state_digest: String,
+    identity: ArtifactIdentity,
+    bytes: TuneArtifactBytes,
+    object_graph: Vec<(String, Vec<u8>)>,
+    link_recipe: Vec<String>,
+}
+
+impl NonPublishableTuneTrial {
+    #[must_use]
+    pub const fn identity(&self) -> &ArtifactIdentity {
+        &self.identity
+    }
+
+    #[must_use]
+    pub fn primary_size(&self) -> u64 {
+        self.identity.roles[0].size
+    }
+
+    #[must_use]
+    pub const fn plan_digest(&self) -> [u8; 32] {
+        self.plan.digest
+    }
+
+    pub(crate) fn verify_internal_identity(&self) -> Result<(), String> {
+        let identity = derive_artifact_identity(
+            self.identity.kind,
+            &self.bytes,
+            &self.object_graph,
+            &self.link_recipe,
+        )?;
+        if identity != self.identity {
+            return Err("tuning trial artifact identity mismatch".to_string());
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn plan(&self) -> &TuningPlan {
+        &self.plan
+    }
+
+    pub(crate) fn post_state_digest(&self) -> &str {
+        &self.post_state_digest
+    }
+}
+
+/// Freezes one checked plan and actual bytes returned by the shared Native pipeline.
+pub fn compile_tune_trial(
+    state: &KirVerifiedProgramState,
+    space: &TuningSpace,
+    plan: &TuningPlan,
+    request: TuneTrialBuildRequest,
+) -> Result<NonPublishableTuneTrial, String> {
+    check_tuning_plan(state, space, plan).map_err(|error| error.to_string())?;
+    let replayed = apply_tuning_plan(state, space, plan).map_err(|error| error.to_string())?;
+    let identity = derive_artifact_identity(
+        request.kind,
+        &request.bytes,
+        &request.object_graph,
+        &request.link_recipe,
+    )?;
+    Ok(NonPublishableTuneTrial {
+        plan: plan.clone(),
+        post_state_digest: replayed.kir_digest(),
+        identity,
+        bytes: request.bytes,
+        object_graph: request.object_graph,
+        link_recipe: request.link_recipe,
+    })
+}

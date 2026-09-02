@@ -10,9 +10,13 @@ mod input_map;
 mod inspection;
 #[path = "tune/manifest.rs"]
 mod manifest;
+#[path = "tune/replay.rs"]
+mod replay;
 #[path = "tune/search.rs"]
 mod search;
 #[path = "tune/snapshot.rs"]
 mod snapshot;
 #[path = "tune/support.rs"]
 mod support;
+#[path = "tune/trial.rs"]
+mod trial;

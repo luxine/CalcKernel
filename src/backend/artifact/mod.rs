@@ -1,6 +1,7 @@
 mod archive;
 mod lld;
 mod platform;
+mod verified;
 
 pub use archive::{
     NativeArchive, create_native_multiversion_static_archive,
@@ -12,3 +13,4 @@ pub use lld::{
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
 };
 pub use platform::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+pub use verified::{VerifiedNativeBuild, build_verified_native_artifact};

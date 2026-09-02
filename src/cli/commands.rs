@@ -27,10 +27,9 @@ use calckernel::{
     NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu, NativeHeaderMode,
     NativeMultiversionTargetSet, NativeObject, NativeOptimizationLevel, NativePlatform,
     NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
-    build_late_profile_layout_plan, check_kir_multiversion_bundle,
+    build_late_profile_layout_plan, build_verified_native_artifact, check_kir_multiversion_bundle,
     create_native_multiversion_static_archive, create_native_profile_generation_static_archive,
-    create_native_static_archive, emit_native_header, emit_native_multiversion_objects,
-    emit_native_profile_generation_header, link_native_dynamic_library, link_native_executable,
+    emit_native_header, emit_native_multiversion_objects, emit_native_profile_generation_header,
     link_native_multiversion_dynamic_library, link_native_multiversion_executable,
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
     lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
@@ -1042,41 +1041,25 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         .filter(|function| function.exported)
         .map(|function| function.name.clone())
         .collect::<Vec<_>>();
-    let (primary, import_library) = match kind {
-        ArtifactKind::Executable => (
-            link_native_executable(&object)
-                .map_err(|error| error.to_string())?
-                .as_bytes()
-                .to_vec(),
-            None,
-        ),
-        ArtifactKind::Object => (object.as_bytes().to_vec(), None),
-        ArtifactKind::Static => (
-            create_native_static_archive(&object)
-                .map_err(|error| error.to_string())?
-                .as_bytes()
-                .to_vec(),
-            None,
-        ),
-        ArtifactKind::Dynamic => {
-            let library = link_native_dynamic_library(&object, &exports)
-                .map_err(|error| error.to_string())?;
-            (
-                library.as_bytes().to_vec(),
-                library.import_library().map(<[u8]>::to_vec),
-            )
-        }
-    };
+    let verified_build = build_verified_native_artifact(
+        artifact_kind,
+        &object,
+        &exports,
+        header.as_deref().map(str::as_bytes).map(<[u8]>::to_vec),
+    )
+    .map_err(|error| error.to_string())?;
+    let primary = verified_build.primary();
+    let import_library = verified_build.import_library();
     let mut transaction = OutputTransaction::new();
     if kind == ArtifactKind::Executable {
-        transaction.stage_executable(paths.primary.clone(), &primary)?;
+        transaction.stage_executable(paths.primary.clone(), primary)?;
     } else {
-        transaction.stage(paths.primary.clone(), &primary)?;
+        transaction.stage(paths.primary.clone(), primary)?;
     }
     if let (Some(path), Some(header)) = (&paths.header, header.as_deref()) {
         transaction.stage(path.clone(), header.as_bytes())?;
     }
-    if let (Some(path), Some(bytes)) = (&paths.import_library, import_library.as_deref()) {
+    if let (Some(path), Some(bytes)) = (&paths.import_library, import_library) {
         transaction.stage(path.clone(), bytes)?;
     }
     transaction.commit()?;

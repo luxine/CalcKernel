@@ -6,8 +6,8 @@ use std::{
 use calckernel::{
     BoundsMode, EmitLlvmOptions, KirConsumer, NativeArtifactKind, NativeArtifactPaths,
     NativeContext, NativeObject, NativeOptimizationLevel, NativePlatform, NativeTarget,
-    OverflowMode, create_native_static_archive, link_native_dynamic_library,
-    lower_native_kir_module,
+    OverflowMode, build_verified_native_artifact, create_native_static_archive,
+    link_native_dynamic_library, lower_native_kir_module,
 };
 
 use super::runtime_support::executable_bytes;
@@ -110,6 +110,24 @@ fn archive_api_should_accept_only_verified_native_objects() {
     let signature: fn(&NativeObject) -> Result<calckernel::NativeArchive, calckernel::NativeError> =
         create_native_static_archive;
     let _ = signature;
+}
+
+#[test]
+fn artifacts_verified_native_build_should_share_role_tagged_packaging() {
+    let object = native_object("export fn answer() -> i32 { return 42; }");
+    let build = build_verified_native_artifact(
+        NativeArtifactKind::Dynamic,
+        &object,
+        &["answer".to_string()],
+        Some(b"header".to_vec()),
+    )
+    .expect("verified build");
+
+    assert_eq!(build.kind(), NativeArtifactKind::Dynamic);
+    assert!(!build.primary().is_empty());
+    assert_eq!(build.header(), Some(b"header".as_slice()));
+    assert_eq!(build.object_graph().len(), 1);
+    assert_eq!(build.link_recipe(), ["embedded-lld-dynamic-v1"]);
 }
 
 #[test]
