@@ -862,6 +862,33 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
 }
 
 #[test]
+fn linux_profile_runtime_hex_should_avoid_mixed_signedness_under_gcc_werror() {
+    let linux = read("native/profile_runtime/platform/linux.c");
+    let hex = linux
+        .split_once("static char ck_profile_hex(uint8_t nibble) {")
+        .expect("Linux profile hex helper")
+        .1
+        .split_once("\n}")
+        .expect("Linux profile hex helper end")
+        .0;
+
+    for required in [
+        "if (nibble < 10u)",
+        "return (char)('0' + (int)nibble);",
+        "return (char)('a' + (int)nibble - 10);",
+    ] {
+        assert!(
+            hex.contains(required),
+            "Linux GCC -Werror build requires warning-clean hex conversion {required:?}"
+        );
+    }
+    assert!(
+        !hex.contains('?'),
+        "mixed signed/unsigned conditional arms regress GCC -Werror on AArch64 Linux"
+    );
+}
+
+#[test]
 fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi() {
     for path in [
         "native/dispatch_runtime/include/ckc_dispatch_runtime.h",

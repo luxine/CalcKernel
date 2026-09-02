@@ -143,7 +143,10 @@ static int ck_profile_open_directory(const uint8_t *path, uint32_t length) {
 }
 
 static char ck_profile_hex(uint8_t nibble) {
-  return (char)(nibble < 10u ? '0' + nibble : 'a' + nibble - 10u);
+  if (nibble < 10u) {
+    return (char)('0' + (int)nibble);
+  }
+  return (char)('a' + (int)nibble - 10);
 }
 
 static void ck_profile_names(const uint8_t run_id[16], char temporary[49],
