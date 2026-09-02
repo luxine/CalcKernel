@@ -175,11 +175,16 @@ the decision-independent primary, header, and import-library outputs that exist.
 
 Publication uses a sibling lock, journal, stage files, and backup files. Their
 names begin `.ckc-tune-` followed by the first 32 hexadecimal characters of
-SHA-256(`"CK-TUNE-OUTPUT-SET\0"`, output kind, the canonical decision path, and
-the output-role-sorted canonical destination paths). CK opens the lock and journal without following symbolic links
+`H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` from the decision schema. CK opens
+the lock and journal without following symbolic links
 or reparse points and holds an exclusive operating-system advisory lock throughout
 recovery and publication. The journal stores and verifies the full 32-byte output-
 set id; a prefix collision with another set is a hard error, never an alias.
+
+The sole byte-, filename-, barrier-, phase-, and recovery-level authority is the
+shared normative attachment
+[`publication-journal-1.md`](publication-journal-1.md). The summary below cannot
+weaken or reorder that protocol.
 
 The bounded journal schema 1 contains the transaction id, output-set id, phase,
 and, in publication order decision, header, import-library, primary, for each
@@ -188,22 +193,26 @@ old-presence bit, old digest, new digest, and new size. Its phases are `Prepared
 `BackedUp=2`, `DecisionPublished=3`, `SidecarsPublished=4`,
 `PrimaryPublished=5`, and `Committed=6`. Publication is exactly:
 
-1. create and verify all sibling stage files, then flush every file;
+1. create and verify all sibling stage files, flush every file, then flush the
+   parent directory;
 2. write and flush `Prepared`, then flush the parent directory;
-3. rename each prior destination to its backup, write and flush `BackedUp`;
-4. atomically rename and flush the decision, then record `DecisionPublished`;
-5. publish and flush the header and then import library when present, then record
-   `SidecarsPublished`;
-6. publish and flush the primary artifact last, then record `PrimaryPublished`;
+3. rename each prior destination to its backup, flush the parent, then write and
+   flush `BackedUp`;
+4. atomically rename and flush the decision and parent, then record
+   `DecisionPublished`;
+5. publish and flush the header and then import library when present, flush the
+   parent, and record `SidecarsPublished`;
+6. publish and flush the primary artifact and parent last, then record
+   `PrimaryPublished`;
 7. verify the entire new set, record and flush `Committed`, remove backups and
    stages, remove the journal, and flush the directory.
 
 Directory flush uses the strongest documented platform equivalent and is covered
 by each native-host recovery test. On any reported error CK rolls back before
-returning. On restart, recovery first hashes every destination, stage, and backup:
-if the primary does not equal its journaled new digest it restores the complete old
-set; if the primary equals the new digest it completes the new set. Both operations
-are idempotent. An impossible or unrecorded digest combination is a hard recovery
+returning. On restart, recovery first hashes every destination, stage, and backup.
+Phases 1 through 4 roll back unless a distinct new primary proves its rename;
+phases 5 and 6 roll forward, and an identical old/new primary uses the phase. Both
+operations are idempotent. An impossible or unrecorded digest combination is a hard recovery
 error that preserves the journal and all evidence for diagnosis rather than
 guessing. A later command may not touch the set until recovery succeeds.
 
@@ -331,8 +340,9 @@ must be named by an explicit path; PATH lookup is forbidden. Schema 1 accepts on
 the host's native ELF, Mach-O, or PE/COFF executable format, not a script or
 interpreter directive.
 
-The canonical manifest identity is not the raw TOML byte stream. It is the
-domain-separated SHA-256 of a fixed binary encoding, in this order:
+The canonical manifest identity is not the raw TOML byte stream. It is
+`H("CK-TUNE-MANIFEST\0", ManifestMaterial)` using the primitive framing in the
+normative decision-schema attachment, in this order:
 
 1. schema;
 2. runner argv strings;
@@ -366,7 +376,11 @@ minimal SystemRoot and WINDIR values needed to create a process. Any other inher
 variable must be explicitly allowlisted. A requested variable that is absent is an
 error. Names are unique byte-for-byte on Unix and unique under ASCII
 case-insensitive comparison on Windows; duplicate or noncanonical spelling is an
-error. Each value is at most 4,096 bytes and the complete effective environment is
+error. The complete effective environment, not merely the user allowlist, is capped
+at 16 entries. Windows inserts its required base names first; an allowlisted base
+name with canonical spelling refers to that one existing entry, while conflicting
+case is rejected. Validation fails if the union exceeds 16. Each value is at most
+4,096 bytes and the complete effective environment is
 at most 65,536 bytes; NUL is rejected. Every effective name and exact value,
 including the Windows platform base
 values, enters tuning identity.
@@ -494,9 +508,27 @@ After all cases are calibrated, the fixed state machine is:
 5. validation round 2 repeats the same matrix with a distinct ordering domain;
 6. selection runs only after every required surviving stream is complete.
 
+Before candidate smoke, CK derives:
+
+    session_digest = H("CK-TUNE-SESSION\0",
+                       Identity,
+                       Contract,
+                       Workload,
+                       Environment tags 1..16,
+                       complete Frontier,
+                       baseline plan/object-graph/link-recipe/size tuple)
+
+`H` and each canonical record are defined by `decision-schema-1.md`. Calibration
+records, measurements, correctness results, cache origins, temporary paths,
+timestamps, and publication destinations are excluded. The derived digest is stored
+as Environment tag 18 and is the sole measurement-order seed.
+
 A warmup channel evaluation is exactly one invocation. A measured channel
 evaluation is exactly three invocations and stores their minimum. Every invocation
 validates protocol and correctness. The baseline is present in every phase.
+
+Smoke has phase 1, round 0, row 0, and call 1; candidates and cases retain the
+plan-digest and case-id order stated above, so smoke requires no channel rotation.
 
 Cases are stored in case-id order. Channels are stored as baseline followed by
 ascending plan digest. For each row, CK computes:
@@ -506,9 +538,9 @@ ascending plan digest. For each row, CK computes:
 
 The first eight bytes interpreted as a big-endian u64 select a left-rotation modulo
 the channel count for that case. The same formula with case_id replaced by the
-single byte 0xff selects the case-list rotation. Phase values are 1 search-warmup,
-2 search-measured, 3 validation-1-warmup, 4 validation-1-measured,
-5 validation-2-warmup, and 6 validation-2-measured. round is zero outside
+single byte 0xff selects the case-list rotation. Phase values are 1 candidate-smoke,
+2 search-warmup, 3 search-measured, 4 validation-1-warmup,
+5 validation-1-measured, 6 validation-2-warmup, and 7 validation-2-measured. round is zero outside
 validation and 1 or 2 inside it. Rejected channel slots remain explicit skips, so
 their removal cannot reorder favorable samples.
 
@@ -694,9 +726,11 @@ Search ranks candidates with exact integer Q32 normalized time:
     ratio_q32 = ceil(candidate_ns * 2^32 / baseline_ns)
     score_q32 = ceil(sum(weight * ratio_q32) / sum(weight))
 
-No floating-point arithmetic participates in selection. The best bounded entrants
-advance to validation. All products and sums use checked u128 arithmetic, and the
-persisted Q32 result must fit u64.
+No floating-point arithmetic participates in selection. Entrants are totally
+ordered by lower search score, smaller actual primary-artifact bytes, fewer
+non-baseline choices, then lower plan digest; the best bounded entrants advance to
+validation. All products and sums use checked u128 arithmetic, and the persisted
+Q32 result must fit u64.
 
 ### 11.2 Validation phase
 
@@ -844,13 +878,14 @@ Top-level tag 3, `Workload`, contains:
 | 4 | List<Text> | argv, in manifest order |
 | 5 | List<Record> | effective environment, sorted by platform-normalized name |
 | 6 | U32 | timeout milliseconds |
-| 7 | List<Record> | inputs sorted by logical mount name: name, digest, size |
+| 7 | List<Record> | inputs in manifest order: logical path, digest, size |
 | 8 | List<Record> | cases sorted by case id: id, role enum, seed, weight, expected digest |
 
 Top-level tag 4, `Environment`, contains the closed measurement tuple, timer and
 scheduling evidence, followed by a case-id-ordered calibration record list. Each
 calibration records iterations, attempts, accepted and confirmation elapsed times,
-and overshoot. Unavailable text uses `unavailable`; unavailable numeric host facts
+and overshoot, followed by the derived session digest. Unavailable text uses
+`unavailable`; unavailable numeric host facts
 use their explicit absent optional state.
 
 Top-level tag 5, `Frontier`, contains the candidate-space digest at tag 1, sites at
@@ -915,7 +950,7 @@ Closed enum values are:
 | alternative class | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
 | expansion disposition | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
 | candidate outcome | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
-| ordering phase | search-warmup=1, search-measured=2, validation-one-warmup=3, validation-one-measured=4, validation-two-warmup=5, validation-two-measured=6; only 2, 4, and 6 occur in stored streams |
+| ordering phase | candidate-smoke=1, search-warmup=2, search-measured=3, validation-one-warmup=4, validation-one-measured=5, validation-two-warmup=6, validation-two-measured=7; only 3, 5, and 7 occur in stored streams |
 | selection reason | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
 | output role | primary=1, header=2, import-library=3 |
 | cache-origin kind | freshly-built=1, verified-local-hit=2 |
@@ -1199,7 +1234,7 @@ five rows of `benches/cases/pgo-cases.tsv`: `branch-layout`,
 There are no optional rows or post-result exclusions.
 
 The existing `training.tsv` is search input and `held-out.tsv` is validation input.
-The tuner receives both through five fixed `benches/tune/workloads/*.cktune.toml`
+The tuner receives both through seven fixed `benches/tune/workloads/*.cktune.toml`
 manifests. It never receives the sealed release file
 `benches/fixtures/tune/release-held-out.tsv`, whose exact data rows are:
 
@@ -1210,7 +1245,38 @@ manifests. It never receives the sealed release file
     memory-bound\trelease-zip-4096\t4096\t97\t0
     compute-bound\trelease-f64-4091\t4091\t101\t1.0009765625
 
-The fixed recipe contains `benches/cases/tune-cases.tsv`, the five workload
+`benches/cases/tune-cases.tsv` has exactly these seven logical rows after its schema
+header; each row fixes the source, manifest basename, and search/validation/release
+record provenance:
+
+| Tune case | Source | Search record | Validation record | Release record |
+| --- | --- | --- | --- | --- |
+| branch-layout | `benches/fixtures/pgo/branch_layout.ck` | train-branch-biased | held-branch-prime | release-branch-prime |
+| call-constant-length | `benches/fixtures/pgo/call_constant_length.ck` | train-fixed-4000 | held-fixed-4000 | release-fixed-4000 |
+| trip-unroll-simd | `benches/oracles/fixtures/map_u32.ck` | train-map-4000 | held-map-3967 | release-map-4093 |
+| memory-bound | `benches/oracles/fixtures/zip_u32.ck` | train-zip-4000 | held-zip-4000 | release-zip-4096 |
+| compute-bound | `benches/fixtures/pgo/compute_bound.ck` | train-f64-4000 | held-f64-3989 | release-f64-4091 |
+| contract-noalias | `benches/oracles/fixtures/contract_noalias.ck` | train-zip-4000 | held-zip-4000 | release-zip-4096 |
+| contract-fixed-length | `benches/oracles/fixtures/contract_fixed_length.ck` | train-fixed-4000 | held-fixed-4000 | release-fixed-4000 |
+
+For each row, `<tune-case>.cktune.toml` is exactly schema 1 with runner path
+`../../../target/release/ckc-tune-runner`, args `["--ck-tune"]`, inputs
+`["../../fixtures/pgo/training.tsv","../../fixtures/pgo/held-out.tsv"]`, empty
+`inherit_env`, and `timeout_ms=30000`. It contains exactly `<tune-case>.search`
+and `<tune-case>.validation`, with roles search/validation, weight 1, and the seed
+from the named input record. Expected digests are not discretionary constants:
+each is
+
+    SHA-256("CK-TUNE-RESULT\0" || U32_BE(native_abi_schema) ||
+            U32_BE(len(case_id_utf8)) || case_id_utf8 ||
+            U64_BE(result_byte_count) || canonical_result_bytes)
+
+and is written in `tune-cases.tsv` and the manifest. The audited CK, C, and Rust
+implementations must independently produce those exact bytes before evidence
+collection. The release digest uses `<tune-case>.release`; the release record and
+digest are never present in a tune manifest.
+
+The fixed recipe contains `benches/cases/tune-cases.tsv`, the seven workload
 manifests, `benches/tune/runner.rs`, `benches/oracles/tune/manifest.toml`,
 `benches/oracles/tune/c/tune_oracle.c`,
 `benches/oracles/tune/rust/tune_oracle.rs`, the seven CK sources comprising the
@@ -1237,7 +1303,8 @@ bytes, exact v0.13 replay commit and archive, schema 8 file, pinned LLVM/Clang
 operating system, CPU features, recipe, artifacts, decisions, and every retained
 sample have size and SHA-256 identity. Evidence entries must be regular files below
 the evidence directory, with no symlink, traversal, missing, duplicate, or unknown
-entry.
+entry. The stable x86-64 worker requires x86-64-v4; the stable AArch64 worker
+requires SVE2. A missing tier is a failed gate, never workflow discretion.
 
 Main-case timing uses `rotating-six-channel-v1` with channels in this exact order:
 `tuned`, `v014Ordinary`, `v013Ordinary`, `v013Pgo`, `cSimd`, and `rustSimd`.
@@ -1254,8 +1321,9 @@ release samples.
 Each main case records all six raw streams and orders, medians, correctness digest,
 source/input identities, selected or baseline decision, complete `.cktune` identity,
 all artifact identities, eligibility bit fixed true, and release-held-out result.
-The two domain cases record the same facts for three streams. The five `.cktune`
-files and complete role-tagged published output sets are copied into evidence; their
+The two domain cases record the same facts for three streams plus their exact tuned
+decision, output set, and three build commands. All seven `.cktune` files and
+complete role-tagged published output sets are copied into evidence; their
 schema, identity, certificate/baseline reason, plan, object graph, link recipe,
 measurements, and on-disk digests are independently checked.
 

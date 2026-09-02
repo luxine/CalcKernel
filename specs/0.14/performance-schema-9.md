@@ -37,9 +37,11 @@ in `benches/baselines/v0_13_replay.toml`. `evidenceDirectory` matches
 `logicalCpus`, `physicalCpus`, `numaNodes`, `features`, `requiredTier`,
 `availableTiers`, `osState`, and `capabilityDigest`. Feature and tier lists are
 sorted and unique. The digest is over the other fields in
-canonical JSON with domain `CK-V014-PERF-HARDWARE\0`. The x86-64 job requires its
-workflow-declared enhanced x86 tier; the AArch64 job requires its workflow-declared
-enhanced AArch64 tier. Missing required hardware fails instead of skipping.
+canonical JSON with domain `CK-V014-PERF-HARDWARE\0`. The x86-64 job requires
+`requiredTier="x86-64-v4"`; the AArch64 job requires
+`requiredTier="aarch64-sve2"`. That tier must occur in `availableTiers` and all of
+its required features in `features`. Missing required hardware fails instead of
+skipping.
 
 `recipe` has exactly `schema`, `files`, `digest`, and `thresholds`. `schema=1`.
 `files` is a path-sorted list of `FileIdentity` covering every path named in Section
@@ -83,7 +85,7 @@ passes before any schema-9 threshold is evaluated.
 `workload` has exactly `casesManifest`, `sources`, `search`, `validation`,
 `adversarial`, `releaseHeldOut`, `tuneManifests`, `runner`, `oracleManifest`,
 `cOracle`, and `rustOracle`. Scalar file members are `FileIdentity`; `sources` and
-`tuneManifests` are path-sorted `FileIdentity` lists of exactly seven and five
+`tuneManifests` are path-sorted `FileIdentity` lists of exactly seven and seven
 entries. Their file set and logical rows equal Section 19.1 exactly.
 
 `sampling` has exactly `mainProtocol`, `domainProtocol`, `mainChannels`,
@@ -98,9 +100,23 @@ entries. Their file set and logical rows equal Section 19.1 exactly.
 - stability `at-least-80-percent-within-20-percent-of-upper-median`;
 - rerun policy `unstable-evidence-is-invalid-no-selective-rerun`.
 
+Every steady-state order uses this exact byte formula:
+
+    key = SHA-256("CK-V014-PERF-ORDER\0" ||
+                  U32_BE(len(candidate_sha_ascii)) || candidate_sha_ascii ||
+                  U32_BE(len(protocol_utf8)) || protocol_utf8 ||
+                  U32_BE(len(split_utf8)) || split_utf8 ||
+                  U32_BE(len(case_utf8)) || case_utf8 ||
+                  phase_u8 || row_u32_be)
+
+Phase is 1 for warmup and 2 for measured rows; row is zero-based within its phase.
+The first eight digest bytes are a big-endian u64 and select a left rotation modulo
+channel count from the fixed channel list. `split` is `release-held-out` or
+`domain-release-held-out`. The stored order must equal this formula.
+
 ## 4. Decisions and artifacts
 
-`tuningDecisions` is a case-name-sorted list of exactly five objects with keys
+`tuningDecisions` is a case-name-sorted list of exactly seven objects with keys
 `case`, `file`, `decisionDigest`, `selectionReason`, `planDigest`,
 `objectGraphDigest`, `linkRecipeDigest`, `certificateDigest`, and `outputRecords`.
 `file` is a `FileIdentity`; five digest fields are `Digest`, except
@@ -108,7 +124,7 @@ entries. Their file set and logical rows equal Section 19.1 exactly.
 reason. `outputRecords` is a role-sorted list with exact keys `role`, `logicalName`,
 `bytes`, and `sha256`, and must equal the decoded decision and retained outputs.
 
-`tuningArtifacts` is a case-name-sorted list of exactly five objects with keys
+`tuningArtifacts` is a case-name-sorted list of exactly seven objects with keys
 `case`, `decision`, and `outputs`; `decision` is a `FileIdentity`, and `outputs` is
 the complete role-sorted list of one, two, or three objects with exactly `role`,
 `path`, `bytes`, and `sha256`. Every identity equals `tuningDecisions`.
@@ -129,9 +145,12 @@ row contains every channel exactly once and equals the specified digest rotation
 `mediansNs` has those keys and equals each list's ascending element 10. Every stream
 passes the 16-of-20 inclusive 80%..120% stability rule.
 
-A `DomainCase` has the same keys and rules except `eligible` is absent and all four
-channel-shaped objects/orders use exactly the three domain channels. Each case's
-correctness digest agrees across all channels.
+A `DomainCase` has the same keys and rules except `eligible` is absent,
+`buildCommands` is added, and all channel-shaped objects/orders use exactly the
+three domain channels. `buildCommands` has exactly the three channel keys and each
+value is the closed command object from Section 6. The tuned artifact and
+`decisionDigest` must equal the corresponding entries in `tuningArtifacts` and
+`tuningDecisions`. Each case's correctness digest agrees across all channels.
 
 The main gates use release-held-out rows only. For every selected tuned case,
 `tuned/v013-faster` is at most 98/100; every case, including baseline selections,
@@ -142,7 +161,7 @@ throughput gate against the faster generic oracle.
 
 ## 6. Compilation, size, and resource records
 
-`tuneUseCompileTime` is a case-name-sorted five-row list comparing `tuneUse` with
+`tuneUseCompileTime` is a case-name-sorted seven-row list comparing `tuneUse` with
 `v014Ordinary`. `ordinaryCompileRegression` is the same shape comparing
 `v014Ordinary` with `v013Ordinary`. Each row has exactly `case`, `warmupOrder`,
 `sampleOrder`, `samplesNs`, `mediansNs`, and `commands`. Orders contain three and
@@ -153,13 +172,15 @@ with exactly the two channel keys; each value has exactly `argv`, `executable`,
 `executable` is a `FileIdentity`, `inputs` is a path-sorted `FileIdentity` list, and
 `environmentDigest` is a `Digest`.
 
-`artifactSize` is a case-name-sorted five-row list with exactly `case`,
+The first channel of compile warmup row 0 is the left-listed channel and alternates
+across all 18 rows without restarting at the measured boundary; the report retains
+the separated 3/15 orders. `artifactSize` is a case-name-sorted seven-row list with exactly `case`,
 `tunedPrimary`, and `baselinePrimary`; the latter two are `FileIdentity` and the
 ratio is at most 110/100. `archiveSize` has exactly `candidate` and `v013Replay`,
 both `FileIdentity`, with ratio at most 110/100.
 
 `resourceUse` has exactly `sessions` and `cacheHardLimitBytes`. The hard limit is
-4,294,967,296. `sessions` is a five-row case-name-sorted list with exactly `case`,
+4,294,967,296. `sessions` is a seven-row case-name-sorted list with exactly `case`,
 `budget`, `wallMs`, `peakRssBytes`, `ordinaryPeakRssBytes`, `expansions`,
 `compileAttempts`, `measuredFinalists`, `validationEntrants`, and `cacheBytes`.
 Budget is `standard`; all counts fit its preset; wall, RSS ratio, and cache meet the
@@ -167,7 +188,7 @@ frozen thresholds.
 
 ## 7. Determinism and correctness
 
-`determinism` is a case-name-sorted list of five objects with exactly `case`,
+`determinism` is a case-name-sorted list of seven objects with exactly `case`,
 `coldOne`, `coldTwo`, and `warm`. Each run has exactly `decisionDigest`,
 `planDigest`, `objectGraphDigest`, `linkRecipeDigest`, `outputSetDigest`,
 `compiledCandidates`, and `measuredCandidates`. The two cold runs match all five

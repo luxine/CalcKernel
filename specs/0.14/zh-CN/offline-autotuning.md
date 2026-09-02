@@ -155,12 +155,15 @@ Profile、声明输入或者另一目标形成别名。Schema 1 不支持跨目�
 摘要与物理体积。
 
 发布使用同目录锁、Journal、Stage 与 Backup 文件。名称以 `.ckc-tune-` 加上
-SHA-256(`"CK-TUNE-OUTPUT-SET\0"`、输出类型、规范决策路径以及按输出角色排序
-的规范目标路径)
-前 32 个十六进制字符开头。CK 打开锁和 Journal 时不得跟随符号链接或
+决策 Schema 中 `H("CK-TUNE-OUTPUT-SET\0", OutputSetMaterial)` 前 32 个
+十六进制字符开头。CK 打开锁和 Journal 时不得跟随符号链接或
 Reparse Point，并在恢复与发布全程持有操作系统排他 Advisory Lock。Journal
 存储并校验完整 32 字节输出集 id；与另一集合发生前缀碰撞属于硬错误，绝不视为
 同一集合。
+
+英中设计共用的规范附件
+[`publication-journal-1.md`](../publication-journal-1.md) 是唯一字节、文件名、
+Barrier、阶段与恢复级权威；下述概览不能弱化或重排该协议。
 
 有界 Journal Schema 1 包含事务 id、输出集 id、阶段；按发布顺序 decision、
 header、import-library、primary，对每个存在的目标，
@@ -168,20 +171,21 @@ header、import-library、primary，对每个存在的目标，
 体积。阶段为 `Prepared=1`、`BackedUp=2`、`DecisionPublished=3`、
 `SidecarsPublished=4`、`PrimaryPublished=5`、`Committed=6`。发布严格为：
 
-1. 创建并验证所有同目录 Stage 文件，然后 Flush 每个文件；
+1. 创建并验证所有同目录 Stage 文件，Flush 每个文件，再 Flush 父目录；
 2. 写入并 Flush `Prepared`，再 Flush 父目录；
-3. 将各旧目标重命名为 Backup，写入并 Flush `BackedUp`；
-4. 原子重命名并 Flush 决策，记录 `DecisionPublished`；
-5. 如存在则依次发布并 Flush 头文件、Import Library，再记录
+3. 将各旧目标重命名为 Backup，Flush 父目录，再写入并 Flush `BackedUp`；
+4. 原子重命名并 Flush 决策和父目录，再记录 `DecisionPublished`；
+5. 如存在则依次发布并 Flush 头文件、Import Library，Flush 父目录，再记录
    `SidecarsPublished`；
-6. 最后发布并 Flush 主产物，记录 `PrimaryPublished`；
+6. 最后发布并 Flush 主产物和父目录，再记录 `PrimaryPublished`；
 7. 验证整个新输出集，记录并 Flush `Committed`，删除 Backup、Stage 与
    Journal，再 Flush 目录。
 
 目录 Flush 使用各平台有文档的最强等价机制，并由每个原生宿主恢复测试覆盖。
 任何已报告错误都必须在返回前回滚。重启恢复先计算所有目标、Stage 与 Backup
-摘要：主输出不等于 Journal 中新摘要时恢复完整旧集合；主输出等于新摘要时补全
-新集合。两者都必须幂等。无法解释或未记录的摘要组合是硬恢复错误，必须保留
+摘要。阶段 1 至 4 回滚，除非一个与旧摘要不同的新主输出证明已经完成重命名；
+阶段 5、6 前滚；旧新主输出相同时按阶段判定。两者都必须幂等。无法解释或未
+记录的摘要组合是硬恢复错误，必须保留
 Journal 与全部证据，不得猜测；恢复成功前后续命令不得接触该集合。
 
 本规范中的事务输出集发布特指这种带 Journal、主输出最后发布的协议，不宣称
@@ -300,8 +304,9 @@ Schema 1 只包含以下字段：
 该目录外，但必须由显式路径指定，禁止通过 PATH 查找。Schema 1 只接受宿主
 原生 ELF、Mach-O 或 PE/COFF 可执行格式，不接受脚本或解释器指令。
 
-规范 Manifest 身份不是 TOML 原始字节流，而是按以下顺序对固定二进制编码
-进行域分离 SHA-256：
+规范 Manifest 身份不是 TOML 原始字节流，而是使用规范决策 Schema 附件的
+Primitive Framing，按以下顺序计算
+`H("CK-TUNE-MANIFEST\0", ManifestMaterial)`：
 
 1. schema；
 2. runner argv 字符串；
@@ -329,7 +334,9 @@ CK_TUNE_TEMP 和固定的 inputs 子目录定位这些文件。
 驱动程序从空环境启动。在 Windows 上，CK 只能提供创建进程所需的最小
 SystemRoot 和 WINDIR 值。其他继承变量必须显式加入允许列表；请求的变量
 不存在即报错。Unix 名称按字节唯一，Windows 名称按 ASCII 大小写不敏感比较
-唯一；重复或非规范拼写均报错。每个值最多 4,096 字节，完整有效环境最多
+唯一；重复或非规范拼写均报错。上限 16 约束完整有效环境，而不仅是用户允许
+列表。Windows 先插入所需基础名称；规范拼写的同名允许项引用已有同一记录，
+大小写冲突则拒绝；Union 超过 16 时校验失败。每个值最多 4,096 字节，完整有效环境最多
 65,536 字节；NUL 必须拒绝。包括 Windows 平台基础值在内的每个有效名称
 和精确值都进入调优身份。
 
@@ -437,8 +444,25 @@ Containment 关闭、记录超时，并在全部后续行和轮次中跳过该�
 5. 验证第 2 轮以不同顺序域重复同一矩阵；
 6. 只有全部必要存续流完整后才执行选择。
 
+候选冒烟前，CK 派生：
+
+    session_digest = H("CK-TUNE-SESSION\0",
+                       Identity,
+                       Contract,
+                       Workload,
+                       Environment Tag 1..16,
+                       完整 Frontier,
+                       基线计划/目标图/链接配方/体积 Tuple)
+
+`H` 与每个规范记录由 `decision-schema-1.md` 定义。校准记录、测量、正确性
+结果、缓存来源、临时路径、时间戳和发布目标均排除。派生摘要存为 Environment
+Tag 18，是唯一测量顺序种子。
+
 一次预热通道评估恰好调用一次。一次测量通道评估恰好调用三次并存储最小值。
 每次调用都验证协议与正确性。基线存在于每个阶段。
+
+冒烟使用 Phase 1、Round 0、Row 0、Call 1；候选与用例保持上述计划摘要和
+case-id 顺序，因此冒烟无需通道轮转。
 
 用例按 case-id 存储；通道依次为基线和按计划摘要升序排列的候选。每一行中，
 CK 计算：
@@ -448,8 +472,8 @@ CK 计算：
 
 将前八个字节解释为大端 u64，对该用例的通道数取模，得到向左轮转量。用
 单字节 0xff 替代 case_id 的相同公式得到用例列表轮转量。Phase 值依次为：
-1 搜索预热、2 搜索测量、3 验证一预热、4 验证一测量、5 验证二预热、
-6 验证二测量。验证外 round 为零，验证内为 1 或 2。被拒绝的通道槽位继续
+1 候选冒烟、2 搜索预热、3 搜索测量、4 验证一预热、5 验证一测量、
+6 验证二预热、7 验证二测量。验证外 round 为零，验证内为 1 或 2。被拒绝的通道槽位继续
 作为显式 skip，因此移除候选不能重排有利样本。
 
 启动一次调用前，CK 要求会话墙钟至少还剩完整配置超时加固定 2,250 ms
@@ -609,8 +633,10 @@ Cache Hit 不启动搜索会话。
     ratio_q32 = ceil(candidate_ns * 2^32 / baseline_ns)
     score_q32 = ceil(sum(weight * ratio_q32) / sum(weight))
 
-选择过程不使用浮点运算。全部乘积与求和使用经过检查的 u128 算术，持久化
-Q32 结果必须能装入 u64。排名最好的有界入围者进入验证。
+选择过程不使用浮点运算。入围者严格依次按更低搜索得分、更小实际主产物
+字节数、更少非基线选择、更低计划摘要形成全序；排名最好的有界入围者进入
+验证。全部乘积与求和使用经过检查的 u128 算术，持久化 Q32 结果必须能装入
+u64。
 
 ### 11.2 验证阶段
 
@@ -748,12 +774,13 @@ Tag 和精确值由附件固定，并必须等于第 8、10、11 节。
 | 4 | List<Text> | 按 Manifest 顺序的 argv |
 | 5 | List<Record> | 按平台规范变量名排序的有效环境 |
 | 6 | U32 | 超时毫秒数 |
-| 7 | List<Record> | 按逻辑挂载名排序的输入：名称、摘要、体积 |
+| 7 | List<Record> | 按 Manifest 顺序的输入：逻辑路径、摘要、体积 |
 | 8 | List<Record> | 按用例 id 排序：id、角色枚举、种子、权重、期望摘要 |
 
 顶层 Tag 4 `Environment` 包含封闭测量 Tuple、计时器与调度证据，以及按用例
 id 排序的校准记录列表。每项校准记录迭代数、尝试数、接受与确认耗时以及
-Overshoot。不可得文本使用 `unavailable`；不可得数字宿主事实使用显式 absent
+Overshoot，随后是派生 Session Digest。不可得文本使用 `unavailable`；不可得
+数字宿主事实使用显式 absent
 可选状态。
 
 顶层 Tag 5 `Frontier` 的 Tag 1 为候选空间摘要，Tag 2 为决策点，Tag 3 为
@@ -811,7 +838,7 @@ Basename、暂存字节摘要和物理体积。可执行输出集仅含主输出
 | 备选类别 | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
 | 展开处置 | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
 | 候选结果 | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
-| 顺序阶段 | search-warmup=1, search-measured=2, validation-one-warmup=3, validation-one-measured=4, validation-two-warmup=5, validation-two-measured=6；仅 2、4、6 出现在存储流 |
+| 顺序阶段 | candidate-smoke=1, search-warmup=2, search-measured=3, validation-one-warmup=4, validation-one-measured=5, validation-two-warmup=6, validation-two-measured=7；仅 3、5、7 出现在存储流 |
 | 选择原因 | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
 | 输出角色 | primary=1, header=2, import-library=3 |
 | 缓存来源类型 | freshly-built=1, verified-local-hit=2 |
@@ -1058,7 +1085,7 @@ Archive、`results-schema8.json` 必须存在且摘要精确。五个可调优�
 `call-constant-length`、`trip-unroll-simd`、`memory-bound`、`compute-bound`。
 没有可选行或结果产生后的排除。
 
-现有 `training.tsv` 是搜索输入，`held-out.tsv` 是验证输入；调优器通过五个固定
+现有 `training.tsv` 是搜索输入，`held-out.tsv` 是验证输入；调优器通过七个固定
 `benches/tune/workloads/*.cktune.toml` Manifest 接收二者。调优器永不接收
 封存发布文件 `benches/fixtures/tune/release-held-out.tsv`，其精确数据行为：
 
@@ -1069,7 +1096,35 @@ Archive、`results-schema8.json` 必须存在且摘要精确。五个可调优�
     memory-bound\trelease-zip-4096\t4096\t97\t0
     compute-bound\trelease-f64-4091\t4091\t101\t1.0009765625
 
-固定 Recipe 包含 `benches/cases/tune-cases.tsv`、五个工作负载 Manifest、
+`benches/cases/tune-cases.tsv` 在 Schema Header 后严格包含以下七个逻辑行；
+每行固定源码、Manifest Basename 以及搜索/验证/发布记录来源：
+
+| 调优用例 | 源码 | 搜索记录 | 验证记录 | 发布记录 |
+| --- | --- | --- | --- | --- |
+| branch-layout | `benches/fixtures/pgo/branch_layout.ck` | train-branch-biased | held-branch-prime | release-branch-prime |
+| call-constant-length | `benches/fixtures/pgo/call_constant_length.ck` | train-fixed-4000 | held-fixed-4000 | release-fixed-4000 |
+| trip-unroll-simd | `benches/oracles/fixtures/map_u32.ck` | train-map-4000 | held-map-3967 | release-map-4093 |
+| memory-bound | `benches/oracles/fixtures/zip_u32.ck` | train-zip-4000 | held-zip-4000 | release-zip-4096 |
+| compute-bound | `benches/fixtures/pgo/compute_bound.ck` | train-f64-4000 | held-f64-3989 | release-f64-4091 |
+| contract-noalias | `benches/oracles/fixtures/contract_noalias.ck` | train-zip-4000 | held-zip-4000 | release-zip-4096 |
+| contract-fixed-length | `benches/oracles/fixtures/contract_fixed_length.ck` | train-fixed-4000 | held-fixed-4000 | release-fixed-4000 |
+
+每行的 `<tune-case>.cktune.toml` 严格为 Schema 1：runner path 是
+`../../../target/release/ckc-tune-runner`，args 为 `["--ck-tune"]`，inputs 为
+`["../../fixtures/pgo/training.tsv","../../fixtures/pgo/held-out.tsv"]`，
+`inherit_env` 为空，`timeout_ms=30000`。它恰含 `<tune-case>.search` 与
+`<tune-case>.validation`，Role 分别为 search/validation，Weight 为 1，Seed
+来自命名输入记录。Expected Digest 不是实现可选择常量，而是：
+
+    SHA-256("CK-TUNE-RESULT\0" || U32_BE(native_abi_schema) ||
+            U32_BE(len(case_id_utf8)) || case_id_utf8 ||
+            U64_BE(result_byte_count) || canonical_result_bytes)
+
+结果同时写入 `tune-cases.tsv` 与 Manifest。收集证据前，经审计的 CK、C、Rust
+实现必须独立产生这些精确字节。发布摘要使用 `<tune-case>.release` 作为 case
+id；发布记录与摘要绝不出现在调优 Manifest 中。
+
+固定 Recipe 包含 `benches/cases/tune-cases.tsv`、七个工作负载 Manifest、
 `benches/tune/runner.rs`、`benches/oracles/tune/manifest.toml`、
 `benches/oracles/tune/c/tune_oracle.c`、
 `benches/oracles/tune/rust/tune_oracle.rs`、由五个用例以及
@@ -1095,6 +1150,8 @@ Oracle Manifest 固定 C11、Rust 2024、严格浮点行为、安全前置条件
 Rust 1.90.0、驱动字节、Manifest、源码/输入字节、硬件、操作系统、CPU 特性、
 Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份。证据项必须是
 证据目录下的普通文件，不得有符号链接、路径穿越、缺失、重复或未知项。
+稳定 x86-64 Worker 必须具备 x86-64-v4；稳定 AArch64 Worker 必须具备 SVE2。
+缺少 Tier 属于门槛失败，绝不是 Workflow 可选择项。
 
 主用例计时使用 `rotating-six-channel-v1`，通道顺序严格为：`tuned`、
 `v014Ordinary`、`v013Ordinary`、`v013Pgo`、`cSimd`、`rustSimd`。领域计时
@@ -1107,8 +1164,9 @@ Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份�
 
 每个主用例记录全部六个原始流及顺序、中位数、正确性摘要、源码/输入身份、
 获选或基线决策、完整 `.cktune` 身份、全部产物身份、固定为 true 的 Eligibility
-位与发布留出结果。两个领域用例记录三通道的同类事实。五个 `.cktune` 和完整
-带角色发布输出集复制进证据；其 Schema、身份、证书/基线原因、计划、目标图、
+位与发布留出结果。两个领域用例记录三通道的同类事实以及精确调优决策、输出
+集与三条构建命令。全部七个 `.cktune` 和完整带角色发布输出集复制进证据；其
+Schema、身份、证书/基线原因、计划、目标图、
 链接配方、测量与磁盘摘要均被独立检查。
 
 tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对测量，每行交替
