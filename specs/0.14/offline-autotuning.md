@@ -420,9 +420,13 @@ CK copies snapshots to flat, content-addressed files below
 `CK_TUNE_TEMP/inputs`, named exactly as eight lowercase hexadecimal digits for the
 zero-based manifest ordinal, one `-`, the 64-character lowercase content digest,
 and `.bin`, and creates a
-read-only `CK_TUNE_INPUT_MAP`. That bounded canonical map begins with `CKTIMAP1`, a
-big-endian count, then for each manifest-order input its logical-path `Text`, staged
-ASCII basename `Text`, byte length `U64`, and digest `D32`. Generated long basenames
+read-only `CK_TUNE_INPUT_MAP`. That bounded canonical map is exactly eight ASCII
+bytes `CKTIMAP1`, `U32_BE(input_count)`, then one concatenated record for each
+manifest-order input. A record is logical-path `Text`, staged ASCII basename
+`Text`, byte length `U64`, and digest `D32`; `Text` is `U32_BE(UTF-8 byte length)`
+plus those bytes, `U64` is big-endian, and `D32` is exactly 32 bytes. The count is
+0..64 and parsing must end exactly after its records; truncation, overflow, invalid
+UTF-8, a count mismatch, or a trailing byte is an error. Generated long basenames
 are distinct under exact and ASCII-folded comparison. CK opens the actual temporary
 parent, create-news every entry no-follow, and on Windows enumerates every resulting
 long/short-name pair and requires a one-to-one relation: no long or short spelling
@@ -1490,6 +1494,11 @@ Each session retains its exact tune build command, a locked complete before/afte
 cache inventory, canonical event log, raw counters, wall time, peak RSS, decision,
 and outputs. Cold namespaces are distinct and empty; warm begins from cold one's
 exact post-cache inventory with no intervening access.
+On both stable Linux performance hosts, tuned and ordinary compiler processes use
+the same direct-child `wait4` supervisor; its retained receipt binds the exact
+command, `CLOCK_MONOTONIC_RAW` interval, zero wait status, and kernel `ru_maxrss`
+high-water value converted from KiB to bytes. Sparse polling is not accepted as a
+peak-memory source.
 Every timed channel carries a closed build command and an explicit foreign-key
 chain from its output bytes to the tuned decision/output set or audited baseline.
 All CK performance builds explicitly use `--overflow unchecked --bounds unchecked`,

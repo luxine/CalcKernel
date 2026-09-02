@@ -368,9 +368,12 @@ Primitive Framing，按以下顺序计算
 不可变内容快照并校验摘要。每次计时调用前，CK 将输入快照复制到
 `CK_TUNE_TEMP/inputs` 下的扁平内容寻址文件，名称严格由零基 Manifest 序号的
 八个小写十六进制数字、一个 `-`、64 字符小写内容摘要和 `.bin` 组成，并创建
-只读 `CK_TUNE_INPUT_MAP`。该有界规范 Map 以 `CKTIMAP1` 开始，
-随后是大端数量，再按 Manifest 顺序写入逻辑路径 `Text`、暂存 ASCII Basename
-`Text`、字节数 `U64` 与摘要 `D32`。生成的长名在精确和 ASCII 折叠比较下均唯一。
+只读 `CK_TUNE_INPUT_MAP`。该有界规范 Map 严格由八个 ASCII 字节 `CKTIMAP1`、
+`U32_BE(input_count)` 以及每个 Manifest 顺序输入的一条连续记录组成。记录依次为
+逻辑路径 `Text`、暂存 ASCII Basename `Text`、字节数 `U64` 与摘要 `D32`；`Text`
+是 `U32_BE(UTF-8 字节数)` 后接对应字节，`U64` 为大端，`D32` 恰为 32 字节。
+数量范围为 0..64，解析必须恰好结束于最后一条记录；截断、溢出、无效 UTF-8、
+数量不符或尾随字节均报错。生成的长名在精确和 ASCII 折叠比较下均唯一。
 CK 打开实际临时父目录并将每项 create-new/no-follow；Windows 还枚举全部生成项的
 长短名对并要求一一对应，任何长名或短名都不得等于或解析到另一暂存项；不支持
 或不一致的枚举会失败关闭。全部文件复算摘要。输入准备不计入测量区间，每次
@@ -1293,6 +1296,9 @@ tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对�
 每个会话都保留精确 Tune Build 命令、加锁的完整 Cache 前后清单、规范事件日志、
 原始计数、墙钟、峰值 RSS、决策和输出。两个冷 Namespace 不同且初始为空；热
 运行在无中间访问的条件下从 Cold One 的精确运行后 Cache 清单开始。
+两个稳定 Linux 性能宿主都用同一个 direct-child `wait4` Supervisor 测量 tuned 与
+ordinary 编译器进程；保留回执绑定精确命令、`CLOCK_MONOTONIC_RAW` 区间、零等待
+状态和由 KiB 转换为字节的内核 `ru_maxrss` 高水位。稀疏轮询不能作为峰值内存来源。
 每个计时通道都携带封闭构建命令，并通过显式外键链连接其输出字节与调优
 决策/输出集或审计基线。全部 CK 性能构建显式使用
 `--overflow unchecked --bounds unchecked`，每个 Oracle 通道固定相同的已定义

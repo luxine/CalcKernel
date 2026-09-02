@@ -352,7 +352,10 @@ described by its references, and rejects an unused, missing, or extra reference.
 `environmentDigest` is
 `P("CK-V014-PERF-COMMAND-ENV\0", environment List<EnvironmentEntryValue>)`,
 where an entry value is name `Text`, value `Text`, then references
-`List<FileIdentityValue>`.
+`List<FileIdentityValue>`. Its derived `commandDigest` is
+`P("CK-V014-PERF-COMMAND\0", argv List<Text>, workingDirectory Text,
+executable FileIdentityValue, inputs List<FileIdentityValue>, environmentDigest
+DigestBytes)`; it is not an additional JSON key.
 
 Every compile-time command uses a distinct create-new output and an initially empty
 distinct cache namespace; setup and cleanup occur outside the timed interval. The
@@ -375,7 +378,7 @@ templates and no extra optimization flag:
 
 | Channel | Executable and required mode |
 | --- | --- |
-| `tuned` | `candidateBinary`; `ckc tune build <source> --out <primary> --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked --workload <manifest> --budget standard --tune-out <decision>` |
+| `tuned` | `candidateBinary`; `ckc tune build <source> --config <manifest> --out <primary> --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked --budget standard --tune-out <decision>` |
 | `v014Ordinary` | `candidateBinary`; `ckc build <source> --out <primary> --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked` |
 | `v013Ordinary` | `v013ReplayBundle.compiler`; the same ordinary build template |
 | `v013Pgo` | `v013ReplayBundle.compiler`; ordinary template plus `--pgo-use <case-profile>` |
@@ -465,14 +468,18 @@ the pinned LLVM/runtime statically and has no undeclared runtime dependency.
 
 `resourceUse` has exactly `sessions` and `cacheHardLimitBytes`. The hard limit is
 4,294,967,296. `sessions` is a seven-row case-name-sorted list with exactly `case`,
-`decision`, `decisionDigest`, `ordinaryBuild`, `budget`, `wallMs`, `peakRssBytes`,
+`decision`, `decisionDigest`, `ordinaryBuild`, `ordinarySupervisorLog`,
+`ordinarySupervisorDigest`, `budget`, `wallMs`, `peakRssBytes`,
 `ordinaryPeakRssBytes`, `expansions`,
 `compileAttempts`, `measuredFinalists`, `validationEntrants`, and `cacheBytes`.
 `decision` and `decisionDigest` equal the same-name `tuningDecisions` row. Budget is
 `standard`; `ordinaryBuild` equals the same-name
 `artifactSize.baselineBuild`. Wall time, tuner RSS, counters, and cache bytes are
-derived from the same-name `determinism.coldOne` event/snapshot evidence;
-`ordinaryPeakRssBytes` is measured from `ordinaryBuild`. All counts fit the preset;
+derived from the same-name `determinism.coldOne` event/snapshot evidence.
+`ordinarySupervisorLog` is a `FileIdentity` and `ordinarySupervisorDigest` follows
+the exact supervisor protocol below; its embedded command digest must equal
+`ordinaryBuild.command.commandDigest`, and `ordinaryPeakRssBytes` is its checked
+high-water conversion. All counts fit the preset;
 wall, RSS ratio, and cache meet the frozen thresholds.
 
 ## 7. Determinism and correctness
@@ -504,19 +511,27 @@ closed event kinds are `compile-attempt`, `measurement-evaluation`, `cache-hit`,
 measurement counts, cache-origin claims, and publication state are rederived from
 this log and the decoded decision.
 
-`supervisorLog` is an evidence-root `FileIdentity` containing canonical UTF-8
-lines. The first is `CK-TUNE-SUPERVISOR<TAB>1`. It is followed by exactly one
-`start<TAB><monotonic-ns>` line, one or more
-`rss<TAB><ordinal><TAB><monotonic-ns><TAB><bytes>` lines with contiguous ordinals
-and nondecreasing timestamps, and one
-`exit<TAB><monotonic-ns><TAB><status>` line; all integers are unsigned decimal,
-status is zero, and every line ends LF. The start precedes every sample and the
-exit is not earlier than the last sample. `supervisorDigest` is
-`P("CK-V014-TUNE-SUPERVISOR\0", supervisorLog FileIdentityValue)`. `wallMs` equals
-the ceiling of `(exit-start)/1,000,000`, and `peakRssBytes` equals the maximum RSS
-sample. The supervisor launches the exact `build.command`, owns the namespace
-lock, captures the compiler event stream, and takes the two cache snapshots; the
-run-level resource fields cannot be supplied independently.
+`supervisorLog` is an evidence-root `FileIdentity` containing exactly three
+canonical UTF-8 lines:
+
+    CK-TUNE-SUPERVISOR<TAB>1
+    start<TAB><command-digest><TAB><monotonic-raw-ns>
+    wait4<TAB><monotonic-raw-ns><TAB><wait-status><TAB><ru-maxrss-kib>
+
+Every placeholder is lowercase digest or unsigned decimal and every line ends LF.
+The stable performance hosts are Linux: the supervisor reads
+`CLOCK_MONOTONIC_RAW` immediately before creating the exact direct compiler child,
+then obtains that same PID through successful `wait4`; raw wait status is zero and
+`ru_maxrss` is the kernel high-water value in KiB, not a sample. The second clock
+read occurs immediately after `wait4` and is no earlier than start.
+`supervisorDigest` is
+`P("CK-V014-TUNE-SUPERVISOR\0", supervisorLog FileIdentityValue)`. The embedded
+command digest equals `build.command.commandDigest`; `wallMs` is the ceiling of
+`(end-start)/1,000,000`, and `peakRssBytes` is checked
+`ru_maxrss_kib * 1024`. The supervisor owns the namespace lock, captures the
+compiler event stream, and takes the two cache snapshots; the run-level resource
+fields cannot be supplied independently. Ordinary compilation uses this identical
+protocol through the resource record above.
 
 A `CacheSnapshot` has exactly `namespace`, `files`, and `digest`. `namespace` is a
 unique evidence-relative directory path; `files` is a path-sorted list of every
