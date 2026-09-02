@@ -30,9 +30,11 @@ path = "benches/pgo_perf.rs"
 harness = false
 
 [dependencies]
+libc = "0.2"
 num-bigint = "0.4"
 sha2 = "0.10"
 thiserror = "2.0"
+toml = "0.8"
 unicode-normalization = "0.1"
 wat = "1.0"
 
