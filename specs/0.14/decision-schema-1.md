@@ -265,6 +265,16 @@ all three metrics are present exactly for `legal`; a duplicate has only its resu
 digest; illegal and growth-rejected have neither. Diagnostic code is zero exactly
 for legal and duplicate.
 
+Expansion ordinals are exactly zero-based and contiguous. The first record has
+ordinal 0 when nonempty, record `i` has ordinal `i`, and the list contains exactly
+the indices `0 <= i < expansions.len()`. Starting with the empty baseline, the checker walks every
+unit, precompile-ranked beam plan, and canonical nonbaseline variant in the main
+design's nested-loop order. Each expected derivation consumes the next record,
+whose parent/unit/variant, disposition, optional result, diagnostics, and recomputed
+whole-plan metrics must match. The list stops only when all units are exhausted or
+the preset expansion limit is reached; omission, insertion, reorder, or
+reclassification is invalid.
+
 ## 8. Candidates and measurements
 
 `Candidates` is tag 1 `baseline: Candidate` and tag 2 `trials:
@@ -336,6 +346,26 @@ or warmup therefore stores only measured streams completed before that phase. An
 state/field combination outside this table or any missing/extra completed stream is
 invalid. The selection-wide rules below, rather than a candidate-local guess,
 assign every completed validation entrant's terminal outcome.
+
+The trace replay above deterministically reconstructs the final beam and applies
+the preset compile-attempt diversity truncation. `Candidates.trials` is exactly
+that compile-selection set, sorted by plan digest, with one record per plan and no
+other record; each plan's choices and rank material equal the reconstructed plan.
+A decision is invalid if expansion or compile selection stopped early for wall
+budget. For source-aware acceptance, every trial is independently rebuilt in an
+isolated cache and its object graph, link recipe, primary digest, and actual byte
+count must equal the record even when the original origin was a cache hit.
+
+Using checked `u128`, a trial is size-valid exactly when
+`trial.primaryArtifactBytes * 100 <= baseline.primaryArtifactBytes * 110`.
+Every other trial has outcome `size-rejected`. The checker replaces the third
+precompile rank key with actual primary bytes, applies the same diversity
+truncation to the complete size-valid set, and obtains exactly the preset-bounded
+measured-finalist set. Every size-valid trial outside it is
+`compiled-unmeasured`. Every member is either `timed-out` at its recorded point or
+has the exact smoke/search/validation streams and final outcome required by this
+matrix and the selection-wide table. Thus neither a compile-selected plan nor the
+highest-ranked valid finalist can be silently omitted.
 
 Candidate outcomes and `Selection.reason` obey this exact cross-record table. Let
 `Q1` and `Q2` be each round's `rankedPlanDigests` after filtering to stable records

@@ -278,7 +278,7 @@ Schema 1 只包含以下字段：
 | TOML 位置 | 字段 | 类型与规则 |
 | --- | --- | --- |
 | 根 | schema | 必需整数，恰好为 1 |
-| runner | path | 指向宿主格式原生可执行文件的必需 UTF-8 路径；它属于操作路径，不属于规范身份 |
+| runner | path | 指向宿主格式原生可执行文件的必需 UTF-8 路径；相对值从规范 Manifest 父目录解析，允许绝对值；它属于操作路径，不属于规范身份 |
 | runner | input_root | 从 Manifest 目录解析的可选 UTF-8 目录路径，默认 `.`；仅属于操作路径 |
 | runner | args | 最多 64 个 `Text` 字符串的可选数组，默认空；每项必须已经 NFC、无 NUL、最多 4,096 个 UTF-8 字节，总计最多 64 KiB |
 | runner | inputs | 最多 64 个相对输入根的普通文件 `Text` 路径，默认空；每个路径必须已经 NFC、无 NUL、非绝对、无父级穿越且最多 4,096 个 UTF-8 字节；每个文件最多 1 GiB，总计最多 4 GiB |
@@ -331,7 +331,9 @@ CK 不得在校验后再次规范化参数。
 
 ### 7.2 路径与输入
 
-`input_root` 从规范 Manifest 目录解析，并以一个稳定的 no-follow 目录 Handle
+绝对 `runner.path` 按原值使用；相对值（包括父级分量）从规范 Manifest 父目录
+解析，绝不相对调用方或源码工作目录。CK 逐组件遍历且不跟随符号链接/Reparse
+Point，在快照前按 Handle 打开最终文件；任何歧义都报错。`input_root` 从规范 Manifest 目录解析，并以一个稳定的 no-follow 目录 Handle
 打开；它的拼写可以包含父级分量，但解析后的根在打开输入前固定。每个逻辑输入
 路径只能在该 Handle 下解析；绝对路径、逻辑路径内部父级穿越、符号链接/Reparse
 歧义、非普通文件以及逃逸根目录都必须拒绝。解析到同一文件 Handle 身份的两个
@@ -635,9 +637,10 @@ CK 在稳定调优单元和规范单元 Variant 集合上使用确定性 Beam Se
         for plan in beam_precompile_rank_order:
             for variant in unit.nonbaseline_variants_in_canonical_order:
                 if expansions == expansion_limit: 停止全部后续展开
+                ordinal = expansions
                 expansions += 1
                 派生 plan + variant，并运行全部 KIR 合法性/增长检查
-                记录尝试，包括非法、重复或者增长超限
+                以 ordinal 记录尝试，包括非法、重复或者增长超限
                 将合法且唯一的派生计划加入 pool
         unique = deduplicate(pool without baseline)
         beam = [baseline] + diversity_truncate(unique, beam_width)
@@ -649,6 +652,10 @@ CK 在稳定调优单元和规范单元 Variant 集合上使用确定性 Beam Se
 停止；已经接受的计划仍可参与，后续单元保持基线行为。一个计划被选中编译即
 消耗一个编译尝试槽，即使已验证的编译 Cache Hit 避免了物理编译。CK 已声明
 合法的计划若编译失败，属于编译器错误。
+
+展开序号从零开始且连续：第一次记录为 0，之后每项严格加一，列表恰为
+`0..expansions-1`，且 `expansions` 等于其长度。追踪必须包含上述嵌套循环在单元
+耗尽或达到预设上限前产生的每次尝试；遗漏、插入、重排或错误分类均无效。
 
 `deduplicate` 对同一计划摘要保留规范编译前排名最先出现者。
 `diversity_truncate` 按固定类别顺序处理：内联、专用化、展开、Loop SIMD、
@@ -677,6 +684,15 @@ Cache Hit 不启动搜索会话。
 每 Pass 增长限制继续生效。被拒绝或无效的尝试消耗其记录的展开或编译预算，
 绝不返还。在体积合法的已编译计划中，编译后排名至多选择预设的测量最终候选
 数量；合法计划较少时，只以更小但完整的前沿继续。
+
+只有完整确定性展开追踪和派生编译选择全部完成后，才可生成成功决策。最终检查器
+从候选空间和预设重放封闭算法：决策 Trial 集必须恰好等于完整编译选择，按计划
+摘要存储且不得遗漏或额外加入。检查器在隔离 Cache 中独立重建每个 Trial，并
+核对计划、对象/链接身份、主产物摘要和实际字节数。体积拒绝项恰为超过 110% 的
+Trial；对其余全部 Trial 以实际主产物字节替代 KIR 字节并应用同一 Diversity 规则，
+得到精确测量最终候选集。每个体积合法非最终候选均为 `compiled-unmeasured`；每个
+最终候选必须具有状态机规定的精确 Smoke/Search/Validation 结果和 Stream。墙钟
+预算若导致展开或编译选择无法完成，命令失败且不写决策，绝不序列化部分前沿。
 
 墙钟预算到期后，CK 停止创建候选。如果无法为所有必要入围者完成固定验证
 协议，命令失败且不产生输出，不得从不完整证据中选择计划。
