@@ -205,7 +205,7 @@ Existing dev-only Git/Python/pinned toolchain requirements are sufficient.
 上述结论是本计划建立时的状态记录。runtime replay 的生产实现、负向测试、cache 隔离与
 artifact 审计已经纳入 I14/I19 和阶段 11 总审；实现与证据候选
 `202f950195b4d1160c60c0a518149617705910e3` 通过 GitHub Actions run
-[`33403148950`](https://github.com/luxine/Rust_CalcKernel/actions/runs/33403148950) 的同 SHA
+[`33403148950`](https://github.com/luxine/CalcKernel/actions/runs/33403148950) 的同 SHA
 十项 required jobs。两架构 schema-6 native performance report 也均通过 replay aggregate 与
 individual gates；因此本补充计划不再有未签收项，最终文档提交仅需按 `99-final-acceptance.md`
 约定完成一次无 tracked 变更的同 SHA 复跑。

@@ -1,8 +1,8 @@
-# Rust CalcKernel
+# CalcKernel
 
 [简体中文](README.zh-CN.md)
 
-Rust CalcKernel 0.12.0 ships `native ckc`, a self-contained command-line
+CalcKernel 0.12.0 ships `native ckc`, a self-contained Rust command-line
 compiler for the CK computation-kernel language. Release binaries compile, link,
 and run native CK without an external compiler toolchain. The repository also
 retains inspectable C and WebAssembly source/binary emitters.

@@ -1,8 +1,8 @@
-# Rust CalcKernel
+# CalcKernel
 
 [English](README.md)
 
-Rust CalcKernel 0.12.0 发布 `native ckc`：一个可自包含运行的 CK computation-kernel
+CalcKernel 0.12.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
 语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
 仓库同时保留可检查的 C 与 WebAssembly emitter。
 

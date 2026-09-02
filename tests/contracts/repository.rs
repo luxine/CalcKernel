@@ -40,6 +40,41 @@ fn repository_should_declare_v0_12_everywhere() {
 }
 
 #[test]
+fn repository_identity_should_use_the_canonical_github_name() {
+    let canonical = "https://github.com/luxine/CalcKernel";
+    let cargo = read("Cargo.toml");
+    assert!(
+        cargo.contains(&format!("repository = \"{canonical}\"")),
+        "Cargo package metadata must publish the canonical repository"
+    );
+    for path in ["README.md", "README.zh-CN.md"] {
+        let readme = read(path);
+        assert!(
+            readme.starts_with("# CalcKernel\n"),
+            "{path} must use the canonical project name"
+        );
+        assert!(
+            !readme.contains("Rust CalcKernel"),
+            "{path} must not retain the former project name"
+        );
+    }
+    for path in [
+        ".github/workflows/ci.yml",
+        "specs/0.11/implementation/11-interrupt-handoff-plan.md",
+        "specs/0.11/implementation/11-release-candidate-acceptance.md",
+        "specs/0.11/implementation/11-runtime-replay-plan.md",
+        "specs/0.11/implementation/11-windows-static-link-plan.md",
+        "specs/0.11/implementation/99-final-acceptance.md",
+    ] {
+        let text = read(path);
+        assert!(
+            !text.contains("https://github.com/luxine/Rust_CalcKernel"),
+            "{path} must not rely on the renamed GitHub repository URL"
+        );
+    }
+}
+
+#[test]
 fn v0_12_compatibility_manifest_should_cover_optimizer_and_v0_11_boundary() {
     let manifest = read("tests/fixtures/compatibility/v0_12/manifest.toml");
     assert!(manifest.contains("release = \"0.12.0\""));
