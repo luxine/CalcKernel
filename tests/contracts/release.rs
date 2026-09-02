@@ -279,6 +279,8 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         "setup-node",
         "CALCKERNEL_TS_ROOT",
         "repository: luxine/CalcKernel",
+        "repository: luxine/CalcKernel_retire",
+        "tests/oracles/typescript",
         "gh release upload",
         "--clobber",
     ] {
