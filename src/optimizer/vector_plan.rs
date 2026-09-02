@@ -267,6 +267,21 @@ pub fn validate_vectorization_plan(
     plan: &VectorizationPlan,
     profile: &KirTargetProfile,
 ) -> Result<(), String> {
+    validate_vectorization_plan_internal(plan, profile, Some(20))
+}
+
+pub(crate) fn validate_tuned_vectorization_plan(
+    plan: &VectorizationPlan,
+    profile: &KirTargetProfile,
+) -> Result<(), String> {
+    validate_vectorization_plan_internal(plan, profile, None)
+}
+
+fn validate_vectorization_plan_internal(
+    plan: &VectorizationPlan,
+    profile: &KirTargetProfile,
+    minimum_reduction_percent: Option<u32>,
+) -> Result<(), String> {
     if plan.pre_state.profile_digest != profile.digest_hex() {
         return Err("vector plan target profile identity is stale".to_string());
     }
@@ -330,12 +345,15 @@ pub fn validate_vectorization_plan(
     if plan.predicates.len() > 4 {
         return Err("vector plan has more than four runtime predicates".to_string());
     }
-    validate_cost(plan.cost, 20)?;
+    validate_cost_decomposition(plan.cost)?;
+    if let Some(minimum) = minimum_reduction_percent {
+        validate_cost_threshold(plan.cost, minimum)?;
+    }
     validate_growth(plan.pre_state.frozen_kir_units, plan.growth)?;
     Ok(())
 }
 
-fn validate_cost(cost: KirCostEstimate, minimum_reduction_percent: u32) -> Result<(), String> {
+fn validate_cost_decomposition(cost: KirCostEstimate) -> Result<(), String> {
     if cost.total
         != cost
             .transformed_body
@@ -344,6 +362,13 @@ fn validate_cost(cost: KirCostEstimate, minimum_reduction_percent: u32) -> Resul
     {
         return Err("plan cost total does not match its closed decomposition".to_string());
     }
+    Ok(())
+}
+
+fn validate_cost_threshold(
+    cost: KirCostEstimate,
+    minimum_reduction_percent: u32,
+) -> Result<(), String> {
     let maximum = cost.scalar.saturating_mul(100 - minimum_reduction_percent) / 100;
     if cost.total > maximum {
         return Err("plan cost does not meet the profitability threshold".to_string());

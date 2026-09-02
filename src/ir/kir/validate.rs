@@ -129,6 +129,7 @@ fn validate_kir_module_with_previous(
             None,
         ));
     }
+    validate_tune_layout(module, &mut errors);
     let block_capacity = module
         .functions
         .iter()
@@ -236,6 +237,69 @@ fn validate_kir_module_with_previous(
         }
     }
     KirValidationResult { errors }
+}
+
+fn validate_tune_layout(module: &KirModule, errors: &mut Vec<KirValidationError>) {
+    let Some(layout) = &module.tune_layout else {
+        return;
+    };
+    if layout.functions.is_empty() || layout.functions.len() > 4_096 {
+        errors.push(error(
+            "KIR tune layout function count is outside the closed bound",
+            None,
+            None,
+            None,
+        ));
+        return;
+    }
+    let mut previous = None;
+    for requested in &layout.functions {
+        if previous.is_some_and(|prior| prior >= requested.function) {
+            errors.push(error(
+                "KIR tune layout functions are not strictly ordered",
+                Some(requested.function),
+                None,
+                None,
+            ));
+        }
+        previous = Some(requested.function);
+        let Some(function) = module
+            .functions
+            .iter()
+            .find(|function| function.id == requested.function)
+        else {
+            errors.push(error(
+                "KIR tune layout names an unknown function",
+                Some(requested.function),
+                None,
+                None,
+            ));
+            continue;
+        };
+        if requested.blocks.len() != function.blocks.len() || requested.blocks.len() > 4_096 {
+            errors.push(error(
+                "KIR tune layout is not a complete block permutation",
+                Some(requested.function),
+                None,
+                None,
+            ));
+            continue;
+        }
+        let expected = function
+            .blocks
+            .iter()
+            .map(|block| block.id)
+            .collect::<HashSet<_>>();
+        let actual = requested.blocks.iter().copied().collect::<HashSet<_>>();
+        if actual.len() != requested.blocks.len() || actual != expected {
+            errors.push(error(
+                "KIR tune layout is not a complete block permutation",
+                Some(requested.function),
+                None,
+                None,
+            ));
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

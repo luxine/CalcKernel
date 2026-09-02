@@ -29,15 +29,20 @@ trace，按冻结 whole-plan rank 和 diversity rule 得到 frontier/compile sel
 4. 写 beam/diversity RED：baseline free carry、七类固定优先、完整 rank tiebreak、compile attempt 消耗、
    quick/standard/thorough bounds 精确；同输入多次产生 byte-identical frontier 与 selection。
 5. 写 replay RED：按 specialization→inlining→short-slice→Loop SIMD→unroll→SLP→layout 顺序重放，
-   mandatory analyses/checkers 保持原位；错误 site/pre/post/plan digest fail-closed。
+   mandatory analyses/checkers 保持原位，选中任意非布局 rewrite 后仍执行固定 DCE/cleanup 后缀，
+   early-only plan 不得重新进入 ordinary specialization/inlining；错误
+   site/pre/post/plan digest fail-closed，内部 checker/compiler failure 不得降级成可跳过 illegal。
+   为 specialization/unroll/Loop SIMD/SLP 等调优路径分别绕过普通静态收益判定，但保留 legality/proof/
+   target/transaction/growth，并用普通 proposer 拒绝而 tuning space 接纳的 RED 锁定隔离。
 6. 写 ordinary isolation RED：empty plan 的 optimized KIR 与 v0.13 ordinary O3 完全一致，O0/O1/O2、C、
-   WASM、multiversion 与非 tune build 不受新 frontier code 影响。
+   WASM、multiversion 与非 tune build 不受新 frontier code 影响；layout-only 在移除布局元数据后也
+   必须与 empty-plan 普通 O3 KIR 完全一致，并确定性投影 O3 后存活/新建基本块。
 7. 运行 `cargo test --test optimizer tuning_ -- --nocapture`、`cargo test --test tune search_ -- --nocapture`
    和 `cargo test --locked`，记录 RED/GREEN 与 canonical candidate-space digest。
 
 ## 实现边界
 
-- tuning 只能绕过 ordinary static profitability threshold，不能绕过 legality/checker/transaction/growth。
+- tuning 必须能绕过 ordinary static profitability threshold，但不能绕过 legality/checker/transaction/growth；
+  ordinary O3 proposer/checker 仍使用原阈值。
 - 不搜索 LLVM flag/pass pipeline、CPU tier、ABI、guard、fast math 或 source-level syntax。
 - 到达 expansion/compile limit 是完整有界结果；wall budget 中断完整 expansion/compile selection 不产生 decision。
-

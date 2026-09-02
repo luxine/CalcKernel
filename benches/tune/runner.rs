@@ -1,21 +1,29 @@
 // Standalone schema-1 runner for the frozen CK 0.14 tuning corpus.
 
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, time::Instant};
 
 use calckernel::decode_input_map;
 use sha2::{Digest, Sha256};
 
 fn main() {
-    if let Err(error) = run() {
+    if let Err(error) = dispatch() {
         eprintln!("ckc-tune-runner: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), String> {
-    if !env::args().skip(1).eq(["--ck-tune"]) {
-        return Err("expected the exact --ck-tune argument".to_string());
+fn dispatch() -> Result<(), String> {
+    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    if arguments == ["--ck-tune"] {
+        return run_tune();
     }
+    if arguments.first().map(String::as_str) == Some("--ck-perf") {
+        return run_performance(&arguments);
+    }
+    Err("expected the exact --ck-tune or --ck-perf protocol".to_string())
+}
+
+fn run_tune() -> Result<(), String> {
     if env::var("CK_TUNE_PROTOCOL").as_deref() != Ok("1")
         || env::var("CK_TUNE_ARTIFACT_KIND").as_deref() != Ok("dynamic")
     {
@@ -62,11 +70,50 @@ fn run() -> Result<(), String> {
     };
     let record = parse_record(&input, provenance_case, seed)?;
     let library = DynamicLibrary::open(&artifact)?;
-    let result = unsafe { execute(&library, base_case, &record, iterations)? };
+    let (result, _) = unsafe { execute(&library, base_case, &record, iterations)? };
     let digest = result_digest(&case_id, &result)?;
     println!(
         "CKTUNE/1 {case_id} {seed} {iterations} {iterations} {}",
         hex(&digest)
+    );
+    Ok(())
+}
+
+fn run_performance(arguments: &[String]) -> Result<(), String> {
+    if arguments.len() != 8 {
+        return Err(
+            "--ck-perf requires artifact, case, case-id, length, seed, parameter, and iterations"
+                .to_string(),
+        );
+    }
+    let artifact = PathBuf::from(&arguments[1]);
+    let case = &arguments[2];
+    let case_id = &arguments[3];
+    if case_id != &format!("{case}.validation") && case_id != &format!("{case}.release") {
+        return Err("performance case id does not match its case/split".to_string());
+    }
+    let record = InputRecord {
+        length: arguments[4]
+            .parse::<u32>()
+            .map_err(|_| "invalid performance input length".to_string())?,
+        salt: arguments[5]
+            .parse::<u64>()
+            .map_err(|_| "invalid performance input seed".to_string())?,
+        parameter: arguments[6].clone(),
+    };
+    let iterations = arguments[7]
+        .parse::<u64>()
+        .map_err(|_| "invalid performance iteration count".to_string())?;
+    if iterations == 0 {
+        return Err("performance iterations must be positive".to_string());
+    }
+    let library = DynamicLibrary::open(&artifact)?;
+    let (result, elapsed_ns) = unsafe { execute(&library, case, &record, iterations)? };
+    let digest = result_digest(case_id, &result)?;
+    println!(
+        "CKPERF/1 {case_id} {} {iterations} {iterations} {elapsed_ns} {}",
+        record.salt,
+        hex(&digest),
     );
     Ok(())
 }
@@ -117,7 +164,7 @@ unsafe fn execute(
     case: &str,
     record: &InputRecord,
     iterations: u64,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, u64), String> {
     match case {
         "branch-layout" => {
             type Kernel = unsafe extern "C" fn(*const u64, u32, u32, u64) -> u64;
@@ -128,12 +175,13 @@ unsafe fn execute(
                 .map_err(|_| "invalid branch parameter".to_string())?;
             let input = vec![value; usize::try_from(record.length).map_err(|_| "length")?];
             let mut result = 0;
+            let started = Instant::now();
             for _ in 0..iterations {
                 result = unsafe {
                     kernel(input.as_ptr(), record.length, record.length, record.salt)
                 };
             }
-            Ok(result.to_le_bytes().to_vec())
+            Ok((result.to_le_bytes().to_vec(), elapsed_ns(started)?))
         }
         "call-constant-length" => {
             type Kernel = unsafe extern "C" fn(*const u32, u32, *mut u32, u32);
@@ -144,10 +192,11 @@ unsafe fn execute(
                 .map_err(|_| "invalid fixed parameter".to_string())?;
             let input = vec![value; 4_000];
             let mut output = vec![0_u32; 4_000];
+            let started = Instant::now();
             for _ in 0..iterations {
                 unsafe { kernel(input.as_ptr(), 4_000, output.as_mut_ptr(), 4_000) };
             }
-            Ok(u32_bytes(&output))
+            Ok((u32_bytes(&output), elapsed_ns(started)?))
         }
         "trip-unroll-simd" | "contract-noalias" | "contract-fixed-length" => {
             type Kernel = unsafe extern "C" fn(*const u32, u32, *mut u32, u32, u32);
@@ -159,6 +208,7 @@ unsafe fn execute(
             };
             let input = u32_input(length, record.salt);
             let mut output = vec![0_u32; usize::try_from(length).map_err(|_| "length")?];
+            let started = Instant::now();
             for _ in 0..iterations {
                 unsafe {
                     kernel(
@@ -170,7 +220,7 @@ unsafe fn execute(
                     )
                 };
             }
-            Ok(u32_bytes(&output))
+            Ok((u32_bytes(&output), elapsed_ns(started)?))
         }
         "memory-bound" => {
             type Kernel =
@@ -179,6 +229,7 @@ unsafe fn execute(
             let left = u32_input(record.length, record.salt);
             let right = u32_input(record.length, record.salt + 17);
             let mut output = vec![0_u32; usize::try_from(record.length).map_err(|_| "length")?];
+            let started = Instant::now();
             for _ in 0..iterations {
                 unsafe {
                     kernel(
@@ -192,7 +243,7 @@ unsafe fn execute(
                     )
                 };
             }
-            Ok(u32_bytes(&output))
+            Ok((u32_bytes(&output), elapsed_ns(started)?))
         }
         "compute-bound" => {
             type Kernel = unsafe extern "C" fn(*const f64, u32, *mut f64, u32, u32, f64);
@@ -208,6 +259,7 @@ unsafe fn execute(
                 })
                 .collect::<Vec<_>>();
             let mut output = vec![0_f64; usize::try_from(record.length).map_err(|_| "length")?];
+            let started = Instant::now();
             for _ in 0..iterations {
                 unsafe {
                     kernel(
@@ -220,13 +272,21 @@ unsafe fn execute(
                     )
                 };
             }
-            Ok(output
-                .iter()
-                .flat_map(|value| value.to_bits().to_le_bytes())
-                .collect())
+            Ok((
+                output
+                    .iter()
+                    .flat_map(|value| value.to_bits().to_le_bytes())
+                    .collect(),
+                elapsed_ns(started)?,
+            ))
         }
         _ => Err("unknown frozen tuning case".to_string()),
     }
+}
+
+fn elapsed_ns(started: Instant) -> Result<u64, String> {
+    u64::try_from(started.elapsed().as_nanos().max(1))
+        .map_err(|_| "performance elapsed time overflow".to_string())
 }
 
 fn u32_input(length: u32, salt: u64) -> Vec<u32> {

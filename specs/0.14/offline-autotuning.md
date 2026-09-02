@@ -662,6 +662,22 @@ lowering; the backend consumes that metadata after the unchanged fixed LLVM O3
 pipeline and before object emission. The empty plan uses the unmodified v0.13 O3
 profitability decisions and leaves ordinary compilation and the existing O2-only
 late-layout behavior unchanged.
+Once a non-layout tuning choice is present, replay never re-enters an ordinary
+profitability-controlled phase: only the exact selected alternatives run, followed
+by the mandatory analyses and cleanup suffix. This prevents an early-only plan
+from acquiring an unrecorded ordinary specialization or inline choice.
+Because layout is metadata rather than an O3 rewrite, a layout-only plan first
+completes the fixed ordinary KIR O3 suffix. CK then projects the selected pre-tune
+block permutation onto surviving block ids and appends any blocks created by the
+fixed suffix in their canonical post-suffix order. An empty projection or a
+projection equal to the canonical order is a measured no-op. This deterministic
+projection is part of source-aware replay; layout may never suppress the KIR O3
+suffix or name blocks that no longer exist.
+LLVM O3 may legally delete a selected function or block before late layout. The
+backend therefore preserves selected functions when possible, then reconciles the
+layout list against the post-O3 module. It applies the complete surviving mapping;
+if no complete selected mapping survives, layout becomes a measured no-op rather
+than naming a nonexistent object or changing the LLVM pipeline.
 
 ### 9.2 Never tunable
 
@@ -682,10 +698,15 @@ equivalence, or target legality.
 
 ### 9.3 Tuning units
 
-Overlapping roots, cloned helpers, specialization boundaries, and shared code-size
-effects are clustered deterministically into one tuning unit. A session considers
-at most 64 units. Units beyond that bound use ordinary optimizer decisions, selected
-by canonical rank rather than discovery order.
+Within one alternative class, overlapping roots, cloned helpers, specialization
+boundaries, and shared code-size effects are clustered deterministically into one
+tuning unit. The schema-1 `Unit.class` field keeps every unit class-homogeneous;
+cross-class interactions are represented by canonical whole-plan expansions over
+multiple units. If a later class invalidates an earlier class's anchor or
+precondition, that expansion is retained as an `illegal` search result and search
+continues rather than aborting the session. A session considers at most 64 units.
+Units beyond that bound use ordinary optimizer decisions, selected by canonical
+rank rather than discovery order.
 
 Each unit exposes at most four coherent non-baseline unit variants. A unit variant
 is one closed set of choices at one or more sites; the command line never forms a
@@ -699,7 +720,9 @@ Candidate materialization separates legality from static profitability:
 
 1. CK recomputes all structural, proof, effect, guard, failure-order, target-feature,
    and growth checks.
-2. A legal tuning trial may bypass only the ordinary static-profitability threshold.
+2. CK must expose a legal measurement-owned alternative even when the ordinary
+   static-profitability threshold rejects it; such a trial may bypass only that
+   threshold, never any legality, proof, target, transaction, or growth check.
 3. The resulting trial artifact has a non-publishable typestate.
 4. Trial artifacts cannot enter production output or the production object cache.
 5. Only a valid measured-profitability certificate may authorize replay of that
@@ -1462,7 +1485,8 @@ top-level key set is exactly:
 `schemaVersion` is 9 and `candidateVersion` is `0.14.0`. Candidate SHA, compiler
 bytes, the exact v0.13 historical replay evidence closure, the fresh v0.14
 schema-8 compatibility evidence closure, pinned LLVM/Clang 22.1.8, Rust 1.90.0,
-runner bytes, manifests, source/input bytes, hardware, operating system, CPU
+the retained `/usr/bin/ld` system-linker identity, runner bytes, manifests,
+source/input bytes, hardware, operating system, CPU
 features, recipe, artifacts, decisions, and every retained evidence file have size
 and SHA-256 identity. Every evidence-root entry must be a regular
 file below the evidence directory, with no symlink, traversal, missing, duplicate,
@@ -1483,6 +1507,16 @@ digests. Dynamic loading, symbol resolution, setup, tuning search, and harness I
 are outside steady timing. There is no selective rerun. The internal `.cktune`
 three-invocation decision evidence remains separate from these external seven-call
 release samples.
+Every external receipt is timed inside the retained native runner's iteration
+loop. The collector starts that runner directly with an empty environment and
+parses its exact `CKPERF/1` receipt; process startup, dynamic loading, input
+allocation, result hashing, output, and Python/FFI loop overhead are outside the
+reported elapsed time.
+Every C/Rust oracle build also starts with an exactly empty environment. C oracle
+argv names the independently resolved `/usr/bin/ld` through Clang `--ld-path`;
+Rust oracle argv names the resolved pinned Clang driver and that same linker
+through explicit `-C linker` and `-C link-arg`. Their live bytes must equal the
+retained toolchain identities, so no oracle build resolves a linker through PATH.
 
 Each case/split first records the fixed doubling calibration and one confirmation;
 its selected iterations-per-call is identical for every channel, warmup receipt,
@@ -1507,7 +1541,8 @@ measurements, and on-disk digests are independently checked.
 Tune-use compilation time is measured against v0.14 ordinary compilation with
 three warmup pairs and fifteen measured pairs, alternating first channel by row;
 ordinary v0.14 compilation is compared with exact v0.13 ordinary compilation by
-the same protocol. Both use upper medians, retain raw times and command identities,
+the same protocol. Both use upper medians, bind every raw time to its command in a
+closed `TimedCommand` receipt,
 and exclude tuning search. Artifact size uses the exact primary outputs paired with
 timing. Resource evidence retains standard-session wall time, peak compiler/tuner
 RSS, expansion/compile/finalist counts, and cache bytes. Determinism consists of two

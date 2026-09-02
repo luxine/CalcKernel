@@ -79,6 +79,20 @@ pub struct KirModule {
     pub entry: Option<MirEntryPoint>,
     pub structs: Vec<MirStruct>,
     pub functions: Vec<KirFunction>,
+    /// Optional CK-owned late layout intent. It is inert until the Native O3
+    /// pipeline has completed and is absent from every ordinary build.
+    pub tune_layout: Option<KirTuneLayoutPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KirTuneLayoutPlan {
+    pub functions: Vec<KirTuneFunctionLayout>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KirTuneFunctionLayout {
+    pub function: FunctionId,
+    pub blocks: Vec<BlockId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

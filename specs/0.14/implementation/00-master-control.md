@@ -60,6 +60,8 @@ exact-SHA CI；长任务只做间隔查询，不在前台持续等待。
     运行产物、性能 report、CI artifact、动态 run id 或本地 secret。
 11. 每阶段在 `target/acceptance/v0.14/stage-NN/` 记录被测 SHA、RED 摘要、命令、测试计数、
     Rust/LLVM/Clang/host identity。旧阶段日志不能代替最终 SHA 的总验收。
+12. 实施期成立的真实设计复诊以 `implementation-design-correction-01.md` 至 `08.md` 为完整序列；
+    其中修订只能闭合可实现性与证据真实性，不得降低本总控或规范门槛。
 
 ## 冻结实现架构
 
@@ -119,4 +121,3 @@ recipe 身份，不接受调优策略。`src/cli/tune.rs` 是薄编排层。
 - 规范缺陷：先新增 `specs/0.14/review/implementation-blocker-NN.md` 复诊；成立后同步修改双语规范、
   normative attachment、总控、受影响 task/acceptance 和测试，再继续。
 - 远程缺陷：区分产品失败、runner/capability 失败与暂态基础设施失败；不得以本地或旧 SHA 结果代替。
-

@@ -134,8 +134,47 @@ pub fn build_late_profile_layout_plan(
     CkLateProfileLayoutPlan { functions: output }
 }
 
+/// Converts canonical tuning metadata into the same closed late-layout bridge
+/// representation used by PGO, without consulting timings or LLVM heuristics.
+pub fn build_tune_layout_plan(
+    module: &crate::KirModule,
+) -> Result<Option<CkLateProfileLayoutPlan>, NativeError> {
+    let Some(layout) = &module.tune_layout else {
+        return Ok(None);
+    };
+    let mut functions = Vec::with_capacity(layout.functions.len());
+    for requested in &layout.functions {
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.id == requested.function)
+            .ok_or_else(|| layout_error("tune layout function is missing"))?;
+        let llvm_function = if module.config.consumer == KirConsumer::NativeExecutable
+            && module
+                .entry
+                .as_ref()
+                .is_some_and(|entry| entry.function_name == function.name)
+        {
+            "__ck_user_main".to_string()
+        } else if function.exported {
+            format!("__ck_impl_{}", function.name)
+        } else {
+            function.name.clone()
+        };
+        functions.push(CkLateProfileFunctionLayout {
+            llvm_function,
+            blocks: requested
+                .blocks
+                .iter()
+                .map(|block| format!("kir.bb{}", block.index()))
+                .collect(),
+        });
+    }
+    Ok(Some(CkLateProfileLayoutPlan { functions }))
+}
+
 impl<'context> OptimizedNativeModule<'context> {
-    /// Applies the closed layout plan after the complete ordinary O2 IR pipeline.
+    /// Applies the closed layout plan after the complete ordinary O2 or O3 IR pipeline.
     ///
     /// # Errors
     ///
@@ -146,8 +185,11 @@ impl<'context> OptimizedNativeModule<'context> {
         target: &NativeTarget,
         plan: &CkLateProfileLayoutPlan,
     ) -> Result<(Self, CkLateProfileLayoutReport), NativeError> {
-        if self.level != NativeOptimizationLevel::O2 {
-            return Err(layout_error("late profile layout requires O2"));
+        if !matches!(
+            self.level,
+            NativeOptimizationLevel::O2 | NativeOptimizationLevel::O3
+        ) {
+            return Err(layout_error("late layout requires O2 or O3"));
         }
         let encoded = plan.encode()?;
         let report =

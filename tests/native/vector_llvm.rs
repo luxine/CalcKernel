@@ -322,6 +322,7 @@ pub(super) fn vector_module(target: &NativeTarget) -> KirModule {
             .expect("target profile"),
         entry: None,
         structs: Vec::new(),
+        tune_layout: None,
         functions: vec![KirFunction {
             id: FunctionId::from_index(0),
             name: "vector_kernel".to_string(),

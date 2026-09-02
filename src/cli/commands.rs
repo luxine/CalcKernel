@@ -28,10 +28,10 @@ use calckernel::{
     NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu, NativeHeaderMode,
     NativeMultiversionTargetSet, NativeObject, NativeOptimizationLevel, NativePlatform,
     NativeProfileGeneration, NativeTarget, VerifiedNativeBuild, anchor_profile_directory,
-    apply_profile, build_late_profile_layout_plan, build_verified_native_artifact,
-    check_kir_multiversion_bundle, create_native_multiversion_static_archive,
-    create_native_profile_generation_static_archive, emit_native_header,
-    emit_native_multiversion_objects, emit_native_profile_generation_header,
+    apply_profile, build_late_profile_layout_plan, build_tune_layout_plan,
+    build_verified_native_artifact, check_kir_multiversion_bundle,
+    create_native_multiversion_static_archive, create_native_profile_generation_static_archive,
+    emit_native_header, emit_native_multiversion_objects, emit_native_profile_generation_header,
     link_native_multiversion_dynamic_library, link_native_multiversion_executable,
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
     lower_native_kir_module, lower_native_profile_generation_module,
@@ -1194,6 +1194,24 @@ pub(super) fn compile_replayed_native_build(
     .map_err(|error| error.to_string())?
     .optimize(&target, NativeOptimizationLevel::O3)
     .map_err(|error| error.to_string())?;
+    let optimized = if let Some(plan) =
+        build_tune_layout_plan(state.module()).map_err(|error| error.to_string())?
+    {
+        let ir = optimized
+            .to_ir_string()
+            .map_err(|error| error.to_string())?;
+        let reconciled = reconcile_late_layout_names(plan, &ir);
+        if reconciled.functions.is_empty() {
+            optimized
+        } else {
+            optimized
+                .apply_late_profile_layout(&target, &reconciled)
+                .map_err(|error| error.to_string())?
+                .0
+        }
+    } else {
+        optimized
+    };
     let object = target
         .emit_object(optimized)
         .map_err(|error| error.to_string())?;

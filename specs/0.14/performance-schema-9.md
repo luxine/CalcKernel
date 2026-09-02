@@ -47,7 +47,8 @@ in `benches/baselines/v0_13_replay.toml`. `evidenceDirectory` matches
 ## 2. Identity objects
 
 `toolchain` has exactly `llvmVersion`, `clangVersion`, `rustVersion`,
-`componentManifest`, `clangBinary`, `clangProfileRuntime`, and `rustCompiler`.
+`componentManifest`, `clangBinary`, `clangProfileRuntime`, `rustCompiler`, and
+`systemLinker`.
 Versions are exactly `22.1.8`, `22.1.8`, and `1.90.0`; the last four values are
 `FileIdentity` objects.
 Before
@@ -56,7 +57,9 @@ evidence path `toolchain/llvm-build.toml`, the resolved regular Clang executable
 `toolchain/clang.bin`, and the discovered Clang profile runtime archive to
 `toolchain/clang-profile-runtime.bin`; those are the paths recorded in the three
 identities, all with `root="evidence"`. It also copies the resolved Rust compiler
-to `toolchain/rustc.bin`. The checker hashes all four retained files,
+to `toolchain/rustc.bin`. It resolves the nonempty regular `/usr/bin/ld` endpoint
+and copies its bytes to `toolchain/system-linker.bin`. The checker hashes all five
+retained files,
 requires the manifest to describe the pinned LLVM component build, and requires the
 resolved `CKC_CLANG_ORACLE` executable to equal retained `clangBinary` and report
 22.1.8. It runs that original executable with the sole argument
@@ -66,6 +69,8 @@ non-symlink matches of
 `lib/**/clang_rt.profile*.lib`; exactly one total match is required, and the
 retained runtime must equal it byte-for-byte.
 The resolved Rust executable must equal retained `rustCompiler` and report 1.90.0.
+The checker independently resolves `/usr/bin/ld` and requires its live bytes to
+equal retained `systemLinker`.
 
 `hardware` has exactly `target`, `arch`, `os`, `osBuild`, `kernel`, `cpuModel`,
 `logicalCpus`, `physicalCpus`, `numaNodes`, `features`, `requiredTier`,
@@ -79,6 +84,8 @@ Both stable performance jobs require `os="linux"`. The x86-64 job requires
 `requiredTier="aarch64-sve2"`. That tier must occur in `availableTiers` and all of
 its required features in `features`. Missing required hardware fails instead of
 skipping.
+For `x86-64-v4`, the required feature set is exactly AVX-512 F/BW/CD/DQ/VL;
+omitting AVX-512CD must fail the tier gate.
 
 `recipe` has exactly `schema`, `files`, `digest`, and `thresholds`. `schema=1`.
 `files` is a path-sorted list of `FileIdentity` covering every path named in Section
@@ -207,6 +214,12 @@ channel count from the fixed channel list. `split` is `release-held-out`,
 reason. `outputRecords` is a role-sorted list with exact keys `role`, `logicalName`,
 `bytes`, and `sha256`. Every extracted scalar and output record must equal the
 decoded retained decision; none is trusted as an independent report assertion.
+For a present certificate, `certificateDigest` is
+`P("CK-V014-TUNE-CERTIFICATE\0", plan DigestBytes, frontier DigestBytes,
+policy DigestBytes, roundOne DigestBytes, roundTwo DigestBytes, correctness
+DigestBytes, objectGraph DigestBytes, linkRecipe DigestBytes)`, using certificate
+tags 1 through 8 in that order. A baseline reason has no certificate and therefore
+uses JSON null.
 
 `tuningArtifacts` is a case-name-sorted list of exactly seven objects with keys
 `case`, `decision`, and `outputs`; `decision` is a `FileIdentity`, and `outputs` is
@@ -237,6 +250,19 @@ doubling with checked `u64` arithmetic until the first elapsed value at least
 exactly `elapsedNs`, `iterations`, `completed`, and `correctnessDigest`; elapsed is
 positive and completed equals iterations. Calibration/confirmation happens before
 ordered warmup and is not included in a sample.
+
+Steady-state receipts are produced by the retained native runner, not by a
+language-runtime FFI loop. The collector invokes the runner directly, without a
+shell or inherited environment, as
+`ckc-tune-runner --ck-perf <artifact> <case> <case-id> <length> <seed>
+<parameter> <iterations>`. The runner loads and resolves the artifact and prepares
+inputs before starting its monotonic timer; it times only a native loop of the
+requested kernel invocations, computes the result digest after the loop, and emits
+exactly `CKPERF/1 <case-id> <seed> <iterations> <completed> <elapsed-ns>
+<digest>\n`. The collector requires an exact echo, positive u64 elapsed time,
+exact completion, and the frozen digest. Process startup, dynamic loading,
+allocation, digesting, stdout, and Python/ctypes iteration overhead are therefore
+outside `elapsedNs`.
 
 A `MainCase` has exactly `case`, `eligible`, `source`, `input`, `decisionDigest`,
 `correctnessDigest`, `correctnessDigests`, `artifacts`, `buildCommands`,
@@ -316,9 +342,13 @@ throughput gate against the faster generic oracle.
 `sampleOrder`, `samplesNs`, `mediansNs`, and `commands`. Orders contain three and
 fifteen two-channel permutations with alternating first channel. Each samples list
 has 15 positive values, each median is ascending element 7. `commands` is an object
-with exactly the two channel keys; each value is a list of exactly 18 `Command`
+with exactly the two channel keys; each value is a list of exactly 18 `TimedCommand`
 objects, the first three corresponding to warmup occurrences and the remaining 15
-to measured occurrences in the retained order. A `Command` has exactly `argv`,
+to measured occurrences in the retained order. Each entry is a `TimedCommand`
+with exactly `command` and `elapsedNs`; `elapsedNs` is the positive raw wall time
+for that invocation and `command` is the closed `Command` below. The checker
+requires each measured `samplesNs` value to equal the corresponding retained
+`TimedCommand.elapsedNs`. A `Command` has exactly `argv`,
 `workingDirectory`, `executable`, `inputs`, `environment`, and
 `environmentDigest`, where `argv` is the exact string vector,
 `workingDirectory` is exactly `repository`, argv contains no absolute or traversing
@@ -356,6 +386,12 @@ where an entry value is name `Text`, value `Text`, then references
 `P("CK-V014-PERF-COMMAND\0", argv List<Text>, workingDirectory Text,
 executable FileIdentityValue, inputs List<FileIdentityValue>, environmentDigest
 DigestBytes)`; it is not an additional JSON key.
+For Clang, Rustc, and a replay compiler whose resource/sysroot lookup depends on
+its installed location, the operating-system executable selector may name the
+resolved original path only after the checker proves that file byte-equal to the
+retained `executable`. The child still receives the recorded relative `argv[0]`
+unchanged. Replacing any recorded argv string with the original absolute path is
+invalid evidence.
 
 Every compile-time command uses a distinct create-new output and an initially empty
 distinct cache namespace; setup and cleanup occur outside the timed interval. The
@@ -382,10 +418,10 @@ templates and no extra optimization flag:
 | `v014Ordinary` | `candidateBinary`; `ckc build <source> --out <primary> --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked` |
 | `v013Ordinary` | `v013ReplayBundle.compiler`; the same ordinary build template |
 | `v013Pgo` | `v013ReplayBundle.compiler`; ordinary template plus `--pgo-use <case-profile>` |
-| `cSimd` | `toolchain.clangBinary`; the exact C11 native explicit-SIMD template in `oracleManifest` |
-| `rustSimd` | `toolchain.rustCompiler`; the exact Rust-2024 native explicit-SIMD template in `oracleManifest` |
-| `genericC` | `toolchain.clangBinary`; the manifest's generic C11 O3 template with no CK domain assumption |
-| `genericRust` | `toolchain.rustCompiler`; the manifest's generic Rust-2024 O3 template with no CK domain assumption |
+| `cSimd` | `toolchain.clangBinary`; the exact C11 native explicit-SIMD template in `oracleManifest`, followed by `--ld-path=<resolved-/usr/bin/ld>` |
+| `rustSimd` | `toolchain.rustCompiler`; the exact Rust-2024 native explicit-SIMD template in `oracleManifest`, followed by `-C linker=<resolved-CKC_CLANG_ORACLE> -C link-arg=--ld-path=<resolved-/usr/bin/ld>` |
+| `genericC` | `toolchain.clangBinary`; the manifest's generic C11 O3 template with no CK domain assumption, followed by the same explicit `--ld-path` |
+| `genericRust` | `toolchain.rustCompiler`; the manifest's generic Rust-2024 O3 template with no CK domain assumption, followed by the same explicit Clang linker driver and `--ld-path` |
 
 The two explicit CK modes are part of every CK template, including tune-use and
 v0.13 PGO. Oracle manifests encode the same defined-input behavior and preconditions;
@@ -405,7 +441,10 @@ is absent before its build. Every cold or compile-time cache namespace is absent
 and empty before its build; the sole exception is the explicitly linked warm
 TuneRun in Section 7, whose pre-state must equal cold one's post-state. Wrappers,
 shell commands, ambient PATH resolution, reused outputs, implicit shared caches,
-and unlisted flags are invalid.
+and unlisted flags are invalid. The explicit linker endpoints are live-byte
+checked against retained `clangBinary` and `systemLinker`; the latter is an input
+of every oracle command and the former is additionally an input of every Rust
+oracle command. Every oracle process starts with an exactly empty environment.
 
 A `BuildCommand` has exactly `command`, `decision`, and `outputs`. `command` is the
 closed `Command` above. `decision` is the consumed or generated tuning-decision
@@ -506,7 +545,11 @@ run and its command uses that run's cache namespace. `eventLog` is an evidence-r
 or `-`, ordering phase or `-`, case id or `-`, and calls as unsigned decimal,
 separated by one TAB and ending LF. Ordinals start at zero and are contiguous;
 closed event kinds are `compile-attempt`, `measurement-evaluation`, `cache-hit`,
-`cache-miss`, and `publication`. `eventDigest` is
+`cache-miss`, and `publication`. The direct-child supervisor derives this event
+receipt after successful exit from the decoded decision, the compiler's closed
+cold/warm outcome, and the before/after cache state; it is not a second optional
+compiler output protocol. The independent checker repeats that derivation and
+rejects any extra, missing, or reordered event. `eventDigest` is
 `P("CK-V014-TUNE-EVENTS\0", eventLog FileIdentityValue)`. Candidate counts,
 measurement counts, cache-origin claims, and publication state are rederived from
 this log and the decoded decision.
@@ -528,8 +571,8 @@ read occurs immediately after `wait4` and is no earlier than start.
 `P("CK-V014-TUNE-SUPERVISOR\0", supervisorLog FileIdentityValue)`. The embedded
 command digest equals `build.command.commandDigest`; `wallMs` is the ceiling of
 `(end-start)/1,000,000`, and `peakRssBytes` is checked
-`ru_maxrss_kib * 1024`. The supervisor owns the namespace lock, captures the
-compiler event stream, and takes the two cache snapshots; the run-level resource
+`ru_maxrss_kib * 1024`. The supervisor owns the namespace lock, derives the
+canonical event receipt, and takes the two cache snapshots; the run-level resource
 fields cannot be supplied independently. Ordinary compilation uses this identical
 protocol through the resource record above.
 
@@ -538,9 +581,14 @@ unique evidence-relative directory path; `files` is a path-sorted list of every
 regular non-symlink file below it, and `digest` is
 `P("CK-V014-CACHE-SNAPSHOT\0", namespace Text, files
 List<FileIdentityValue>)`. Unknown entries, unsafe directories, and unlisted files
-are invalid. `cacheBefore`/`cacheAfter` are complete snapshots taken under an
-exclusive namespace lock immediately before/after the command and are bound to
-the same supervisor record.
+are invalid. `cacheBefore`/`cacheAfter` are complete temporal snapshots taken under
+an exclusive namespace lock immediately before/after the command and are bound to
+the same supervisor record. Because the live namespace is intentionally mutated by
+the child, the checker reopens and proves completeness of the final snapshot,
+rehashes every file named by both snapshot receipts, verifies cold-before emptiness
+and warm-before/cold-after equality, and validates the canonical snapshot digests;
+it does not incorrectly require a historical pre-state list to equal the later live
+directory contents.
 
 `coldOne` and `coldTwo` have distinct namespaces and empty `cacheBefore.files`; no
 other process may use either namespace. Their exact commands differ only in

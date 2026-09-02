@@ -20,3 +20,15 @@ pub fn prepare_vectorization_trial(
         charge: prepared.charge,
     })
 }
+
+pub(crate) fn prepare_tuned_vectorization_trial(
+    pre_state: &KirVerifiedProgramState,
+    candidate: &VectorizationCandidate,
+) -> Result<PreparedVectorization, String> {
+    let prepared = super::kir_passes::materialize_tuned_vectorization_trial(pre_state, candidate)?;
+    Ok(PreparedVectorization {
+        trial: prepared.trial,
+        plan: prepared.plan,
+        charge: prepared.charge,
+    })
+}

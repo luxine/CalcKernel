@@ -31,7 +31,8 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
 4. 写 sampling RED：main fixed six-channel，validation/domain fixed three-channel；每 split doubling calibration+
    confirmation、3 warmup、20 measured、每 sample 7 equal batches/min/upper median/16 stable，rotation digest 重算。
 5. 写 provenance RED：每 channel 的 closed BuildCommand→artifact/decision/profile/source/input foreign-key 完整；
-   CK 与 oracle 都显式 unchecked bounds/overflow 且 strict defined inputs，无 CLI default 混用。
+   CK 与 oracle 都显式 unchecked bounds/overflow 且 strict defined inputs，无 CLI default 混用。Oracle
+   必须在空环境中显式绑定保留且现场等字节的 Clang linker driver 与 `/usr/bin/ld`，不得依赖 PATH。
 6. 写 threshold RED：相对 faster v0.13 ordinary/PGO 的 5% geo、2% selected、<=2% regression；相对 hand SIMD
    98% geo/92% each；domain >8% geo；全部 eligible case 包含 baseline selection，禁止 post-result exclusion。
 7. 写 compile/size/resource RED：tune-use 10% geo/20% each，ordinary 3%/8%，artifact 110%，archive 110%，
@@ -42,7 +43,12 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
    fresh 重跑全 schema8 compatibility；两者不能互相代替或重写。
 10. 写 archive RED：producer exact invocation，POSIX-pax deterministic gzip 仅含排序的 LICENSE、notices、ckc，
     modes 0644/0644/0755，member/content/compression/static-dependency receipt 完整。
-11. 运行 Python mutation/oracle tests、Rust performance contract tests与 `measure-v014-performance.py --contract-only`；
+11. 以保留的 native runner 在函数指针循环内部采样并严格校验 `CKPERF/1` 回执，禁止
+    Python/FFI 循环开销进入 `elapsedNs`；运行 Python mutation/oracle tests、Rust performance
+    contract tests 与 `measure-v014-performance.py --contract-only`；x86-64-v4 精确要求
+    AVX-512 F/BW/CD/DQ/VL，缺少 CD 也必须失败。
+12. 删除所有不属于 report 的 compile/profile/cache/lock scratch，并由 checker 反向证明
+    evidence root 的真实普通文件集合精确等于全部 evidence `FileIdentity` 的闭包。
     支持 tier 上再执行完整 collector+checker，其他 host 不伪造性能通过。
 
 ## 实现边界

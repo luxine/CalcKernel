@@ -321,9 +321,13 @@ fn candidate_compiler(repo_root: &Path) -> Result<PathBuf, String> {
         .output()
         .map_err(|error| format!("execute candidate compiler {}: {error}", path.display()))?;
     if !output.status.success()
-        || !String::from_utf8_lossy(&output.stdout).starts_with("ckc 0.13.0")
+        || !String::from_utf8_lossy(&output.stdout)
+            .starts_with(&format!("ckc {}", env!("CARGO_PKG_VERSION")))
     {
-        return Err("CKC_CANDIDATE_COMPILER must identify ckc 0.13.0".into());
+        return Err(format!(
+            "CKC_CANDIDATE_COMPILER must identify ckc {}",
+            env!("CARGO_PKG_VERSION")
+        ));
     }
     Ok(path)
 }

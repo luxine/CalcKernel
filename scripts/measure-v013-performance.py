@@ -550,11 +550,11 @@ def collect_compile_samples(candidate, case, profiles, evidence, warmup, samples
     return result
 
 
-def collect(output, quick):
+def collect(output, quick, candidate_version="0.13.0"):
     candidate = pathlib.Path(os.environ.get("CKC_CANDIDATE_COMPILER", REPO / "target/release/ckc"))
     candidate = candidate if candidate.is_absolute() else (REPO / candidate).resolve()
-    if not command_output([candidate, "--version"]).startswith("ckc 0.13.0"):
-        fail("CKC_CANDIDATE_COMPILER must identify ckc 0.13.0")
+    if not command_output([candidate, "--version"]).startswith(f"ckc {candidate_version}"):
+        fail(f"CKC_CANDIDATE_COMPILER must identify ckc {candidate_version}")
     candidate_sha = command_output(["git", "rev-parse", "HEAD"]).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha):
         fail("candidate SHA is not exact")
@@ -700,7 +700,7 @@ def collect(output, quick):
     deterministic_archive(archive_path, candidate)
     replay_archive = replay_report["archive"]
     report = {
-        "schemaVersion": 8, "candidateVersion": "0.13.0", "candidateSha": candidate_sha,
+        "schemaVersion": 8, "candidateVersion": candidate_version, "candidateSha": candidate_sha,
         "replayCommit": V012_COMMIT, "evidenceDirectory": evidence.name,
         "toolchain": {
             "llvmVersion": LLVM_VERSION, "clangVersion": LLVM_VERSION,
@@ -773,9 +773,13 @@ def main() -> int:
     parser.add_argument("--task", choices=("collect",), required=True)
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--candidate-version", default="0.13.0")
     args = parser.parse_args()
     try:
-        collect(args.out, args.quick)
+        if args.candidate_version == "0.13.0":
+            collect(args.out, args.quick)
+        else:
+            collect(args.out, args.quick, args.candidate_version)
     except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         print(f"schema-8 measurement failed: {error}", file=sys.stderr)
         return 1

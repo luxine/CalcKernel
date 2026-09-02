@@ -531,6 +531,7 @@ fn build_hidden_variant_module(
         entry: None,
         structs: baseline.structs.clone(),
         functions,
+        tune_layout: None,
     };
     let validation = validate_kir_module(&module);
     if !validation.errors.is_empty() {

@@ -34,6 +34,15 @@ pub fn print_kir_module(module: &KirModule) -> String {
         }
         output.push_str(" }\n");
     }
+    if let Some(layout) = &module.tune_layout {
+        for function in &layout.functions {
+            output.push_str(&format!("tune-layout f{}", function.function.index()));
+            for block in &function.blocks {
+                output.push_str(&format!(" b{}", block.index()));
+            }
+            output.push('\n');
+        }
+    }
     for function in &module.functions {
         output.push('\n');
         output.push_str(&print_kir_function(function));

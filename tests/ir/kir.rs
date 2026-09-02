@@ -133,6 +133,7 @@ fn kir_model_and_printer_should_include_complete_module_identity() {
         profile: KirTargetProfile::inspection(),
         entry: None,
         structs: Vec::new(),
+        tune_layout: None,
         functions: Vec::new(),
     };
 
@@ -152,6 +153,7 @@ fn kir_printer_should_be_byte_deterministic_for_identical_model() {
         profile: KirTargetProfile::inspection(),
         entry: None,
         structs: Vec::new(),
+        tune_layout: None,
         functions: Vec::new(),
     };
     let expected = print_kir_module(&module);
@@ -178,6 +180,7 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
         profile: KirTargetProfile::inspection(),
         entry: None,
         structs: Vec::new(),
+        tune_layout: None,
         functions: vec![KirFunction {
             id: FunctionId::from_index(0),
             name: "answer".to_string(),

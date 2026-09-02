@@ -102,6 +102,7 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         read("scripts/check-native-performance.py"),
         read("scripts/package-v014-performance-archive.py"),
         read("scripts/audit-performance-oracles.py"),
+        read("scripts/prepare-performance-replay.py"),
     ]
     .join("\n");
     for required in [
@@ -117,6 +118,7 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         "CK-V014-TUNE-SUPERVISOR\\0",
         "--contract-only",
         "--schema-only",
+        "--baseline\", choices=(\"0.13\"",
     ] {
         assert!(
             combined.contains(required),

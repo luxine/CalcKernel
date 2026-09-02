@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import math
 import os
@@ -15,6 +17,8 @@ import stat
 import statistics
 import subprocess
 import sys
+import tarfile
+import tempfile
 import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -28,6 +32,7 @@ LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
 ORACLE_MANIFEST_SHA256 = "7ebe12a1fc4e3217ef7824fa75ad40caa6a76461a05af5f7a4b65a432c902631"
 DEFAULT_BASELINE_MANIFEST = REPO / "benches/baselines/v0_10_compiler.toml"
+V013_REPLAY_MANIFEST = REPO / "benches/baselines/v0_13_replay.toml"
 RECIPE_FILES = [
     "scripts/prepare-performance-replay.py",
     "scripts/audit-performance-oracles.py",
@@ -329,9 +334,15 @@ def check_schema9_hardware(value, contract_only):
     if value["capabilityDigest"] != schema9_digest(b"CK-V014-PERF-HARDWARE\0", *material):
         fail("schema-9 hardware capabilityDigest mismatch")
     if not contract_only:
+        if value["arch"] not in {"x86_64", "aarch64"}:
+            fail("schema-9 release evidence has an unsupported architecture")
         required = "x86-64-v4" if value["arch"] == "x86_64" else "aarch64-sve2"
+        needed = ({"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
+                  if value["arch"] == "x86_64" else {"sve", "sve2"})
         if value["os"] != "linux" or value["requiredTier"] != required:
             fail("schema-9 release evidence requires a stable Linux hardware tier")
+        if not needed.issubset(value["features"]):
+            fail("schema-9 release evidence lacks required hardware features")
 
 
 def check_schema9_recipe(value, evidence_root):
@@ -463,13 +474,14 @@ def check_schema9_schema_only(report, path):
     contract_only = all(value is False for value in report["correctness"].values())
     toolchain_keys = {
         "llvmVersion", "clangVersion", "rustVersion", "componentManifest",
-        "clangBinary", "clangProfileRuntime", "rustCompiler",
+        "clangBinary", "clangProfileRuntime", "rustCompiler", "systemLinker",
     }
     exact_keys(report["toolchain"], toolchain_keys, "schema-9 toolchain")
     if (report["toolchain"]["llvmVersion"], report["toolchain"]["clangVersion"],
             report["toolchain"]["rustVersion"]) != (LLVM_VERSION, LLVM_VERSION, RUST_VERSION):
         fail("schema-9 toolchain versions are not pinned")
-    for key in ["componentManifest", "clangBinary", "clangProfileRuntime", "rustCompiler"]:
+    for key in ["componentManifest", "clangBinary", "clangProfileRuntime", "rustCompiler",
+                "systemLinker"]:
         check_schema9_file(report["toolchain"][key], root, f"schema-9 toolchain {key}", "evidence")
     check_schema9_file(report["candidateBinary"], root, "schema-9 candidateBinary", "evidence")
     check_schema9_hardware(report["hardware"], contract_only)
@@ -1315,11 +1327,14 @@ def check_schema8(report, path, baseline_manifest, *, candidate_version="0.13.0"
         fail("cumulativeSchemaSeven filename is not pinned")
     cumulative_path = root / cumulative["file"]
     verify_file(cumulative_path, cumulative["bytes"], cumulative["sha256"], "cumulativeSchemaSeven")
-    check_schema7(
-        json.loads(cumulative_path.read_text(encoding="utf-8"), object_pairs_hook=strict_json_object),
-        cumulative_path,
-        baseline_manifest,
-    )
+    cumulative_report = json.loads(
+        cumulative_path.read_text(encoding="utf-8"), object_pairs_hook=strict_json_object)
+    if candidate_version == "0.13.0":
+        check_schema7(cumulative_report, cumulative_path, baseline_manifest)
+    else:
+        check_schema7(
+            cumulative_report, cumulative_path, baseline_manifest,
+            candidate_version=candidate_version)
 
     check_evidence_artifacts(report["trainingShards"], root, "trainingShards", ["baseline", "multiversion"])
     check_evidence_artifacts(report["finalProfiles"], root, "finalProfiles", ["baseline", "multiversion"])
@@ -1374,7 +1389,8 @@ def check_schema8(report, path, baseline_manifest, *, candidate_version="0.13.0"
         fail("schema-8 correctness evidence is incomplete")
 
 
-def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
+def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path, *,
+                  candidate_version="0.13.0"):
     top_keys = {
         "schemaVersion", "candidateVersion", "cpuPolicy", "fastMath", "clangVersion",
         "rustVersion", "warmup", "sampleRepetitions", "samplingProtocol", "channelNames",
@@ -1386,8 +1402,8 @@ def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
     exact_keys(report, top_keys, "performance report")
     if report["schemaVersion"] != 7:
         fail("performance report schemaVersion must be 7")
-    if report["candidateVersion"] != "0.13.0":
-        fail("candidateVersion must identify the 0.13.0 candidate")
+    if report["candidateVersion"] != candidate_version:
+        fail(f"candidateVersion must identify the {candidate_version} candidate")
     if report["cpuPolicy"] != "baseline":
         fail("release performance requires baseline CPU policy")
     if report["fastMath"] is not False:
@@ -1420,6 +1436,1121 @@ def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
     check_optimizer(report, manifest)
 
 
+def schema9_u64(value, field, *, positive_value=False):
+    if type(value) is not int or value < (1 if positive_value else 0) or value > 0xffff_ffff_ffff_ffff:
+        fail(f"{field} must be a {'positive ' if positive_value else ''}u64")
+    return value
+
+
+def schema9_sorted_files(values, evidence_root, field, expected_root=None):
+    if not isinstance(values, list):
+        fail(f"{field} must be a list")
+    keys = []
+    for index, value in enumerate(values):
+        check_schema9_file(value, evidence_root, f"{field}[{index}]", expected_root)
+        keys.append((0 if value["root"] == "repository" else 1, value["path"].encode("utf-8")))
+    if keys != sorted(keys) or len(keys) != len(set(keys)):
+        fail(f"{field} must be path-sorted and unique")
+    return values
+
+
+def schema9_tagged(nodes, tag, field):
+    if not isinstance(nodes, list):
+        fail(f"{field} must be an inspection node list")
+    matches = [node.get("value") for node in nodes if isinstance(node, dict) and node.get("tag") == tag]
+    if len(matches) != 1:
+        fail(f"{field} is missing unique tag {tag}")
+    return matches[0]
+
+
+def schema9_inspect_decision(candidate, decision, field):
+    result = subprocess.run(
+        [candidate, "tune", "inspect", decision, "--json"], cwd=REPO, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+    )
+    if result.returncode:
+        fail(f"{field} decision inspection failed: {result.stdout[-3000:]}")
+    try:
+        inspection = json.loads(result.stdout, object_pairs_hook=strict_json_object)
+    except json.JSONDecodeError as error:
+        fail(f"{field} decision inspection is not JSON: {error}")
+    records = inspection.get("records")
+    if not isinstance(records, list) or len(records) != 8:
+        fail(f"{field} decision inspection tree is incomplete")
+    selection = schema9_tagged(records, 7, field)
+    replay = schema9_tagged(records, 8, field)
+    candidates = schema9_tagged(records, 6, field)
+    frontier = schema9_tagged(records, 5, field)
+    reason = schema9_tagged(selection, 4, field)
+    certificate = schema9_tagged(selection, 5, field)
+    output_records = []
+    for node in schema9_tagged(replay, 6, field):
+        output_records.append({
+            "role": schema9_tagged(node, 1, field),
+            "logicalName": schema9_tagged(node, 2, field),
+            "sha256": schema9_tagged(node, 3, field),
+            "bytes": schema9_tagged(node, 4, field),
+        })
+    certificate_digest = None
+    if certificate is not None:
+        certificate_digest = schema9_digest(
+            b"CK-V014-TUNE-CERTIFICATE\0",
+            *(bytes.fromhex(schema9_tagged(certificate, tag, field)) for tag in range(1, 9)),
+        )
+    summary = {
+        "decisionDigest": inspection.get("decisionDigest"),
+        "choiceIdentityDigest": schema9_tagged(replay, 10, field),
+        "selectionReason": reason,
+        "planDigest": schema9_tagged(selection, 3, field),
+        "objectGraphDigest": schema9_tagged(replay, 4, field),
+        "linkRecipeDigest": schema9_tagged(replay, 5, field),
+        "certificateDigest": certificate_digest,
+        "outputRecords": output_records,
+    }
+    trials = schema9_tagged(candidates, 2, field)
+    first_round = schema9_tagged(selection, 1, field)
+    counts = {
+        "compiled": len(trials),
+        "measured": sum(bool(schema9_tagged(node, 9, field)) for node in trials),
+        "expansions": len(schema9_tagged(frontier, 4, field)),
+        "validationEntrants": len(schema9_tagged(first_round, 2, field)),
+    }
+    return summary, counts
+
+
+def schema9_output_digest(outputs):
+    values = []
+    for output in outputs:
+        file = output["file"]
+        values.append(schema9_text(output["role"]) + file["bytes"].to_bytes(8, "big")
+                      + bytes.fromhex(file["sha256"]))
+    return schema9_digest(b"CK-V014-PERF-OUTPUT-CONTENT\0", schema9_list(values))
+
+
+def schema9_check_output_set(outputs, evidence_root, field):
+    if not isinstance(outputs, list) or not 1 <= len(outputs) <= 3:
+        fail(f"{field} must contain one through three outputs")
+    rank = {"primary": 0, "header": 1, "import-library": 2}
+    roles = []
+    for index, output in enumerate(outputs):
+        exact_keys(output, {"role", "file"}, f"{field}[{index}]")
+        if output["role"] not in rank:
+            fail(f"{field} contains an unknown output role")
+        check_schema9_file(output["file"], evidence_root, f"{field}[{index}].file", "evidence")
+        roles.append(output["role"])
+    if roles != sorted(roles, key=rank.get) or len(roles) != len(set(roles)) or "primary" not in roles:
+        fail(f"{field} output roles are not complete/canonical")
+    return outputs
+
+
+def schema9_check_environment(entries, evidence_root, field):
+    allowed = {
+        "CKC_LLVM_PREFIX", "CKC_CLANG_ORACLE", "CKC_CANDIDATE_COMPILER",
+        "CKC_V013_REPLAY_BUNDLE", "XDG_CACHE_HOME", "HOME", "LOCALAPPDATA",
+        "SystemRoot", "WINDIR",
+    }
+    if not isinstance(entries, list):
+        fail(f"{field} must be a list")
+    names = []
+    encoded = []
+    for index, entry in enumerate(entries):
+        exact_keys(entry, {"name", "value", "references"}, f"{field}[{index}]")
+        name, value = entry["name"], entry["value"]
+        if name not in allowed or not isinstance(value, str):
+            fail(f"{field} contains an unknown name or non-text value")
+        references = schema9_sorted_files(entry["references"], evidence_root,
+                                           f"{field}[{index}].references")
+        if name.startswith("CKC_") and not references:
+            fail(f"{field} {name} lacks retained references")
+        if not name.startswith("CKC_") and references:
+            fail(f"{field} {name} must not carry references")
+        names.append(name)
+        encoded.append(schema9_text(name) + schema9_text(value)
+                       + schema9_list([schema9_file_value(item) for item in references]))
+    if names != sorted(names) or len(names) != len(set(names)):
+        fail(f"{field} names must be sorted and unique")
+    return schema9_digest(b"CK-V014-PERF-COMMAND-ENV\0", schema9_list(encoded))
+
+
+def schema9_check_command(command, evidence_root, field):
+    exact_keys(command, {
+        "argv", "workingDirectory", "executable", "inputs", "environment",
+        "environmentDigest",
+    }, field)
+    argv = command["argv"]
+    if (not isinstance(argv, list) or not argv
+            or any(not isinstance(item, str) or not item for item in argv)):
+        fail(f"{field} argv must be nonempty text")
+    if command["workingDirectory"] != "repository":
+        fail(f"{field} workingDirectory must be repository")
+    for argument in argv:
+        if argument.startswith("/") or "\\" in argument or "../" in argument:
+            fail(f"{field} argv contains an absolute or traversing path")
+    check_schema9_file(command["executable"], evidence_root, f"{field}.executable")
+    executable_argument_matches = (
+        argv[0] == command["executable"]["path"]
+        if command["executable"]["root"] == "repository"
+        else argv[0].endswith(command["executable"]["path"])
+    )
+    if not executable_argument_matches:
+        fail(f"{field} argv[0] does not identify its executable")
+    schema9_sorted_files(command["inputs"], evidence_root, f"{field}.inputs")
+    digest = schema9_check_environment(command["environment"], evidence_root,
+                                       f"{field}.environment")
+    if command["environmentDigest"] != digest:
+        fail(f"{field} environmentDigest mismatch")
+    return schema9_digest(
+        b"CK-V014-PERF-COMMAND\0", schema9_list([schema9_text(item) for item in argv]),
+        schema9_text("repository"), schema9_file_value(command["executable"]),
+        schema9_list([schema9_file_value(item) for item in command["inputs"]]),
+        bytes.fromhex(digest),
+    )
+
+
+def schema9_check_build(build, evidence_root, field, *, tuned=None):
+    exact_keys(build, {"command", "decision", "outputs"}, field)
+    command_digest = schema9_check_command(build["command"], evidence_root, f"{field}.command")
+    outputs = schema9_check_output_set(build["outputs"], evidence_root, f"{field}.outputs")
+    if build["decision"] is None:
+        if tuned is True:
+            fail(f"{field} tuned build lacks a decision")
+    else:
+        check_schema9_file(build["decision"], evidence_root, f"{field}.decision", "evidence")
+        if tuned is False:
+            fail(f"{field} nontuned build unexpectedly has a decision")
+    argv = build["command"]["argv"]
+    if tuned is not None:
+        if "--out" not in argv:
+            fail(f"{field} command omits --out")
+        required = ["--kind", "dynamic", "--cpu", "native", "-O3", "--overflow",
+                    "unchecked", "--bounds", "unchecked"]
+        for token in required:
+            if token not in argv:
+                fail(f"{field} command omits required token {token}")
+        if tuned is True:
+            if (argv[1:3] != ["tune", "build"] or "--budget" not in argv
+                    or "--tune-out" not in argv):
+                fail(f"{field} does not use the closed tuned build template")
+        elif len(argv) < 2 or argv[1] != "build":
+            fail(f"{field} does not use the closed ordinary build template")
+    return outputs, command_digest
+
+
+def schema9_file_argument(file, evidence_root):
+    if file["root"] == "repository":
+        return file["path"]
+    try:
+        return (evidence_root / file["path"]).resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        fail("schema-9 evidence command argument is outside the repository")
+
+
+def schema9_check_channel_template(build, evidence_root, field, channel, source,
+                                   manifest=None, profile=None, oracle=None, case_index=None,
+                                   case_name=None, oracle_linkers=None):
+    command, argv = build["command"], build["command"]["argv"]
+    executable = schema9_file_argument(command["executable"], evidence_root)
+    primary = next(item["file"] for item in build["outputs"] if item["role"] == "primary")
+    primary_arg = schema9_file_argument(primary, evidence_root)
+    if not primary_arg.endswith(".so"):
+        fail(f"{field} primary output is not a Linux dynamic library")
+    base_arg = primary_arg[:-3]
+    ordinary = [
+        executable, "build", schema9_file_argument(source, evidence_root), "--out", base_arg,
+        "--kind", "dynamic", "--cpu", "native", "-O3", "--overflow", "unchecked",
+        "--bounds", "unchecked",
+    ]
+    if channel == "tuned":
+        if manifest is None or build["decision"] is None:
+            fail(f"{field} tuned template lacks manifest/decision")
+        expected = [
+            executable, "tune", "build", schema9_file_argument(source, evidence_root),
+            "--config", schema9_file_argument(manifest, evidence_root), "--out", base_arg,
+            "--kind", "dynamic", "--cpu", "native", "-O3", "--overflow", "unchecked",
+            "--bounds", "unchecked", "--budget", "standard", "--tune-out",
+            schema9_file_argument(build["decision"], evidence_root),
+        ]
+        expected_inputs = [source, manifest]
+    elif channel in {"v014Ordinary", "v013Ordinary"}:
+        expected = ordinary
+        expected_inputs = [source]
+    elif channel == "v013Pgo":
+        if profile is None:
+            fail(f"{field} v013Pgo template lacks profile")
+        expected = [*ordinary, "--pgo-use", schema9_file_argument(profile, evidence_root)]
+        expected_inputs = [source, profile]
+    elif channel in {"cSimd", "genericC"}:
+        if oracle is None or oracle_linkers is None:
+            fail(f"{field} C oracle template lacks its retained linker closure")
+        flavor = "simd_args" if channel == "cSimd" else "generic_args"
+        expected = [
+            executable, *oracle["c"][flavor],
+            f"--ld-path={oracle_linkers['system']}",
+            f"-DCK_TUNE_ORACLE_CASE={case_index}",
+            schema9_file_argument(source, evidence_root), "-o", primary_arg,
+        ]
+        expected_inputs = [source, manifest, oracle_linkers["systemIdentity"]]
+    elif channel in {"rustSimd", "genericRust"}:
+        if oracle is None or oracle_linkers is None:
+            fail(f"{field} Rust oracle template lacks its retained linker closure")
+        flavor = "simd_args" if channel == "rustSimd" else "generic_args"
+        expected = [
+            executable, *oracle["rust"][flavor],
+            "-C", f"linker={oracle_linkers['clang']}",
+            "-C", f"link-arg=--ld-path={oracle_linkers['system']}",
+            "--cfg", f'tune_case="{case_name}"',
+            schema9_file_argument(source, evidence_root), "-o", primary_arg,
+        ]
+        expected_inputs = [source, manifest, oracle_linkers["clangIdentity"],
+                           oracle_linkers["systemIdentity"]]
+    else:
+        fail(f"{field} has an unknown build channel {channel}")
+    if argv != expected:
+        fail(f"{field} does not match the closed {channel} command template")
+    expected_inputs.sort(key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    if command["inputs"] != expected_inputs:
+        fail(f"{field} does not retain the complete {channel} input set")
+
+
+def schema9_check_ck_environment(command, evidence_root, report, field):
+    entries = {entry["name"]: entry for entry in command["environment"]}
+    expected = {
+        "CKC_CANDIDATE_COMPILER": [report["candidateBinary"]],
+        "CKC_CLANG_ORACLE": [report["toolchain"]["clangBinary"]],
+        "CKC_LLVM_PREFIX": sorted([
+            report["toolchain"]["componentManifest"], report["toolchain"]["clangBinary"],
+            report["toolchain"]["clangProfileRuntime"],
+        ], key=lambda item: (item["root"], item["path"].encode("utf-8"))),
+        "CKC_V013_REPLAY_BUNDLE": sorted([
+            report["v013ReplayBundle"][key]
+            for key in ["manifest", "compiler", "archive", "schemaEight", "checker"]
+        ], key=lambda item: (item["root"], item["path"].encode("utf-8"))),
+    }
+    if set(entries) != {*expected, "XDG_CACHE_HOME"}:
+        fail(f"{field} does not contain the exact Linux CK environment")
+    for name, references in expected.items():
+        if entries[name]["references"] != references:
+            fail(f"{field} {name} retained-reference mapping mismatch")
+    cache = pathlib.Path(entries["XDG_CACHE_HOME"]["value"])
+    try:
+        cache.resolve().relative_to(evidence_root.resolve())
+    except ValueError:
+        fail(f"{field} cache base is outside the evidence directory")
+    for name in ["CKC_CANDIDATE_COMPILER", "CKC_CLANG_ORACLE"]:
+        original = pathlib.Path(entries[name]["value"])
+        if (not original.is_file() or original.is_symlink()
+                or file_digest(original) != entries[name]["references"][0]["sha256"]):
+            fail(f"{field} {name} live path differs from retained identity")
+    prefix = pathlib.Path(entries["CKC_LLVM_PREFIX"]["value"])
+    component = prefix / "share/ckc/llvm-build.toml"
+    if not component.is_file() or file_digest(component) != report["toolchain"]["componentManifest"]["sha256"]:
+        fail(f"{field} CKC_LLVM_PREFIX component identity mismatch")
+    replay = pathlib.Path(entries["CKC_V013_REPLAY_BUNDLE"]["value"])
+    expected_names = {
+        "ckc-v013": report["v013ReplayBundle"]["compiler"],
+        "ckc-v013-distribution.tar.gz": report["v013ReplayBundle"]["archive"],
+        "check-native-performance-v013.py": report["v013ReplayBundle"]["checker"],
+    }
+    for name, identity in expected_names.items():
+        original = replay / name
+        if not original.is_file() or file_digest(original) != identity["sha256"]:
+            fail(f"{field} CKC_V013_REPLAY_BUNDLE {name} identity mismatch")
+
+
+def schema9_order(candidate_sha, protocol, split, case, phase, row, channels):
+    material = (b"CK-V014-PERF-ORDER\0" + schema9_text(candidate_sha)
+                + schema9_text(protocol) + schema9_text(split) + schema9_text(case)
+                + phase.to_bytes(1, "big") + row.to_bytes(4, "big"))
+    rotation = int.from_bytes(hashlib.sha256(material).digest()[:8], "big") % len(channels)
+    return channels[rotation:] + channels[:rotation]
+
+
+def schema9_receipt(value, field, iterations, digest):
+    exact_keys(value, {"elapsedNs", "iterations", "completed", "correctnessDigest"}, field)
+    schema9_u64(value["elapsedNs"], f"{field}.elapsedNs", positive_value=True)
+    if value["iterations"] != iterations or value["completed"] != iterations:
+        fail(f"{field} iteration/completion mismatch")
+    if value["correctnessDigest"] != digest:
+        fail(f"{field} correctness digest mismatch")
+
+
+def schema9_calibration(value, field, channel, digest):
+    exact_keys(value, {"channel", "attempts", "selectedIterationsPerCall", "confirmation"}, field)
+    if value["channel"] != channel:
+        fail(f"{field} calibration channel mismatch")
+    selected = schema9_u64(value["selectedIterationsPerCall"],
+                           f"{field}.selectedIterationsPerCall", positive_value=True)
+    attempts = value["attempts"]
+    if not isinstance(attempts, list) or not 1 <= len(attempts) <= 32:
+        fail(f"{field} attempts must contain one through 32 entries")
+    iterations = 1
+    for index, receipt in enumerate(attempts):
+        schema9_receipt(receipt, f"{field}.attempts[{index}]", iterations, digest)
+        if index + 1 < len(attempts) and receipt["elapsedNs"] >= 50_000_000:
+            fail(f"{field} continued after reaching the calibration floor")
+        iterations *= 2
+    if attempts[-1]["elapsedNs"] < 50_000_000 or selected != attempts[-1]["iterations"]:
+        fail(f"{field} did not stop at the first qualifying calibration attempt")
+    schema9_receipt(value["confirmation"], f"{field}.confirmation", selected, digest)
+    return selected
+
+
+def schema9_case_record(value, evidence_root, field, *, case, channels, protocol, split,
+                        candidate_sha, source, input_file, decision, tuned_artifacts,
+                        expected_digest, eligible=False):
+    keys = {
+        "case", "source", "input", "decisionDigest", "correctnessDigest",
+        "correctnessDigests", "artifacts", "buildCommands", "calibration",
+        "warmupOrder", "sampleOrder", "warmupReceipts", "callReceipts", "callsNs",
+        "samplesNs", "mediansNs",
+    }
+    if eligible:
+        keys.add("eligible")
+    exact_keys(value, keys, field)
+    if value["case"] != case or value["source"] != source or value["input"] != input_file:
+        fail(f"{field} case/source/input foreign key mismatch")
+    if eligible and value["eligible"] is not True:
+        fail(f"{field} eligible must be true")
+    if value["decisionDigest"] != decision["decisionDigest"]:
+        fail(f"{field} decision foreign key mismatch")
+    if value["correctnessDigest"] != expected_digest:
+        fail(f"{field} expected correctness digest mismatch")
+    for key in ["correctnessDigests", "artifacts", "buildCommands", "warmupReceipts",
+                "callReceipts", "callsNs", "samplesNs", "mediansNs"]:
+        exact_keys(value[key], set(channels), f"{field}.{key}")
+    if any(value["correctnessDigests"][channel] != expected_digest for channel in channels):
+        fail(f"{field} differential correctness mismatch")
+    calibration_channel = {
+        "release-held-out": "v014Ordinary", "validation": "v013Ordinary",
+        "domain-release-held-out": "genericC",
+    }[split]
+    iterations = schema9_calibration(value["calibration"], f"{field}.calibration",
+                                     calibration_channel, expected_digest)
+    for phase, key, rows in [(1, "warmupOrder", 3), (2, "sampleOrder", 20)]:
+        orders = value[key]
+        if not isinstance(orders, list) or len(orders) != rows:
+            fail(f"{field}.{key} row count mismatch")
+        for row, actual in enumerate(orders):
+            expected = schema9_order(candidate_sha, protocol, split, case, phase, row, channels)
+            if actual != expected:
+                fail(f"{field}.{key}[{row}] rotation mismatch")
+    for channel in channels:
+        check_schema9_file(value["artifacts"][channel], evidence_root,
+                           f"{field}.artifacts.{channel}", "evidence")
+        ck_channel = channel in {"tuned", "v014Ordinary", "v013Ordinary", "v013Pgo"}
+        outputs, _ = schema9_check_build(
+            value["buildCommands"][channel], evidence_root,
+            f"{field}.buildCommands.{channel}",
+            tuned=(channel == "tuned") if ck_channel else None,
+        )
+        primary = next(item["file"] for item in outputs if item["role"] == "primary")
+        if primary != value["artifacts"][channel]:
+            fail(f"{field} primary artifact/build foreign key mismatch for {channel}")
+        if channel == "tuned":
+            if (value["buildCommands"][channel]["decision"] != tuned_artifacts["decision"]
+                    or outputs != tuned_artifacts["outputs"]
+                    or primary != next(item["file"] for item in tuned_artifacts["outputs"]
+                                       if item["role"] == "primary")):
+                fail(f"{field} tuned artifact foreign key mismatch")
+        warm = value["warmupReceipts"][channel]
+        calls = value["callReceipts"][channel]
+        call_ns = value["callsNs"][channel]
+        samples = value["samplesNs"][channel]
+        if (not isinstance(warm, list) or len(warm) != 3
+                or not isinstance(calls, list) or len(calls) != 20
+                or not isinstance(call_ns, list) or len(call_ns) != 20
+                or not isinstance(samples, list) or len(samples) != 20):
+            fail(f"{field} sampling row count mismatch for {channel}")
+        for group_name, receipts, expected_rows in [
+            ("warmupReceipts", warm, 3), ("callReceipts", calls, 20),
+        ]:
+            for row, receipt_row in enumerate(receipts):
+                if not isinstance(receipt_row, list) or len(receipt_row) != 7:
+                    fail(f"{field}.{group_name}.{channel}[{row}] must have seven calls")
+                for call, receipt in enumerate(receipt_row):
+                    schema9_receipt(receipt,
+                                    f"{field}.{group_name}.{channel}[{row}][{call}]",
+                                    iterations, expected_digest)
+        for row, numbers in enumerate(call_ns):
+            if (not isinstance(numbers, list) or len(numbers) != 7
+                    or any(type(number) is not int or number <= 0 for number in numbers)):
+                fail(f"{field}.callsNs.{channel}[{row}] must have seven positive integers")
+            if numbers != [receipt["elapsedNs"] for receipt in calls[row]]:
+                fail(f"{field}.callsNs.{channel}[{row}] receipt mismatch")
+            if samples[row] != min(numbers):
+                fail(f"{field}.samplesNs.{channel}[{row}] is not the row minimum")
+        median = sorted(samples)[10]
+        if value["mediansNs"][channel] != median:
+            fail(f"{field}.mediansNs.{channel} is not the upper median")
+        if sum(median * 80 <= sample * 100 <= median * 120 for sample in samples) < 16:
+            fail(f"{field}.{channel} sampling stream is unstable")
+
+
+def schema9_ratio_le(numerators, denominators, num, den):
+    return math.prod(value * den for value in numerators) <= math.prod(value * num for value in denominators)
+
+
+def schema9_throughput_ge(candidate, baseline, num, den, *, strict=False):
+    left = math.prod(value * den for value in baseline)
+    right = math.prod(value * num for value in candidate)
+    return left > right if strict else left >= right
+
+
+def schema9_check_profiles(workload, evidence_root, table, replay_compiler, target):
+    rows = workload["profiles"]
+    if not isinstance(rows, list) or len(rows) != 7:
+        fail("schema-9 workload profiles must contain seven rows")
+    if [row.get("case") for row in rows] != sorted(SCHEMA9_CASES):
+        fail("schema-9 workload profiles are not case-name sorted")
+    result = {}
+    for row in rows:
+        exact_keys(row, {"case", "file", "compilerSource", "source", "trainingInput"},
+                   "schema-9 workload profile")
+        case = row["case"]
+        profile_path = check_schema9_file(row["file"], evidence_root,
+                                          f"schema-9 profile {case}", "evidence")
+        if row["source"] != next(item for item in workload["sources"]
+                                  if item["path"] == table[case]["source"]):
+            fail(f"schema-9 profile {case} source foreign key mismatch")
+        if row["trainingInput"] != workload["search"]:
+            fail(f"schema-9 profile {case} training input mismatch")
+        hash_value(row["compilerSource"], f"schema-9 profile {case} compilerSource")
+        inspected = subprocess.run(
+            [replay_compiler, "pgo", "inspect", profile_path, "--json"], cwd=REPO,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, env={},
+        )
+        if inspected.returncode:
+            fail(f"schema-9 profile {case} inspection failed: {inspected.stdout[-2000:]}")
+        decoded = json.loads(inspected.stdout, object_pairs_hook=strict_json_object)
+        identity = decoded.get("identity")
+        profile_target = identity.get("target") if isinstance(identity, dict) else None
+        profile_modes = identity.get("modes") if isinstance(identity, dict) else None
+        if (decoded.get("schema") != 1 or decoded.get("format") != "CKPROF01"
+                or not isinstance(identity, dict)
+                or identity.get("compilerPackage") != "0.13.0"
+                or not isinstance(profile_target, dict)
+                or profile_target.get("triple") != target
+                or profile_modes != {
+                    "overflowChecked": False, "boundsChecked": False,
+                    "strictFloat": True, "sanitizer": False,
+                    "topology": "native-library", "optimizationFamily": "o3",
+                    "cpuPolicy": "native",
+                }
+                or decoded.get("compatibleCompilerPackage") is not True
+                or type(decoded.get("completedRuns")) is not int
+                or decoded["completedRuns"] < 1
+                or type(decoded.get("observedSites")) is not int
+                or decoded["observedSites"] < 1
+                or decoded.get("incompleteObservations") is not False):
+            fail(f"schema-9 profile {case} inspection identity/content mismatch")
+        source_identity = identity.get("compilerSource")
+        if source_identity != row["compilerSource"]:
+            fail(f"schema-9 profile {case} compiler identity mismatch")
+        result[case] = row
+    return result
+
+
+def schema9_check_decisions(report, evidence_root, candidate_path):
+    decisions = report["tuningDecisions"]
+    artifacts = report["tuningArtifacts"]
+    if (not isinstance(decisions, list) or len(decisions) != 7
+            or [row.get("case") for row in decisions] != sorted(SCHEMA9_CASES)):
+        fail("schema-9 tuningDecisions must contain seven sorted rows")
+    if (not isinstance(artifacts, list) or len(artifacts) != 7
+            or [row.get("case") for row in artifacts] != sorted(SCHEMA9_CASES)):
+        fail("schema-9 tuningArtifacts must contain seven sorted rows")
+    decision_map, artifact_map, count_map = {}, {}, {}
+    for row in decisions:
+        exact_keys(row, {
+            "case", "file", "decisionDigest", "choiceIdentityDigest", "selectionReason",
+            "planDigest", "objectGraphDigest", "linkRecipeDigest", "certificateDigest",
+            "outputRecords",
+        }, "schema-9 tuning decision")
+        case = row["case"]
+        path = check_schema9_file(row["file"], evidence_root,
+                                  f"schema-9 tuning decision {case}", "evidence")
+        summary, counts = schema9_inspect_decision(candidate_path, path, case)
+        if {key: row[key] for key in summary} != summary:
+            fail(f"schema-9 tuning decision {case} disagrees with decoded decision")
+        for key in ["decisionDigest", "choiceIdentityDigest", "planDigest",
+                    "objectGraphDigest", "linkRecipeDigest"]:
+            hash_value(row[key], f"schema-9 tuning decision {case} {key}")
+        if row["certificateDigest"] is not None:
+            hash_value(row["certificateDigest"], f"schema-9 tuning decision {case} certificate")
+        decision_map[case], count_map[case] = row, counts
+    for row in artifacts:
+        exact_keys(row, {"case", "decision", "outputs"}, "schema-9 tuning artifact")
+        case = row["case"]
+        if row["decision"] != decision_map[case]["file"]:
+            fail(f"schema-9 tuning artifact {case} decision foreign key mismatch")
+        outputs = schema9_check_output_set(row["outputs"], evidence_root,
+                                           f"schema-9 tuning artifact {case}")
+        records = {record["role"]: record for record in decision_map[case]["outputRecords"]}
+        if set(records) != {output["role"] for output in outputs}:
+            fail(f"schema-9 tuning artifact {case} output role mismatch")
+        for output in outputs:
+            record, file = records[output["role"]], output["file"]
+            exact_keys(record, {"role", "logicalName", "bytes", "sha256"},
+                       f"schema-9 tuning decision {case} output record")
+            if (record["logicalName"] != pathlib.PurePosixPath(file["path"]).name
+                    or record["bytes"] != file["bytes"] or record["sha256"] != file["sha256"]):
+                fail(f"schema-9 tuning artifact {case} output identity mismatch")
+        artifact_map[case] = row
+    return decision_map, artifact_map, count_map
+
+
+def schema9_check_cache(value, evidence_root, field, *, current=False):
+    exact_keys(value, {"namespace", "files", "digest"}, field)
+    relative = schema9_relative(value["namespace"], f"{field}.namespace")
+    namespace = evidence_root.joinpath(*relative.parts)
+    if namespace.is_symlink() or not namespace.is_dir():
+        fail(f"{field} namespace is not a real directory")
+    files = schema9_sorted_files(value["files"], evidence_root, f"{field}.files", "evidence")
+    if current:
+        actual = []
+        for entry in namespace.rglob("*"):
+            if entry.is_symlink() or (not entry.is_dir() and not entry.is_file()):
+                fail(f"{field} namespace contains an unsafe entry")
+            if entry.is_file():
+                actual.append(entry.relative_to(evidence_root).as_posix())
+        if sorted(actual) != [item["path"] for item in files]:
+            fail(f"{field} cache snapshot is not complete")
+    digest = schema9_digest(
+        b"CK-V014-CACHE-SNAPSHOT\0", schema9_text(value["namespace"]),
+        schema9_list([schema9_file_value(item) for item in files]),
+    )
+    if value["digest"] != digest:
+        fail(f"{field} digest mismatch")
+
+
+def schema9_check_supervisor(file, evidence_root, command_digest, field):
+    path = check_schema9_file(file, evidence_root, field, "evidence")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) != 3 or lines[0] != "CK-TUNE-SUPERVISOR\t1":
+        fail(f"{field} supervisor framing mismatch")
+    start = lines[1].split("\t")
+    wait = lines[2].split("\t")
+    if (len(start) != 3 or start[:2] != ["start", command_digest]
+            or len(wait) != 4 or wait[0] != "wait4"):
+        fail(f"{field} supervisor record mismatch")
+    begin = schema9_u64(int(start[2]), f"{field}.start")
+    end = schema9_u64(int(wait[1]), f"{field}.end")
+    status = schema9_u64(int(wait[2]), f"{field}.status")
+    rss_kib = schema9_u64(int(wait[3]), f"{field}.rss", positive_value=True)
+    if status != 0 or end < begin:
+        fail(f"{field} supervisor process did not complete successfully")
+    return max(1, (end - begin + 999_999) // 1_000_000), rss_kib * 1024
+
+
+def schema9_check_events(file, evidence_root, field, plan_digest, *, warm):
+    path = check_schema9_file(file, evidence_root, field, "evidence")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "CK-TUNE-EVENTS\t1":
+        fail(f"{field} event framing mismatch")
+    allowed = {"compile-attempt", "measurement-evaluation", "cache-hit", "cache-miss", "publication"}
+    counts = {name: 0 for name in allowed}
+    kinds = []
+    for ordinal, line in enumerate(lines[1:]):
+        fields = line.split("\t")
+        if len(fields) != 6 or fields[0] != str(ordinal) or fields[1] not in allowed:
+            fail(f"{field} malformed event row")
+        if fields[2] not in {"-", plan_digest} or fields[3] not in {"-", "search"} or fields[4] != "-":
+            fail(f"{field} event provenance mismatch")
+        schema9_u64(int(fields[5]), f"{field}.calls")
+        counts[fields[1]] += 1
+        kinds.append(fields[1])
+    if counts["publication"] != 1:
+        fail(f"{field} must contain one publication")
+    if warm:
+        if counts["cache-hit"] != 1 or any(counts[name] for name in
+                                            ["cache-miss", "compile-attempt", "measurement-evaluation"]):
+            fail(f"{field} is not an exact warm reuse event stream")
+        if kinds != ["cache-hit", "publication"]:
+            fail(f"{field} warm event order mismatch")
+    elif counts["cache-miss"] != 1 or counts["cache-hit"]:
+        fail(f"{field} is not a cold event stream")
+    elif kinds != (["cache-miss"] + ["compile-attempt"] * counts["compile-attempt"]
+                   + ["measurement-evaluation"] * counts["measurement-evaluation"]
+                   + ["publication"]):
+        fail(f"{field} cold event order mismatch")
+    return counts
+
+
+def schema9_check_tune_run(value, evidence_root, field, candidate_path, *, warm):
+    exact_keys(value, {
+        "decision", "outputs", "decisionDigest", "choiceIdentityDigest", "planDigest",
+        "objectGraphDigest", "linkRecipeDigest", "outputContentDigest", "build",
+        "cacheBefore", "cacheAfter", "eventLog", "eventDigest", "supervisorLog",
+        "supervisorDigest", "compiledCandidates", "measuredCandidates", "wallMs",
+        "peakRssBytes",
+    }, field)
+    decision_path = check_schema9_file(value["decision"], evidence_root,
+                                       f"{field}.decision", "evidence")
+    outputs = schema9_check_output_set(value["outputs"], evidence_root, f"{field}.outputs")
+    summary, decision_counts = schema9_inspect_decision(candidate_path, decision_path, field)
+    for key in ["decisionDigest", "choiceIdentityDigest", "planDigest", "objectGraphDigest",
+                "linkRecipeDigest"]:
+        if value[key] != summary[key]:
+            fail(f"{field} {key} disagrees with the retained decision")
+    records = {record["role"]: record for record in summary["outputRecords"]}
+    for output in outputs:
+        file = output["file"]
+        record = records.get(output["role"])
+        if (record is None or record["logicalName"] != pathlib.PurePosixPath(file["path"]).name
+                or record["bytes"] != file["bytes"] or record["sha256"] != file["sha256"]):
+            fail(f"{field} output disagrees with the retained decision")
+    if value["outputContentDigest"] != schema9_output_digest(outputs):
+        fail(f"{field} outputContentDigest mismatch")
+    build_outputs, build_digest = schema9_check_build(value["build"], evidence_root,
+                                                      f"{field}.build", tuned=True)
+    if value["build"]["decision"] != value["decision"] or build_outputs != outputs:
+        fail(f"{field} build/decision/output foreign key mismatch")
+    schema9_check_cache(value["cacheBefore"], evidence_root, f"{field}.cacheBefore")
+    schema9_check_cache(value["cacheAfter"], evidence_root, f"{field}.cacheAfter", current=True)
+    counts = schema9_check_events(value["eventLog"], evidence_root, f"{field}.eventLog",
+                                  value["planDigest"], warm=warm)
+    expected_event_digest = schema9_digest(
+        b"CK-V014-TUNE-EVENTS\0", schema9_file_value(value["eventLog"]))
+    if value["eventDigest"] != expected_event_digest:
+        fail(f"{field} eventDigest mismatch")
+    wall, rss = schema9_check_supervisor(value["supervisorLog"], evidence_root,
+                                         build_digest, f"{field}.supervisorLog")
+    expected_supervisor = schema9_digest(
+        b"CK-V014-TUNE-SUPERVISOR\0", schema9_file_value(value["supervisorLog"]))
+    if (value["supervisorDigest"] != expected_supervisor or value["wallMs"] != wall
+            or value["peakRssBytes"] != rss):
+        fail(f"{field} supervisor-derived values mismatch")
+    expected_compiled = 0 if warm else decision_counts["compiled"]
+    expected_measured = 0 if warm else decision_counts["measured"]
+    if (value["compiledCandidates"] != expected_compiled
+            or value["measuredCandidates"] != expected_measured
+            or counts["compile-attempt"] != expected_compiled
+            or counts["measurement-evaluation"] != expected_measured):
+        fail(f"{field} event/decision candidate counts mismatch")
+    return summary, decision_counts
+
+
+def schema9_check_compile_rows(rows, evidence_root, field, report, left, right):
+    if (not isinstance(rows, list) or len(rows) != 7
+            or [row.get("case") for row in rows] != sorted(SCHEMA9_CASES)):
+        fail(f"{field} must contain seven case-name-sorted rows")
+    medians = {left: [], right: []}
+    for row in rows:
+        case = row["case"]
+        exact_keys(row, {"case", "warmupOrder", "sampleOrder", "samplesNs", "mediansNs", "commands"},
+                   f"{field}.{case}")
+        channels = [left, right]
+        expected_orders = [channels[index % 2:] + channels[:index % 2] for index in range(18)]
+        if row["warmupOrder"] != expected_orders[:3] or row["sampleOrder"] != expected_orders[3:]:
+            fail(f"{field}.{case} alternating order mismatch")
+        for key in ["samplesNs", "mediansNs", "commands"]:
+            exact_keys(row[key], set(channels), f"{field}.{case}.{key}")
+        for channel in channels:
+            receipts = row["commands"][channel]
+            if not isinstance(receipts, list) or len(receipts) != 18:
+                fail(f"{field}.{case}.{channel} must retain 18 timed commands")
+            elapsed = []
+            output_paths, cache_paths = set(), set()
+            for index, receipt in enumerate(receipts):
+                exact_keys(receipt, {"command", "elapsedNs"},
+                           f"{field}.{case}.{channel}.commands[{index}]")
+                value = schema9_u64(receipt["elapsedNs"],
+                                    f"{field}.{case}.{channel}.elapsedNs", positive_value=True)
+                command = receipt["command"]
+                schema9_check_command(command, evidence_root,
+                                      f"{field}.{case}.{channel}.commands[{index}]")
+                expected_executable = (report["v013ReplayBundle"]["compiler"]
+                                       if channel == "v013Ordinary"
+                                       else report["candidateBinary"])
+                if command["executable"] != expected_executable:
+                    fail(f"{field}.{case}.{channel} executable mismatch")
+                schema9_check_ck_environment(
+                    command, evidence_root, report,
+                    f"{field}.{case}.{channel}.commands[{index}].environment")
+                if "--out" not in command["argv"]:
+                    fail(f"{field}.{case}.{channel} command omits --out")
+                output_path = command["argv"][command["argv"].index("--out") + 1]
+                try:
+                    (REPO / output_path).resolve().relative_to(evidence_root.resolve())
+                except ValueError:
+                    fail(f"{field}.{case}.{channel} output is outside the evidence directory")
+                cache_entries = [entry["value"] for entry in command["environment"]
+                                 if entry["name"] in {"XDG_CACHE_HOME", "HOME", "LOCALAPPDATA"}]
+                if len(cache_entries) != 1:
+                    fail(f"{field}.{case}.{channel} command lacks one cache base")
+                if output_path in output_paths or cache_entries[0] in cache_paths:
+                    fail(f"{field}.{case}.{channel} reuses timed output/cache state")
+                output_paths.add(output_path)
+                cache_paths.add(cache_entries[0])
+                if index >= 3:
+                    elapsed.append(value)
+                argv = command["argv"]
+                table = schema9_case_table()
+                source = next(item for item in report["workload"]["sources"]
+                              if item["path"] == table[case]["source"])
+                executable = schema9_file_argument(command["executable"], evidence_root)
+                expected = [
+                    executable, "build", schema9_file_argument(source, evidence_root),
+                    "--out", output_path, "--kind", "dynamic", "--cpu", "native", "-O3",
+                    "--overflow", "unchecked", "--bounds", "unchecked",
+                ]
+                if source not in command["inputs"]:
+                    fail(f"{field}.{case}.{channel} compile command omits source input")
+                if channel == "tuneUse":
+                    decision = next(item["file"] for item in report["tuningDecisions"]
+                                    if item["case"] == case)
+                    expected.extend(["--tune-use", schema9_file_argument(decision, evidence_root)])
+                    if decision not in command["inputs"]:
+                        fail(f"{field}.{case} tuneUse command omits its decision input")
+                if argv != expected:
+                    fail(f"{field}.{case}.{channel} compile command template mismatch")
+            if row["samplesNs"][channel] != elapsed:
+                fail(f"{field}.{case}.{channel} samples do not equal retained receipts")
+            if row["mediansNs"][channel] != sorted(elapsed)[7]:
+                fail(f"{field}.{case}.{channel} compile median mismatch")
+            medians[channel].append(row["mediansNs"][channel])
+    return medians
+
+
+def schema9_check_archive(value, evidence_root, report):
+    exact_keys(value, {"candidate", "v013Replay", "producer", "command", "members"},
+               "schema-9 archiveSize")
+    candidate = check_schema9_file(value["candidate"], evidence_root,
+                                   "schema-9 candidate archive", "evidence")
+    if value["v013Replay"] != report["v013ReplayBundle"]["archive"]:
+        fail("schema-9 archive replay foreign key mismatch")
+    check_schema9_file(value["producer"], evidence_root, "schema-9 archive producer", "repository")
+    if value["producer"]["path"] != "scripts/package-v014-performance-archive.py":
+        fail("schema-9 archive producer path mismatch")
+    schema9_check_command(value["command"], evidence_root, "schema-9 archive command")
+    if value["command"]["executable"] != value["producer"] or value["command"]["environment"]:
+        fail("schema-9 archive command producer/environment mismatch")
+    expected_members = [
+        ("ckc-v0.14/LICENSE", 0o644, next(item for item in value["command"]["inputs"]
+                                          if item["path"] == "LICENSE")),
+        ("ckc-v0.14/THIRD_PARTY_NOTICES.md", 0o644,
+         next(item for item in value["command"]["inputs"]
+              if item["path"] == "THIRD_PARTY_NOTICES.md")),
+        ("ckc-v0.14/ckc", 0o755, report["candidateBinary"]),
+    ]
+    expected_inputs = sorted([item[2] for item in expected_members],
+                             key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    if value["command"]["inputs"] != expected_inputs:
+        fail("schema-9 archive command input set mismatch")
+    expected_argv = [
+        schema9_file_argument(value["producer"], evidence_root), "--compiler",
+        schema9_file_argument(report["candidateBinary"], evidence_root), "--license", "LICENSE",
+        "--notices", "THIRD_PARTY_NOTICES.md", "--out",
+        schema9_file_argument(value["candidate"], evidence_root),
+    ]
+    if value["command"]["argv"] != expected_argv:
+        fail("schema-9 archive command argv mismatch")
+    if not isinstance(value["members"], list) or len(value["members"]) != 3:
+        fail("schema-9 archive member cardinality mismatch")
+    for actual, (name, mode, file) in zip(value["members"], expected_members, strict=True):
+        exact_keys(actual, {"path", "mode", "file"}, "schema-9 archive member")
+        if actual != {"path": name, "mode": mode, "file": file}:
+            fail("schema-9 archive member identity mismatch")
+    raw = candidate.read_bytes()
+    if raw[:4] != b"\x1f\x8b\x08\x00" or raw[4:8] != b"\0\0\0\0":
+        fail("schema-9 candidate archive gzip header is not deterministic")
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(raw)), mode="r:") as archive:
+        records = archive.getmembers()
+        if [record.name for record in records] != [item[0] for item in expected_members]:
+            fail("schema-9 candidate archive record order mismatch")
+        for record, (_, mode, file) in zip(records, expected_members, strict=True):
+            if (not record.isfile() or record.mode != mode or record.mtime != 0
+                    or record.uid or record.gid or record.uname or record.gname or record.pax_headers):
+                fail("schema-9 candidate archive metadata mismatch")
+            stream = archive.extractfile(record)
+            source = (REPO if file["root"] == "repository" else evidence_root) / file["path"]
+            if stream is None or stream.read() != source.read_bytes():
+                fail("schema-9 candidate archive content mismatch")
+    return value["candidate"]["bytes"], value["v013Replay"]["bytes"]
+
+
+def schema9_check_tree(files, evidence_root, prefix, field):
+    schema9_sorted_files(files, evidence_root, field, "evidence")
+    prefix_path = evidence_root / prefix
+    actual = []
+    for entry in prefix_path.rglob("*"):
+        if entry.is_symlink() or (not entry.is_dir() and not entry.is_file()):
+            fail(f"{field} contains an unsafe entry")
+        if entry.is_file():
+            actual.append(entry.relative_to(evidence_root).as_posix())
+    if sorted(actual) != [item["path"] for item in files]:
+        fail(f"{field} is not the complete retained tree")
+
+
+def schema9_check_evidence_closure(report, evidence_root):
+    identities = {}
+
+    def visit(value):
+        if isinstance(value, dict):
+            if set(value) == {"root", "path", "bytes", "sha256"}:
+                if value["root"] == "evidence":
+                    prior = identities.setdefault(value["path"], value)
+                    if prior != value:
+                        fail("schema-9 evidence path has conflicting identities")
+                return
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(report)
+    actual = []
+    for entry in evidence_root.rglob("*"):
+        if entry.is_symlink() or (not entry.is_dir() and not entry.is_file()):
+            fail("schema-9 evidence closure contains an unsafe entry")
+        if entry.is_file():
+            actual.append(entry.relative_to(evidence_root).as_posix())
+    if sorted(actual) != sorted(identities):
+        missing = sorted(set(identities) - set(actual))
+        unknown = sorted(set(actual) - set(identities))
+        fail(f"schema-9 evidence closure mismatch: missing={missing}, unknown={unknown}")
+
+
+def schema9_check_replay(report, evidence_root):
+    replay = report["v013ReplayBundle"]
+    exact_keys(replay, {"commit", "manifest", "compiler", "archive", "schemaEight", "checker",
+                        "evidenceFiles"}, "schema-9 v013ReplayBundle")
+    if replay["commit"] != report["v013ReplayCommit"]:
+        fail("schema-9 v0.13 replay commit mismatch")
+    for key in ["manifest", "compiler", "archive", "schemaEight", "checker"]:
+        check_schema9_file(replay[key], evidence_root, f"schema-9 replay {key}", "evidence")
+    prefix = pathlib.PurePosixPath(replay["manifest"]["path"]).parts[0]
+    schema9_check_tree(replay["evidenceFiles"], evidence_root, prefix,
+                       "schema-9 v0.13 replay files")
+    retained_manifest = evidence_root / replay["manifest"]["path"]
+    if retained_manifest.read_bytes() != V013_REPLAY_MANIFEST.read_bytes():
+        fail("schema-9 retained v0.13 manifest differs from the pinned candidate recipe")
+    manifest = tomllib.loads(retained_manifest.read_text(encoding="utf-8"))
+    if manifest.get("commit") != replay["commit"] or manifest.get("version") != "0.13.0":
+        fail("schema-9 retained v0.13 manifest identity mismatch")
+    source_checker = subprocess.run(
+        ["git", "show", f"{replay['commit']}:scripts/check-native-performance.py"], cwd=REPO,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    if source_checker.returncode or source_checker.stdout != (evidence_root / replay["checker"]["path"]).read_bytes():
+        fail("schema-9 retained v0.13 checker differs from its pinned commit")
+    with tempfile.TemporaryDirectory(prefix="ckc-v013-schema9-check-") as temporary:
+        checkout = pathlib.Path(temporary) / "checkout"
+        clone = subprocess.run(
+            ["git", "clone", "--quiet", "--shared", str(REPO), str(checkout)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
+        )
+        if clone.returncode:
+            fail(f"schema-9 v0.13 checker checkout failed: {clone.stdout[-2000:]}")
+        checkout_result = subprocess.run(
+            ["git", "checkout", "--quiet", "--detach", replay["commit"]], cwd=checkout,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
+        )
+        if checkout_result.returncode:
+            fail(f"schema-9 v0.13 checker revision failed: {checkout_result.stdout[-2000:]}")
+        historical = subprocess.run(
+            [sys.executable, "-B", checkout / "scripts/check-native-performance.py",
+             evidence_root / replay["schemaEight"]["path"]], cwd=checkout,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
+        )
+        if historical.returncode:
+            fail(f"schema-9 retained v0.13 historical evidence failed: {historical.stdout[-3000:]}")
+    historical_report_path = evidence_root / replay["schemaEight"]["path"]
+    historical_report = json.loads(historical_report_path.read_text(encoding="utf-8"))
+    if (historical_report.get("candidateVersion") != "0.13.0"
+            or historical_report.get("candidateSha") != replay["commit"]):
+        fail("schema-9 historical report is not the pinned v0.13 candidate")
+    historical_directory = historical_report.get("evidenceDirectory")
+    historical_binary = historical_report.get("candidateBinary")
+    if (not isinstance(historical_directory, str) or not isinstance(historical_binary, dict)
+            or set(historical_binary) != {"file", "bytes", "sha256"}):
+        fail("schema-9 historical candidate binary identity is malformed")
+    copied_binary = historical_report_path.parent / historical_directory / historical_binary["file"]
+    verify_file(copied_binary, historical_binary["bytes"], historical_binary["sha256"],
+                "schema-9 historical candidate binary")
+    if (historical_binary["bytes"] != replay["compiler"]["bytes"]
+            or historical_binary["sha256"] != replay["compiler"]["sha256"]):
+        fail("schema-9 replay compiler differs from the accepted historical candidate")
+    with tarfile.open(evidence_root / replay["archive"]["path"], mode="r:gz") as archive:
+        compiler_members = [member for member in archive.getmembers()
+                            if member.name == "ckc-v0.13/ckc"]
+        if len(compiler_members) != 1 or not compiler_members[0].isfile():
+            fail("schema-9 v0.13 archive lacks its unique compiler member")
+        stream = archive.extractfile(compiler_members[0])
+        if stream is None or stream.read() != (evidence_root / replay["compiler"]["path"]).read_bytes():
+            fail("schema-9 v0.13 archive compiler differs from the replay compiler")
+    cumulative = report["cumulativeSchemaEight"]
+    exact_keys(cumulative, {"report", "files"}, "schema-9 cumulativeSchemaEight")
+    cumulative_path = check_schema9_file(cumulative["report"], evidence_root,
+                                         "schema-9 cumulative schema-8 report", "evidence")
+    cumulative_prefix = pathlib.PurePosixPath(cumulative["report"]["path"]).parts[0]
+    schema9_check_tree(cumulative["files"], evidence_root, cumulative_prefix,
+                       "schema-9 cumulative schema-8 files")
+    check(cumulative_path, DEFAULT_BASELINE_MANIFEST, schema=8,
+          compat_candidate="0.14.0", candidate_sha=report["candidateSha"])
+    return evidence_root / replay["compiler"]["path"]
+
+
+def schema9_check_determinism_and_resources(report, evidence_root, candidate_path,
+                                            decision_map, artifact_map, count_map):
+    rows = report["determinism"]
+    sessions = report["resourceUse"]["sessions"]
+    if (not isinstance(rows, list) or len(rows) != 7
+            or [row.get("case") for row in rows] != sorted(SCHEMA9_CASES)):
+        fail("schema-9 determinism must contain seven sorted rows")
+    if (not isinstance(sessions, list) or len(sessions) != 7
+            or [row.get("case") for row in sessions] != sorted(SCHEMA9_CASES)):
+        fail("schema-9 resourceUse sessions must contain seven sorted rows")
+    session_map = {row["case"]: row for row in sessions}
+    namespaces = set()
+    for row in rows:
+        exact_keys(row, {"case", "coldOne", "coldTwo", "warm"}, "schema-9 determinism row")
+        case = row["case"]
+        cold_one, cold_two, warm = row["coldOne"], row["coldTwo"], row["warm"]
+        _, cold_counts = schema9_check_tune_run(
+            cold_one, evidence_root, f"schema-9 determinism {case}.coldOne",
+            candidate_path, warm=False)
+        schema9_check_tune_run(cold_two, evidence_root,
+                               f"schema-9 determinism {case}.coldTwo", candidate_path,
+                               warm=False)
+        schema9_check_tune_run(warm, evidence_root, f"schema-9 determinism {case}.warm",
+                               candidate_path, warm=True)
+        if cold_one["cacheBefore"]["files"] or cold_two["cacheBefore"]["files"]:
+            fail(f"schema-9 determinism {case} cold cache was not empty")
+        cold_names = [cold_one["cacheBefore"]["namespace"], cold_two["cacheBefore"]["namespace"]]
+        if cold_names[0] == cold_names[1] or any(name in namespaces for name in cold_names):
+            fail(f"schema-9 determinism {case} cold cache namespace was reused")
+        namespaces.update(cold_names)
+        if (warm["cacheBefore"] != cold_one["cacheAfter"]
+                or warm["cacheAfter"] != warm["cacheBefore"]):
+            fail(f"schema-9 determinism {case} warm cache continuity mismatch")
+        cold_fields = ["choiceIdentityDigest", "planDigest", "objectGraphDigest",
+                       "linkRecipeDigest", "outputContentDigest"]
+        if any(cold_one[key] != cold_two[key] for key in cold_fields):
+            fail(f"schema-9 determinism {case} independent cold results disagree")
+        if any(cold_one[key] != warm[key] for key in ["decisionDigest", *cold_fields]):
+            fail(f"schema-9 determinism {case} warm exact reuse disagrees")
+        if (cold_one["decision"] != artifact_map[case]["decision"]
+                or cold_one["outputs"] != artifact_map[case]["outputs"]
+                or cold_one["decision"] != decision_map[case]["file"]):
+            fail(f"schema-9 determinism {case} canonical cold-one foreign key mismatch")
+        for role in {item["role"] for item in cold_one["outputs"]}:
+            first = next(item["file"] for item in cold_one["outputs"] if item["role"] == role)
+            reused = next(item["file"] for item in warm["outputs"] if item["role"] == role)
+            if (first["bytes"], first["sha256"]) != (reused["bytes"], reused["sha256"]):
+                fail(f"schema-9 determinism {case} warm output bytes disagree")
+        session = session_map[case]
+        exact_keys(session, {
+            "case", "decision", "decisionDigest", "ordinaryBuild", "ordinarySupervisorLog",
+            "ordinarySupervisorDigest", "budget", "wallMs", "peakRssBytes",
+            "ordinaryPeakRssBytes", "expansions", "compileAttempts", "measuredFinalists",
+            "validationEntrants", "cacheBytes",
+        }, f"schema-9 resource session {case}")
+        if (session["decision"] != decision_map[case]["file"]
+                or session["decisionDigest"] != decision_map[case]["decisionDigest"]
+                or session["budget"] != "standard"
+                or session["wallMs"] != cold_one["wallMs"]
+                or session["peakRssBytes"] != cold_one["peakRssBytes"]
+                or session["expansions"] != cold_counts["expansions"]
+                or session["compileAttempts"] != cold_one["compiledCandidates"]
+                or session["measuredFinalists"] != cold_one["measuredCandidates"]
+                or session["validationEntrants"] != cold_counts["validationEntrants"]
+                or session["cacheBytes"] != sum(item["bytes"] for item in cold_one["cacheAfter"]["files"])):
+            fail(f"schema-9 resource session {case} derived values mismatch")
+        _, ordinary_digest = schema9_check_build(
+            session["ordinaryBuild"], evidence_root,
+            f"schema-9 resource session {case}.ordinaryBuild", tuned=False)
+        ordinary_wall, ordinary_rss = schema9_check_supervisor(
+            session["ordinarySupervisorLog"], evidence_root, ordinary_digest,
+            f"schema-9 resource session {case}.ordinarySupervisorLog")
+        if ordinary_wall <= 0 or session["ordinaryPeakRssBytes"] != ordinary_rss:
+            fail(f"schema-9 resource session {case} ordinary supervisor mismatch")
+        digest = schema9_digest(
+            b"CK-V014-TUNE-SUPERVISOR\0",
+            schema9_file_value(session["ordinarySupervisorLog"]))
+        if session["ordinarySupervisorDigest"] != digest:
+            fail(f"schema-9 resource session {case} ordinary supervisor digest mismatch")
+    return session_map
+
+
+def schema9_check_artifact_sizes(report, evidence_root, artifact_map):
+    rows = report["artifactSize"]
+    if (not isinstance(rows, list) or len(rows) != 7
+            or [row.get("case") for row in rows] != sorted(SCHEMA9_CASES)):
+        fail("schema-9 artifactSize must contain seven sorted rows")
+    values = []
+    for row in rows:
+        exact_keys(row, {"case", "tunedPrimary", "baselinePrimary", "baselineBuild"},
+                   "schema-9 artifact size row")
+        case = row["case"]
+        check_schema9_file(row["tunedPrimary"], evidence_root,
+                           f"schema-9 artifact {case} tuned", "evidence")
+        check_schema9_file(row["baselinePrimary"], evidence_root,
+                           f"schema-9 artifact {case} baseline", "evidence")
+        outputs, _ = schema9_check_build(row["baselineBuild"], evidence_root,
+                                         f"schema-9 artifact {case}.baselineBuild", tuned=False)
+        primary = next(item["file"] for item in outputs if item["role"] == "primary")
+        tuned = next(item["file"] for item in artifact_map[case]["outputs"]
+                     if item["role"] == "primary")
+        if row["baselinePrimary"] != primary or row["tunedPrimary"] != tuned:
+            fail(f"schema-9 artifact {case} foreign key mismatch")
+        values.append((row["tunedPrimary"]["bytes"], row["baselinePrimary"]["bytes"]))
+    return values, {row["case"]: row for row in rows}
+
+
+def schema9_check_toolchain(report, evidence_root):
+    toolchain = report["toolchain"]
+    component = evidence_root / toolchain["componentManifest"]["path"]
+    manifest = tomllib.loads(component.read_text(encoding="utf-8"))
+    if (manifest.get("schema") != 1 or manifest.get("version") != "22.1.8"
+            or manifest.get("static_only") is not True
+            or not {"core", "native", "orcjit", "nativecodegen", "lto"}.issubset(
+                set(manifest.get("components", [])))):
+        fail("schema-9 retained LLVM component manifest is not the pinned static build")
+    candidate = evidence_root / report["candidateBinary"]["path"]
+    version = subprocess.run([candidate, "--version"], cwd=REPO, text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    if version.returncode or not version.stdout.startswith("ckc 0.14.0"):
+        fail("schema-9 retained candidate binary identity mismatch")
+    clang_name = os.environ.get("CKC_CLANG_ORACLE")
+    if not clang_name:
+        fail("schema-9 full checking requires CKC_CLANG_ORACLE")
+    clang = pathlib.Path(clang_name).resolve()
+    if file_digest(clang) != report["toolchain"]["clangBinary"]["sha256"]:
+        fail("schema-9 resolved Clang differs from the retained binary")
+    clang_version = subprocess.run([clang, "--version"], text=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, check=False)
+    if clang_version.returncode or "clang version 22.1.8" not in clang_version.stdout.lower():
+        fail("schema-9 resolved Clang is not 22.1.8")
+    resource = subprocess.run([clang, "--print-resource-dir"], text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    if resource.returncode:
+        fail("schema-9 Clang resource directory query failed")
+    root = pathlib.Path(resource.stdout.strip())
+    matches = sorted(root.glob("lib/**/libclang_rt.profile*.a"))
+    matches += sorted(root.glob("lib/**/clang_rt.profile*.lib"))
+    if len(matches) != 1 or file_digest(matches[0]) != report["toolchain"]["clangProfileRuntime"]["sha256"]:
+        fail("schema-9 Clang profile runtime identity mismatch")
+    rustc = subprocess.run(["rustup", "which", "rustc", "--toolchain", "1.90.0"],
+                           text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           check=False)
+    if rustc.returncode:
+        fail("schema-9 rustc 1.90.0 resolution failed")
+    rustc_path = pathlib.Path(rustc.stdout.strip()).resolve()
+    if file_digest(rustc_path) != report["toolchain"]["rustCompiler"]["sha256"]:
+        fail("schema-9 resolved Rust compiler differs from the retained binary")
+    system_linker = pathlib.Path("/usr/bin/ld").resolve(strict=True)
+    if (not system_linker.is_file() or system_linker.is_symlink()
+            or file_digest(system_linker) != report["toolchain"]["systemLinker"]["sha256"]):
+        fail("schema-9 resolved system linker differs from the retained binary")
+    return {
+        "clang": str(clang), "system": str(system_linker),
+        "clangIdentity": report["toolchain"]["clangBinary"],
+        "systemIdentity": report["toolchain"]["systemLinker"],
+    }
+
+
 def check_schema9(report, path, *, schema_only=False):
     contract_only, _, _ = check_schema9_schema_only(report, path)
     if schema_only:
@@ -1443,21 +2574,203 @@ def check_schema9(report, path, *, schema_only=False):
         fail("contract-only schema-9 output is not performance acceptance evidence")
     if not all(report["correctness"].values()):
         fail("schema-9 correctness evidence is incomplete")
-    required_cardinality = {
-        "tuningDecisions": 7, "tuningArtifacts": 7, "cases": 5,
-        "validationCases": 7, "domainCases": 2, "tuneUseCompileTime": 7,
-        "ordinaryCompileRegression": 7, "artifactSize": 7, "determinism": 7,
-    }
-    for key, count in required_cardinality.items():
-        if not isinstance(report[key], list) or len(report[key]) != count:
-            fail(f"schema-9 {key} must contain exactly {count} rows")
     exact_keys(report["resourceUse"], {"sessions", "cacheHardLimitBytes"},
                "schema-9 resourceUse")
-    if (not isinstance(report["resourceUse"]["sessions"], list)
-            or len(report["resourceUse"]["sessions"]) != 7):
-        fail("schema-9 resourceUse must contain seven sessions")
-    if not report["archiveSize"] or not report["v013ReplayBundle"] or not report["cumulativeSchemaEight"]:
-        fail("schema-9 replay/archive closure is incomplete")
+    if report["resourceUse"]["cacheHardLimitBytes"] != SCHEMA9_THRESHOLDS["cacheBytesMaximum"]:
+        fail("schema-9 resourceUse cache hard limit mismatch")
+    evidence_root = path.parent / report["evidenceDirectory"]
+    table = schema9_case_table()
+    oracle_linkers = schema9_check_toolchain(report, evidence_root)
+    replay_compiler = schema9_check_replay(report, evidence_root)
+    candidate_path = evidence_root / report["candidateBinary"]["path"]
+    profiles = schema9_check_profiles(report["workload"], evidence_root, table,
+                                      replay_compiler, report["hardware"]["target"])
+    decision_map, artifact_map, count_map = schema9_check_decisions(
+        report, evidence_root, candidate_path)
+
+    sources = {
+        case: next(item for item in report["workload"]["sources"]
+                   if item["path"] == table[case]["source"])
+        for case in SCHEMA9_CASES
+    }
+    release_expected = {row["case"]: row["digest"]
+                        for row in report["workload"]["expectedResults"]}
+    case_groups = [
+        ("cases", SCHEMA9_MAIN_CASES, SCHEMA9_MAIN_CHANNELS,
+         "rotating-six-channel-v1", "release-held-out", report["workload"]["releaseHeldOut"],
+         True),
+        ("validationCases", SCHEMA9_CASES, SCHEMA9_VALIDATION_CHANNELS,
+         "rotating-three-channel-v1", "validation", report["workload"]["validation"], False),
+        ("domainCases", SCHEMA9_DOMAIN_CASES, SCHEMA9_DOMAIN_CHANNELS,
+         "rotating-three-channel-v1", "domain-release-held-out",
+         report["workload"]["releaseHeldOut"], False),
+    ]
+    measured = {}
+    for key, expected_cases, channels, protocol, split, input_file, eligible in case_groups:
+        rows = report[key]
+        if (not isinstance(rows, list) or len(rows) != len(expected_cases)
+                or [row.get("case") for row in rows] != sorted(expected_cases)):
+            fail(f"schema-9 {key} case set/order mismatch")
+        for row in rows:
+            case = row["case"]
+            expected_digest = (table[case]["validationDigest"] if split == "validation"
+                               else release_expected[case])
+            schema9_case_record(
+                row, evidence_root, f"schema-9 {key}.{case}", case=case,
+                channels=channels, protocol=protocol, split=split,
+                candidate_sha=report["candidateSha"], source=sources[case],
+                input_file=input_file, decision=decision_map[case],
+                tuned_artifacts=artifact_map[case], expected_digest=expected_digest,
+                eligible=eligible,
+            )
+            measured[(key, case)] = row
+
+    expected_executables = {
+        "tuned": report["candidateBinary"], "v014Ordinary": report["candidateBinary"],
+        "v013Ordinary": report["v013ReplayBundle"]["compiler"],
+        "v013Pgo": report["v013ReplayBundle"]["compiler"],
+        "cSimd": report["toolchain"]["clangBinary"],
+        "rustSimd": report["toolchain"]["rustCompiler"],
+        "genericC": report["toolchain"]["clangBinary"],
+        "genericRust": report["toolchain"]["rustCompiler"],
+    }
+    with (REPO / report["workload"]["oracleManifest"]["path"]).open("rb") as source:
+        oracle = tomllib.load(source)
+    oracle_index = {row["name"]: row["oracle_case"] for row in oracle.get("case", [])}
+    manifests = {
+        case: next(item for item in report["workload"]["tuneManifests"]
+                   if pathlib.PurePosixPath(item["path"]).name == table[case]["manifest"])
+        for case in SCHEMA9_CASES
+    }
+    for row in [*report["cases"], *report["validationCases"], *report["domainCases"]]:
+        for channel, build in row["buildCommands"].items():
+            if build["command"]["executable"] != expected_executables[channel]:
+                fail(f"schema-9 {row['case']} {channel} executable foreign key mismatch")
+            argv = build["command"]["argv"]
+            if channel in {"tuned", "v014Ordinary", "v013Ordinary", "v013Pgo"}:
+                schema9_check_ck_environment(
+                    build["command"], evidence_root, report,
+                    f"schema-9 {row['case']}.{channel}.environment")
+            elif build["command"]["environment"]:
+                fail(f"schema-9 {row['case']} {channel} oracle environment is not empty")
+            if channel == "v013Pgo":
+                if "--pgo-use" not in argv or profiles[row["case"]]["file"] not in build["command"]["inputs"]:
+                    fail(f"schema-9 {row['case']} v013Pgo profile foreign key mismatch")
+            elif "--pgo-use" in argv:
+                fail(f"schema-9 {row['case']} unexpected PGO input in {channel}")
+            command_source = (report["workload"]["cOracle"] if channel in {"cSimd", "genericC"}
+                              else report["workload"]["rustOracle"]
+                              if channel in {"rustSimd", "genericRust"}
+                              else sources[row["case"]])
+            schema9_check_channel_template(
+                build, evidence_root, f"schema-9 {row['case']}.{channel}", channel,
+                command_source,
+                manifest=(report["workload"]["oracleManifest"]
+                          if channel in {"cSimd", "genericC", "rustSimd", "genericRust"}
+                          else manifests[row["case"]]),
+                profile=profiles[row["case"]]["file"], oracle=oracle,
+                case_index=oracle_index.get(row["case"]), case_name=row["case"],
+                oracle_linkers=oracle_linkers,
+            )
+
+    sessions = schema9_check_determinism_and_resources(
+        report, evidence_root, candidate_path, decision_map, artifact_map, count_map)
+    artifact_ratios, size_map = schema9_check_artifact_sizes(report, evidence_root, artifact_map)
+    for case in SCHEMA9_CASES:
+        if sessions[case]["ordinaryBuild"] != size_map[case]["baselineBuild"]:
+            fail(f"schema-9 {case} ordinary resource/artifact build mismatch")
+    tune_medians = schema9_check_compile_rows(
+        report["tuneUseCompileTime"], evidence_root, "schema-9 tuneUseCompileTime",
+        report, "tuneUse", "v014Ordinary")
+    ordinary_medians = schema9_check_compile_rows(
+        report["ordinaryCompileRegression"], evidence_root,
+        "schema-9 ordinaryCompileRegression", report,
+        "v014Ordinary", "v013Ordinary")
+    archive_candidate, archive_replay = schema9_check_archive(report["archiveSize"], evidence_root,
+                                                              report)
+
+    thresholds = report["recipe"]["thresholds"]
+    main = report["cases"]
+    tuned_times = [row["mediansNs"]["tuned"] for row in main]
+    baseline_times = [min(row["mediansNs"]["v013Ordinary"], row["mediansNs"]["v013Pgo"])
+                      for row in main]
+    if not schema9_ratio_le(tuned_times, baseline_times,
+                            thresholds["heldOutGeomeanMaximumNum"],
+                            thresholds["heldOutGeomeanMaximumDen"]):
+        fail("schema-9 held-out geometric performance gate failed")
+    for row, baseline in zip(main, baseline_times, strict=True):
+        if not schema9_ratio_le([row["mediansNs"]["tuned"]], [baseline],
+                                thresholds["validationOrHeldOutMaximumNum"],
+                                thresholds["validationOrHeldOutMaximumDen"]):
+            fail(f"schema-9 {row['case']} held-out slowdown gate failed")
+        if decision_map[row["case"]]["selectionReason"] == "tuned" and not schema9_ratio_le(
+                [row["mediansNs"]["tuned"]], [baseline],
+                thresholds["selectedCaseMaximumNum"], thresholds["selectedCaseMaximumDen"]):
+            fail(f"schema-9 {row['case']} selected-case gain gate failed")
+    for row in report["validationCases"]:
+        baseline = min(row["mediansNs"]["v013Ordinary"], row["mediansNs"]["v013Pgo"])
+        if not schema9_ratio_le([row["mediansNs"]["tuned"]], [baseline],
+                                thresholds["validationOrHeldOutMaximumNum"],
+                                thresholds["validationOrHeldOutMaximumDen"]):
+            fail(f"schema-9 {row['case']} validation slowdown gate failed")
+    oracle_baselines = [min(row["mediansNs"]["cSimd"], row["mediansNs"]["rustSimd"])
+                        for row in main]
+    if not schema9_throughput_ge(
+            tuned_times, oracle_baselines, thresholds["oracleGeomeanThroughputMinimumNum"],
+            thresholds["oracleGeomeanThroughputMinimumDen"]):
+        fail("schema-9 explicit-SIMD oracle geometric gate failed")
+    for row, baseline in zip(main, oracle_baselines, strict=True):
+        if not schema9_throughput_ge(
+                [row["mediansNs"]["tuned"]], [baseline],
+                thresholds["oracleCaseThroughputMinimumNum"],
+                thresholds["oracleCaseThroughputMinimumDen"]):
+            fail(f"schema-9 {row['case']} explicit-SIMD oracle gate failed")
+    domain_tuned = [row["mediansNs"]["tuned"] for row in report["domainCases"]]
+    domain_baselines = [min(row["mediansNs"]["genericC"], row["mediansNs"]["genericRust"])
+                        for row in report["domainCases"]]
+    if not schema9_throughput_ge(
+            domain_tuned, domain_baselines, thresholds["domainThroughputMinimumNum"],
+            thresholds["domainThroughputMinimumDen"], strict=True):
+        fail("schema-9 domain throughput gate failed")
+    if any(not schema9_ratio_le([left], [right], thresholds["artifactMaximumNum"],
+                                thresholds["artifactMaximumDen"])
+           for left, right in artifact_ratios):
+        fail("schema-9 artifact size gate failed")
+    if not schema9_ratio_le([archive_candidate], [archive_replay],
+                            thresholds["archiveMaximumNum"], thresholds["archiveMaximumDen"]):
+        fail("schema-9 archive size gate failed")
+    compile_gates = [
+        (tune_medians, "tuneUse", "v014Ordinary", "tuneUseCompileGeomeanMaximumNum",
+         "tuneUseCompileGeomeanMaximumDen", "tuneUseCompileCaseMaximumNum",
+         "tuneUseCompileCaseMaximumDen", "tune-use"),
+        (ordinary_medians, "v014Ordinary", "v013Ordinary",
+         "ordinaryCompileGeomeanMaximumNum", "ordinaryCompileGeomeanMaximumDen",
+         "ordinaryCompileCaseMaximumNum", "ordinaryCompileCaseMaximumDen", "ordinary"),
+    ]
+    for medians, left, right, geo_num, geo_den, case_num, case_den, label in compile_gates:
+        if not schema9_ratio_le(medians[left], medians[right], thresholds[geo_num], thresholds[geo_den]):
+            fail(f"schema-9 {label} compile geometric gate failed")
+        if any(not schema9_ratio_le([a], [b], thresholds[case_num], thresholds[case_den])
+               for a, b in zip(medians[left], medians[right], strict=True)):
+            fail(f"schema-9 {label} compile per-case gate failed")
+    for case, session in sessions.items():
+        if session["wallMs"] > thresholds["standardWallMsMaximum"]:
+            fail(f"schema-9 {case} tuning wall budget failed")
+        if not schema9_ratio_le(
+                [session["peakRssBytes"]], [session["ordinaryPeakRssBytes"]],
+                thresholds["peakRssMaximumNum"], thresholds["peakRssMaximumDen"]):
+            fail(f"schema-9 {case} peak RSS gate failed")
+        if session["cacheBytes"] > thresholds["cacheBytesMaximum"]:
+            fail(f"schema-9 {case} cache size gate failed")
+
+    audit = subprocess.run(
+        [sys.executable, "-B", REPO / "scripts/audit-performance-oracles.py", "--tune",
+         "--clang", os.environ["CKC_CLANG_ORACLE"]], cwd=REPO, env=os.environ.copy(),
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+    )
+    if audit.returncode:
+        fail(f"schema-9 independent oracle audit failed: {audit.stdout[-3000:]}")
+    schema9_check_evidence_closure(report, evidence_root)
 
 
 def check(path: pathlib.Path, baseline_manifest: pathlib.Path, *, schema_only=False,
@@ -1503,7 +2816,9 @@ def main():
             args.results, args.baseline, schema_only=args.schema_only, schema=args.schema,
             compat_candidate=args.compat_candidate, candidate_sha=args.candidate_sha,
         )
-    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
+    except (OSError, ValueError, KeyError, IndexError, StopIteration, TypeError,
+            OverflowError, subprocess.SubprocessError, json.JSONDecodeError,
+            tomllib.TOMLDecodeError) as error:
         print(f"native performance gate failed: {error}", file=sys.stderr)
         return 1
     print("native performance gate passed")

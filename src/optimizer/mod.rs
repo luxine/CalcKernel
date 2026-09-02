@@ -25,7 +25,7 @@ mod verify;
 pub use analysis::*;
 pub use audit::*;
 pub use facts::*;
-pub use kir_passes::{LoopSimplifyResult, canonicalize_kir_loops};
+pub use kir_passes::{InlineTuningCandidate, LoopSimplifyResult, canonicalize_kir_loops};
 pub use kir_pipeline::*;
 pub use multiversion::*;
 pub use pgo::*;

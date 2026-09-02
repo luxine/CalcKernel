@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     BlockId, ContractInstanceSource, InstructionId, KirBlock, KirBlockParam, KirEdge,
@@ -16,6 +16,15 @@ use super::{
 
 const INLINE_CALLEE_BUDGET: usize = 32;
 const INLINE_MODULE_BUDGET: u32 = 128;
+
+/// Stable source-side identity of one direct call that the existing
+/// effect-aware inliner can legally materialize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InlineTuningCandidate {
+    pub caller: crate::FunctionId,
+    pub call: InstructionId,
+    pub callee: crate::FunctionId,
+}
 
 #[derive(Debug, Clone)]
 struct InlineCandidate {
@@ -121,10 +130,16 @@ pub(crate) fn run_effect_aware_inline(
 ) -> u32 {
     let mut allocator = IdAllocator::for_module(module);
     let mut inlined = 0_u32;
+    let skipped = BTreeSet::new();
     loop {
-        let Some(candidate) =
-            find_candidate(module, contracts.as_ref(), eliminations, inlined, pgo)
-        else {
+        let Some(candidate) = find_candidate(
+            module,
+            contracts.as_ref(),
+            eliminations,
+            inlined,
+            pgo,
+            &skipped,
+        ) else {
             break;
         };
         if !inline_candidate(
@@ -142,12 +157,117 @@ pub(crate) fn run_effect_aware_inline(
     inlined
 }
 
+/// Enumerates every legal direct-call inline site without mutating the input.
+pub(crate) fn discover_tuning_inline_candidates(
+    module: &KirModule,
+    contracts: Option<&ContractFactSet>,
+    eliminations: &[KirGuardElimination],
+) -> Vec<InlineTuningCandidate> {
+    let mut skipped = BTreeSet::new();
+    let mut candidates = Vec::new();
+    while candidates.len() < usize::try_from(INLINE_MODULE_BUDGET).unwrap_or(usize::MAX) {
+        let Some(candidate) = find_candidate(module, contracts, eliminations, 0, None, &skipped)
+        else {
+            break;
+        };
+        let call = module.functions[candidate.caller_index].blocks[candidate.block_index]
+            .instructions[candidate.call_index]
+            .id;
+        let identity = InlineTuningCandidate {
+            caller: module.functions[candidate.caller_index].id,
+            call,
+            callee: candidate.callee.id,
+        };
+        if !skipped.insert((identity.caller, identity.call)) {
+            break;
+        }
+        candidates.push(identity);
+    }
+    candidates
+}
+
+/// Materializes exactly one already-enumerated inline alternative and rebuilds
+/// the verified state. This never applies a second profitable call implicitly.
+pub(crate) fn materialize_tuning_inline(
+    pre_state: &super::super::KirVerifiedProgramState,
+    requested: InlineTuningCandidate,
+) -> Result<super::super::KirVerifiedProgramState, String> {
+    let enumerated = discover_tuning_inline_candidates(
+        pre_state.module(),
+        pre_state.contract_facts(),
+        pre_state.eliminated_guards(),
+    );
+    let clone_number = enumerated
+        .iter()
+        .position(|candidate| *candidate == requested)
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or_else(|| "inline tuning candidate is stale or illegal".to_string())?;
+
+    let mut module = pre_state.module().clone();
+    let mut contracts = pre_state.contract_facts().cloned();
+    let mut skipped = BTreeSet::new();
+    let selected = loop {
+        let candidate = find_candidate(
+            &module,
+            contracts.as_ref(),
+            pre_state.eliminated_guards(),
+            0,
+            None,
+            &skipped,
+        )
+        .ok_or_else(|| "inline tuning candidate disappeared during replay".to_string())?;
+        let caller = module.functions[candidate.caller_index].id;
+        let call = module.functions[candidate.caller_index].blocks[candidate.block_index]
+            .instructions[candidate.call_index]
+            .id;
+        if (caller, call, candidate.callee.id)
+            == (requested.caller, requested.call, requested.callee)
+        {
+            break candidate;
+        }
+        skipped.insert((caller, call));
+    };
+    let mut allocator = IdAllocator::for_module(&module);
+    if !inline_candidate(
+        &mut module,
+        &mut contracts,
+        pre_state.eliminated_guards(),
+        selected,
+        &mut allocator,
+        clone_number,
+    ) {
+        return Err("inline tuning candidate failed materialization".to_string());
+    }
+    super::run_cleanup(&mut module);
+    super::super::KirVerifiedProgramState::from_parts(
+        module,
+        contracts,
+        pre_state.proofs().clone(),
+        pre_state.eliminated_guards().to_vec(),
+        pre_state.evidence_generation(),
+    )
+}
+
+/// Re-enumerates legality and compares the entire verified post-state.
+pub(crate) fn check_tuning_inline_independently(
+    pre_state: &super::super::KirVerifiedProgramState,
+    trial: &super::super::KirVerifiedProgramState,
+    requested: InlineTuningCandidate,
+) -> Result<(), String> {
+    let expected = materialize_tuning_inline(pre_state, requested)?;
+    if &expected != trial {
+        return Err("inline tuning post-state is not the exact checked rewrite".to_string());
+    }
+    Ok(())
+}
+
 fn find_candidate(
     module: &KirModule,
     contracts: Option<&ContractFactSet>,
     eliminations: &[KirGuardElimination],
     already_inlined: u32,
     pgo: Option<&crate::CkPgoOptimizerPlan>,
+    skipped: &BTreeSet<(crate::FunctionId, InstructionId)>,
 ) -> Option<InlineCandidate> {
     if already_inlined >= INLINE_MODULE_BUDGET {
         return None;
@@ -155,6 +275,9 @@ fn find_candidate(
     for (caller_index, caller) in module.functions.iter().enumerate() {
         for (block_index, block) in caller.blocks.iter().enumerate() {
             for (call_index, instruction) in block.instructions.iter().enumerate() {
+                if skipped.contains(&(caller.id, instruction.id)) {
+                    continue;
+                }
                 let KirInstructionKind::Call { function_name, .. } = &instruction.kind else {
                     continue;
                 };

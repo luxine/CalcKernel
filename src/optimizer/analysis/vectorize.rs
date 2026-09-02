@@ -88,6 +88,22 @@ pub struct VectorizationDiscovery {
 pub fn discover_vectorization_candidates(
     state: &KirVerifiedProgramState,
 ) -> VectorizationDiscovery {
+    discover_vectorization_candidates_internal(state, true)
+}
+
+/// Discovers legal measurement-owned candidates without applying the ordinary
+/// O3 static-profitability cutoff. All target, proof, and shape checks remain.
+#[must_use]
+pub fn discover_tuning_vectorization_candidates(
+    state: &KirVerifiedProgramState,
+) -> VectorizationDiscovery {
+    discover_vectorization_candidates_internal(state, false)
+}
+
+fn discover_vectorization_candidates_internal(
+    state: &KirVerifiedProgramState,
+    require_static_profitability: bool,
+) -> VectorizationDiscovery {
     let mut discovery = VectorizationDiscovery::default();
     let module = state.module();
     if !matches!(
@@ -127,7 +143,7 @@ pub fn discover_vectorization_candidates(
     for function in &module.functions {
         let loops = analyze_canonical_loops_for_discovery(function);
         for descriptor in loops.loops.iter().filter(|loop_| loop_.innermost) {
-            match discover_one(state, function, descriptor) {
+            match discover_one(state, function, descriptor, require_static_profitability) {
                 Ok(candidates) => discovery.candidates.extend(candidates),
                 Err(reason) => discovery.fallbacks.push(VectorizationFallback {
                     function: function.id,
@@ -154,6 +170,7 @@ fn discover_one(
     state: &KirVerifiedProgramState,
     function: &crate::KirFunction,
     descriptor: &CanonicalLoopDescriptor,
+    require_static_profitability: bool,
 ) -> Result<Vec<VectorizationCandidate>, String> {
     let shape = simple_shape(function, descriptor)
         .ok_or_else(|| "unsupported-vector-loop-shape".to_string())?;
@@ -478,6 +495,7 @@ fn discover_one(
                 &accesses.accesses,
                 needs_splat,
                 version_predicate.as_ref(),
+                require_static_profitability,
             ) {
                 Ok(result) => result,
                 Err(error) if error == "vector-profitability-threshold-not-met" => {
@@ -525,6 +543,7 @@ fn discover_one(
     Ok(candidates)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn candidate_cost_and_threshold(
     profile: &crate::KirTargetProfile,
     descriptor: &CanonicalLoopDescriptor,
@@ -533,6 +552,7 @@ fn candidate_cost_and_threshold(
     accesses: &[AffineMemoryAccess],
     needs_splat: bool,
     version_predicate: Option<&super::TotalVersionPredicate>,
+    require_static_profitability: bool,
 ) -> Result<(KirCostEstimate, u32), String> {
     let (vf, uf) = shape;
     let lanes = u8::try_from(vf).map_err(|_| "vector VF exceeds cost schema".to_string())?;
@@ -705,24 +725,31 @@ fn candidate_cost_and_threshold(
     )?;
     let chunk_width = u32::from(vf).saturating_mul(u32::from(uf));
     let scalar_chunk = scalar_iteration.saturating_mul(chunk_width);
-    if u64::from(vector_chunk).saturating_mul(100) >= u64::from(scalar_chunk).saturating_mul(80) {
+    if require_static_profitability
+        && u64::from(vector_chunk).saturating_mul(100) >= u64::from(scalar_chunk).saturating_mul(80)
+    {
         return Err("vector-profitability-threshold-not-met".to_string());
     }
-    let minimum_trip = (2_u32..=1024)
-        .map(|chunks| chunks.saturating_mul(chunk_width))
-        .find(|trip| {
-            (0..chunk_width).all(|tail| {
-                let iterations = trip.saturating_add(tail);
-                let scalar = scalar_iteration.saturating_mul(iterations);
-                let transformed = vector_chunk
-                    .saturating_mul(*trip / chunk_width)
-                    .saturating_add(scalar_iteration.saturating_mul(tail))
-                    .saturating_add(predicate_cost)
-                    .saturating_add(epilogue.saturating_mul(u32::from(tail != 0)));
-                u64::from(transformed).saturating_mul(100) <= u64::from(scalar).saturating_mul(80)
+    let minimum_trip = if require_static_profitability {
+        (2_u32..=1024)
+            .map(|chunks| chunks.saturating_mul(chunk_width))
+            .find(|trip| {
+                (0..chunk_width).all(|tail| {
+                    let iterations = trip.saturating_add(tail);
+                    let scalar = scalar_iteration.saturating_mul(iterations);
+                    let transformed = vector_chunk
+                        .saturating_mul(*trip / chunk_width)
+                        .saturating_add(scalar_iteration.saturating_mul(tail))
+                        .saturating_add(predicate_cost)
+                        .saturating_add(epilogue.saturating_mul(u32::from(tail != 0)));
+                    u64::from(transformed).saturating_mul(100)
+                        <= u64::from(scalar).saturating_mul(80)
+                })
             })
-        })
-        .ok_or_else(|| "vector-profitability-threshold-not-met".to_string())?;
+            .ok_or_else(|| "vector-profitability-threshold-not-met".to_string())?
+    } else {
+        chunk_width.saturating_mul(2)
+    };
     if let LoopTripCount::Exact { iterations } = descriptor.trip_count
         && (iterations < u64::from(minimum_trip) || iterations > u64::from(u32::MAX))
     {

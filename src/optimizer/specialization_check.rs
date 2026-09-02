@@ -26,6 +26,27 @@ pub fn check_specialization_plan_independently(
     plan: &SpecializationPlan,
     charge: &CandidateBudgetCharge,
 ) -> Result<(), TransactionCheckError> {
+    check_specialization_plan(pre_state, trial, plan, charge, true)
+}
+
+/// Checks the same closed specialization transaction for offline tuning while
+/// deliberately leaving profitability to measurement and selection.
+pub fn check_tuned_specialization_plan_independently(
+    pre_state: &KirVerifiedProgramState,
+    trial: &KirVerifiedProgramState,
+    plan: &SpecializationPlan,
+    charge: &CandidateBudgetCharge,
+) -> Result<(), TransactionCheckError> {
+    check_specialization_plan(pre_state, trial, plan, charge, false)
+}
+
+fn check_specialization_plan(
+    pre_state: &KirVerifiedProgramState,
+    trial: &KirVerifiedProgramState,
+    plan: &SpecializationPlan,
+    charge: &CandidateBudgetCharge,
+    require_profitability: bool,
+) -> Result<(), TransactionCheckError> {
     let malformed = |message: &str| Err(TransactionCheckError::compiler(message));
     if plan.pre_state.kir_digest != pre_state.kir_digest()
         || plan.pre_state.profile_digest != pre_state.module().profile.digest_hex()
@@ -127,7 +148,8 @@ pub fn check_specialization_plan_independently(
     {
         return malformed("specialization scalar cost record is false");
     }
-    if !specialization_profitability_threshold(original_units, clone_units) {
+    if require_profitability && !specialization_profitability_threshold(original_units, clone_units)
+    {
         return Err(TransactionCheckError::reject(
             "specialization-profitability-threshold-not-met",
         ));

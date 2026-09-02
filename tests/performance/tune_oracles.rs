@@ -79,7 +79,7 @@ fn tune_archive_producer_is_directly_executable_and_deterministic() {
     let second = temporary.join("second.tar.gz");
     for output in [&first, &second] {
         let status = Command::new(&producer)
-            .current_dir(&root)
+            .current_dir(root)
             .args(["--compiler"])
             .arg(&compiler)
             .args([
@@ -96,4 +96,73 @@ fn tune_archive_producer_is_directly_executable_and_deterministic() {
     }
     assert_eq!(fs::read(first).unwrap(), fs::read(second).unwrap());
     fs::remove_dir_all(temporary).expect("remove temporary archive directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn tune_performance_runner_times_the_native_batch_and_returns_exact_correctness() {
+    let root = repo_root();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let temporary = root
+        .join("target/ckc-perf/tests")
+        .join(format!("native-runner-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(&temporary).expect("temporary runner directory");
+    let library = temporary.join(if cfg!(target_os = "macos") {
+        "oracle.dylib"
+    } else {
+        "oracle.so"
+    });
+    let compiled = Command::new("cc")
+        .current_dir(root)
+        .args([
+            "-std=c11",
+            "-O3",
+            "-fno-fast-math",
+            "-ffp-contract=off",
+            "-DCK_TUNE_GENERIC=1",
+            "-DCK_TUNE_ORACLE_CASE=7",
+            "-shared",
+            "-fPIC",
+            "benches/oracles/tune/c/tune_oracle.c",
+            "-o",
+        ])
+        .arg(&library)
+        .status()
+        .expect("compile performance runner probe");
+    assert!(compiled.success());
+    let output = Command::new(env!("CARGO_BIN_EXE_ckc-tune-runner"))
+        .env_clear()
+        .current_dir(root)
+        .args(["--ck-perf"])
+        .arg(&library)
+        .args([
+            "contract-fixed-length",
+            "contract-fixed-length.release",
+            "4000",
+            "83",
+            "13",
+            "1000",
+        ])
+        .output()
+        .expect("run native performance batch");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("UTF-8 runner receipt");
+    let fields = text.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 7);
+    assert_eq!(fields[0], "CKPERF/1");
+    assert_eq!(fields[1], "contract-fixed-length.release");
+    assert_eq!(&fields[2..5], &["83", "1000", "1000"]);
+    assert!(fields[5].parse::<u64>().is_ok_and(|elapsed| elapsed > 0));
+    assert_eq!(
+        fields[6],
+        "843434df40c89d2af135810472bd157e63e4351d07c8f5bb5b918af54104a2c3"
+    );
+    fs::remove_dir_all(temporary).expect("remove temporary runner directory");
 }

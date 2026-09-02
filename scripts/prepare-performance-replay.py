@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an independently built pinned V0.12, V0.11, or retained V0.10 replay bundle."""
+"""Prepare an independently built pinned V0.13 through retained V0.10 replay bundle."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import gzip
 import hashlib
 import io
+import json
 import os
 import pathlib
 import platform
@@ -17,6 +18,8 @@ import sys
 import tarfile
 import tomllib
 
+V013_COMMIT = "94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05"
+V013_MANIFEST_SHA256 = "1150d52a3942371098dc07553dc417889f4db5dfa2331200f3d90179f2f66b21"
 V012_COMMIT = "1c2596da11242704cc6d875e969fc45cf58ea21d"
 V012_MANIFEST_SHA256 = "4f96c75f28f92dfb493ef944bca42b14a096363623e7d22b7a7390bb2d02bb13"
 BASELINE_COMMIT = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
@@ -50,6 +53,11 @@ V012_SOURCES = {
     "memory-bound": "benches/oracles/fixtures/zip_u32.ck",
     "compute-bound": "benches/fixtures/pgo/compute_bound.ck",
 }
+V013_SOURCES = {
+    **V012_SOURCES,
+    "contract-noalias": "benches/oracles/fixtures/contract_noalias.ck",
+    "contract-fixed-length": "benches/oracles/fixtures/contract_fixed_length.ck",
+}
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -58,6 +66,17 @@ def sha256_file(path: pathlib.Path) -> str:
 
 
 def baseline_identity(version: str) -> dict:
+    if version == "0.13":
+        return {
+            "version": version,
+            "commit": V013_COMMIT,
+            "manifest": "v0_13_replay.toml",
+            "manifestSha256": V013_MANIFEST_SHA256,
+            "compiler": "ckc-v013",
+            "header": "ckc-v013-performance-replay",
+            "runtimeAbi": "2",
+            "adapters": (),
+        }
     if version == "0.12":
         return {
             "version": version,
@@ -108,8 +127,9 @@ def validate_pins(repo: pathlib.Path, version: str = "0.12") -> dict:
         if sha256_file(baseline / name) != digest:
             raise ValueError(f"pinned replay adapter has changed: {name}")
     source_digests = manifest.get("source_digests", manifest)
-    if version == "0.12":
-        for case, relative in V012_SOURCES.items():
+    if version in {"0.12", "0.13"}:
+        sources = V013_SOURCES if version == "0.13" else V012_SOURCES
+        for case, relative in sources.items():
             if sha256_file(repo / relative) != source_digests.get(case):
                 raise ValueError(f"pinned replay CK source has changed: {case}")
         return manifest
@@ -151,7 +171,7 @@ def validate_compiler_output(
     required = set(expected) | {"Code generator", "ORC object layer"}
     if version in {"0.10", "0.11"} and set(fields) != required:
         raise ValueError("incomplete or unknown verbose compiler identity")
-    if version == "0.12" and not required.issubset(fields):
+    if version in {"0.12", "0.13"} and not required.issubset(fields):
         raise ValueError("incomplete verbose compiler identity")
     for field, value in expected.items():
         if fields[field] != value:
@@ -196,7 +216,8 @@ def host_identity() -> tuple[str, str, str]:
     return target, triple, ".so" if os_name == "linux" else ".dylib"
 
 
-def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> None:
+def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
+            with_performance: bool = False) -> None:
     repo = repo.resolve()
     out = out.absolute()
     if os.path.lexists(out):
@@ -226,7 +247,7 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> Non
     source = out / ".source"
 
     with (out / "preparation.log").open("w", encoding="utf-8", newline="\n") as log:
-        def run(command, cwd=repo) -> str:
+        def run(command, cwd=repo, environment=None) -> str:
             command = [str(arg) for arg in command]
             description = shlex.join(command)
             print(f"replay preparation: {description}", flush=True)
@@ -234,7 +255,7 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> Non
             log.flush()
             result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     encoding="utf-8", errors="replace", check=False,
-                                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                                    env={**(environment or os.environ), "GIT_TERMINAL_PROMPT": "0"})
             log.write(result.stdout)
             log.flush()
             if result.returncode:
@@ -279,14 +300,14 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> Non
         compiler_digest = sha256_file(compiler)
         shutil.copy2(compiler, out / identity["compiler"])
         artifacts = []
-        if version == "0.12":
-            archive = out / "ckc-v012-distribution.tar.gz"
+        if version in {"0.12", "0.13"}:
+            archive = out / f"ckc-v{version.replace('.', '')}-distribution.tar.gz"
             deterministic_archive(
                 archive,
                 [
-                    ("ckc-v0.12/ckc", out / identity["compiler"]),
-                    ("ckc-v0.12/LICENSE", source / "LICENSE"),
-                    ("ckc-v0.12/THIRD_PARTY_NOTICES.md", source / "THIRD_PARTY_NOTICES.md"),
+                    (f"ckc-v{version}/ckc", out / identity["compiler"]),
+                    (f"ckc-v{version}/LICENSE", source / "LICENSE"),
+                    (f"ckc-v{version}/THIRD_PARTY_NOTICES.md", source / "THIRD_PARTY_NOTICES.md"),
                 ],
             )
         else:
@@ -304,6 +325,78 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> Non
                     if not library.is_file() or library.is_symlink() or library.stat().st_size == 0:
                         raise ValueError(f"baseline did not emit a nonempty library: {filename}")
                     artifacts.append((mode, case, filename, str(library.stat().st_size), sha256_file(library)))
+        historical = []
+        if with_performance:
+            if version != "0.13":
+                raise ValueError("--with-performance is defined only for the v0.13 replay")
+            required = [
+                "CKC_V012_RUNTIME_BUNDLE", "CKC_V011_RUNTIME_BUNDLE",
+                "CKC_V010_RUNTIME_BUNDLE", "CKC_LLVM_PREFIX", "CKC_CLANG_ORACLE",
+            ]
+            missing = [name for name in required if not os.environ.get(name)]
+            if missing:
+                raise ValueError(
+                    "historical v0.13 performance replay requires " + ", ".join(missing)
+                )
+            replay_environment = {
+                **os.environ,
+                "CKC_CANDIDATE_COMPILER": str(compiler),
+                "GITHUB_SHA": identity["commit"],
+            }
+            run([
+                "cargo", "+1.90.0", "bench", "--features", "native-toolchain",
+                "--bench", "ckc_perf", "--", "--case", "proof", "--task", "check",
+                "--cpu", "baseline",
+            ], source, replay_environment)
+            run([
+                "cargo", "+1.90.0", "bench", "--features", "native-toolchain",
+                "--bench", "pgo_perf", "--", "--task", "collect", "--out",
+                "target/ckc-perf/v0.13-results.json",
+            ], source, replay_environment)
+            historical_report = source / "target/ckc-perf/v0.13-results.json"
+            decoded = json.loads(historical_report.read_text(encoding="utf-8"))
+            evidence_name = decoded.get("evidenceDirectory")
+            if not isinstance(evidence_name, str) or "/" in evidence_name or "\\" in evidence_name:
+                raise ValueError("historical v0.13 report has an unsafe evidence directory")
+            historical_evidence = historical_report.parent / evidence_name
+            if not historical_evidence.is_dir() or historical_evidence.is_symlink():
+                raise ValueError("historical v0.13 evidence directory is missing or indirect")
+            run([
+                "python3", "-B", "scripts/check-native-performance.py",
+                historical_report,
+            ], source, replay_environment)
+            destination = out / "schema8"
+            destination.mkdir()
+            shutil.copy2(historical_report, destination / "v0.13-results.json")
+            shutil.copy2(source / "scripts/check-native-performance.py",
+                         out / "check-native-performance-v013.py")
+            for entry in historical_evidence.rglob("*"):
+                if entry.is_symlink():
+                    raise ValueError("historical v0.13 evidence contains a symlink")
+                if entry.is_file():
+                    relative = entry.relative_to(historical_evidence)
+                    target_file = destination / evidence_name / relative
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(entry, target_file)
+                elif not entry.is_dir():
+                    raise ValueError("historical v0.13 evidence contains a special file")
+            for environment_name, retained_name in [
+                ("CKC_V012_RUNTIME_BUNDLE", "replay-v012"),
+                ("CKC_V011_RUNTIME_BUNDLE", "replay-v011"),
+                ("CKC_V010_RUNTIME_BUNDLE", "replay-v010"),
+            ]:
+                source_bundle = pathlib.Path(replay_environment[environment_name])
+                target_bundle = destination / retained_name
+                target_bundle.mkdir()
+                for entry in sorted(source_bundle.iterdir()):
+                    if entry.is_symlink():
+                        raise ValueError(f"{environment_name} contains a symlink")
+                    if entry.is_file():
+                        shutil.copy2(entry, target_bundle / entry.name)
+            historical = [
+                ("historicalReport", "schema8/v0.13-results.json"),
+                ("historicalChecker", "check-native-performance-v013.py"),
+            ]
         if source_state() != original_state:
             raise ValueError("baseline source changed after applying the exact approved adapters")
         validate_pins(repo, identity["version"])
@@ -319,32 +412,45 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> Non
             "compilerIdentity": f"calckernel {identity['version']}.0 ({identity['commit']})",
             "compilerSha256": compiler_digest,
             "compilerBytes": str((out / identity["compiler"]).stat().st_size),
-            "llvmVersion": "22.1.8", "target": target, "cpuPolicy": "baseline",
+            "llvmVersion": "22.1.8", "target": target,
+            "cpuPolicy": manifest.get("cpu_policy", "baseline"),
             "llvmComponentSha256": component_digest,
             "recipeSha256": recipe,
             "adapterSetSha256": named_digest((f"benches/baselines/{name}", digest) for name, digest in identity["adapters"]),
             "sourceDiffSha256": original_state[1],
             "baselineManifestSha256": identity["manifestSha256"],
         }
-        records = [f"{identity['header']}\t{2 if version == '0.12' else 1}"]
+        records = [f"{identity['header']}\t{3 if version == '0.13' else 2 if version == '0.12' else 1}"]
         records.extend(f"{name}\t{value}" for name, value in metadata.items())
         records.extend("artifact\t" + "\t".join(artifact) for artifact in artifacts)
-        if version == "0.12":
+        if version in {"0.12", "0.13"}:
             records.append(
-                "distributionArchive\tckc-v012-distribution.tar.gz\t"
+                f"distributionArchive\t{archive.name}\t"
                 f"{archive.stat().st_size}\t{sha256_file(archive)}"
             )
+        for kind, relative in historical:
+            retained = out / relative
+            records.append(
+                f"{kind}\t{relative}\t{retained.stat().st_size}\t{sha256_file(retained)}"
+            )
         (out / "replay.tsv").write_text("\n".join(records) + "\n", encoding="utf-8", newline="\n")
+    # The detached clone is owned build scratch, not replay evidence. Retaining it
+    # would make the supposedly closed bundle include Git internals and target data.
+    shutil.rmtree(source)
     print(f"Prepared pinned V{identity['version']} replay bundle: {out}", flush=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=pathlib.Path, help="new owned bundle output directory")
-    parser.add_argument("--baseline", choices=("0.12", "0.11", "0.10"), default="0.12")
+    parser.add_argument("--baseline", choices=("0.13", "0.12", "0.11", "0.10"), default="0.12")
+    parser.add_argument("--with-performance", action="store_true")
     args = parser.parse_args()
     try:
-        prepare(pathlib.Path(__file__).resolve().parents[1], args.out, args.baseline)
+        prepare(
+            pathlib.Path(__file__).resolve().parents[1], args.out, args.baseline,
+            args.with_performance,
+        )
     except (OSError, ValueError) as error:
         print(f"replay preparation failed: {error}", file=sys.stderr)
         return 1

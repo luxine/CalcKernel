@@ -32,18 +32,38 @@ pub(crate) fn canonical_expansion(expansion: &ExpansionRecord) -> Vec<u8> {
         5,
         &[match expansion.disposition {
             ExpansionDisposition::Legal => 1,
+            ExpansionDisposition::Illegal => 2,
             ExpansionDisposition::Duplicate => 3,
+            ExpansionDisposition::GrowthRejected => 4,
         }],
     );
-    field(&mut out, 6, &optional(Some(&expansion.result_plan_digest)));
-    field(&mut out, 7, &0u16.to_be_bytes());
+    field(
+        &mut out,
+        6,
+        &optional(
+            expansion
+                .result_plan_digest
+                .as_ref()
+                .map(<[u8; 32]>::as_slice),
+        ),
+    );
+    field(&mut out, 7, &expansion.diagnostic_code.to_be_bytes());
     for (tag, metric) in (8u16..=10).zip([
         expansion.whole_plan_dynamic,
         expansion.whole_plan_static,
         expansion.whole_plan_kir_bytes,
     ]) {
-        let metric = metric.to_be_bytes();
-        field(&mut out, tag, &optional(legal.then_some(metric.as_slice())));
+        let metric = metric.map(u64::to_be_bytes);
+        field(
+            &mut out,
+            tag,
+            &optional(
+                legal
+                    .then_some(metric.as_ref())
+                    .flatten()
+                    .map(<[u8; 8]>::as_slice),
+            ),
+        );
     }
     out
 }

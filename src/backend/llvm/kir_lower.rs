@@ -437,6 +437,16 @@ fn lower_native_kir_module_inner<'context>(
             }
             functions.insert(kir_function.name.clone(), handle);
         }
+        if let Some(layout) = &kir.tune_layout {
+            for requested in &layout.functions {
+                let function = kir
+                    .functions
+                    .iter()
+                    .find(|function| function.id == requested.function)
+                    .ok_or_else(|| lowering_error("tune layout names an unknown KIR function"))?;
+                module.preserve_function(require_function(&functions, &function.name)?)?;
+            }
+        }
         if let Some(entry) = &kir.entry {
             module.preserve_function(require_function(&functions, &entry.function_name)?)?;
         }

@@ -9,7 +9,9 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpansionDisposition {
     Legal,
+    Illegal,
     Duplicate,
+    GrowthRejected,
 }
 
 /// One zero-based deterministic expansion trace record.
@@ -20,10 +22,11 @@ pub struct ExpansionRecord {
     pub unit_id: [u8; 32],
     pub variant_id: [u8; 32],
     pub disposition: ExpansionDisposition,
-    pub result_plan_digest: [u8; 32],
-    pub whole_plan_dynamic: u64,
-    pub whole_plan_static: u64,
-    pub whole_plan_kir_bytes: u64,
+    pub result_plan_digest: Option<[u8; 32]>,
+    pub diagnostic_code: u16,
+    pub whole_plan_dynamic: Option<u64>,
+    pub whole_plan_static: Option<u64>,
+    pub whole_plan_kir_bytes: Option<u64>,
 }
 
 /// Complete deterministic search output before compilation.
@@ -63,7 +66,40 @@ pub fn run_deterministic_search(
                 }
                 let ordinal =
                     u32::try_from(expansions.len()).map_err(|_| TuningPlanError::ResourceLimit)?;
-                let derived = extend_plan(state, space, &parent, unit, variant.variant_id)?;
+                let derived = match extend_plan(state, space, &parent, unit, variant.variant_id) {
+                    Ok(derived) => derived,
+                    Err(TuningPlanError::IllegalAlternative(_)) => {
+                        expansions.push(ExpansionRecord {
+                            ordinal,
+                            parent_plan_digest: parent.digest,
+                            unit_id: unit.unit_id,
+                            variant_id: variant.variant_id,
+                            disposition: ExpansionDisposition::Illegal,
+                            result_plan_digest: None,
+                            diagnostic_code: 1,
+                            whole_plan_dynamic: None,
+                            whole_plan_static: None,
+                            whole_plan_kir_bytes: None,
+                        });
+                        continue;
+                    }
+                    Err(TuningPlanError::GrowthRejected(_)) => {
+                        expansions.push(ExpansionRecord {
+                            ordinal,
+                            parent_plan_digest: parent.digest,
+                            unit_id: unit.unit_id,
+                            variant_id: variant.variant_id,
+                            disposition: ExpansionDisposition::GrowthRejected,
+                            result_plan_digest: None,
+                            diagnostic_code: 2,
+                            whole_plan_dynamic: None,
+                            whole_plan_static: None,
+                            whole_plan_kir_bytes: None,
+                        });
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 let duplicate = pool.iter().any(|plan| plan.digest == derived.digest);
                 expansions.push(ExpansionRecord {
                     ordinal,
@@ -75,10 +111,11 @@ pub fn run_deterministic_search(
                     } else {
                         ExpansionDisposition::Legal
                     },
-                    result_plan_digest: derived.digest,
-                    whole_plan_dynamic: derived.predicted_dynamic,
-                    whole_plan_static: derived.predicted_static,
-                    whole_plan_kir_bytes: derived.kir_bytes,
+                    result_plan_digest: Some(derived.digest),
+                    diagnostic_code: 0,
+                    whole_plan_dynamic: Some(derived.predicted_dynamic),
+                    whole_plan_static: Some(derived.predicted_static),
+                    whole_plan_kir_bytes: Some(derived.kir_bytes),
                 });
                 if !duplicate {
                     pool.push(derived);

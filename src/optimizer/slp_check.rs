@@ -20,8 +20,27 @@ pub fn check_slp_plan_independently(
     plan: &SlpPlan,
     charge: &CandidateBudgetCharge,
 ) -> Result<(), TransactionCheckError> {
+    check_slp_plan_internal(pre_state, trial, plan, charge, true)
+}
+
+pub fn check_tuned_slp_plan_independently(
+    pre_state: &crate::KirVerifiedProgramState,
+    trial: &crate::KirVerifiedProgramState,
+    plan: &SlpPlan,
+    charge: &CandidateBudgetCharge,
+) -> Result<(), TransactionCheckError> {
+    check_slp_plan_internal(pre_state, trial, plan, charge, false)
+}
+
+fn check_slp_plan_internal(
+    pre_state: &crate::KirVerifiedProgramState,
+    trial: &crate::KirVerifiedProgramState,
+    plan: &SlpPlan,
+    charge: &CandidateBudgetCharge,
+    require_static_profitability: bool,
+) -> Result<(), TransactionCheckError> {
     if plan.memory.is_some() {
-        return check_memory_slp_plan(pre_state, trial, plan, charge);
+        return check_memory_slp_plan(pre_state, trial, plan, charge, require_static_profitability);
     }
     let malformed = |message: &str| Err(TransactionCheckError::compiler(message));
     let function_id = plan.pre_state.function;
@@ -151,7 +170,7 @@ pub fn check_slp_plan_independently(
     if plan.cost != expected_cost {
         return malformed("SLP cost decomposition is false");
     }
-    if !slp_profitability_threshold(expected_cost) {
+    if require_static_profitability && !slp_profitability_threshold(expected_cost) {
         return Err(TransactionCheckError::reject(
             "slp-profitability-threshold-not-met",
         ));
@@ -169,6 +188,7 @@ fn check_memory_slp_plan(
     trial: &crate::KirVerifiedProgramState,
     plan: &SlpPlan,
     charge: &CandidateBudgetCharge,
+    require_static_profitability: bool,
 ) -> Result<(), TransactionCheckError> {
     let malformed = |message: &str| Err(TransactionCheckError::compiler(message));
     let function_id = plan.pre_state.function;
@@ -491,7 +511,7 @@ fn check_memory_slp_plan(
     if plan.cost != expected_cost {
         return malformed("SLP memory cost decomposition is false");
     }
-    if !slp_profitability_threshold(expected_cost) {
+    if require_static_profitability && !slp_profitability_threshold(expected_cost) {
         return Err(TransactionCheckError::reject(
             "slp-profitability-threshold-not-met",
         ));

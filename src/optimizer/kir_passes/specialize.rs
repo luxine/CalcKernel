@@ -734,6 +734,7 @@ fn module_with_function(
         entry: None,
         structs: template.structs.clone(),
         functions: vec![function],
+        tune_layout: None,
     }
 }
 

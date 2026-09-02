@@ -253,6 +253,7 @@ fn vector_module() -> KirModule {
         profile: vector_profile(),
         entry: None,
         structs: Vec::new(),
+        tune_layout: None,
         functions: vec![KirFunction {
             id: FunctionId::from_index(0),
             name: "vector_kernel".to_string(),

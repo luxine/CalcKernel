@@ -2,17 +2,26 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
+use super::kir_passes::{
+    InlineTuningCandidate, check_tuning_inline_independently, discover_tuning_inline_candidates,
+    materialize_tuning_inline, run_check_elimination, run_cleanup, run_dead_code_elimination,
+    run_dead_store_elimination, run_gvn, run_induction_simplification,
+    run_integer_constant_folding, run_licm, run_load_forwarding, run_memory_ssa_refine,
+    run_sccp_range,
+};
 use super::{
     KirOptimizationLevel, KirVerifiedProgramState, SlpCandidate, SpecializationCandidate,
-    UnrollCandidate, VectorizationCandidate, check_slp_plan_independently,
-    check_specialization_plan_independently, check_unroll_plan_independently,
-    check_vectorization_trial_independently, discover_slp_candidates,
-    discover_specialization_candidates, discover_unroll_candidates,
-    discover_vectorization_candidates, prepare_slp_trial, prepare_specialization_trial,
-    prepare_unroll_trial, prepare_vectorization_trial, run_kir_pass_pipeline,
+    TransactionCheckError, UnrollCandidate, VectorizationCandidate,
+    check_tuned_slp_plan_independently, check_tuned_specialization_plan_independently,
+    check_tuned_vectorization_trial_independently, check_unroll_structure_independently,
+    discover_slp_candidates, discover_specialization_candidates,
+    discover_tuning_vectorization_candidates, discover_unroll_candidates, prepare_slp_trial,
+    prepare_specialization_trial, prepare_tuned_vectorization_trial, prepare_unroll_trial,
+    run_kir_pass_pipeline,
 };
 use crate::{
-    MirPrimitiveTypeName, MirType, SpecializationFactValue, print_kir_module,
+    BlockId, FunctionId, KirTuneFunctionLayout, KirTuneLayoutPlan, MirPrimitiveTypeName, MirType,
+    SpecializationFactValue, print_kir_module,
     tune::{TunePlanChoice, TuningPlan, plan_digest},
 };
 
@@ -69,6 +78,10 @@ pub struct TuneRootAnchor {
 /// Closed wire payload for one currently materializable CK alternative.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TuneAlternativePayload {
+    Inlining {
+        callee_symbol: String,
+        force_inline: bool,
+    },
     Specialization {
         bindings: Vec<TuneSpecializationBinding>,
         guarded: bool,
@@ -85,6 +98,15 @@ pub enum TuneAlternativePayload {
         pack_width: u32,
         operand_anchors: Vec<TuneRootAnchor>,
     },
+    ShortSliceVersioning {
+        maximum_length: u32,
+        vector_bits: u32,
+        interleave: u32,
+    },
+    Layout {
+        scope: u8,
+        root_order: Vec<[u8; 32]>,
+    },
 }
 
 /// Canonical specialization value encoded without target-endian ambiguity.
@@ -93,6 +115,15 @@ pub struct TuneSpecializationBinding {
     pub argument_ordinal: u32,
     pub kind: u8,
     pub bits: u128,
+}
+
+/// A checked block-order intent attached to canonical KIR and consumed only at
+/// the Native late-layout boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneLayoutAction {
+    pub scope: u8,
+    pub function: FunctionId,
+    pub blocks: Vec<BlockId>,
 }
 
 /// One exact site alternative inside a unit variant.
@@ -128,10 +159,16 @@ pub struct TuneVariant {
 /// value from the immutable pre-tune state before looking up a variant id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TuneVariantAction {
+    Inlining(InlineTuningCandidate),
     Specialization(SpecializationCandidate),
     Unrolling(UnrollCandidate),
     LoopSimd(VectorizationCandidate),
     Slp(SlpCandidate),
+    ShortSliceVersioning {
+        candidate: VectorizationCandidate,
+        maximum_length: u32,
+    },
+    Layout(TuneLayoutAction),
 }
 
 /// One deterministic cluster of overlapping tuning sites.
@@ -187,6 +224,8 @@ pub enum TuningPlanError {
     DigestMismatch,
     #[error("tuning alternative failed independent legality: {0}")]
     IllegalAlternative(String),
+    #[error("tuning alternative exceeded the frozen structural growth bound: {0}")]
+    GrowthRejected(String),
     #[error("tuning replay failed after legality: {0}")]
     ReplayFailure(String),
 }
@@ -207,7 +246,45 @@ pub fn enumerate_tuning_space(
         .iter()
         .map(|function| (function.id, function.name.clone()))
         .collect::<BTreeMap<_, _>>();
+    let late_state = advance_to_tunable_late_o3(state)?;
+    let late_function_names = late_state
+        .module()
+        .functions
+        .iter()
+        .map(|function| (function.id, function.name.clone()))
+        .collect::<BTreeMap<_, _>>();
     let mut seeds = Vec::new();
+
+    for candidate in discover_tuning_inline_candidates(
+        state.module(),
+        state.contract_facts(),
+        state.eliminated_guards(),
+    ) {
+        let symbol = function_names
+            .get(&candidate.caller)
+            .ok_or(TuningPlanError::PreStateMismatch)?
+            .clone();
+        let callee = function_names
+            .get(&candidate.callee)
+            .ok_or(TuningPlanError::PreStateMismatch)?;
+        seeds.push(VariantSeed::new(
+            TuneAlternativeClass::Inlining,
+            symbol.clone(),
+            TuneRootAnchor {
+                function_symbol: symbol,
+                kind: 6,
+                preorder_ordinal: instruction_kind_ordinal(
+                    state,
+                    candidate.caller,
+                    candidate.call,
+                    true,
+                )?,
+            },
+            1,
+            format!("callee={callee};action=force-inline"),
+            TuneVariantAction::Inlining(candidate),
+        ));
+    }
 
     for candidate in
         discover_specialization_candidates(state.module(), state.contract_facts()).candidates
@@ -234,8 +311,8 @@ pub fn enumerate_tuning_space(
             TuneVariantAction::Specialization(candidate),
         ));
     }
-    for candidate in discover_vectorization_candidates(state).candidates {
-        let symbol = function_names
+    for candidate in discover_tuning_vectorization_candidates(&late_state).candidates {
+        let symbol = late_function_names
             .get(&candidate.function)
             .ok_or(TuningPlanError::PreStateMismatch)?
             .clone();
@@ -244,17 +321,45 @@ pub fn enumerate_tuning_space(
             TuneAlternativeClass::LoopSimd,
             symbol,
             TuneRootAnchor {
-                function_symbol: function_names[&candidate.function].clone(),
+                function_symbol: late_function_names[&candidate.function].clone(),
                 kind: 3,
-                preorder_ordinal: u32::try_from(candidate.loop_id.index())
-                    .map_err(|_| TuningPlanError::ResourceLimit)?,
+                preorder_ordinal: candidate.loop_id.index(),
             },
             parameter,
             candidate.key.stable_text(),
             TuneVariantAction::LoopSimd(candidate),
         ));
+        let mut short_candidate = match seeds.last().map(|seed| &seed.action) {
+            Some(TuneVariantAction::LoopSimd(candidate)) => candidate.clone(),
+            _ => unreachable!("the just-added seed is Loop SIMD"),
+        };
+        let chunk_width = u32::from(short_candidate.vf) * u32::from(short_candidate.uf);
+        if let Some(tuned_minimum) = short_candidate.minimum_trip.checked_mul(2)
+            && tuned_minimum <= chunk_width.saturating_mul(1024)
+            && let Some(maximum_length) = tuned_minimum.checked_sub(1)
+        {
+            short_candidate.minimum_trip = tuned_minimum;
+            seeds.push(VariantSeed::new(
+                TuneAlternativeClass::ShortSliceVersioning,
+                late_function_names[&short_candidate.function].clone(),
+                TuneRootAnchor {
+                    function_symbol: late_function_names[&short_candidate.function].clone(),
+                    kind: 3,
+                    preorder_ordinal: short_candidate.loop_id.index(),
+                },
+                maximum_length,
+                format!(
+                    "{};short-slice-maximum={maximum_length}",
+                    short_candidate.key.stable_text()
+                ),
+                TuneVariantAction::ShortSliceVersioning {
+                    candidate: short_candidate,
+                    maximum_length,
+                },
+            ));
+        }
     }
-    for function in &state.module().functions {
+    for function in &late_state.module().functions {
         let loops = super::analyze_canonical_loops_for_discovery(function);
         for candidate in discover_unroll_candidates(function, &loops.loops).candidates {
             seeds.push(VariantSeed::new(
@@ -263,8 +368,7 @@ pub fn enumerate_tuning_space(
                 TuneRootAnchor {
                     function_symbol: function.name.clone(),
                     kind: 3,
-                    preorder_ordinal: u32::try_from(candidate.loop_id.index())
-                        .map_err(|_| TuningPlanError::ResourceLimit)?,
+                    preorder_ordinal: candidate.loop_id.index(),
                 },
                 if candidate.full {
                     candidate.trip_count
@@ -276,7 +380,8 @@ pub fn enumerate_tuning_space(
             ));
         }
         for candidate in
-            discover_slp_candidates(function, &state.proofs().instruction_dependencies()).candidates
+            discover_slp_candidates(function, &late_state.proofs().instruction_dependencies())
+                .candidates
         {
             seeds.push(VariantSeed::new(
                 TuneAlternativeClass::Slp,
@@ -285,7 +390,7 @@ pub fn enumerate_tuning_space(
                     function_symbol: function.name.clone(),
                     kind: 5,
                     preorder_ordinal: instruction_kind_ordinal(
-                        state,
+                        &late_state,
                         candidate.function,
                         candidate.root,
                         false,
@@ -294,6 +399,54 @@ pub fn enumerate_tuning_space(
                 u32::from(candidate.lanes),
                 candidate.key.stable_text(),
                 TuneVariantAction::Slp(candidate),
+            ));
+        }
+        if function.blocks.len() >= 3 {
+            let mut blocks = function
+                .blocks
+                .iter()
+                .map(|block| block.id)
+                .collect::<Vec<_>>();
+            blocks.reverse();
+            let mut root_order = Vec::with_capacity(blocks.len());
+            for block in &blocks {
+                let ordinal = function
+                    .blocks
+                    .iter()
+                    .position(|candidate| candidate.id == *block)
+                    .and_then(|index| u32::try_from(index).ok())
+                    .ok_or(TuningPlanError::PreStateMismatch)?;
+                root_order.push(derive_root_id(
+                    pre_tune_kir_digest,
+                    &TuneRootAnchor {
+                        function_symbol: function.name.clone(),
+                        kind: 4,
+                        preorder_ordinal: ordinal,
+                    },
+                ));
+            }
+            let function_ordinal = state
+                .module()
+                .functions
+                .iter()
+                .position(|candidate| candidate.id == function.id)
+                .and_then(|index| u32::try_from(index).ok())
+                .ok_or(TuningPlanError::PreStateMismatch)?;
+            seeds.push(VariantSeed::new(
+                TuneAlternativeClass::Layout,
+                function.name.clone(),
+                TuneRootAnchor {
+                    function_symbol: function.name.clone(),
+                    kind: 2,
+                    preorder_ordinal: function_ordinal,
+                },
+                u32::try_from(blocks.len()).map_err(|_| TuningPlanError::ResourceLimit)?,
+                format!("scope=block;roots={root_order:?}"),
+                TuneVariantAction::Layout(TuneLayoutAction {
+                    scope: 1,
+                    function: function.id,
+                    blocks,
+                }),
             ));
         }
     }
@@ -339,13 +492,28 @@ pub fn enumerate_tuning_space(
         let root_id = derive_root_id(pre_tune_kir_digest, &root_anchor);
         let site_id = derive_site_id(root_id, class, rank, pre_state_digest);
         let unit_id = derive_unit_id(&[site_id], pre_state_digest);
+        let action_state = if matches!(
+            class,
+            TuneAlternativeClass::ShortSliceVersioning
+                | TuneAlternativeClass::LoopSimd
+                | TuneAlternativeClass::Unrolling
+                | TuneAlternativeClass::Slp
+        ) {
+            &late_state
+        } else {
+            state
+        };
         let mut variants = Vec::new();
         for seed in group.into_iter().take(4) {
-            let Some(payload) = payload_for_action(state, &seed.action)? else {
+            let Some(payload) = payload_for_action(action_state, &seed.action)? else {
                 continue;
             };
-            let Ok(isolated) = apply_variant_action(state, &seed.action) else {
-                continue;
+            let isolated = match apply_variant_action(action_state, &seed.action) {
+                Ok(isolated) => isolated,
+                Err(
+                    TuningPlanError::IllegalAlternative(_) | TuningPlanError::GrowthRejected(_),
+                ) => continue,
+                Err(error) => return Err(error),
             };
             let isolated_post_state_digest = tuning_kir_state_digest(&isolated)?;
             let isolated_kir_bytes = u64::try_from(print_kir_module(isolated.module()).len())
@@ -562,6 +730,8 @@ fn replay_selections(
     let mut current = state.clone();
     let mut choices = Vec::with_capacity(selections.len());
     let mut previous_key = None;
+    let mut contains_selected_rewrite = false;
+    let mut entered_late_o3 = false;
     for (index, (unit_id, variant_id)) in selections.iter().enumerate() {
         let unit = space
             .units
@@ -578,10 +748,37 @@ fn replay_selections(
             return Err(TuningPlanError::NonCanonicalOrder);
         }
         previous_key = Some(key);
+        if matches!(
+            unit.class,
+            TuneAlternativeClass::ShortSliceVersioning
+                | TuneAlternativeClass::LoopSimd
+                | TuneAlternativeClass::Unrolling
+                | TuneAlternativeClass::Slp
+        ) && !entered_late_o3
+        {
+            current = advance_to_tunable_late_o3(&current)?;
+            entered_late_o3 = true;
+        }
         let pre_state_digest = tuning_kir_state_digest(&current)?;
-        current = apply_variant_action(&current, &variant.action)?;
-        if index + 1 == selections.len() {
-            current = finish_ordinary_o3(&current)?;
+        let is_last = index + 1 == selections.len();
+        if let TuneVariantAction::Layout(layout) = &variant.action {
+            current = if contains_selected_rewrite {
+                if !entered_late_o3 {
+                    current = advance_to_tunable_late_o3(&current)?;
+                }
+                apply_layout_after_selected_o3(state, &current, layout)?
+            } else {
+                apply_layout_after_ordinary_o3(&current, layout)?
+            };
+        } else {
+            current = apply_variant_action(&current, &variant.action)?;
+            contains_selected_rewrite = true;
+            if is_last {
+                if !entered_late_o3 {
+                    current = advance_to_tunable_late_o3(&current)?;
+                }
+                current = finish_selected_o3(&current)?;
+            }
         }
         let post_state_digest = tuning_kir_state_digest(&current)?;
         choices.push(TunePlanChoice {
@@ -613,49 +810,121 @@ fn apply_variant_action(
     action: &TuneVariantAction,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
     match action {
+        TuneVariantAction::Inlining(candidate) => {
+            let trial =
+                materialize_tuning_inline(state, *candidate).map_err(map_materialization_error)?;
+            check_tuning_inline_independently(state, &trial, *candidate)
+                .map_err(TuningPlanError::IllegalAlternative)?;
+            Ok(trial)
+        }
         TuneVariantAction::Specialization(candidate) => {
             let prepared = prepare_specialization_trial(state, candidate, 0)
-                .map_err(TuningPlanError::IllegalAlternative)?;
-            check_specialization_plan_independently(
+                .map_err(map_materialization_error)?;
+            check_tuned_specialization_plan_independently(
                 state,
                 &prepared.trial,
                 &prepared.plan,
                 &prepared.charge,
             )
-            .map_err(|error| TuningPlanError::IllegalAlternative(format!("{error:?}")))?;
+            .map_err(map_transaction_check_error)?;
             Ok(prepared.trial)
         }
         TuneVariantAction::Unrolling(candidate) => {
-            let prepared = prepare_unroll_trial(state, candidate)
-                .map_err(TuningPlanError::IllegalAlternative)?;
-            check_unroll_plan_independently(
+            let prepared =
+                prepare_unroll_trial(state, candidate).map_err(map_materialization_error)?;
+            check_unroll_structure_independently(
                 state,
                 &prepared.trial,
                 &prepared.plan,
                 &prepared.charge,
             )
-            .map_err(|error| TuningPlanError::IllegalAlternative(format!("{error:?}")))?;
+            .map_err(map_transaction_check_error)?;
             Ok(prepared.trial)
         }
         TuneVariantAction::LoopSimd(candidate) => {
-            let prepared = prepare_vectorization_trial(state, candidate)
-                .map_err(TuningPlanError::IllegalAlternative)?;
-            check_vectorization_trial_independently(
+            let prepared = prepare_tuned_vectorization_trial(state, candidate)
+                .map_err(map_materialization_error)?;
+            check_tuned_vectorization_trial_independently(
                 state,
                 &prepared.trial,
                 &prepared.plan,
                 &prepared.charge,
+                candidate.minimum_trip,
             )
-            .map_err(|error| TuningPlanError::IllegalAlternative(format!("{error:?}")))?;
+            .map_err(map_transaction_check_error)?;
             Ok(prepared.trial)
         }
         TuneVariantAction::Slp(candidate) => {
             let prepared =
-                prepare_slp_trial(state, candidate).map_err(TuningPlanError::IllegalAlternative)?;
-            check_slp_plan_independently(state, &prepared.trial, &prepared.plan, &prepared.charge)
-                .map_err(|error| TuningPlanError::IllegalAlternative(format!("{error:?}")))?;
+                prepare_slp_trial(state, candidate).map_err(map_materialization_error)?;
+            check_tuned_slp_plan_independently(
+                state,
+                &prepared.trial,
+                &prepared.plan,
+                &prepared.charge,
+            )
+            .map_err(map_transaction_check_error)?;
             Ok(prepared.trial)
         }
+        TuneVariantAction::ShortSliceVersioning {
+            candidate,
+            maximum_length,
+        } => {
+            if candidate.minimum_trip != maximum_length.saturating_add(1) {
+                return Err(TuningPlanError::IllegalAlternative(
+                    "short-slice threshold does not match its vector candidate".to_string(),
+                ));
+            }
+            let prepared = prepare_tuned_vectorization_trial(state, candidate)
+                .map_err(map_materialization_error)?;
+            check_tuned_vectorization_trial_independently(
+                state,
+                &prepared.trial,
+                &prepared.plan,
+                &prepared.charge,
+                candidate.minimum_trip,
+            )
+            .map_err(map_transaction_check_error)?;
+            Ok(prepared.trial)
+        }
+        TuneVariantAction::Layout(layout) => {
+            check_layout_action(state, layout)?;
+            let mut module = state.module().clone();
+            module.tune_layout = Some(KirTuneLayoutPlan {
+                functions: vec![KirTuneFunctionLayout {
+                    function: layout.function,
+                    blocks: layout.blocks.clone(),
+                }],
+            });
+            let trial = KirVerifiedProgramState::from_parts(
+                module,
+                state.contract_facts().cloned(),
+                state.proofs().clone(),
+                state.eliminated_guards().to_vec(),
+                state.evidence_generation(),
+            )
+            .map_err(TuningPlanError::IllegalAlternative)?;
+            check_layout_trial_independently(state, &trial, layout)?;
+            Ok(trial)
+        }
+    }
+}
+
+fn map_transaction_check_error(error: TransactionCheckError) -> TuningPlanError {
+    match error {
+        TransactionCheckError::Reject(reason) if reason.contains("growth") => {
+            TuningPlanError::GrowthRejected(reason)
+        }
+        TransactionCheckError::Reject(reason) => TuningPlanError::IllegalAlternative(reason),
+        TransactionCheckError::Compiler(reason) => TuningPlanError::ReplayFailure(reason),
+    }
+}
+
+fn map_materialization_error(reason: String) -> TuningPlanError {
+    if reason.contains("growth") {
+        TuningPlanError::GrowthRejected(reason)
+    } else {
+        TuningPlanError::IllegalAlternative(reason)
     }
 }
 
@@ -681,6 +950,202 @@ fn finish_ordinary_o3(
         0,
     )
     .map_err(TuningPlanError::ReplayFailure)
+}
+
+fn rebuild_preserving_entry_units(
+    prior: &KirVerifiedProgramState,
+    module: crate::KirModule,
+    contract_facts: Option<super::ContractFactSet>,
+    proofs: super::ProofArena,
+    eliminated_guards: Vec<super::KirGuardElimination>,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    KirVerifiedProgramState::from_checked_parts_with_entry_units(
+        module,
+        contract_facts,
+        proofs,
+        eliminated_guards,
+        prior.evidence_generation(),
+        prior.optimization_entry_module_units(),
+    )
+    .map_err(TuningPlanError::ReplayFailure)
+}
+
+fn advance_to_tunable_late_o3(
+    state: &KirVerifiedProgramState,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    let mut module = state.module().clone();
+    let contract_facts = state.contract_facts().cloned();
+    let mut proofs = state.proofs().clone();
+    let mut eliminated_guards = state.eliminated_guards().to_vec();
+    let mut explanations = Vec::new();
+
+    run_memory_ssa_refine(&mut module, contract_facts.as_ref())
+        .map_err(TuningPlanError::ReplayFailure)?;
+    run_gvn(&mut module, &proofs.instruction_dependencies());
+    run_load_forwarding(&mut module);
+    run_dead_store_elimination(&mut module);
+    run_integer_constant_folding(&mut module, contract_facts.as_ref(), &proofs)
+        .map_err(TuningPlanError::ReplayFailure)?;
+    let _ = run_sccp_range(&module);
+    run_check_elimination(
+        &mut module,
+        contract_facts.as_ref(),
+        &mut proofs,
+        &mut eliminated_guards,
+        &mut explanations,
+        state.evidence_generation(),
+        true,
+    )
+    .map_err(TuningPlanError::ReplayFailure)?;
+
+    let loop_analyses = module
+        .functions
+        .iter()
+        .map(super::analyze_natural_loops)
+        .collect::<Vec<_>>();
+    run_licm(
+        &mut module,
+        &proofs.instruction_dependencies(),
+        &loop_analyses,
+    )
+    .map_err(TuningPlanError::ReplayFailure)?;
+    run_induction_simplification(&mut module, &proofs, &loop_analyses)
+        .map_err(TuningPlanError::ReplayFailure)?;
+    run_integer_constant_folding(&mut module, contract_facts.as_ref(), &proofs)
+        .map_err(TuningPlanError::ReplayFailure)?;
+    let _ = run_sccp_range(&module);
+    run_check_elimination(
+        &mut module,
+        contract_facts.as_ref(),
+        &mut proofs,
+        &mut eliminated_guards,
+        &mut explanations,
+        state.evidence_generation(),
+        true,
+    )
+    .map_err(TuningPlanError::ReplayFailure)?;
+
+    rebuild_preserving_entry_units(state, module, contract_facts, proofs, eliminated_guards)
+}
+
+fn finish_selected_o3(
+    state: &KirVerifiedProgramState,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    let mut module = state.module().clone();
+    run_dead_code_elimination(&mut module, &state.proofs().instruction_dependencies());
+    run_cleanup(&mut module);
+    rebuild_preserving_entry_units(
+        state,
+        module,
+        state.contract_facts().cloned(),
+        state.proofs().clone(),
+        state.eliminated_guards().to_vec(),
+    )
+}
+
+fn apply_layout_after_ordinary_o3(
+    state: &KirVerifiedProgramState,
+    requested: &TuneLayoutAction,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    check_layout_action(state, requested)?;
+    let ordinary = finish_ordinary_o3(state)?;
+    let function = ordinary
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.id == requested.function)
+        .ok_or(TuningPlanError::PreStateMismatch)?;
+    let live = function
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<BTreeSet<_>>();
+    let mut blocks = requested
+        .blocks
+        .iter()
+        .copied()
+        .filter(|block| live.contains(block))
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        return Ok(ordinary);
+    }
+    let mut seen = blocks.iter().copied().collect::<BTreeSet<_>>();
+    blocks.extend(
+        function
+            .blocks
+            .iter()
+            .map(|block| block.id)
+            .filter(|block| seen.insert(*block)),
+    );
+    if blocks
+        .iter()
+        .copied()
+        .eq(function.blocks.iter().map(|block| block.id))
+    {
+        return Ok(ordinary);
+    }
+    apply_variant_action(
+        &ordinary,
+        &TuneVariantAction::Layout(TuneLayoutAction {
+            scope: requested.scope,
+            function: requested.function,
+            blocks,
+        }),
+    )
+}
+
+fn apply_layout_after_selected_o3(
+    original: &KirVerifiedProgramState,
+    selected: &KirVerifiedProgramState,
+    requested: &TuneLayoutAction,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    check_layout_action(original, requested)?;
+    let finished = finish_selected_o3(selected)?;
+    let Some(function) = finished
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.id == requested.function)
+    else {
+        return Ok(finished);
+    };
+    let live = function
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<BTreeSet<_>>();
+    let mut blocks = requested
+        .blocks
+        .iter()
+        .copied()
+        .filter(|block| live.contains(block))
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        return Ok(finished);
+    }
+    let mut seen = blocks.iter().copied().collect::<BTreeSet<_>>();
+    blocks.extend(
+        function
+            .blocks
+            .iter()
+            .map(|block| block.id)
+            .filter(|block| seen.insert(*block)),
+    );
+    if blocks
+        .iter()
+        .copied()
+        .eq(function.blocks.iter().map(|block| block.id))
+    {
+        return Ok(finished);
+    }
+    apply_variant_action(
+        &finished,
+        &TuneVariantAction::Layout(TuneLayoutAction {
+            scope: requested.scope,
+            function: requested.function,
+            blocks,
+        }),
+    )
 }
 
 /// Derives the normative identity digest of the canonical pre-tune KIR bytes.
@@ -726,6 +1191,15 @@ pub(crate) fn canonical_root_anchor(anchor: &TuneRootAnchor) -> Vec<u8> {
 
 pub(crate) fn canonical_alternative_payload(payload: &TuneAlternativePayload) -> Vec<u8> {
     let (class, value) = match payload {
+        TuneAlternativePayload::Inlining {
+            callee_symbol,
+            force_inline,
+        } => {
+            let mut value = Vec::new();
+            canonical_field(&mut value, 1, &canonical_text(callee_symbol));
+            canonical_field(&mut value, 2, &[if *force_inline { 1 } else { 2 }]);
+            (TuneAlternativeClass::Inlining, value)
+        }
         TuneAlternativePayload::Specialization { bindings, guarded } => {
             let items = bindings
                 .iter()
@@ -770,6 +1244,27 @@ pub(crate) fn canonical_alternative_payload(payload: &TuneAlternativePayload) ->
             canonical_field(&mut value, 1, &pack_width.to_be_bytes());
             canonical_field(&mut value, 2, &canonical_list(&anchors));
             (TuneAlternativeClass::Slp, value)
+        }
+        TuneAlternativePayload::ShortSliceVersioning {
+            maximum_length,
+            vector_bits,
+            interleave,
+        } => {
+            let mut value = Vec::new();
+            canonical_field(&mut value, 1, &maximum_length.to_be_bytes());
+            canonical_field(&mut value, 2, &vector_bits.to_be_bytes());
+            canonical_field(&mut value, 3, &interleave.to_be_bytes());
+            (TuneAlternativeClass::ShortSliceVersioning, value)
+        }
+        TuneAlternativePayload::Layout { scope, root_order } => {
+            let roots = root_order
+                .iter()
+                .map(|root| root.to_vec())
+                .collect::<Vec<_>>();
+            let mut value = Vec::new();
+            canonical_field(&mut value, 1, &[*scope]);
+            canonical_field(&mut value, 2, &canonical_list(&roots));
+            (TuneAlternativeClass::Layout, value)
         }
     };
     let mut out = Vec::new();
@@ -941,6 +1436,18 @@ fn payload_for_action(
     action: &TuneVariantAction,
 ) -> Result<Option<TuneAlternativePayload>, TuningPlanError> {
     match action {
+        TuneVariantAction::Inlining(candidate) => {
+            let callee = state
+                .module()
+                .functions
+                .iter()
+                .find(|function| function.id == candidate.callee)
+                .ok_or(TuningPlanError::PreStateMismatch)?;
+            Ok(Some(TuneAlternativePayload::Inlining {
+                callee_symbol: callee.name.clone(),
+                force_inline: true,
+            }))
+        }
         TuneVariantAction::Specialization(candidate) => {
             let callee = state
                 .module()
@@ -1044,7 +1551,130 @@ fn payload_for_action(
                 ),
             )
         }
+        TuneVariantAction::ShortSliceVersioning {
+            candidate,
+            maximum_length,
+        } => {
+            let lane_bits = candidate
+                .operations
+                .iter()
+                .map(|operation| {
+                    u32::from(operation.lane_type.bit_width())
+                        .max(u32::from(operation.result_lane_type.bit_width()))
+                })
+                .max()
+                .unwrap_or(64);
+            let vector_bits = u32::from(candidate.vf)
+                .checked_mul(lane_bits)
+                .ok_or(TuningPlanError::ResourceLimit)?;
+            let interleave = u32::from(candidate.uf);
+            Ok((candidate.minimum_trip == maximum_length.saturating_add(1)
+                && vector_bits.is_power_of_two()
+                && (64..=2_048).contains(&vector_bits)
+                && (1..=8).contains(&interleave))
+            .then_some(TuneAlternativePayload::ShortSliceVersioning {
+                maximum_length: *maximum_length,
+                vector_bits,
+                interleave,
+            }))
+        }
+        TuneVariantAction::Layout(layout) => {
+            check_layout_action(state, layout)?;
+            let function = state
+                .module()
+                .functions
+                .iter()
+                .find(|function| function.id == layout.function)
+                .ok_or(TuningPlanError::PreStateMismatch)?;
+            let mut roots = Vec::with_capacity(layout.blocks.len());
+            let pre_tune = tuning_pre_kir_digest(state)?;
+            for block in &layout.blocks {
+                let ordinal = function
+                    .blocks
+                    .iter()
+                    .position(|candidate| candidate.id == *block)
+                    .and_then(|index| u32::try_from(index).ok())
+                    .ok_or(TuningPlanError::PreStateMismatch)?;
+                roots.push(derive_root_id(
+                    pre_tune,
+                    &TuneRootAnchor {
+                        function_symbol: function.name.clone(),
+                        kind: 4,
+                        preorder_ordinal: ordinal,
+                    },
+                ));
+            }
+            Ok(Some(TuneAlternativePayload::Layout {
+                scope: layout.scope,
+                root_order: roots,
+            }))
+        }
     }
+}
+
+fn check_layout_action(
+    state: &KirVerifiedProgramState,
+    layout: &TuneLayoutAction,
+) -> Result<(), TuningPlanError> {
+    if layout.scope != 1 || state.module().tune_layout.is_some() {
+        return Err(TuningPlanError::IllegalAlternative(
+            "layout scope or pre-state metadata is outside schema 1".to_string(),
+        ));
+    }
+    let function = state
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.id == layout.function)
+        .ok_or(TuningPlanError::PreStateMismatch)?;
+    let expected = function
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<BTreeSet<_>>();
+    let actual = layout.blocks.iter().copied().collect::<BTreeSet<_>>();
+    if layout.blocks.len() < 3
+        || layout.blocks.len() != function.blocks.len()
+        || actual.len() != layout.blocks.len()
+        || actual != expected
+        || layout
+            .blocks
+            .iter()
+            .copied()
+            .eq(function.blocks.iter().map(|block| block.id))
+    {
+        return Err(TuningPlanError::IllegalAlternative(
+            "layout action is not a distinct complete block permutation".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn check_layout_trial_independently(
+    pre_state: &KirVerifiedProgramState,
+    trial: &KirVerifiedProgramState,
+    layout: &TuneLayoutAction,
+) -> Result<(), TuningPlanError> {
+    check_layout_action(pre_state, layout)?;
+    let mut without_layout = trial.module().clone();
+    let attached = without_layout.tune_layout.take();
+    if without_layout != *pre_state.module()
+        || attached
+            != Some(KirTuneLayoutPlan {
+                functions: vec![KirTuneFunctionLayout {
+                    function: layout.function,
+                    blocks: layout.blocks.clone(),
+                }],
+            })
+        || trial.contract_facts() != pre_state.contract_facts()
+        || trial.proofs() != pre_state.proofs()
+        || trial.eliminated_guards() != pre_state.eliminated_guards()
+    {
+        return Err(TuningPlanError::IllegalAlternative(
+            "layout trial changed data outside canonical layout metadata".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn specialization_bits(
@@ -1163,4 +1793,35 @@ fn hash_canonical_record(domain: &[u8], material: &[u8]) -> [u8; 32] {
     hasher.update(domain);
     hasher.update(canonical_record(material));
     hasher.finalize().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transaction_rejections_keep_growth_distinct_and_internal_failures_fatal() {
+        assert!(matches!(
+            map_materialization_error("vector-code-growth-budget-not-met".to_string()),
+            TuningPlanError::GrowthRejected(_)
+        ));
+        assert!(matches!(
+            map_transaction_check_error(TransactionCheckError::reject(
+                "vector-code-growth-budget-not-met"
+            )),
+            TuningPlanError::GrowthRejected(_)
+        ));
+        assert!(matches!(
+            map_transaction_check_error(TransactionCheckError::reject(
+                "profitability-threshold-not-met"
+            )),
+            TuningPlanError::IllegalAlternative(_)
+        ));
+        assert!(matches!(
+            map_transaction_check_error(TransactionCheckError::compiler(
+                "checker invariant failed"
+            )),
+            TuningPlanError::ReplayFailure(_)
+        ));
+    }
 }

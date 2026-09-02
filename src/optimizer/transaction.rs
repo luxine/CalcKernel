@@ -182,6 +182,28 @@ impl KirVerifiedProgramState {
         eliminated_guards: Vec<KirGuardElimination>,
         evidence_generation: u32,
     ) -> Result<Self, String> {
+        let optimization_entry_module_units =
+            module.functions.iter().fold(0_u32, |total, function| {
+                total.saturating_add(kir_function_units(function))
+            });
+        Self::from_checked_parts_with_entry_units(
+            module,
+            contract_facts,
+            proofs,
+            eliminated_guards,
+            evidence_generation,
+            optimization_entry_module_units,
+        )
+    }
+
+    pub(crate) fn from_checked_parts_with_entry_units(
+        module: KirModule,
+        contract_facts: Option<ContractFactSet>,
+        proofs: ProofArena,
+        eliminated_guards: Vec<KirGuardElimination>,
+        evidence_generation: u32,
+        optimization_entry_module_units: u32,
+    ) -> Result<Self, String> {
         let validation = validate_kir_optimization_evidence(
             &module,
             contract_facts.as_ref(),
@@ -197,10 +219,6 @@ impl KirVerifiedProgramState {
                 .collect::<Vec<_>>()
                 .join("; "));
         }
-        let optimization_entry_module_units =
-            module.functions.iter().fold(0_u32, |total, function| {
-                total.saturating_add(kir_function_units(function))
-            });
         Self::from_verified_parts(
             module,
             contract_facts,

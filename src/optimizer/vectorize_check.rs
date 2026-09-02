@@ -10,6 +10,7 @@ use crate::{
 };
 
 use super::KirVerifiedProgramState;
+use super::vector_plan::validate_tuned_vectorization_plan;
 
 #[derive(Debug, Clone)]
 struct CheckedVectorOperation {
@@ -87,9 +88,36 @@ pub fn check_vectorization_trial_independently(
     plan: &VectorizationPlan,
     charge: &CandidateBudgetCharge,
 ) -> Result<(), TransactionCheckError> {
+    check_vectorization_trial_with_minimum(pre_state, trial, plan, charge, None)
+}
+
+/// Checks a tuning-owned vector threshold while retaining vector legality,
+/// proof, cost-decomposition, and growth checks. Static profitability is left
+/// to the measured tuning protocol; the minimum remains bounded and aligned.
+pub fn check_tuned_vectorization_trial_independently(
+    pre_state: &KirVerifiedProgramState,
+    trial: &KirVerifiedProgramState,
+    plan: &VectorizationPlan,
+    charge: &CandidateBudgetCharge,
+    tuned_minimum_trip: u32,
+) -> Result<(), TransactionCheckError> {
+    check_vectorization_trial_with_minimum(pre_state, trial, plan, charge, Some(tuned_minimum_trip))
+}
+
+fn check_vectorization_trial_with_minimum(
+    pre_state: &KirVerifiedProgramState,
+    trial: &KirVerifiedProgramState,
+    plan: &VectorizationPlan,
+    charge: &CandidateBudgetCharge,
+    tuned_minimum_trip: Option<u32>,
+) -> Result<(), TransactionCheckError> {
     let compiler = |message: &str| Err(TransactionCheckError::compiler(message));
-    validate_vectorization_plan(plan, &pre_state.module().profile)
-        .map_err(TransactionCheckError::compiler)?;
+    if tuned_minimum_trip.is_some() {
+        validate_tuned_vectorization_plan(plan, &pre_state.module().profile)
+    } else {
+        validate_vectorization_plan(plan, &pre_state.module().profile)
+    }
+    .map_err(TransactionCheckError::compiler)?;
     if plan.pre_state.kir_digest != pre_state.kir_digest()
         || plan.pre_state.profile_digest != pre_state.module().profile.digest_hex()
         || plan.pre_state.evidence_generation != pre_state.evidence_generation()
@@ -105,7 +133,8 @@ pub fn check_vectorization_trial_independently(
     if plan.pre_state.frozen_kir_units != kir_function_units(original) {
         return compiler("vector frozen function size is false");
     }
-    let candidate = reconstruct_vector_source_independently(pre_state, trial, plan)?;
+    let candidate =
+        reconstruct_vector_source_independently(pre_state, trial, plan, tuned_minimum_trip)?;
     if plan.cost != candidate.predicted_cost
         || plan.operations.len()
             != candidate
@@ -934,6 +963,7 @@ fn reconstruct_vector_source_independently(
     pre_state: &KirVerifiedProgramState,
     trial: &KirVerifiedProgramState,
     plan: &VectorizationPlan,
+    tuned_minimum_trip: Option<u32>,
 ) -> Result<CheckedVectorSource, TransactionCheckError> {
     let malformed = |message: &str| TransactionCheckError::compiler(message);
     let original = pre_state
@@ -1154,8 +1184,21 @@ fn reconstruct_vector_source_independently(
         &accesses,
         plan,
         version_predicate.is_some(),
+        tuned_minimum_trip.is_none(),
     )?;
-    if minimum_trip != expected_minimum {
+    if let Some(tuned) = tuned_minimum_trip {
+        let chunk_width = u32::from(plan.vf).saturating_mul(u32::from(plan.uf));
+        let maximum = chunk_width.saturating_mul(1024);
+        if minimum_trip != tuned
+            || tuned < expected_minimum
+            || tuned > maximum
+            || tuned % chunk_width != 0
+        {
+            return Err(malformed(
+                "tuned vector trip threshold is outside the independently safe range",
+            ));
+        }
+    } else if minimum_trip != expected_minimum {
         return Err(malformed(
             "vector trip threshold is not independently optimal",
         ));
@@ -1573,6 +1616,7 @@ fn independently_price_vector_plan(
     accesses: &[CheckedVectorAccess],
     plan: &VectorizationPlan,
     has_runtime_predicate: bool,
+    require_static_profitability: bool,
 ) -> Result<(KirCostEstimate, u32), TransactionCheckError> {
     let malformed = |message: &str| TransactionCheckError::compiler(message);
     let profile = &pre_state.module().profile;
@@ -1803,26 +1847,33 @@ fn independently_price_vector_plan(
     )?;
     let chunk_width = u32::from(plan.vf).saturating_mul(u32::from(plan.uf));
     let scalar_chunk = scalar_iteration.saturating_mul(chunk_width);
-    if u64::from(vector_chunk).saturating_mul(100) >= u64::from(scalar_chunk).saturating_mul(80) {
+    if require_static_profitability
+        && u64::from(vector_chunk).saturating_mul(100) >= u64::from(scalar_chunk).saturating_mul(80)
+    {
         return Err(TransactionCheckError::reject(
             "profitability-threshold-not-met",
         ));
     }
-    let minimum_trip = (2_u32..=1024)
-        .map(|chunks| chunks.saturating_mul(chunk_width))
-        .find(|trip| {
-            (0..chunk_width).all(|tail| {
-                let iterations = trip.saturating_add(tail);
-                let scalar = scalar_iteration.saturating_mul(iterations);
-                let transformed = vector_chunk
-                    .saturating_mul(*trip / chunk_width)
-                    .saturating_add(scalar_iteration.saturating_mul(tail))
-                    .saturating_add(predicate_cost)
-                    .saturating_add(epilogue.saturating_mul(u32::from(tail != 0)));
-                u64::from(transformed).saturating_mul(100) <= u64::from(scalar).saturating_mul(80)
+    let minimum_trip = if require_static_profitability {
+        (2_u32..=1024)
+            .map(|chunks| chunks.saturating_mul(chunk_width))
+            .find(|trip| {
+                (0..chunk_width).all(|tail| {
+                    let iterations = trip.saturating_add(tail);
+                    let scalar = scalar_iteration.saturating_mul(iterations);
+                    let transformed = vector_chunk
+                        .saturating_mul(*trip / chunk_width)
+                        .saturating_add(scalar_iteration.saturating_mul(tail))
+                        .saturating_add(predicate_cost)
+                        .saturating_add(epilogue.saturating_mul(u32::from(tail != 0)));
+                    u64::from(transformed).saturating_mul(100)
+                        <= u64::from(scalar).saturating_mul(80)
+                })
             })
-        })
-        .ok_or_else(|| TransactionCheckError::reject("profitability-threshold-not-met"))?;
+            .ok_or_else(|| TransactionCheckError::reject("profitability-threshold-not-met"))?
+    } else {
+        chunk_width.saturating_mul(2)
+    };
     let priced_tail = chunk_width.saturating_sub(1);
     let priced_trip = minimum_trip.saturating_add(priced_tail);
     let priced_chunks = minimum_trip / chunk_width;

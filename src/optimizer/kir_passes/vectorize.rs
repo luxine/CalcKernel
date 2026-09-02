@@ -54,6 +54,21 @@ pub(crate) fn materialize_vectorization_trial(
     pre_state: &KirVerifiedProgramState,
     candidate: &VectorizationCandidate,
 ) -> Result<MaterializedVectorization, String> {
+    materialize_vectorization_trial_internal(pre_state, candidate, true)
+}
+
+pub(crate) fn materialize_tuned_vectorization_trial(
+    pre_state: &KirVerifiedProgramState,
+    candidate: &VectorizationCandidate,
+) -> Result<MaterializedVectorization, String> {
+    materialize_vectorization_trial_internal(pre_state, candidate, false)
+}
+
+fn materialize_vectorization_trial_internal(
+    pre_state: &KirVerifiedProgramState,
+    candidate: &VectorizationCandidate,
+    require_static_profitability: bool,
+) -> Result<MaterializedVectorization, String> {
     let chunk_width = u32::from(candidate.vf)
         .checked_mul(u32::from(candidate.uf))
         .ok_or_else(|| "vector VF/UF chunk width overflowed".to_string())?;
@@ -1191,7 +1206,15 @@ pub(crate) fn materialize_vectorization_trial(
         growth: VectorPlanGrowth::new(before_function, after_function, module_before, module_after),
         proofs: roots,
     };
-    crate::validate_vectorization_plan(&plan, &pre_state.module().profile).map_err(|error| {
+    let validation = if require_static_profitability {
+        crate::validate_vectorization_plan(&plan, &pre_state.module().profile)
+    } else {
+        super::super::vector_plan::validate_tuned_vectorization_plan(
+            &plan,
+            &pre_state.module().profile,
+        )
+    };
+    validation.map_err(|error| {
         if error == "vector plan growth exceeds its frozen structural budget" {
             "vector-code-growth-budget-not-met".to_string()
         } else {

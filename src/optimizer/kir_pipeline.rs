@@ -302,6 +302,7 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
         entry: None,
         structs: Vec::new(),
         functions: Vec::new(),
+        tune_layout: None,
     };
     let mut result = KirPassManagerResult {
         module: pending_module,

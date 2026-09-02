@@ -105,6 +105,7 @@ pub fn build_kir_module_with_profile(
         entry: artifact.entry,
         structs: artifact.structs,
         functions,
+        tune_layout: None,
     })
 }
 

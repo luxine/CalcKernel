@@ -36,6 +36,8 @@ jobs:
       CALCKERNEL_TS_ROOT: ${{ github.workspace }}/tests/oracles/typescript
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify exact checkout SHA
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20.19.5
@@ -78,6 +80,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify exact checkout SHA
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.90.0
@@ -143,6 +147,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify exact checkout SHA
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.90.0
@@ -231,10 +237,12 @@ jobs:
   performance:
     name: performance (${{ matrix.arch }})
     env:
+      CKC_V013_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay-v013
       CKC_V012_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay-v012
       CKC_V011_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay-v011
       CKC_V010_RUNTIME_BUNDLE: ${{ github.workspace }}/target/performance-runtime-replay
       CKC_CANDIDATE_COMPILER: ${{ github.workspace }}/target/release/ckc
+      CKC_V014_SCHEMA8_REPORT: ${{ github.workspace }}/target/ckc-perf/v0.13-results.json
     strategy:
       fail-fast: false
       matrix:
@@ -250,6 +258,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Verify exact checkout SHA
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.90.0
@@ -264,21 +274,25 @@ jobs:
         run: |
           python3 -B scripts/audit-performance-oracles.py
           python3 -B scripts/audit-performance-oracles.py --pgo
+          python3 -B scripts/audit-performance-oracles.py --tune
       - name: Prepare independently built exact 0.12 compiler replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.12 --out "$CKC_V012_RUNTIME_BUNDLE"
       - name: Prepare independently built pinned 0.11 compiler replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.11 --out "$CKC_V011_RUNTIME_BUNDLE"
       - name: Prepare retained independently built pinned 0.10 compiler replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.10 --out "$CKC_V010_RUNTIME_BUNDLE"
+      - name: Prepare exact 0.13 compiler and historical schema-8 replay
+        run: python3 scripts/prepare-performance-replay.py --baseline 0.13 --with-performance --out "$CKC_V013_RUNTIME_BUNDLE"
       - name: Gate cumulative schema 7 and schema 8 on the same stable worker
         id: performance-gate
         run: |
           mkdir -p target/ckc-perf
           cargo bench --features native-toolchain --bench ckc_perf -- --case proof --task check --cpu baseline 2>&1 | tee target/ckc-perf/benchmark.log
           cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
-          python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json 2>&1 | tee target/ckc-perf/checker-schema7.log
-          cargo bench --features native-toolchain --bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/benchmark-schema8.log
-          python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/checker-schema8.log
+          cargo bench --features native-toolchain --bench pgo_perf -- --task collect --candidate-version 0.14.0 --out target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/benchmark-schema8.log
+          python3 scripts/check-native-performance.py --schema 8 --compat-candidate 0.14.0 --candidate-sha "$GITHUB_SHA" target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/checker-schema8.log
+          cargo bench --features native-toolchain --bench tune_perf -- --task collect --out target/ckc-perf/v0.14-results.json 2>&1 | tee target/ckc-perf/benchmark-schema9.log
+          python3 scripts/check-native-performance.py --schema 9 target/ckc-perf/v0.14-results.json 2>&1 | tee target/ckc-perf/checker-schema9.log
       - name: Diagnose performance on the same worker without replacing the failed gate
         if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
         timeout-minutes: 20
@@ -294,6 +308,12 @@ jobs:
             target/performance-runtime-replay-v012/ckc-v012-distribution.tar.gz
             target/performance-runtime-replay-v012/replay.tsv
             target/performance-runtime-replay-v012/preparation.log
+            target/performance-runtime-replay-v013/ckc-v013
+            target/performance-runtime-replay-v013/ckc-v013-distribution.tar.gz
+            target/performance-runtime-replay-v013/replay.tsv
+            target/performance-runtime-replay-v013/preparation.log
+            target/performance-runtime-replay-v013/schema8/
+            target/performance-runtime-replay-v013/check-native-performance-v013.py
             target/performance-runtime-replay-v011/ckc-v011
             target/performance-runtime-replay-v011/replay.tsv
             target/performance-runtime-replay-v011/preparation.log
@@ -305,4 +325,6 @@ jobs:
             build/perf/latest.summary.json
             build/perf/latest.summary.md
             target/performance-diagnostics
+            target/ckc-perf/v0.14-results.json
+            target/ckc-perf/v014-measurement-*
           if-no-files-found: error

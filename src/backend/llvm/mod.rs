@@ -72,7 +72,8 @@ pub use kir_lower::{
 #[cfg(feature = "native-toolchain")]
 pub use late_layout::{
     CkLateProfileFunctionLayout, CkLateProfileLayoutPlan, CkLateProfileLayoutReport,
-    CkLateProfileRepair, build_late_profile_layout_plan, test_apply_late_layout_bytes,
+    CkLateProfileRepair, build_late_profile_layout_plan, build_tune_layout_plan,
+    test_apply_late_layout_bytes,
 };
 #[cfg(feature = "native-toolchain")]
 pub use module::NativeModule;

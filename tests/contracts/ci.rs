@@ -236,6 +236,41 @@ fn daily_ci_should_gate_native_integration_and_all_release_hosts() {
 }
 
 #[test]
+fn ci_v014_should_bind_tuning_and_all_three_performance_schemas_to_one_sha() {
+    let workflow = read(".github/workflows/ci.yml");
+    for required in [
+        "Verify exact checkout SHA",
+        "test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"",
+        "scripts/audit-performance-oracles.py --tune",
+        "--baseline 0.13 --with-performance",
+        "CKC_V013_RUNTIME_BUNDLE",
+        "CKC_V014_SCHEMA8_REPORT",
+        "--candidate-version 0.14.0",
+        "--schema 8 --compat-candidate 0.14.0 --candidate-sha \"$GITHUB_SHA\"",
+        "--bench tune_perf -- --task collect --out target/ckc-perf/v0.14-results.json",
+        "--schema 9 target/ckc-perf/v0.14-results.json",
+        "v0.14-results.json",
+        "v014-measurement-*",
+    ] {
+        assert!(workflow.contains(required), "v0.14 CI omitted {required:?}");
+    }
+    assert_eq!(
+        workflow.matches("Verify exact checkout SHA").count(),
+        4,
+        "each logical job definition must verify its exact checkout SHA",
+    );
+    for forbidden in [
+        "continue-on-error: true\n        run: cargo bench",
+        "--quick",
+    ] {
+        assert!(
+            !workflow.contains(forbidden),
+            "required performance was weakened by {forbidden:?}"
+        );
+    }
+}
+
+#[test]
 fn native_host_ci_should_preserve_parallel_failures_before_darwin_diagnostics() {
     let workflow = read(".github/workflows/ci.yml");
     let suite = workflow
@@ -322,8 +357,8 @@ fn performance_ci_should_select_a_case_from_the_benchmark_manifest() {
         .find("cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json")
         .expect("performance CI must preserve its raw report");
     let gate = workflow
-        .find("python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json")
-        .expect("performance CI must run the strict checker");
+        .find("--schema 8 --compat-candidate 0.14.0")
+        .expect("performance CI must run the cumulative strict checker");
     assert!(
         preserve < gate,
         "performance CI must preserve raw evidence before a failing gate"
@@ -746,9 +781,10 @@ fn ci_should_execute_the_exact_v013_schema_eight_candidate_contract() {
         "--baseline 0.12",
         "scripts/audit-performance-oracles.py --pgo",
         "target/ckc-perf/results-baseline.json",
-        "python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json",
-        "--bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json",
-        "python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json",
+        "--bench pgo_perf -- --task collect --candidate-version 0.14.0 --out target/ckc-perf/v0.13-results.json",
+        "--schema 8 --compat-candidate 0.14.0",
+        "--bench tune_perf -- --task collect --out target/ckc-perf/v0.14-results.json",
+        "--schema 9 target/ckc-perf/v0.14-results.json",
         "target/performance-runtime-replay-v012/ckc-v012",
         "target/performance-runtime-replay-v012/ckc-v012-distribution.tar.gz",
     ] {
@@ -758,10 +794,10 @@ fn ci_should_execute_the_exact_v013_schema_eight_candidate_contract() {
         );
     }
     let schema7 = performance
-        .find("python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json")
-        .expect("cumulative schema-7 gate");
+        .find("cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json")
+        .expect("cumulative schema-7 evidence");
     let schema8 = performance
-        .find("--bench pgo_perf -- --task collect --out target/ckc-perf/v0.13-results.json")
+        .find("--bench pgo_perf -- --task collect --candidate-version 0.14.0")
         .expect("schema-8 producer");
     assert!(
         schema7 < schema8,
