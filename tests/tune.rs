@@ -10,10 +10,16 @@ mod generate_fixtures;
 mod input_map;
 #[path = "tune/inspection.rs"]
 mod inspection;
+#[path = "tune/journal.rs"]
+mod journal;
 #[path = "tune/manifest.rs"]
 mod manifest;
 #[path = "tune/measurement.rs"]
 mod measurement;
+#[path = "tune/publication.rs"]
+mod publication;
+#[path = "tune/recovery.rs"]
+mod recovery;
 #[path = "tune/replay.rs"]
 mod replay;
 #[path = "tune/runner.rs"]

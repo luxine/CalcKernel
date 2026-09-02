@@ -10,6 +10,7 @@ mod inspect;
 mod manifest;
 mod measure;
 mod plan;
+mod publication;
 mod replay;
 mod runner;
 mod schema;
@@ -38,6 +39,11 @@ pub use measure::{
 };
 pub(crate) use plan::plan_digest;
 pub use plan::{TunePlanChoice, TuningPlan};
+pub use publication::{
+    IntoTuneOutputPaths, JournalPhase, PublicationError, PublicationFault, PublicationJournal,
+    PublicationRole, PublicationSet, RecoveryDirection, ResolvedDestination, TuneArtifactPaths,
+    TuneOutputSet, TunePublishArtifacts, decode_publication_journal, encode_publication_journal,
+};
 pub use replay::{
     TuneFinalistSelection, select_size_valid_finalists, verify_tune_trials_with_source,
 };
