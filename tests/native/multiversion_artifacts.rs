@@ -272,7 +272,7 @@ fn cache_multiversion_complete_bundle_should_hit_and_reject_each_corrupt_referen
         assert!(
             fs::read(path)
                 .expect("repaired entry")
-                .starts_with(b"CKCOBJ03")
+                .starts_with(b"CKCOBJ04")
         );
     }
     let static_output = root.join("answer-static");

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -93,6 +94,62 @@ SCHEMA8_THRESHOLDS = (
     "generationOverhead=5.0;archiveGrowth=1.15"
 )
 
+SCHEMA9_TOP_KEYS = {
+    "schemaVersion", "candidateVersion", "candidateSha", "v013ReplayCommit",
+    "evidenceDirectory", "toolchain", "hardware", "recipe", "candidateBinary",
+    "v013ReplayBundle", "cumulativeSchemaEight", "workload", "tuningDecisions",
+    "tuningArtifacts", "sampling", "cases", "validationCases", "domainCases",
+    "tuneUseCompileTime", "ordinaryCompileRegression", "artifactSize", "archiveSize",
+    "resourceUse", "determinism", "correctness",
+}
+SCHEMA9_THRESHOLDS = {
+    "archiveMaximumDen": 100, "archiveMaximumNum": 110,
+    "artifactMaximumDen": 100, "artifactMaximumNum": 110,
+    "cacheBytesMaximum": 4_294_967_296,
+    "domainThroughputMinimumDen": 100, "domainThroughputMinimumNum": 108,
+    "heldOutGeomeanMaximumDen": 100, "heldOutGeomeanMaximumNum": 95,
+    "oracleCaseThroughputMinimumDen": 100, "oracleCaseThroughputMinimumNum": 92,
+    "oracleGeomeanThroughputMinimumDen": 100, "oracleGeomeanThroughputMinimumNum": 98,
+    "ordinaryCompileCaseMaximumDen": 100, "ordinaryCompileCaseMaximumNum": 108,
+    "ordinaryCompileGeomeanMaximumDen": 100, "ordinaryCompileGeomeanMaximumNum": 103,
+    "peakRssMaximumDen": 1, "peakRssMaximumNum": 2,
+    "selectedCaseMaximumDen": 100, "selectedCaseMaximumNum": 98,
+    "standardWallMsMaximum": 1_800_000,
+    "tuneUseCompileCaseMaximumDen": 100, "tuneUseCompileCaseMaximumNum": 120,
+    "tuneUseCompileGeomeanMaximumDen": 100, "tuneUseCompileGeomeanMaximumNum": 110,
+    "validationOrHeldOutMaximumDen": 100, "validationOrHeldOutMaximumNum": 102,
+}
+SCHEMA9_RECIPE_FILES = [
+    "benches/cases/tune-cases.tsv",
+    *[f"benches/tune/workloads/{name}.cktune.toml" for name in [
+        "branch-layout", "call-constant-length", "compute-bound",
+        "contract-fixed-length", "contract-noalias", "memory-bound", "trip-unroll-simd",
+    ]],
+    "benches/tune/runner.rs", "benches/oracles/tune/manifest.toml",
+    "benches/oracles/tune/c/tune_oracle.c", "benches/oracles/tune/rust/tune_oracle.rs",
+    "benches/fixtures/pgo/branch_layout.ck", "benches/fixtures/pgo/call_constant_length.ck",
+    "benches/oracles/fixtures/map_u32.ck", "benches/oracles/fixtures/zip_u32.ck",
+    "benches/fixtures/pgo/compute_bound.ck", "benches/oracles/fixtures/contract_noalias.ck",
+    "benches/oracles/fixtures/contract_fixed_length.ck", "benches/fixtures/pgo/training.tsv",
+    "benches/fixtures/pgo/held-out.tsv", "benches/fixtures/pgo/adversarial.tsv",
+    "benches/fixtures/tune/release-held-out.tsv", "benches/tune_perf.rs",
+    "scripts/measure-v014-performance.py", "scripts/check-native-performance.py",
+    "scripts/audit-performance-oracles.py", "scripts/package-v014-performance-archive.py",
+    "LICENSE", "THIRD_PARTY_NOTICES.md", "benches/baselines/v0_13_replay.toml",
+    "specs/0.14/performance-schema-9.md",
+]
+SCHEMA9_CASES = {
+    "branch-layout", "call-constant-length", "compute-bound", "contract-fixed-length",
+    "contract-noalias", "memory-bound", "trip-unroll-simd",
+}
+SCHEMA9_MAIN_CASES = SCHEMA9_CASES - {"contract-fixed-length", "contract-noalias"}
+SCHEMA9_DOMAIN_CASES = {"contract-fixed-length", "contract-noalias"}
+SCHEMA9_MAIN_CHANNELS = [
+    "tuned", "v014Ordinary", "v013Ordinary", "v013Pgo", "cSimd", "rustSimd",
+]
+SCHEMA9_VALIDATION_CHANNELS = ["tuned", "v013Ordinary", "v013Pgo"]
+SCHEMA9_DOMAIN_CHANNELS = ["tuned", "genericC", "genericRust"]
+
 
 def fail(message: str):
     raise ValueError(message)
@@ -164,6 +221,265 @@ def exact_keys(value, expected, field):
     missing = set(expected) - set(value)
     if unknown or missing:
         fail(f"{field} has unknown or missing fields: unknown={sorted(unknown)}, missing={sorted(missing)}")
+
+
+def schema9_text(value):
+    encoded = value.encode("utf-8")
+    return len(encoded).to_bytes(4, "big") + encoded
+
+
+def schema9_list(values):
+    return len(values).to_bytes(4, "big") + b"".join(values)
+
+
+def schema9_file_value(value):
+    return ({"repository": 1, "evidence": 2}[value["root"]].to_bytes(1, "big")
+            + schema9_text(value["path"]) + value["bytes"].to_bytes(8, "big")
+            + bytes.fromhex(value["sha256"]))
+
+
+def schema9_digest(domain, *values):
+    digest = hashlib.sha256(domain)
+    for value in values:
+        digest.update(value)
+    return digest.hexdigest()
+
+
+def schema9_relative(value, field):
+    if not isinstance(value, str) or not value or "\\" in value:
+        fail(f"{field} path must be a nonempty portable relative path")
+    path = pathlib.PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        fail(f"{field} path is absolute or traversing")
+    return path
+
+
+def check_schema9_file(value, evidence_root, field, expected_root=None):
+    exact_keys(value, {"root", "path", "bytes", "sha256"}, field)
+    root = value["root"]
+    if root not in {"repository", "evidence"} or (expected_root and root != expected_root):
+        fail(f"{field} has the wrong root")
+    relative = schema9_relative(value["path"], field)
+    base = REPO if root == "repository" else evidence_root
+    target = base.joinpath(*relative.parts)
+    try:
+        metadata = target.lstat()
+    except OSError as error:
+        fail(f"{field} is missing: {error}")
+    if target.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_size <= 0:
+        fail(f"{field} must resolve to a nonempty regular non-symlink file")
+    if type(value["bytes"]) is not int or value["bytes"] != metadata.st_size:
+        fail(f"{field} byte count mismatch")
+    hash_value(value["sha256"], f"{field} sha256")
+    if file_digest(target) != value["sha256"]:
+        fail(f"{field} SHA-256 mismatch")
+    return target
+
+
+def schema9_case_table():
+    lines = (REPO / "benches/cases/tune-cases.tsv").read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "ckc-tune-cases\t1":
+        fail("schema-9 case table header is invalid")
+    rows = {}
+    for line in lines[1:]:
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 13 or fields[0] in rows:
+            fail("schema-9 case table contains a malformed or duplicate row")
+        rows[fields[0]] = {
+            "source": fields[1], "manifest": fields[2], "searchDigest": fields[5],
+            "validationDigest": fields[8], "releaseDigest": fields[11],
+            "partition": fields[12],
+        }
+    if set(rows) != SCHEMA9_CASES:
+        fail("schema-9 case table corpus is incomplete")
+    return rows
+
+
+def check_schema9_hardware(value, contract_only):
+    keys = {
+        "target", "arch", "os", "osBuild", "kernel", "cpuModel", "logicalCpus",
+        "physicalCpus", "numaNodes", "features", "requiredTier", "availableTiers",
+        "osState", "capabilityDigest",
+    }
+    exact_keys(value, keys, "schema-9 hardware")
+    for key in ["target", "arch", "os", "osBuild", "kernel", "cpuModel", "requiredTier", "osState"]:
+        if not isinstance(value[key], str) or not value[key]:
+            fail(f"schema-9 hardware {key} must be nonempty text")
+    for key in ["logicalCpus", "physicalCpus", "numaNodes"]:
+        if type(value[key]) is not int or not 0 < value[key] <= 0xffff_ffff:
+            fail(f"schema-9 hardware {key} must be a positive u32")
+    for key in ["features", "availableTiers"]:
+        if (not isinstance(value[key], list) or value[key] != sorted(set(value[key]))
+                or any(not isinstance(item, str) or not item for item in value[key])):
+            fail(f"schema-9 hardware {key} must be sorted unique text")
+    if value["requiredTier"] not in value["availableTiers"]:
+        fail("schema-9 required hardware tier is unavailable")
+    material = [
+        schema9_text(value[key]) for key in [
+            "target", "arch", "os", "osBuild", "kernel", "cpuModel",
+        ]
+    ]
+    material += [value[key].to_bytes(4, "big") for key in ["logicalCpus", "physicalCpus", "numaNodes"]]
+    material += [schema9_list([schema9_text(item) for item in value["features"]]),
+                 schema9_text(value["requiredTier"]),
+                 schema9_list([schema9_text(item) for item in value["availableTiers"]]),
+                 schema9_text(value["osState"])]
+    if value["capabilityDigest"] != schema9_digest(b"CK-V014-PERF-HARDWARE\0", *material):
+        fail("schema-9 hardware capabilityDigest mismatch")
+    if not contract_only:
+        required = "x86-64-v4" if value["arch"] == "x86_64" else "aarch64-sve2"
+        if value["os"] != "linux" or value["requiredTier"] != required:
+            fail("schema-9 release evidence requires a stable Linux hardware tier")
+
+
+def check_schema9_recipe(value, evidence_root):
+    exact_keys(value, {"schema", "files", "digest", "thresholds"}, "schema-9 recipe")
+    if value["schema"] != 1 or value["thresholds"] != SCHEMA9_THRESHOLDS:
+        fail("schema-9 recipe schema or thresholds mismatch")
+    if not isinstance(value["files"], list) or len(value["files"]) != len(SCHEMA9_RECIPE_FILES):
+        fail("schema-9 recipe file cardinality mismatch")
+    paths = []
+    for item in value["files"]:
+        check_schema9_file(item, evidence_root, "schema-9 recipe file", "repository")
+        paths.append(item["path"])
+    if paths != sorted(SCHEMA9_RECIPE_FILES) or len(paths) != len(set(paths)):
+        fail("schema-9 recipe file set/order mismatch")
+    threshold_values = [schema9_text(name) + number.to_bytes(8, "big")
+                        for name, number in sorted(SCHEMA9_THRESHOLDS.items())]
+    expected = schema9_digest(
+        b"CK-V014-PERF-RECIPE\0", (1).to_bytes(4, "big"),
+        schema9_list([schema9_file_value(item) for item in value["files"]]),
+        schema9_list(threshold_values),
+    )
+    if value["digest"] != expected:
+        fail("schema-9 recipe digest mismatch")
+
+
+def check_schema9_workload(value, evidence_root, table):
+    keys = {
+        "casesManifest", "sources", "search", "validation", "adversarial",
+        "releaseHeldOut", "tuneManifests", "runner", "oracleManifest", "cOracle",
+        "rustOracle", "profiles", "expectedResults",
+    }
+    exact_keys(value, keys, "schema-9 workload")
+    scalar = {
+        "casesManifest": "benches/cases/tune-cases.tsv",
+        "search": "benches/fixtures/pgo/training.tsv",
+        "validation": "benches/fixtures/pgo/held-out.tsv",
+        "adversarial": "benches/fixtures/pgo/adversarial.tsv",
+        "releaseHeldOut": "benches/fixtures/tune/release-held-out.tsv",
+        "oracleManifest": "benches/oracles/tune/manifest.toml",
+        "cOracle": "benches/oracles/tune/c/tune_oracle.c",
+        "rustOracle": "benches/oracles/tune/rust/tune_oracle.rs",
+    }
+    for key, path in scalar.items():
+        check_schema9_file(value[key], evidence_root, f"schema-9 workload {key}", "repository")
+        if value[key]["path"] != path:
+            fail(f"schema-9 workload {key} path mismatch")
+    check_schema9_file(value["runner"], evidence_root, "schema-9 workload runner", "evidence")
+    for key, expected in [
+        ("sources", sorted(row["source"] for row in table.values())),
+        ("tuneManifests", sorted(f"benches/tune/workloads/{row['manifest']}" for row in table.values())),
+    ]:
+        if not isinstance(value[key], list) or [row.get("path") for row in value[key]] != expected:
+            fail(f"schema-9 workload {key} set/order mismatch")
+        for item in value[key]:
+            check_schema9_file(item, evidence_root, f"schema-9 workload {key}", "repository")
+    if not isinstance(value["profiles"], list):
+        fail("schema-9 workload profiles must be a list")
+    results = value["expectedResults"]
+    if not isinstance(results, list) or len(results) != 7:
+        fail("schema-9 expectedResults must contain seven rows")
+    seen = set()
+    for row in results:
+        exact_keys(row, {"case", "split", "input", "canonicalBytes", "digest"},
+                   "schema-9 expected result")
+        case = row["case"]
+        if case not in table or case in seen or row["split"] != "release-held-out":
+            fail("schema-9 expected result case/split mismatch")
+        seen.add(case)
+        if row["input"] != value["releaseHeldOut"]:
+            fail("schema-9 expected result input foreign key mismatch")
+        raw_path = check_schema9_file(row["canonicalBytes"], evidence_root,
+                                     "schema-9 canonical result", "evidence")
+        raw = raw_path.read_bytes()
+        expected = schema9_digest(
+            b"CK-TUNE-RESULT\0", (1).to_bytes(4, "big"), schema9_text(f"{case}.release"),
+            len(raw).to_bytes(8, "big"), raw,
+        )
+        if row["digest"] != expected or expected != table[case]["releaseDigest"]:
+            fail("schema-9 expected result digest mismatch")
+    if [row["case"] for row in results] != sorted(SCHEMA9_CASES):
+        fail("schema-9 expected results are not case-name sorted")
+
+
+def check_schema9_sampling(value):
+    expected = {
+        "mainProtocol": "rotating-six-channel-v1",
+        "validationProtocol": "rotating-three-channel-v1",
+        "domainProtocol": "rotating-three-channel-v1",
+        "mainChannels": SCHEMA9_MAIN_CHANNELS,
+        "validationChannels": SCHEMA9_VALIDATION_CHANNELS,
+        "domainChannels": SCHEMA9_DOMAIN_CHANNELS,
+        "warmupRows": 3, "sampleRows": 20, "callsPerSample": 7,
+        "statistic": "minimum-then-upper-median",
+        "stabilityPolicy": "at-least-80-percent-within-20-percent-of-upper-median",
+        "rerunPolicy": "unstable-evidence-is-invalid-no-selective-rerun",
+    }
+    if value != expected:
+        fail("schema-9 sampling contract mismatch")
+
+
+def check_schema9_schema_only(report, path):
+    exact_keys(report, SCHEMA9_TOP_KEYS, "schema-9 performance report")
+    if report["schemaVersion"] != 9 or report["candidateVersion"] != "0.14.0":
+        fail("schema-9 version identity mismatch")
+    if report["candidateSha"] != current_candidate_sha():
+        fail("schema-9 candidateSha mismatch")
+    with (REPO / "benches/baselines/v0_13_replay.toml").open("rb") as source:
+        replay = tomllib.load(source)
+    if report["v013ReplayCommit"] != replay.get("commit"):
+        fail("schema-9 v013ReplayCommit mismatch")
+    directory = report["evidenceDirectory"]
+    if not isinstance(directory, str) or re.fullmatch(r"v014-measurement-[0-9]+-[0-9]+", directory) is None:
+        fail("schema-9 evidenceDirectory is invalid")
+    root = path.parent / directory
+    try:
+        metadata = root.lstat()
+    except OSError as error:
+        fail(f"schema-9 evidenceDirectory is missing: {error}")
+    if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        fail("schema-9 evidenceDirectory must be a real non-symlink directory")
+    correctness_keys = {
+        "search", "validation", "adversarial", "validationDifferential",
+        "releaseHeldOutDifferential", "domainDifferential", "oracleUbAudit",
+        "aliasAudit", "featureAudit",
+    }
+    exact_keys(report["correctness"], correctness_keys, "schema-9 correctness")
+    if any(type(value) is not bool for value in report["correctness"].values()):
+        fail("schema-9 correctness fields must be booleans")
+    contract_only = all(value is False for value in report["correctness"].values())
+    toolchain_keys = {
+        "llvmVersion", "clangVersion", "rustVersion", "componentManifest",
+        "clangBinary", "clangProfileRuntime", "rustCompiler",
+    }
+    exact_keys(report["toolchain"], toolchain_keys, "schema-9 toolchain")
+    if (report["toolchain"]["llvmVersion"], report["toolchain"]["clangVersion"],
+            report["toolchain"]["rustVersion"]) != (LLVM_VERSION, LLVM_VERSION, RUST_VERSION):
+        fail("schema-9 toolchain versions are not pinned")
+    for key in ["componentManifest", "clangBinary", "clangProfileRuntime", "rustCompiler"]:
+        check_schema9_file(report["toolchain"][key], root, f"schema-9 toolchain {key}", "evidence")
+    check_schema9_file(report["candidateBinary"], root, "schema-9 candidateBinary", "evidence")
+    check_schema9_hardware(report["hardware"], contract_only)
+    check_schema9_recipe(report["recipe"], root)
+    table = schema9_case_table()
+    check_schema9_workload(report["workload"], root, table)
+    check_schema9_sampling(report["sampling"])
+    if report["resourceUse"].get("cacheHardLimitBytes") != SCHEMA9_THRESHOLDS["cacheBytesMaximum"]:
+        fail("schema-9 cache hard limit mismatch")
+    return contract_only, root, table
 
 
 def check_order(value, width, rows, field):
@@ -919,7 +1235,8 @@ def check_schema8_compile_size(report):
             fail(f"{prefix} aggregate artifact size exceeds {maximum}x")
 
 
-def check_schema8(report, path, baseline_manifest):
+def check_schema8(report, path, baseline_manifest, *, candidate_version="0.13.0",
+                  candidate_sha=None):
     top_keys = {
         "schemaVersion", "candidateVersion", "candidateSha", "replayCommit", "evidenceDirectory",
         "toolchain", "hardware", "capabilityManifest", "recipe", "workload", "candidateBinary",
@@ -927,9 +1244,10 @@ def check_schema8(report, path, baseline_manifest):
         "variantObjects", "sampling", "cases", "compileTime", "artifactSize", "archiveSize", "correctness",
     }
     exact_keys(report, top_keys, "schema-8 performance report")
-    if report["schemaVersion"] != 8 or report["candidateVersion"] != "0.13.0":
-        fail("schemaVersion: 8 and candidate 0.13.0 are required")
-    if report["candidateSha"] != current_candidate_sha() or report["replayCommit"] != V012_COMMIT:
+    expected_sha = candidate_sha or current_candidate_sha()
+    if report["schemaVersion"] != 8 or report["candidateVersion"] != candidate_version:
+        fail(f"schemaVersion: 8 and candidate {candidate_version} are required")
+    if report["candidateSha"] != expected_sha or report["replayCommit"] != V012_COMMIT:
         fail("candidateSha or exact v0.12 replay commit mismatch")
     directory = report["evidenceDirectory"]
     if not isinstance(directory, str) or re.fullmatch(r"v013-measurement-[0-9]+-[0-9]+", directory) is None:
@@ -1102,21 +1420,89 @@ def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
     check_optimizer(report, manifest)
 
 
-def check(path: pathlib.Path, baseline_manifest: pathlib.Path):
-    report = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=strict_json_object)
-    if report.get("schemaVersion") == 8:
-        check_schema8(report, path, baseline_manifest)
+def check_schema9(report, path, *, schema_only=False):
+    contract_only, _, _ = check_schema9_schema_only(report, path)
+    if schema_only:
+        if not contract_only:
+            fail("--schema-only accepts only the explicit non-accepting contract fixture")
+        dynamic_empty = [
+            "tuningDecisions", "tuningArtifacts", "cases", "validationCases",
+            "domainCases", "tuneUseCompileTime", "ordinaryCompileRegression",
+            "artifactSize", "determinism",
+        ]
+        if any(report[key] != [] for key in dynamic_empty):
+            fail("schema-9 contract fixture contains measured evidence")
+        exact_keys(report["resourceUse"], {"sessions", "cacheHardLimitBytes"},
+                   "schema-9 contract resourceUse")
+        if report["resourceUse"]["sessions"] != [] or report["archiveSize"] != {}:
+            fail("schema-9 contract fixture must not claim resource/archive evidence")
+        if report["v013ReplayBundle"] != {} or report["cumulativeSchemaEight"] != {}:
+            fail("schema-9 contract fixture must not claim replay evidence")
+        return
+    if contract_only:
+        fail("contract-only schema-9 output is not performance acceptance evidence")
+    if not all(report["correctness"].values()):
+        fail("schema-9 correctness evidence is incomplete")
+    required_cardinality = {
+        "tuningDecisions": 7, "tuningArtifacts": 7, "cases": 5,
+        "validationCases": 7, "domainCases": 2, "tuneUseCompileTime": 7,
+        "ordinaryCompileRegression": 7, "artifactSize": 7, "determinism": 7,
+    }
+    for key, count in required_cardinality.items():
+        if not isinstance(report[key], list) or len(report[key]) != count:
+            fail(f"schema-9 {key} must contain exactly {count} rows")
+    exact_keys(report["resourceUse"], {"sessions", "cacheHardLimitBytes"},
+               "schema-9 resourceUse")
+    if (not isinstance(report["resourceUse"]["sessions"], list)
+            or len(report["resourceUse"]["sessions"]) != 7):
+        fail("schema-9 resourceUse must contain seven sessions")
+    if not report["archiveSize"] or not report["v013ReplayBundle"] or not report["cumulativeSchemaEight"]:
+        fail("schema-9 replay/archive closure is incomplete")
+
+
+def check(path: pathlib.Path, baseline_manifest: pathlib.Path, *, schema_only=False,
+          schema=None, compat_candidate=None, candidate_sha=None):
+    raw = path.read_text(encoding="utf-8")
+    report = json.loads(raw, object_pairs_hook=strict_json_object)
+    actual_schema = report.get("schemaVersion")
+    if schema is not None and actual_schema != schema:
+        fail(f"requested schema {schema} does not match report schema {actual_schema}")
+    if actual_schema == 9:
+        canonical = json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n"
+        if raw != canonical:
+            fail("schema-9 JSON is not canonical sorted UTF-8 with one trailing LF")
+        check_schema9(report, path, schema_only=schema_only)
+    elif schema_only:
+        fail("--schema-only is defined only for schema 9")
+    elif actual_schema == 8:
+        check_schema8(
+            report, path, baseline_manifest,
+            candidate_version=compat_candidate or "0.13.0", candidate_sha=candidate_sha,
+        )
     else:
+        if compat_candidate or candidate_sha:
+            fail("compatibility candidate overrides require schema 8")
         check_schema7(report, path, baseline_manifest)
 
 
 def main():
-    if len(sys.argv) not in {2, 3}:
-        print(f"usage: {pathlib.Path(sys.argv[0]).name} <results.json> [v0_10_baseline.toml]", file=sys.stderr)
-        return 2
-    baseline = pathlib.Path(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_BASELINE_MANIFEST
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--schema-only", action="store_true")
+    parser.add_argument("--schema", type=int, choices=[7, 8, 9])
+    parser.add_argument("--compat-candidate")
+    parser.add_argument("--candidate-sha")
+    parser.add_argument("results", type=pathlib.Path)
+    parser.add_argument("baseline", nargs="?", type=pathlib.Path, default=DEFAULT_BASELINE_MANIFEST)
+    args = parser.parse_args()
+    if bool(args.compat_candidate) != bool(args.candidate_sha):
+        parser.error("--compat-candidate and --candidate-sha must be supplied together")
+    if args.compat_candidate and args.schema != 8:
+        parser.error("compatibility overrides require --schema 8")
     try:
-        check(pathlib.Path(sys.argv[1]), baseline)
+        check(
+            args.results, args.baseline, schema_only=args.schema_only, schema=args.schema,
+            compat_candidate=args.compat_candidate, candidate_sha=args.candidate_sha,
+        )
     except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"native performance gate failed: {error}", file=sys.stderr)
         return 1

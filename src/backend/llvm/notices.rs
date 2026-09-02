@@ -5,11 +5,11 @@ pub const NATIVE_ABI_VERSION: u32 = 1;
 pub const RUNTIME_ABI_VERSION: u32 = 2;
 
 /// Current private Native cache entry identity reported by every compiler build.
-pub const NATIVE_CACHE_ENTRY_MAGIC: &str = "CKCOBJ03";
+pub const NATIVE_CACHE_ENTRY_MAGIC: &str = "CKCOBJ04";
 /// Current private Native cache-key schema.
-pub const NATIVE_CACHE_KEY_SCHEMA: u32 = 4;
+pub const NATIVE_CACHE_KEY_SCHEMA: u32 = 5;
 /// Current private Native cache-manifest schema.
-pub const NATIVE_CACHE_MANIFEST_SCHEMA: u32 = 4;
+pub const NATIVE_CACHE_MANIFEST_SCHEMA: u32 = 5;
 
 /// One notice embedded into every `ckc` binary.
 #[derive(Debug, Clone, Copy)]

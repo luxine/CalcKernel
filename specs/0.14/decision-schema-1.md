@@ -545,9 +545,11 @@ mandatory bridge pass up to, but not including, the next chosen unit; the final
 choice also executes the remaining KIR pipeline through canonical cleanup and
 layout-metadata attachment. The first pre-state equals Replay tag 2, adjacent
 post/pre-state digests are equal, and the last post-state equals Replay tag 3.
-For an empty plan, Replay tags 2 and 3 both equal the pre-tune state. The plan is
-always reapplied from a fresh pre-tune module; these equalities are independently
-recomputed rather than trusted.
+For an empty plan, Replay tag 2 equals the pre-tune state and Replay tag 3 equals
+the independently reconstructed ordinary v0.13 O3 final KIR state. Those values
+may differ whenever an ordinary profitability-controlled O3 rewrite commits. The
+plan is always reapplied from a fresh pre-tune module; these equalities are
+independently recomputed rather than trusted.
 
 `ObjectGraphMaterial` is tag 1 `schema: U32(1)`, tag 2 `outputKind: U8`, tag 3
 `targetIdentityDigest: D32`, tag 4 `objects: List<ObjectIdentity,4096>`. Objects sort

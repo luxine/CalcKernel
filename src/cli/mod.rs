@@ -6,6 +6,7 @@ mod output;
 mod pgo;
 #[cfg(feature = "native-toolchain")]
 mod run;
+mod tune;
 
 use args::usage;
 use commands::{dispatch, run_version};
@@ -28,6 +29,16 @@ pub(crate) fn run(args: Vec<String>) -> i32 {
 
     if command == "pgo" {
         return match pgo::run(&args[1..]) {
+            Ok(()) => 0,
+            Err(message) => {
+                print_error(&message);
+                1
+            }
+        };
+    }
+
+    if command == "tune" {
+        return match tune::run(&args[1..]) {
             Ok(()) => 0,
             Err(message) => {
                 print_error(&message);

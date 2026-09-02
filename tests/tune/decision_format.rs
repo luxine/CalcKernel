@@ -200,19 +200,19 @@ fn decision_round_trip_matches_five_normative_fixture_digests() {
         ),
         (
             "decision-schema1-baseline.cktune",
-            "c4ac671ebacc766dd9d914a677103bf4919a5d84d36f9e62e9503d63d92ac213",
+            "2f33ede8b254a60400680989464e836ddc6d63fa7dfc55682b13ad5adeb2f2b6",
         ),
         (
             "decision-schema1-tuned.cktune",
-            "915eaa8a2f761e5dd668e7feb245b234253881f04241338dc29dbb6af718322e",
+            "7994531438bddcb8d3a1c336d6305478f863aa5e1da88f44bfa13bbba69a76e4",
         ),
         (
             "decision-schema1-inspection.json",
-            "c9df1833857789a92d9115721193fa9461542d073619ddf08835d753f4b014d8",
+            "288a97113f60587c947ae29b4d992b23d24b30fb4826a2d0c8c49b7c7a0a982d",
         ),
         (
             "decision-schema1-inspection.txt",
-            "748f54ddd0214c9940cca5e92a662553ee94943bbe53d16a410d60d9be27f8fd",
+            "bb7e116ff40841466e503d921b5f451e9327a0a75238920bef1c3d7b22d8a96c",
         ),
     ];
     for (name, digest) in expected {

@@ -1,6 +1,6 @@
 [package]
 name = "calckernel"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 license = "MIT"
 description = "Native compiler for the CK / CalcKernel computation language."
@@ -29,6 +29,11 @@ name = "pgo_perf"
 path = "benches/pgo_perf.rs"
 harness = false
 
+[[bench]]
+name = "tune_perf"
+path = "benches/tune_perf.rs"
+harness = false
+
 [dependencies]
 libc = "0.2"
 num-bigint = "0.4"
@@ -39,7 +44,7 @@ unicode-normalization = "0.1"
 wat = "1.0"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
 
 [build-dependencies]
 cc = "1.2"

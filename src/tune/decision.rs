@@ -1,9 +1,11 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
 use super::schema::{
     DECISION_DIGEST_DOMAIN, MAX_TUNE_DECISION_BYTES, PLAN_DIGEST_DOMAIN, POLICY_DIGEST_DOMAIN,
-    TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA,
+    TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA, TuneBudget,
 };
 
 const HEADER_BYTES: usize = 12;
@@ -13,6 +15,43 @@ const DIGEST_BYTES: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuneDecision {
     bytes: Vec<u8>,
+}
+
+/// Source- and artifact-aware replay material extracted only after complete
+/// self-contained validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneReplayRequirements {
+    pub compiler_version: String,
+    pub compiler_source: [u8; 32],
+    pub llvm_bridge: [u8; 32],
+    pub source_digest: [u8; 32],
+    pub semantic_contract_digest: [u8; 32],
+    pub pre_tune_kir_digest: [u8; 32],
+    pub compilation_mode_digest: [u8; 32],
+    pub output_kind: u8,
+    pub target_triple: String,
+    pub target_cpu: String,
+    pub target_features: Vec<String>,
+    pub target_profile: String,
+    pub profile_digest: Option<[u8; 32]>,
+    pub budget: TuneBudget,
+    pub session_digest: [u8; 32],
+    pub selected_plan_digest: [u8; 32],
+    pub frontier_digest: [u8; 32],
+    pub selected_pre_state_digest: [u8; 32],
+    pub selected_post_state_digest: [u8; 32],
+    pub object_graph_digest: [u8; 32],
+    pub link_recipe_digest: [u8; 32],
+    pub outputs: Vec<TuneReplayOutput>,
+}
+
+/// One role-tagged recorded output required by replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneReplayOutput {
+    pub role: u8,
+    pub logical_basename: String,
+    pub content_digest: [u8; 32],
+    pub content_bytes: u64,
 }
 
 impl TuneDecision {
@@ -30,6 +69,146 @@ impl TuneDecision {
     pub fn validate_self_contained(&self) -> Result<(), TuneDecisionError> {
         decode_tune_decision(&self.bytes).map(|_| ())
     }
+
+    /// Extracts the closed source-aware replay identity.
+    pub fn replay_requirements(&self) -> Result<TuneReplayRequirements, TuneDecisionError> {
+        self.validate_self_contained()?;
+        let body_end = self.bytes.len() - DIGEST_BYTES;
+        let top = parse_fields(
+            &self.bytes[HEADER_BYTES..body_end],
+            1..=8,
+            "top-level records",
+        )?;
+        let identity = parse_record_fields(top[0], 1..=22, "Identity")?;
+        let contract = parse_record_fields(top[1], 1..=32, "Contract")?;
+        let environment = parse_record_fields(top[3], 1..=19, "Environment")?;
+        let target_record = parse_record_envelope(identity[20], "TargetIdentity")?;
+        let target = parse_record_fields(target_record, 1..=4, "TargetIdentity")?;
+        let profile_digest = match identity[21].split_first() {
+            Some((&0, [])) => None,
+            Some((&1, record)) => {
+                let profile = parse_record_fields(
+                    parse_record_envelope(record, "ProfileIdentity")?,
+                    1..=6,
+                    "ProfileIdentity",
+                )?;
+                Some(copy_digest(profile[4], "ProfileIdentity.contentDigest")?)
+            }
+            _ => return Err(TuneDecisionError::InvalidValue("Identity.profile")),
+        };
+        let features = parse_text_values(target[2], 256, "TargetIdentity.features")?;
+        let selection = parse_record_fields(top[6], 1..=5, "Selection")?;
+        let replay = parse_record_fields(top[7], 1..=10, "Replay")?;
+        let (output_count, mut offset) = parse_list_header(replay[5], 3, "Replay.outputs")?;
+        let mut outputs = Vec::with_capacity(usize::try_from(output_count).unwrap_or(0));
+        for _ in 0..output_count {
+            let (record, consumed) = parse_record_prefix(&replay[5][offset..], "OutputIdentity")?;
+            let fields = parse_record_fields(record, 1..=4, "OutputIdentity")?;
+            outputs.push(TuneReplayOutput {
+                role: parse_enum(fields[0], 1..=3, "OutputIdentity.role")?,
+                logical_basename: parse_text(fields[1], "OutputIdentity.logicalBasename")?
+                    .to_string(),
+                content_digest: copy_digest(fields[2], "OutputIdentity.contentDigest")?,
+                content_bytes: parse_u64(fields[3], "OutputIdentity.contentBytes")?,
+            });
+            offset += consumed;
+        }
+        require_exact_end(replay[5], offset, "Replay.outputs")?;
+        Ok(TuneReplayRequirements {
+            compiler_version: parse_text(identity[0], "Identity.ckVersion")?.to_string(),
+            compiler_source: copy_digest(identity[1], "Identity.compilerSource")?,
+            llvm_bridge: copy_digest(identity[4], "Identity.llvmBridge")?,
+            source_digest: copy_digest(identity[15], "Identity.sourceDigest")?,
+            semantic_contract_digest: copy_digest(identity[16], "Identity.semanticContractDigest")?,
+            pre_tune_kir_digest: copy_digest(identity[17], "Identity.preTuneKirDigest")?,
+            compilation_mode_digest: copy_digest(identity[18], "Identity.compilationModeDigest")?,
+            output_kind: parse_enum(identity[19], 1..=2, "Identity.outputKind")?,
+            target_triple: parse_text(target[0], "TargetIdentity.triple")?.to_string(),
+            target_cpu: parse_text(target[1], "TargetIdentity.cpu")?.to_string(),
+            target_features: features,
+            target_profile: parse_text(target[3], "TargetIdentity.targetProfile")?.to_string(),
+            profile_digest,
+            budget: match parse_enum(contract[5], 1..=3, "Contract.preset")? {
+                1 => TuneBudget::Quick,
+                2 => TuneBudget::Standard,
+                3 => TuneBudget::Thorough,
+                _ => unreachable!("closed preset parser"),
+            },
+            session_digest: copy_digest(environment[17], "Environment.sessionDigest")?,
+            selected_plan_digest: copy_digest(selection[2], "Selection.selectedPlanDigest")?,
+            frontier_digest: copy_digest(replay[0], "Replay.frontierDigest")?,
+            selected_pre_state_digest: copy_digest(replay[1], "Replay.selectedPreState")?,
+            selected_post_state_digest: copy_digest(replay[2], "Replay.selectedPostState")?,
+            object_graph_digest: copy_digest(replay[3], "Replay.objectGraphDigest")?,
+            link_recipe_digest: copy_digest(replay[4], "Replay.linkRecipeDigest")?,
+            outputs,
+        })
+    }
+
+    /// Reports whether any recorded candidate terminated with a canonical
+    /// timeout. Completed baseline decisions with such a timeout are not warm
+    /// cache hits because their interrupted search must be measured afresh.
+    pub fn has_candidate_timeout(&self) -> Result<bool, TuneDecisionError> {
+        self.validate_self_contained()?;
+        let body_end = self.bytes.len() - DIGEST_BYTES;
+        let top = parse_fields(
+            &self.bytes[HEADER_BYTES..body_end],
+            1..=8,
+            "top-level records",
+        )?;
+        let candidates = parse_record_fields(top[5], 1..=2, "Candidates")?;
+        let baseline = parse_record_fields(
+            parse_record_envelope(candidates[0], "Candidate")?,
+            1..=12,
+            "Candidate",
+        )?;
+        if optional_is_present(baseline[10], "Candidate.timeout")? {
+            return Ok(true);
+        }
+        let (count, mut offset) = parse_list_header(candidates[1], 32, "Candidates.trials")?;
+        for _ in 0..count {
+            let (record, consumed) = parse_record_prefix(&candidates[1][offset..], "Candidate")?;
+            let fields = parse_record_fields(record, 1..=12, "Candidate")?;
+            if optional_is_present(fields[10], "Candidate.timeout")? {
+                return Ok(true);
+            }
+            offset = offset
+                .checked_add(consumed)
+                .ok_or(TuneDecisionError::ResourceLimit("Candidates.trials"))?;
+        }
+        require_exact_end(candidates[1], offset, "Candidates.trials")?;
+        Ok(false)
+    }
+}
+
+fn optional_is_present(bytes: &[u8], context: &'static str) -> Result<bool, TuneDecisionError> {
+    match bytes.split_first() {
+        Some((&0, [])) => Ok(false),
+        Some((&1, value)) if !value.is_empty() => Ok(true),
+        _ => Err(TuneDecisionError::InvalidValue(context)),
+    }
+}
+
+fn copy_digest(bytes: &[u8], context: &'static str) -> Result<[u8; 32], TuneDecisionError> {
+    bytes
+        .try_into()
+        .map_err(|_| TuneDecisionError::InvalidValue(context))
+}
+
+fn parse_text_values(
+    bytes: &[u8],
+    limit: u32,
+    context: &'static str,
+) -> Result<Vec<String>, TuneDecisionError> {
+    let (count, mut offset) = parse_list_header(bytes, limit, context)?;
+    let mut values = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+    for _ in 0..count {
+        let (value, consumed) = parse_text_prefix(&bytes[offset..], context)?;
+        values.push(value.to_string());
+        offset += consumed;
+    }
+    require_exact_end(bytes, offset, context)?;
+    Ok(values)
 }
 
 /// Encodes a previously validated decision using its unique schema-1 bytes.
@@ -110,6 +289,7 @@ pub fn decode_tune_decision(bytes: &[u8]) -> Result<TuneDecision, TuneDecisionEr
 }
 
 fn validate_cross_record_equalities(fields: &[&[u8]]) -> Result<(), TuneDecisionError> {
+    validate_frontier_equalities(fields)?;
     let candidates = parse_record_fields(fields[5], 1..=2, "Candidates")?;
     let baseline = parse_record_envelope(candidates[0], "Candidate")?;
     let baseline_fields = parse_record_fields(baseline, 1..=12, "Candidate")?;
@@ -152,6 +332,10 @@ fn validate_cross_record_equalities(fields: &[&[u8]]) -> Result<(), TuneDecision
         ));
     }
 
+    for candidate in &all_candidates {
+        validate_compile_cache_origin(fields[0], candidate)?;
+    }
+
     let replay = parse_record_fields(fields[7], 1..=10, "Replay")?;
     if replay[3] != selected_candidate[2] || replay[4] != selected_candidate[3] {
         return Err(TuneDecisionError::InvalidValue("Replay artifact identity"));
@@ -159,8 +343,361 @@ fn validate_cross_record_equalities(fields: &[&[u8]]) -> Result<(), TuneDecision
     if replay[6] != selected_candidate[9] {
         return Err(TuneDecisionError::InvalidValue("Replay.compileOrigin"));
     }
+    validate_measurement_cache_origin(fields, replay[7])?;
     validate_replay_primary(replay[5], selected_candidate[11], selected_candidate[4])?;
     Ok(())
+}
+
+fn validate_compile_cache_origin(
+    identity: &[u8],
+    candidate: &[&[u8]],
+) -> Result<(), TuneDecisionError> {
+    let origin = parse_record_fields(
+        parse_record_envelope(candidate[9], "CacheOrigin")?,
+        1..=3,
+        "CacheOrigin",
+    )?;
+    let mut key_material = Vec::new();
+    append_field(&mut key_material, 1, &1u32.to_be_bytes());
+    append_field(&mut key_material, 2, &record_envelope(identity));
+    append_field(&mut key_material, 3, candidate[0]);
+    let key_digest = record_domain_hash(b"CK-TUNE-COMPILE-KEY\0", &key_material);
+    if origin[1] != key_digest {
+        return Err(TuneDecisionError::InvalidValue(
+            "CacheOrigin.compileKeyDigest",
+        ));
+    }
+    let mut entry_material = Vec::new();
+    append_field(&mut entry_material, 1, &key_digest);
+    append_field(&mut entry_material, 2, candidate[11]);
+    append_field(&mut entry_material, 3, candidate[4]);
+    append_field(&mut entry_material, 4, candidate[2]);
+    append_field(&mut entry_material, 5, candidate[3]);
+    if origin[2] != record_domain_hash(b"CK-TUNE-COMPILE-ENTRY\0", &entry_material) {
+        return Err(TuneDecisionError::InvalidValue(
+            "CacheOrigin.compileEntryDigest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_measurement_cache_origin(
+    records: &[&[u8]],
+    encoded_origin: &[u8],
+) -> Result<(), TuneDecisionError> {
+    let environment = parse_record_fields(records[3], 1..=19, "Environment")?;
+    let origin = parse_record_fields(
+        parse_record_envelope(encoded_origin, "CacheOrigin")?,
+        1..=3,
+        "CacheOrigin",
+    )?;
+    let mut key_material = Vec::new();
+    append_field(&mut key_material, 1, &1u32.to_be_bytes());
+    append_field(&mut key_material, 2, environment[17]);
+    append_field(&mut key_material, 3, environment[18]);
+    let key_digest = record_domain_hash(b"CK-TUNE-MEASUREMENT-KEY\0", &key_material);
+    if origin[1] != key_digest {
+        return Err(TuneDecisionError::InvalidValue(
+            "CacheOrigin.measurementKeyDigest",
+        ));
+    }
+    let mut entry_material = Vec::new();
+    append_field(&mut entry_material, 1, &key_digest);
+    append_field(&mut entry_material, 2, &record_envelope(records[5]));
+    append_field(&mut entry_material, 3, &record_envelope(records[6]));
+    if origin[2] != record_domain_hash(b"CK-TUNE-MEASUREMENT-ENTRY\0", &entry_material) {
+        return Err(TuneDecisionError::InvalidValue(
+            "CacheOrigin.measurementEntryDigest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_frontier_equalities(fields: &[&[u8]]) -> Result<(), TuneDecisionError> {
+    let identity = parse_record_fields(fields[0], 1..=22, "Identity")?;
+    let pre_tune = identity[17];
+    let frontier = parse_record_fields(fields[4], 1..=4, "Frontier")?;
+    let mut site_classes = BTreeMap::<Vec<u8>, (u8, [u8; 32])>::new();
+    let mut prior_site = None::<[u8; 32]>;
+    let (site_count, mut site_offset) = parse_list_header(frontier[1], 4_096, "Frontier.sites")?;
+    for _ in 0..site_count {
+        let (site, consumed) = parse_record_prefix(&frontier[1][site_offset..], "Frontier.sites")?;
+        let site_fields = parse_record_fields(site, 1..=6, "Site")?;
+        let site_id = copy_digest(site_fields[0], "Site.siteId")?;
+        if prior_site.is_some_and(|prior| prior >= site_id) {
+            return Err(TuneDecisionError::InvalidValue("Frontier.sites order"));
+        }
+        prior_site = Some(site_id);
+        let class = parse_enum(site_fields[1], 1..=7, "Site.class")?;
+        let mut root_material = Vec::new();
+        append_field(&mut root_material, 1, pre_tune);
+        append_field(&mut root_material, 2, site_fields[5]);
+        if site_fields[2] != record_domain_hash(b"CK-TUNE-ROOT\0", &root_material) {
+            return Err(TuneDecisionError::InvalidValue("Site.rootId"));
+        }
+        let mut site_material = Vec::new();
+        append_field(&mut site_material, 1, site_fields[2]);
+        append_field(&mut site_material, 2, site_fields[1]);
+        append_field(&mut site_material, 3, site_fields[4]);
+        append_field(&mut site_material, 4, site_fields[3]);
+        if site_fields[0] != record_domain_hash(b"CK-TUNE-SITE\0", &site_material) {
+            return Err(TuneDecisionError::InvalidValue("Site.siteId"));
+        }
+        if site_classes
+            .insert(
+                site_id.to_vec(),
+                (class, copy_digest(site_fields[3], "Site.preStateDigest")?),
+            )
+            .is_some()
+        {
+            return Err(TuneDecisionError::InvalidValue("Frontier.sites duplicate"));
+        }
+        site_offset = site_offset
+            .checked_add(consumed)
+            .ok_or(TuneDecisionError::ResourceLimit("Frontier.sites"))?;
+    }
+    require_exact_end(frontier[1], site_offset, "Frontier.sites")?;
+
+    let mut prior_unit = None::<(u8, [u8; 32])>;
+    let mut unit_ids = BTreeSet::new();
+    let (unit_count, mut unit_offset) = parse_list_header(frontier[2], 64, "Frontier.units")?;
+    for _ in 0..unit_count {
+        let (unit, consumed) = parse_record_prefix(&frontier[2][unit_offset..], "Frontier.units")?;
+        let unit_fields = parse_record_fields(unit, 1..=4, "Unit")?;
+        let unit_id = copy_digest(unit_fields[0], "Unit.unitId")?;
+        let mut unit_material = Vec::new();
+        append_field(&mut unit_material, 1, unit_fields[1]);
+        append_field(&mut unit_material, 2, unit_fields[2]);
+        if unit_fields[0] != record_domain_hash(b"CK-TUNE-UNIT\0", &unit_material) {
+            return Err(TuneDecisionError::InvalidValue("Unit.unitId"));
+        }
+        let site_ids = parse_digest_values(unit_fields[1], 4_096, "Unit.siteIds")?;
+        if site_ids.is_empty() || site_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(TuneDecisionError::InvalidValue("Unit.siteIds"));
+        }
+        let mut unit_class = None;
+        for site_id in &site_ids {
+            let (class, site_pre) = site_classes
+                .get(site_id.as_slice())
+                .copied()
+                .ok_or(TuneDecisionError::InvalidValue("Unit.siteIds"))?;
+            if unit_fields[2] != site_pre {
+                return Err(TuneDecisionError::InvalidValue("Unit.baselineStateDigest"));
+            }
+            if unit_class
+                .replace(class)
+                .is_some_and(|prior| prior != class)
+            {
+                return Err(TuneDecisionError::InvalidValue("Unit site class"));
+            }
+        }
+        let class = unit_class.ok_or(TuneDecisionError::InvalidValue("Unit.siteIds"))?;
+        let phase = replay_phase(class);
+        if prior_unit.is_some_and(|prior| prior >= (phase, unit_id)) {
+            return Err(TuneDecisionError::InvalidValue("Frontier.units order"));
+        }
+        prior_unit = Some((phase, unit_id));
+        if !unit_ids.insert(unit_id) {
+            return Err(TuneDecisionError::InvalidValue("Frontier.units duplicate"));
+        }
+
+        let (variant_count, mut variant_offset) =
+            parse_list_header(unit_fields[3], 4, "Unit.variants")?;
+        let mut prior_variant = None::<[u8; 32]>;
+        for _ in 0..variant_count {
+            let (variant, variant_consumed) =
+                parse_record_prefix(&unit_fields[3][variant_offset..], "Unit.variants")?;
+            let variant_fields = parse_record_fields(variant, 1..=7, "UnitVariant")?;
+            let variant_id = copy_digest(variant_fields[0], "UnitVariant.variantId")?;
+            if prior_variant.is_some_and(|prior| prior >= variant_id)
+                || variant_fields[1] != [class]
+            {
+                return Err(TuneDecisionError::InvalidValue(
+                    "Unit.variants order or class",
+                ));
+            }
+            prior_variant = Some(variant_id);
+            validate_site_alternative_equalities(
+                variant_fields[2],
+                class,
+                &site_ids,
+                &site_classes,
+                variant_fields[6],
+            )?;
+            let mut variant_material = Vec::new();
+            append_field(&mut variant_material, 1, unit_fields[0]);
+            for (tag, value) in (2u16..=7).zip(&variant_fields[1..7]) {
+                append_field(&mut variant_material, tag, value);
+            }
+            if variant_fields[0] != record_domain_hash(b"CK-TUNE-UNIT-VARIANT\0", &variant_material)
+            {
+                return Err(TuneDecisionError::InvalidValue("UnitVariant.variantId"));
+            }
+            variant_offset = variant_offset
+                .checked_add(variant_consumed)
+                .ok_or(TuneDecisionError::ResourceLimit("Unit.variants"))?;
+        }
+        require_exact_end(unit_fields[3], variant_offset, "Unit.variants")?;
+        unit_offset = unit_offset
+            .checked_add(consumed)
+            .ok_or(TuneDecisionError::ResourceLimit("Frontier.units"))?;
+    }
+    require_exact_end(frontier[2], unit_offset, "Frontier.units")?;
+
+    let mut space_material = Vec::new();
+    append_field(&mut space_material, 1, frontier[1]);
+    append_field(&mut space_material, 2, frontier[2]);
+    if frontier[0] != record_domain_hash(b"CK-TUNE-CANDIDATE-SPACE\0", &space_material) {
+        return Err(TuneDecisionError::InvalidValue(
+            "Frontier.candidateSpaceDigest",
+        ));
+    }
+    let mut frontier_hasher = Sha256::new();
+    frontier_hasher.update(b"CK-TUNE-FRONTIER\0");
+    frontier_hasher.update(frontier[0]);
+    frontier_hasher.update(frontier[3]);
+    let replay = parse_record_fields(fields[7], 1..=10, "Replay")?;
+    if replay[0] != frontier_hasher.finalize().as_slice() {
+        return Err(TuneDecisionError::InvalidValue("Replay.frontierDigest"));
+    }
+    Ok(())
+}
+
+fn validate_site_alternative_equalities(
+    bytes: &[u8],
+    class: u8,
+    unit_site_ids: &[[u8; 32]],
+    site_classes: &BTreeMap<Vec<u8>, (u8, [u8; 32])>,
+    variant_post: &[u8],
+) -> Result<(), TuneDecisionError> {
+    let (count, mut offset) = parse_list_header(bytes, 4_096, "UnitVariant.siteAlternatives")?;
+    if usize::try_from(count).ok() != Some(unit_site_ids.len()) {
+        return Err(TuneDecisionError::InvalidValue(
+            "UnitVariant.siteAlternatives",
+        ));
+    }
+    let mut seen = Vec::new();
+    let mut prior = None::<([u8; 32], [u8; 32])>;
+    for _ in 0..count {
+        let (alternative, consumed) =
+            parse_record_prefix(&bytes[offset..], "UnitVariant.siteAlternatives")?;
+        let fields = parse_record_fields(alternative, 1..=5, "SiteAlternative")?;
+        let site_id = copy_digest(fields[0], "SiteAlternative.siteId")?;
+        let alternative_id = copy_digest(fields[1], "SiteAlternative.alternativeId")?;
+        let key = (site_id, alternative_id);
+        let Some((site_class, site_pre)) = site_classes.get(site_id.as_slice()).copied() else {
+            return Err(TuneDecisionError::InvalidValue(
+                "UnitVariant.siteAlternatives site",
+            ));
+        };
+        if prior.is_some_and(|prior| prior >= key) || site_class != class || fields[2] != site_pre {
+            return Err(TuneDecisionError::InvalidValue(
+                "UnitVariant.siteAlternatives order or class",
+            ));
+        }
+        prior = Some(key);
+        seen.push(site_id);
+        let payload = parse_record_fields(
+            parse_record_envelope(fields[4], "AlternativePayload")?,
+            1..=2,
+            "AlternativePayload",
+        )?;
+        if payload[0] != [class] || fields[3] != variant_post {
+            return Err(TuneDecisionError::InvalidValue(
+                "SiteAlternative class or post-state",
+            ));
+        }
+        let mut material = Vec::new();
+        append_field(&mut material, 1, fields[0]);
+        append_field(&mut material, 2, fields[4]);
+        append_field(&mut material, 3, fields[3]);
+        if fields[1] != record_domain_hash(b"CK-TUNE-ALTERNATIVE\0", &material) {
+            return Err(TuneDecisionError::InvalidValue(
+                "SiteAlternative.alternativeId",
+            ));
+        }
+        offset = offset
+            .checked_add(consumed)
+            .ok_or(TuneDecisionError::ResourceLimit(
+                "UnitVariant.siteAlternatives",
+            ))?;
+    }
+    require_exact_end(bytes, offset, "UnitVariant.siteAlternatives")?;
+    if seen != unit_site_ids {
+        return Err(TuneDecisionError::InvalidValue(
+            "UnitVariant.siteAlternatives site set",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_digest_values(
+    bytes: &[u8],
+    maximum: u32,
+    name: &'static str,
+) -> Result<Vec<[u8; 32]>, TuneDecisionError> {
+    let (count, mut offset) = parse_list_header(bytes, maximum, name)?;
+    let mut values = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+    for _ in 0..count {
+        let end = offset
+            .checked_add(32)
+            .ok_or(TuneDecisionError::ResourceLimit(name))?;
+        values.push(copy_digest(
+            bytes
+                .get(offset..end)
+                .ok_or(TuneDecisionError::Truncated(name))?,
+            name,
+        )?);
+        offset = end;
+    }
+    require_exact_end(bytes, offset, name)?;
+    Ok(values)
+}
+
+fn replay_phase(class: u8) -> u8 {
+    match class {
+        2 => 1,
+        1 => 2,
+        6 => 3,
+        4 => 4,
+        3 => 5,
+        5 => 6,
+        7 => 7,
+        _ => unreachable!("AlternativeClass was already validated"),
+    }
+}
+
+fn append_field(output: &mut Vec<u8>, tag: u16, payload: &[u8]) {
+    output.extend_from_slice(&tag.to_be_bytes());
+    output.extend_from_slice(
+        &u32::try_from(payload.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
+    output.extend_from_slice(payload);
+}
+
+fn record_envelope(fields: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(4 + fields.len());
+    output.extend_from_slice(
+        &u32::try_from(fields.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
+    output.extend_from_slice(fields);
+    output
+}
+
+fn record_domain_hash(domain: &[u8], fields: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(
+        u32::try_from(fields.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(fields);
+    hasher.finalize().into()
 }
 
 fn validate_plan_digest(stored: &[u8], choices: &[u8]) -> Result<(), TuneDecisionError> {

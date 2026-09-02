@@ -38,7 +38,9 @@ pub fn verify_tune_trials_with_source(
         check_tuning_plan(state, space, trial.plan()).map_err(|error| error.to_string())?;
         let replayed =
             apply_tuning_plan(state, space, trial.plan()).map_err(|error| error.to_string())?;
-        if replayed.kir_digest() != trial.post_state_digest() {
+        if crate::tuning_kir_state_digest(&replayed).map_err(|error| error.to_string())?
+            != trial.post_state_digest()
+        {
             return Err("tuning trial post-state mismatch".to_string());
         }
         trial.verify_internal_identity()?;

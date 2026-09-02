@@ -1,10 +1,10 @@
-# CalcKernel 0.13 Compatibility Policy
+# CalcKernel 0.14 Compatibility Policy
 
 [简体中文](../zh-CN/project/compatibility.md)
 
-This document is the normative compatibility authority for `0.13.x`.
+This document is the normative compatibility authority for `0.14.x`.
 
-Patch releases preserve accepted 0.13.0 source and observable semantics, stable
+Patch releases preserve accepted 0.14.0 source and observable semantics, stable
 diagnostic identifiers/categories, documented CLI names/flags/defaults,
 stdout/stderr classes, semantic textual MIR, public C/WASM/Native C ABI shapes,
 checked first-error order, runtime diagnostic bytes/statuses, and the six
@@ -16,6 +16,27 @@ boundary remains unchanged. Private Rust modules, KIR text and schema, profile
 wire formats, facts/proof encoding, pass algorithms, private LLVM bridge ABI,
 cache entries, dispatch/collection runtimes, measurements, and undocumented
 compiler interfaces are not public contracts.
+
+## 0.13.0 to 0.14.0 migration
+
+- Accepted 0.13 source, language semantics, semantic MIR, diagnostics, checked
+  behavior, runtime output, and public Native C ABI remain compatible. Native C
+  ABI stays version 1, Runtime ABI 2, KIR v3, LLVM bridge ABI 4, and CK profile/
+  multiversion schemas stay version 1.
+- Offline Auto-Tuning is opt-in through `ckc tune build|inspect` and
+  `ckc build --tune-use`. Ordinary commands never capture a workload, execute a
+  runner, read a tuning decision, or access `tune-v1`.
+- `CKTUNE01` and the tuning manifest/measurement/inspection/plan formats use
+  private schema 1. A future schema, unknown field, corrupt decision, or any
+  source/compiler/target/profile/mode/frontier/plan/artifact mismatch fails
+  closed without an ordinary-build fallback.
+- Native cache advances from `CKCOBJ03` key/manifest schema 4 to `CKCOBJ04`
+  key/manifest schema 5. Old private cache entries are clean misses and are not
+  upgraded or reinterpreted.
+
+Executable 0.13 compatibility history remains in
+`tests/fixtures/compatibility/v0_13/manifest.toml`; its accepted source boundary
+is compiled by the current compatibility target.
 
 ## 0.12.0 to 0.13.0 migration
 
@@ -85,4 +106,4 @@ The executable history is retained in
 
 The 0.10.0 identity and fixtures remain in
 `tests/fixtures/compatibility/v0_10/manifest.toml`. A future `1.0.0` begins the
-long-term stability commitment; the 0.13 line does not claim 1.0 compatibility.
+long-term stability commitment; the 0.14 line does not claim 1.0 compatibility.

@@ -132,7 +132,7 @@ pub struct MeasurementRun {
 pub enum MeasurementFailure {
     #[error("invalid measurement configuration: {0}")]
     InvalidConfiguration(String),
-    #[error("runner failure")]
+    #[error("runner failure: {0}")]
     Runner(#[from] RunnerFailure),
     #[error("runner result does not match the frozen case")]
     Correctness,

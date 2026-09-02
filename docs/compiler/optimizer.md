@@ -1,4 +1,4 @@
-# CalcKernel 0.13 Fact-Driven Optimizer
+# CalcKernel 0.14 Fact-Driven Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -79,7 +79,7 @@ consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
-C and WebAssembly profiles disable Vector KIR in 0.13.
+C and WebAssembly profiles disable Vector KIR in 0.14.
 
 Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
 the complete candidate module, proof/fact state, and audit-budget delta are
@@ -112,7 +112,7 @@ Loop SIMD, loop SLP, and unroll are priced over the same immutable loop scope an
 only one winner commits. A vector candidate must beat the scalar cost by at least
 20% at its conservative trip threshold; exact shorter trips stay scalar. The
 aggregate O3 growth ceiling and proposer/checker work budgets apply across all
-0.13 speculative transforms, including rejected alternatives and clones.
+0.14 speculative transforms, including rejected alternatives and clones.
 
 Integer constant propagation also runs in guard-free functions. It rewrites
 modular arithmetic, integer copies and comparisons, including consumers of
@@ -252,6 +252,23 @@ the move is unobservable. Contract facts never weaken source semantics: a false
 unsafe precondition is already undefined at entry, while safe functions gain no
 new undefined behavior from failed analysis.
 
+## Offline Auto-Tuning
+
+`ckc tune build` starts from the exact verified ordinary O3 Native state. The
+compiler enumerates seven CK-owned alternative classes—specialization,
+inlining, short-slice versioning, Loop SIMD, unrolling, SLP, and layout—using
+stable site/unit/variant identities. A deterministic bounded beam produces a
+complete frontier; legal plans are replayed through the same verifier and
+Native object/link pipeline as ordinary builds. Correctness smoke checks run
+before timing, candidate order rotates deterministically, and measured winners
+must survive two independent validation rounds and the artifact-size gate.
+
+The decision is non-proof optimization evidence. It cannot introduce a range,
+alias, alignment, effect, or safety fact, and it cannot suppress verifier or
+checked-mode obligations. `--tune-use` recomputes the current frontier and exact
+selected plan, then compares post-state, object graph, and link recipe with the
+decision. A mismatch is an error rather than an ordinary-optimization fallback.
+
 ## Backend facts and performance
 
 Only verified pairwise no-alias, alignment, range, and effect facts reach C or
@@ -259,11 +276,11 @@ LLVM. C emits portable hints only when their complete preconditions hold. Native
 performs a pre-LLVM fact audit and rejects injected or stale metadata.
 
 Performance gates compare identical algorithms, safety modes, data, hardware,
-CPU policy, training/evaluation split, and strict semantics. Schema 8 compares
-0.13 ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
+CPU policy, training/evaluation split, and strict semantics. Schema 9 compares
+0.14 ordinary/PGO/multiversion/tuned channels with pinned Clang/Rust PGO and
 hand-written SIMD oracles, and replays exact 0.12 commit
 `1c2596da11242704cc6d875e969fc45cf58ea21d`. Correctness, optimization time,
 generation overhead, artifact size, compiler archive size, and cache behavior
-have separate gates. PGO and bounded multiversioning ship in 0.13. Auto-Tuning
-remains 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
+have separate gates. PGO, bounded multiversioning, and offline Auto-Tuning ship
+in 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.

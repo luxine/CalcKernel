@@ -9,5 +9,9 @@ mod oracle_fixtures;
 mod pgo_contract;
 #[path = "performance/runtime_replay.rs"]
 mod runtime_replay;
+#[path = "performance/tune_contract.rs"]
+mod tune_contract;
+#[path = "performance/tune_oracles.rs"]
+mod tune_oracles;
 #[path = "performance/vector_oracles.rs"]
 mod vector_oracles;

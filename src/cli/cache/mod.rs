@@ -152,5 +152,16 @@ pub(super) fn clean_default() -> Result<(), String> {
         Err(error) => return Err(format!("inspect cache root {}: {error}", root.display())),
         Ok(_) => {}
     }
+    let tune_namespace = root.join(calckernel::TUNE_CACHE_NAMESPACE);
+    match fs::symlink_metadata(&tune_namespace) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect tuning cache namespace {}: {error}",
+                tune_namespace.display()
+            ));
+        }
+        Ok(_) => calckernel::TuneCache::open_at(&root)?.remove_namespace()?,
+    }
     CacheStore::open_at(root)?.clean()
 }

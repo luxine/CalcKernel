@@ -34,11 +34,11 @@ fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_histo
 }
 
 #[test]
-fn repository_should_declare_v0_13_everywhere() {
+fn repository_should_declare_v0_14_everywhere() {
     let cargo = read("Cargo.toml");
     let lock = read("Cargo.lock");
-    assert!(cargo.contains("version = \"0.13.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.13.0\""));
+    assert!(cargo.contains("version = \"0.14.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.14.0\""));
     for path in [
         "README.md",
         "README.zh-CN.md",
@@ -47,7 +47,7 @@ fn repository_should_declare_v0_13_everywhere() {
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.13.0"), "{path} must name 0.13.0");
+        assert!(read(path).contains("0.14.0"), "{path} must name 0.14.0");
     }
 }
 
@@ -153,6 +153,43 @@ fn v0_13_compatibility_manifest_should_cover_pgo_multiversion_and_v0_12_boundary
             assert!(
                 read(path).contains(&format!("fn {test_name}")),
                 "0.13 compatibility evidence does not resolve: {evidence}"
+            );
+        }
+    }
+}
+
+#[test]
+fn v0_14_compatibility_manifest_should_cover_tuning_and_v0_13_boundary() {
+    let manifest = read("tests/fixtures/compatibility/v0_14/manifest.toml");
+    assert!(manifest.contains("release = \"0.14.0\""));
+    for id in [
+        "tune-decision-schema1",
+        "tune-workload-snapshot",
+        "deterministic-frontier-replay",
+        "measurement-selection",
+        "journaled-publication",
+        "native-cache-v5",
+        "v0-13-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.14 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.14 compatibility evidence does not resolve: {evidence}"
             );
         }
     }

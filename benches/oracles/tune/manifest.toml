@@ -1,0 +1,59 @@
+schema_version = 1
+native_abi_schema = 1
+clang_version = "22.1.8"
+rust_version = "1.90.0"
+c_standard = "c11"
+rust_edition = "2024"
+fast_math = false
+fp_contraction = false
+overflow = "unchecked-defined-inputs"
+bounds = "unchecked-defined-inputs"
+alias_audit = "explicit-simd-restrict-generic-noalias-unspecified"
+
+[c]
+source = "benches/oracles/tune/c/tune_oracle.c"
+sha256 = "3ee435c469f5e70663e8c231d0e3516067e1e8e6efcd834625e24ff15b9ab34e"
+simd_args = ["-std=c11", "-O3", "-march=native", "-fno-fast-math", "-ffp-contract=off", "-fno-builtin", "-shared", "-fPIC"]
+generic_args = ["-std=c11", "-O3", "-march=native", "-fno-fast-math", "-ffp-contract=off", "-fno-builtin", "-DCK_TUNE_GENERIC=1", "-shared", "-fPIC"]
+ubsan_args = ["-fsanitize=undefined", "-fno-sanitize-recover=all", "-fsanitize-trap=undefined"]
+
+[rust]
+source = "benches/oracles/tune/rust/tune_oracle.rs"
+sha256 = "8068166a2c5ce9714abc224b2e21fba4bdef2f5a85673e37b95c90d16791eba2"
+simd_args = ["--edition", "2024", "--crate-type", "cdylib", "-Awarnings", "-C", "opt-level=3", "-C", "target-cpu=native", "-C", "panic=abort", "-C", "llvm-args=-fp-contract=off"]
+generic_args = ["--edition", "2024", "--crate-type", "cdylib", "-Awarnings", "-C", "opt-level=3", "-C", "target-cpu=native", "-C", "panic=abort", "-C", "llvm-args=-fp-contract=off"]
+
+[[case]]
+name = "branch-layout"
+oracle_case = 1
+abi = "slice-branch-u64"
+
+[[case]]
+name = "call-constant-length"
+oracle_case = 2
+abi = "slice-fixed-u32"
+
+[[case]]
+name = "trip-unroll-simd"
+oracle_case = 3
+abi = "slice-map-u32"
+
+[[case]]
+name = "memory-bound"
+oracle_case = 4
+abi = "slice-zip-u32"
+
+[[case]]
+name = "compute-bound"
+oracle_case = 5
+abi = "slice-f64"
+
+[[case]]
+name = "contract-noalias"
+oracle_case = 6
+abi = "slice-map-u32-domain"
+
+[[case]]
+name = "contract-fixed-length"
+oracle_case = 7
+abi = "slice-fixed-length-u32-domain"

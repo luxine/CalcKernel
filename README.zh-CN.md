@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-CalcKernel 0.13.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
+CalcKernel 0.14.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
 语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
 仓库同时保留可检查的 C 与 WebAssembly emitter。
 
@@ -25,6 +25,9 @@ CalcKernel 0.13.0 发布 `native ckc`：一个用 Rust 实现、可自包含运�
   `ckc pgo` / `--pgo-*` workflow 进行的 non-proof PGO application。
 - 显式 Native `--cpu multiversion` build，包含 portable baseline、已验证的受限 variant、
   baseline-safe one-time dispatch 与 executable/dynamic/static artifact 中的稳定 ABI thunk。
+- 显式 offline Auto-Tuning：`ckc tune build|inspect` 与经过完整重放验证的
+  `ckc build --tune-use`，包含 immutable workload snapshot、deterministic search、
+  correctness-first measurement、private cache 与 journaled output。
 - Source-only C 与 portable WAT/WASM 输出。
 - 面向 macOS、Linux、Windows 的 AArch64/x86-64 六个零工具链 release archive。
 
@@ -64,13 +67,18 @@ ckc pgo build examples/native/hello.ck --out /tmp/hello-pgo \
   --profile-out /tmp/hello.ckprof
 ckc build examples/core/scalar.ck --kind static --cpu multiversion \
   --pgo-use /tmp/scalar.ckprof --out /tmp/libscalar.a
+ckc tune build examples/native/hello.ck --config workload.cktune.toml \
+  --kind executable --cpu native -O3 --out /tmp/hello-tuned
+ckc tune inspect /tmp/hello-tuned.cktune
+ckc build examples/native/hello.ck --kind executable --cpu native -O3 \
+  --tune-use /tmp/hello-tuned.cktune --out /tmp/hello-replayed
 ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
 ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
 ckc licenses
 ```
 
-`run` 与 `build` 默认 O3。只有显式使用 `pgo` command 或 `--pgo-*` option 才启用 PGO；
-普通开发不会训练或读取 profile。Native build 默认 portable CPU baseline，`--cpu native`
+`run` 与 `build` 默认 O3。只有显式使用相应 command/flag 才启用 PGO 或 offline tuning；
+普通开发不会训练、运行 measurement runner，也不会读取 profile/tuning decision。Native build 默认 portable CPU baseline，`--cpu native`
 与 `--cpu multiversion` 均为显式选择。`build-llvm` 是 deprecated alias，不提供 PGO 或
 multiversion behavior。
 
@@ -118,13 +126,13 @@ cargo build --release --features native-toolchain --locked
 Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
 发布见 [release policy](docs/zh-CN/project/release.md)。
 
-CalcKernel 0.13.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
+CalcKernel 0.14.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
 LLVM bridge 为 ABI 4，KIR 使用 `kir-v3` identity，Native object cache 使用
-`CKCOBJ03` 及 key/manifest schema 4。旧 0.12/0.11 private cache entry 会 fail closed，
-不会与 0.13 artifact 混用。已接受的 0.12.0、0.11.0 与 0.10.0 source boundary 保留在
+`CKCOBJ04` 及 key/manifest schema 5。旧 0.13 及更早 private cache entry 会 fail closed，
+不会与 0.14 artifact 混用。已接受的 0.13.0、0.12.0、0.11.0 与 0.10.0 source boundary 保留在
 [兼容性策略](docs/zh-CN/project/compatibility.md)中。
 
-PGO 与受限 runtime multiversioning 已在 0.13 实现。Auto-Tuning remains 0.14；
+PGO、受限 runtime multiversioning 与显式 offline Auto-Tuning 均已实现；
 indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍是未来工作。
 
 ## 内存边界

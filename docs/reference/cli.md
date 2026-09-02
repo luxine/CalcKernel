@@ -1,4 +1,4 @@
-# `ckc` 0.13 CLI Reference
+# `ckc` 0.14 CLI Reference
 
 [简体中文](../zh-CN/reference/cli.md)
 
@@ -23,7 +23,9 @@ requested textual output use stdout unless stated otherwise.
 | `ckc pgo build <file> --out <executable>` | Generate, run once without arguments, merge, and build one final O3 executable. |
 | `ckc pgo merge <shard-or-directory>... --out <file.ckprof>` | Canonically merge completed `CKPART01` shards. |
 | `ckc pgo inspect <file.ckprof> [--json]` | Validate and inspect one terminal `CKPROF01` profile. |
-| `ckc cache clean` | Remove only the resolved CK native cache. |
+| `ckc tune build <file> --config <manifest>` | Explicit host-native offline tuning and journaled artifact/decision publication. |
+| `ckc tune inspect <file.cktune> [--json]` | Validate and inspect one `CKTUNE01` decision without compiling or running it. |
+| `ckc cache clean` | Safely remove the resolved ordinary and `tune-v1` caches. |
 | `ckc licenses` | Print embedded third-party notices. |
 | `ckc --version --verbose` | Print compiler, ABI, LLVM, target, codegen, and ORC identity. |
 
@@ -56,6 +58,8 @@ no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
 - `--target <host-triple>` is accepted by Native inspection/build commands only
   when it normalizes to the detected host triple; cross-compilation is rejected.
 - `--no-cache` makes `run` bypass persistent cache reads and writes.
+- `--budget quick|standard|thorough`, `--tune-out`, and `--no-tune-cache`
+  apply only to `tune build`; `--tune-use` applies only to `build`.
 - `--print-facts`, `--print-effect-summaries`, and `--explain-optimization`
   write deterministic verified KIR evidence to stderr on inspection-capable commands.
 - `--sanitize-contracts` is accepted only by `run` and
@@ -93,7 +97,7 @@ ckc build kernels.ck --kind static --pgo-use kernels.ckprof \
 Profile use accepts O2/O3; specialization and `--cpu multiversion` require O3.
 Generation accepts executable, dynamic, and static outputs, but a generation object
 is rejected because it has no process/library flush owner. A
-multiversion object is also rejected because 0.13 defines a named-object bundle,
+multiversion object is also rejected because 0.14 defines a named-object bundle,
 not a partial-link format; baseline/native single-version profile-use objects
 remain supported. Dynamic, static, and object outputs use Native-library topology,
 while executables use Native-executable topology. `--pgo-use` and
@@ -108,7 +112,7 @@ ordered multiversion target set. A profile identity mismatch is an error, not a
 partial-profile hint. Unknown fields, digest failures, missing observations, and
 unsupported schema versions fail closed. Profile generation artifacts bypass all
 Native object-cache reads/writes; final use bundles hit only when every named
-object and dispatch identity validates under `CKCOBJ03` key/manifest schema 4.
+object and dispatch identity validates under `CKCOBJ04` key/manifest schema 5.
 
 Profiles can reveal workload branch, trip-count, length, and constant-frequency
 information. Directories and files therefore stay inside the user's trust
@@ -117,6 +121,44 @@ source, counters, profiles, diagnostics, or artifacts. Stable error
 categories distinguish invalid CLI combination, collection/publication,
 profile identity mismatch, profile mapping, unsupported target tier, detector,
 variant verification, and final artifact failures.
+
+## Offline tuning workflow
+
+Offline Auto-Tuning is explicit and host-native:
+
+```sh
+ckc tune build kernel.ck --config workload.cktune.toml --kind executable \
+  --cpu native -O3 --budget standard --out kernel-tuned
+ckc tune inspect kernel-tuned.cktune --json
+ckc build kernel.ck --kind executable --cpu native -O3 \
+  --tune-use kernel-tuned.cktune --out kernel-replayed
+```
+
+`tune build` accepts only executable or dynamic output, exact host target,
+`--cpu native`, and O3. Optional `--pgo-use` and checked modes remain part of
+the complete identity; profile generation, multiversioning, and contract
+sanitization are rejected. The closed schema-1 TOML manifest names one
+host-format runner, immutable declared inputs, an environment allowlist, and
+disjoint search/validation cases. Runner and input paths are captured without
+following symlinks. Every invocation receives only declared arguments,
+environment, case/seed/iteration variables, and a fresh `CKTIMAP1` input map.
+
+The compiler builds the ordinary baseline, enumerates a bounded deterministic
+frontier, validates correctness before timing, rotates candidate order, and
+uses two validation rounds. It publishes the Native output set and one
+canonical `CKTUNE01` schema-1 decision through crash-recoverable journals.
+`--tune-use` reconstructs the current source/KIR/frontier/selected plan and
+compares object-graph and link-recipe identity; any stale compiler, source,
+schema, CPU/features, profile, mode, kind, frontier, plan, or artifact is an
+error with no ordinary-build fallback. A different destination is allowed.
+
+The private `tune-v1` namespace separates compile, measurement, and completed
+decision domains, uses an installation-local CSPRNG salt for measurement keys,
+owner-only files, checksums, atomic writes, and a hard 4 GiB deterministic LRU
+limit. An exact complete warm decision can be republished byte-for-byte;
+`--no-tune-cache` forces a fresh session. Ordinary commands neither open this
+namespace nor run the harness. No command uploads workload, source, decision,
+measurement, profile, or artifact data.
 
 ## Backend and effect matrix
 
@@ -143,17 +185,18 @@ unsafe ownership/permissions, a symlink replacement, or an unparseable object
 is a miss, never executable input. The same-user cache remains inside the
 user's trust boundary and is not a security sandbox.
 
-CalcKernel 0.13 uses KIR v3 and `CKCOBJ03` manifest schema 4. Contract
+CalcKernel 0.14 uses KIR v3 and `CKCOBJ04` manifest schema 5. Contract
 sanitization, consumer roots, checked modes, the canonical `KirTargetProfile`
 digest, cost/proof schema identities, target/CPU policy, and optimization
-budgets are part of the key. 0.12 and older private objects fail closed and cannot be
-reused under the 0.13 compiler.
+budgets are part of the key. 0.13 and older private objects fail closed and cannot be
+reused under the 0.14 compiler.
 
 Roots are `$XDG_CACHE_HOME/ckc` or `$HOME/.cache/ckc` on Linux,
 `$HOME/Library/Caches/ckc` on macOS, and
 `%LOCALAPPDATA%\CalcKernel\cache` on Windows. A missing required base disables
 cache for the run. Writes use owner-only same-filesystem staging and atomic
-rename; the default soft limit is 1 GiB with best-effort LRU eviction.
+rename; the ordinary-cache default soft limit is 1 GiB with best-effort LRU eviction.
+`ckc cache clean` removes both the ordinary entries and the validated tuning namespace.
 
 Native checked failures use statuses 240–243; stdout failure uses 244; abnormal
 child termination maps to 245; contract sanitizer failure uses 246 and exact

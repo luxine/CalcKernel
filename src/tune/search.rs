@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    KirVerifiedProgramState, TuneAlternativeClass, TuneBudget, TunePlanChoice, TuneUnit,
-    TuningPlan, TuningPlanError, TuningSpace, apply_tuning_plan,
+    KirVerifiedProgramState, TuneAlternativeClass, TuneBudget, TuneUnit, TuningPlan,
+    TuningPlanError, TuningSpace,
 };
 
 /// Closed result of one attempted plan expansion.
@@ -45,7 +45,8 @@ pub fn run_deterministic_search(
     budget: TuneBudget,
 ) -> Result<SearchFrontier, TuningPlanError> {
     let contract = budget.contract();
-    let baseline = metrics_for(state, TuningPlan::baseline())?;
+    let (baseline_plan, baseline_state) = crate::optimizer::derive_tuning_plan(state, space, &[])?;
+    let baseline = metrics_for(&baseline_state, baseline_plan)?;
     let mut beam = vec![baseline.clone()];
     let mut expansions = Vec::new();
     'units: for unit in &space.units {
@@ -110,22 +111,14 @@ fn extend_plan(
     unit: &TuneUnit,
     variant_id: [u8; 32],
 ) -> Result<TuningPlan, TuningPlanError> {
-    let mut choices = parent.choices.clone();
-    choices.push(TunePlanChoice {
-        unit_id: unit.unit_id,
-        variant_id,
-        class: unit.class,
-    });
-    let digest = super::plan::plan_digest(&choices);
-    let plan = TuningPlan {
-        choices,
-        predicted_dynamic: 0,
-        predicted_static: 0,
-        kir_bytes: 0,
-        digest,
-    };
-    apply_tuning_plan(state, space, &plan)?;
-    metrics_for(state, plan)
+    let mut selections = parent
+        .choices
+        .iter()
+        .map(|choice| (choice.unit_id, choice.variant_id))
+        .collect::<Vec<_>>();
+    selections.push((unit.unit_id, variant_id));
+    let (plan, replayed) = crate::optimizer::derive_tuning_plan(state, space, &selections)?;
+    metrics_for(&replayed, plan)
 }
 
 fn metrics_for(
@@ -140,16 +133,10 @@ fn metrics_for(
         .map(|block| block.instructions.len())
         .sum::<usize>();
     let base = u64::try_from(instruction_count).map_err(|_| TuningPlanError::ResourceLimit)?;
-    let choice_weight = plan.choices.iter().try_fold(0u64, |total, choice| {
-        total
-            .checked_add(u64::from(choice.class.replay_phase()))
-            .ok_or(TuningPlanError::ResourceLimit)
-    })?;
-    plan.predicted_dynamic = base.saturating_mul(100).saturating_sub(choice_weight);
-    plan.predicted_static = base.saturating_add(choice_weight);
-    plan.kir_bytes = u64::try_from(state.kir_digest().len())
-        .map_err(|_| TuningPlanError::ResourceLimit)?
-        .saturating_add(choice_weight);
+    plan.predicted_dynamic = base;
+    plan.predicted_static = base;
+    plan.kir_bytes = u64::try_from(crate::print_kir_module(state.module()).len())
+        .map_err(|_| TuningPlanError::ResourceLimit)?;
     Ok(plan)
 }
 

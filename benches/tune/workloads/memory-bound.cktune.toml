@@ -1,0 +1,23 @@
+schema = 1
+
+[runner]
+path = "../../../target/release/ckc-tune-runner"
+input_root = "../.."
+args = ["--ck-tune"]
+inputs = ["fixtures/pgo/training.tsv", "fixtures/pgo/held-out.tsv"]
+inherit_env = []
+timeout_ms = 30000
+
+[[case]]
+id = "memory-bound.search"
+role = "search"
+seed = 23
+weight = 1
+expected_digest = "e476b4ae4d4f1b622fd64fd0556131ba2136a94e1153620078264390c8f3a84f"
+
+[[case]]
+id = "memory-bound.validation"
+role = "validation"
+seed = 43
+weight = 1
+expected_digest = "de14ed3bda04cdc21091aa71e5579aad7c692c45b813bf91e9b53cf69212b7ab"

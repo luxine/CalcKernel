@@ -92,12 +92,12 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribution() {
+fn docs_v0_14_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribution() {
     let required_by_file = [
         (
             "docs/reference/language.md",
             &[
-                "CalcKernel 0.13",
+                "CalcKernel 0.14",
                 "fn main() -> void",
                 "fn main() -> i32",
                 "print_i32",
@@ -125,13 +125,15 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
                 "--consumer",
                 "--cpu",
                 "--explain-optimization",
-                "CKCOBJ03",
+                "CKCOBJ04",
+                "ckc tune build",
+                "--tune-use",
             ][..],
         ),
         (
             "docs/reference/mir.md",
             &[
-                "CalcKernel 0.13",
+                "CalcKernel 0.14",
                 "entry",
                 "runtime effect",
                 "print",
@@ -178,7 +180,8 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         (
             "docs/project/compatibility.md",
             &[
-                "0.13.x",
+                "0.14.x",
+                "0.13.0",
                 "0.12.0",
                 "0.11.0",
                 "0.10.0",
@@ -189,7 +192,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         (
             "docs/guides/performance.md",
             &[
-                "schema 8",
+                "schema 9",
                 "95%",
                 "10%",
                 "3%",
@@ -202,7 +205,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         ),
         (
             "docs/project/release.md",
-            &["0.13.0", "native-toolchain", "ckc licenses", "six archives"][..],
+            &["0.14.0", "native-toolchain", "ckc licenses", "six archives"][..],
         ),
     ];
     for (path, required) in required_by_file {
@@ -218,7 +221,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.13.0"), "{path} must identify 0.13.0");
+        assert!(read(path).contains("0.14.0"), "{path} must identify 0.14.0");
     }
 
     let language = read("docs/reference/language.md");
@@ -253,7 +256,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
 }
 
 #[test]
-fn docs_v0_13_should_describe_only_the_implemented_optimizer_boundary() {
+fn docs_v0_14_should_describe_only_the_implemented_optimizer_boundary() {
     for path in [
         "docs/compiler/architecture.md",
         "docs/zh-CN/compiler/architecture.md",
@@ -278,14 +281,14 @@ fn docs_v0_13_should_describe_only_the_implemented_optimizer_boundary() {
         "docs/zh-CN/guides/performance.md",
     ] {
         let text = read(path);
-        for required in ["PGO", "multiversion", "Auto-Tuning remains 0.14"] {
+        for required in ["PGO", "multiversion", "offline Auto-Tuning"] {
             assert!(text.contains(required), "{path} must contain {required:?}");
         }
     }
 }
 
 #[test]
-fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
+fn docs_v0_14_should_close_pgo_multiversion_tuning_security_and_future_boundaries() {
     for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
         let text = read(path);
         for required in [
@@ -298,7 +301,8 @@ fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
             "ck_profile_flush_",
             "CKPART01",
             "CKPROF01",
-            "CKCOBJ03",
+            "CKCOBJ04",
+            "CKTUNE01",
             "generation artifacts bypass",
             "profile identity mismatch",
             "No command uploads",
@@ -345,9 +349,9 @@ fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
             "Runtime ABI",
             "named-object",
             "baseline-safe",
-            "CKCOBJ03",
-            "key schema 4",
-            "manifest schema 4",
+            "CKCOBJ04",
+            "key schema 5",
+            "manifest schema 5",
         ] {
             assert!(text.contains(required), "{path} must contain {required:?}");
         }
@@ -356,11 +360,11 @@ fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
     for path in ["docs/project/roadmap.md", "docs/zh-CN/project/roadmap.md"] {
         let text = read(path);
         for required in [
-            "Auto-Tuning",
             "0.14",
             "indirect calls",
             "scalable KIR",
             "adaptive JIT PGO",
+            "offline and immutable",
         ] {
             assert!(text.contains(required), "{path} must contain {required:?}");
         }
@@ -368,7 +372,7 @@ fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
 }
 
 #[test]
-fn docs_v0_13_should_define_canonical_slice_and_mode_contracts() {
+fn docs_v0_14_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
         "C and Native support optional `--bounds checked` guards for slice indexing and"

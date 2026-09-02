@@ -1,4 +1,4 @@
-# CalcKernel 0.13 编译器架构
+# CalcKernel 0.14 编译器架构
 
 [English](../../compiler/architecture.md)
 
@@ -11,6 +11,7 @@
     -> optional CK workload profile (non-proof) + target profile
     -> KIR verifier -> transactional optimizer -> KIR verifier
     -> optional same pre-state CPU variants -> baseline-safe dispatcher
+    -> optional explicit offline tuning -> independently replayed exact plan
     +-> C source/header
     +-> WAT/WASM
     +-> structural LLVM -> TargetMachine object -> ORC 或进程内 LLD
@@ -57,7 +58,7 @@ pre-state 不变。multiversion planning 让 baseline 与全部 enhanced variant
 开始，分别验证，并禁止 cross-variant LTO。
 
 `src/backend/` 只消费 verified KIR。C/Native 用显式 guard/status flow 支持四种
-overflow/bounds 组合，WASM 仅支持 unchecked。0.13 的 C 与 WebAssembly profile 明确禁用
+overflow/bounds 组合，WASM 仅支持 unchecked。0.14 的 C 与 WebAssembly profile 明确禁用
 Vector KIR，因此二者继续消费 verified scalar KIR，同时保留有收益的 scalar specialization
 与 cleanup。C 可输出 portable restrict/alignment hint；Native 结构化 lowering 已检查的
 Vector KIR，并在 bridge 前运行 fact audit，再把合法 scalar fact 映射到 LLVM
@@ -74,11 +75,17 @@ attribute/metadata，验证 IR，最后由 host TargetMachine 输出 object。
 process-local acquire-release publication；public ABI thunk 保持稳定，baseline、variant 与
 runtime implementation 是隐藏的 named-object member。
 
+`src/tune/` 负责显式 offline Auto-Tuning：解析 closed workload，以 no-follow 方式捕获
+runner/input bytes，从 immutable pre-tune KIR 枚举 canonical choice，执行受限 search 与
+correctness-first measurement，再独立 replay selected plan。`CKTUNE01` schema 1 绑定
+compiler/source/mode/target/frontier/plan/object/link identity。Publication 使用 persistent
+destination lock 与 recoverable journal；普通命令不会进入 tuning 或执行 runner。
+
 `src/cli/` 负责参数、dispatch、transactional output、`emit-kir` evidence、contract
 sanitizer、isolated run/cache 与 diagnostic。Cache/codegen identity 包含 KIR v3、consumer、
 mode、contract、ABI、LLVM、target-profile digest、CPU feature、optimizer proof/cost schema、
-budget 与 sanitizer configuration。Native entry 使用 `CKCOBJ03` key schema 4 和 manifest
-schema 4。Multiversion cache hit 要求闭合有序 bundle、每个 named object、target set、
+budget 与 sanitizer configuration。Native entry 使用 `CKCOBJ04` key schema 5 和 manifest
+schema 5。Multiversion cache hit 要求闭合有序 bundle、每个 named object、target set、
 dispatcher/runtime、profile 与 physical artifact identity 全部匹配；generation 绕过 cache。
 
 Malformed KIR、stale proof/fact、无效 effect order 或 backend fact-audit failure 都会在

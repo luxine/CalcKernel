@@ -174,6 +174,120 @@ pub fn run_kir_pass_pipeline(
     run_kir_pass_pipeline_with_profile(module, level, contracts, None)
 }
 
+/// Builds the immutable v0.14 tuning checkpoint immediately before the first
+/// profitability-controlled O3 rewrite.
+///
+/// This deliberately runs only mandatory, semantics-preserving preparation:
+/// CFG canonicalization, initial SCCP/range simplification, loop
+/// canonicalization, and the first independently verified guard elimination.
+/// Ordinary and tuned builds both derive their alternatives from this exact
+/// state.
+pub fn prepare_kir_pre_tune_state(
+    mut module: KirModule,
+    contracts: Option<&ContractFactSet>,
+) -> Result<KirVerifiedProgramState, String> {
+    const GENERATION: u32 = 0;
+    let mut contract_facts = contracts.cloned();
+    let mut proofs = ProofArena::new(GENERATION);
+    let mut eliminated_guards = Vec::new();
+    let mut explanations = Vec::new();
+
+    let input = validate_kir_optimization_evidence(
+        &module,
+        contract_facts.as_ref(),
+        &proofs,
+        &eliminated_guards,
+        GENERATION,
+    );
+    if !input.errors.is_empty() {
+        return Err(input
+            .errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+
+    if kir_passes::run_cfg_canonicalize(&mut module, contract_facts.as_ref()) {
+        refresh_pre_guard_cfg(&module, &mut contract_facts)?;
+    }
+    run_pre_guard_sccp(&mut module, &mut contract_facts)?;
+    let simplified = kir_passes::canonicalize_kir_loops(&mut module)?;
+    if simplified.changed {
+        refresh_pre_guard_cfg(&module, &mut contract_facts)?;
+    }
+    let _ = kir_passes::run_sccp_range(&module);
+    kir_passes::run_check_elimination(
+        &mut module,
+        contract_facts.as_ref(),
+        &mut proofs,
+        &mut eliminated_guards,
+        &mut explanations,
+        GENERATION,
+        false,
+    )?;
+    KirVerifiedProgramState::from_parts(
+        module,
+        contract_facts,
+        proofs,
+        eliminated_guards,
+        GENERATION,
+    )
+}
+
+/// Reconstitutes the lowering input for an independently replayed tuning state.
+/// No optimizer proposal is trusted here: the state constructor and this bridge
+/// both revalidate the complete KIR/evidence tuple before native lowering.
+pub fn pass_result_from_verified_tuning_state(
+    state: &KirVerifiedProgramState,
+    pgo: Option<super::CkPgoOptimizerPlan>,
+) -> Result<KirPassManagerResult, String> {
+    let evidence = validate_kir_optimization_evidence(
+        state.module(),
+        state.contract_facts(),
+        state.proofs(),
+        state.eliminated_guards(),
+        state.evidence_generation(),
+    );
+    if !evidence.errors.is_empty() {
+        return Err(evidence
+            .errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    let module = state.module().clone();
+    let proofs = state.proofs().clone();
+    let eliminated_guards = state.eliminated_guards().to_vec();
+    let contract_facts = state.contract_facts().cloned();
+    Ok(KirPassManagerResult {
+        module: module.clone(),
+        artifact: Some(module.clone()),
+        records: vec![KirPassRecord {
+            name: "tune-source-aware-replay".to_string(),
+            changed: false,
+            verified: true,
+        }],
+        errors: Vec::new(),
+        proofs: proofs.clone(),
+        eliminated_guards: eliminated_guards.clone(),
+        explanations: Vec::new(),
+        vector_explanations: Vec::new(),
+        analysis_fallbacks: Vec::new(),
+        contract_facts: contract_facts.clone(),
+        stats: KirOptimizationStats::default(),
+        audit: KirOptimizationAuditState::for_module(&module),
+        pgo,
+        verification_cache: Some(VerifiedKirState {
+            module,
+            proofs,
+            eliminated_guards,
+            contract_facts,
+        }),
+    })
+}
+
 pub(crate) fn run_kir_pass_pipeline_with_profile(
     mut module: KirModule,
     level: KirOptimizationLevel,

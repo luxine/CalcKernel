@@ -14,22 +14,20 @@ fn tuned_payloads() -> Vec<Vec<u8>> {
     let mut payloads = decision_payloads();
     let pre_state = [0x82; 32];
     let post_state = [0xa4; 32];
-    let site_id = [0xa1; 32];
-    let unit_id = [0xa2; 32];
-    let variant_id = [0xa3; 32];
-    let choice = plan_choice(unit_id, variant_id, pre_state, post_state);
-    let plan_digest = domain_hash(b"CK-TUNE-PLAN\0", &list(&[record(&choice)]));
-    payloads[4] = tuned_frontier(
-        site_id,
-        unit_id,
-        variant_id,
-        plan_digest,
+    let (frontier, choice, plan_digest, frontier_digest) = tuned_frontier(pre_state, post_state);
+    let candidates = tuned_candidates(plan_digest, &choice);
+    let selection = tuned_selection(plan_digest);
+    payloads[4] = frontier;
+    payloads[5] = candidates.clone();
+    payloads[6] = selection.clone();
+    payloads[7] = tuned_replay(
+        frontier_digest,
         pre_state,
         post_state,
+        plan_digest,
+        &candidates,
+        &selection,
     );
-    payloads[5] = tuned_candidates(plan_digest, &choice);
-    payloads[6] = tuned_selection(plan_digest);
-    payloads[7] = tuned_replay(plan_digest, pre_state, post_state);
     payloads
 }
 
@@ -185,58 +183,94 @@ fn calibration(id: &str) -> Vec<u8> {
 }
 
 fn frontier_payload() -> Vec<u8> {
+    let sites = list(&[]);
+    let units = list(&[]);
+    let expansions = list(&[]);
+    let candidate_space = candidate_space_digest(&sites, &units);
     let mut payload = Vec::new();
-    field(&mut payload, 1, &[0x51; 32]);
-    field(&mut payload, 2, &list(&[]));
-    field(&mut payload, 3, &list(&[]));
-    field(&mut payload, 4, &list(&[]));
+    field(&mut payload, 1, &candidate_space);
+    field(&mut payload, 2, &sites);
+    field(&mut payload, 3, &units);
+    field(&mut payload, 4, &expansions);
     payload
 }
 
 fn tuned_frontier(
-    site_id: [u8; 32],
-    unit_id: [u8; 32],
-    variant_id: [u8; 32],
-    plan_digest: [u8; 32],
     pre_state: [u8; 32],
     post_state: [u8; 32],
-) -> Vec<u8> {
+) -> (Vec<u8>, Vec<u8>, [u8; 32], [u8; 32]) {
     let mut anchor = Vec::new();
     field(&mut anchor, 1, &text("kernel"));
     field(&mut anchor, 2, &[3]);
     field(&mut anchor, 3, &0u32.to_be_bytes());
+    let mut root_material = Vec::new();
+    field(&mut root_material, 1, &[18; 32]);
+    field(&mut root_material, 2, &record(&anchor));
+    let root_id = record_domain_hash(b"CK-TUNE-ROOT\0", &root_material);
+    let mut site_material = Vec::new();
+    field(&mut site_material, 1, &root_id);
+    field(&mut site_material, 2, &[2]);
+    field(&mut site_material, 3, &0u32.to_be_bytes());
+    field(&mut site_material, 4, &pre_state);
+    let site_id = record_domain_hash(b"CK-TUNE-SITE\0", &site_material);
     let mut site = Vec::new();
     field(&mut site, 1, &site_id);
     field(&mut site, 2, &[2]);
-    field(&mut site, 3, &[0xa0; 32]);
+    field(&mut site, 3, &root_id);
     field(&mut site, 4, &pre_state);
     field(&mut site, 5, &0u32.to_be_bytes());
     field(&mut site, 6, &record(&anchor));
     let mut specialization = Vec::new();
-    field(&mut specialization, 1, &list(&[]));
+    let mut binding = Vec::new();
+    field(&mut binding, 1, &0u32.to_be_bytes());
+    field(&mut binding, 2, &[1]);
+    field(&mut binding, 3, &1u128.to_be_bytes());
+    field(&mut specialization, 1, &list(&[record(&binding)]));
     field(&mut specialization, 2, &[0]);
     let mut alternative_payload = Vec::new();
     field(&mut alternative_payload, 1, &[2]);
     field(&mut alternative_payload, 2, &record(&specialization));
     let mut alternative = Vec::new();
     field(&mut alternative, 1, &site_id);
-    field(&mut alternative, 2, &[0xa5; 32]);
+    let mut alternative_material = Vec::new();
+    field(&mut alternative_material, 1, &site_id);
+    field(&mut alternative_material, 2, &record(&alternative_payload));
+    field(&mut alternative_material, 3, &post_state);
+    let alternative_id = record_domain_hash(b"CK-TUNE-ALTERNATIVE\0", &alternative_material);
+    field(&mut alternative, 2, &alternative_id);
     field(&mut alternative, 3, &pre_state);
     field(&mut alternative, 4, &post_state);
     field(&mut alternative, 5, &record(&alternative_payload));
+    let site_alternatives = list(&[record(&alternative)]);
+    let mut unit_material = Vec::new();
+    let site_ids = list(&[site_id.to_vec()]);
+    field(&mut unit_material, 1, &site_ids);
+    field(&mut unit_material, 2, &pre_state);
+    let unit_id = record_domain_hash(b"CK-TUNE-UNIT\0", &unit_material);
+    let mut variant_material = Vec::new();
+    field(&mut variant_material, 1, &unit_id);
+    field(&mut variant_material, 2, &[2]);
+    field(&mut variant_material, 3, &site_alternatives);
+    field(&mut variant_material, 4, &10u64.to_be_bytes());
+    field(&mut variant_material, 5, &20u64.to_be_bytes());
+    field(&mut variant_material, 6, &30u64.to_be_bytes());
+    field(&mut variant_material, 7, &post_state);
+    let variant_id = record_domain_hash(b"CK-TUNE-UNIT-VARIANT\0", &variant_material);
     let mut variant = Vec::new();
     field(&mut variant, 1, &variant_id);
     field(&mut variant, 2, &[2]);
-    field(&mut variant, 3, &list(&[record(&alternative)]));
+    field(&mut variant, 3, &site_alternatives);
     field(&mut variant, 4, &10u64.to_be_bytes());
     field(&mut variant, 5, &20u64.to_be_bytes());
     field(&mut variant, 6, &30u64.to_be_bytes());
     field(&mut variant, 7, &post_state);
     let mut unit = Vec::new();
     field(&mut unit, 1, &unit_id);
-    field(&mut unit, 2, &list(&[site_id.to_vec()]));
+    field(&mut unit, 2, &site_ids);
     field(&mut unit, 3, &pre_state);
     field(&mut unit, 4, &list(&[record(&variant)]));
+    let choice = plan_choice(unit_id, variant_id, pre_state, post_state);
+    let plan_digest = domain_hash(b"CK-TUNE-PLAN\0", &list(&[record(&choice)]));
     let mut expansion = Vec::new();
     field(&mut expansion, 1, &0u32.to_be_bytes());
     field(&mut expansion, 2, &empty_plan_digest());
@@ -248,12 +282,17 @@ fn tuned_frontier(
     for tag in 8..=10 {
         field(&mut expansion, tag, &optional(Some(&10u64.to_be_bytes())));
     }
+    let sites = list(&[record(&site)]);
+    let units = list(&[record(&unit)]);
+    let expansions = list(&[record(&expansion)]);
+    let candidate_space = candidate_space_digest(&sites, &units);
+    let frontier_digest = frontier_digest(candidate_space, &expansions);
     let mut payload = Vec::new();
-    field(&mut payload, 1, &[0x51; 32]);
-    field(&mut payload, 2, &list(&[record(&site)]));
-    field(&mut payload, 3, &list(&[record(&unit)]));
-    field(&mut payload, 4, &list(&[record(&expansion)]));
-    payload
+    field(&mut payload, 1, &candidate_space);
+    field(&mut payload, 2, &sites);
+    field(&mut payload, 3, &units);
+    field(&mut payload, 4, &expansions);
+    (payload, choice, plan_digest, frontier_digest)
 }
 
 fn candidates_payload() -> Vec<u8> {
@@ -274,7 +313,17 @@ fn tuned_candidates(plan_digest: [u8; 32], choice: &[u8]) -> Vec<u8> {
     field(&mut trial, 7, &0u16.to_be_bytes());
     field(&mut trial, 8, &optional(Some(&[0x68; 32])));
     field(&mut trial, 9, &list(&[]));
-    field(&mut trial, 10, &record(&cache_origin(0xba)));
+    field(
+        &mut trial,
+        10,
+        &record(&compile_cache_origin(
+            plan_digest,
+            [0xb3; 32],
+            [0xb4; 32],
+            4_000,
+            [0xbc; 32],
+        )),
+    );
     field(&mut trial, 11, &optional(None));
     field(&mut trial, 12, &[0xbc; 32]);
     let mut payload = Vec::new();
@@ -310,18 +359,64 @@ fn baseline_candidate() -> Vec<u8> {
     field(&mut payload, 7, &0u16.to_be_bytes());
     field(&mut payload, 8, &optional(Some(&[0x68; 32])));
     field(&mut payload, 9, &list(&[]));
-    field(&mut payload, 10, &record(&cache_origin(0x6a)));
+    field(
+        &mut payload,
+        10,
+        &record(&compile_cache_origin(
+            empty_plan, [0x63; 32], [0x64; 32], 4_096, [0x6c; 32],
+        )),
+    );
     field(&mut payload, 11, &optional(None));
     field(&mut payload, 12, &[0x6c; 32]);
     payload
 }
 
-fn cache_origin(fill: u8) -> Vec<u8> {
+fn cache_origin(key_digest: [u8; 32], entry_digest: [u8; 32]) -> Vec<u8> {
     let mut payload = Vec::new();
     field(&mut payload, 1, &[1]);
-    field(&mut payload, 2, &[fill; 32]);
-    field(&mut payload, 3, &[fill.wrapping_add(1); 32]);
+    field(&mut payload, 2, &key_digest);
+    field(&mut payload, 3, &entry_digest);
     payload
+}
+
+fn compile_cache_origin(
+    plan_digest: [u8; 32],
+    object_graph_digest: [u8; 32],
+    link_recipe_digest: [u8; 32],
+    primary_bytes: u64,
+    primary_digest: [u8; 32],
+) -> Vec<u8> {
+    let mut key_material = Vec::new();
+    field(&mut key_material, 1, &1u32.to_be_bytes());
+    field(&mut key_material, 2, &record(&identity_payload()));
+    field(&mut key_material, 3, &plan_digest);
+    let key_digest = record_domain_hash(b"CK-TUNE-COMPILE-KEY\0", &key_material);
+    let mut entry_material = Vec::new();
+    field(&mut entry_material, 1, &key_digest);
+    field(&mut entry_material, 2, &primary_digest);
+    field(&mut entry_material, 3, &primary_bytes.to_be_bytes());
+    field(&mut entry_material, 4, &object_graph_digest);
+    field(&mut entry_material, 5, &link_recipe_digest);
+    cache_origin(
+        key_digest,
+        record_domain_hash(b"CK-TUNE-COMPILE-ENTRY\0", &entry_material),
+    )
+}
+
+fn measurement_cache_origin(candidates: &[u8], selection: &[u8]) -> Vec<u8> {
+    let mut key_material = Vec::new();
+    field(&mut key_material, 1, &1u32.to_be_bytes());
+    field(&mut key_material, 2, &[0x48; 32]);
+    field(&mut key_material, 3, &[0x49; 32]);
+    let key_digest = record_domain_hash(b"CK-TUNE-MEASUREMENT-KEY\0", &key_material);
+    let mut entry_material = Vec::new();
+    field(&mut entry_material, 1, &key_digest);
+    field(&mut entry_material, 2, &record(candidates));
+    field(&mut entry_material, 3, &record(selection));
+    cache_origin(
+        key_digest,
+        record_domain_hash(b"CK-TUNE-MEASUREMENT-ENTRY\0", &entry_material),
+    )
 }
 
 fn selection_payload() -> Vec<u8> {
@@ -362,8 +457,12 @@ fn round_summary(round: u8) -> Vec<u8> {
 }
 
 fn replay_payload() -> Vec<u8> {
+    let sites = list(&[]);
+    let units = list(&[]);
+    let expansions = list(&[]);
+    let digest = frontier_digest(candidate_space_digest(&sites, &units), &expansions);
     let mut payload = Vec::new();
-    field(&mut payload, 1, &[0x81; 32]);
+    field(&mut payload, 1, &digest);
     field(&mut payload, 2, &[0x82; 32]);
     field(&mut payload, 3, &[0x82; 32]);
     field(&mut payload, 4, &[0x63; 32]);
@@ -373,16 +472,40 @@ fn replay_payload() -> Vec<u8> {
         6,
         &list(&[record(&output_identity("program"))]),
     );
-    field(&mut payload, 7, &record(&cache_origin(0x6a)));
-    field(&mut payload, 8, &record(&cache_origin(0x88)));
+    field(
+        &mut payload,
+        7,
+        &record(&compile_cache_origin(
+            empty_plan_digest(),
+            [0x63; 32],
+            [0x64; 32],
+            4_096,
+            [0x6c; 32],
+        )),
+    );
+    field(
+        &mut payload,
+        8,
+        &record(&measurement_cache_origin(
+            &candidates_payload(),
+            &selection_payload(),
+        )),
+    );
     field(&mut payload, 9, &[0x89; 32]);
     field(&mut payload, 10, &[0x8a; 32]);
     payload
 }
 
-fn tuned_replay(_plan_digest: [u8; 32], pre_state: [u8; 32], post_state: [u8; 32]) -> Vec<u8> {
+fn tuned_replay(
+    frontier_digest: [u8; 32],
+    pre_state: [u8; 32],
+    post_state: [u8; 32],
+    plan_digest: [u8; 32],
+    candidates: &[u8],
+    selection: &[u8],
+) -> Vec<u8> {
     let mut payload = Vec::new();
-    field(&mut payload, 1, &[0x81; 32]);
+    field(&mut payload, 1, &frontier_digest);
     field(&mut payload, 2, &pre_state);
     field(&mut payload, 3, &post_state);
     field(&mut payload, 4, &[0xb3; 32]);
@@ -392,8 +515,22 @@ fn tuned_replay(_plan_digest: [u8; 32], pre_state: [u8; 32], post_state: [u8; 32
         6,
         &list(&[record(&tuned_output_identity("program"))]),
     );
-    field(&mut payload, 7, &record(&cache_origin(0xba)));
-    field(&mut payload, 8, &record(&cache_origin(0x88)));
+    field(
+        &mut payload,
+        7,
+        &record(&compile_cache_origin(
+            plan_digest,
+            [0xb3; 32],
+            [0xb4; 32],
+            4_000,
+            [0xbc; 32],
+        )),
+    );
+    field(
+        &mut payload,
+        8,
+        &record(&measurement_cache_origin(candidates, selection)),
+    );
     field(&mut payload, 9, &[0x89; 32]);
     field(&mut payload, 10, &[0x8a; 32]);
     payload
@@ -479,4 +616,21 @@ fn domain_hash(domain: &[u8], bytes: &[u8]) -> [u8; 32] {
     hasher.update(domain);
     hasher.update(bytes);
     hasher.finalize().into()
+}
+
+fn record_domain_hash(domain: &[u8], fields: &[u8]) -> [u8; 32] {
+    domain_hash(domain, &record(fields))
+}
+
+fn candidate_space_digest(sites: &[u8], units: &[u8]) -> [u8; 32] {
+    let mut material = Vec::new();
+    field(&mut material, 1, sites);
+    field(&mut material, 2, units);
+    record_domain_hash(b"CK-TUNE-CANDIDATE-SPACE\0", &material)
+}
+
+fn frontier_digest(candidate_space: [u8; 32], expansions: &[u8]) -> [u8; 32] {
+    let mut material = candidate_space.to_vec();
+    material.extend_from_slice(expansions);
+    domain_hash(b"CK-TUNE-FRONTIER\0", &material)
 }

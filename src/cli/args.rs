@@ -1,4 +1,4 @@
-use calckernel::{BoundsMode, KirConsumer, OverflowMode};
+use calckernel::{BoundsMode, KirConsumer, OverflowMode, TuneBudget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArtifactKind {
@@ -115,6 +115,11 @@ pub(super) struct ParsedArgs {
     pub(super) profile_out: Option<String>,
     pub(super) pgo_generate: Option<String>,
     pub(super) pgo_use: Option<String>,
+    pub(super) tune_use: Option<String>,
+    pub(super) tune_config: Option<String>,
+    pub(super) tune_budget: Option<TuneBudget>,
+    pub(super) tune_out: Option<String>,
+    pub(super) no_tune_cache: bool,
     pub(super) no_cache: bool,
     pub(super) print_facts: bool,
     pub(super) print_effect_summaries: bool,
@@ -139,6 +144,11 @@ impl ParsedArgs {
             profile_out: None,
             pgo_generate: None,
             pgo_use: None,
+            tune_use: None,
+            tune_config: None,
+            tune_budget: None,
+            tune_out: None,
+            no_tune_cache: false,
             no_cache: false,
             print_facts: false,
             print_effect_summaries: false,
@@ -151,7 +161,8 @@ impl ParsedArgs {
                 "--out" => {
                     require_allowed(command, "--out")?;
                     index += 1;
-                    parsed.out = Some(require_long_flag_value(args, index, "--out")?.to_string());
+                    let value = require_long_flag_value(args, index, "--out")?.to_string();
+                    set_once(&mut parsed.out, value, "--out")?;
                 }
                 "-o" => {
                     require_allowed(command, "--out")?;
@@ -189,16 +200,15 @@ impl ParsedArgs {
                 "--kind" => {
                     require_allowed(command, "--kind")?;
                     index += 1;
-                    parsed.kind = Some(ArtifactKind::parse(require_long_flag_value(
-                        args, index, "--kind",
-                    )?)?);
+                    let value =
+                        ArtifactKind::parse(require_long_flag_value(args, index, "--kind")?)?;
+                    set_once(&mut parsed.kind, value, "--kind")?;
                 }
                 "--cpu" => {
                     require_allowed(command, "--cpu")?;
                     index += 1;
-                    parsed.cpu = Some(CpuPolicy::parse(require_long_flag_value(
-                        args, index, "--cpu",
-                    )?)?);
+                    let value = CpuPolicy::parse(require_long_flag_value(args, index, "--cpu")?)?;
+                    set_once(&mut parsed.cpu, value, "--cpu")?;
                 }
                 "--consumer" => {
                     require_allowed(command, "--consumer")?;
@@ -232,6 +242,48 @@ impl ParsedArgs {
                     index += 1;
                     let value = require_long_flag_value(args, index, "--pgo-use")?.to_string();
                     set_once(&mut parsed.pgo_use, value, "--pgo-use")?;
+                }
+                "--tune-use" => {
+                    require_allowed(command, "--tune-use")?;
+                    index += 1;
+                    let value = require_long_flag_value(args, index, "--tune-use")?.to_string();
+                    set_once(&mut parsed.tune_use, value, "--tune-use")?;
+                }
+                "--config" => {
+                    require_allowed(command, "--config")?;
+                    index += 1;
+                    let value = require_long_flag_value(args, index, "--config")?.to_string();
+                    set_once(&mut parsed.tune_config, value, "--config")?;
+                }
+                "--budget" => {
+                    require_allowed(command, "--budget")?;
+                    index += 1;
+                    let value = match require_long_flag_value(args, index, "--budget")? {
+                        "quick" => TuneBudget::Quick,
+                        "standard" => TuneBudget::Standard,
+                        "thorough" => TuneBudget::Thorough,
+                        other => {
+                            return Err(format!(
+                                "Invalid value for --budget: {other}. Expected 'quick', 'standard', or 'thorough'."
+                            ));
+                        }
+                    };
+                    set_once(&mut parsed.tune_budget, value, "--budget")?;
+                }
+                "--tune-out" => {
+                    require_allowed(command, "--tune-out")?;
+                    index += 1;
+                    let value = require_long_flag_value(args, index, "--tune-out")?.to_string();
+                    set_once(&mut parsed.tune_out, value, "--tune-out")?;
+                }
+                "--no-tune-cache" => {
+                    require_allowed(command, "--no-tune-cache")?;
+                    if parsed.no_tune_cache {
+                        return Err(
+                            "Option --no-tune-cache was provided more than once.".to_string()
+                        );
+                    }
+                    parsed.no_tune_cache = true;
                 }
                 "--no-cache" => {
                     require_allowed(command, "--no-cache")?;
@@ -281,6 +333,7 @@ impl ParsedArgs {
             }
         }
         validate_profile_options(&parsed)?;
+        validate_tune_options(&parsed)?;
         Ok(parsed)
     }
 }
@@ -305,7 +358,10 @@ pub(super) fn parse_opt_level(args: &ParsedArgs) -> Result<u8, String> {
 }
 
 fn default_opt_level(command: &str) -> u8 {
-    if matches!(command, "run" | "build" | "build-llvm" | "pgo-build") {
+    if matches!(
+        command,
+        "run" | "build" | "build-llvm" | "pgo-build" | "tune-build"
+    ) {
         3
     } else {
         0
@@ -325,6 +381,7 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "build"
                 | "build-llvm"
                 | "pgo-build"
+                | "tune-build"
         ),
         "--overflow" | "--bounds" => matches!(
             command,
@@ -337,6 +394,7 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "build-llvm"
                 | "run"
                 | "pgo-build"
+                | "tune-build"
         ),
         "--opt-level" => matches!(
             command,
@@ -350,10 +408,11 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "build-llvm"
                 | "run"
                 | "pgo-build"
+                | "tune-build"
         ),
-        "--target" => matches!(command, "emit-llvm" | "build" | "build-llvm"),
-        "--kind" => matches!(command, "build" | "build-llvm"),
-        "--cpu" => matches!(command, "build" | "emit-kir" | "pgo-build"),
+        "--target" => matches!(command, "emit-llvm" | "build" | "build-llvm" | "tune-build"),
+        "--kind" => matches!(command, "build" | "build-llvm" | "tune-build"),
+        "--cpu" => matches!(command, "build" | "emit-kir" | "pgo-build" | "tune-build"),
         "--consumer" => command == "emit-kir",
         "--header" => command == "emit-c",
         "--no-cache" => command == "run",
@@ -369,11 +428,16 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
                 | "run"
         ),
         "--sanitize-contracts" => {
-            matches!(command, "run" | "build" | "build-llvm" | "pgo-build")
+            matches!(
+                command,
+                "run" | "build" | "build-llvm" | "pgo-build" | "tune-build"
+            )
         }
         "--profile-out" => command == "pgo-build",
-        "--pgo-generate" => command == "build",
-        "--pgo-use" => matches!(command, "build" | "emit-kir"),
+        "--pgo-generate" => matches!(command, "build" | "tune-build"),
+        "--pgo-use" => matches!(command, "build" | "emit-kir" | "tune-build"),
+        "--tune-use" => command == "build",
+        "--config" | "--budget" | "--tune-out" | "--no-tune-cache" => command == "tune-build",
         _ => false,
     };
     if allowed {
@@ -424,6 +488,54 @@ fn validate_profile_options(args: &ParsedArgs) -> Result<(), String> {
         }
         if args.command == "build" && args.kind == Some(ArtifactKind::Object) {
             return Err("CPU multiversioning does not support --kind object.".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_tune_options(args: &ParsedArgs) -> Result<(), String> {
+    if args.command == "tune-build" {
+        if !matches!(
+            args.kind,
+            Some(ArtifactKind::Executable | ArtifactKind::Dynamic)
+        ) {
+            return Err("'tune build' requires --kind executable or --kind dynamic.".to_string());
+        }
+        if args.cpu != Some(CpuPolicy::Native) {
+            return Err("'tune build' requires --cpu native.".to_string());
+        }
+        if parse_opt_level(args)? != 3 {
+            return Err("'tune build' requires -O3.".to_string());
+        }
+        if args.pgo_generate.is_some() {
+            return Err("'tune build' does not support --pgo-generate.".to_string());
+        }
+        if args.sanitize_contracts {
+            return Err("'tune build' does not support --sanitize-contracts.".to_string());
+        }
+    }
+    if args.tune_use.is_some() {
+        if args.pgo_generate.is_some() {
+            return Err(
+                "Options --tune-use and --pgo-generate are mutually exclusive.".to_string(),
+            );
+        }
+        if args.sanitize_contracts || args.cpu == Some(CpuPolicy::Multiversion) {
+            return Err(
+                "Tune replay is incompatible with sanitizer and multiversion modes.".to_string(),
+            );
+        }
+        if !matches!(
+            args.kind,
+            Some(ArtifactKind::Executable | ArtifactKind::Dynamic)
+        ) {
+            return Err("Tune replay requires --kind executable or --kind dynamic.".to_string());
+        }
+        if args.cpu != Some(CpuPolicy::Native) {
+            return Err("Tune replay requires --cpu native.".to_string());
+        }
+        if parse_opt_level(args)? != 3 {
+            return Err("Tune replay requires -O3.".to_string());
         }
     }
     Ok(())
@@ -506,7 +618,9 @@ pub(super) fn usage() -> &'static str {
         "  ckc emit-llvm <file> [--out <ll-file>] [--target <host-triple>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native|multiversion>] [--pgo-generate <directory>|--pgo-use <file.ckprof>] [-O0|-O1|-O2|-O3] [--sanitize-contracts]\n",
+        "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native|multiversion>] [--pgo-generate <directory>|--pgo-use <file.ckprof>] [--tune-use <decision.cktune>] [-O0|-O1|-O2|-O3] [--sanitize-contracts]\n",
+        "  ckc tune build <file> --config <workload.cktune.toml> --out <artifact> --kind <executable|dynamic> --cpu native -O3 [--budget <quick|standard|thorough>] [--tune-out <decision.cktune>] [--no-tune-cache]\n",
+        "  ckc tune inspect <decision.cktune> [--json]\n",
         "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [native build options]\n",
         "  ckc pgo build <file> --out <executable> [--profile-out <file.ckprof>] [-O3]\n",
         "  ckc pgo merge <shard-or-directory>... --out <file.ckprof>\n",
@@ -525,6 +639,10 @@ pub(super) fn usage() -> &'static str {
         "  --pgo-generate <directory>         Build a temporary Native collection artifact.\n",
         "  --pgo-use <file.ckprof>            Apply a validated CK workload profile.\n",
         "  --profile-out <file.ckprof>        Output profile for 'pgo build'.\n",
+        "  --tune-use <decision.cktune>       Replay one exact validated tuning decision.\n",
+        "  --budget <preset>                  Tuning budget: quick, standard, or thorough.\n",
+        "  --tune-out <decision.cktune>       Explicit tuning-decision output path.\n",
+        "  --no-tune-cache                    Force a fresh offline tuning session.\n",
         "  -O0, -O1, -O2, -O3              Alias for --opt-level.\n",
         "  --print-facts                   Print deterministic verified KIR facts to stderr.\n",
         "  --print-effect-summaries        Print deterministic effect summaries to stderr.\n",

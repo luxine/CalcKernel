@@ -1,0 +1,8 @@
+ckc-tune-inputs	1	release-held-out
+branch-layout	release-branch-prime	16381	79	3
+call-constant-length	release-fixed-4000	4000	83	13
+trip-unroll-simd	release-map-4093	4093	89	0
+memory-bound	release-zip-4096	4096	97	0
+compute-bound	release-f64-4091	4091	101	1.0009765625
+contract-noalias	release-zip-4096	4096	97	0
+contract-fixed-length	release-fixed-4000	4000	83	13

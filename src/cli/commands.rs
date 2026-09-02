@@ -6,11 +6,12 @@ use std::collections::BTreeSet;
 use calckernel::{
     BoundsMode, CheckedProgram, EffectTarget, EmitWasmOptions, KirBoundsMode, KirBuildConfig,
     KirConsumer, KirOptimizationLevel, KirOverflowMode, KirPassManagerResult, KirSanitizerMode,
-    KirTargetProfile, MemoryEffect, OverflowMode, SourceFile, annotate_unsafe_contracts,
-    build_kir_module, build_kir_module_with_profile, check, emit_c_kir_header,
-    emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
-    format_diagnostics, import_contract_facts, lower_to_mir, print_fact_arena, print_kir_module,
-    print_mir_module, print_optimization_audit, print_proof_arena, run_kir_pass_pipeline,
+    KirTargetProfile, KirVerifiedProgramState, MemoryEffect, OverflowMode, SourceFile,
+    annotate_unsafe_contracts, build_kir_module, build_kir_module_with_profile, check,
+    emit_c_kir_header, emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
+    format_diagnostics, import_contract_facts, lower_to_mir, prepare_kir_pre_tune_state,
+    print_fact_arena, print_kir_module, print_mir_module, print_optimization_audit,
+    print_proof_arena, run_kir_pass_pipeline,
 };
 
 #[cfg(feature = "native-toolchain")]
@@ -26,15 +27,17 @@ use calckernel::{
     EmitLlvmOptions, KirMultiversionPlanningRequest, NATIVE_PROFILE_RUNTIME_SHA256,
     NativeArtifactKind, NativeArtifactPaths, NativeContext, NativeCpu, NativeHeaderMode,
     NativeMultiversionTargetSet, NativeObject, NativeOptimizationLevel, NativePlatform,
-    NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
-    build_late_profile_layout_plan, build_verified_native_artifact, check_kir_multiversion_bundle,
-    create_native_multiversion_static_archive, create_native_profile_generation_static_archive,
-    emit_native_header, emit_native_multiversion_objects, emit_native_profile_generation_header,
+    NativeProfileGeneration, NativeTarget, VerifiedNativeBuild, anchor_profile_directory,
+    apply_profile, build_late_profile_layout_plan, build_verified_native_artifact,
+    check_kir_multiversion_bundle, create_native_multiversion_static_archive,
+    create_native_profile_generation_static_archive, emit_native_header,
+    emit_native_multiversion_objects, emit_native_profile_generation_header,
     link_native_multiversion_dynamic_library, link_native_multiversion_executable,
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
-    lower_native_kir_module, lower_native_profile_generation_module, prepare_ck_profile_kir,
-    print_kir_multiversion_bundle, propose_kir_multiversion_bundle, read_profile_input,
-    run_profile_guided_kir_pass_pipeline, validate_profile_analysis_for_optimizer,
+    lower_native_kir_module, lower_native_profile_generation_module,
+    pass_result_from_verified_tuning_state, prepare_ck_profile_kir, print_kir_multiversion_bundle,
+    propose_kir_multiversion_bundle, read_profile_input, run_profile_guided_kir_pass_pipeline,
+    validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
@@ -222,6 +225,8 @@ pub(super) fn dispatch(command: &str, args: &[String]) -> Option<Result<(), Stri
 
 struct CompiledKir {
     result: KirPassManagerResult,
+    #[cfg_attr(not(feature = "native-toolchain"), allow(dead_code))]
+    pre_tune: Option<KirVerifiedProgramState>,
 }
 
 struct KirCompilationTarget {
@@ -261,17 +266,21 @@ fn compile_kir(
     }
     .map_err(|error| error.to_string())?;
     let contracts = import_contract_facts(&kir, program, 0).map_err(|error| error.to_string())?;
-    let result = run_kir_pass_pipeline(
-        kir,
-        match opt_level {
-            0 => KirOptimizationLevel::O0,
-            1 => KirOptimizationLevel::O1,
-            2 => KirOptimizationLevel::O2,
-            3 => KirOptimizationLevel::O3,
-            _ => return Err("optimization level is outside 0..=3".to_string()),
-        },
-        Some(&contracts),
-    );
+    let level = match opt_level {
+        0 => KirOptimizationLevel::O0,
+        1 => KirOptimizationLevel::O1,
+        2 => KirOptimizationLevel::O2,
+        3 => KirOptimizationLevel::O3,
+        _ => return Err("optimization level is outside 0..=3".to_string()),
+    };
+    let pre_tune = (level == KirOptimizationLevel::O3
+        && matches!(
+            target.consumer,
+            KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+        ))
+    .then(|| prepare_kir_pre_tune_state(kir.clone(), Some(&contracts)))
+    .transpose()?;
+    let result = run_kir_pass_pipeline(kir, level, Some(&contracts));
     if !result.errors.is_empty() {
         return Err(format!(
             "KIR verification failed: {}",
@@ -279,7 +288,7 @@ fn compile_kir(
         ));
     }
     emit_kir_inspection(program, &result, args)?;
-    Ok(CompiledKir { result })
+    Ok(CompiledKir { result, pre_tune })
 }
 
 fn emit_kir_inspection(
@@ -593,6 +602,14 @@ pub(super) fn run_version(args: &[String]) -> Result<(), String> {
         calckernel::NATIVE_CACHE_KEY_SCHEMA,
         calckernel::NATIVE_CACHE_MANIFEST_SCHEMA
     );
+    println!(
+        "CK tuning: CKTUNE01 decision {} manifest {} measurement {} inspection {} plan {}",
+        calckernel::TUNE_DECISION_SCHEMA,
+        calckernel::TUNE_MANIFEST_SCHEMA,
+        calckernel::TUNE_MEASUREMENT_SCHEMA,
+        calckernel::TUNE_INSPECTION_SCHEMA,
+        calckernel::TUNE_PLAN_SCHEMA
+    );
     #[cfg(feature = "native-toolchain")]
     {
         let info = calckernel::bridge_info().map_err(|error| error.to_string())?;
@@ -669,7 +686,7 @@ fn code_generator_name() -> &'static str {
 }
 
 #[cfg(not(feature = "native-toolchain"))]
-fn native_unavailable_error() -> String {
+pub(super) fn native_unavailable_error() -> String {
     "error: native toolchain unavailable: this developer build was compiled without the \
      'native-toolchain' feature"
         .to_string()
@@ -876,11 +893,31 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
 }
 
 #[cfg(feature = "native-toolchain")]
-pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
+pub(super) struct NativeBuildProduct {
+    pub(super) paths: NativeArtifactPaths,
+    pub(super) artifact_kind: NativeArtifactKind,
+    pub(super) build: VerifiedNativeBuild,
+    pub(super) state: KirVerifiedProgramState,
+    pub(super) source_digest: [u8; 32],
+    pub(super) semantic_contract_digest: [u8; 32],
+    pub(super) compilation_mode_digest: [u8; 32],
+    pub(super) target_triple: String,
+    pub(super) target_cpu: String,
+    pub(super) target_features: Vec<String>,
+    pub(super) target_profile: String,
+    pub(super) profile_digest: Option<[u8; 32]>,
+    pub(super) pgo: Option<calckernel::CkPgoOptimizerPlan>,
+    pub(super) source_file_name: String,
+}
+
+#[cfg(feature = "native-toolchain")]
+pub(super) fn compile_verified_native_product(
+    args: &ParsedArgs,
+) -> Result<NativeBuildProduct, String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
     if args.pgo_generate.is_some() {
-        return run_profile_generation_build(args);
+        return Err("profile-generation builds are not verified tuning products".to_string());
     }
     let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
     let overflow_mode = parse_overflow_mode(args)?;
@@ -903,15 +940,7 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
     };
     let cpu_policy = args.cpu.unwrap_or(CpuPolicy::Baseline);
     if cpu_policy == CpuPolicy::Multiversion {
-        return run_multiversion_planning_build(
-            args,
-            &checked.checked_program,
-            consumer,
-            kind,
-            overflow_mode,
-            bounds_mode,
-            opt_level,
-        );
+        return Err("multiversion builds are not single verified tuning products".to_string());
     }
     let cpu = match cpu_policy {
         CpuPolicy::Baseline => NativeCpu::Baseline,
@@ -1048,27 +1077,224 @@ pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
         header.as_deref().map(str::as_bytes).map(<[u8]>::to_vec),
     )
     .map_err(|error| error.to_string())?;
-    let primary = verified_build.primary();
-    let import_library = verified_build.import_library();
-    let mut transaction = OutputTransaction::new();
-    if kind == ArtifactKind::Executable {
-        transaction.stage_executable(paths.primary.clone(), primary)?;
+    let state = if let Some(pre_tune) = compiled.pre_tune.clone() {
+        pre_tune
     } else {
-        transaction.stage(paths.primary.clone(), primary)?;
+        KirVerifiedProgramState::from_parts(
+            compiled
+                .result
+                .artifact
+                .as_ref()
+                .expect("verified Native KIR artifact")
+                .clone(),
+            compiled.result.contract_facts.clone(),
+            compiled.result.proofs.clone(),
+            compiled.result.eliminated_guards.clone(),
+            0,
+        )?
+    };
+    let source_bytes = read_file_bytes(input)?;
+    let source_digest = Sha256::digest(&source_bytes).into();
+    let semantic_contract_digest = digest_tune_parts(
+        b"CK-TUNE-SEMANTIC-CONTRACT\0",
+        &[
+            &[mode_value(overflow_mode)],
+            &[bounds_mode_value(bounds_mode)],
+            b"strict-f64",
+        ],
+    );
+    let compilation_mode_digest = digest_tune_parts(
+        b"CK-TUNE-COMPILATION-MODE\0",
+        &[
+            &[opt_level],
+            &[mode_value(overflow_mode)],
+            &[bounds_mode_value(bounds_mode)],
+            &[match artifact_kind {
+                NativeArtifactKind::Executable => 1,
+                NativeArtifactKind::Dynamic => 2,
+                NativeArtifactKind::Static => 3,
+                NativeArtifactKind::Object => 4,
+            }],
+            b"cpu-native",
+        ],
+    );
+    let target_triple = target.triple().map_err(|error| error.to_string())?;
+    if args
+        .target
+        .as_deref()
+        .is_some_and(|requested| requested != target_triple)
+    {
+        return Err("offline tuning target must equal the exact host triple".to_string());
     }
-    if let (Some(path), Some(header)) = (&paths.header, header.as_deref()) {
-        transaction.stage(path.clone(), header.as_bytes())?;
+    let target_cpu = target.cpu().map_err(|error| error.to_string())?;
+    let mut target_features = target
+        .features()
+        .map_err(|error| error.to_string())?
+        .split(',')
+        .filter(|feature| !feature.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    target_features.sort();
+    target_features.dedup();
+    let target_profile = state.module().profile.digest_hex();
+    let profile_digest = args
+        .pgo_use
+        .as_deref()
+        .map(read_file_bytes)
+        .transpose()?
+        .map(|bytes| Sha256::digest(bytes).into());
+    Ok(NativeBuildProduct {
+        paths,
+        artifact_kind,
+        build: verified_build,
+        state,
+        source_digest,
+        semantic_contract_digest,
+        compilation_mode_digest,
+        target_triple,
+        target_cpu,
+        target_features,
+        target_profile,
+        profile_digest,
+        pgo: compiled.result.pgo.clone(),
+        source_file_name: input.to_string(),
+    })
+}
+
+/// Lowers and links one independently replayed KIR state through the exact same
+/// LLVM O3/object/embedded-linker path as the ordinary baseline.  It returns a
+/// frozen build value and performs no publication or production-cache write.
+#[cfg(feature = "native-toolchain")]
+pub(super) fn compile_replayed_native_build(
+    product: &NativeBuildProduct,
+    state: &KirVerifiedProgramState,
+) -> Result<VerifiedNativeBuild, String> {
+    let target =
+        NativeTarget::host_with_cpu(NativeCpu::Native).map_err(|error| error.to_string())?;
+    let pgo = product
+        .pgo
+        .as_ref()
+        .map(|plan| calckernel::project_pgo_plan_for_kir(state.module(), plan))
+        .transpose()?;
+    let result = pass_result_from_verified_tuning_state(state, pgo)?;
+    let context = NativeContext::new().map_err(|error| error.to_string())?;
+    let optimized = lower_native_kir_module(
+        &context,
+        &target,
+        &result,
+        &EmitLlvmOptions {
+            source_file_name: Some(product.source_file_name.clone()),
+            target_triple: Some(product.target_triple.clone()),
+        },
+    )
+    .map_err(|error| error.to_string())?
+    .verify()
+    .map_err(|error| error.to_string())?
+    .audit()
+    .map_err(|error| error.to_string())?
+    .optimize(&target, NativeOptimizationLevel::O3)
+    .map_err(|error| error.to_string())?;
+    let object = target
+        .emit_object(optimized)
+        .map_err(|error| error.to_string())?;
+    let exports = state
+        .module()
+        .functions
+        .iter()
+        .filter(|function| function.exported)
+        .map(|function| function.name.clone())
+        .collect::<Vec<_>>();
+    build_verified_native_artifact(
+        product.artifact_kind,
+        &object,
+        &exports,
+        product.build.header().map(<[u8]>::to_vec),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "native-toolchain")]
+fn digest_tune_parts(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(domain);
+    for part in parts {
+        digest.update(u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+        digest.update(part);
     }
-    if let (Some(path), Some(bytes)) = (&paths.import_library, import_library) {
+    digest.finalize().into()
+}
+
+#[cfg(feature = "native-toolchain")]
+pub(super) fn publish_native_product(product: &NativeBuildProduct) -> Result<(), String> {
+    publish_verified_native_build(&product.paths, product.artifact_kind, &product.build)
+}
+
+#[cfg(feature = "native-toolchain")]
+pub(super) fn publish_verified_native_build(
+    paths: &NativeArtifactPaths,
+    artifact_kind: NativeArtifactKind,
+    build: &VerifiedNativeBuild,
+) -> Result<(), String> {
+    let mut transaction = OutputTransaction::new();
+    if artifact_kind == NativeArtifactKind::Executable {
+        transaction.stage_executable(paths.primary.clone(), build.primary())?;
+    } else {
+        transaction.stage(paths.primary.clone(), build.primary())?;
+    }
+    if let (Some(path), Some(header)) = (&paths.header, build.header()) {
+        transaction.stage(path.clone(), header)?;
+    }
+    if let (Some(path), Some(bytes)) = (&paths.import_library, build.import_library()) {
         transaction.stage(path.clone(), bytes)?;
     }
-    transaction.commit()?;
-    println!("OK: built native {}", artifact_kind_name(artifact_kind));
-    println!("{}", paths.primary.display());
-    if let Some(path) = paths.header {
+    transaction.commit()
+}
+
+#[cfg(feature = "native-toolchain")]
+pub(super) fn run_build(args: &ParsedArgs) -> Result<(), String> {
+    if args.tune_use.is_some() {
+        return super::tune::run_replay(args);
+    }
+    if args.pgo_generate.is_some() {
+        return run_profile_generation_build(args);
+    }
+    if args.cpu == Some(CpuPolicy::Multiversion) {
+        let input = require_input(args, "build")?;
+        require_out(args, "build")?;
+        let kind = args.kind.unwrap_or(ArtifactKind::Dynamic);
+        let overflow_mode = parse_overflow_mode(args)?;
+        let bounds_mode = parse_bounds_mode(args)?;
+        let opt_level = parse_opt_level(args)?;
+        let (source, checked) = check_file(input)?;
+        if !checked.diagnostics.is_empty() {
+            return Err(format_diagnostics(&source, &checked.diagnostics));
+        }
+        let consumer = if kind == ArtifactKind::Executable {
+            KirConsumer::NativeExecutable
+        } else {
+            KirConsumer::NativeLibrary
+        };
+        return run_multiversion_planning_build(
+            args,
+            &checked.checked_program,
+            consumer,
+            kind,
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+        );
+    }
+    let product = compile_verified_native_product(args)?;
+    publish_native_product(&product)?;
+    println!(
+        "OK: built native {}",
+        artifact_kind_name(product.artifact_kind)
+    );
+    println!("{}", product.paths.primary.display());
+    if let Some(path) = &product.paths.header {
         println!("{}", path.display());
     }
-    if let Some(path) = paths.import_library {
+    if let Some(path) = &product.paths.import_library {
         println!("{}", path.display());
     }
     Ok(())
@@ -1712,6 +1938,10 @@ fn compile_profile_guided_kir(
     args: &ParsedArgs,
 ) -> Result<CompiledKir, String> {
     let immutable = CkImmutableProfileAnalysis::new(application.analysis.clone());
+    let pre_tune = Some(prepare_kir_pre_tune_state(
+        application.use_plan.module.clone(),
+        application.contracts.as_ref(),
+    )?);
     let result = run_profile_guided_kir_pass_pipeline(
         &application.use_plan,
         &immutable,
@@ -1725,7 +1955,7 @@ fn compile_profile_guided_kir(
         ));
     }
     emit_kir_inspection(program, &result, args)?;
-    Ok(CompiledKir { result })
+    Ok(CompiledKir { result, pre_tune })
 }
 
 #[cfg(feature = "native-toolchain")]
@@ -2073,7 +2303,7 @@ fn profile_generation_identity(
 }
 
 #[cfg(feature = "native-toolchain")]
-fn compiler_source_identity() -> [u8; 32] {
+pub(super) fn compiler_source_identity() -> [u8; 32] {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
     bytes.push(0);

@@ -1,0 +1,23 @@
+schema = 1
+
+[runner]
+path = "../../../target/release/ckc-tune-runner"
+input_root = "../.."
+args = ["--ck-tune"]
+inputs = ["fixtures/pgo/training.tsv", "fixtures/pgo/held-out.tsv"]
+inherit_env = []
+timeout_ms = 30000
+
+[[case]]
+id = "branch-layout.search"
+role = "search"
+seed = 7
+weight = 1
+expected_digest = "adc1409a936495ec76d0abc841e11b0901b68fd8f7e2ab4057d951caca310cba"
+
+[[case]]
+id = "branch-layout.validation"
+role = "validation"
+seed = 31
+weight = 1
+expected_digest = "458d92f98b4afc604af846938e4eade51a929d778f443bcdbe45905d079616ef"

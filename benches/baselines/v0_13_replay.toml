@@ -1,0 +1,20 @@
+schema_version = 1
+version = "0.13.0"
+commit = "94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05"
+compiler_identity = "calckernel 0.13.0 (94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05)"
+llvm_version = "22.1.8"
+rust_version = "1.90.0"
+cpu_policy = "native"
+historical_schema = 8
+historical_report = "v0.13-results.json"
+historical_checker = "scripts/check-native-performance.py"
+archive = "ckc-v013-distribution.tar.gz"
+
+[source_digests]
+branch-layout = "bb7ab8a6f45c32be20c7e1b205841a04dbc9aa472329fb9706623e37e7be75e5"
+call-constant-length = "7de1578c15469dcbce0a52cebae8bc04120bae69937710f3bec94034daf10938"
+trip-unroll-simd = "e9c5a60146eecdea795985a700f4fd55b0e1ee6e8acb1dc81848f3e6364c0a5e"
+memory-bound = "96ec127ce03d5f3a3b283d42bc068927b2440b72428aec91a6fe9eef96b4bf25"
+compute-bound = "273d820dba3f7ef6f14aa014149ee9ddde3e1511d486f3b68a6d5e275bab78d3"
+contract-noalias = "a155724e8b695cdb08b49a777234d292ced4151d2712494427d83baea7b567b4"
+contract-fixed-length = "95cdb760da2cde7aa03d52a7cbe4255846b33c800a06c12fe399edb37e08c5e8"

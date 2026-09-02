@@ -9,3 +9,5 @@ mod kir_inspection;
 mod oracle_portability;
 #[path = "cli/oracle_readiness.rs"]
 mod oracle_readiness;
+#[path = "cli/tune.rs"]
+mod tune;

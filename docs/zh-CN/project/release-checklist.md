@@ -18,10 +18,13 @@
 - [ ] `ckc run` 与 `ckc build --kind executable` 均在 external-tool `PATH` 为空时通过。
 - [ ] 每个 host 的 generated artifact、release binary dependency 与 JIT memory audit 通过；hardened macOS 只使用允许的 allow-JIT entitlement，并按 capability 选择 per-thread MAP_JIT 或页级 W^X，绝不接受 RWX。
 - [ ] 实际打包的 Darwin compiler 在严格签名校验前已显式 ad-hoc 签名，启用 hardened runtime，且只含唯一 allow-JIT entitlement。
-- [ ] Controlled x86-64/AArch64 worker 上 strict schema 8 exact-0.12 replay、CK
-  PGO/multiversion/combined、selected-direct dispatch、等价 Clang/Rust PGO、C/Rust SIMD、
+- [ ] Controlled x86-64/AArch64 worker 上 strict schema 9 offline-tuning evidence、fresh
+  schema 8 compatibility、exact v0.13 replay、CK PGO/multiversion/combined/tuned、
+  selected-direct dispatch、等价 Clang/Rust PGO、C/Rust SIMD、
   domain-fact、generation overhead、optimizer latency、artifact/archive size 与
   source-to-object gate 均在 portable baseline CPU policy 与 required enhanced tier 下通过。
+- [ ] 两个 isolated cold tuning session、locked zero-work warm reuse、tune-use
+  compile/size/resource receipt 与全部七个 workload partition 通过。
 - [ ] Profile、target-set、variant-object、capability、hardware、recipe、sample、source、
   oracle 与 candidate identity/digest 完整且精确。
 - [ ] exact candidate-SHA 的十个 required CI job 全绿，无 skipped/continue-on-error gate；

@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 const KEY_MAGIC: &[u8] = b"CKC-CACHE-KEY\0";
-pub(in crate::cli) const KEY_SCHEMA: u32 = 4;
+pub(in crate::cli) const KEY_SCHEMA: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::cli) struct CacheKeyInput {
@@ -137,10 +137,10 @@ mod tests {
     fn canonical_key_should_have_one_exact_architecture_independent_vector() {
         let input = vector();
         let bytes = canonical_key_bytes(&input);
-        assert!(bytes.starts_with(b"CKC-CACHE-KEY\0\0\0\0\x04"));
+        assert!(bytes.starts_with(b"CKC-CACHE-KEY\0\0\0\0\x05"));
         assert_eq!(
             cache_key_hex(&input),
-            "4b6a7c147c891bbc12a17d1d805a1479ad3b6fe5f9a31366dc1e49b3df4d6407"
+            "947df6e50d2933ef806b567b97255b7fe3af79e971b4b71c62bd2a408b4130ea"
         );
     }
 

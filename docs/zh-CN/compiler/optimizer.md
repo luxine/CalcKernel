@@ -1,4 +1,4 @@
-# CalcKernel 0.13 Fact-Driven Optimizer
+# CalcKernel 0.14 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -65,7 +65,7 @@ variant，不改变 public semantics。
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.13 的 C/WebAssembly profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.14 的 C/WebAssembly profile 禁用 Vector KIR。
 
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
@@ -90,7 +90,7 @@ Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainde
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
 提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
-保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.13
+保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.14
 speculative transform，包括被拒绝的 alternative 与 clone。
 
 整数常量传播也处理无 guard 的函数，实际改写 modular arithmetic、整数 Copy 和比较，
@@ -188,10 +188,24 @@ Possible checked failure 和 runtime print 是 ordered effect，不能无证明�
 验证的 no-alias/alignment/range/effect fact 才能进入 C/LLVM；Native pre-LLVM fact audit 会
 拒绝 injected 或 stale metadata。
 
+## Offline Auto-Tuning
+
+`ckc tune build` 从 exact verified ordinary O3 Native state 开始。Compiler 使用 stable
+site/unit/variant identity 枚举 specialization、inlining、short-slice versioning、Loop SIMD、
+unrolling、SLP 与 layout 七类 CK-owned alternative。Deterministic bounded beam 生成完整
+frontier；legal plan 通过与普通 build 相同的 verifier 和 Native object/link pipeline replay。
+Correctness smoke 先于 timing，candidate order 确定性轮换，measured winner 必须通过两轮独立
+validation 与 artifact-size gate。
+
+Decision 是 non-proof optimization evidence，不能创建 range、alias、alignment、effect 或
+safety fact，也不能跳过 verifier/checked-mode obligation。`--tune-use` 重算当前 frontier 与
+exact selected plan，再比较 post-state、object graph 与 link recipe。Mismatch 直接报错，不回退
+ordinary optimization。
+
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
-下使用 schema 8 比较 0.13 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
+下使用 schema 9 比较 0.14 ordinary/PGO/multiversion/tuned channel、固定 Clang/Rust PGO、
 hand-written SIMD oracle，并 replay exact 0.12 commit
 `1c2596da11242704cc6d875e969fc45cf58ea21d`。Correctness、optimization time、generation
-overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
-在 0.13 交付；Auto-Tuning remains 0.14，indirect calls、scalable KIR 与 adaptive JIT PGO
+overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO、受限 multiversioning
+与 offline Auto-Tuning 在 0.14 交付；indirect calls、scalable KIR 与 adaptive JIT PGO
 仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。

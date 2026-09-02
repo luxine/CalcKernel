@@ -65,7 +65,7 @@ impl TuneTrialBuildRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonPublishableTuneTrial {
     plan: TuningPlan,
-    post_state_digest: String,
+    post_state_digest: [u8; 32],
     identity: ArtifactIdentity,
     bytes: TuneArtifactBytes,
     object_graph: Vec<(String, Vec<u8>)>,
@@ -105,8 +105,12 @@ impl NonPublishableTuneTrial {
         &self.plan
     }
 
-    pub(crate) fn post_state_digest(&self) -> &str {
-        &self.post_state_digest
+    pub(crate) const fn post_state_digest(&self) -> [u8; 32] {
+        self.post_state_digest
+    }
+
+    pub(crate) const fn post_state_digest_bytes(&self) -> [u8; 32] {
+        self.post_state_digest
     }
 
     pub(crate) const fn artifact_kind_name(&self) -> &'static str {
@@ -152,7 +156,8 @@ pub fn compile_tune_trial(
     )?;
     Ok(NonPublishableTuneTrial {
         plan: plan.clone(),
-        post_state_digest: replayed.kir_digest(),
+        post_state_digest: crate::tuning_kir_state_digest(&replayed)
+            .map_err(|error| error.to_string())?,
         identity,
         bytes: request.bytes,
         object_graph: request.object_graph,

@@ -1,0 +1,23 @@
+schema = 1
+
+[runner]
+path = "../../../target/release/ckc-tune-runner"
+input_root = "../.."
+args = ["--ck-tune"]
+inputs = ["fixtures/pgo/training.tsv", "fixtures/pgo/held-out.tsv"]
+inherit_env = []
+timeout_ms = 30000
+
+[[case]]
+id = "contract-fixed-length.search"
+role = "search"
+seed = 11
+weight = 1
+expected_digest = "540a796a8eb0f5acfc1cba7e031240c1f138a8a57a166d1751abf5c7b2bb421b"
+
+[[case]]
+id = "contract-fixed-length.validation"
+role = "validation"
+seed = 37
+weight = 1
+expected_digest = "390087c9cc52b38022ad3f7116df488c6046d01065a8139ccdc6c251d27f383e"

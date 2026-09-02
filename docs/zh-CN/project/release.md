@@ -1,11 +1,11 @@
-# 原生 `ckc` 0.13 发布策略
+# 原生 `ckc` 0.14 发布策略
 
 [English](../../project/release.md)
 
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
 
-Feature branch 中的 0.13.0 identity 是 release candidate，不是已发布 Release。只有 schema-8
+Feature branch 中的 0.14.0 identity 是 release candidate，不是已发布 Release。只有 schema-9
 x86-64/AArch64 performance 与 exact candidate-SHA 十作业 CI 全部完成后才可创建 tag 或
 GitHub Release。代码或 contract 变化后重新记录 evidence，必须重跑受影响 gate。
 
@@ -56,6 +56,6 @@ run 验证完整的六个 archive 与六个 checksum；若 Release 已存在则�
 publish job 具有 repository write permission。
 
 Release tag 是 annotated `vMAJOR.MINOR.PATCH`，永不移动。Published Release 或
-asset 不覆盖；若 `v0.13.0` 之后发现缺陷，发布 `v0.13.1` 等新 patch version。0.13.0
+asset 不覆盖；若 `v0.14.0` 之后发现缺陷，发布 `v0.14.1` 等新 patch version。0.14.0
 发布由六个 archive 和对应六个 checksum sidecar 组成，必须 all-or-nothing 发布。
 [发布清单](release-checklist.md)是必须完成的 sign-off record。

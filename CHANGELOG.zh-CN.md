@@ -2,6 +2,21 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.14.0 - Release candidate
+
+- 新增显式 offline Auto-Tuning：`ckc tune build|inspect` 与 fail-closed
+  `ckc build --tune-use` replay。普通命令保持 measurement-free，不会隐式运行 workload runner。
+- 新增闭合 schema-1 tuning manifest 与 `CKTUNE01` decision、immutable no-follow
+  workload snapshot、受限 deterministic search、correctness smoke、轮换 measurement、
+  两轮 validation，以及独立检查的 source/artifact replay。
+- 新增 `tune-v1` 下 owner-private 的 compile/measurement/completed-decision cache domain、
+  exact warm reuse、deterministic 4 GiB LRU eviction 与可崩溃恢复的 journaled multi-file publication。
+- Private Native object cache 更新到 `CKCOBJ04` key/manifest schema 5。Public language、
+  Native C ABI 1、Runtime ABI 2、KIR v3、LLVM bridge ABI 4、profile schema 1 与
+  multiversion schema 1 均保持不变。
+- 新增 schema-9 tuning performance evidence 与 exact candidate-SHA CI gate。正式发布仍需
+  两个受控架构 worker 和全部 required remote job 通过。
+
 ## 0.13.0 - Release candidate
 
 - 新增确定性的 CK 自有 `CKPART01` shard 与 `CKPROF01` workload profile，提供安全的

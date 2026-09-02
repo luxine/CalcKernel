@@ -24,9 +24,9 @@ evidence = "tests/native/multiversion_dispatch.rs:multiversion_dispatch_should_b
 [[change]]
 id = "native-cache-v4"
 fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
-evidence = "tests/native/cache.rs:cache_schema_should_use_v4_identity_and_reject_ckcobj02_entries"
+evidence = "tests/native/cache.rs:cache_schema_should_use_v5_identity_and_reject_ckcobj03_entries"
 
 [[change]]
 id = "v0-12-source-compatibility"
 fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
-evidence = "tests/compatibility.rs:compatibility_v0_12_sources_and_public_runtime_contracts_should_remain_accepted"
+evidence = "tests/compatibility.rs:compatibility_v0_13_sources_and_public_runtime_contracts_should_remain_accepted"

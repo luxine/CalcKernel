@@ -18,11 +18,14 @@ For a version `X.Y.Z`:
 - [ ] `ckc run` and `ckc build --kind executable` both pass with no external-tool `PATH`.
 - [ ] Generated artifact, release binary dependency, and JIT memory audits pass on every host; hardened macOS uses only the approved allow-JIT entitlement and selects a capability-consistent per-thread MAP_JIT or page-level W^X path, never RWX.
 - [ ] The actual packaged Darwin compiler is explicitly ad-hoc signed with hardened runtime and the sole allow-JIT entitlement before strict signature verification.
-- [ ] Strict schema 8 exact-0.12 replay, CK PGO/multiversion/combined,
+- [ ] Strict schema 9 offline-tuning evidence plus fresh schema 8 compatibility,
+  exact v0.13 replay, CK PGO/multiversion/combined/tuned,
   selected-direct dispatch, equivalent Clang/Rust PGO, C/Rust SIMD, domain-fact,
   generation overhead, optimizer latency, artifact/archive size, and
   source-to-object gates pass on controlled x86-64 and AArch64 workers under
   portable baseline CPU policy plus the required enhanced tier.
+- [ ] Two isolated cold tuning sessions, locked zero-work warm reuse, tune-use
+  compile/size/resource receipts, and all seven declared workload partitions pass.
 - [ ] Profile, target-set, variant-object, capability, hardware, recipe, sample,
   source, oracle, and candidate identities/digests are complete and exact.
 - [ ] The exact candidate-SHA ten required CI jobs are green with no skipped or

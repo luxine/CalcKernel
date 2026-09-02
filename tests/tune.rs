@@ -1,3 +1,5 @@
+#[path = "tune/cache.rs"]
+mod cache;
 #[path = "tune/calibration.rs"]
 mod calibration;
 #[path = "tune/decision_format.rs"]

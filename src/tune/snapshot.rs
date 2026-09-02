@@ -32,6 +32,14 @@ struct CapturedInput {
     digest: [u8; 32],
 }
 
+/// Public, path-safe identity of one captured workload input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneCapturedInputIdentity {
+    pub logical_path: String,
+    pub bytes: u64,
+    pub digest: [u8; 32],
+}
+
 struct CapturedEnvironment {
     identity: TuneEnvironmentIdentity,
     value: Vec<u8>,
@@ -244,6 +252,37 @@ impl CapturedWorkload {
             .iter()
             .map(|entry| &entry.identity)
             .collect()
+    }
+
+    /// Returns path-safe identities without exposing captured input contents.
+    #[must_use]
+    pub fn input_identities(&self) -> Vec<TuneCapturedInputIdentity> {
+        self.inputs
+            .iter()
+            .map(|input| TuneCapturedInputIdentity {
+                logical_path: input.logical_path.clone(),
+                bytes: u64::try_from(input.bytes.len()).unwrap_or(u64::MAX),
+                digest: input.digest,
+            })
+            .collect()
+    }
+
+    /// Returns the accepted runner argv in execution order.
+    #[must_use]
+    pub fn runner_args(&self) -> &[String] {
+        &self.args
+    }
+
+    /// Returns the accepted timeout.
+    #[must_use]
+    pub const fn invocation_timeout_ms(&self) -> u32 {
+        self.timeout_ms
+    }
+
+    /// Returns canonical case identities.
+    #[must_use]
+    pub fn case_identities(&self) -> &[super::TuneCase] {
+        &self.cases
     }
 
     pub(crate) fn args(&self) -> &[String] {

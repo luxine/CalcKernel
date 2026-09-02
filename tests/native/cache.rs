@@ -86,15 +86,15 @@ fn cache_entries(root: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-fn cache_schema_should_use_v4_identity_and_reject_ckcobj02_entries() {
+fn cache_schema_should_use_v5_identity_and_reject_ckcobj03_entries() {
     let fixture = Fixture::new("fn main() -> i32 { return 0; }");
     assert_eq!(fixture.run(&[]).status.code(), Some(0));
     let entry = cache_entries(&fixture.cache_root()).remove(0);
     let bytes = fs::read(&entry).expect("read cache v4 entry");
-    assert!(bytes.starts_with(b"CKCOBJ03"));
+    assert!(bytes.starts_with(b"CKCOBJ04"));
 
     let mut old = bytes;
-    old[..8].copy_from_slice(b"CKCOBJ02");
+    old[..8].copy_from_slice(b"CKCOBJ03");
     fs::write(&entry, old).expect("install legacy cache magic");
     #[cfg(unix)]
     {
@@ -106,7 +106,7 @@ fn cache_schema_should_use_v4_identity_and_reject_ckcobj02_entries() {
     assert!(
         fs::read(&entry)
             .expect("read repaired cache entry")
-            .starts_with(b"CKCOBJ03")
+            .starts_with(b"CKCOBJ04")
     );
 }
 
@@ -243,6 +243,16 @@ fn concurrent_writers_should_converge_without_temporary_files() {
 fn cache_clean_should_remove_only_the_resolved_ckc_cache_root() {
     let fixture = Fixture::new("fn main() -> i32 { print_i32(42); print_newline(); return 0; }");
     assert_successful_program(&fixture.run(&[]));
+    let tuning = calckernel::TuneCache::open_at(fixture.cache_root()).expect("tuning cache");
+    let tune_key = tuning.derive_key(calckernel::TuneCacheDomain::Decision, &[b"completed"]);
+    tuning
+        .write(calckernel::TuneCacheDomain::Decision, tune_key, b"decision")
+        .expect("write tuning cache");
+    assert!(
+        tuning
+            .entry_path(calckernel::TuneCacheDomain::Decision, tune_key)
+            .is_file()
+    );
     let sibling = fixture
         .cache_root()
         .parent()

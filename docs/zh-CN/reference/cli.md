@@ -1,4 +1,4 @@
-# `ckc` 0.13 CLI 参考
+# `ckc` 0.14 CLI 参考
 
 [English](../../reference/cli.md)
 
@@ -22,7 +22,9 @@ text output 写 stdout，另有说明时除外。
 | `ckc pgo build <file> --out <executable>` | Generate、无参数运行一次、merge，并生成最终 O3 executable。 |
 | `ckc pgo merge <shard-or-directory>... --out <file.ckprof>` | Canonical merge 已完成的 `CKPART01` shard。 |
 | `ckc pgo inspect <file.ckprof> [--json]` | 验证并查看 terminal `CKPROF01` profile。 |
-| `ckc cache clean` | 仅删除解析出的 CK native cache。 |
+| `ckc tune build <file> --config <manifest>` | 显式 host-native offline tuning 与 journaled artifact/decision publication。 |
+| `ckc tune inspect <file.cktune> [--json]` | 只验证/查看 `CKTUNE01` decision，不编译或运行。 |
+| `ckc cache clean` | 安全删除解析出的 ordinary 与 `tune-v1` cache。 |
 | `ckc licenses` | 输出内嵌 third-party notice。 |
 | `ckc --version --verbose` | 输出 compiler、ABI、LLVM、target、codegen 与 ORC identity。 |
 
@@ -46,6 +48,8 @@ archiver，Native build 不留下 `.c` 或 `.ll` intermediate。`emit-c` 永不�
   run 使用 host CPU。`emit-kir` 只有显式选择 Native consumer 后才接受 `--cpu`。
 - `--target <host-triple>` 只接受规范化后等于当前 host triple 的目标；不支持 cross compile。
 - `--no-cache` 令 run 绕过 persistent cache 的读写。
+- `--budget quick|standard|thorough`、`--tune-out`、`--no-tune-cache` 只用于
+  `tune build`；`--tune-use` 只用于 `build`。
 - `--print-facts`、`--print-effect-summaries`、`--explain-optimization` 输出
   deterministic verified KIR evidence。
 - `--sanitize-contracts` 只用于 `run` 与 `build --kind executable`，在每个 unsafe entry
@@ -76,7 +80,7 @@ ckc build kernels.ck --kind static --pgo-use kernels.ckprof \
 
 Profile use 接受 O2/O3；specialization 与 `--cpu multiversion` 要求 O3。Generation 支持
 executable、dynamic 与 static，但 generation object 因没有 process/library flush owner 而拒绝。
-multiversion object 也会拒绝，因为 0.13 定义 named-object bundle，不定义 partial-link format；
+multiversion object 也会拒绝，因为 0.14 定义 named-object bundle，不定义 partial-link format；
 baseline/native single-version profile-use object 仍支持。Dynamic/static/object 使用
 Native-library topology，executable 使用 Native-executable topology。`--pgo-use` 与
 `--pgo-generate` 互斥，并且都不能与 `--sanitize-contracts` 组合。每个 invalid CLI combination
@@ -87,14 +91,46 @@ terminal aggregate，不能再次 merge。Identity 包含 compiler/source/KIR/si
 schema/runtime、target/object format、safety mode、topology、O2/O3 family、CPU policy 与有序
 multiversion target set。profile identity mismatch 是错误，不是 partial-profile hint。Unknown
 field、digest failure、missing observation 与 unsupported schema 都 fail closed。generation artifacts bypass
-全部 Native object-cache 读写；最终 use bundle 只有在 `CKCOBJ03` key/manifest
-schema 4 下每个 named object 与 dispatch identity 均验证通过时才能命中。
+全部 Native object-cache 读写；最终 use bundle 只有在 `CKCOBJ04` key/manifest
+schema 5 下每个 named object 与 dispatch identity 均验证通过时才能命中。
 
 Profile 可能暴露 workload 的 branch、trip count、length 与 constant-frequency 信息，因此
 directory/file 留在用户 trust boundary 内，input 不通过 symlink 递归。No command uploads
 source、counter、profile、diagnostic 或 artifact。稳定 error category 区分 invalid CLI
 combination、collection/publication、profile identity mismatch、profile mapping、unsupported
 target tier、detector、variant verification 与 final artifact failure。
+
+## Offline tuning workflow
+
+Offline Auto-Tuning 是显式且 host-native 的：
+
+```sh
+ckc tune build kernel.ck --config workload.cktune.toml --kind executable \
+  --cpu native -O3 --budget standard --out kernel-tuned
+ckc tune inspect kernel-tuned.cktune --json
+ckc build kernel.ck --kind executable --cpu native -O3 \
+  --tune-use kernel-tuned.cktune --out kernel-replayed
+```
+
+`tune build` 只接受 executable/dynamic、exact host target、`--cpu native` 与 O3。
+Optional `--pgo-use` 和 checked mode 进入完整 identity；profile generation、multiversion
+和 contract sanitizer 均拒绝。闭合 schema-1 TOML manifest 声明一个 host-format runner、
+immutable input、environment allowlist，以及互不混用的 search/validation case。Runner 与 input
+path 通过 no-follow snapshot 捕获。每次 invocation 只接收声明的 argv/env、case/seed/iteration
+变量与新建的 `CKTIMAP1` input map。
+
+Compiler 构建 ordinary baseline，枚举受限 deterministic frontier，在 timing 前验证 correctness，
+轮换 candidate 顺序并执行两轮 validation。Native output set 与 canonical `CKTUNE01` schema-1
+decision 通过可崩溃恢复的 journal 一起发布。`--tune-use` 重建当前 source/KIR/frontier/selected
+plan 并比较 object-graph/link-recipe identity；compiler、source、schema、CPU/features、profile、
+mode、kind、frontier、plan 或 artifact 任一 stale 都直接失败，不回退到 ordinary build。允许使用
+不同 destination。
+
+Private `tune-v1` namespace 将 compile、measurement、completed-decision domain 分离；
+measurement key 使用 installation-local CSPRNG salt，并采用 owner-only file、checksum、atomic
+write 与 hard 4 GiB deterministic LRU。完整 exact warm decision 可逐字节重新发布；
+`--no-tune-cache` 强制 fresh session。普通命令不会打开该 namespace 或运行 harness。
+No command uploads workload、source、decision、measurement、profile 或 artifact data。
 
 ## Backend 与 effect matrix
 
@@ -115,13 +151,14 @@ object 与 SHA-256 integrity digest。`--no-cache` 绕过读写。Corruption、u
 permission、symlink replacement 或 unparseable object 视为 miss。Same-user cache 仍属于 user
 trust boundary，不是 security sandbox。
 
-0.13 使用 KIR v3 与 `CKCOBJ03` manifest schema 4。Key 包含 contract sanitizer、consumer
+0.14 使用 KIR v3 与 `CKCOBJ04` manifest schema 5。Key 包含 contract sanitizer、consumer
 root、checked mode、规范化 `KirTargetProfile` digest、cost/proof schema identity、target/CPU
-policy 与 optimization budget；0.12 及更早 private object fail closed，不会被复用。
+policy 与 optimization budget；0.13 及更早 private object fail closed，不会被复用。
 
 Root 为 Linux 的 `$XDG_CACHE_HOME/ckc` 或 `$HOME/.cache/ckc`、macOS 的
 `$HOME/Library/Caches/ckc`、Windows 的 `%LOCALAPPDATA%\CalcKernel\cache`。缺少 required base
 时本次 run 禁用 cache。Write 使用 owner-only same-filesystem staging 与 atomic rename；默认
-soft limit 为 1 GiB，采用 best-effort LRU eviction。Native checked failure 使用 240–243，
+ordinary cache soft limit 为 1 GiB，采用 best-effort LRU eviction。`ckc cache clean` 同时删除
+ordinary entry 与经过验证的 tuning namespace。Native checked failure 使用 240–243，
 stdout failure 为 244，abnormal child termination 为 245。
 Contract sanitizer failure 为 246，精确输出 `CKR0007: unsafe contract violation`。

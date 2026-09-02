@@ -204,6 +204,14 @@ impl TuneManifest {
     pub fn cases(&self) -> &[TuneCase] {
         &self.cases
     }
+
+    /// Returns every operational path that an output must not alias.
+    #[must_use]
+    pub fn protected_paths(&self) -> Vec<PathBuf> {
+        let mut paths = vec![self.runner_path.clone(), self.input_root.clone()];
+        paths.extend(self.inputs.iter().map(|input| self.input_root.join(input)));
+        paths
+    }
 }
 
 fn reject_unknown(table: &toml::Table, allowed: &[&str]) -> Result<(), TuneManifestError> {

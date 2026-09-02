@@ -24,7 +24,7 @@ evidence = "tests/optimizer/slp.rs:unroll_slp_transaction_should_commit_or_rollb
 [[change]]
 id = "native-cache-v3"
 fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
-evidence = "tests/native/cache.rs:cache_schema_should_use_v4_identity_and_reject_ckcobj02_entries"
+evidence = "tests/native/cache.rs:cache_schema_should_use_v5_identity_and_reject_ckcobj03_entries"
 
 [[change]]
 id = "v0-11-source-compatibility"

@@ -1,0 +1,23 @@
+schema = 1
+
+[runner]
+path = "../../../target/release/ckc-tune-runner"
+input_root = "../.."
+args = ["--ck-tune"]
+inputs = ["fixtures/pgo/training.tsv", "fixtures/pgo/held-out.tsv"]
+inherit_env = []
+timeout_ms = 30000
+
+[[case]]
+id = "trip-unroll-simd.search"
+role = "search"
+seed = 17
+weight = 1
+expected_digest = "bb013e074bf05e407209645fc0744426bf311085e5122faad63348d402e7b0af"
+
+[[case]]
+id = "trip-unroll-simd.validation"
+role = "validation"
+seed = 41
+weight = 1
+expected_digest = "cf276483b70e5b81da776cc27d6191192c167ba4b098a0a684cbc2a96a4b480a"

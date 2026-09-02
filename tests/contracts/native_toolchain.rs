@@ -916,13 +916,13 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
 }
 
 #[test]
-fn native_cache_schema4_contract_should_bind_complete_bundle_and_atomic_outputs() {
+fn native_cache_schema5_contract_should_bind_complete_bundle_and_atomic_outputs() {
     let key = read("src/cli/cache/key.rs");
     let entry = read("src/cli/cache/entry.rs");
     let cache = read("src/cli/cache/mod.rs");
     let output = read("src/cli/output.rs");
     for required in [
-        "const KEY_SCHEMA: u32 = 4",
+        "const KEY_SCHEMA: u32 = 5",
         "profile_identity",
         "artifact_identity",
         "pgo_identity",
@@ -933,8 +933,8 @@ fn native_cache_schema4_contract_should_bind_complete_bundle_and_atomic_outputs(
         assert!(key.contains(required), "cache key missing {required}");
     }
     for required in [
-        "CKCOBJ03",
-        "const MANIFEST_SCHEMA: u32 = 4",
+        "CKCOBJ04",
+        "const MANIFEST_SCHEMA: u32 = 5",
         "CKCBND01",
         "dispatch_runtime_digest",
         "cache bundle variant order is invalid",

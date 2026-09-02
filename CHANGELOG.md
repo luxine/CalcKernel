@@ -2,6 +2,25 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
+## 0.14.0 - Release candidate
+
+- Added explicit offline Auto-Tuning with `ckc tune build|inspect` and
+  fail-closed `ckc build --tune-use` replay. Ordinary commands remain
+  measurement-free and never invoke a workload runner implicitly.
+- Added closed schema-1 tuning manifests and `CKTUNE01` decisions, immutable
+  no-follow workload snapshots, bounded deterministic search, correctness
+  smoke checks, rotated measurements, two validation rounds, and independently
+  checked source/artifact replay.
+- Added owner-private compile/measurement/completed-decision cache domains below
+  `tune-v1`, exact warm reuse, deterministic 4 GiB LRU eviction, and
+  journaled crash-recoverable multi-file publication.
+- Advanced the private Native object cache to `CKCOBJ04` key/manifest schema 5.
+  Public language, Native C ABI 1, Runtime ABI 2, KIR v3, LLVM bridge ABI 4,
+  profile schema 1, and multiversion schema 1 remain unchanged.
+- Added schema-9 tuning performance evidence and exact candidate-SHA CI gates.
+  Formal release still requires both controlled architecture workers and all
+  required remote jobs to pass.
+
 ## 0.13.0 - Release candidate
 
 - Added deterministic CK-owned `CKPART01` shards and `CKPROF01` workload

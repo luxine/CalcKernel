@@ -1,8 +1,9 @@
-# CalcKernel 0.13 性能指南
+# CalcKernel 0.14 性能指南
 
 [English](../../guides/performance.md)
 
-CalcKernel 0.13 使用 fail-closed performance report schema 8。正式 release 必须具有固定
+CalcKernel 0.14 新增 fail-closed performance report schema 9，同时保留 schema-8 cumulative
+compatibility gate。正式 release 必须具有固定
 x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
 Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
 hardware/capability manifest、compiler/oracle/source/recipe digest、training/held-out corpus、
@@ -23,6 +24,17 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 缺少、unknown、extra 或不匹配的 report field、digest、stream、tier、capability 都使 checker 失败。
 
 ## 累积 release gate
+
+- 五个 release-held-out tuned case 都与 exact v0.13 ordinary/PGO 中更快者比较：
+  tuned time geometric 不超过 95%，每个 selected tuned case 不超过 98%，validation/release
+  ratio 均不超过 102%；baseline selection 也必须进入 aggregate。
+- Tuned throughput 相对 hand-written C/Rust SIMD 达到 geometric 98%、逐 case 92%；两个
+  declared domain kernel 相对更快 generic C/Rust oracle 的 geometric throughput 严格超过 8%。
+- `--tune-use` compile time 相对 0.14 ordinary build 的 geometric/逐 case slowdown 不超过
+  10%/20%；0.14 ordinary 相对 v0.13 保持 3%/8%。Tuned artifact 与 deterministic compiler
+  archive 均不超过 110%。
+- Standard tuning 不超过 30 分钟及声明的 candidate/resource bound，peak RSS 不超过 2x，
+  tuning cache 不超过 4 GiB；两个 empty-cache cold run 与一个 locked warm reuse 满足 exact determinism。
 
 - 0.13 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
   2%，单项不超过 5%。
@@ -68,9 +80,9 @@ cargo bench --features native-toolchain --bench ckc_perf -- \
   --case proof --task check --cpu baseline
 cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
 python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json
-cargo bench --features native-toolchain --bench pgo_perf -- \
-  --task collect --out target/ckc-perf/v0.13-results.json
-python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json
+cargo bench --features native-toolchain --bench tune_perf -- \
+  --task collect --out target/ckc-perf/v0.14-results.json
+python3 scripts/check-native-performance.py target/ckc-perf/v0.14-results.json
 ```
 
 Native 命令要求固定路径 `CKC_LLVM_PREFIX`、`CKC_CLANG_ORACLE`、
@@ -83,5 +95,5 @@ Report 在独立 checker 读取前 canonicalize 并 hash；benchmark 本身不�
 target/capability、oracle precondition、threshold、statistic、exclusion 或 checker 均属于需评审
 contract change。
 
-PGO 与受限 multiversioning 只有在这些 gate 通过后才随 0.13 交付。Auto-Tuning remains 0.14；
-indirect-call promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。
+PGO、受限 multiversioning 与显式 offline Auto-Tuning 只有在这些 gate 通过后才随 0.14
+交付；indirect-call promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。

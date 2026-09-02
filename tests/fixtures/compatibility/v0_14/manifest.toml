@@ -1,0 +1,37 @@
+schema = 1
+release = "0.14.0"
+
+[[change]]
+id = "tune-decision-schema1"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/tune/decision_format.rs:decision_schema_one_accepts_complete_canonical_frame"
+
+[[change]]
+id = "tune-workload-snapshot"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/tune/snapshot.rs:snapshot_capture_is_immutable_after_source_replacement"
+
+[[change]]
+id = "deterministic-frontier-replay"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/tune/replay.rs:replay_requires_the_complete_compile_selection_in_plan_digest_order"
+
+[[change]]
+id = "measurement-selection"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/tune/measurement.rs:measurement_schedule_is_deterministic_complete_and_rotated"
+
+[[change]]
+id = "journaled-publication"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/tune/publication.rs:publication_crash_matrix_recovers_only_complete_old_or_new_sets"
+
+[[change]]
+id = "native-cache-v5"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/native/cache.rs:cache_schema_should_use_v5_identity_and_reject_ckcobj03_entries"
+
+[[change]]
+id = "v0-13-source-compatibility"
+fixture = "tests/fixtures/compatibility/v0_12/vector_optimizer.ck"
+evidence = "tests/compatibility.rs:compatibility_v0_13_sources_and_public_runtime_contracts_should_remain_accepted"

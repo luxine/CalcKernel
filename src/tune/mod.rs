@@ -1,8 +1,10 @@
 //! Bounded, reproducible offline auto-tuning records and algorithms.
 
 mod artifact;
+mod cache;
 mod calibration;
 mod decision;
+mod decision_encode;
 mod environment;
 mod frontier;
 mod input_map;
@@ -23,10 +25,21 @@ mod trial;
 pub use artifact::{
     ArtifactIdentity, TuneArtifactKind, TuneArtifactRole, TuneArtifactRoleIdentity,
 };
+pub use cache::{
+    CachedTuneEntry, TUNE_CACHE_HARD_LIMIT, TUNE_CACHE_NAMESPACE, TuneCache, TuneCacheDomain,
+    TuneCacheKey, TuneCacheReceipt,
+};
 pub use calibration::{
     CalibrationObservation, CalibrationRecord, calibrate_case_observations, calibrate_cases,
 };
-pub use decision::{TuneDecision, TuneDecisionError, decode_tune_decision, encode_tune_decision};
+pub use decision::{
+    TuneDecision, TuneDecisionError, TuneReplayOutput, TuneReplayRequirements,
+    decode_tune_decision, encode_tune_decision,
+};
+pub use decision_encode::{
+    TuneDecisionBuildInput, TuneDecisionCandidate, TuneDecisionIdentity, TuneDecisionOutput,
+    TuneRecordedCacheOrigin, derive_tune_session_digest, encode_completed_tune_decision,
+};
 pub use environment::{BaselineSessionSeed, SessionDigestMaterial, derive_session_digest};
 pub use frontier::canonical_frontier_digest;
 pub use input_map::{TuneInputMapEntry, TuneInputMapError, decode_input_map, encode_input_map};
@@ -63,7 +76,7 @@ pub use selection::{
 };
 pub use session::{DecisionAssemblyError, assemble_decision};
 pub use snapshot::{
-    CapturedWorkload, StagedInvocationInputs, TuneEnvironmentIdentity, TuneSnapshotError,
-    capture_workload, stage_invocation_inputs,
+    CapturedWorkload, StagedInvocationInputs, TuneCapturedInputIdentity, TuneEnvironmentIdentity,
+    TuneSnapshotError, capture_workload, stage_invocation_inputs,
 };
 pub use trial::{NonPublishableTuneTrial, TuneTrialBuildRequest, compile_tune_trial};

@@ -26,7 +26,7 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
    adversarial partitions、runner/oracle/compiler/license/notices/baseline/schema recipe 全覆盖且 bytes+SHA 固定。
 2. 写 correctness RED：manifest search/validation expected digest 与 release digest 从独立 CK/C/Rust canonical
    result bytes 重算；release file/digest 不得进入任何 tune manifest 或 tuning decision input。
-3. 写 schema top-level/identity RED：exact 27 keys、candidate/version/SHA、v013 replay commit、toolchains、hardware、
+3. 写 schema top-level/identity RED：exact 25 keys、candidate/version/SHA、v013 replay commit、toolchains、hardware、
    recipe/binary/evidence-root file identity；missing/unknown/symlink/traversal/duplicate/wrong-root 全失败。
 4. 写 sampling RED：main fixed six-channel，validation/domain fixed three-channel；每 split doubling calibration+
    confirmation、3 warmup、20 measured、每 sample 7 equal batches/min/upper median/16 stable，rotation digest 重算。
@@ -50,4 +50,3 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
 - collector 只收集 raw evidence，`check-native-performance.py` 是唯一接受者。
 - internal `.cktune` 三 invocation measurement 与 external release 七 batch sample 绝不复用或混写。
 - 性能 host 仅稳定 Linux x86-64-v4 和 AArch64 SVE2；缺 tier 是 required gate failure。
-

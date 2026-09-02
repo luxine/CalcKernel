@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-CalcKernel 0.13.0 ships `native ckc`, a self-contained Rust command-line
+CalcKernel 0.14.0 ships `native ckc`, a self-contained Rust command-line
 compiler for the CK computation-kernel language. Release binaries compile, link,
 and run native CK without an external compiler toolchain. The repository also
 retains inspectable C and WebAssembly source/binary emitters.
@@ -28,6 +28,9 @@ retains inspectable C and WebAssembly source/binary emitters.
 - Explicit Native `--cpu multiversion` builds with a portable baseline,
   verified bounded variants, baseline-safe one-time dispatch, and stable ABI
   thunks in executable, dynamic, and static artifacts.
+- Explicit offline Auto-Tuning through `ckc tune build|inspect` and verified
+  `ckc build --tune-use`, with immutable workload snapshots, deterministic
+  search, correctness-first measurement, private caches, and journaled output.
 - Source-only C output and portable WAT/WASM output.
 - Six zero-toolchain release archives for macOS, Linux, and Windows on AArch64
   and x86-64.
@@ -70,13 +73,19 @@ ckc pgo build examples/native/hello.ck --out /tmp/hello-pgo \
   --profile-out /tmp/hello.ckprof
 ckc build examples/core/scalar.ck --kind static --cpu multiversion \
   --pgo-use /tmp/scalar.ckprof --out /tmp/libscalar.a
+ckc tune build examples/native/hello.ck --config workload.cktune.toml \
+  --kind executable --cpu native -O3 --out /tmp/hello-tuned
+ckc tune inspect /tmp/hello-tuned.cktune
+ckc build examples/native/hello.ck --kind executable --cpu native -O3 \
+  --tune-use /tmp/hello-tuned.cktune --out /tmp/hello-replayed
 ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
 ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
 ckc licenses
 ```
 
-`run` and `build` default to O3. PGO is off unless a `pgo` command or `--pgo-*`
-option is present; ordinary development never trains or reads a profile. Native
+`run` and `build` default to O3. PGO and offline tuning are off unless their
+explicit commands or flags are present; ordinary development never trains,
+measures a runner, or reads a profile/tuning decision. Native
 build defaults to the release target's portable CPU baseline; `--cpu native` and
 `--cpu multiversion` are explicit. `build-llvm` remains only as a deprecated
 alias and has no PGO/multiversion behavior.
@@ -129,16 +138,16 @@ cargo build --release --features native-toolchain --locked
 Release policy, platform audits, performance gates, archive names, and immutable
 GitHub Release publication are defined in [docs/project/release.md](docs/project/release.md).
 
-CalcKernel 0.13.0 keeps the public Native C ABI at version 1 and Runtime ABI at
+CalcKernel 0.14.0 keeps the public Native C ABI at version 1 and Runtime ABI at
 version 2. The private LLVM bridge is ABI 4, KIR uses the `kir-v3` identity, and
-the Native object cache uses `CKCOBJ03` with key/manifest schema 4. Old 0.11
-and 0.12 private cache entries fail closed instead of aliasing a 0.13 artifact.
-The accepted 0.12.0, 0.11.0, and 0.10.0 source boundaries are retained in the
+the Native object cache uses `CKCOBJ04` with key/manifest schema 5. Old 0.13
+and earlier private cache entries fail closed instead of aliasing a 0.14 artifact.
+The accepted 0.13.0, 0.12.0, 0.11.0, and 0.10.0 source boundaries are retained in the
 [compatibility policy](docs/project/compatibility.md).
 
-PGO and bounded runtime multiversioning are implemented in 0.13. Auto-Tuning remains 0.14;
-indirect-call promotion, scalable KIR vectors, and adaptive JIT
-PGO also remain future work.
+PGO, bounded runtime multiversioning, and explicit offline Auto-Tuning are
+implemented. Indirect-call promotion, scalable KIR vectors, and adaptive JIT
+PGO remain future work.
 
 ## Memory boundary
 

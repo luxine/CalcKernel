@@ -1,8 +1,9 @@
-# CalcKernel 0.13 Performance Guide
+# CalcKernel 0.14 Performance Guide
 
 [简体中文](../zh-CN/guides/performance.md)
 
-CalcKernel 0.13 uses fail-closed performance report schema 8. A formal release
+CalcKernel 0.14 adds fail-closed performance report schema 9 while retaining the
+schema-8 cumulative compatibility gate. A formal release
 requires complete reports from fixed x86-64 and AArch64 workers; a local build
 or release-candidate identity does not sign those gates. Measurements bind the
 candidate SHA, exact 0.12 replay SHA, LLVM/Clang 22.1.8, Rust 1.90.0, hardware
@@ -29,6 +30,20 @@ reruns or deletion of a case. Missing/unknown/extra/mismatched report fields,
 digests, streams, tiers, or capabilities fail the checker.
 
 ## Cumulative release gates
+
+- Every one of five release-held-out tuned cases is compared with the faster
+  exact v0.13 ordinary/PGO result: tuned time is at most 95% geometrically,
+  each selected tuned case is at most 98%, and no validation/release ratio
+  exceeds 102%. Baseline selections remain in every aggregate.
+- Tuned throughput reaches at least 98% of explicit hand-written C/Rust SIMD
+  geometrically and 92% per case. The two declared domain kernels exceed the
+  faster generic C/Rust oracle by more than 8% geometrically.
+- `--tune-use` compile time is at most 10% slower geometrically and 20% per
+  case than 0.14 ordinary build; 0.14 ordinary stays within 3%/8% of v0.13.
+  Tuned artifacts and the deterministic compiler archive remain within 110%.
+- Standard tuning stays within 30 minutes and its declared candidate/resource
+  bounds, peak RSS stays within 2x, tuning cache stays within 4 GiB, and two
+  empty-cache cold runs plus one locked warm reuse satisfy exact determinism.
 
 - Ordinary no-PGO 0.13 baseline/native versus exact 0.12 replay: geometric-mean
   slowdown at most 2%, individual slowdown at most 5%.
@@ -79,9 +94,9 @@ cargo bench --features native-toolchain --bench ckc_perf -- \
   --case proof --task check --cpu baseline
 cp target/ckc-perf/results.json target/ckc-perf/results-baseline.json
 python3 scripts/check-native-performance.py target/ckc-perf/results-baseline.json
-cargo bench --features native-toolchain --bench pgo_perf -- \
-  --task collect --out target/ckc-perf/v0.13-results.json
-python3 scripts/check-native-performance.py target/ckc-perf/v0.13-results.json
+cargo bench --features native-toolchain --bench tune_perf -- \
+  --task collect --out target/ckc-perf/v0.14-results.json
+python3 scripts/check-native-performance.py target/ckc-perf/v0.14-results.json
 ```
 
 The Native commands require the pinned `CKC_LLVM_PREFIX`, `CKC_CLANG_ORACLE`,
@@ -96,6 +111,6 @@ report/artifacts and do not rebuild or remeasure a required gate. Changing a
 source, corpus, profile, target/capability, oracle precondition, threshold,
 statistic, exclusion, or checker is a reviewed contract change.
 
-PGO and bounded multiversioning ship in 0.13 only after these gates pass.
-Auto-Tuning remains 0.14; indirect-call promotion, scalable KIR, and adaptive
-JIT PGO remain future work.
+PGO, bounded multiversioning, and explicit offline Auto-Tuning ship in 0.14 only
+after these gates pass. Indirect-call promotion, scalable KIR, and adaptive JIT
+PGO remain future work.

@@ -2,7 +2,7 @@ use calckernel::{
     KirBoundsMode, KirBuildConfig, KirConsumer, KirOverflowMode, KirSanitizerMode,
     KirVerifiedProgramState, SourceFile, TuneArtifactKind, TuneBudget, TuneTrialBuildRequest,
     build_kir_module, check, compile_tune_trial, enumerate_tuning_space, lower_to_mir,
-    run_deterministic_search,
+    prepare_kir_pre_tune_state, run_deterministic_search,
 };
 
 #[test]
@@ -70,19 +70,19 @@ fn trial_identity_detects_primary_object_and_recipe_mutations() {
 pub(crate) fn state() -> KirVerifiedProgramState {
     let checked = check(&SourceFile::new(
         "trial.ck",
-        "export fn kernel(n: u32) -> u32 { return (n + 1) * 2; }",
+        "export fn kernel() -> u32 { let i: u32 = 0; let total: u32 = 0; while i < 12 { total = total + i; i = i + 1; } return total; }",
     ));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("MIR");
     let module = build_kir_module(
         &mir,
         KirBuildConfig {
-            consumer: KirConsumer::Inspection,
+            consumer: KirConsumer::C,
             overflow_mode: KirOverflowMode::Unchecked,
             bounds_mode: KirBoundsMode::Unchecked,
             sanitizer_mode: KirSanitizerMode::Disabled,
         },
     )
     .expect("KIR");
-    KirVerifiedProgramState::new(module, None, 0).expect("verified")
+    prepare_kir_pre_tune_state(module, None).expect("verified pre-tune state")
 }

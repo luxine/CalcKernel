@@ -1,4 +1,4 @@
-# CalcKernel 0.13 Compiler Architecture
+# CalcKernel 0.14 Compiler Architecture
 
 [简体中文](../zh-CN/compiler/architecture.md)
 
@@ -12,6 +12,7 @@ documents. Module names in this document explain implementation ownership.
     -> optional CK workload profile (non-proof) + target profile
     -> KIR verifier -> transactional optimizer -> KIR verifier
     -> optional same pre-state CPU variants -> baseline-safe dispatcher
+    -> optional explicit offline tuning -> independently replayed exact plan
     +-> C source/header
     +-> WAT/WASM
     +-> structural LLVM -> TargetMachine object -> ORC or in-process LLD
@@ -71,7 +72,7 @@ the same pre-state, verifies them independently, and forbids cross-variant LTO.
 `src/backend/` consumes verified KIR only. C and Native support the four
 overflow/bounds combinations through explicit guards and status flow; WASM is
 unchecked-only. C and WebAssembly profiles deliberately disable Vector KIR in
-0.13, so both continue from verified scalar KIR while retaining profitable
+0.14, so both continue from verified scalar KIR while retaining profitable
 scalar specialization and cleanup. C contract facts may become portable
 restrict/alignment hints. Native structurally lowers checked Vector KIR and the
 same scalar facts to LLVM IR, validates metadata with a pre-LLVM fact audit,
@@ -90,12 +91,20 @@ the full-identity `ck_profile_flush_*` control symbol only after quiescence.
 acquire-release publication. Public ABI thunks remain stable; baseline,
 variant, and runtime implementations remain hidden named-object members.
 
+`src/tune/` owns explicit offline Auto-Tuning. It parses a closed workload,
+captures runner/input bytes without indirection, enumerates canonical choices
+from immutable pre-tune KIR, performs bounded search and correctness-first
+measurement, then independently replays the selected plan. `CKTUNE01` schema 1
+binds compiler/source/mode/target/frontier/plan/object/link identity. Publication
+uses persistent destination locks and a recoverable journal; ordinary commands
+do not enter tuning or execute the runner.
+
 `src/cli/` owns parsing, dispatch, transactional output, `emit-kir` evidence,
 contract-sanitizer selection, isolated run/cache policy, and diagnostics. Cache
 and code-generation identity includes KIR v3, consumer, modes, contracts, ABI,
 LLVM, target-profile digest, CPU features, optimizer proof/cost schemas, budgets,
-and sanitizer configuration. Native entries use `CKCOBJ03` key schema 4 and
-manifest schema 4. A multiversion cache hit requires the closed ordered bundle,
+and sanitizer configuration. Native entries use `CKCOBJ04` key schema 5 and
+manifest schema 5. A multiversion cache hit requires the closed ordered bundle,
 every named object, target set, dispatcher/runtime, profile, and physical
 artifact identity; generation bypasses cache.
 

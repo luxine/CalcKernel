@@ -1,8 +1,8 @@
-# CalcKernel 0.13 Language Reference
+# CalcKernel 0.14 Language Reference
 
 [简体中文](../zh-CN/reference/language.md)
 
-This document is the normative source-language contract for CalcKernel 0.13.
+This document is the normative source-language contract for CalcKernel 0.14.
 CK is a deterministic computation-kernel language; source files use `.ck`.
 
 ## Types and declarations
@@ -47,7 +47,7 @@ and runtime-effect model:
 Arguments are evaluated once in source order. Native executable and `run`
 roots may reach these calls. A reachable print from a Native library/object
 export, a C artifact root, or a WebAssembly export is rejected. Unreachable
-print code may be removed. CK 0.13 has no general strings or byte I/O.
+print code may be removed. CK 0.14 has no general strings or byte I/O.
 
 Value prints do not append a newline; `print_newline` emits exactly one LF on
 every platform. Integers are base 10 without locale, grouping, leading zero, or
@@ -121,7 +121,7 @@ contract {
 ```
 
 Contract expressions are compile-time facts over mathematical integers. The
-closed 0.13 language permits integer parameters/constants, `slice.len`, affine
+closed 0.14 language permits integer parameters/constants, `slice.len`, affine
 `+`/`-` and multiplication by a constant, comparisons, conjunction,
 `multiple_of(value, positive_constant)`, `noalias(slice, slice)`, and
 `aligned(pointer, power_of_two)`. It excludes calls, loads, stores, disjunction,
@@ -163,7 +163,7 @@ guards; WebAssembly rejects checked modes.
 ## Diagnostics and non-goals
 
 Stable frontend codes are listed in [Diagnostics](diagnostics.md). Source
-typing is backend-independent. CalcKernel 0.13 has no modules/imports, dynamic
+typing is backend-independent. CalcKernel 0.14 has no modules/imports, dynamic
 allocation, ownership runtime, exceptions, async, closures, source generics
 beyond pointer/slice constructors, `f32`, SIMD source types, GPU target,
 program arguments, stdin, threads, or public embeddable JIT API.
