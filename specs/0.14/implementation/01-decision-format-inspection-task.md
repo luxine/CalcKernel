@@ -24,7 +24,7 @@ deterministic fixtures，不产生真实候选。
 
 1. 写 `decision_schema_one_rejects_noncanonical_framing_and_limits` RED，覆盖 endian、tag 顺序、
    duplicate/unknown、truncation、trailing、optional discriminant、UTF-8/NFC/NUL、count/length overflow、
-   32 MiB 和每项上限；运行 `cargo test --test tune decision_schema_one_rejects -- --exact`，预期因
+   32 MiB 和每项上限；运行 `cargo test --test tune decision_schema_one_rejects`，预期因
    `decode_tune_decision` 缺失而失败。
 2. 定义完整 record model 和 schema constants，实现只接受唯一编码的 primitive/list/record/optional
    cursor；再次运行同一测试，预期 framing mutation 全部通过。
@@ -43,4 +43,3 @@ deterministic fixtures，不产生真实候选。
 - 自包含 checker 只能重算 decision 内部闭包；依赖 source/KIR/artifact 的等式由阶段 04 checker 完成。
 - 不通过 serde 的宽松 map 反序列化绕过 field order/duplicate 检查；不暴露接受未知 tag 的兼容模式。
 - inspection 不能新增 friendly summary；每个 wire node 必须恰好出现一次。
-

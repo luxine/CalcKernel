@@ -33,6 +33,7 @@ harness = false
 num-bigint = "0.4"
 sha2 = "0.10"
 thiserror = "2.0"
+unicode-normalization = "0.1"
 wat = "1.0"
 
 [build-dependencies]

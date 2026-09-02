@@ -5,9 +5,11 @@ mod frontend;
 mod ir;
 mod optimizer;
 mod profile;
+mod tune;
 
 pub use backend::*;
 pub use frontend::*;
 pub use ir::*;
 pub use optimizer::*;
 pub use profile::*;
+pub use tune::*;
