@@ -63,6 +63,7 @@ pub struct CanonicalCandidateTimeout {
     pub case_id: String,
     pub iterations: u64,
     pub timeout_ms: u32,
+    pub elapsed_ns: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -183,10 +184,14 @@ impl TuneRunner {
         }
         let Some(status) = status else {
             if invocation.candidate {
+                let elapsed_ns = timer
+                    .elapsed_ns()
+                    .map_err(|_| RunnerFailure::TimerOverflow)?;
                 return Err(RunnerFailure::CandidateTimeout(CanonicalCandidateTimeout {
                     case_id: invocation.case_id.clone(),
                     iterations: invocation.iterations,
                     timeout_ms,
+                    elapsed_ns,
                 }));
             }
             return Err(RunnerFailure::BaselineTimeout);

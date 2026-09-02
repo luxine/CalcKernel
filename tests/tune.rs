@@ -12,12 +12,18 @@ mod input_map;
 mod inspection;
 #[path = "tune/manifest.rs"]
 mod manifest;
+#[path = "tune/measurement.rs"]
+mod measurement;
 #[path = "tune/replay.rs"]
 mod replay;
 #[path = "tune/runner.rs"]
 mod runner;
 #[path = "tune/search.rs"]
 mod search;
+#[path = "tune/selection.rs"]
+mod selection;
+#[path = "tune/session.rs"]
+mod session;
 #[path = "tune/snapshot.rs"]
 mod snapshot;
 #[path = "tune/support.rs"]
