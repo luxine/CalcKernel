@@ -87,7 +87,9 @@ required job、旧日志、历史数值或 lowered threshold。
 
 ## H. exact-SHA 十作业 CI
 
-- [ ] quality 通过。
+- [ ] quality 校验 85 项 `tests/oracles/typescript/SOURCE_MANIFEST.sha256`，以 frozen、
+  script-disabled lockfile 构建仓库内 TypeScript oracle，并实际通过 C/WASM/CLI/fixture live
+  differential gates；无私有仓库读取、registry 替代或 oracle test skip。
 - [ ] native integration 通过。
 - [ ] darwin-arm64、darwin-x64、linux-arm64、linux-x64、win32-arm64、win32-x64 六 host 通过。
 - [ ] x86-64 与 AArch64 performance 通过。

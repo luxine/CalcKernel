@@ -39,6 +39,9 @@ replay Native artifacts、8 个 v0.10 replay Native artifacts。诊断不得重�
 
 - exact candidate SHA 的 quality、native integration、六 host、x86-64/AArch64 performance 共十
   个 required jobs 全绿，无 skipped/continue-on-error gate。
+- quality 必须先通过 85 项 `SOURCE_MANIFEST.sha256` 校验和 frozen、script-disabled lockfile install
+  构建仓库内固定 TypeScript oracle，再实际执行 C/WASM/CLI/fixture differential tests；不能访问私有
+  退役仓库、替换成不兼容 registry artifact 或通过跳过 oracle-only tests 获得 green。
 - feature branch workflow_dispatch 的 run id/SHA 与本阶段提交一致；若为记录证据又提交，必须
   对新 SHA 重跑。
 

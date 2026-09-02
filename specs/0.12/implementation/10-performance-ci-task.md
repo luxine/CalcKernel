@@ -37,8 +37,11 @@ oracle、domain-fact suite、artifact size/source-to-object compile-time gate，
    candidate-free transaction allocation；changed function、module-global identity、fact/proof/rewrite
    verification、deterministic budget debit 与 materialized certificate digest 均不得省略。前序
    loop descriptor 只可在 induction structure 未改变且 function identity 精确匹配时复用。
-10. 更新 CI 为 quality、native-integration、六 native hosts、两 performance jobs；上传完整 evidence，
-   不把 diagnostic job 替换 gate。失败或显式请求的同 worker diagnostic 只检查实际测量对象，
+10. 更新 CI 为 quality、native-integration、六 native hosts、两 performance jobs；quality 先校验
+    `tests/oracles/typescript/SOURCE_MANIFEST.sha256`，以 frozen lockfile 和禁用 scripts 的 install
+    构建仓库内固定 oracle，再执行既有 C/WASM/CLI/fixture live differential gate；不得依赖私有
+    退役仓库凭据、替换成不兼容 registry artifact 或跳过 oracle-only tests。上传完整 evidence，
+    不把 diagnostic job 替换 gate。失败或显式请求的同 worker diagnostic 只检查实际测量对象，
    必须同时覆盖 32 个 candidate/current/replay-Clang scalar 对象、8 个 v0.11 replay Native 对象
    与 8 个 v0.10 replay Native 对象；不得读取已由 schema 7 删除的 `runtimeReplay` 字段，也不得
    重新构建或重新计时。

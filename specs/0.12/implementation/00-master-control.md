@@ -94,6 +94,13 @@ cache identity 的 schema/version 常量必须集中定义并进入 mutation tes
 - 规范反例：先在 `specs/0.12/review/implementation-blockers-*.md` 复诊，成立后同步修订。
 - 远程 CI：提交/推送后记录 run id 与 exact SHA，30–60 秒以上间隔查询；不持续占用前台等待。
 
+阶段 10 在 GitHub 仓库从 `Rust_CalcKernel` 更名为 `CalcKernel` 后暴露了 TypeScript oracle
+旧仓库名碰撞：quality 的第二次 checkout 会在当前 Rust 仓库中解析退役 TypeScript commit，因而
+不能形成有效的 exact-SHA 验收。复诊与闭环见
+`specs/0.12/review/implementation-blocker-03.md`。修复仅把固定提交的最小 oracle 源码与 fixtures
+固化到 `tests/oracles/typescript`，保留 frozen lockfile、provenance 与 85 项 source manifest，并
+继续执行原有 live differential gate；语言/ABI、性能阈值、corpus、schema 7 与十作业要求均不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。
