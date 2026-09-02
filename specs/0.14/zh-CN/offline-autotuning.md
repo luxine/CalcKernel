@@ -9,9 +9,10 @@
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
-在 v0.13 通过远程验收门槛之前，上述基线修订是临时的。开始实现前，必须将
-本设计分支变基到最终通过验收的 v0.13 修订，或者逐项复核其差异。任何语义
-差异都必须显式解决，不得通过适配测试来掩盖。
+在 v0.13 通过远程验收门槛之前，上述基线修订是临时的。完成仓库差异审计后，
+实现可以基于该精确候选继续，但版本发布仍受阻。在最终验收前，必须将本分支
+变基到最终通过验收的 v0.13 修订，或者逐项复核其差异。任何语义差异都必须
+显式解决，不得通过适配测试来掩盖。
 
 ## 1. 目标
 
@@ -65,7 +66,8 @@ CK 0.14 采用有界的离线两阶段自动调优：
 - 由 cpu=native 选出的精确本机 CPU 和特性集合。
 - 可执行文件和动态库输出。
 - 能表示为有限备选项的现有 CK 优化决策。
-- 可选使用已经采集的 CK profile 作为候选排序和代码生成输入。
+- 可选使用由完全相同 v0.14 编译器/源码/Schema 身份采集的 CK Profile，作为
+  候选排序和代码生成输入。缓存身份改为 Schema 5 后，不接受 v0.13 Profile。
 - 确定性的候选生成、测量调度、选择、缓存、检查和重放。
 - 稳定的文本和 JSON 检查输出。
 
@@ -141,20 +143,50 @@ Profile 是不可变输入。源码变更后重新采集 Profile，仍是单独�
       [--tune-out <decision.cktune>]
       [--no-tune-cache]
 
-默认预算为 standard。省略 tune-out 时，决策路径为 <artifact>.cktune。如果
-提供 target，它必须规范化为精确宿主三元组；省略时选择同一个宿主三元组。
+默认预算为 standard。现有 `NativeArtifactPaths` 解析定义完整输出集：可执行
+文件只有主输出；动态库包括主库和生成的 C 头文件；Windows 动态库还包括
+Import Library。省略 `--tune-out` 时，决策路径为解析后主输出路径追加
+`.cktune`。显式决策路径必须与所有输出具有相同的规范父目录。提供 target
+时必须规范化为精确宿主三元组；省略时选择同一三元组。
 
-产物路径和决策路径经过规范目标解析后必须彼此不同，也不得与任何源码、
-Manifest、驱动程序、Profile 或声明输入形成别名。CK 暂存并验证两个文件，
-将其摘要写入持久化发布 Journal，先发布决策，最后发布产物。每次替换各自
-保持原子性。
+所有目标经过规范目标解析后必须彼此不同，也不得与源码、Manifest、驱动、
+Profile、声明输入或者另一目标形成别名。Schema 1 不支持跨目录输出集。决策
+记录存在的主输出、头文件和 Import Library 的角色、规范逻辑名称、暂存字节
+摘要与物理体积。
 
-对任何已报告失败，CK 将两个目标都回滚到此前状态。进程或机器意外故障可能
-在旧产物或不存在的产物旁留下孤立的新决策，但绝不会留下这样一个新产物：
-它对应的完整决策尚未持久化。后续 CK 命令接触任一路径前，必须持有排他目标
-锁恢复 Journal。成对消费者校验决策中存储的最终产物摘要。本规范中的成对
-事务发布，特指这种带 Journal、产物最后发布的协议；不宣称两个任意文件系统
-路径能同时原子可见。
+发布使用同目录锁、Journal、Stage 与 Backup 文件。名称以 `.ckc-tune-` 加上
+SHA-256(`"CK-TUNE-OUTPUT-SET\0"`、输出类型、规范决策路径以及按输出角色排序
+的规范目标路径)
+前 32 个十六进制字符开头。CK 打开锁和 Journal 时不得跟随符号链接或
+Reparse Point，并在恢复与发布全程持有操作系统排他 Advisory Lock。Journal
+存储并校验完整 32 字节输出集 id；与另一集合发生前缀碰撞属于硬错误，绝不视为
+同一集合。
+
+有界 Journal Schema 1 包含事务 id、输出集 id、阶段；按发布顺序 decision、
+header、import-library、primary，对每个存在的目标，
+还包含目标、Stage 与 Backup 的 Basename、旧文件存在位、旧摘要、新摘要与新
+体积。阶段为 `Prepared=1`、`BackedUp=2`、`DecisionPublished=3`、
+`SidecarsPublished=4`、`PrimaryPublished=5`、`Committed=6`。发布严格为：
+
+1. 创建并验证所有同目录 Stage 文件，然后 Flush 每个文件；
+2. 写入并 Flush `Prepared`，再 Flush 父目录；
+3. 将各旧目标重命名为 Backup，写入并 Flush `BackedUp`；
+4. 原子重命名并 Flush 决策，记录 `DecisionPublished`；
+5. 如存在则依次发布并 Flush 头文件、Import Library，再记录
+   `SidecarsPublished`；
+6. 最后发布并 Flush 主产物，记录 `PrimaryPublished`；
+7. 验证整个新输出集，记录并 Flush `Committed`，删除 Backup、Stage 与
+   Journal，再 Flush 目录。
+
+目录 Flush 使用各平台有文档的最强等价机制，并由每个原生宿主恢复测试覆盖。
+任何已报告错误都必须在返回前回滚。重启恢复先计算所有目标、Stage 与 Backup
+摘要：主输出不等于 Journal 中新摘要时恢复完整旧集合；主输出等于新摘要时补全
+新集合。两者都必须幂等。无法解释或未记录的摘要组合是硬恢复错误，必须保留
+Journal 与全部证据，不得猜测；恢复成功前后续命令不得接触该集合。
+
+本规范中的事务输出集发布特指这种带 Journal、主输出最后发布的协议，不宣称
+多个文件同时原子可见。成对消费者仅在决策以及全部记录角色都与磁盘摘要和
+体积一致后接受发布结果。
 
 如果全部必要基线与存续候选测量有效且稳定，但没有候选满足固定收益阈值，
 命令成功输出基线产物和一份选择基线的决策文件。已经被规范超时规则移除的
@@ -204,7 +236,7 @@ Schema：未知、重复、缺失、类型错误或者超出范围的字段均�
 清单声明：
 
 - schema = 1；
-- 经过规范化解析的绝对驱动程序可执行路径；
+- 一个只用于取得不可变快照的宿主原生驱动程序可执行路径；
 - 不经过 shell 的固定 argv 向量；
 - 可选的、显式允许继承的环境变量；
 - 要计算摘要的驱动程序输入文件列表；
@@ -222,10 +254,10 @@ Schema 1 只包含以下字段：
 | TOML 位置 | 字段 | 类型与规则 |
 | --- | --- | --- |
 | 根 | schema | 必需整数，恰好为 1 |
-| runner | path | 指向普通可执行文件的必需 UTF-8 路径 |
+| runner | path | 指向宿主格式原生可执行文件的必需 UTF-8 路径；它属于操作路径，不属于规范身份 |
 | runner | args | 最多 64 个 UTF-8 字符串的可选数组，默认空，编码总长度最多 64 KiB |
 | runner | inputs | 最多 64 个清单相对普通文件路径的可选数组，默认空；每个最多 1 GiB，总计最多 4 GiB |
-| runner | inherit_env | 最多 16 个唯一 ASCII 环境变量名的可选数组，默认空 |
+| runner | inherit_env | 最多 16 个匹配 [A-Za-z_][A-Za-z0-9_]* 的唯一名称，默认空 |
 | runner | timeout_ms | 100 至 120,000 的可选整数，默认 30,000 |
 | 每个 case 条目 | id | 符合上述语法和长度的必需唯一标识 |
 | 每个 case 条目 | role | 必需字符串，只能是 search 或 validation |
@@ -265,14 +297,29 @@ Schema 1 只包含以下字段：
 
 清单相对路径在规范化后的清单目录下解析。父目录穿越、符号链接歧义、声明
 为输入但并非普通文件，以及逃逸该目录的路径都必须拒绝。驱动程序可以位于
-该目录外，但必须由显式路径指定，禁止通过 PATH 查找。
+该目录外，但必须由显式路径指定，禁止通过 PATH 查找。Schema 1 只接受宿主
+原生 ELF、Mach-O 或 PE/COFF 可执行格式，不接受脚本或解释器指令。
 
-清单、驱动程序可执行文件和每个声明输入文件的规范字节都计算 SHA-256
-摘要。任一变更都会使测量复用失效。绝对路径和时间戳只能作为诊断元数据，
-不得进入规范调优身份。
+规范 Manifest 身份不是 TOML 原始字节流，而是按以下顺序对固定二进制编码
+进行域分离 SHA-256：
 
-会话开始时，CK 在不跟随符号链接的前提下打开每个已验证输入，将其流式复制
-到私有的不可变内容快照并校验摘要。每次计时调用前，CK 将快照复制到
+1. schema；
+2. runner argv 字符串；
+3. 排序后的有效继承环境变量名称/值记录；
+4. timeout；
+5. 按 Manifest 顺序排列的输入记录，每项包含规范相对暂存路径、字节长度和
+   内容摘要；
+6. 按规范标识排序的 case 记录，每项包含 role、seed、weight 和期望摘要；
+7. 不可变 runner 快照字节长度与内容摘要。
+
+操作 Manifest 与 runner 绝对路径、TOML 空白/注释、时间戳、除可执行有效性
+外的文件权限以及临时路径均被排除。任何逻辑字段或内容字节变化都会使复用
+失效。
+
+会话开始时，CK 在不跟随符号链接或 Reparse Point 的前提下打开 runner 和
+每个已验证输入。CK 将 runner 复制到私有会话快照，验证复制后字节与宿主
+可执行格式，并在整个会话中只执行该快照。每个输入同样被流式复制到私有
+不可变内容快照并校验摘要。每次计时调用前，CK 将输入快照复制到
 CK_TUNE_TEMP/inputs 下，并保持清单相对路径。输入准备不计入测量区间，每次
 调用收到全新副本，因此一次驱动调用不能改变后续调用的输入。驱动程序通过
 CK_TUNE_TEMP 和固定的 inputs 子目录定位这些文件。
@@ -280,8 +327,14 @@ CK_TUNE_TEMP 和固定的 inputs 子目录定位这些文件。
 ### 7.3 环境
 
 驱动程序从空环境启动。在 Windows 上，CK 只能提供创建进程所需的最小
-SystemRoot 和 WINDIR 值。其他继承变量必须显式加入允许列表，其名称和精确
-值都进入调优身份。
+SystemRoot 和 WINDIR 值。其他继承变量必须显式加入允许列表；请求的变量
+不存在即报错。Unix 名称按字节唯一，Windows 名称按 ASCII 大小写不敏感比较
+唯一；重复或非规范拼写均报错。每个值最多 4,096 字节，完整有效环境最多
+65,536 字节；NUL 必须拒绝。包括 Windows 平台基础值在内的每个有效名称
+和精确值都进入调优身份。
+
+Unix 规范继承值是精确非 NUL 字节；Windows 值以不做规范化的 UTF-8 编码，
+无法表示的值必须拒绝。
 
 CK 设置以下协议变量：
 
@@ -302,7 +355,8 @@ argv 和环境直接传给进程创建接口。CK 绝不拼接 shell 命令字�
 用例逻辑迭代，并生成确定性的正确性摘要。
 
 对于动态库，驱动程序负责加载并调用其导出 ABI；对于可执行文件，驱动程序
-负责调用或者驱动它。清单声明输出类型，但 CK 不推断应用协议。
+负责调用或者驱动它。Artifact kind 只来自 ckc tune build，并通过
+CK_TUNE_ARTIFACT_KIND 传入，不是 Manifest 字段。CK 不推断应用协议。
 
 驱动程序是用户明确授权的任意代码。CK 不宣称提供跨平台的文件系统或网络
 沙箱。如果驱动程序不可信，用户必须自行应用操作系统沙箱。
@@ -333,17 +387,74 @@ stdout 上限为 4 KiB。stderr 为诊断而捕获，上限为 1 MiB。截断、
 ### 8.3 计时与进程控制
 
 CK 使用高分辨率单调时钟在驱动程序外部测量经过时间。它为每次调用建立私有
-目录，执行输出与超时限制，超时时终止完整进程树，并清理临时文件。
+目录，执行输出与超时限制，并清理临时文件。
 
-驱动程序必须批量执行足够多的工作，以摊薄进程启动成本。CK 通过按 2 的幂
-翻倍迭代次数校准基线，直到一次调用至少持续 50 ms，并以不超过 250 ms 为
-目标。溢出或者无法在预设限制内达到该窗口均为错误。所得迭代数对该用例的
-全部候选保持固定。
+Schema 1 提供协作式进程 Containment，而不是敌对代码沙箱：
 
-成功完成基线校准后的候选超时是规范性能拒绝。CK 终止并回收其进程树，记录
-超时，将该候选从后续行和轮次移除，然后继续处理其余候选。对这个已拒绝
-候选，这视为验证已经完成。基线超时、无法终止并回收完整进程树、崩溃、
-协议错误或者正确性摘要不匹配都会中止会话。
+- Windows 将 runner 以暂停状态创建，放入禁止 Breakaway 且设置
+  KILL_ON_JOB_CLOSE 的 Job Object，然后恢复执行；无法建立该 Job 即调优错误。
+- Linux 与 Darwin 在 runner 代码执行前创建新进程组。runner 契约禁止
+  setsid、改变进程组、Double-fork Daemon、调用结束后仍存活的后台工作以及
+  任何等价逃逸。
+- 超时或输出溢出时，CK 先请求 Group/Job 终止并等待 250 ms，然后强制终止，
+  回收直接 runner，并最多再等待 2,000 ms 让协作式 Containment 变空。
+- 无法建立 Containment、终止、回收 runner 或观察到协作式 Containment
+  为空，都会中止会话。
+
+故意逃逸的 POSIX 后代属于任意敌对同用户行为，位于“不提供沙箱”的契约边界
+外。CK 不声称能够发现或终止这种进程。
+
+驱动程序必须批量执行足够多的工作，以摊薄启动成本。对按规范标识排序的每个
+搜索与验证用例，基线校准为：
+
+1. 从 iterations = 1 开始；
+2. 最多执行 32 次计时基线尝试；
+3. 每次尝试后都验证期望摘要；
+4. 接受第一次持续至少 50 ms 的尝试；
+5. 否则以经过检查的 u64 算术将 iterations 翻倍后重试；
+6. 接受后，以相同 iterations 和摘要再执行一次基线确认调用；
+7. 接受的尝试超过 250 ms 时记录 calibrationOvershoot。
+
+32 次尝试后仍未达到 50 ms、算术溢出、基线超时或确认失败都会中止会话。
+250 ms 是首选上限，不是拒绝单次逻辑迭代本身较粗的工作负载的理由。接受的
+迭代数在该用例的搜索与两轮验证中保持固定，验证绝不重新校准。
+
+成功完成基线校准后，候选耗尽完整配置超时即为规范性能拒绝。CK 执行上述
+Containment 关闭、记录超时，并在全部后续行和轮次中跳过该不可变通道槽位，
+但不改变存续通道顺序。对该已拒绝候选，这视为验证已经完成。基线超时、
+缩短的 Deadline、崩溃、协议错误、正确性摘要不匹配或 Containment 故障都会
+中止会话。
+
+### 8.4 调用状态机与顺序
+
+全部用例校准后，固定状态机为：
+
+1. 每个已编译候选按计划摘要排序，对每个按 case-id 排序的搜索用例执行一次
+   正确性冒烟调用；
+2. 搜索在不可变的“基线加最终候选”通道列表上执行三行预热和二十行测量；
+3. 排名最好的有界存续候选进入验证；
+4. 验证第 1 轮在不可变的“基线加入围者”列表上执行三行预热和二十行测量；
+5. 验证第 2 轮以不同顺序域重复同一矩阵；
+6. 只有全部必要存续流完整后才执行选择。
+
+一次预热通道评估恰好调用一次。一次测量通道评估恰好调用三次并存储最小值。
+每次调用都验证协议与正确性。基线存在于每个阶段。
+
+用例按 case-id 存储；通道依次为基线和按计划摘要升序排列的候选。每一行中，
+CK 计算：
+
+    H = SHA-256("CK-TUNE-ORDER\0" || session_digest ||
+               phase_u8 || round_u8 || row_u32_be || case_id)
+
+将前八个字节解释为大端 u64，对该用例的通道数取模，得到向左轮转量。用
+单字节 0xff 替代 case_id 的相同公式得到用例列表轮转量。Phase 值依次为：
+1 搜索预热、2 搜索测量、3 验证一预热、4 验证一测量、5 验证二预热、
+6 验证二测量。验证外 round 为零，验证内为 1 或 2。被拒绝的通道槽位继续
+作为显式 skip，因此移除候选不能重排有利样本。
+
+启动一次调用前，CK 要求会话墙钟至少还剩完整配置超时加固定 2,250 ms
+Containment 清理余量；否则不启动进程，直接以证据不完整中止。CK 绝不为了
+适配会话 Deadline 缩短 runner 超时。只有耗尽完整配置候选超时才是性能拒绝。
 
 ## 9. 合法候选模型
 
@@ -384,7 +495,10 @@ CK 0.14 只能调优由 CK 事实推导且由 CK 拥有的有限备选项：
 聚类为一个调优单元。一个会话最多考虑 64 个单元。超过上限的单元使用普通
 优化器决策，并按规范排名而不是发现顺序选定。
 
-每个决策点最多暴露四个非基线备选项。计划与追踪最多包含 4096 个显式选择。
+每个单元最多暴露四个一致的非基线单元 Variant。一个单元 Variant 是一个或
+多个决策点上的一组封闭选择；命令行绝不对独立决策点备选项构造笛卡尔积。
+一个会话最多记录 4,096 个决策点、每计划 64 个非基线选择、256 个单元
+Variant 和 16,384 次计划展开尝试。
 
 ### 9.4 试验类型状态
 
@@ -402,19 +516,49 @@ CK 0.14 只能调优由 CK 事实推导且由 CK 拥有的有限备选项：
 
 ## 10. 确定性搜索
 
-CK 在稳定调优单元和规范备选集合上使用确定性 Beam Search。
+CK 在稳定调优单元和规范单元 Variant 集合上使用确定性 Beam Search。编译前
+候选严格依次按以下键排序：
 
-候选排序依次为：
-
-1. 预测动态成本；
-2. 预测静态成本；
-3. 产物体积；
+1. 以规范成本模型单位表示的预测动态成本；
+2. 以规范成本模型单位表示的预测静态成本；
+3. 预测 KIR 代码单位；
 4. 非基线选择数量；
 5. 备选类别和规范顺序；
 6. 计划摘要。
 
-在按排名填充剩余 Beam 槽位前，通过确定性的类别轮转从每个可用备选类别
-接纳候选，避免静态模型淘汰所有结构不同的合法候选。
+编译前尚无产物字节数，因此它绝不参与该排名。编译后选择测量最终候选时，
+以实际产物字节数替代预测 KIR 代码单位，其余排序键不变。
+
+封闭算法为：
+
+    beam = [baseline]
+    expansions = 0
+    for unit in canonical_unit_order:
+        pool = beam                         # 免费携带基线
+        for plan in beam_precompile_rank_order:
+            for variant in unit.nonbaseline_variants_in_canonical_order:
+                if expansions == expansion_limit: 停止全部后续展开
+                expansions += 1
+                派生 plan + variant，并运行全部 KIR 合法性/增长检查
+                记录尝试，包括非法、重复或者增长超限
+                将合法且唯一的派生计划加入 pool
+        unique = deduplicate(pool without baseline)
+        beam = [baseline] + diversity_truncate(unique, beam_width)
+    frontier = beam without baseline
+    compile_selection = diversity_truncate(frontier, compile_attempt_limit)
+
+携带基线不消耗 Beam 槽、展开或编译尝试。每次非基线派生在校验前消耗一次展开；
+非法、重复、增长超限或 Cache Hit 都不返还。达到展开上限时，在下一次派生前
+停止；已经接受的计划仍可参与，后续单元保持基线行为。一个计划被选中编译即
+消耗一个编译尝试槽，即使已验证的编译 Cache Hit 避免了物理编译。CK 已声明
+合法的计划若编译失败，属于编译器错误。
+
+`deduplicate` 对同一计划摘要保留规范编译前排名最先出现者。
+`diversity_truncate` 按固定类别顺序处理：内联、专用化、展开、Loop SIMD、
+SLP、短 Slice/版本化、布局。有槽位时，每类取“最新非基线选择”属于该类的最佳
+计划一次；若 Beam 比可用类别数更窄，则固定类别顺序优先。余下槽按全局排名
+填充并跳过已选计划。Beam、编译选择和编译后最终候选选择使用同一规则，避免
+静态模型淘汰全部结构不同的合法候选。
 
 封闭预设如下：
 
@@ -428,11 +572,14 @@ CK 在稳定调优单元和规范备选集合上使用确定性 Beam Search。
 
 发生 Cache Miss 时，预设墙钟在 Manifest 校验与输入快照完成后、基线构造前
 立即开始。它包括基线与候选编译、驱动准备、搜索、两轮验证、最终重放和事务
-暂存。每次驱动超时还受剩余墙钟预算限制。精确完整决策的 Cache Hit 不启动
-搜索会话。
+暂存。仅当剩余预算足以覆盖完整配置超时以及第 8.4 节固定的 2,250 ms 收容
+余量时，才启动一次驱动调用；不得为适配会话预算缩短超时。精确完整决策的
+Cache Hit 不启动搜索会话。
 
 候选产物体积不得超过匹配基线字节数的 110%。现有 KIR、重写、专用化和
-每 Pass 增长限制继续生效。被拒绝或无效的尝试消耗其审计预算，绝不返还。
+每 Pass 增长限制继续生效。被拒绝或无效的尝试消耗其记录的展开或编译预算，
+绝不返还。在体积合法的已编译计划中，编译后排名至多选择预设的测量最终候选
+数量；合法计划较少时，只以更小但完整的前沿继续。
 
 墙钟预算到期后，CK 停止创建候选。如果无法为所有必要入围者完成固定验证
 协议，命令失败且不产生输出，不得从不完整证据中选择计划。
@@ -544,13 +691,148 @@ Schema 1 要求以下顶层 Tag 按升序且完整出现：
 单字节存在判别值。每个有效决策只有一种编码。末尾 Hash 是重放与缓存键所用
 的规范决策摘要。
 
-文件最大 32 MiB，最多包含 33 个候选（含基线）、16 个用例和 4096 个计划
-选择。每个字符串、集合、样本矩阵和诊断字段都具有低于总限制的实现常量。
+文件最大 32 MiB，最多包含 33 个候选（含基线）、16 个用例，每个计划最多
+64 个选择。以下上限具有规范性：
+
+| 项目 | 上限 |
+| --- | ---: |
+| UTF-8 文本字段 / 诊断 | 4,096 字节 |
+| argv 项数 / argv 总字节 | 64 / 65,536 |
+| 环境变量项数 / 总字节 | 16 / 65,536 |
+| 声明输入数 / 单输入 / 全部输入 | 64 / 1 GiB / 4 GiB |
+| 用例 / 决策点 / 单元 / Variant | 16 / 4,096 / 64 / 256 |
+| 每单元 Variant / 展开记录 | 4 / 16,384 |
+| 候选（含基线）/ 每计划选择 | 33 / 64 |
+| 输出记录 / 每完整流样本 | 3 / 20 |
+| 测量流 | 1,584 |
 
 未知、重复、截断、尾随、顺序错误、超限或者非规范内容都会被拒绝。只有在
 边界和溢出检查完成后才允许分配内存。
 
-### 12.2 记录的身份
+### 12.2 封闭 Schema 1 记录
+
+英中设计共用的规范附件 [`decision-schema-1.md`](../decision-schema-1.md) 是
+唯一逐 Tag 线协议权威；它冻结全部 Primitive、嵌套 Tag、类型、枚举、必需/
+可选状态、数值、边界与排序。下述内容仅是概览，不能覆盖该附件。必要字段恰好
+出现一次，只有 `Opt<T>` 字段可选；全部 `Text` 字段禁止绝对路径。
+
+顶层 Tag 1 `Identity` 包含：
+
+| Tag | 类型 | 含义 |
+| ---: | --- | --- |
+| 1 | Text | CK 版本 |
+| 2 | D32 | CK 源码身份 |
+| 3 | Text | Rust 工具链身份 |
+| 4 | Text | LLVM 身份 |
+| 5 | D32 | LLVM Bridge 身份 |
+| 6..15 | U32 | 语言、原生 ABI、运行时 ABI、KIR、证明、成本模型、目标、原生缓存、Profile、PGO 分析 Schema |
+| 16 | D32 | 源码摘要 |
+| 17 | D32 | 语义与契约摘要 |
+| 18 | D32 | 调优前 KIR 摘要 |
+| 19 | D32 | 编译模式摘要 |
+| 20 | U8 | 输出类型枚举 |
+| 21 | Record | 目标三元组、CPU、特性和目标 Profile 身份 |
+| 22 | Opt<Record> | Profile Schema、编译器/源码身份、拓扑与字节摘要 |
+
+顶层 Tag 2 `Contract` 包含五个 Schema 值、预算预设及其六个搜索边界、精确
+产物比率、校准、采样、收容、稳定性与验证整数，以及域分离策略摘要。其 32 个
+Tag 和精确值由附件固定，并必须等于第 8、10、11 节。
+
+顶层 Tag 3 `Workload` 包含：
+
+| Tag | 类型 | 含义 |
+| ---: | --- | --- |
+| 1 | D32 | 规范 Manifest 身份 |
+| 2 | D32 | 私有驱动快照摘要 |
+| 3 | U64 | 驱动快照长度 |
+| 4 | List<Text> | 按 Manifest 顺序的 argv |
+| 5 | List<Record> | 按平台规范变量名排序的有效环境 |
+| 6 | U32 | 超时毫秒数 |
+| 7 | List<Record> | 按逻辑挂载名排序的输入：名称、摘要、体积 |
+| 8 | List<Record> | 按用例 id 排序：id、角色枚举、种子、权重、期望摘要 |
+
+顶层 Tag 4 `Environment` 包含封闭测量 Tuple、计时器与调度证据，以及按用例
+id 排序的校准记录列表。每项校准记录迭代数、尝试数、接受与确认耗时以及
+Overshoot。不可得文本使用 `unavailable`；不可得数字宿主事实使用显式 absent
+可选状态。
+
+顶层 Tag 5 `Frontier` 的 Tag 1 为候选空间摘要，Tag 2 为决策点，Tag 3 为
+单元，Tag 4 为展开追踪。记录为：
+
+| 记录 | 按 Tag 顺序的必要字段 |
+| --- | --- |
+| Site | 稳定 id `D32`；类别枚举 `U8`；根 id `D32`；前状态摘要 `D32`；规范排名 `U32` |
+| Unit | 稳定单元 id `D32`；有序 Site-id 列表；基线状态摘要 `D32`；有序 Variant 列表 |
+| UnitVariant | Variant id `D32`；类别枚举 `U8`；有序选择列表；预测动态 `U64`；预测静态 `U64`；预测 KIR 单位 `U64`；后状态摘要 `D32` |
+| PlanChoice | 单元 id `D32`；Variant id `D32`；类别 `U8`；前状态 `D32`；后状态 `D32` |
+| Expansion | 序号 `U32`；父计划 `D32`；单元 id `D32`；Variant id `D32`；处置枚举 `U8`；结果计划 `Opt<D32>`；诊断码 `U16` |
+
+顶层 Tag 6 `Candidates` 的 Tag 1 为基线候选，Tag 2 是按计划摘要排序的非
+基线候选列表。候选记录为：
+
+| Tag | 类型 | 含义 |
+| ---: | --- | --- |
+| 1 | D32 | 计划摘要；基线使用规范空计划摘要 |
+| 2 | List<PlanChoice> | 按单元顺序的选择 |
+| 3 | D32 | 目标图摘要 |
+| 4 | D32 | 链接配方摘要 |
+| 5 | U64 | 实际主产物字节数 |
+| 6 | U8 | 结果枚举 |
+| 7 | U16 | 无诊断时为零的诊断码 |
+| 8 | Opt<D32> | 正确性摘要 |
+| 9 | List<Record> | 规范顺序的测量流 |
+| 10 | Record | 不可变编译 CacheOrigin |
+| 11 | Opt<Record> | 精确超时位置；仅 timed-out 结果要求存在 |
+
+测量流包含阶段、轮次、用例、计划、迭代数、二十个有序行记录和正确性摘要。
+每行包含序号、排列键摘要、恰好三个原始纳秒调用以及其最小存储样本。预热
+调用执行但不存储。规范超时候选不包含后续流，并携带精确超时位置；其他流
+缺失都使决策不完整且无效。
+
+顶层 Tag 7 `Selection` 的 Tag 1、2 为第一、第二轮摘要；Tag 3 为获选计划
+摘要；Tag 4 为选择原因枚举；Tag 5 为 `Opt<Certificate>`。每轮摘要包含用例
+中位数、聚合 Q32 比率、稳定性、阈值结果与排名后入围计划摘要。证书包含精确
+计划、前沿、策略、两轮、正确性、目标图与链接配方摘要。调优选择必须有证书；
+基线选择禁止证书。
+
+顶层 Tag 8 `Replay` 的 Tag 1..5 为前沿、获选前状态、获选后状态、目标图和
+链接配方摘要；Tag 6 为按角色排序的输出记录；Tag 7..8 为不可变编译与测量
+CacheOrigin 记录；Tag 9 为重放结果摘要。每个输出记录包含输出角色枚举、规范逻辑
+Basename、暂存字节摘要和物理体积。可执行输出集仅含主输出；动态输出集还含
+头文件，Windows 上再含 Import Library。
+
+封闭枚举值为：
+
+| 枚举 | 值 |
+| --- | --- |
+| 输出类型 | executable=1, dynamic=2 |
+| 预算 | quick=1, standard=2, thorough=3 |
+| 用例角色 | search=1, validation=2 |
+| 备选类别 | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
+| 展开处置 | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
+| 候选结果 | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
+| 顺序阶段 | search-warmup=1, search-measured=2, validation-one-warmup=3, validation-one-measured=4, validation-two-warmup=5, validation-two-measured=6；仅 2、4、6 出现在存储流 |
+| 选择原因 | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
+| 输出角色 | primary=1, header=2, import-library=3 |
+| 缓存来源类型 | freshly-built=1, verified-local-hit=2 |
+
+集合顺序为：用例按 id；Site、Unit、Variant 按稳定 id；展开按序号；候选先
+基线再按计划摘要；计划选择按单元 id；流按阶段、轮、用例 id、计划摘要；流内
+行按序号；输出按角色。Text 比较和排序以编码后的 UTF-8 字节为准。
+
+仓库携带四个规范 Schema Fixture：
+
+- `tests/fixtures/tune/decision-schema1-framing.hex`；
+- `tests/fixtures/tune/decision-schema1-baseline.cktune`；
+- `tests/fixtures/tune/decision-schema1-tuned.cktune`；
+- `tests/fixtures/tune/decision-schema1-inspection.json`。
+
+Framing Vector 覆盖全部标量/容器类型和两种可选状态。基线 Vector 有一个搜索
+与一个验证用例以及 `no-candidate`；调优 Vector 有一个单元、一个合法 Variant、
+完整三阶段样本和有效证书。Parser 实现验收前，字节及 SHA-256 必须冻结在
+Schema 测试中；编码、解码、检查、重编码、截断、突变和跨端序测试共用它们。
+
+### 12.3 记录的身份
 
 文件记录：
 
@@ -567,8 +849,8 @@ Schema 1 要求以下顶层 Tag 按升序且完整出现：
   样本和稳定性结果；
 - 两轮验证决策；
 - 获选计划或者规范的基线选择原因；
-- 暂存最终产物的字节摘要与物理体积；
-- 缓存复用事实。
+- 完整的带角色暂存输出集字节摘要与物理体积；
+- 不可变的编译与测量缓存来源事实。
 
 原始工作负载文件、任意驱动 stdout、秘密和绝对路径不得存入规范身份。调优
 命令运行时，人类诊断可以显示明确标注为非规范的本地路径。
@@ -579,7 +861,7 @@ Vendor/Family/Model/Stepping、宿主可提供时的 Microcode、规范化 CPU �
 字段使用一个显式 unavailable 值，不能省略。禁止记录主机名、用户名、硬件
 序列号和操作系统机器标识。
 
-### 12.3 重放身份
+### 12.4 重放身份
 
 重放不要求原清单、驱动程序或工作负载输入存在，但必须精确匹配：
 
@@ -590,7 +872,11 @@ Vendor/Family/Model/Stepping、宿主可提供时的 Microcode、规范化 CPU �
 - 编译模式和输出类型；
 - 决策前沿、前置条件和规范获选计划。
 
-规范 .cktune 决策摘要进入生产原生缓存键。编译器、Schema、源码、CPU、
+规范 .cktune 决策摘要进入生产原生缓存键。记录的输出集摘要用于验证原始发布
+配对以及任何完整决策 Cache Hit。后续 tune-use 可以使用不同目标 Basename；
+它必须精确复现记录的目标图和链接配方，而由目标路径衍生的打包字节由该次构建
+重新审计与记录，不与原始路径相关容器摘要比较。已有决策中的缓存来源事实不可
+变，重编码或复用不得重写它。编译器、Schema、源码、CPU、
 特性、profile、模式或者计划发生变化时，必须重新调优。选择基线的决策包含
 空覆盖计划；tune-use 正常验证该决策，然后复现精确的普通基线。
 
@@ -652,8 +938,8 @@ tune-use 仍然允许。
 - 调优不执行遥测、网络上传、Profile 服务或远程执行。
 - 驱动程序是用户显式授权的可执行文件，不使用 shell 插值。
 - 输入和输出在分配内存前执行边界检查。
-- 临时目录和进程树由会话拥有并清理。
-- 最终成对发布使用第 6 节带 Journal、摘要校验且产物最后发布的协议。
+- 临时目录和协作式进程组/Job Object 由会话在第 8.3 节明确边界内拥有并清理。
+- 最终输出集使用第 6 节带 Journal、摘要校验且主输出最后发布的协议。
 - 公共解析器接受模糊测试和变异测试。
 - 试验类型状态从构造上保证未验证产物不可发布。
 
@@ -733,9 +1019,9 @@ CK 0.14 将 CKCOBJ03/schema 4 条目视为干净的 Cache Miss，绝不原地升
 - Manifest 与决策解析；
 - 可执行文件与动态库驱动协议；
 - 确定性搜索与重放；
-- 进程树超时与清理；
+- 协作式进程组/Job Object 超时与清理，并验证敌意 POSIX 逃逸不属于驱动契约；
 - 缓存权限、失效、损坏、路径穿越与淘汰；
-- Journal 恢复、回滚、摘要配对验证和产物最后发布；
+- 每个阶段边界的 Journal 恢复、回滚/前滚、完整输出集摘要验证和主输出最后发布；
 - 普通非调优行为；
 - 最终产物保持现有自包含系统运行时策略。
 
@@ -758,8 +1044,92 @@ Schema 9。CI 还包括：
 CK 0.14 保留所有已经通过验收的 v0.12 和 v0.13 正确性、代码质量、性能、
 编译时间和产物门槛。即使调优基准改善，对这些门槛的回归也会阻止发布。
 
-冻结的调优语料在测量前划分为搜索、验证和封存留出用例。留出语料对调优器
-不可见。可调优用例和排除项在结果产生前声明，禁止测量后排除。
+### 19.1 冻结 Schema 9 证据契约
+
+英中设计共用的规范附件
+[`performance-schema-9.md`](../performance-schema-9.md) 是唯一逐字段 JSON
+权威；它固定所有嵌套键、类型、数量、统计、身份和失败关闭检查。本节固定相关
+产品策略与仓库资产。
+
+Schema 9 扩展但绝不替代 `benches/baselines/v0_13_replay.toml` 指定的精确已
+验收 Schema 8 报告。开始 v0.14 收集前，该 Manifest、v0.13 编译器及其确定性
+Archive、`results-schema8.json` 必须存在且摘要精确。五个可调优用例恰为
+`benches/cases/pgo-cases.tsv` 的五行：`branch-layout`、
+`call-constant-length`、`trip-unroll-simd`、`memory-bound`、`compute-bound`。
+没有可选行或结果产生后的排除。
+
+现有 `training.tsv` 是搜索输入，`held-out.tsv` 是验证输入；调优器通过五个固定
+`benches/tune/workloads/*.cktune.toml` Manifest 接收二者。调优器永不接收
+封存发布文件 `benches/fixtures/tune/release-held-out.tsv`，其精确数据行为：
+
+    ckc-tune-inputs\t1\trelease-held-out
+    branch-layout\trelease-branch-prime\t16381\t79\t3
+    call-constant-length\trelease-fixed-4000\t4000\t83\t13
+    trip-unroll-simd\trelease-map-4093\t4093\t89\t0
+    memory-bound\trelease-zip-4096\t4096\t97\t0
+    compute-bound\trelease-f64-4091\t4091\t101\t1.0009765625
+
+固定 Recipe 包含 `benches/cases/tune-cases.tsv`、五个工作负载 Manifest、
+`benches/tune/runner.rs`、`benches/oracles/tune/manifest.toml`、
+`benches/oracles/tune/c/tune_oracle.c`、
+`benches/oracles/tune/rust/tune_oracle.rs`、由五个用例以及
+`contract_noalias.ck`、`contract_fixed_length.ck` 组成的七份 CK 源码、四个
+输入分区、`benches/tune_perf.rs`、`scripts/measure-v014-performance.py`、
+`scripts/check-native-performance.py` 和 `scripts/audit-performance-oracles.py`。
+Oracle Manifest 固定 C11、Rust 2024、严格浮点行为、安全前置条件与 UB/别名
+审计。任意 Recipe 字节变化都会使证据失效。
+
+报告路径为 `target/ckc-perf/v0.14-results.json`；证据位于其旁边名为
+`v014-measurement-<unix-seconds>-<pid>` 的真实、非符号链接目录。顶层键集合
+严格为：
+
+    schemaVersion, candidateVersion, candidateSha, v013ReplayCommit,
+    evidenceDirectory, toolchain, hardware, recipe, candidateBinary,
+    v013ReplayBundle, cumulativeSchemaEight, workload, tuningDecisions,
+    tuningArtifacts, sampling, cases, domainCases, tuneUseCompileTime,
+    ordinaryCompileRegression, artifactSize, archiveSize, resourceUse,
+    determinism, correctness
+
+`schemaVersion` 为 9，`candidateVersion` 为 `0.14.0`。候选 SHA、编译器字节、
+精确 v0.13 Replay Commit 与 Archive、Schema 8 文件、固定 LLVM/Clang 22.1.8、
+Rust 1.90.0、驱动字节、Manifest、源码/输入字节、硬件、操作系统、CPU 特性、
+Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份。证据项必须是
+证据目录下的普通文件，不得有符号链接、路径穿越、缺失、重复或未知项。
+
+主用例计时使用 `rotating-six-channel-v1`，通道顺序严格为：`tuned`、
+`v014Ordinary`、`v013Ordinary`、`v013Pgo`、`cSimd`、`rustSimd`。领域计时
+使用 `rotating-three-channel-v1`，顺序为 `tuned`、`genericC`、
+`genericRust`。两者执行三行不记录的预热、保留二十行测量；每个样本将每通道
+调用七个等量批次并存最小值，结果使用上中位数。至少 16/20 样本必须位于中位
+数 80%..120% 闭区间。轮转由候选、用例、分区和行摘要导出。动态加载、符号
+解析、准备、调优搜索与驱动 I/O 不计入稳态计时。禁止选择性重跑。`.cktune`
+内部三调用决策证据与外部七调用发布样本彼此独立。
+
+每个主用例记录全部六个原始流及顺序、中位数、正确性摘要、源码/输入身份、
+获选或基线决策、完整 `.cktune` 身份、全部产物身份、固定为 true 的 Eligibility
+位与发布留出结果。两个领域用例记录三通道的同类事实。五个 `.cktune` 和完整
+带角色发布输出集复制进证据；其 Schema、身份、证书/基线原因、计划、目标图、
+链接配方、测量与磁盘摘要均被独立检查。
+
+tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对测量，每行交替
+首通道；v0.14 普通编译与精确 v0.13 普通编译使用同一协议。两者使用上中位数，
+保留原始时间与命令身份，并排除调优搜索。产物体积使用与计时配对的精确主输出。
+资源证据保留 standard 会话墙钟、编译器/调优器峰值 RSS、展开/编译/最终候选
+计数以及缓存字节。确定性证据包含两个独立冷缓存会话和一个精确热缓存会话，并
+比较决策、计划、目标图、链接配方、输出集、编译数和测量数。
+
+`scripts/measure-v014-performance.py` 只收集原始证据；
+`scripts/check-native-performance.py` 是唯一验收权威，对任何缺失/未知键、身份
+不匹配、非有限或非正测量、错误数量/顺序、不稳定流、不合格硬件、决策不匹配、
+阈值失败、选择性重跑或未保留证据都失败关闭。
+`scripts/audit-performance-oracles.py` 独立复核源码/Oracle/输入覆盖与语义。两个
+必需稳定性能 Job 在增强型 x86-64 与 AArch64 宿主上、同一候选 SHA 执行完整
+契约。
+
+### 19.2 冻结阈值
+
+上述语料在测量前划分为搜索、验证和封存留出用例。可调优用例和排除项在结果
+产生前声明，禁止测量后排除。
 
 对可调优用例，将获选调优结果与相同语义下更快的 v0.13 普通或 PGO 原生
 基线比较：
@@ -776,8 +1146,9 @@ CK 0.14 保留所有已经通过验收的 v0.12 和 v0.13 正确性、代码质�
 - 几何平均性能至少达到 98%；
 - 每个用例至少达到 92%。
 
-在冻结的领域约束套件上，调优 CK 相对更快的通用 C 或 Rust O3 结果，几何
-平均快 8% 以上。
+在冻结的两用例领域约束套件 `contract_noalias.ck` 和
+`contract_fixed_length.ck` 上，调优 CK 相对语义通用且更快的 C 或 Rust O3
+结果，几何平均快 8% 以上；两个用例都必须参与。
 
 资源与确定性门槛为：
 
@@ -806,7 +1177,8 @@ CK 0.14 保留所有已经通过验收的 v0.12 和 v0.13 正确性、代码质�
 5. 冻结性能语料达到第 19 节全部阈值；
 6. 文档、CLI Help、示例、Schema 和检查输出一致；
 7. 生成的可执行文件和动态库保持承诺的零额外依赖部署模型；
-8. 仓库干净且全部发布证据已经提交。
+8. 仓库干净，全部发布证据由精确 SHA 的 CI Run 与 Release Archive 保留；生成
+   的证据不提交进其自身所记录的源码 Commit。
 
 只通过本地功能测试、只通过搜索工作负载或者只通过一个性能宿主，都不足以
 发布。

@@ -11,9 +11,11 @@ reproducible, cached, ahead-of-time auto-tuning system. It does not claim that t
 implementation or release acceptance has completed.
 
 The base revision is provisional until v0.13 passes its remote acceptance gates.
-Before implementation begins, this design branch must be rebased onto, or reviewed
-against, the final accepted v0.13 revision. Any semantic difference must be resolved
-explicitly; it must not be hidden by adapting tests.
+Implementation may proceed against this exact candidate after a repository-
+difference audit, but release remains blocked. Before final acceptance, the branch
+must be rebased onto, or reviewed against, the final accepted v0.13 revision. Any
+semantic difference must be resolved explicitly; it must not be hidden by adapting
+tests.
 
 ## 1. Objective
 
@@ -73,8 +75,9 @@ must not start tuning, execute a harness, or consume a tuning decision implicitl
 - An exact native CPU and feature set selected by cpu=native.
 - Executable and dynamic-library outputs.
 - Existing CK optimization decisions that can be expressed as finite alternatives.
-- Optional use of an already collected CK profile as a ranking and code-generation
-  input.
+- Optional use of an already collected CK profile from the exact same v0.14
+  compiler/source/schema identity as a ranking and code-generation input. A v0.13
+  profile is not accepted after the schema-5 cache identity change.
 - Deterministic candidate generation, measurement scheduling, selection, caching,
   inspection, and replay.
 - Stable text and JSON inspection output.
@@ -156,24 +159,58 @@ The primary command is:
       [--tune-out <decision.cktune>]
       [--no-tune-cache]
 
-The default budget is standard. If tune-out is omitted, the decision path is
-<artifact>.cktune. If target is present it must normalize to the exact host triple;
-omission selects that same host triple.
+The default budget is standard. Existing `NativeArtifactPaths` resolution defines
+the complete output set: an executable has one primary output; a dynamic library
+has the primary library and generated C header; and a Windows dynamic library also
+has its import library. If `--tune-out` is omitted, the decision path is the
+resolved primary-output path with `.cktune` appended. An explicit decision path
+must have the same canonical parent directory as every output. If `--target` is
+present it must normalize to the exact host triple; omission selects that triple.
 
-The artifact and decision paths must be distinct after canonical destination
-resolution and must not alias any source, manifest, runner, profile, or declared
-input. CK stages and verifies both files, records their digests in a durable
-publication journal, publishes the decision first, and publishes the artifact last.
-Each replacement is individually atomic.
+Every destination must be distinct after canonical destination resolution and
+must not alias any source, manifest, runner, profile, declared input, or another
+destination. Schema 1 does not support a multi-directory output set. The decision
+records the role, canonical logical name, staged byte digest, and physical size of
+the decision-independent primary, header, and import-library outputs that exist.
 
-On any reported failure, CK rolls both destinations back to their prior state. An
-unexpected process or machine failure can leave an orphan new decision next to the
-old or absent artifact, but never a new artifact for which the complete decision
-was not already durable. The journal is recovered under an exclusive destination
-lock before a later CK command touches either path. Pair consumers verify the final
-artifact digest stored by the decision. This journaled artifact-last protocol is
-the meaning of transactional pair publication in this specification; simultaneous
-atomic visibility of two arbitrary filesystem paths is not claimed.
+Publication uses a sibling lock, journal, stage files, and backup files. Their
+names begin `.ckc-tune-` followed by the first 32 hexadecimal characters of
+SHA-256(`"CK-TUNE-OUTPUT-SET\0"`, output kind, the canonical decision path, and
+the output-role-sorted canonical destination paths). CK opens the lock and journal without following symbolic links
+or reparse points and holds an exclusive operating-system advisory lock throughout
+recovery and publication. The journal stores and verifies the full 32-byte output-
+set id; a prefix collision with another set is a hard error, never an alias.
+
+The bounded journal schema 1 contains the transaction id, output-set id, phase,
+and, in publication order decision, header, import-library, primary, for each
+present destination its destination, stage, and backup basename,
+old-presence bit, old digest, new digest, and new size. Its phases are `Prepared=1`,
+`BackedUp=2`, `DecisionPublished=3`, `SidecarsPublished=4`,
+`PrimaryPublished=5`, and `Committed=6`. Publication is exactly:
+
+1. create and verify all sibling stage files, then flush every file;
+2. write and flush `Prepared`, then flush the parent directory;
+3. rename each prior destination to its backup, write and flush `BackedUp`;
+4. atomically rename and flush the decision, then record `DecisionPublished`;
+5. publish and flush the header and then import library when present, then record
+   `SidecarsPublished`;
+6. publish and flush the primary artifact last, then record `PrimaryPublished`;
+7. verify the entire new set, record and flush `Committed`, remove backups and
+   stages, remove the journal, and flush the directory.
+
+Directory flush uses the strongest documented platform equivalent and is covered
+by each native-host recovery test. On any reported error CK rolls back before
+returning. On restart, recovery first hashes every destination, stage, and backup:
+if the primary does not equal its journaled new digest it restores the complete old
+set; if the primary equals the new digest it completes the new set. Both operations
+are idempotent. An impossible or unrecorded digest combination is a hard recovery
+error that preserves the journal and all evidence for diagnosis rather than
+guessing. A later command may not touch the set until recovery succeeds.
+
+This journaled primary-last protocol is the meaning of transactional output-set
+publication here; simultaneous atomic visibility of several files is not claimed.
+Pair consumers accept a published result only after the decision and every recorded
+output role agree with the on-disk digest and size.
 
 If all required baseline and surviving-candidate measurements are valid and stable
 but no candidate satisfies the fixed benefit thresholds, the command succeeds with
@@ -226,7 +263,7 @@ fields are errors.
 The manifest declares:
 
 - schema = 1;
-- an absolute runner executable after canonical resolution;
+- one host-native runner executable path used only to acquire an immutable snapshot;
 - a fixed argv vector, with no shell;
 - optional explicitly allowlisted inherited environment variables;
 - a list of runner input files to digest;
@@ -245,10 +282,10 @@ Schema 1 has exactly these fields:
 | TOML location | Field | Type and rule |
 | --- | --- | --- |
 | root | schema | Required integer, exactly 1 |
-| runner | path | Required UTF-8 path to a regular executable |
+| runner | path | Required UTF-8 path to a host-format native executable; it is operational, not canonical identity |
 | runner | args | Optional array of at most 64 UTF-8 strings; default empty; total encoded bytes at most 64 KiB |
 | runner | inputs | Optional array of at most 64 manifest-relative regular-file paths; default empty; each at most 1 GiB and total at most 4 GiB |
-| runner | inherit_env | Optional array of at most 16 unique ASCII environment names; default empty |
+| runner | inherit_env | Optional array of at most 16 unique names matching [A-Za-z_][A-Za-z0-9_]*; default empty |
 | runner | timeout_ms | Optional integer from 100 through 120,000; default 30,000 |
 | each case entry | id | Required unique identifier with the syntax and length above |
 | each case entry | role | Required string, exactly search or validation |
@@ -290,26 +327,52 @@ manifest fields.
 Manifest-relative paths resolve under the canonical manifest directory. Parent
 traversal, symlink ambiguity, non-regular declared input files, and paths escaping
 that directory are rejected. The runner itself may be outside that directory but
-must be named by an explicit path; PATH lookup is forbidden.
+must be named by an explicit path; PATH lookup is forbidden. Schema 1 accepts only
+the host's native ELF, Mach-O, or PE/COFF executable format, not a script or
+interpreter directive.
 
-The canonical bytes of the manifest, runner executable, and every declared input
-file are SHA-256 digested. A change invalidates measurement reuse. Absolute paths
-and timestamps are diagnostic metadata, not canonical tuning identity.
+The canonical manifest identity is not the raw TOML byte stream. It is the
+domain-separated SHA-256 of a fixed binary encoding, in this order:
 
-At session start, CK opens every validated input without following a symlink,
-streams it into a private immutable-content snapshot, and verifies its digest. Before
-each timed invocation, CK copies that snapshot below CK_TUNE_TEMP/inputs while
-preserving the manifest-relative path. Input preparation is outside the measured
-interval, and each invocation receives a fresh copy, so one runner invocation cannot
-change a later invocation's input. The harness uses CK_TUNE_TEMP plus the documented
-inputs subdirectory to locate these files.
+1. schema;
+2. runner argv strings;
+3. sorted effective inherited-environment name/value records;
+4. timeout;
+5. input records in manifest order, each containing its normalized relative staged
+   path, byte length, and content digest;
+6. case records in canonical identifier order, each containing role, seed, weight,
+   and expected digest;
+7. the immutable runner-snapshot byte length and content digest.
+
+The operational manifest and runner absolute paths, TOML whitespace/comments,
+timestamps, file permissions other than executable validity, and temporary paths
+are excluded. Changing any logical field or content byte invalidates reuse.
+
+At session start, CK opens the runner and every validated input without following
+symlinks or reparse points. It copies the runner into a private session snapshot,
+verifies the copied bytes and host executable format, and executes only that
+snapshot for the rest of the session. It likewise streams each input into a private
+immutable-content snapshot and verifies its digest. Before each timed invocation,
+CK copies the input snapshot below CK_TUNE_TEMP/inputs while preserving the
+manifest-relative path. Input preparation is outside the measured interval, and
+each invocation receives a fresh copy, so one runner invocation cannot change a
+later invocation's input. The harness uses CK_TUNE_TEMP plus the documented inputs
+subdirectory to locate these files.
 
 ### 7.3 Environment
 
 The runner starts from an empty environment. On Windows, CK may provide only the
 minimal SystemRoot and WINDIR values needed to create a process. Any other inherited
-variable must be explicitly allowlisted. Both its name and exact value enter tuning
-identity.
+variable must be explicitly allowlisted. A requested variable that is absent is an
+error. Names are unique byte-for-byte on Unix and unique under ASCII
+case-insensitive comparison on Windows; duplicate or noncanonical spelling is an
+error. Each value is at most 4,096 bytes and the complete effective environment is
+at most 65,536 bytes; NUL is rejected. Every effective name and exact value,
+including the Windows platform base
+values, enters tuning identity.
+
+Canonical inherited values are the exact non-NUL bytes on Unix. Windows values are
+encoded as UTF-8 without normalization and an unrepresentable value is rejected.
 
 CK sets these protocol variables:
 
@@ -331,8 +394,9 @@ It must load or execute CK_TUNE_ARTIFACT, run exactly CK_TUNE_ITERATIONS logical
 iterations of the named case, and produce a deterministic correctness digest.
 
 For a dynamic library, the harness owns loading and calling its exported ABI. For
-an executable, the harness owns invoking or driving it. The manifest declares the
-kind, but CK does not infer an application protocol.
+an executable, the harness owns invoking or driving it. Artifact kind comes only
+from ckc tune build; it is passed through CK_TUNE_ARTIFACT_KIND and is not a
+manifest field. CK does not infer an application protocol.
 
 The harness is arbitrary user-authorized code. CK does not claim to provide a
 portable filesystem or network sandbox. Users must apply their own operating-system
@@ -369,20 +433,90 @@ ordinary candidate rejection.
 
 CK measures elapsed time outside the runner with a monotonic high-resolution clock.
 It creates a private per-invocation directory, enforces output and timeout limits,
-terminates the complete process tree on timeout, and cleans temporary files.
+and cleans temporary files.
 
-The harness must batch enough work to amortize process startup. CK calibrates the
-baseline by doubling a power-of-two iteration count until one invocation lasts at
-least 50 ms, targeting no more than 250 ms. Overflow or inability to reach this
-window within the preset limit is an error. The resulting iteration count is fixed
-for all candidates for that case.
+Schema 1 provides cooperative process containment, not a hostile-code sandbox:
 
-A candidate timeout after successful baseline calibration is a canonical
-performance rejection. CK kills and reaps its process tree, records the timeout,
-removes that candidate from later rows and rounds, and continues with the remaining
-candidates. This counts as completed validation for that rejected candidate. A
-baseline timeout, inability to kill and reap the complete tree, crash, protocol
-error, or correctness mismatch aborts the session.
+- Windows creates the runner suspended, assigns it to a non-breakaway Job Object
+  with KILL_ON_JOB_CLOSE, then resumes it. Failure to establish that job is a tuning
+  error.
+- Linux and Darwin create a new process group before runner code executes. The
+  runner contract forbids setsid, changing process group, double-fork
+  daemonization, background work that outlives the invocation, and any equivalent
+  containment escape.
+- On timeout or output overflow CK requests group/job termination, waits 250 ms,
+  forcibly terminates the group/job, reaps the direct runner, and allows at most
+  another 2,000 ms for the cooperative containment to become empty.
+- Failure to establish containment, terminate, reap the runner, or observe the
+  cooperative containment empty aborts the session.
+
+An intentionally escaping POSIX descendant is arbitrary hostile same-user behavior
+outside this no-sandbox contract. CK does not claim that it can discover or kill
+such a process.
+
+The harness must batch enough work to amortize startup. For every search and
+validation case in canonical identifier order, baseline calibration is:
+
+1. start at iterations = 1;
+2. perform at most 32 timed baseline attempts;
+3. validate the expected digest after every attempt;
+4. accept the first attempt lasting at least 50 ms;
+5. otherwise double iterations with checked u64 arithmetic and retry;
+6. after acceptance, run one additional baseline confirmation invocation with the
+   same iterations and digest;
+7. record calibrationOvershoot when the accepted attempt exceeds 250 ms.
+
+Failure to reach 50 ms in 32 attempts, arithmetic overflow, baseline timeout, or
+confirmation failure aborts the session. The 250 ms value is a preferred upper
+target, not a reason to reject a workload whose single logical iteration is
+coarser. The accepted iteration count is fixed for that case in search and both
+validation rounds; validation never recalibrates.
+
+A candidate that consumes its complete configured timeout after successful
+baseline calibration is a canonical performance rejection. CK applies the
+containment shutdown above, records the timeout, and skips that immutable channel
+slot in all later rows and rounds without changing the order of surviving
+channels. This counts as completed validation for the rejected candidate. A
+baseline timeout, shortened deadline, crash, protocol error, correctness mismatch,
+or containment failure aborts the session.
+
+### 8.4 Invocation state machine and ordering
+
+After all cases are calibrated, the fixed state machine is:
+
+1. each compiled candidate, in plan-digest order, receives one correctness-smoke
+   invocation for every search case in case-id order;
+2. search executes three warmup rows and twenty measured rows over the immutable
+   baseline-plus-finalists channel list;
+3. the best bounded surviving candidates enter validation;
+4. validation round 1 executes three warmup and twenty measured rows over its
+   immutable baseline-plus-entrants list;
+5. validation round 2 repeats the same matrix with a distinct ordering domain;
+6. selection runs only after every required surviving stream is complete.
+
+A warmup channel evaluation is exactly one invocation. A measured channel
+evaluation is exactly three invocations and stores their minimum. Every invocation
+validates protocol and correctness. The baseline is present in every phase.
+
+Cases are stored in case-id order. Channels are stored as baseline followed by
+ascending plan digest. For each row, CK computes:
+
+    H = SHA-256("CK-TUNE-ORDER\0" || session_digest ||
+               phase_u8 || round_u8 || row_u32_be || case_id)
+
+The first eight bytes interpreted as a big-endian u64 select a left-rotation modulo
+the channel count for that case. The same formula with case_id replaced by the
+single byte 0xff selects the case-list rotation. Phase values are 1 search-warmup,
+2 search-measured, 3 validation-1-warmup, 4 validation-1-measured,
+5 validation-2-warmup, and 6 validation-2-measured. round is zero outside
+validation and 1 or 2 inside it. Rejected channel slots remain explicit skips, so
+their removal cannot reorder favorable samples.
+
+Before starting an invocation, CK requires at least the complete configured
+timeout plus the fixed 2,250 ms containment-cleanup allowance to remain in the
+session wall budget. Otherwise it aborts with incomplete evidence without launching
+the process. CK never shortens a runner timeout to fit the session deadline. Only
+expiration of the complete configured candidate timeout is a performance rejection.
 
 ## 9. Legal candidate model
 
@@ -426,8 +560,11 @@ effects are clustered deterministically into one tuning unit. A session consider
 at most 64 units. Units beyond that bound use ordinary optimizer decisions, selected
 by canonical rank rather than discovery order.
 
-Each site exposes at most four non-baseline alternatives. A plan and trace contain
-at most 4096 explicit choices.
+Each unit exposes at most four coherent non-baseline unit variants. A unit variant
+is one closed set of choices at one or more sites; the command line never forms a
+Cartesian product of independent site alternatives. A session records at most
+4,096 sites, 64 non-baseline choices in one plan, 256 unit variants, and 16,384
+attempted plan expansions.
 
 ### 9.4 Trial typestate
 
@@ -449,20 +586,55 @@ declared its plan legal is a compiler error, not a search rejection.
 ## 10. Deterministic search
 
 CK uses a deterministic beam search over stable tuning units and canonical
-alternative sets.
+unit-variant sets. Before compilation, candidate ordering is exactly:
 
-Candidate ordering is:
-
-1. predicted dynamic cost;
-2. predicted static cost;
-3. artifact size;
+1. predicted dynamic cost in canonical cost-model units;
+2. predicted static cost in canonical cost-model units;
+3. predicted KIR code units;
 4. number of non-baseline choices;
 5. alternative class and canonical order;
 6. plan digest.
 
-A deterministic diversity round-robin admits candidates from each available
-alternative class before filling remaining beam slots by rank. This prevents the
-static model from eliminating every structurally different legal candidate.
+Artifact bytes are unavailable before compilation and therefore never participate
+in this ranking. After compilation, actual artifact bytes replace predicted KIR
+code units in the same ordering for measured-finalist selection.
+
+The closed algorithm is:
+
+    beam = [baseline]
+    expansions = 0
+    for unit in canonical_unit_order:
+        pool = beam                         # free baseline carry
+        for plan in beam_precompile_rank_order:
+            for variant in unit.nonbaseline_variants_in_canonical_order:
+                if expansions == expansion_limit: stop all further expansion
+                expansions += 1
+                derive plan + variant and run all KIR legality/growth checks
+                record the attempt, including illegal, duplicate, or over-growth
+                add a legal, unique derived plan to pool
+        unique = deduplicate(pool without baseline)
+        beam = [baseline] + diversity_truncate(unique, beam_width)
+    frontier = beam without baseline
+    compile_selection = diversity_truncate(frontier, compile_attempt_limit)
+
+Baseline carry never consumes a beam slot, expansion, or compile attempt. Every
+attempted non-baseline derivation consumes one expansion before validation; an
+illegal, duplicate, over-growth, or cache-hit attempt is never refunded. Reaching
+the expansion limit stops expansion before the next derivation; already accepted
+plans remain eligible and later units retain their baseline behavior. Selecting a
+plan for compilation consumes one compile-attempt slot even when a verified compile
+cache hit avoids physical recompilation. A failure to compile a plan that CK already
+declared legal is a compiler error.
+
+`deduplicate` keeps the first canonical precompile-ranked occurrence of each plan
+digest. `diversity_truncate` considers alternative classes in this fixed order:
+inlining, specialization, unrolling, loop SIMD, SLP, short-slice/versioning, and
+layout. While slots remain, it takes the best plan whose newest non-baseline choice
+belongs to each class, once per class; if the beam is narrower than the number of
+available classes, the fixed class order wins. It fills remaining slots by the
+global rank, skipping plans already chosen. This rule applies identically to the
+beam, compile selection, and postcompile finalist selection and prevents the static
+model from eliminating every structurally different legal candidate.
 
 The closed presets are:
 
@@ -479,12 +651,17 @@ schema 1.
 On a cache miss, the preset wall clock starts after manifest validation and input
 snapshotting, immediately before baseline construction. It includes baseline and
 candidate compilation, runner setup, search, both validation rounds, final replay,
-and transactional staging. Each runner timeout is also capped by the remaining
-wall-clock budget. An exact completed-decision cache hit performs no search session.
+and transactional staging. A runner invocation starts only when the remaining
+budget can cover its full configured timeout plus the fixed 2,250 ms containment
+allowance from Section 8.4; its timeout is never shortened to fit the session. An
+exact completed-decision cache hit performs no search session.
 
 A candidate artifact may be at most 110% of matching baseline bytes. Existing KIR,
 rewrite, specialization, and per-pass growth bounds remain in force. Rejected or
-invalid attempts consume their audit budget and are never refunded.
+invalid attempts consume their recorded expansion or compile budget and are never
+refunded. Of size-valid compiled plans, postcompile ranking selects at most the
+preset's measured-finalist count; fewer valid plans simply proceed as a smaller
+complete frontier.
 
 When the wall-clock budget expires, CK stops creating candidates. If the fixed
 validation protocol cannot complete for all required entrants, the command fails
@@ -607,13 +784,163 @@ presence discriminator. There is exactly one encoding for every valid decision.
 The trailing hash is the canonical decision digest used by replay and cache keys.
 
 The maximum file size is 32 MiB. It contains at most 33 candidates including the
-baseline, 16 cases, and 4096 plan choices. Every string, collection, sample matrix,
-and diagnostic field has an implementation constant below the total limit.
+baseline, 16 cases, and 64 choices per plan. The following limits are normative:
+
+| Item | Limit |
+| --- | ---: |
+| UTF-8 text field / diagnostic | 4,096 bytes |
+| argv entries / total argv bytes | 64 / 65,536 |
+| environment entries / total environment bytes | 16 / 65,536 |
+| declared inputs / one input / all inputs | 64 / 1 GiB / 4 GiB |
+| cases / sites / units / variants | 16 / 4,096 / 64 / 256 |
+| variants per unit / expansion records | 4 / 16,384 |
+| candidates including baseline / choices per plan | 33 / 64 |
+| output records / samples per complete stream | 3 / 20 |
+| measurement streams | 1,584 |
 
 Unknown, duplicate, truncated, trailing, out-of-order, over-limit, or noncanonical
 content is rejected. Parsing allocates only after bounds and overflow checks.
 
-### 12.2 Recorded identity
+### 12.2 Closed schema 1 records
+
+The sole tag-by-tag wire authority is the shared normative attachment
+[`decision-schema-1.md`](decision-schema-1.md). It freezes every primitive, nested
+tag, type, enum, required/optional state, value, bound, and ordering. The overview
+below is explanatory and cannot override that attachment. A required field is
+present exactly once; only `Opt<T>` fields are optional; and absolute paths are
+forbidden in every `Text` field.
+
+Top-level tag 1, `Identity`, contains:
+
+| Tag | Type | Meaning |
+| ---: | --- | --- |
+| 1 | Text | CK version |
+| 2 | D32 | CK source identity |
+| 3 | Text | Rust toolchain identity |
+| 4 | Text | LLVM identity |
+| 5 | D32 | LLVM bridge identity |
+| 6..15 | U32 | language, native ABI, runtime ABI, KIR, proof, cost-model, target, native-cache, profile, and PGO-analysis schemas |
+| 16 | D32 | source digest |
+| 17 | D32 | semantic and contract digest |
+| 18 | D32 | pre-tune KIR digest |
+| 19 | D32 | compilation-mode digest |
+| 20 | U8 | output kind enum |
+| 21 | Record | target triple, CPU, features, and target-profile identity |
+| 22 | Opt<Record> | profile schema, compiler/source identity, topology, and byte digest |
+
+Top-level tag 2, `Contract`, contains the five schema values, budget preset and its
+six search bounds, exact artifact ratio, calibration, sampling, containment,
+stability and validation integers, and the domain-separated policy digest. Its 32
+tags and their exact values are fixed by the attachment and must equal Sections 8,
+10, and 11.
+
+Top-level tag 3, `Workload`, contains:
+
+| Tag | Type | Meaning |
+| ---: | --- | --- |
+| 1 | D32 | canonical manifest identity |
+| 2 | D32 | private runner-snapshot digest |
+| 3 | U64 | runner-snapshot length |
+| 4 | List<Text> | argv, in manifest order |
+| 5 | List<Record> | effective environment, sorted by platform-normalized name |
+| 6 | U32 | timeout milliseconds |
+| 7 | List<Record> | inputs sorted by logical mount name: name, digest, size |
+| 8 | List<Record> | cases sorted by case id: id, role enum, seed, weight, expected digest |
+
+Top-level tag 4, `Environment`, contains the closed measurement tuple, timer and
+scheduling evidence, followed by a case-id-ordered calibration record list. Each
+calibration records iterations, attempts, accepted and confirmation elapsed times,
+and overshoot. Unavailable text uses `unavailable`; unavailable numeric host facts
+use their explicit absent optional state.
+
+Top-level tag 5, `Frontier`, contains the candidate-space digest at tag 1, sites at
+tag 2, units at tag 3, and expansion trace at tag 4. Records are:
+
+| Record | Required fields in tag order |
+| --- | --- |
+| Site | stable site id `D32`; class enum `U8`; root id `D32`; pre-state digest `D32`; canonical rank `U32` |
+| Unit | stable unit id `D32`; ordered site-id list; baseline state digest `D32`; ordered variant list |
+| UnitVariant | variant id `D32`; class enum `U8`; ordered choice list; predicted dynamic `U64`; predicted static `U64`; predicted KIR units `U64`; post-state digest `D32` |
+| PlanChoice | unit id `D32`; variant id `D32`; class enum `U8`; pre-state `D32`; post-state `D32` |
+| Expansion | ordinal `U32`; parent plan `D32`; unit id `D32`; variant id `D32`; disposition enum `U8`; resulting plan `Opt<D32>`; diagnostic code `U16` |
+
+Top-level tag 6, `Candidates`, contains the baseline candidate at tag 1 and a list
+of non-baseline candidates in plan-digest order at tag 2. A candidate record has:
+
+| Tag | Type | Meaning |
+| ---: | --- | --- |
+| 1 | D32 | plan digest; baseline uses the canonical empty-plan digest |
+| 2 | List<PlanChoice> | choices in unit order |
+| 3 | D32 | object-graph digest |
+| 4 | D32 | link-recipe digest |
+| 5 | U64 | actual primary-artifact bytes |
+| 6 | U8 | outcome enum |
+| 7 | U16 | diagnostic code, zero when absent |
+| 8 | Opt<D32> | correctness digest |
+| 9 | List<Record> | measurement streams in canonical order |
+| 10 | Record | immutable compile CacheOrigin |
+| 11 | Opt<Record> | exact timeout location; required only for timed-out outcome |
+
+A measurement stream contains phase, round, case, plan, iterations, twenty ordered
+row records, and correctness digest. Each row contains its ordinal, permutation-key
+digest, exactly three raw nanosecond calls, and their minimum stored sample. Warmup
+calls are executed but not stored. A canonically timed-out candidate has no later
+streams and carries the exact timeout location; other missing streams make the
+decision incomplete and invalid.
+
+Top-level tag 7, `Selection`, contains round-one and round-two summaries at tags 1
+and 2, the selected plan digest at tag 3, selection-reason enum at tag 4, and an
+`Opt<Certificate>` at tag 5. Each summary contains case medians, aggregate Q32 ratio,
+stability result, threshold result, and ranked entrant plan digests. A certificate
+contains the exact plan, frontier, policy, both-round, correctness, object-graph,
+and link-recipe digests. A tuned selection requires a certificate; a baseline
+selection forbids one.
+
+Top-level tag 8, `Replay`, contains frontier, selected pre-state, selected post-state,
+object-graph, and link-recipe digests at tags 1..5; a role-sorted list of output
+records at tag 6; immutable compile and measurement CacheOrigin records at tags
+7..8; and the
+replay-result digest at tag 9. Each output record contains output-role enum, canonical
+logical basename, staged byte digest, and physical size. The executable output set
+contains only primary; a dynamic output set additionally contains header and, on
+Windows, import library.
+
+Closed enum values are:
+
+| Enum | Values |
+| --- | --- |
+| output kind | executable=1, dynamic=2 |
+| budget | quick=1, standard=2, thorough=3 |
+| case role | search=1, validation=2 |
+| alternative class | inlining=1, specialization=2, unrolling=3, loop-SIMD=4, SLP=5, short-slice/versioning=6, layout=7 |
+| expansion disposition | legal=1, illegal=2, duplicate=3, growth-rejected=4 |
+| candidate outcome | baseline=1, compiled-unmeasured=2, size-rejected=3, timed-out=4, search-nonwinner=5, validation-threshold=6, validation-disagreement=7, selected=8 |
+| ordering phase | search-warmup=1, search-measured=2, validation-one-warmup=3, validation-one-measured=4, validation-two-warmup=5, validation-two-measured=6; only 2, 4, and 6 occur in stored streams |
+| selection reason | tuned=1, no-candidate=2, validation-threshold=3, validation-disagreement=4 |
+| output role | primary=1, header=2, import-library=3 |
+| cache-origin kind | freshly-built=1, verified-local-hit=2 |
+
+Collections are ordered by: cases by case id; sites, units, and variants by stable
+id; expansion records by ordinal; candidates with baseline first then plan digest;
+plan choices by unit id; streams by phase, round, case id, and plan digest; stream
+rows by ordinal; and outputs by output role. Text comparisons and ordering operate
+on encoded UTF-8 bytes.
+
+The repository carries four normative schema fixtures:
+
+- `tests/fixtures/tune/decision-schema1-framing.hex`;
+- `tests/fixtures/tune/decision-schema1-baseline.cktune`;
+- `tests/fixtures/tune/decision-schema1-tuned.cktune`;
+- `tests/fixtures/tune/decision-schema1-inspection.json`.
+
+The framing vector covers every scalar/container type and both optional states. The
+baseline vector has one search and one validation case and `no-candidate`; the tuned
+vector has one unit, one legal variant, complete three-phase samples, and a valid
+certificate. Before the parser implementation is accepted, these bytes and their
+SHA-256 values are frozen in the schema test; encode, decode, inspect, re-encode,
+truncation, mutation, and cross-endian tests consume the same fixtures.
+
+### 12.3 Recorded identity
 
 The file records:
 
@@ -632,8 +959,8 @@ The file records:
   correctness digest, raw stored sample, and stability result;
 - both validation-round decisions;
 - the selected plan or the canonical baseline-selection reason;
-- the staged final artifact byte digest and physical size;
-- cache reuse facts.
+- the complete role-tagged staged output-set byte digests and physical sizes;
+- immutable compile and measurement cache-origin facts.
 
 Raw workload files, arbitrary runner stdout, secrets, and absolute paths are not
 stored in canonical identity. Human diagnostics may show explicitly marked
@@ -646,7 +973,7 @@ and monotonic-timer kind and reported resolution. An unavailable field uses one
 explicit unavailable value rather than being omitted. Hostname, username, hardware
 serial numbers, and operating-system machine identifiers are forbidden.
 
-### 12.3 Replay identity
+### 12.4 Replay identity
 
 Replay does not require the original manifest, runner, or workload inputs. It does
 require an exact match for:
@@ -658,7 +985,13 @@ require an exact match for:
 - compilation modes and output kind;
 - decision frontier, preconditions, and canonical selected plan.
 
-The canonical .cktune decision digest enters the production native cache key. A
+The canonical .cktune decision digest enters the production native cache key. The
+recorded output-set digests validate the original published pair and any completed-
+decision cache hit. A later tune-use may use a different destination basename; it
+must reproduce the recorded object graph and link recipe exactly, while destination-
+derived packaging bytes are newly audited and recorded by that build rather than
+compared to the original path-dependent container digest. Cache-origin facts in an
+existing decision are immutable and re-encoding or reuse cannot rewrite them. A
 compiler, schema, source, CPU, feature, profile, mode, or plan change requires
 retuning. A baseline-selection decision contains an empty override plan; tune-use
 validates the decision normally and then reproduces the exact ordinary baseline.
@@ -735,9 +1068,10 @@ of the cache.
 - The runner is an explicit user-authorized executable; no shell interpolation is
   used.
 - Inputs and outputs are bounded before allocation.
-- Temporary directories and process trees are owned and cleaned by the session.
-- Final pair publication uses the journaled, digest-checked, artifact-last protocol
-  in Section 6.
+- Temporary directories and cooperative process groups/Job Objects are owned and
+  cleaned by the session under Section 8.3's explicit boundary.
+- Final output-set publication uses the journaled, digest-checked, primary-last
+  protocol in Section 6.
 - The public parser is fuzzed and mutation-tested.
 - Trial typestate makes an unvalidated artifact unpublishable by construction.
 
@@ -820,9 +1154,11 @@ The six native hosts verify:
 - manifest and decision parsing;
 - executable and dynamic harness protocols;
 - deterministic search and replay;
-- process-tree timeout and cleanup;
+- cooperative process-group/Job-Object timeout and cleanup, including hostile
+  POSIX escape rejection as outside the runner contract;
 - cache permissions, invalidation, corruption, traversal, and eviction;
-- journal recovery, rollback, digest-pair validation, and artifact-last output;
+- journal recovery, rollback/roll-forward, full output-set digest validation, and
+  primary-last publication at every phase boundary;
 - ordinary non-tuning behavior;
 - final artifacts preserving the existing self-contained system-runtime policy.
 
@@ -847,10 +1183,107 @@ CK 0.14 preserves every accepted v0.12 and v0.13 correctness, code-quality,
 performance, compilation-time, and artifact gate. A regression against those gates
 blocks release even if tuning benchmarks improve.
 
-The frozen tuning corpus is partitioned before measurement into search, validation,
-and sealed held-out cases. The held-out corpus is unavailable to the tuner. Cases
-eligible for tuning and exclusions are declared before results; post-measurement
-exclusion is forbidden.
+### 19.1 Frozen schema 9 evidence contract
+
+The sole field-by-field JSON authority is the shared normative attachment
+[`performance-schema-9.md`](performance-schema-9.md). It fixes all nested keys,
+types, cardinalities, statistics, identities, and fail-closed checks; this section
+fixes the associated product policy and repository assets.
+
+Schema 9 extends, and never substitutes for, the exact accepted schema 8 report
+named by `benches/baselines/v0_13_replay.toml`. That manifest, the v0.13 compiler,
+its deterministic archive, and `results-schema8.json` must be present and digest-
+exact before v0.14 collection begins. The five tune-eligible cases are exactly the
+five rows of `benches/cases/pgo-cases.tsv`: `branch-layout`,
+`call-constant-length`, `trip-unroll-simd`, `memory-bound`, and `compute-bound`.
+There are no optional rows or post-result exclusions.
+
+The existing `training.tsv` is search input and `held-out.tsv` is validation input.
+The tuner receives both through five fixed `benches/tune/workloads/*.cktune.toml`
+manifests. It never receives the sealed release file
+`benches/fixtures/tune/release-held-out.tsv`, whose exact data rows are:
+
+    ckc-tune-inputs\t1\trelease-held-out
+    branch-layout\trelease-branch-prime\t16381\t79\t3
+    call-constant-length\trelease-fixed-4000\t4000\t83\t13
+    trip-unroll-simd\trelease-map-4093\t4093\t89\t0
+    memory-bound\trelease-zip-4096\t4096\t97\t0
+    compute-bound\trelease-f64-4091\t4091\t101\t1.0009765625
+
+The fixed recipe contains `benches/cases/tune-cases.tsv`, the five workload
+manifests, `benches/tune/runner.rs`, `benches/oracles/tune/manifest.toml`,
+`benches/oracles/tune/c/tune_oracle.c`,
+`benches/oracles/tune/rust/tune_oracle.rs`, the seven CK sources comprising the
+five cases plus `contract_noalias.ck` and `contract_fixed_length.ck`, the four input
+partitions, `benches/tune_perf.rs`, `scripts/measure-v014-performance.py`,
+`scripts/check-native-performance.py`, and `scripts/audit-performance-oracles.py`.
+The oracle manifest pins C11, Rust 2024, strict floating-point behavior, safety
+preconditions, and the UB/alias audit. Any recipe-byte change invalidates evidence.
+
+The report path is `target/ckc-perf/v0.14-results.json`; evidence is a real,
+non-symlink directory named `v014-measurement-<unix-seconds>-<pid>` beside it. Its
+top-level key set is exactly:
+
+    schemaVersion, candidateVersion, candidateSha, v013ReplayCommit,
+    evidenceDirectory, toolchain, hardware, recipe, candidateBinary,
+    v013ReplayBundle, cumulativeSchemaEight, workload, tuningDecisions,
+    tuningArtifacts, sampling, cases, domainCases, tuneUseCompileTime,
+    ordinaryCompileRegression, artifactSize, archiveSize, resourceUse,
+    determinism, correctness
+
+`schemaVersion` is 9 and `candidateVersion` is `0.14.0`. Candidate SHA, compiler
+bytes, exact v0.13 replay commit and archive, schema 8 file, pinned LLVM/Clang
+22.1.8, Rust 1.90.0, runner bytes, manifests, source/input bytes, hardware,
+operating system, CPU features, recipe, artifacts, decisions, and every retained
+sample have size and SHA-256 identity. Evidence entries must be regular files below
+the evidence directory, with no symlink, traversal, missing, duplicate, or unknown
+entry.
+
+Main-case timing uses `rotating-six-channel-v1` with channels in this exact order:
+`tuned`, `v014Ordinary`, `v013Ordinary`, `v013Pgo`, `cSimd`, and `rustSimd`.
+Domain timing uses `rotating-three-channel-v1` with `tuned`, `genericC`, and
+`genericRust`. Both protocols execute three unrecorded warmup rows, retain twenty
+measured rows, call each channel seven equal batches per sample, store the minimum,
+and use the upper median. At least 16 of 20 samples must lie within inclusive
+80%..120% of that median. Rotation derives from the candidate, case, split, and row
+digests. Dynamic loading, symbol resolution, setup, tuning search, and harness I/O
+are outside steady timing. There is no selective rerun. The internal `.cktune`
+three-invocation decision evidence remains separate from these external seven-call
+release samples.
+
+Each main case records all six raw streams and orders, medians, correctness digest,
+source/input identities, selected or baseline decision, complete `.cktune` identity,
+all artifact identities, eligibility bit fixed true, and release-held-out result.
+The two domain cases record the same facts for three streams. The five `.cktune`
+files and complete role-tagged published output sets are copied into evidence; their
+schema, identity, certificate/baseline reason, plan, object graph, link recipe,
+measurements, and on-disk digests are independently checked.
+
+Tune-use compilation time is measured against v0.14 ordinary compilation with
+three warmup pairs and fifteen measured pairs, alternating first channel by row;
+ordinary v0.14 compilation is compared with exact v0.13 ordinary compilation by
+the same protocol. Both use upper medians, retain raw times and command identities,
+and exclude tuning search. Artifact size uses the exact primary outputs paired with
+timing. Resource evidence retains standard-session wall time, peak compiler/tuner
+RSS, expansion/compile/finalist counts, and cache bytes. Determinism consists of two
+independent cold-cache sessions and one exact warm-cache session with decision,
+plan, object-graph, link-recipe, output-set, compile-count, and measurement-count
+comparisons.
+
+`scripts/measure-v014-performance.py` only collects raw evidence.
+`scripts/check-native-performance.py` is the sole authority that accepts it and
+fails closed on any missing/unknown key, identity mismatch, nonfinite or nonpositive
+measurement, wrong cardinality/order, unstable stream, ineligible hardware,
+decision mismatch, threshold failure, selective rerun, or unretained evidence.
+`scripts/audit-performance-oracles.py` independently rechecks source/oracle/input
+coverage and semantics. The two required stable-performance jobs run this complete
+contract on enhanced x86-64 and AArch64 hosts at the same candidate SHA.
+
+### 19.2 Frozen thresholds
+
+The corpus above is partitioned before measurement into search, validation, and
+sealed held-out cases. Cases eligible for tuning and exclusions are declared before
+results; post-measurement exclusion is forbidden.
 
 For tune-eligible cases, compare the selected tuned result with the faster
 identical-semantics v0.13 ordinary or PGO native baseline:
@@ -869,8 +1302,9 @@ identical semantics and hardware:
 - geometric mean performance is at least 98%;
 - every case is at least 92%.
 
-On the frozen domain-constraint suite, tuned CK beats the generic faster C or Rust
-O3 result by more than 8% geometric mean.
+On the frozen two-case domain-constraint suite, `contract_noalias.ck` and
+`contract_fixed_length.ck`, tuned CK beats the faster semantically generic C or
+Rust O3 result by more than 8% geometric mean. Both cases participate.
 
 Resource and determinism gates are:
 
@@ -904,7 +1338,9 @@ CK 0.14 is releasable only when:
 6. documentation, CLI help, examples, schemas, and inspection output agree;
 7. produced executables and dynamic libraries retain the promised zero-dependency
    deployment model;
-8. the repository is clean and all release evidence is committed.
+8. the repository is clean and all release evidence is retained by the exact-SHA
+   CI run and release archive; generated evidence is not committed into the source
+   commit whose SHA it records.
 
 Passing only local functional tests, only search workloads, or only one performance
 host is not sufficient.
