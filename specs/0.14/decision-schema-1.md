@@ -143,7 +143,10 @@ Preset tuples `(beam, expansion, compile, finalist, entrant, wall-ms)` are quick
 | 7 | `inputs` | `List<InputIdentity,64>` |
 | 8 | `cases` | `List<CaseIdentity,16>` |
 
-`EnvironmentEntry` is tag 1 `name: Text`, tag 2 `value: Bytes`.
+`EnvironmentEntry` is tag 1 `name: Text`, tag 2 `valueBytes: U64`, and tag 3
+`valueDigest: D32`. The digest is
+`H("CK-TUNE-ENV-VALUE\0", name Text, value Bytes)` over the private accepted value;
+the value itself is never a decision field.
 `ManifestInputMaterial` and the wire-identical `InputIdentity` are tag 1
 `logicalPath: Text`, tag 2 `digest: D32`, tag 3 `bytes: U64`.
 `ManifestCaseMaterial` and the wire-identical `CaseIdentity` are tag 1 `id: Text`,
@@ -151,14 +154,17 @@ tag 2 `role: U8 CaseRole`, tag 3 `seed: U64`, tag 4 `weight: U32`, and tag 5
 `expectedDigest: D32`.
 
 Every argv and logical-path `Text` value must already be NFC and at most 4,096
-UTF-8 bytes; non-NFC input is rejected rather than rewritten, and the accepted argv
-bytes are executed unchanged. Unix environment records store the
-exact non-NUL environment value bytes; Windows stores the exact value as UTF-8
+UTF-8 bytes; non-NFC input is rejected rather than rewritten. Unix executes those
+exact accepted bytes as argv elements. Windows applies the closed conversion and
+quoting ABI in the main design. Unix environment identity hashes the exact non-NUL
+value bytes; Windows hashes the exact UTF-8 encoding of the accepted UTF-16 value
 without normalization and rejects an unrepresentable value. Entries are sorted
 by Unix name bytes or Windows ASCII-case-folded name bytes and are unique under the
 same comparison. The count is the complete effective set: Windows inserts required
 `SystemRoot`/`WINDIR` records first, unions canonically spelled allowlist records,
-and rejects a total above 16. Inputs preserve manifest order, one input is at most
+and rejects a total above 16. Every stored length equals the private value length
+and every digest rederives from that value during tune build; inspection exposes
+only the length and digest. Inputs preserve manifest order, one input is at most
 1 GiB and their sum at most 4 GiB. Cases are sorted by id bytes and include at least
 one role of each kind.
 
@@ -369,6 +375,33 @@ most 97/100 of `2^32`, every case ratio is at most 102/100 of `2^32`, and
 design. `rankedPlanDigests` contains exactly the passing plans in the stated
 validation rank, with no duplicate or omitted entrant.
 
+These fields are derived, never asserted. For round 1 or 2, the checker selects
+phase 5 or 7 streams with the same round. `RoundSummary.plans` contains exactly
+every non-timeout validation entrant whose baseline and candidate stream is
+complete for that round, sorted by plan digest. Each `caseMedians` list contains
+exactly every validation `CaseIdentity` in case-id order. `baselineNs` and
+`candidateNs` are ascending stored-minimum element 10 of the corresponding 20-row
+streams; `ratioQ32` is
+`ceil(candidateNs * 2^32 / baselineNs)`. `aggregateRatioQ32` is
+`ceil(sum(case.weight * ratioQ32) / sum(case.weight))`, all with checked `u128`
+intermediates and a `u64` result.
+
+For each row ordinal 0..19, the checker instead uses that ordinal's stored minimum
+from every validation case, computes each per-case ratio with the same ceiling,
+then the same weighted aggregate. `pairedWins` is exactly the count whose aggregate
+is strictly below `2^32`. `stable` is the conjunction of the attachment's 16-of-20
+rule for every referenced baseline and candidate stream. `thresholdPassed` and
+`rankedPlanDigests` are then rederived as above; ranking uses aggregate ratio,
+candidate primary bytes, choice count, then plan digest.
+
+The validation-entrant set is itself rederived from complete stable phase-3 search
+streams: compute their weighted Q32 score with the same formulas, rank by score,
+primary bytes, choice count, and plan digest, and take the preset bound. A
+candidate absent from that set cannot have validation streams. A timeout at phase
+4..7 proves prior entry but is excluded from both ranked qualifier lists. These
+equalities connect calibration iterations, raw rows, candidates, rounds, and final
+selection; changing a summary without changing its source streams is invalid.
+
 `Certificate` is tag 1 `planDigest: D32`, tag 2 `frontierDigest: D32`, tag 3
 `policyDigest: D32`, tag 4 `roundOneDigest: D32`, tag 5 `roundTwoDigest: D32`, tag
 6 `correctnessDigest: D32`, tag 7 `objectGraphDigest: D32`, tag 8
@@ -518,7 +551,12 @@ is a hard error.
 `DestinationKeyMaterial` is tag 1 the complete `ParentIdentity` and tag 2
 `lookupLeaf: Text`. Tune destinations use only the ASCII-safe leaf grammar in the
 main design. A case-sensitive parent stores exact leaf bytes; an ASCII-case-
-insensitive parent stores ASCII lowercase. `OutputSetMaterial` is tag 1 output kind,
+insensitive parent stores ASCII lowercase. On Windows an existing entry's
+`lookupLeaf` is always derived from the authoritative long leaf obtained from its
+opened handle, even when the requested spelling was a manually assigned short
+name; unavailable or inconsistent long/short-name discovery fails closed. An
+absent entry uses the requested legal leaf and is re-resolved after lock acquisition
+before any mutation. `OutputSetMaterial` is tag 1 output kind,
 tag 2 decision destination id, and tag 3 a role-sorted list whose records contain
 output role and destination id. Duplicate detection, lock identity, journal
 membership, and output-set identity all use these same ids. This operational

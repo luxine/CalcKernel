@@ -63,8 +63,13 @@ expands the closure, CK releases in reverse order and retries. A malformed reser
 journal is a hard error.
 
 Journal path bytes are operational rename evidence only. Intersection, equality,
-ordering, and lock selection use the recomputed destination ids, so two spellings
-that the parent filesystem resolves as one ASCII leaf can never form separate sets.
+ordering, and lock selection use the recomputed destination ids. On Windows that
+recomputation first resolves an existing requested spelling by handle to its
+authoritative long leaf and enumerates its alternate short leaf as required by the
+main design; unsupported or inconsistent enumeration fails closed. An initially
+absent leaf is rechecked after closure locking and before staging, and namespace
+change restarts acquisition. Thus case variants and manually assigned short-name
+spellings of one directory entry cannot form separate sets.
 
 Once the rescan is stable, CK recovers every intersecting transaction in full
 set-id order while holding the complete closure. A concurrently active overlapping

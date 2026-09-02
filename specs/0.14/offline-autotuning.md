@@ -176,14 +176,24 @@ the decision-independent primary, header, and import-library outputs that exist.
 Every tune destination leaf is 1..255 ASCII bytes, matches
 `[A-Za-z0-9][A-Za-z0-9._-]*`, is neither `.` nor `..`, does not begin
 `.ckc-tune-`, and is not a Windows device name or a name with a trailing dot or
-space. CK opens the already-existing common parent directory no-follow and obtains
+space. The grammar excludes `~`; therefore no requested destination can spell the
+ordinary automatically generated Windows 8.3 form of a newly created long name.
+That observation is not used for existing entries: on Windows CK opens every
+existing destination by handle, obtains its authoritative long leaf and any short
+leaf, replaces an alias spelling with the long leaf for canonical path and key
+construction, and rejects the operation if either query is unsupported,
+inconsistent, or collides with another destination. Thus a manually assigned short
+name such as `ALT.DLL` cannot acquire a separate lock. CK opens the already-existing common parent directory no-follow and obtains
 its stable volume/directory identity and lookup case behavior from the platform
 adapter. The adapter must distinguish case-sensitive from ASCII-case-insensitive
 lookup for that exact directory; unknown, mutable, or unsupported equivalence fails
 before staging. Restricting leaves to ASCII removes Unicode normalization aliases.
-All alias checks, sort keys, and locks use the resulting parent-identity plus exact
-or ASCII-lowercase leaf key. Existing destinations are additionally checked by
-handle identity.
+All alias checks, sort keys, and locks use the resulting parent identity plus the
+canonical long leaf's exact or ASCII-lowercase lookup key. Existing destinations
+are additionally checked by handle identity. A destination absent during this
+canonicalization is rechecked, with the same no-follow long/short-name procedure,
+after the complete lock set is acquired and immediately before staging; a changed
+namespace causes release and restart. CK never creates or assigns a short name.
 
 Publication uses one persistent sibling lock per canonical decision, artifact, or
 sidecar destination, plus a set journal, stage files, and backup files. A
@@ -293,6 +303,7 @@ The manifest declares:
 
 - schema = 1;
 - one host-native runner executable path used only to acquire an immutable snapshot;
+- one operational input-root directory, defaulting to the manifest directory;
 - a fixed argv vector, with no shell;
 - optional explicitly allowlisted inherited environment variables;
 - a list of runner input files to digest;
@@ -312,8 +323,9 @@ Schema 1 has exactly these fields:
 | --- | --- | --- |
 | root | schema | Required integer, exactly 1 |
 | runner | path | Required UTF-8 path to a host-format native executable; it is operational, not canonical identity |
+| runner | input_root | Optional UTF-8 directory path resolved from the manifest directory; default `.`; operational only |
 | runner | args | Optional array of at most 64 `Text` strings; default empty; each is already NFC, NUL-free, at most 4,096 UTF-8 bytes, and the total is at most 64 KiB |
-| runner | inputs | Optional array of at most 64 manifest-relative regular-file `Text` paths; default empty; each path is already NFC, NUL-free, and at most 4,096 UTF-8 bytes; each file is at most 1 GiB and their total at most 4 GiB |
+| runner | inputs | Optional array of at most 64 input-root-relative regular-file `Text` paths; default empty; each path is already NFC, NUL-free, nonabsolute, nontraversing, and at most 4,096 UTF-8 bytes; each file is at most 1 GiB and their total at most 4 GiB |
 | runner | inherit_env | Optional array of at most 16 unique names matching [A-Za-z_][A-Za-z0-9_]*; default empty |
 | runner | timeout_ms | Optional integer from 100 through 120,000; default 30,000 |
 | each case entry | id | Required unique identifier with the syntax and length above |
@@ -328,6 +340,7 @@ A canonical example is:
 
     [runner]
     path = "./build/tune-harness"
+    input_root = "."
     args = ["--ck-tune"]
     inputs = ["data/search.bin", "data/validation.bin"]
     inherit_env = []
@@ -347,16 +360,30 @@ A canonical example is:
     weight = 2
     expected_digest = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
-The runner receives the exact accepted UTF-8 argv bytes; CK never normalizes an
-argument after validation. The runner working directory is always CK_TUNE_TEMP.
+On Unix the runner receives the exact accepted UTF-8 argv bytes. On Windows CK
+passes the runner snapshot path separately as `lpApplicationName`, uses that same
+path as argv element zero, and converts every accepted Unicode scalar sequence to
+UTF-16 without normalization or lossy replacement. It applies the Microsoft
+UCRT argv inverse and always quotes each argument. For every run of `n` backslashes,
+ordinary following text emits `n`; a following quote emits `2n+1` backslashes then
+the quote; and the closing quote emits `2n` backslashes. The quoted arguments join
+with one U+0020. A conforming runner uses UCRT-compatible argv decoding; a runner
+that reparses the raw command line differently is outside schema 1. Golden process
+tests execute a retained probe and require exact argv recovery for empty,
+whitespace, quote, trailing-backslash, and non-ASCII arguments. CK never normalizes
+an argument after validation. The runner working directory is always CK_TUNE_TEMP.
 The manifest cannot override it. Resource-output limits are fixed by this
 specification rather than configurable manifest fields.
 
 ### 7.2 Paths and inputs
 
-Manifest-relative paths resolve under the canonical manifest directory. Parent
-traversal, symlink ambiguity, non-regular declared input files, and paths escaping
-that directory are rejected. The runner itself may be outside that directory but
+`input_root` resolves from the canonical manifest directory and is opened as one
+stable no-follow directory handle; its spelling may contain parent components, but
+the resolved root is fixed before any input is opened. Each logical input path then
+resolves beneath that handle. Absolute paths, parent traversal within a logical
+path, symlink/reparse ambiguity, non-regular files, and escape from the opened root
+are rejected. Two inputs resolving to the same file handle identity are rejected.
+The runner itself may be outside that directory but
 must be named by an explicit path; PATH lookup is forbidden. Schema 1 accepts only
 the host's native ELF, Mach-O, or PE/COFF executable format, not a script or
 interpreter directive.
@@ -367,7 +394,7 @@ normative decision-schema attachment, in this order:
 
 1. schema;
 2. runner argv strings;
-3. sorted effective inherited-environment name/value records;
+3. sorted effective inherited-environment name/value-length/value-digest records;
 4. timeout;
 5. `ManifestInputMaterial` records in manifest order, each containing logical path,
    content digest, and byte length at tags 1..3;
@@ -377,8 +404,8 @@ normative decision-schema attachment, in this order:
 
 The exact material records and outer tags are defined once in
 [`decision-schema-1.md`](decision-schema-1.md); this list is only an aligned
-overview. Accepted logical paths are used unchanged below `CK_TUNE_TEMP/inputs`, so
-the staged path bytes and recorded identity cannot diverge.
+overview. `input_root` and source path spellings are operational and excluded; the
+logical path plus immutable bytes remain canonical identity.
 
 The operational manifest and runner absolute paths, TOML whitespace/comments,
 timestamps, file permissions other than executable validity, and temporary paths
@@ -389,11 +416,20 @@ symlinks or reparse points. It copies the runner into a private session snapshot
 verifies the copied bytes and host executable format, and executes only that
 snapshot for the rest of the session. It likewise streams each input into a private
 immutable-content snapshot and verifies its digest. Before each timed invocation,
-CK copies the input snapshot below CK_TUNE_TEMP/inputs while preserving the
-manifest-relative path. Input preparation is outside the measured interval, and
-each invocation receives a fresh copy, so one runner invocation cannot change a
-later invocation's input. The harness uses CK_TUNE_TEMP plus the documented inputs
-subdirectory to locate these files.
+CK copies snapshots to flat, content-addressed files below
+`CK_TUNE_TEMP/inputs`, named exactly as eight lowercase hexadecimal digits for the
+zero-based manifest ordinal, one `-`, the 64-character lowercase content digest,
+and `.bin`, and creates a
+read-only `CK_TUNE_INPUT_MAP`. That bounded canonical map begins with `CKTIMAP1`, a
+big-endian count, then for each manifest-order input its logical-path `Text`, staged
+ASCII basename `Text`, byte length `U64`, and digest `D32`. Generated long basenames
+are distinct under exact and ASCII-folded comparison. CK opens the actual temporary
+parent, create-news every entry no-follow, and on Windows enumerates every resulting
+long/short-name pair and requires a one-to-one relation: no long or short spelling
+may equal or resolve to any other staged entry. Unsupported or inconsistent
+enumeration fails closed. All files are rehashed. Input preparation is outside the measured
+interval, and each invocation receives a fresh map and files, so one runner
+invocation cannot change a later invocation's input.
 
 ### 7.3 Environment
 
@@ -407,12 +443,15 @@ at 16 entries. Windows inserts its required base names first; an allowlisted bas
 name with canonical spelling refers to that one existing entry, while conflicting
 case is rejected. Validation fails if the union exceeds 16. Each value is at most
 4,096 bytes and the complete effective environment is
-at most 65,536 bytes; NUL is rejected. Every effective name and exact value,
-including the Windows platform base
-values, enters tuning identity.
+at most 65,536 bytes; NUL is rejected. Every effective name and exact value
+identity, including the Windows platform base values, enters tuning identity.
 
 Canonical inherited values are the exact non-NUL bytes on Unix. Windows values are
 encoded as UTF-8 without normalization and an unrepresentable value is rejected.
+Only name, exact byte length, and
+`H("CK-TUNE-ENV-VALUE\0", name Text, value Bytes)` enter the public decision; the
+actual value remains only in private session memory and process state and is never
+rendered by inspect.
 
 CK sets these protocol variables:
 
@@ -423,6 +462,7 @@ CK sets these protocol variables:
     CK_TUNE_SEED=<unsigned decimal u64>
     CK_TUNE_ITERATIONS=<unsigned decimal u64>
     CK_TUNE_TEMP=<absolute private per-run directory>
+    CK_TUNE_INPUT_MAP=<absolute private input-map path>
 
 The argv and environment are passed directly to process creation. CK never builds
 a shell command string.
@@ -430,7 +470,8 @@ a shell command string.
 ### 7.4 Harness responsibility
 
 The harness is tuning-only and is not linked into or required by the final artifact.
-It must load or execute CK_TUNE_ARTIFACT, run exactly CK_TUNE_ITERATIONS logical
+It must read declared input locations from CK_TUNE_INPUT_MAP, load or execute
+CK_TUNE_ARTIFACT, run exactly CK_TUNE_ITERATIONS logical
 iterations of the named case, and produce a deterministic correctness digest.
 
 For a dynamic library, the harness owns loading and calling its exported ABI. For
@@ -524,8 +565,9 @@ or containment failure aborts the session.
 
 After all cases are calibrated, the fixed state machine is:
 
-1. each compiled candidate, in plan-digest order, receives one correctness-smoke
-   invocation for every search case in case-id order;
+1. after artifact-size rejection and postcompile finalist selection, each
+   size-valid measured finalist, in plan-digest order, receives one
+   correctness-smoke invocation for every search case in case-id order;
 2. search executes three warmup rows and twenty measured rows over the immutable
    baseline-plus-finalists channel list;
 3. the best bounded surviving candidates enter validation;
@@ -800,6 +842,11 @@ For paired row r, CK computes the weighted Q32 score from row r of every validat
 case using the same per-case normalization formula as the aggregate score. “Lower”
 means strictly below the baseline Q32 value 2^32. Row indices are synchronized
 across validation cases.
+
+Decision Schema 1 makes every persisted round field a checked derivation of the
+matching calibration records and phase-5/7 raw streams: case medians, Q32 ratios,
+weighted aggregate, stability, paired wins, entrant membership, threshold bit, and
+rank cannot be supplied independently.
 
 Within each round, qualifying plans are ranked and ties are resolved by:
 
@@ -1276,7 +1323,7 @@ The six native hosts verify:
 - ordinary non-tuning behavior;
 - final artifacts preserving the existing self-contained system-runtime policy.
 
-Performance claims are made only on the stable enhanced x86-64 and AArch64 workers.
+Performance claims are made only on the stable Linux enhanced x86-64 and AArch64 workers.
 Performance output advances to schema 9. CI additionally includes:
 
 - sanitizer and ASan coverage for parsers, planner, and process control;
@@ -1304,10 +1351,13 @@ The sole field-by-field JSON authority is the shared normative attachment
 types, cardinalities, statistics, identities, and fail-closed checks; this section
 fixes the associated product policy and repository assets.
 
-Schema 9 extends, and never substitutes for, the exact accepted schema 8 report
-named by `benches/baselines/v0_13_replay.toml`. That manifest, the v0.13 compiler,
-its deterministic archive, and `results-schema8.json` must be present and digest-
-exact before v0.14 collection begins. The five tune-eligible cases are exactly the
+Schema 9 extends, and never substitutes for, two distinct schema-8 gates. The
+historical accepted report named by `benches/baselines/v0_13_replay.toml` is checked
+with its retained checker in a detached exact v0.13 checkout. A fresh cumulative
+compatibility report reruns the entire schema-8 suite with candidate version 0.14.0
+and the current candidate SHA through the checker's explicit compatibility mode;
+all old thresholds remain unchanged. Rewriting the historical report or checking
+it against v0.14 HEAD is forbidden. The five tune-eligible cases are exactly the
 five rows of `benches/cases/pgo-cases.tsv`: `branch-layout`,
 `call-constant-length`, `trip-unroll-simd`, `memory-bound`, and `compute-bound`.
 There are no optional rows or post-result exclusions.
@@ -1339,8 +1389,9 @@ record provenance:
 | contract-fixed-length | `benches/oracles/fixtures/contract_fixed_length.ck` | train-fixed-4000 | held-fixed-4000 | release-fixed-4000 |
 
 For each row, `<tune-case>.cktune.toml` is exactly schema 1 with runner path
-`../../../target/release/ckc-tune-runner`, args `["--ck-tune"]`, inputs
-`["../../fixtures/pgo/training.tsv","../../fixtures/pgo/held-out.tsv"]`, empty
+`../../../target/release/ckc-tune-runner`, input root `../..`, args
+`["--ck-tune"]`, inputs
+`["fixtures/pgo/training.tsv","fixtures/pgo/held-out.tsv"]`, empty
 `inherit_env`, and `timeout_ms=30000`. It contains exactly `<tune-case>.search`
 and `<tune-case>.validation`, with roles search/validation, weight 1, and the seed
 from the named input record. Expected digests are not discretionary constants:
@@ -1361,7 +1412,10 @@ manifests, `benches/tune/runner.rs`, `benches/oracles/tune/manifest.toml`,
 `benches/oracles/tune/rust/tune_oracle.rs`, the seven CK sources comprising the
 five cases plus `contract_noalias.ck` and `contract_fixed_length.ck`, the four input
 partitions, `benches/tune_perf.rs`, `scripts/measure-v014-performance.py`,
-`scripts/check-native-performance.py`, and `scripts/audit-performance-oracles.py`.
+`scripts/check-native-performance.py`, `scripts/audit-performance-oracles.py`,
+`scripts/package-v014-performance-archive.py`, `LICENSE`, and
+`THIRD_PARTY_NOTICES.md`, plus `benches/baselines/v0_13_replay.toml` and the
+normative `specs/0.14/performance-schema-9.md`.
 The oracle manifest pins C11, Rust 2024, strict floating-point behavior, safety
 preconditions, and the UB/alias audit. Any recipe-byte change invalidates evidence.
 
@@ -1377,13 +1431,14 @@ top-level key set is exactly:
     determinism, correctness
 
 `schemaVersion` is 9 and `candidateVersion` is `0.14.0`. Candidate SHA, compiler
-bytes, exact v0.13 replay commit and archive, schema 8 file, pinned LLVM/Clang
-22.1.8, Rust 1.90.0, runner bytes, manifests, source/input bytes, hardware,
-operating system, CPU features, recipe, artifacts, decisions, and every retained
-sample have size and SHA-256 identity. Every evidence-root entry must be a regular
+bytes, the exact v0.13 historical replay evidence closure, the fresh v0.14
+schema-8 compatibility evidence closure, pinned LLVM/Clang 22.1.8, Rust 1.90.0,
+runner bytes, manifests, source/input bytes, hardware, operating system, CPU
+features, recipe, artifacts, decisions, and every retained evidence file have size
+and SHA-256 identity. Every evidence-root entry must be a regular
 file below the evidence directory, with no symlink, traversal, missing, duplicate,
 or unknown entry; repository-root identities resolve only in the clean candidate
-checkout. The stable x86-64 worker requires x86-64-v4; the stable AArch64 worker
+checkout. The stable Linux x86-64 worker requires x86-64-v4; the stable Linux AArch64 worker
 requires SVE2. A missing tier is a failed gate, never workflow discretion.
 
 Main-case timing uses `rotating-six-channel-v1` with channels in this exact order:
@@ -1391,7 +1446,7 @@ Main-case timing uses `rotating-six-channel-v1` with channels in this exact orde
 Validation timing uses `rotating-three-channel-v1` with `tuned`, `v013Ordinary`,
 and `v013Pgo`.
 Domain timing uses `rotating-three-channel-v1` with `tuned`, `genericC`, and
-`genericRust`. All three protocols execute three unrecorded warmup rows, retain twenty
+`genericRust`. All three protocols execute and retain receipts for three unscored warmup rows, retain twenty
 measured rows, call each channel seven equal batches per sample, store the minimum,
 and use the upper median. At least 16 of 20 samples must lie within inclusive
 80%..120% of that median. Rotation derives from the candidate, case, split, and row
@@ -1399,6 +1454,12 @@ digests. Dynamic loading, symbol resolution, setup, tuning search, and harness I
 are outside steady timing. There is no selective rerun. The internal `.cktune`
 three-invocation decision evidence remains separate from these external seven-call
 release samples.
+
+Each case/split first records the fixed doubling calibration and one confirmation;
+its selected iterations-per-call is identical for every channel, warmup receipt,
+and measured receipt. Every receipt records requested/completed iterations, time,
+and correctness. Validation receipts must equal the manifest expected digest;
+release/domain receipts must equal the independently regenerated frozen result.
 
 Each main case records all six raw seven-call streams and orders, their per-row
 minima, medians, per-channel correctness digests,
@@ -1425,13 +1486,26 @@ independent cold-cache sessions compared by measurement-independent choice ident
 plan, object graph, link recipe, and published-content identity, plus one exact
 warm-cache reuse compared by decision and output bytes as well as zero compile and
 measurement counts. Genuine cold-session raw timings are preserved and may differ.
+Each session retains its exact tune build command, a locked complete before/after
+cache inventory, canonical event log, raw counters, wall time, peak RSS, decision,
+and outputs. Cold namespaces are distinct and empty; warm begins from cold one's
+exact post-cache inventory with no intervening access.
 Every timed channel carries a closed build command and an explicit foreign-key
 chain from its output bytes to the tuned decision/output set or audited baseline.
+All CK performance builds explicitly use `--overflow unchecked --bounds unchecked`,
+and every oracle channel fixes the same defined-input semantics; no comparison
+relies on a CLI default or mixes safety modes.
 The canonical tuning decision/output set is the first cold determinism run; main
 and validation timing, artifact-size, resource, and warm-reuse records reference
 that same retained identity rather than parallel unbound copies.
 Every file identity explicitly names either the candidate-SHA repository root or
 the retained evidence root.
+
+Archive size compares the replay manifest's exact v0.13 archive with a deterministic
+three-member v0.14 archive containing the same candidate compiler used above plus
+the repository license and notices. Its recipe-pinned producer, closed invocation,
+complete member manifest, metadata, compression bytes, and static-dependency audit
+are retained.
 
 `scripts/measure-v014-performance.py` only collects raw evidence.
 `scripts/check-native-performance.py` is the sole authority that accepts it and
@@ -1440,7 +1514,7 @@ measurement, wrong cardinality/order, unstable stream, ineligible hardware,
 decision mismatch, threshold failure, selective rerun, or unretained evidence.
 `scripts/audit-performance-oracles.py` independently rechecks source/oracle/input
 coverage and semantics. The two required stable-performance jobs run this complete
-contract on enhanced x86-64 and AArch64 hosts at the same candidate SHA.
+contract on Linux enhanced x86-64 and AArch64 hosts at the same candidate SHA.
 
 ### 19.2 Frozen thresholds
 

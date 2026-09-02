@@ -156,11 +156,19 @@ Profile、声明输入或者另一目标形成别名。Schema 1 不支持跨目�
 
 每个调优目标叶名为 1..255 个 ASCII 字节，匹配
 `[A-Za-z0-9][A-Za-z0-9._-]*`，不是 `.`/`..`，不以 `.ckc-tune-` 开头，
-也不是 Windows 设备名或以点/空格结尾的名称。CK 不跟随链接地打开已经存在的
-共同父目录，并从平台适配器取得该精确目录的稳定卷/目录身份和查找大小写行为。
+也不是 Windows 设备名或以点/空格结尾的名称。该语法排除 `~`，所以请求的目标
+不能拼写新增长名通常自动生成的 Windows 8.3 形式，但该事实不用于处理已有目录项。
+在 Windows 上，CK 按 Handle 打开每个已有目标，取得权威长叶名和任何短叶名，
+把别名拼写替换为长叶名后再构造规范路径和 Key；查询不受支持、结果不一致或与
+另一目标碰撞时失败关闭。因此手工指定的 `ALT.DLL` 一类短名不能取得独立锁。
+CK 不跟随链接地打开已经存在的共同父目录，
+并从平台适配器取得该精确目录的稳定卷/目录身份和查找大小写行为。
 适配器必须区分大小写敏感与 ASCII 大小写不敏感；未知、可变或不支持的等价性
 在暂存前失败。ASCII 限制排除 Unicode 规范化别名。全部别名检查、排序键和锁
-均使用父目录身份加精确或 ASCII 小写叶名键；已有目标还要按 Handle 身份复核。
+均使用父目录身份加规范长叶名的精确或 ASCII 小写查找键；已有目标还要按 Handle
+身份复核。规范化时不存在的目标，在取得完整锁集合后、开始暂存前，按相同的
+no-follow 长短名流程重新检查；命名空间变化会释放锁并重新开始。CK 从不创建或
+指定短名。
 
 发布为每个规范决策、产物或 Sidecar 目标使用一个持久同目录锁，并使用集合
 Journal、Stage 与 Backup 文件。目标锁名称取
@@ -252,6 +260,7 @@ Schema：未知、重复、缺失、类型错误或者超出范围的字段均�
 
 - schema = 1；
 - 一个只用于取得不可变快照的宿主原生驱动程序可执行路径；
+- 一个操作性输入根目录，默认是 Manifest 目录；
 - 不经过 shell 的固定 argv 向量；
 - 可选的、显式允许继承的环境变量；
 - 要计算摘要的驱动程序输入文件列表；
@@ -270,8 +279,9 @@ Schema 1 只包含以下字段：
 | --- | --- | --- |
 | 根 | schema | 必需整数，恰好为 1 |
 | runner | path | 指向宿主格式原生可执行文件的必需 UTF-8 路径；它属于操作路径，不属于规范身份 |
+| runner | input_root | 从 Manifest 目录解析的可选 UTF-8 目录路径，默认 `.`；仅属于操作路径 |
 | runner | args | 最多 64 个 `Text` 字符串的可选数组，默认空；每项必须已经 NFC、无 NUL、最多 4,096 个 UTF-8 字节，总计最多 64 KiB |
-| runner | inputs | 最多 64 个清单相对普通文件 `Text` 路径的可选数组，默认空；每个路径必须已经 NFC、无 NUL且最多 4,096 个 UTF-8 字节；每个文件最多 1 GiB，总计最多 4 GiB |
+| runner | inputs | 最多 64 个相对输入根的普通文件 `Text` 路径，默认空；每个路径必须已经 NFC、无 NUL、非绝对、无父级穿越且最多 4,096 个 UTF-8 字节；每个文件最多 1 GiB，总计最多 4 GiB |
 | runner | inherit_env | 最多 16 个匹配 [A-Za-z_][A-Za-z0-9_]* 的唯一名称，默认空 |
 | runner | timeout_ms | 100 至 120,000 的可选整数，默认 30,000 |
 | 每个 case 条目 | id | 符合上述语法和长度的必需唯一标识 |
@@ -286,6 +296,7 @@ Schema 1 只包含以下字段：
 
     [runner]
     path = "./build/tune-harness"
+    input_root = "."
     args = ["--ck-tune"]
     inputs = ["data/search.bin", "data/validation.bin"]
     inherit_env = []
@@ -305,14 +316,26 @@ Schema 1 只包含以下字段：
     weight = 2
     expected_digest = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
-驱动程序接收通过校验的精确 UTF-8 argv 字节；CK 不得在校验后再次规范化参数。
+Unix 驱动程序接收通过校验的精确 UTF-8 argv 字节。Windows 把 runner 快照路径
+另行作为 `lpApplicationName` 传入并使用同一路径作为 argv 第 0 项；每个已接受
+Unicode 标量序列无规范化、无损地转为 UTF-16，应用 Microsoft UCRT argv 逆算法，
+并总是为每个参数加引号：每段
+`n` 个反斜线在普通文字前输出 `n` 个，在引号前输出 `2n+1` 个再输出引号，在
+结束引号前输出 `2n` 个；参数间以一个 U+0020 连接。符合规范的 runner 使用
+UCRT 兼容 argv 解码；自行以不同规则解析原始命令行者不属于 Schema 1。Golden
+进程测试执行保留的探针，对空串、空白、引号、尾反斜线和非 ASCII 参数逐项要求
+还原精确 argv。
+CK 不得在校验后再次规范化参数。
 驱动程序工作目录始终为 CK_TUNE_TEMP，清单不能覆盖它。资源输出限制由本规范
 固定，不是可配置的清单字段。
 
 ### 7.2 路径与输入
 
-清单相对路径在规范化后的清单目录下解析。父目录穿越、符号链接歧义、声明
-为输入但并非普通文件，以及逃逸该目录的路径都必须拒绝。驱动程序可以位于
+`input_root` 从规范 Manifest 目录解析，并以一个稳定的 no-follow 目录 Handle
+打开；它的拼写可以包含父级分量，但解析后的根在打开输入前固定。每个逻辑输入
+路径只能在该 Handle 下解析；绝对路径、逻辑路径内部父级穿越、符号链接/Reparse
+歧义、非普通文件以及逃逸根目录都必须拒绝。解析到同一文件 Handle 身份的两个
+输入也必须拒绝。驱动程序可以位于
 该目录外，但必须由显式路径指定，禁止通过 PATH 查找。Schema 1 只接受宿主
 原生 ELF、Mach-O 或 PE/COFF 可执行格式，不接受脚本或解释器指令。
 
@@ -322,7 +345,7 @@ Primitive Framing，按以下顺序计算
 
 1. schema；
 2. runner argv 字符串；
-3. 排序后的有效继承环境变量名称/值记录；
+3. 排序后的有效继承环境变量名称/值长度/值摘要记录；
 4. timeout；
 5. 按 Manifest 顺序排列的 `ManifestInputMaterial`，Tag 1..3 依次包含逻辑
    路径、内容摘要和字节长度；
@@ -332,8 +355,8 @@ Primitive Framing，按以下顺序计算
 
 精确 Material 记录及外层 Tag 只在
 [`decision-schema-1.md`](../decision-schema-1.md) 定义一次；此列表只是对齐
-概览。通过校验的逻辑路径在 `CK_TUNE_TEMP/inputs` 下原样使用，因此暂存路径
-字节与记录身份不会分歧。
+概览。`input_root` 与源路径拼写只属于操作信息并被排除；逻辑路径和不可变内容
+仍进入规范身份。
 
 操作 Manifest 与 runner 绝对路径、TOML 空白/注释、时间戳、除可执行有效性
 外的文件权限以及临时路径均被排除。任何逻辑字段或内容字节变化都会使复用
@@ -343,9 +366,15 @@ Primitive Framing，按以下顺序计算
 每个已验证输入。CK 将 runner 复制到私有会话快照，验证复制后字节与宿主
 可执行格式，并在整个会话中只执行该快照。每个输入同样被流式复制到私有
 不可变内容快照并校验摘要。每次计时调用前，CK 将输入快照复制到
-CK_TUNE_TEMP/inputs 下，并保持清单相对路径。输入准备不计入测量区间，每次
-调用收到全新副本，因此一次驱动调用不能改变后续调用的输入。驱动程序通过
-CK_TUNE_TEMP 和固定的 inputs 子目录定位这些文件。
+`CK_TUNE_TEMP/inputs` 下的扁平内容寻址文件，名称严格由零基 Manifest 序号的
+八个小写十六进制数字、一个 `-`、64 字符小写内容摘要和 `.bin` 组成，并创建
+只读 `CK_TUNE_INPUT_MAP`。该有界规范 Map 以 `CKTIMAP1` 开始，
+随后是大端数量，再按 Manifest 顺序写入逻辑路径 `Text`、暂存 ASCII Basename
+`Text`、字节数 `U64` 与摘要 `D32`。生成的长名在精确和 ASCII 折叠比较下均唯一。
+CK 打开实际临时父目录并将每项 create-new/no-follow；Windows 还枚举全部生成项的
+长短名对并要求一一对应，任何长名或短名都不得等于或解析到另一暂存项；不支持
+或不一致的枚举会失败关闭。全部文件复算摘要。输入准备不计入测量区间，每次
+调用收到全新 Map 与文件，因此一次调用不能改变后续输入。
 
 ### 7.3 环境
 
@@ -356,10 +385,13 @@ SystemRoot 和 WINDIR 值。其他继承变量必须显式加入允许列表；�
 列表。Windows 先插入所需基础名称；规范拼写的同名允许项引用已有同一记录，
 大小写冲突则拒绝；Union 超过 16 时校验失败。每个值最多 4,096 字节，完整有效环境最多
 65,536 字节；NUL 必须拒绝。包括 Windows 平台基础值在内的每个有效名称
-和精确值都进入调优身份。
+和值身份都进入调优身份。
 
 Unix 规范继承值是精确非 NUL 字节；Windows 值以不做规范化的 UTF-8 编码，
 无法表示的值必须拒绝。
+公共决策只记录名称、精确字节长度以及
+`H("CK-TUNE-ENV-VALUE\0", name Text, value Bytes)`；实际值只存在于私有会话
+内存和进程状态中，inspect 绝不渲染它。
 
 CK 设置以下协议变量：
 
@@ -370,13 +402,15 @@ CK 设置以下协议变量：
     CK_TUNE_SEED=<无符号十进制 u64>
     CK_TUNE_ITERATIONS=<无符号十进制 u64>
     CK_TUNE_TEMP=<每次运行的私有目录绝对路径>
+    CK_TUNE_INPUT_MAP=<私有输入 Map 绝对路径>
 
 argv 和环境直接传给进程创建接口。CK 绝不拼接 shell 命令字符串。
 
 ### 7.4 驱动程序责任
 
 驱动程序仅用于调优，不链接到最终产物中，最终产物运行时也不依赖它。驱动
-程序必须加载或执行 CK_TUNE_ARTIFACT，运行恰好 CK_TUNE_ITERATIONS 次指定
+程序必须从 CK_TUNE_INPUT_MAP 读取声明输入位置，加载或执行
+CK_TUNE_ARTIFACT，运行恰好 CK_TUNE_ITERATIONS 次指定
 用例逻辑迭代，并生成确定性的正确性摘要。
 
 对于动态库，驱动程序负责加载并调用其导出 ABI；对于可执行文件，驱动程序
@@ -454,8 +488,8 @@ Containment 关闭、记录超时，并在全部后续行和轮次中跳过该�
 
 全部用例校准后，固定状态机为：
 
-1. 每个已编译候选按计划摘要排序，对每个按 case-id 排序的搜索用例执行一次
-   正确性冒烟调用；
+1. 完成产物体积拒绝和编译后最终候选选择后，每个体积合法的测量最终候选按
+   计划摘要排序，对每个按 case-id 排序的搜索用例执行一次正确性冒烟调用；
 2. 搜索在不可变的“基线加最终候选”通道列表上执行三行预热和二十行测量；
 3. 排名最好的有界存续候选进入验证；
 4. 验证第 1 轮在不可变的“基线加入围者”列表上执行三行预热和二十行测量；
@@ -688,6 +722,10 @@ u64。
 对配对行 r，CK 使用每个验证用例的第 r 行，以同聚合得分相同的逐用例
 归一化公式计算加权 Q32 得分。“低于”表示严格低于基线 Q32 值 2^32。各验证
 用例的行号保持同步。
+
+Decision Schema 1 要求每个持久化轮次字段都由匹配校准记录和 Phase 5/7 原始流
+校验推导：用例中位数、Q32 比率、加权聚合、稳定性、配对胜场、入围成员、阈值位
+和排名都不得独立填写。
 
 每轮内先对合格计划排名，平局依次按以下规则解决：
 
@@ -1111,7 +1149,7 @@ CK 0.14 将 CKCOBJ03/schema 4 条目视为干净的 Cache Miss，绝不原地升
 - 普通非调优行为；
 - 最终产物保持现有自包含系统运行时策略。
 
-性能声明只能基于稳定增强型 x86-64 与 AArch64 Worker。性能输出升级至
+性能声明只能基于稳定 Linux 增强型 x86-64 与 AArch64 Worker。性能输出升级至
 Schema 9。CI 还包括：
 
 - 解析器、规划器和进程控制的消毒器与 ASan 覆盖；
@@ -1137,9 +1175,11 @@ CK 0.14 保留所有已经通过验收的 v0.12 和 v0.13 正确性、代码质�
 权威；它固定所有嵌套键、类型、数量、统计、身份和失败关闭检查。本节固定相关
 产品策略与仓库资产。
 
-Schema 9 扩展但绝不替代 `benches/baselines/v0_13_replay.toml` 指定的精确已
-验收 Schema 8 报告。开始 v0.14 收集前，该 Manifest、v0.13 编译器及其确定性
-Archive、`results-schema8.json` 必须存在且摘要精确。五个可调优用例恰为
+Schema 9 扩展但绝不替代两个不同的 Schema 8 门槛。由
+`benches/baselines/v0_13_replay.toml` 指定的历史已验收报告，必须在精确 v0.13
+Detached Checkout 中由其保留 Checker 验证；另一个新鲜累计兼容报告，以候选
+版本 0.14.0 和当前候选 SHA 在显式兼容模式下重跑整个 Schema 8 套件，全部旧阈值
+保持不变。禁止改写历史报告或在 v0.14 HEAD 下直接检查它。五个可调优用例恰为
 `benches/cases/pgo-cases.tsv` 的五行：`branch-layout`、
 `call-constant-length`、`trip-unroll-simd`、`memory-bound`、`compute-bound`。
 没有可选行或结果产生后的排除。
@@ -1169,8 +1209,9 @@ Archive、`results-schema8.json` 必须存在且摘要精确。五个可调优�
 | contract-fixed-length | `benches/oracles/fixtures/contract_fixed_length.ck` | train-fixed-4000 | held-fixed-4000 | release-fixed-4000 |
 
 每行的 `<tune-case>.cktune.toml` 严格为 Schema 1：runner path 是
-`../../../target/release/ckc-tune-runner`，args 为 `["--ck-tune"]`，inputs 为
-`["../../fixtures/pgo/training.tsv","../../fixtures/pgo/held-out.tsv"]`，
+`../../../target/release/ckc-tune-runner`，input root 为 `../..`，args 为
+`["--ck-tune"]`，inputs 为
+`["fixtures/pgo/training.tsv","fixtures/pgo/held-out.tsv"]`，
 `inherit_env` 为空，`timeout_ms=30000`。它恰含 `<tune-case>.search` 与
 `<tune-case>.validation`，Role 分别为 search/validation，Weight 为 1，Seed
 来自命名输入记录。Expected Digest 不是实现可选择常量，而是：
@@ -1189,7 +1230,10 @@ id；发布记录与摘要绝不出现在调优 Manifest 中。
 `benches/oracles/tune/rust/tune_oracle.rs`、由五个用例以及
 `contract_noalias.ck`、`contract_fixed_length.ck` 组成的七份 CK 源码、四个
 输入分区、`benches/tune_perf.rs`、`scripts/measure-v014-performance.py`、
-`scripts/check-native-performance.py` 和 `scripts/audit-performance-oracles.py`。
+`scripts/check-native-performance.py`、`scripts/audit-performance-oracles.py`、
+`scripts/package-v014-performance-archive.py`、`LICENSE` 和
+`THIRD_PARTY_NOTICES.md`，以及 `benches/baselines/v0_13_replay.toml` 和规范
+`specs/0.14/performance-schema-9.md`。
 Oracle Manifest 固定 C11、Rust 2024、严格浮点行为、安全前置条件与 UB/别名
 审计。任意 Recipe 字节变化都会使证据失效。
 
@@ -1205,12 +1249,13 @@ Oracle Manifest 固定 C11、Rust 2024、严格浮点行为、安全前置条件
     determinism, correctness
 
 `schemaVersion` 为 9，`candidateVersion` 为 `0.14.0`。候选 SHA、编译器字节、
-精确 v0.13 Replay Commit 与 Archive、Schema 8 文件、固定 LLVM/Clang 22.1.8、
-Rust 1.90.0、驱动字节、Manifest、源码/输入字节、硬件、操作系统、CPU 特性、
-Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份。每个证据根条目
+精确 v0.13 历史 Replay 证据闭包、新鲜 v0.14 Schema-8 兼容证据闭包、固定
+LLVM/Clang 22.1.8、Rust 1.90.0、驱动字节、Manifest、源码/输入字节、硬件、
+操作系统、CPU 特性、Recipe、产物、决策和每个保留证据文件都具有体积与
+SHA-256 身份。每个证据根条目
 必须是证据目录下的普通文件，不得有符号链接、路径穿越、缺失、重复或未知项；
 仓库根身份只能在干净的候选 Checkout 中解析。
-稳定 x86-64 Worker 必须具备 x86-64-v4；稳定 AArch64 Worker 必须具备 SVE2。
+稳定 Linux x86-64 Worker 必须具备 x86-64-v4；稳定 Linux AArch64 Worker 必须具备 SVE2。
 缺少 Tier 属于门槛失败，绝不是 Workflow 可选择项。
 
 主用例计时使用 `rotating-six-channel-v1`，通道顺序严格为：`tuned`、
@@ -1218,11 +1263,15 @@ Recipe、产物、决策和所有保留样本都具有体积与 SHA-256 身份�
 使用 `rotating-three-channel-v1`，通道为 `tuned`、`v013Ordinary` 和
 `v013Pgo`。领域计时
 使用 `rotating-three-channel-v1`，顺序为 `tuned`、`genericC`、
-`genericRust`。三者都执行三行不记录的预热、保留二十行测量；每个样本将每通道
+`genericRust`。三者都执行并保留三行不计分预热的回执、保留二十行测量；每个样本将每通道
 调用七个等量批次并存最小值，结果使用上中位数。至少 16/20 样本必须位于中位
 数 80%..120% 闭区间。轮转由候选、用例、分区和行摘要导出。动态加载、符号
 解析、准备、调优搜索与驱动 I/O 不计入稳态计时。禁止选择性重跑。`.cktune`
 内部三调用决策证据与外部七调用发布样本彼此独立。
+
+每个用例/分区先记录固定倍增校准和一次确认；获选的每调用迭代数在全部通道、
+预热回执和测量回执中相同。每个回执记录请求/完成迭代数、时间和正确性。验证
+回执必须等于 Manifest 期望摘要；发布/领域回执必须等于独立再生成的冻结结果。
 
 每个主用例记录全部六个原始七调用流及顺序、逐行最小值、中位数、各通道正确性
 摘要、源码/输入身份、
@@ -1241,17 +1290,27 @@ tune-use 编译时间相对 v0.14 普通编译测量：三对预热、十五对�
 计数以及缓存字节。确定性证据以与测量无关的选择身份、计划、目标图、链接配方
 和发布内容身份比较两个独立冷缓存会话，再以决策与输出字节以及零编译/测量计数
 证明一次精确热缓存复用。真实冷会话的原始计时必须保留，并允许不同。
+每个会话都保留精确 Tune Build 命令、加锁的完整 Cache 前后清单、规范事件日志、
+原始计数、墙钟、峰值 RSS、决策和输出。两个冷 Namespace 不同且初始为空；热
+运行在无中间访问的条件下从 Cold One 的精确运行后 Cache 清单开始。
 每个计时通道都携带封闭构建命令，并通过显式外键链连接其输出字节与调优
-决策/输出集或审计基线。规范调优决策/输出集就是第一次冷确定性运行；主/验证
-计时、产物体积、资源与热复用记录都引用同一保留身份，而不是互不绑定的副本。
+决策/输出集或审计基线。全部 CK 性能构建显式使用
+`--overflow unchecked --bounds unchecked`，每个 Oracle 通道固定相同的已定义
+输入语义；比较不依赖 CLI 默认值，也不混合安全模式。规范调优决策/输出集就是
+第一次冷确定性运行；主/验证计时、产物体积、资源与热复用记录都引用同一保留
+身份，而不是互不绑定的副本。
 每个文件身份明确选择候选 SHA 仓库根或保留证据根。
+
+Archive 体积比较 Replay Manifest 的精确 v0.13 Archive 与确定性三成员 v0.14
+Archive；后者包含上述同一候选编译器、仓库 License 与 Notices，并保留 Recipe
+固定的 Producer、封闭调用、完整成员清单、元数据、压缩字节和静态依赖审计。
 
 `scripts/measure-v014-performance.py` 只收集原始证据；
 `scripts/check-native-performance.py` 是唯一验收权威，对任何缺失/未知键、身份
 不匹配、非有限或非正测量、错误数量/顺序、不稳定流、不合格硬件、决策不匹配、
 阈值失败、选择性重跑或未保留证据都失败关闭。
 `scripts/audit-performance-oracles.py` 独立复核源码/Oracle/输入覆盖与语义。两个
-必需稳定性能 Job 在增强型 x86-64 与 AArch64 宿主上、同一候选 SHA 执行完整
+必需稳定性能 Job 在 Linux 增强型 x86-64 与 AArch64 宿主上、同一候选 SHA 执行完整
 契约。
 
 ### 19.2 冻结阈值
