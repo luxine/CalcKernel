@@ -1,3 +1,5 @@
+#[path = "tune/calibration.rs"]
+mod calibration;
 #[path = "tune/decision_format.rs"]
 mod decision_format;
 #[path = "tune/frontier.rs"]
@@ -12,6 +14,8 @@ mod inspection;
 mod manifest;
 #[path = "tune/replay.rs"]
 mod replay;
+#[path = "tune/runner.rs"]
+mod runner;
 #[path = "tune/search.rs"]
 mod search;
 #[path = "tune/snapshot.rs"]

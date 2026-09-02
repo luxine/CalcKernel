@@ -1,6 +1,7 @@
 use crate::{
     KirVerifiedProgramState, TuningPlan, TuningSpace, apply_tuning_plan, check_tuning_plan,
 };
+use std::{fs::OpenOptions, io::Write, path::Path};
 
 use super::artifact::{
     ArtifactIdentity, TuneArtifactBytes, TuneArtifactKind, derive_artifact_identity,
@@ -106,6 +107,31 @@ impl NonPublishableTuneTrial {
 
     pub(crate) fn post_state_digest(&self) -> &str {
         &self.post_state_digest
+    }
+
+    pub(crate) const fn artifact_kind_name(&self) -> &'static str {
+        match self.identity.kind {
+            TuneArtifactKind::Executable => "executable",
+            TuneArtifactKind::Dynamic => "dynamic",
+        }
+    }
+
+    pub(crate) fn stage_primary_for_measurement(&self, path: &Path) -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&self.bytes.primary)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        if self.identity.kind == TuneArtifactKind::Executable {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 }
 

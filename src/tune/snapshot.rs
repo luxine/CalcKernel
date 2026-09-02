@@ -20,6 +20,9 @@ pub struct CapturedWorkload {
     inputs: Vec<CapturedInput>,
     environment: Vec<CapturedEnvironment>,
     manifest_digest: [u8; 32],
+    args: Vec<String>,
+    timeout_ms: u32,
+    cases: Vec<super::TuneCase>,
 }
 
 #[derive(Debug)]
@@ -152,6 +155,9 @@ pub fn capture_workload(manifest: &TuneManifest) -> Result<CapturedWorkload, Tun
         inputs,
         environment,
         manifest_digest,
+        args: manifest.args.clone(),
+        timeout_ms: manifest.timeout_ms,
+        cases: manifest.cases.clone(),
     })
 }
 
@@ -239,6 +245,24 @@ impl CapturedWorkload {
             .map(|entry| &entry.identity)
             .collect()
     }
+
+    pub(crate) fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub(crate) const fn timeout_ms(&self) -> u32 {
+        self.timeout_ms
+    }
+
+    pub(crate) fn cases(&self) -> &[super::TuneCase] {
+        &self.cases
+    }
+
+    pub(crate) fn environment_values(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.environment
+            .iter()
+            .map(|entry| (entry.identity.name.as_str(), entry.value.as_slice()))
+    }
 }
 
 fn read_regular_nofollow(path: &Path, limit: u64) -> Result<Vec<u8>, TuneSnapshotError> {
@@ -263,7 +287,7 @@ fn read_regular_nofollow(path: &Path, limit: u64) -> Result<Vec<u8>, TuneSnapsho
     Ok(bytes)
 }
 
-fn validate_runner(path: &Path, bytes: &[u8]) -> Result<(), TuneSnapshotError> {
+fn validate_runner(_path: &Path, bytes: &[u8]) -> Result<(), TuneSnapshotError> {
     #[cfg(target_os = "linux")]
     let valid_format = bytes.starts_with(b"\x7fELF");
     #[cfg(target_os = "macos")]
@@ -281,7 +305,7 @@ fn validate_runner(path: &Path, bytes: &[u8]) -> Result<(), TuneSnapshotError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if fs::metadata(path)?.permissions().mode() & 0o111 == 0 {
+        if fs::metadata(_path)?.permissions().mode() & 0o111 == 0 {
             return Err(TuneSnapshotError::InvalidRunner);
         }
     }
@@ -343,11 +367,19 @@ fn file_identity(path: &Path) -> Result<(u64, u64), TuneSnapshotError> {
 
 #[cfg(windows)]
 fn file_identity(path: &Path) -> Result<(u64, u64), TuneSnapshotError> {
-    use std::os::windows::fs::MetadataExt;
-    let metadata = fs::metadata(path)?;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    let file = fs::File::open(path)?;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the file handle and output pointer stay valid for the call.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut info) } == 0 {
+        return Err(TuneSnapshotError::Io(std::io::Error::last_os_error()));
+    }
     Ok((
-        metadata.volume_serial_number().unwrap_or(0),
-        metadata.file_index().unwrap_or(0),
+        u64::from(info.dwVolumeSerialNumber),
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
     ))
 }
 
