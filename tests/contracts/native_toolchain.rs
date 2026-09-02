@@ -172,6 +172,13 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
         "Unix bootstrap must not expand an empty array under macOS Bash 3.2 set -u"
     );
     assert!(
+        unix.contains("ckc_cmake_args=(")
+            && unix.contains("ckc_cmake_args+=(")
+            && unix.contains("cmake \"${ckc_cmake_args[@]}\"")
+            && !unix.contains("ckc_runtime_args"),
+        "Unix bootstrap optional CMake flags must extend one non-empty array under macOS Bash 3.2 set -u"
+    );
+    assert!(
         unix.contains("ckc_static_libs=(\"${ckc_lld_libs[@]}\" LLVMDTLTO \"${ckc_llvm_libs[@]}\")"),
         "Unix bootstrap must add LLVM 22 DTLTO after LLD and before its LLVM dependencies"
     );

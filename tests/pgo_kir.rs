@@ -1,7 +1,8 @@
 use calckernel::{
     CkProfileEffectDomain, CkProfileEvent, CkProfileKirMode, CkProfileSiteKind, KirBoundsMode,
-    KirBuildConfig, KirConsumer, KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module,
-    check, lower_to_mir, prepare_ck_profile_kir, print_ck_profile_kir_plan, print_kir_module,
+    KirBuildConfig, KirConsumer, KirNativeCpuPolicy, KirOverflowMode, KirSanitizerMode,
+    KirTargetProfileBuilder, SourceFile, build_kir_module, build_kir_module_with_profile, check,
+    lower_to_mir, prepare_ck_profile_kir, print_ck_profile_kir_plan, print_kir_module,
     validate_ck_profile_kir_plan,
 };
 use sha2::{Digest, Sha256};
@@ -27,16 +28,32 @@ fn build(source: &str, consumer: KirConsumer) -> calckernel::KirModule {
     let checked = check(&SourceFile::new("profile-kir.ck", source));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("MIR lowering");
-    build_kir_module(
-        &mir,
-        KirBuildConfig {
+    let config = KirBuildConfig {
+        consumer,
+        overflow_mode: KirOverflowMode::Unchecked,
+        bounds_mode: KirBoundsMode::Unchecked,
+        sanitizer_mode: KirSanitizerMode::Disabled,
+    };
+    if matches!(
+        consumer,
+        KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+    ) {
+        let profile = KirTargetProfileBuilder::native(
             consumer,
-            overflow_mode: KirOverflowMode::Unchecked,
-            bounds_mode: KirBoundsMode::Unchecked,
-            sanitizer_mode: KirSanitizerMode::Disabled,
-        },
-    )
-    .expect("KIR construction")
+            "x86_64-unknown-linux-gnu",
+            64,
+            true,
+            KirNativeCpuPolicy::Baseline,
+            "baseline-unqueried",
+            Vec::new(),
+        )
+        .expect("deterministic native target profile builder")
+        .build()
+        .expect("deterministic native target profile");
+        build_kir_module_with_profile(&mir, config, profile).expect("native KIR construction")
+    } else {
+        build_kir_module(&mir, config).expect("KIR construction")
+    }
 }
 
 #[test]
@@ -199,7 +216,7 @@ fn profile_kir_schema3_golden_digest_should_be_stable() {
 
     assert_eq!(
         actual,
-        "d55d81bf5819ae28db1ef3b919a8e0ef61bac276ec42e9c03edef89f19ad06b8"
+        "66fcf336677f53bf492245367fba26652535ac9d69d24a99f434461406467be9"
     );
 }
 

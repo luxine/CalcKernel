@@ -74,10 +74,38 @@ case "$ckc_target" in
 esac
 
 ckc_projects="lld"
-ckc_runtime_args=()
 if [[ "$ckc_profile" == "oracle" ]]; then
   ckc_projects="clang;lld"
-  ckc_runtime_args=(
+fi
+
+mkdir -p "$ckc_build_dir/source" "$ckc_build_dir/build"
+tar -xf "$ckc_archive" --strip-components=1 -C "$ckc_build_dir/source"
+
+ckc_cmake_args=(
+  -S "$ckc_build_dir/source/llvm"
+  -B "$ckc_build_dir/build"
+  -G Ninja
+  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_INSTALL_PREFIX="$ckc_prefix"
+  -DLLVM_ENABLE_PROJECTS="$ckc_projects"
+  -DLLVM_TARGETS_TO_BUILD="$ckc_llvm_target"
+  -DLLVM_ENABLE_ASSERTIONS=ON
+  -DBUILD_SHARED_LIBS=OFF
+  -DLLVM_BUILD_LLVM_DYLIB=OFF
+  -DLLVM_LINK_LLVM_DYLIB=OFF
+  -DLLVM_ENABLE_RTTI=OFF
+  -DLLVM_ENABLE_EH=OFF
+  -DLLVM_ENABLE_ZLIB=OFF
+  -DLLVM_ENABLE_ZSTD=OFF
+  -DLLVM_ENABLE_LIBXML2=OFF
+  -DLLVM_ENABLE_TERMINFO=OFF
+  -DLLVM_ENABLE_LIBEDIT=OFF
+  -DLLVM_INCLUDE_TESTS=OFF
+  -DLLVM_INCLUDE_BENCHMARKS=OFF
+  -DLLVM_INCLUDE_EXAMPLES=OFF
+)
+if [[ "$ckc_profile" == "oracle" ]]; then
+  ckc_cmake_args+=(
     -DLLVM_ENABLE_RUNTIMES=compiler-rt
     -DCOMPILER_RT_BUILD_BUILTINS=OFF
     -DCOMPILER_RT_BUILD_SANITIZERS=OFF
@@ -88,38 +116,12 @@ if [[ "$ckc_profile" == "oracle" ]]; then
     -DCOMPILER_RT_BUILD_PROFILE=ON
   )
 fi
-
-ckc_platform_args=()
 if [[ "$ckc_target" == *-apple-darwin ]]; then
-  ckc_platform_args=(-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
+  ckc_cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
 elif [[ "$ckc_target" == *-unknown-linux-gnu ]]; then
-  ckc_platform_args=(-DLLVM_STATIC_LINK_CXX_STDLIB=ON)
+  ckc_cmake_args+=(-DLLVM_STATIC_LINK_CXX_STDLIB=ON)
 fi
-
-mkdir -p "$ckc_build_dir/source" "$ckc_build_dir/build"
-tar -xf "$ckc_archive" --strip-components=1 -C "$ckc_build_dir/source"
-
-cmake -S "$ckc_build_dir/source/llvm" -B "$ckc_build_dir/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$ckc_prefix" \
-  -DLLVM_ENABLE_PROJECTS="$ckc_projects" \
-  -DLLVM_TARGETS_TO_BUILD="$ckc_llvm_target" \
-  -DLLVM_ENABLE_ASSERTIONS=ON \
-  -DBUILD_SHARED_LIBS=OFF \
-  -DLLVM_BUILD_LLVM_DYLIB=OFF \
-  -DLLVM_LINK_LLVM_DYLIB=OFF \
-  -DLLVM_ENABLE_RTTI=OFF \
-  -DLLVM_ENABLE_EH=OFF \
-  -DLLVM_ENABLE_ZLIB=OFF \
-  -DLLVM_ENABLE_ZSTD=OFF \
-  -DLLVM_ENABLE_LIBXML2=OFF \
-  -DLLVM_ENABLE_TERMINFO=OFF \
-  -DLLVM_ENABLE_LIBEDIT=OFF \
-  -DLLVM_INCLUDE_TESTS=OFF \
-  -DLLVM_INCLUDE_BENCHMARKS=OFF \
-  -DLLVM_INCLUDE_EXAMPLES=OFF \
-  "${ckc_runtime_args[@]}" \
-  "${ckc_platform_args[@]}"
+cmake "${ckc_cmake_args[@]}"
 
 if [[ -n "$ckc_jobs" ]]; then
   cmake --build "$ckc_build_dir/build" --parallel "$ckc_jobs"
