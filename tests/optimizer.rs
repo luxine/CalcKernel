@@ -48,3 +48,6 @@ mod pgo;
 
 #[path = "optimizer/multiversion.rs"]
 mod multiversion;
+
+#[path = "optimizer/tuning.rs"]
+mod tuning;
