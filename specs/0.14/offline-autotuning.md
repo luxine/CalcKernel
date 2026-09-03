@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 1a7f89b841ce3033063ef4a8ac458aa695c8a8c0
+Accepted base revision: v0.13 repaired candidate 4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,9 +13,17 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`1a7f89b841ce3033063ef4a8ac458aa695c8a8c0` was reviewed file by file and integrated
+`4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
+
+For inherited schema-7 runtime samples on Linux, the unchanged native kernel-call
+loop is measured with current-thread CPU time. The existing one-allowed-CPU affinity
+scope and four conditioning batches remain required. This excludes time while a
+hosted runner does not schedule the benchmark thread without excluding kernel work;
+non-Linux hosts retain the monotonic timer defined by schema 7. Historical schema-8
+reports and their evidence are copied into the uploadable replay bundle before the
+retained checker runs, so a checker rejection remains diagnosable.
 
 ## 1. Objective
 

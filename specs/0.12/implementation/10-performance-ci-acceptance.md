@@ -35,6 +35,8 @@ disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个 time
 相同的 unmeasured conditioning batch；Linux release-performance 测量必须在整个三 channel
 case 期间固定到继承 allowed affinity set 中的一个 CPU，并在 case 后恢复。timed
 sample/order/statistic/threshold 保持不变。
+Linux runtime sample 使用当前线程 `CLOCK_THREAD_CPUTIME_ID` 差值包围未改变的 native call
+loop，排除共享宿主未调度该线程的时间；非 Linux 开发运行保留 monotonic wall-clock fallback。
 
 性能失败或显式 diagnostic 模式还必须在同一 worker 对 schema 7 报告中的 48 个 scalar 动态库
 逐一核对整库 SHA 并反汇编：32 个 candidate/current/replay-Clang measured artifacts、8 个 v0.11

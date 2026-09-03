@@ -684,6 +684,10 @@ input 分开固定；correctness 覆盖二者及 adversarial input，PGO timed r
 - 每个 host 等价 stripping/signing 边界后的 distributed `ckc` archive 相对 exact 0.12
   不超过 15%。
 
+在权威 Linux performance worker 上，继承的 schema-7 runtime sample 在 same-core affinity
+scope 内使用当前线程 `CLOCK_THREAD_CPUTIME_ID` 差值。它保留未改变 kernel-call loop 消耗的全部
+CPU 时间，只排除共享宿主未调度该线程的区间；非 Linux 开发运行保留 monotonic wall-clock。
+
 全部 timed channel 保持固定 warm-up、rotating order、upper median、stability、equivalence、
 fail-fast。CPU detection、dynamic loading、symbol resolution 在 steady-state timed call 前完成，
 另有 untimed record 证明 resolver 只运行一次。stability 失败代表 evidence 无效，不能重跑到

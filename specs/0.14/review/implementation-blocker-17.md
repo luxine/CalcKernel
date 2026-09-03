@@ -33,3 +33,10 @@ rejects a redirected root, and retains the complete directory beside
 No timed work, conditioning count, sample count, statistic, threshold, corpus,
 oracle, tuning/search policy, language/ABI rule, or platform/job matrix changed.
 V0.14 requires a fresh exact-SHA cumulative CI run.
+
+## Superseded scope
+
+Exact V0.14 run `33808562098` subsequently reproduced the same two-band instability
+despite this same-core repair. The timing portion and the V0.12/V0.13 pins in this
+resolution are superseded by `implementation-blocker-18.md`; the self-contained
+schema-8 evidence closure remains required.

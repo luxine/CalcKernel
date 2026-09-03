@@ -846,6 +846,12 @@ On stable x86-64 and AArch64 workers:
 - the distributed `ckc` archive is at most 15 percent larger than exact 0.12 on
   each host after equivalent stripping/signing boundaries.
 
+On the authoritative Linux performance workers, inherited schema-7 runtime
+samples use the current thread's `CLOCK_THREAD_CPUTIME_ID` delta inside the
+same-core affinity scope. This retains all CPU time consumed by the unchanged
+kernel-call loop while excluding intervals when the shared host does not
+schedule it. Non-Linux development runs keep monotonic wall-clock timing.
+
 All timed channels retain the fixed warm-up, rotating-order, upper-median,
 stability, equivalence, and fail-fast rules. CPU detection, dynamic loading, and
 symbol resolution occur before steady-state timed calls, but a separate untimed

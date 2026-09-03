@@ -809,9 +809,13 @@ The vector corpus includes at least contiguous map/zip, strict element-wise f64,
 integer transform, exact modular integer reduction where target legal, SLP from
 small unrolled bodies, runtime noalias versioning, and specialization that
 exposes a fixed slice length. Memory-bound and compute-bound cases are both
-required. Changing a source, compiler identity, threshold, statistic, target
-profile, or exclusion rule is a reviewed contract change and cannot be done to
-make a candidate pass.
+required. On the authoritative Linux performance workers, each runtime sample
+uses the current thread's `CLOCK_THREAD_CPUTIME_ID` delta inside the same-core
+scope. It retains all CPU time consumed by the kernel-call loop while excluding
+intervals in which the shared host does not schedule that thread; non-Linux
+development runs keep monotonic wall-clock timing. Changing a source, compiler
+identity, threshold, statistic, target profile, or exclusion rule is a reviewed
+contract change and cannot be done to make a candidate pass.
 
 ## Completion and future boundary
 

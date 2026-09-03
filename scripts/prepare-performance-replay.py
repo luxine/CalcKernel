@@ -18,10 +18,10 @@ import sys
 import tarfile
 import tomllib
 
-V013_COMMIT = "1a7f89b841ce3033063ef4a8ac458aa695c8a8c0"
-V013_MANIFEST_SHA256 = "3bda3e936f46527120ca5aeb22c45fa3cb330299a11bfbec945e71ad7624e564"
-V012_COMMIT = "11ca3dbb1220710f184e3c32c873b267d24a22cb"
-V012_MANIFEST_SHA256 = "39ac2622bd827d902e827945b3394e804a93eaa9798619901170d2b0d2c5cb65"
+V013_COMMIT = "4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a"
+V013_MANIFEST_SHA256 = "6d97a1fdc6d1f5bb388c592ae26502f34b2ab7b2018a6d12507183948bf354ea"
+V012_COMMIT = "ea822e343967baa2db113d3dd8f429d8dfdfa779"
+V012_MANIFEST_SHA256 = "f4cde938185c1cfd4f63f3c281c36a7924cddc6963b331e63e1cde8984597eb0"
 BASELINE_COMMIT = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
 BASELINE_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
 V010_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
@@ -416,10 +416,6 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
             historical_evidence = historical_report.parent / evidence_name
             if not historical_evidence.is_dir() or historical_evidence.is_symlink():
                 raise ValueError("historical v0.13 evidence directory is missing or indirect")
-            run([
-                "python3", "-B", "scripts/check-native-performance.py",
-                historical_report,
-            ], source, replay_environment)
             destination = out / "schema8"
             destination.mkdir()
             shutil.copy2(historical_report, destination / "v0.13-results.json")
@@ -448,6 +444,10 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
                         raise ValueError(f"{environment_name} contains a symlink")
                     if entry.is_file():
                         shutil.copy2(entry, target_bundle / entry.name)
+            run([
+                "python3", "-B", "scripts/check-native-performance.py",
+                historical_report,
+            ], source, replay_environment)
             historical = [
                 ("historicalReport", "schema8/v0.13-results.json"),
                 ("historicalChecker", "check-native-performance-v013.py"),

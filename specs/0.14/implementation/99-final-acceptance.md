@@ -9,7 +9,7 @@
 ## A. 分支、基线与版本
 
 - [ ] 当前分支为 `design/v0.14-offline-autotuning`，独立 worktree 正确且 clean；`main` 未自动合并。
-- [ ] 最终 accepted v0.13 revision `1a7f89b841ce3033063ef4a8ac458aa695c8a8c0` 已完成逐差异审计与等价集成。
+- [ ] 最终 accepted v0.13 revision `4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a` 已完成逐差异审计与等价集成。
 - [ ] Cargo/CLI/docs 为 0.14.0；CKCOBJ04/cache 5、tune schemas 1、KIR 3、bridge 4、Native ABI 1、Runtime ABI 2 一致。
 - [ ] 未创建/移动 tag 或 GitHub Release；所有本地/远程证据绑定同一最终 SHA。
 
@@ -68,7 +68,8 @@
 
 - [ ] exact 七 case、三 partitions、CK/C/Rust oracle、recipe/evidence identities 与 historical/fresh schema8 closure 完整；
   schema8 evidence 自包含累计 schema7 JSON 与其 `measurement-*` 目录，Linux schema7 每个 case 在 conditioning
-  前固定到 inherited affinity 允许的一颗 CPU，并在结束后恢复。
+  前固定到 inherited affinity 允许的一颗 CPU、在结束后恢复，并以 current-thread CPU time 计量不变的
+  native kernel-call loop；historical schema8 report/evidence 在 checker 前已复制到可上传目录。
 - [ ] held-out 相对 faster v0.13 baseline geo >=5%，selected each >=2%，validation/held-out each slowdown <=2%。
 - [ ] 相对 faster hand SIMD geo >=98%、each >=92%；两个 domain case 相对 generic C/Rust geo >8%。
 - [ ] artifact <=110%；tune-use compile <=10% geo/20% each；ordinary <=3%/8%；archive <=110%。

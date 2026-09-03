@@ -44,13 +44,15 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
    inventory 0 compile/measure 且 bytes exact；canonical first cold 决策被 main/validation/size/resource 共用。
 9. 写 historical/cumulative RED：exact v0.13 retained checker 在 detached commit 验历史 schema8；其 evidence
    root 必须自包含累计 schema 7 JSON 及其引用的 `measurement-*` 目录；candidate 0.14 fresh 重跑全 schema8
-   compatibility；两者不能互相代替或重写。
+   compatibility；historical report/evidence 必须在 checker 前复制到可上传目录；两者不能互相代替或重写。
 10. 写 archive RED：producer exact invocation，POSIX-pax deterministic gzip 仅含排序的 LICENSE、notices、ckc，
     modes 0644/0644/0755，member/content/compression/static-dependency receipt 完整。
 11. 以保留的 native runner 在函数指针循环内部采样并严格校验 `CKPERF/1` 回执，禁止
     Python/FFI 循环开销进入 `elapsedNs`；运行 Python mutation/oracle tests、Rust performance
     contract tests 与 `measure-v014-performance.py --contract-only`；x86-64-v4 精确要求
-    AVX-512 F/BW/CD/DQ/VL，缺少 CD 也必须失败。
+    AVX-512 F/BW/CD/DQ/VL，缺少 CD 也必须失败。Linux 上继承的 schema-7 runtime sample
+    使用 current-thread CPU time，同时保留 single-CPU affinity 与四轮 conditioning；非 Linux
+    继续使用既有 monotonic timer。
 12. 删除所有不属于 report 的 compile/profile/cache/lock scratch，并由 checker 反向证明
     evidence root 的真实普通文件集合精确等于全部 evidence `FileIdentity` 的闭包。
     支持 tier 上再执行完整 collector+checker，其他 host 不伪造性能通过。

@@ -37,7 +37,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`1a7f89b841ce3033063ef4a8ac458aa695c8a8c0`。两者之间的累计提交已按
+`4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -149,4 +149,12 @@ recipe 身份，不接受调优策略。`src/cli/tune.rs` 是薄编排层。
 Exact V0.13 run `33795954634` 暴露的 Linux 跨 vCPU measurement band 与 schema8 累计证据目录
 缺失，按 `specs/0.14/review/implementation-blocker-17.md` 累计闭环：V0.14 继承 same-core case scope、
 self-contained schema8 evidence 与回归，并重钉 exact V0.12/V0.13 replay。门槛、样本、统计、corpus、
+tuning policy、语言/ABI 与十作业拓扑均未改变。
+
+Exact V0.14 run `33808562098` 进一步证明 same-core affinity 不能排除 hosted
+runner 对短测量的 deschedule/throttling 污染。按
+`specs/0.14/review/implementation-blocker-18.md`，继承的 Linux schema-7 runtime
+sample 改用当前线程 CPU time，同时保留原 affinity 与四轮 conditioning；失败的 historical
+schema-8 report/evidence 在 checker 前复制到非隐藏 artifact 目录。V0.13 replay 已重钉到
+`4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a`。门槛、样本、统计、timed work、corpus、
 tuning policy、语言/ABI 与十作业拓扑均未改变。

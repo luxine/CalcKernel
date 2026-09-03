@@ -183,7 +183,7 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
             && runner.contains("if self.name == \"slp_quad\"")
             && runner.contains("for _ in 0..SLP_CONDITIONING_BATCHES")
             && runner.contains(
-                "self.invoke_repeated(batch_iterations)?;\n            }\n        }\n        let start"
+                "self.invoke_repeated(batch_iterations)?;\n            }\n        }\n        let timer = runtime_timer_start()?;"
             ),
         "the four-item SLP kernel must condition the same runner through a fixed ramp before each timed sample"
     );
@@ -223,5 +223,34 @@ fn linux_vector_runtime_gate_should_pin_one_allowed_cpu_before_conditioning() {
                 .unwrap()
                 < measure_case.find("KernelRunner::new").unwrap(),
         "the runtime gate must pin one allowed CPU before runner conditioning and timing"
+    );
+}
+
+#[test]
+fn linux_vector_runtime_gate_should_measure_current_thread_cpu_time() {
+    let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
+        .expect("read vector performance harness");
+    let measure_once = harness
+        .split("fn measure_once(")
+        .nth(1)
+        .and_then(|source| source.split("fn run_batch(").next())
+        .expect("measure_once implementation");
+
+    for required in [
+        "#[cfg(target_os = \"linux\")]\ntype RuntimeTimer = libc::timespec;",
+        "libc::CLOCK_THREAD_CPUTIME_ID",
+        "fn runtime_timer_start()",
+        "fn runtime_timer_elapsed(timer: RuntimeTimer)",
+        "let timer = runtime_timer_start()?;",
+        "runtime_timer_elapsed(timer)?",
+    ] {
+        assert!(
+            harness.contains(required),
+            "the Linux runtime gate must use current-thread CPU time via {required:?}"
+        );
+    }
+    assert!(
+        !measure_once.contains("Instant::now"),
+        "the authoritative Linux runtime sample must not directly use parent wall-clock time"
     );
 }

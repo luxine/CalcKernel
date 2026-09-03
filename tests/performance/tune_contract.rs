@@ -171,14 +171,29 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         "--contract-only",
         "--schema-only",
         "--baseline\", choices=(\"0.13\"",
-        "1a7f89b841ce3033063ef4a8ac458aa695c8a8c0",
-        "3bda3e936f46527120ca5aeb22c45fa3cb330299a11bfbec945e71ad7624e564",
+        "4cbaa0fb970a5ee2112d5d4f54d1a6e0186f875a",
+        "6d97a1fdc6d1f5bb388c592ae26502f34b2ab7b2018a6d12507183948bf354ea",
     ] {
         assert!(
             combined.contains(required),
             "missing schema-9 token {required}"
         );
     }
+}
+
+#[test]
+fn historical_schema_eight_failure_should_retain_report_before_running_checker() {
+    let preparer = read("scripts/prepare-performance-replay.py");
+    let report_copy = preparer
+        .find("shutil.copy2(historical_report, destination / \"v0.13-results.json\")")
+        .expect("historical schema-8 report retention");
+    let checker = preparer
+        .find("\"python3\", \"-B\", \"scripts/check-native-performance.py\",")
+        .expect("historical schema-8 checker invocation");
+    assert!(
+        report_copy < checker,
+        "the historical report must be retained before its checker can fail"
+    );
 }
 
 #[test]
