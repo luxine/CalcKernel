@@ -249,7 +249,7 @@ $profileRuntimeSource = Join-Path $repoRoot "native/profile_runtime/profile_runt
 $profileRuntimePath = Join-Path $runtimeDir $profileRuntimeObject
 $profileRuntimeInclude = Join-Path $repoRoot "native/profile_runtime/include"
 $profileRuntimeRoot = Join-Path $repoRoot "native/profile_runtime"
-& cl.exe /nologo /c /TC /std:c11 /O2 /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
+& cl.exe /nologo /c /TC /O2 /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
 if ($LASTEXITCODE -ne 0) { throw "profile runtime compilation failed: $profileRuntimeSource" }
 $profileRuntimeHash = (Get-FileHash -LiteralPath $profileRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $dispatchRuntimeObject = "dispatch_runtime.obj"

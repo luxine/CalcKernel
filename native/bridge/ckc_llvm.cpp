@@ -4148,10 +4148,10 @@ extern "C" int32_t ckc_llvm_jit_execute(
 #if defined(CKC_LLD_COFF) && \
     (defined(_M_X64) || defined(__x86_64__))
     if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
-        runtime_objects == nullptr || runtime_object_count != 6) {
+        runtime_objects == nullptr || runtime_object_count != 7) {
 #else
     if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
-        runtime_objects == nullptr || runtime_object_count != 5) {
+        runtime_objects == nullptr || runtime_object_count != 6) {
 #endif
         return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                          "LLVM JIT execution input is invalid");
@@ -4170,10 +4170,10 @@ extern "C" int32_t ckc_llvm_jit_execute(
         for (size_t index = 0; index < runtime_object_count; ++index) {
             auto buffer = validated_object_buffer(
                 runtime_objects[index],
-                index == 0 && runtime_object_count == 6
+                index == 0 && runtime_object_count == 7
                     ? "ckc-jit-image-base.o"
                     : "ckc-runtime-" +
-                          std::to_string(index - (runtime_object_count == 6)) +
+                          std::to_string(index - (runtime_object_count == 7)) +
                           ".o",
                 arch);
             if (!buffer) {
