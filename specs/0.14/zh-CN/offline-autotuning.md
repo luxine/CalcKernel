@@ -142,12 +142,18 @@ Profile 是不可变输入。源码变更后重新采集 Profile，仍是单独�
       [--budget <quick|standard|thorough>]
       [--tune-out <decision.cktune>]
       [--no-tune-cache]
+      [--explain-optimization]
 
 默认预算为 standard。现有 `NativeArtifactPaths` 解析定义完整输出集：可执行
 文件只有主输出；动态库包括主库和生成的 C 头文件；Windows 动态库还包括
 Import Library。省略 `--tune-out` 时，决策路径为解析后主输出路径追加
 `.cktune`。显式决策路径必须与所有输出具有相同的规范父目录。提供 target
 时必须规范化为精确宿主三元组；省略时选择同一三元组。
+
+对 `tune build`，`--explain-optimization` 保留普通诊断，并为每个获选
+predicated-update alternative 输出由独立 checker 验证、且在
+[`predicated-update-performance-1.md`](../predicated-update-performance-1.md) 中定义的
+规范 attestation。它不改变 candidate discovery、selection、decision bytes 或 artifact bytes。
 
 所有目标经过规范目标解析后必须彼此不同，也不得与源码、Manifest、驱动、
 Profile、声明输入或者另一目标形成别名。Schema 1 不支持跨目录输出集。决策
@@ -1452,6 +1458,9 @@ fail-closed gate，证明新的 predicated-update 能力确实被选择且具有
 存在。源码为 strict-`f64` Floyd-Warshall kernel，其内层循环采用规范 same-place
 conditional update。两个 channel 的源语言、ABI、safety mode、target、CPU policy、LLVM
 pipeline 与 input generator 完全相同。
+该独立 report 的逐字段定义、recipe、runner、attestation、sampling、evidence closure、checker
+与 CI invocation 的唯一权威是
+[`predicated-update-performance-1.md`](../predicated-update-performance-1.md)。
 
 语料在测量前固定：PGO generation 与 tuning search 使用确定性的 `N=128`、seed-113
 matrix；tuning validation 使用互不重叠的确定性 `N=256`、seed-127 matrix；release timing

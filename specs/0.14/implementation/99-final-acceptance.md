@@ -1,6 +1,9 @@
 # CK 0.14 总验收
 
-本文件是 0.14 候选的唯一总验收清单。所有项目必须由同一最终 candidate SHA 的真实结果支持；
+> **状态：暂停且不可签署。** 本清单尚未吸收当前 predicated-update 优化兑现、独立性能
+> Contract 1 与跨平台修复门槛；必须在本轮任务第 5 步整体重建后才恢复验收权威。
+
+重建完成后，本文件是 0.14 候选的唯一总验收清单。所有项目必须由同一最终 candidate SHA 的真实结果支持；
 阶段日志、旧 CI、partial report、降低阈值或 skipped required capability 不能代签。
 
 ## A. 分支、基线与版本
@@ -71,4 +74,3 @@
 
 动态 SHA、命令输出、test count、toolchain/host identity、CI run/job 与 artifact digest 只写
 `target/acceptance/v0.14/final/` 和 CI artifact，不能回写本文件制造自引用提交。
-

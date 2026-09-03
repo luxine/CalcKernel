@@ -158,6 +158,7 @@ The primary command is:
       [--budget <quick|standard|thorough>]
       [--tune-out <decision.cktune>]
       [--no-tune-cache]
+      [--explain-optimization]
 
 The default budget is standard. Existing `NativeArtifactPaths` resolution defines
 the complete output set: an executable has one primary output; a dynamic library
@@ -166,6 +167,12 @@ has its import library. If `--tune-out` is omitted, the decision path is the
 resolved primary-output path with `.cktune` appended. An explicit decision path
 must have the same canonical parent directory as every output. If `--target` is
 present it must normalize to the exact host triple; omission selects that triple.
+
+For `tune build`, `--explain-optimization` retains ordinary diagnostics and, for
+each selected predicated-update alternative, emits the independently verified
+canonical attestation defined by
+[`predicated-update-performance-1.md`](predicated-update-performance-1.md). It
+does not alter candidate discovery, selection, decision bytes, or artifact bytes.
 
 Every destination must be distinct after canonical destination resolution and
 must not alias any source, manifest, runner, profile, declared input, or another
@@ -1698,6 +1705,9 @@ present. Its source is a strict-`f64` Floyd-Warshall kernel whose inner loop is 
 canonical same-place conditional update. The source language, ABI, safety modes,
 target, CPU policy, LLVM pipeline, and input generator are identical between
 channels.
+The sole field-by-field authority for this independent report, recipe, runner,
+attestation, sampling, evidence closure, checker, and CI invocation is
+[`predicated-update-performance-1.md`](predicated-update-performance-1.md).
 
 The corpus is fixed before measurement: PGO generation and tuning search use a
 deterministic `N=128`, seed-113 matrix; tuning validation uses a disjoint

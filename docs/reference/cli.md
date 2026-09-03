@@ -62,6 +62,8 @@ no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
   apply only to `tune build`; `--tune-use` applies only to `build`.
 - `--print-facts`, `--print-effect-summaries`, and `--explain-optimization`
   write deterministic verified KIR evidence to stderr on inspection-capable commands.
+  `tune build --explain-optimization` additionally emits selected, independently
+  checked predicated-update attestations without changing decision or artifact bytes.
 - `--sanitize-contracts` is accepted only by `run` and
   `build --kind executable`. It inserts Native debugging checks at every unsafe
   function entry and reports `CKR0007`; it is never an ordinary optimization mode.

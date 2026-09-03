@@ -39,6 +39,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
   使用同一不可变 PGO profile；封存 `N=1024` strict-`f64` Floyd-Warshall 在每个稳定 Linux
   宿主上使用 Auto-Tuning 都必须比 PGO-only 至少快 5%。两个 stream 都必须满足同一
   16-of-20 stability rule，validation slowdown 不得超过 2%。
+  闭合 report 与 sampling 契约见
+  [Predicated-Update Performance Contract 1](../../../specs/0.14/predicated-update-performance-1.md)。
 
 - 0.13 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
   2%，单项不超过 5%。

@@ -52,6 +52,8 @@ archiver，Native build 不留下 `.c` 或 `.ll` intermediate。`emit-c` 永不�
   `tune build`；`--tune-use` 只用于 `build`。
 - `--print-facts`、`--print-effect-summaries`、`--explain-optimization` 输出
   deterministic verified KIR evidence。
+  `tune build --explain-optimization` 还会输出获选且经独立 checker 验证的
+  predicated-update attestation，不改变 decision 或 artifact bytes。
 - `--sanitize-contracts` 只用于 `run` 与 `build --kind executable`，在每个 unsafe entry
   进行调试检查；它不是普通优化 mode。
 

@@ -49,6 +49,8 @@ digests, streams, tiers, or capabilities fail the checker.
   strict-`f64` Floyd-Warshall must run at least 5% faster with Auto-Tuning than
   PGO-only on each stable Linux host; either stream must also satisfy the same
   16-of-20 stability rule, and validation slowdown may not exceed 2%.
+  The closed report and sampling contract is
+  [Predicated-Update Performance Contract 1](../../specs/0.14/predicated-update-performance-1.md).
 
 - Ordinary no-PGO 0.13 baseline/native versus exact 0.12 replay: geometric-mean
   slowdown at most 2%, individual slowdown at most 5%.

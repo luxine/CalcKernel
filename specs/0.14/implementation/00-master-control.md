@@ -1,5 +1,9 @@
 # CK 0.14 离线自动调优实施总控
 
+> **状态：暂停且不可执行。** 本总控及其阶段 01–11/99 文档早于当前
+> predicated-update 优化兑现与跨平台修复规范。它们在本轮对抗性审查通过并按用户任务链
+> 第 5 步整体重建前，不是实施或验收权威，也不能签署 v0.14 完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:executing-plans` and execute this plan inline task-by-task. The
 > user explicitly forbids subagent-driven implementation after planning.
@@ -97,7 +101,8 @@ recipe 身份，不接受调优策略。`src/cli/tune.rs` 是薄编排层。
 | 10 | schema 9 corpus、runner/oracles、collector、checker、archive 与本地 performance contract | benches/scripts/performance tests | 09 |
 | 11 | exact-SHA 十作业 CI、六 host/两 performance gate、最终本地与远程验收 | workflow/contracts | 10 |
 
-每个阶段都有同号 `*-task.md` 与 `*-acceptance.md`。`99-final-acceptance.md` 是唯一总验收清单；
+每个阶段都有同号 `*-task.md` 与 `*-acceptance.md`。重建完成后，
+`99-final-acceptance.md` 才恢复为唯一总验收清单；
 阶段通过不能代签 source-aware replay、六平台、性能、exact-SHA CI 或 v0.13 accepted-base 门禁。
 
 ## 提交与执行策略
