@@ -573,6 +573,8 @@ fn differential_vector_loop_should_match_o0_for_zero_short_exact_remainder_and_o
             "product len={len}"
         );
     }
+    drop(o3);
+    drop(o0);
     fs::remove_dir_all(root).expect("remove vector differential directory");
 }
 

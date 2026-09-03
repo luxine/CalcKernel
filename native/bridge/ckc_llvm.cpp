@@ -39,6 +39,7 @@
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Operator.h>
@@ -2928,8 +2929,14 @@ extern "C" int32_t ckc_llvm_builder_cond_branch(
             condition == nullptr || then_block == nullptr || else_block == nullptr) {
             return invalid(error, "LLVM conditional branch input is null");
         }
-        builder->value->CreateCondBr(llvm_value(condition), llvm_block(then_block),
-                                     llvm_block(else_block));
+        llvm::BranchInst *branch = builder->value->CreateCondBr(
+            llvm_value(condition), llvm_block(then_block), llvm_block(else_block));
+        if (llvm_block(then_block)->getName().starts_with("checked.failure") &&
+            llvm_block(else_block)->getName().starts_with("checked.continue")) {
+            llvm::MDBuilder metadata(builder->value->getContext());
+            branch->setMetadata(llvm::LLVMContext::MD_prof,
+                                metadata.createBranchWeights(1, 2000));
+        }
         return CKC_LLVM_OK;
     });
 }
