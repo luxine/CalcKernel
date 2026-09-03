@@ -11,7 +11,7 @@
 - [ ] `main` 未自动合并；未创建/移动 tag，未创建 GitHub Release。
 - [ ] Cargo/lock/CLI/docs 为 0.13.0；LLVM 22.1.8、bridge ABI 4、KIR 3、CKCOBJ03/key+manifest 4、
   Native ABI 1、Runtime ABI 2 与全部 private schema/runtime identity 一致。
-- [ ] exact 0.12 replay 是 `1009bae18d1a1ebd37ee9ee095cab9a965e69df8`；最终 CI/report/证据
+- [ ] exact 0.12 replay 是 `d83805075b0ac8986c895b7a287c84eac509b7f9`；最终 CI/report/证据
   全部绑定同一 candidate SHA。
 
 ## B. 默认行为、语义与 ABI

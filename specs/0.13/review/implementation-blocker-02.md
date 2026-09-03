@@ -20,7 +20,7 @@ ABI, PGO, performance-threshold, corpus, statistic, or required-job relaxation.
 - CK 0.13 pinned v0.12 commit `1c2596da11242704cc6d875e969fc45cf58ea21d`. Subsequent v0.12
   cross-host CI found the defects documented by `specs/0.12/review/implementation-blocker-04.md`.
   The v0.13 design already requires a rebase when the v0.12 candidate changes, so every exact replay
-  owner now pins `1009bae18d1a1ebd37ee9ee095cab9a965e69df8` and its recomputed manifest digest.
+  owner now pins `d83805075b0ac8986c895b7a287c84eac509b7f9` and its recomputed manifest digest.
 
 ## TDD and evidence
 
