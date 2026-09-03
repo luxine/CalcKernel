@@ -94,6 +94,14 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --all-features --locked
+      - name: Verify predicated-update discovery, materialization, attestation, and runner closure
+        run: |
+          cargo test --all-features --locked --test optimizer predicated_update_ -- --nocapture
+          cargo test --all-features --locked --test tune predicated_attestation_ -- --nocapture
+          cargo test --all-features --locked --test native predicated_update_ -- --nocapture
+          cargo test --all-features --locked --test native libraries_embedded_lld_ -- --nocapture
+          cargo test --all-features --locked --test native executable_ -- --nocapture
+          cargo test --all-features --locked --test performance predicated_update_ -- --nocapture
       - name: Execute real profile generation runtime paths
         run: cargo test --all-features --locked --test native profile_generation_ -- --nocapture
       - name: Verify profile runtime object and LLVM void-call behavior
@@ -178,7 +186,16 @@ jobs:
         id: native-suite
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --all-features --locked --test native -- --nocapture
+        run: |
+          cargo test --all-features --locked --test native -- --nocapture
+          cargo test --all-features --locked --test native profile_generation_ -- --nocapture
+          cargo test --all-features --locked --test native profile_runtime_ -- --nocapture
+          cargo test --all-features --locked --test native named_void_call_ -- --nocapture
+          cargo test --all-features --locked --test native libraries_embedded_lld_ -- --nocapture
+          cargo test --all-features --locked --test native executable_ -- --nocapture
+          cargo test --all-features --locked --test native predicated_update_ -- --nocapture
+          cargo test --all-features --locked --test tune publication_ -- --nocapture
+          cargo test --all-features --locked --test cli multiversion_build_should_commit_the_verified_stage09_artifact_bundle -- --nocapture
       - name: Record target, fallback, detector, and named-object capability evidence
         run: |
           mkdir -p target/capability

@@ -827,6 +827,9 @@ fn ci_v014_native_fulfillment_should_run_on_all_six_hosts() {
         "profile_runtime_",
         "profile_generation_",
         "named_void_call_",
+        "libraries_embedded_lld_",
+        "executable_",
+        "predicated_update_",
         "multiversion_build_should_commit_the_verified_stage09_artifact_bundle",
     ] {
         assert!(
@@ -842,6 +845,10 @@ fn ci_v014_native_fulfillment_should_run_on_all_six_hosts() {
         hosts.matches("\n            runner: ").count(),
         6,
         "native host matrix must retain all six target rows"
+    );
+    assert!(
+        hosts.contains("--test tune publication_ -- --nocapture"),
+        "all six hosts must execute publication success/fault coverage"
     );
 }
 

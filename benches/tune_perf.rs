@@ -42,7 +42,9 @@ fn run() -> Result<(), String> {
         .status()
         .map_err(|error| format!("start tuning performance collection: {error}"))?;
     if !status.success() {
-        return Err(format!("tuning performance collection exited with {status}"));
+        return Err(format!(
+            "tuning performance collection exited with {status}"
+        ));
     }
     Ok(())
 }
