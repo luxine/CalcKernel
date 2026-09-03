@@ -1750,29 +1750,32 @@ void attach_x86_integer_reduction_interleave(
     if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
         return;
     }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
     for (llvm::Function &function : module) {
-        if (function.isDeclaration() || function.empty() ||
-            !may_contain_nonlocal_load(function)) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty() ||
+            !may_contain_nonlocal_load(*function)) {
             continue;
         }
         llvm::ValueToValueMapTy clone_map;
         llvm::Function *attached_clone =
-            llvm::CloneFunction(&function, clone_map);
-        attached_clone->removeFromParent();
-        std::unique_ptr<llvm::Function> clone(attached_clone);
+            llvm::CloneFunction(function, clone_map);
         llvm::SmallVector<llvm::AllocaInst *, 16> allocas;
-        for (llvm::Instruction &instruction : clone->getEntryBlock()) {
+        for (llvm::Instruction &instruction :
+             attached_clone->getEntryBlock()) {
             auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
             if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
                 allocas.push_back(alloca);
             }
         }
-        llvm::DominatorTree clone_dominators(*clone);
+        llvm::DominatorTree clone_dominators(*attached_clone);
         if (!allocas.empty()) {
             llvm::PromoteMemToReg(allocas, clone_dominators);
         }
         llvm::LoopInfo clone_loops(clone_dominators);
-        llvm::DominatorTree production_dominators(function);
+        llvm::DominatorTree production_dominators(*function);
         llvm::LoopInfo production_loops(production_dominators);
         for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
             auto *clone_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
@@ -1803,6 +1806,7 @@ void attach_x86_integer_reduction_interleave(
                                                     loop_id);
             }
         }
+        attached_clone->eraseFromParent();
     }
 }
 

@@ -30,13 +30,20 @@ pre-pass mutation rather than CK semantics, the KIR optimizer, or the pinned LLV
 Reduction discovery now:
 
 1. skips functions without a possible non-local load;
-2. clones each remaining function;
-3. runs the temporary `mem2reg` and loop classification only on that detached clone; and
+2. creates an isolated temporary clone of each remaining function;
+3. runs the temporary `mem2reg` and loop classification only on that clone, then erases it; and
 4. maps a proven clone loop back to the corresponding production loop and attaches only the
    required `llvm.loop.interleave.count = 8` metadata.
 
 The production function is otherwise untouched before LLVM's standard O3 pipeline. A structural
 regression requires clone-based discovery and forbids the prior production-module promotion.
+
+The first clone-isolation candidate detached the clone before calling LLVM `PromoteMemToReg`.
+Exact x86-64 Native CI immediately exposed that invalid lifecycle as a `SIGSEGV`. The final form
+snapshots the production function list first, leaves each temporary clone owned by the module while
+LLVM analyzes it, and calls `eraseFromParent` after all mappings have been consumed. Forcing this
+path on the local AArch64 host reproduces the original crash before the lifecycle correction and
+passes the vector-loop Native regression afterward.
 
 ## Acceptance boundary
 
