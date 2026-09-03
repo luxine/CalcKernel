@@ -31,8 +31,8 @@ identity/budget debit、incremental module-global identity collision、no-op fro
 function-identity fallback 与 unreported mutation 测试；不得以减少 verifier/checker 覆盖来通过门槛。
 `integer_cast` differential 必须覆盖 `0`、`i32::MAX`、`i32::MAX + 1` 与 `u32::MAX`；x86
 `modular_reduction` 必须记录稳定的 Native-loop-vectorizer fallback 并以 pinned object
-disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个 timed sample 前执行相同
-unmeasured conditioning batch，timed sample/order/statistic/threshold 保持不变。
+disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个 timed sample 前执行四个
+相同的 unmeasured conditioning batch，timed sample/order/statistic/threshold 保持不变。
 
 性能失败或显式 diagnostic 模式还必须在同一 worker 对 schema 7 报告中的 48 个 scalar 动态库
 逐一核对整库 SHA 并反汇编：32 个 candidate/current/replay-Clang measured artifacts、8 个 v0.11

@@ -134,7 +134,7 @@ fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
 
     for required in [
         "schemaVersion: 8",
-        "d83805075b0ac8986c895b7a287c84eac509b7f9",
+        "d67468feec71a539bc436cc67c5b28d1395d5133",
         "0.13.0",
         "22.1.8",
         "1.90.0",
