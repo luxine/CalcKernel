@@ -844,3 +844,48 @@ fn ci_v014_native_fulfillment_should_run_on_all_six_hosts() {
         "native host matrix must retain all six target rows"
     );
 }
+
+#[test]
+fn ci_v014_predicated_update_should_gate_both_performance_hosts() {
+    let workflow = read(".github/workflows/ci.yml");
+    let performance = workflow
+        .split("  performance:")
+        .nth(1)
+        .expect("performance job");
+    assert_eq!(
+        performance.matches("\n          - arch:").count(),
+        2,
+        "Contract 1 must run on both stable performance hosts"
+    );
+    for required in [
+        "--schema 9 target/ckc-perf/v0.14-results.json",
+        "--task collect-predicated-update --out target/ckc-perf/v0.14-predicated-update-results.json",
+        "scripts/check-v014-predicated-update.py target/ckc-perf/v0.14-predicated-update-results.json --schema-nine target/ckc-perf/v0.14-results.json",
+        "target/ckc-perf/v0.14-predicated-update-results.json",
+        "target/ckc-perf/v014-predicated-update-*",
+    ] {
+        assert!(
+            performance.contains(required),
+            "Contract 1 CI omitted {required:?}"
+        );
+    }
+    let schema_nine = performance
+        .find("--schema 9 target/ckc-perf/v0.14-results.json")
+        .expect("schema-nine checker");
+    let collect = performance
+        .find("--task collect-predicated-update")
+        .expect("Contract 1 collector");
+    let checker = performance
+        .find("scripts/check-v014-predicated-update.py")
+        .expect("Contract 1 checker");
+    assert!(schema_nine < collect && collect < checker);
+    for forbidden in [
+        "continue-on-error: true\n        run: cargo bench --features native-toolchain --bench tune_perf",
+        "if: runner.os == 'Linux'",
+    ] {
+        assert!(
+            !performance.contains(forbidden),
+            "Contract 1 was weakened by {forbidden:?}"
+        );
+    }
+}

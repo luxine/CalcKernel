@@ -2,6 +2,9 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 use calckernel::TuneManifest;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use super::support::oracle::repo_root;
 
 const CASES: [&str; 7] = [
@@ -171,5 +174,75 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
             combined.contains(required),
             "missing schema-9 token {required}"
         );
+    }
+}
+
+#[test]
+fn predicated_update_contract_should_freeze_the_complete_recipe_and_exact_bench_task() {
+    let collector = read("scripts/measure-v014-predicated-update.py");
+    let checker = read("scripts/check-v014-predicated-update.py");
+    let bench = read("benches/tune_perf.rs");
+    for path in [
+        "benches/fixtures/tune/predicated_update.ck",
+        "benches/fixtures/tune/predicated-update-training.tsv",
+        "benches/fixtures/tune/predicated-update-validation.tsv",
+        "benches/fixtures/tune/predicated-update-release.tsv",
+        "benches/tune/workloads/predicated-update.cktune.toml",
+        "benches/tune/runner.rs",
+        "benches/tune_perf.rs",
+        "scripts/measure-v014-predicated-update.py",
+        "scripts/check-v014-predicated-update.py",
+        "specs/0.14/offline-autotuning.md",
+        "specs/0.14/predicated-update-performance-1.md",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+    ] {
+        assert!(collector.contains(path), "collector recipe omitted {path}");
+        assert!(checker.contains(path), "checker recipe omitted {path}");
+    }
+    for required in [
+        "collect-predicated-update",
+        "scripts/measure-v014-predicated-update.py",
+        "--task <collect|collect-predicated-update> --out <report.json>",
+    ] {
+        assert!(
+            bench.contains(required),
+            "bench dispatch omitted {required}"
+        );
+    }
+}
+
+#[test]
+fn predicated_update_contract_should_keep_collection_and_judgment_separate() {
+    let collector = read("scripts/measure-v014-predicated-update.py");
+    let checker = read("scripts/check-v014-predicated-update.py");
+    for forbidden in ["95/100", "102/100", "acceptance"] {
+        assert!(
+            !collector.to_ascii_lowercase().contains(forbidden),
+            "collector contains acceptance token {forbidden:?}"
+        );
+    }
+    assert!(!checker.contains("import measure_v014_predicated_update"));
+    for required in [
+        "check_recipe",
+        "check_command",
+        "check_cache_scratch",
+        "check_publication_locks",
+        "check_decision_and_attestation",
+        "check_timing_split",
+        "check_evidence_inventory",
+    ] {
+        assert!(checker.contains(required), "checker omitted {required}");
+    }
+    #[cfg(unix)]
+    for path in [
+        "scripts/measure-v014-predicated-update.py",
+        "scripts/check-v014-predicated-update.py",
+    ] {
+        let mode = fs::metadata(repo_root().join(path))
+            .expect("script metadata")
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0, "{path} must be executable");
     }
 }

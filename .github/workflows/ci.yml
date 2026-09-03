@@ -303,6 +303,8 @@ jobs:
           python3 scripts/check-native-performance.py --schema 8 --compat-candidate 0.14.0 --candidate-sha "$GITHUB_SHA" target/ckc-perf/v0.13-results.json 2>&1 | tee target/ckc-perf/checker-schema8.log
           cargo bench --features native-toolchain --bench tune_perf -- --task collect --out target/ckc-perf/v0.14-results.json 2>&1 | tee target/ckc-perf/benchmark-schema9.log
           python3 scripts/check-native-performance.py --schema 9 target/ckc-perf/v0.14-results.json 2>&1 | tee target/ckc-perf/checker-schema9.log
+          cargo bench --features native-toolchain --bench tune_perf -- --task collect-predicated-update --out target/ckc-perf/v0.14-predicated-update-results.json 2>&1 | tee target/ckc-perf/benchmark-predicated-update.log
+          python3 scripts/check-v014-predicated-update.py target/ckc-perf/v0.14-predicated-update-results.json --schema-nine target/ckc-perf/v0.14-results.json 2>&1 | tee target/ckc-perf/checker-predicated-update.log
       - name: Diagnose performance on the same worker without replacing the failed gate
         if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
         timeout-minutes: 20
@@ -337,4 +339,6 @@ jobs:
             target/performance-diagnostics
             target/ckc-perf/v0.14-results.json
             target/ckc-perf/v014-measurement-*
+            target/ckc-perf/v0.14-predicated-update-results.json
+            target/ckc-perf/v014-predicated-update-*
           if-no-files-found: error

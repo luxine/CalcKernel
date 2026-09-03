@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf, process::Command};
 
-const USAGE: &str = "cargo bench --features native-toolchain --bench tune_perf -- --task collect --out <target/ckc-perf/v0.14-results.json>";
+const USAGE: &str = "cargo bench --features native-toolchain --bench tune_perf -- --task <collect|collect-predicated-update> --out <report.json>";
 
 fn main() {
     if let Err(error) = run() {
@@ -19,23 +19,30 @@ fn run() -> Result<(), String> {
         println!("{USAGE}");
         return Ok(());
     }
-    if arguments
-        .windows(2)
-        .all(|pair| pair != ["--task", "collect"])
-        || !arguments.iter().any(|argument| argument == "--out")
+    let [task_flag, task, out_flag, _output] = arguments.as_slice() else {
+        return Err("the release harness requires exact --task <task> --out <path>".to_string());
+    };
+    if task_flag != "--task"
+        || out_flag != "--out"
+        || !matches!(task.as_str(), "collect" | "collect-predicated-update")
     {
-        return Err("the release harness requires --task collect --out <path>".to_string());
+        return Err("the release harness received a noncanonical task request".to_string());
     }
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let script = if task == "collect-predicated-update" {
+        "scripts/measure-v014-predicated-update.py"
+    } else {
+        "scripts/measure-v014-performance.py"
+    };
     let status = Command::new("python3")
         .arg("-B")
-        .arg(repository.join("scripts/measure-v014-performance.py"))
+        .arg(repository.join(script))
         .args(arguments)
         .current_dir(&repository)
         .status()
-        .map_err(|error| format!("start schema-9 measurement: {error}"))?;
+        .map_err(|error| format!("start tuning performance collection: {error}"))?;
     if !status.success() {
-        return Err(format!("schema-9 measurement exited with {status}"));
+        return Err(format!("tuning performance collection exited with {status}"));
     }
     Ok(())
 }
