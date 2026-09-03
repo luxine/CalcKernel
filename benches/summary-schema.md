@@ -64,7 +64,8 @@ reduction, SLP, runtime no-alias versioning, and fixed-length specialization.
 `domainFactSuites` covers no-alias and fixed-length contract advantages. Both
 separate checked and unchecked modes and use `rotating-three-channel-v1` with
 three warm-up rows, twenty sample rows, seven calls per sample, identical input,
-the fixed batch, and upper medians.
+the fixed batch, the upper median of each seven-call sample, and the upper median
+of the twenty stored samples.
 
 Vector channels are candidate/C SIMD/Rust SIMD. Every item must reach 90% of
 the faster oracle and the per-mode geometric mean must reach 95%. Domain

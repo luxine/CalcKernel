@@ -61,6 +61,32 @@ fn oracle_sampling_should_rotate_three_channels_with_the_same_fail_fast_contract
 }
 
 #[test]
+fn oracle_sample_repetitions_should_use_the_upper_median_instead_of_a_fast_outlier() {
+    let mut durations = [4_u128, 8, 8, 8, 8, 8, 8].into_iter();
+    let sample = replay_api::sample_upper_median::<(), 7>(|| {
+        Ok(durations.next().expect("seven frozen durations"))
+    })
+    .unwrap();
+
+    assert_eq!(sample, 8);
+}
+
+#[test]
+fn oracle_sample_repetitions_should_stop_at_the_first_measurement_error() {
+    let mut calls = 0;
+    let sample = replay_api::sample_upper_median::<&str, 7>(|| {
+        calls += 1;
+        if calls == 3 {
+            Err("measurement failed")
+        } else {
+            Ok(8)
+        }
+    });
+
+    assert_eq!((sample, calls), (Err("measurement failed"), 3));
+}
+
+#[test]
 fn replay_preparation_should_validate_pinned_sources_and_actual_compiler_output() {
     let output = std::process::Command::new("python3")
         .arg(super::support::oracle::repo_root().join("tests/performance/runtime_replay_test.py"))

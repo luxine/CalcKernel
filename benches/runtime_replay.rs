@@ -52,6 +52,18 @@ pub fn sample_three_channels<E>(
     sample_rotating_channels(warmup, iterations, call)
 }
 
+pub fn sample_upper_median<E, const SAMPLES: usize>(
+    mut call: impl FnMut() -> Result<u128, E>,
+) -> Result<u128, E> {
+    assert!(SAMPLES > 0, "an upper median requires at least one sample");
+    let mut samples = [0_u128; SAMPLES];
+    for sample in &mut samples {
+        *sample = call()?;
+    }
+    samples.sort_unstable();
+    Ok(samples[SAMPLES / 2])
+}
+
 fn rotating_round<const CHANNELS: usize>(round: usize) -> [usize; CHANNELS] {
     std::array::from_fn(|offset| (round % CHANNELS + offset) % CHANNELS)
 }
