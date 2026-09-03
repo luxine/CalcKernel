@@ -869,12 +869,12 @@ int32_t finish_target_machine(llvm::orc::JITTargetMachineBuilder &builder,
                               CkcLlvmTarget **out,
                               CkcLlvmError *error) {
     builder.setRelocationModel(llvm::Reloc::PIC_);
-    if (builder.getTargetTriple().isOSBinFormatMachO()) {
-        // JIT defaults to Large on x86-64, whose Mach-O calls still use
-        // absolute text relocations even with PIC. The same object must also
-        // be loadable by dyld without writing its executable pages.
-        builder.setCodeModel(llvm::CodeModel::Small);
-    }
+    // The ORC builder may default to Large on x86-64. CK keeps every JIT
+    // dependency in the same object graph, while emitted PIC objects are
+    // linked as ordinary host libraries/executables. Small therefore
+    // preserves the required reachability on every host and avoids Large
+    // model address-materialization overhead in hot kernels.
+    builder.setCodeModel(llvm::CodeModel::Small);
     auto target_machine = builder.createTargetMachine();
     if (!target_machine) {
         return set_llvm_error(error, target_machine.takeError());
