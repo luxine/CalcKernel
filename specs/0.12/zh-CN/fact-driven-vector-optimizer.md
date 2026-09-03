@@ -657,8 +657,11 @@ object 会使两项 gate 失败。
 Vector corpus 至少包含 contiguous map/zip、strict element-wise f64、integer transform、
 target legal 时的 exact modular integer reduction、来自小型 unrolled body 的 SLP、runtime
 noalias versioning，以及暴露 fixed slice length 的 specialization。Memory-bound 与 compute-
-bound case 都是必需的。修改 source、compiler identity、threshold、statistic、target profile
-或 exclusion rule 属于需要评审的契约变更，不得为使候选通过而修改。
+bound case 都是必需的。在权威 Linux performance worker 上，每个 runtime sample 在 same-core
+scope 内使用当前线程的 `CLOCK_THREAD_CPUTIME_ID` 差值；它保留 kernel-call loop 消耗的全部 CPU
+时间，只排除共享宿主未调度该线程的区间。非 Linux 开发运行保留 monotonic wall-clock。修改
+source、compiler identity、threshold、statistic、target profile 或 exclusion rule 属于需要评审的
+契约变更，不得为使候选通过而修改。
 
 ## 完成条件与未来边界
 

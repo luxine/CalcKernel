@@ -1,5 +1,9 @@
 # Implementation blocker 09: repaired scheduler migration and cumulative evidence retention
 
+> The affinity portion is superseded by `implementation-blocker-10.md`; the
+> next cumulative AArch64 run proved that same-core scope alone does not remove
+> shared-host descheduling from runtime wall-clock evidence.
+
 Date: 2026-09-04
 
 ## Finding

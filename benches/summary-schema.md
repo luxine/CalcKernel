@@ -74,6 +74,9 @@ the faster generic oracle by 5%. Checked and unchecked result digests must
 match. `oracleIdentity` pins the manifest, compiler versions, strict math,
 differential audit, and UB audit. `oracleArtifacts` retains all 60 actual
 libraries with exact suite/case/mode/channel names, bytes, and SHA-256.
+On Linux, every stored runtime duration is the current thread CPU-time delta
+around the unchanged native call loop inside its same-core affinity scope;
+shared-host descheduling is excluded without removing kernel CPU work.
 
 ### Object size and source-to-object time
 
@@ -99,7 +102,7 @@ failing candidate never authorizes weakening this schema.
 report for candidate `0.13.0`. It embeds the independently checked schema-7
 report above, so schema 8 extends rather than replaces every 0.12 cumulative
 gate. The report binds the exact candidate SHA and compiler bytes; exact 0.12
-commit `11ca3dbb1220710f184e3c32c873b267d24a22cb`, compiler, replay manifest, and
+commit `ea822e343967baa2db113d3dd8f429d8dfdfa779`, compiler, replay manifest, and
 deterministic distribution archive; LLVM/Clang 22.1.8 and its compiler-rt
 profile runtime; Rust 1.90.0; host hardware; and a canonical enhanced-tier
 capability manifest. Missing enhanced hardware is a failed required gate, not a
