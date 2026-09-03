@@ -78,6 +78,57 @@ impl LinuxCpuAffinityGuard {
 }
 
 #[cfg(target_os = "linux")]
+type RuntimeTimer = libc::timespec;
+
+#[cfg(target_os = "linux")]
+fn runtime_timer_start() -> Result<RuntimeTimer, String> {
+    let mut value = std::mem::MaybeUninit::<libc::timespec>::uninit();
+    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, value.as_mut_ptr()) } != 0 {
+        return Err(format!(
+            "read Linux thread CPU time before runtime sample: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(unsafe { value.assume_init() })
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_timer_elapsed(timer: RuntimeTimer) -> Result<u128, String> {
+    let end = runtime_timer_start()?;
+    let start_ns = runtime_timespec_ns(timer)?;
+    let end_ns = runtime_timespec_ns(end)?;
+    Ok(end_ns
+        .checked_sub(start_ns)
+        .ok_or_else(|| "Linux thread CPU clock moved backwards".to_string())?
+        .max(1))
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_timespec_ns(value: libc::timespec) -> Result<u128, String> {
+    let seconds = u128::try_from(value.tv_sec)
+        .map_err(|_| "Linux thread CPU time contains negative seconds".to_string())?;
+    let nanos = u128::try_from(value.tv_nsec)
+        .map_err(|_| "Linux thread CPU time contains negative nanoseconds".to_string())?;
+    if nanos >= 1_000_000_000 {
+        return Err("Linux thread CPU time contains invalid nanoseconds".into());
+    }
+    Ok(seconds * 1_000_000_000 + nanos)
+}
+
+#[cfg(not(target_os = "linux"))]
+type RuntimeTimer = Instant;
+
+#[cfg(not(target_os = "linux"))]
+fn runtime_timer_start() -> Result<RuntimeTimer, String> {
+    Ok(Instant::now())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn runtime_timer_elapsed(timer: RuntimeTimer) -> Result<u128, String> {
+    Ok(timer.elapsed().as_nanos().max(1))
+}
+
+#[cfg(target_os = "linux")]
 impl Drop for LinuxCpuAffinityGuard {
     fn drop(&mut self) {
         unsafe {
@@ -842,9 +893,9 @@ impl KernelRunner {
                 self.invoke_repeated(batch_iterations)?;
             }
         }
-        let start = Instant::now();
+        let timer = runtime_timer_start()?;
         self.invoke_repeated(batch_iterations)?;
-        let elapsed = start.elapsed().as_nanos().max(1);
+        let elapsed = runtime_timer_elapsed(timer)?;
         let actual = self.result_digest();
         if actual != expected {
             return Err(format!(

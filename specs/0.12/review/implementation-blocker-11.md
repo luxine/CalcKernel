@@ -1,5 +1,9 @@
 # Implementation blocker 11: same-core Linux runtime measurement
 
+> Superseded by `implementation-blocker-12.md`: the next cumulative AArch64
+> run proved that same-core affinity alone did not exclude shared-host
+> descheduling from runtime wall-clock samples.
+
 Date: 2026-09-04
 
 ## Finding

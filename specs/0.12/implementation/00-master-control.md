@@ -123,6 +123,12 @@ conditioning 不足以让四元素 `slp_quad` 在计时前稳定进入持续执�
 继承的 allowed affinity set 选择一个 CPU，并在整个三 channel case 期间固定线程，之后恢复
 原 affinity；现有四批 conditioning 因而稳定作用于同一 core。所有 timed work 与门槛不变。
 
+后续 v0.14 exact AArch64 cumulative replay 又证明 same-core affinity 仍不能排除共享宿主暂停
+vCPU 对 wall-clock runtime 样本的污染。复诊与闭环见
+`specs/0.12/review/implementation-blocker-12.md`。Linux runtime 样本现在以当前线程 CPU time
+包围未改变的 kernel-call loop，只排除未获 CPU 的宿主停顿；threshold、timed work、样本、
+rotation、upper median、corpus 与平台矩阵均不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。

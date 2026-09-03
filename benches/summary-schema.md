@@ -74,6 +74,9 @@ the faster generic oracle by 5%. Checked and unchecked result digests must
 match. `oracleIdentity` pins the manifest, compiler versions, strict math,
 differential audit, and UB audit. `oracleArtifacts` retains all 60 actual
 libraries with exact suite/case/mode/channel names, bytes, and SHA-256.
+On Linux, every stored runtime duration is the current thread CPU-time delta
+around the unchanged native call loop inside its same-core affinity scope;
+shared-host descheduling is excluded without removing kernel CPU work.
 
 ### Object size and source-to-object time
 
