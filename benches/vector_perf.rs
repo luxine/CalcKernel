@@ -24,6 +24,7 @@ const ORACLE_BATCH_ITERATIONS: usize = 20_000_000;
 const QUICK_BATCH_ITERATIONS: usize = 200_000;
 const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
+const SLP_CONDITIONING_BATCHES: usize = 4;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
     "8bc9a23daf5f625b9855dd58c3e31e111ee58c8dc00dadc8af7be767c18f5f06";
@@ -769,7 +770,9 @@ impl KernelRunner {
 
     fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
         if self.name == "slp_quad" {
-            self.invoke_repeated(batch_iterations)?;
+            for _ in 0..SLP_CONDITIONING_BATCHES {
+                self.invoke_repeated(batch_iterations)?;
+            }
         }
         let start = Instant::now();
         self.invoke_repeated(batch_iterations)?;

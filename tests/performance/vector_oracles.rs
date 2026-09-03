@@ -187,10 +187,13 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         );
     }
     assert!(
-        runner.contains("if self.name == \"slp_quad\"")
-            && runner
-                .contains("self.invoke_repeated(batch_iterations)?;\n        }\n        let start"),
-        "the four-item SLP kernel must condition the same runner before each timed sample"
+        harness.contains("const SLP_CONDITIONING_BATCHES: usize = 4;")
+            && runner.contains("if self.name == \"slp_quad\"")
+            && runner.contains("for _ in 0..SLP_CONDITIONING_BATCHES")
+            && runner.contains(
+                "self.invoke_repeated(batch_iterations)?;\n            }\n        }\n        let start"
+            ),
+        "the four-item SLP kernel must condition the same runner through a fixed ramp before each timed sample"
     );
     assert!(
         harness.contains("sample_upper_median::<_, SAMPLE_REPETITIONS>")

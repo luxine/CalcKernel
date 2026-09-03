@@ -110,6 +110,13 @@ corpus、样本数、统计量或 required job topology；只修复资源生命�
 语义、target-specific lowering、冷路径 metadata，并为三个 channel 增加相同的 unmeasured
 short-kernel conditioning。
 
+候选 `d83805075b0ac8986c895b7a287c84eac509b7f9` 的 AArch64 performance job 又证明单次
+conditioning 不足以让四元素 `slp_quad` 在计时前稳定进入持续执行状态：CK、C、Rust 三方都
+出现约 `4.42 ms`/`8.84 ms` 的同源双峰，Rust 样本恰好跨过稳定性门禁。复诊和闭环见
+`specs/0.12/review/implementation-blocker-10.md`。本轮把三个 channel 的计时前 conditioning
+固定为四个相同的 unmeasured batch；timed batch、样本数、轮换顺序、统计量、阈值、corpus 与
+平台矩阵均保持不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。
