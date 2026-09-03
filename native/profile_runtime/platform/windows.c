@@ -129,7 +129,9 @@ static int32_t __ck_profile_platform_publish(
   if (directory_path == (wchar_t *)0 ||
       !ck_profile_directory_identity(directory_path, directory_characters,
                                      identity_first, identity_second)) {
-    return CKC_PROFILE_PLATFORM_ERROR;
+    return directory_path == (wchar_t *)0
+               ? CKC_PROFILE_PLATFORM_OPEN_ERROR
+               : CKC_PROFILE_PLATFORM_IDENTITY_ERROR;
   }
   wchar_t *temporary = directory_path + directory_characters + 1;
   wchar_t *completed = temporary + directory_characters + 64;
@@ -170,32 +172,33 @@ static int32_t __ck_profile_platform_publish(
   if (file == INVALID_HANDLE_VALUE) {
     return GetLastError() == ERROR_FILE_EXISTS
                ? CKC_PROFILE_PLATFORM_COLLISION
-               : CKC_PROFILE_PLATFORM_ERROR;
+               : CKC_PROFILE_PLATFORM_CREATE_ERROR;
   }
   uint64_t offset = 0;
-  int failed = 0;
+  int32_t failure = CKC_PROFILE_PLATFORM_OK;
   while (offset < length) {
     const uint64_t remaining = length - offset;
     const DWORD request = remaining > 0x7fffffffu ? 0x7fffffffu : (DWORD)remaining;
     DWORD written = 0;
     if (!WriteFile(file, bytes + offset, request, &written, (void *)0) ||
         written == 0u) {
-      failed = 1;
+      failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
       break;
     }
     offset += written;
   }
-  if (!failed && !FlushFileBuffers(file)) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK && !FlushFileBuffers(file)) {
+    failure = CKC_PROFILE_PLATFORM_FILE_SYNC_ERROR;
   }
   if (!CloseHandle(file)) {
-    failed = 1;
+    failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
   }
-  if (!failed && !MoveFileExW(temporary, completed, MOVEFILE_WRITE_THROUGH)) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK &&
+      !MoveFileExW(temporary, completed, MOVEFILE_WRITE_THROUGH)) {
+    failure = CKC_PROFILE_PLATFORM_RENAME_ERROR;
   }
-  if (failed) {
+  if (failure != CKC_PROFILE_PLATFORM_OK) {
     (void)DeleteFileW(temporary);
   }
-  return failed ? CKC_PROFILE_PLATFORM_ERROR : CKC_PROFILE_PLATFORM_OK;
+  return failure;
 }

@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -101,14 +102,14 @@ static int32_t __ck_profile_platform_publish(
   const int directory_fd =
       ck_profile_open_directory(directory, directory_length);
   if (directory_fd < 0) {
-    return CKC_PROFILE_PLATFORM_ERROR;
+    return CKC_PROFILE_PLATFORM_OPEN_ERROR;
   }
   struct stat metadata;
   if (fstat(directory_fd, &metadata) != 0 ||
       (uint64_t)metadata.st_dev != identity_first ||
       (uint64_t)metadata.st_ino != identity_second) {
     close(directory_fd);
-    return CKC_PROFILE_PLATFORM_ERROR;
+    return CKC_PROFILE_PLATFORM_IDENTITY_ERROR;
   }
   char temporary[49];
   char completed[53];
@@ -118,36 +119,38 @@ static int32_t __ck_profile_platform_publish(
                           0600);
   if (file < 0) {
     close(directory_fd);
-    return CKC_PROFILE_PLATFORM_COLLISION;
+    return errno == EEXIST ? CKC_PROFILE_PLATFORM_COLLISION
+                           : CKC_PROFILE_PLATFORM_CREATE_ERROR;
   }
   uint64_t offset = 0;
-  int failed = 0;
+  int32_t failure = CKC_PROFILE_PLATFORM_OK;
   while (offset < length) {
     const size_t request =
         length - offset > (uint64_t)SIZE_MAX ? SIZE_MAX : (size_t)(length - offset);
     const ssize_t written = write(file, bytes + offset, request);
     if (written <= 0) {
-      failed = 1;
+      failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
       break;
     }
     offset += (uint64_t)written;
   }
-  if (!failed && fsync(file) != 0) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK && fsync(file) != 0) {
+    failure = CKC_PROFILE_PLATFORM_FILE_SYNC_ERROR;
   }
   if (close(file) != 0) {
-    failed = 1;
+    failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
   }
-  if (!failed && renameatx_np(directory_fd, temporary, directory_fd, completed,
-                               RENAME_EXCL) != 0) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK &&
+      renameatx_np(directory_fd, temporary, directory_fd, completed,
+                   RENAME_EXCL) != 0) {
+    failure = CKC_PROFILE_PLATFORM_RENAME_ERROR;
   }
-  if (!failed && fsync(directory_fd) != 0) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK && fsync(directory_fd) != 0) {
+    failure = CKC_PROFILE_PLATFORM_DIRECTORY_SYNC_ERROR;
   }
-  if (failed) {
+  if (failure != CKC_PROFILE_PLATFORM_OK) {
     (void)unlinkat(directory_fd, temporary, 0);
   }
   close(directory_fd);
-  return failed ? CKC_PROFILE_PLATFORM_ERROR : CKC_PROFILE_PLATFORM_OK;
+  return failure;
 }

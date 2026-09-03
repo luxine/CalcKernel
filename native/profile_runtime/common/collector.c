@@ -1,11 +1,6 @@
-#include <stdatomic.h>
-
+#include "ckc_profile_atomic.h"
 #include "ckc_profile_runtime.h"
 #include "ckc_profile_platform.h"
-
-#if ATOMIC_LLONG_LOCK_FREE != 2
-#error CK profile generation requires lock-free 64-bit atomics
-#endif
 
 #define CK_PROFILE_NO_OFFSET 0xffffffffu
 
@@ -25,14 +20,14 @@ typedef struct CkProfileState {
   uint32_t directory_length;
   uint64_t identity_first;
   uint64_t identity_second;
-  _Atomic uint64_t *counters;
+  CkProfileAtomicU64 *counters;
 } CkProfileState;
 
 static CkProfileState ck_profile_state;
-static _Atomic uint32_t ck_profile_initialize_state;
-static _Atomic uint32_t ck_profile_flush_state;
-static _Atomic uint32_t ck_profile_overflowed;
-static _Atomic uint32_t ck_profile_incomplete;
+static CkProfileAtomicU32 ck_profile_initialize_state;
+static CkProfileAtomicU32 ck_profile_flush_state;
+static CkProfileAtomicU32 ck_profile_overflowed;
+static CkProfileAtomicU32 ck_profile_incomplete;
 
 static int ck_profile_equal(const uint8_t *left, const uint8_t *right,
                             uint64_t length) {
@@ -89,19 +84,17 @@ int32_t __ck_profile_initialize(
     uint32_t run_id_offset, uint32_t overflow_flag_offset,
     uint32_t digest_offset, const uint8_t *directory, uint32_t directory_length,
     uint64_t directory_identity_first, uint64_t directory_identity_second) {
-  uint32_t state = atomic_load_explicit(&ck_profile_initialize_state,
-                                        memory_order_acquire);
+  uint32_t state =
+      ck_profile_atomic_u32_load_acquire(&ck_profile_initialize_state);
   if (state >= 2u) {
     return state == 2u ? CKC_PROFILE_RUNTIME_STATUS_OK
                        : CKC_PROFILE_RUNTIME_STATUS_CONFIG;
   }
   uint32_t expected = 0u;
-  if (!atomic_compare_exchange_strong_explicit(
-          &ck_profile_initialize_state, &expected, 1u, memory_order_acq_rel,
-          memory_order_acquire)) {
+  if (!ck_profile_atomic_u32_compare_exchange_acq_rel(
+          &ck_profile_initialize_state, &expected, 1u)) {
     do {
-      state = atomic_load_explicit(&ck_profile_initialize_state,
-                                   memory_order_acquire);
+      state = ck_profile_atomic_u32_load_acquire(&ck_profile_initialize_state);
     } while (state == 1u);
     return state == 2u ? CKC_PROFILE_RUNTIME_STATUS_OK
                        : CKC_PROFILE_RUNTIME_STATUS_CONFIG;
@@ -124,16 +117,17 @@ int32_t __ck_profile_initialize(
   ck_profile_state.identity_second = directory_identity_second;
   int32_t status = ck_profile_validate_config();
   if (status == CKC_PROFILE_RUNTIME_STATUS_OK && counter_count != 0u) {
-    const uint64_t bytes = (uint64_t)counter_count * sizeof(_Atomic uint64_t);
+    const uint64_t bytes =
+        (uint64_t)counter_count * sizeof(CkProfileAtomicU64);
     ck_profile_state.counters =
-        (_Atomic uint64_t *)__ck_profile_platform_allocate(bytes);
+        (CkProfileAtomicU64 *)__ck_profile_platform_allocate(bytes);
     if (ck_profile_state.counters == (void *)0) {
       status = CKC_PROFILE_RUNTIME_STATUS_MEMORY;
     }
   }
-  atomic_store_explicit(&ck_profile_initialize_state,
-                        status == CKC_PROFILE_RUNTIME_STATUS_OK ? 2u : 3u,
-                        memory_order_release);
+  ck_profile_atomic_u32_store_release(
+      &ck_profile_initialize_state,
+      status == CKC_PROFILE_RUNTIME_STATUS_OK ? 2u : 3u);
   return status;
 }
 
@@ -141,27 +135,24 @@ static void ck_profile_add_cell(uint32_t index, uint64_t value) {
   if (value == 0u) {
     return;
   }
-  if (atomic_load_explicit(&ck_profile_initialize_state,
-                           memory_order_acquire) != 2u ||
+  if (ck_profile_atomic_u32_load_acquire(&ck_profile_initialize_state) != 2u ||
       index >= ck_profile_state.counter_count) {
     return;
   }
-  _Atomic uint64_t *counter = &ck_profile_state.counters[index];
-  uint64_t observed = atomic_load_explicit(counter, memory_order_relaxed);
+  CkProfileAtomicU64 *counter = &ck_profile_state.counters[index];
+  uint64_t observed = ck_profile_atomic_u64_load_relaxed(counter);
   for (;;) {
     if (observed == UINT64_MAX) {
-      atomic_store_explicit(&ck_profile_overflowed, 1u, memory_order_relaxed);
+      ck_profile_atomic_u32_store_relaxed(&ck_profile_overflowed, 1u);
       return;
     }
     const uint64_t next = value > UINT64_MAX - observed
                               ? UINT64_MAX
                               : observed + value;
-    if (atomic_compare_exchange_weak_explicit(
-            counter, &observed, next, memory_order_relaxed,
-            memory_order_relaxed)) {
+    if (ck_profile_atomic_u64_compare_exchange_relaxed(counter, &observed,
+                                                        next)) {
       if (next == UINT64_MAX) {
-        atomic_store_explicit(&ck_profile_overflowed, 1u,
-                              memory_order_relaxed);
+        ck_profile_atomic_u32_store_relaxed(&ck_profile_overflowed, 1u);
       }
       return;
     }
@@ -238,7 +229,7 @@ void __ck_profile_observe_u32(uint32_t site_index, uint32_t value) {
 
 void __ck_profile_observe_trip(uint32_t site_index, uint64_t value) {
   if (value > UINT32_MAX) {
-    atomic_store_explicit(&ck_profile_incomplete, 1u, memory_order_relaxed);
+    ck_profile_atomic_u32_store_relaxed(&ck_profile_incomplete, 1u);
     value = UINT32_MAX;
   }
   __ck_profile_observe_u32(site_index, (uint32_t)value);
@@ -260,10 +251,10 @@ static void ck_profile_digest_shard(void) {
 
 static int32_t ck_profile_materialize(const uint8_t run_id[16]) {
   uint32_t overflowed =
-      atomic_load_explicit(&ck_profile_overflowed, memory_order_relaxed);
+      ck_profile_atomic_u32_load_relaxed(&ck_profile_overflowed);
   for (uint32_t index = 0; index < ck_profile_state.counter_count; ++index) {
-    const uint64_t value = atomic_load_explicit(&ck_profile_state.counters[index],
-                                                memory_order_relaxed);
+    const uint64_t value =
+        ck_profile_atomic_u64_load_relaxed(&ck_profile_state.counters[index]);
     ck_profile_store_u64_be(
         ck_profile_state.shard + ck_profile_state.counter_offsets[index], value);
     overflowed |= value == UINT64_MAX;
@@ -278,8 +269,8 @@ static int32_t ck_profile_materialize(const uint8_t run_id[16]) {
     const uint32_t first = ck_profile_state.site_first[site];
     const uint32_t count = ck_profile_state.site_counts[site];
     for (uint32_t cell = 0; cell < count; ++cell) {
-      saturated |= atomic_load_explicit(&ck_profile_state.counters[first + cell],
-                                        memory_order_relaxed) == UINT64_MAX;
+      saturated |= ck_profile_atomic_u64_load_relaxed(
+                       &ck_profile_state.counters[first + cell]) == UINT64_MAX;
     }
     ck_profile_state.shard[saturation] = saturated;
   }
@@ -289,7 +280,7 @@ static int32_t ck_profile_materialize(const uint8_t run_id[16]) {
   ck_profile_state.shard[ck_profile_state.overflow_flag_offset] =
       overflowed != 0u;
   ck_profile_state.shard[ck_profile_state.overflow_flag_offset + 1u] =
-      atomic_load_explicit(&ck_profile_incomplete, memory_order_relaxed) != 0u;
+      ck_profile_atomic_u32_load_relaxed(&ck_profile_incomplete) != 0u;
   ck_profile_digest_shard();
 
   uint8_t expected[32];
@@ -307,27 +298,23 @@ static int32_t ck_profile_materialize(const uint8_t run_id[16]) {
 }
 
 int32_t __ck_profile_flush(void) {
-  uint32_t terminal = atomic_load_explicit(&ck_profile_flush_state,
-                                           memory_order_acquire);
+  uint32_t terminal = ck_profile_atomic_u32_load_acquire(&ck_profile_flush_state);
   if (terminal >= 2u) {
     return terminal == 2u ? CKC_PROFILE_RUNTIME_STATUS_OK
                           : (int32_t)(terminal - 3u);
   }
   uint32_t expected = 0u;
-  if (!atomic_compare_exchange_strong_explicit(
-          &ck_profile_flush_state, &expected, 1u, memory_order_acq_rel,
-          memory_order_acquire)) {
+  if (!ck_profile_atomic_u32_compare_exchange_acq_rel(
+          &ck_profile_flush_state, &expected, 1u)) {
     do {
-      terminal = atomic_load_explicit(&ck_profile_flush_state,
-                                      memory_order_acquire);
+      terminal = ck_profile_atomic_u32_load_acquire(&ck_profile_flush_state);
     } while (terminal == 1u);
     return terminal == 2u ? CKC_PROFILE_RUNTIME_STATUS_OK
                           : (int32_t)(terminal - 3u);
   }
 
   int32_t status =
-      atomic_load_explicit(&ck_profile_initialize_state, memory_order_acquire) ==
-              2u
+      ck_profile_atomic_u32_load_acquire(&ck_profile_initialize_state) == 2u
           ? CKC_PROFILE_RUNTIME_STATUS_OK
           : CKC_PROFILE_RUNTIME_STATUS_CONFIG;
   for (uint32_t attempt = 0;
@@ -355,9 +342,8 @@ int32_t __ck_profile_flush(void) {
     status = attempt == 15u ? CKC_PROFILE_RUNTIME_STATUS_WRITE
                             : CKC_PROFILE_RUNTIME_STATUS_OK;
   }
-  atomic_store_explicit(
+  ck_profile_atomic_u32_store_release(
       &ck_profile_flush_state,
-      status == CKC_PROFILE_RUNTIME_STATUS_OK ? 2u : (uint32_t)status + 3u,
-      memory_order_release);
+      status == CKC_PROFILE_RUNTIME_STATUS_OK ? 2u : (uint32_t)status + 3u);
   return status;
 }

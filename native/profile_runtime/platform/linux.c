@@ -11,6 +11,7 @@
 #define CK_LINUX_PROT_READ 1
 #define CK_LINUX_PROT_WRITE 2
 #define CK_LINUX_RENAME_NOREPLACE 1
+#define CK_LINUX_EEXIST 17
 
 #if defined(__x86_64__)
 #define CK_SYS_WRITE 1
@@ -185,14 +186,14 @@ static int32_t __ck_profile_platform_publish(
   const int directory_fd =
       ck_profile_open_directory(directory, directory_length);
   if (directory_fd < 0) {
-    return CKC_PROFILE_PLATFORM_ERROR;
+    return CKC_PROFILE_PLATFORM_OPEN_ERROR;
   }
   CkLinuxStatIdentity metadata;
   if (ck_linux_call3(CK_SYS_FSTAT, directory_fd,
                      (long)(uintptr_t)&metadata, 0) < 0 ||
       metadata.device != identity_first || metadata.inode != identity_second) {
     (void)ck_linux_call3(CK_SYS_CLOSE, directory_fd, 0, 0);
-    return CKC_PROFILE_PLATFORM_ERROR;
+    return CKC_PROFILE_PLATFORM_IDENTITY_ERROR;
   }
   char temporary[49];
   char completed[53];
@@ -204,10 +205,11 @@ static int32_t __ck_profile_platform_publish(
       0600, 0, 0);
   if (file < 0) {
     (void)ck_linux_call3(CK_SYS_CLOSE, directory_fd, 0, 0);
-    return CKC_PROFILE_PLATFORM_COLLISION;
+    return file == -CK_LINUX_EEXIST ? CKC_PROFILE_PLATFORM_COLLISION
+                                    : CKC_PROFILE_PLATFORM_CREATE_ERROR;
   }
   uint64_t offset = 0;
-  int failed = 0;
+  int32_t failure = CKC_PROFILE_PLATFORM_OK;
   while (offset < length) {
     const uint64_t remaining = length - offset;
     const long request =
@@ -215,31 +217,33 @@ static int32_t __ck_profile_platform_publish(
     const long written = ck_linux_call3(
         CK_SYS_WRITE, file, (long)(uintptr_t)(bytes + offset), request);
     if (written <= 0) {
-      failed = 1;
+      failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
       break;
     }
     offset += (uint64_t)written;
   }
-  if (!failed && ck_linux_call3(CK_SYS_FSYNC, file, 0, 0) < 0) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK &&
+      ck_linux_call3(CK_SYS_FSYNC, file, 0, 0) < 0) {
+    failure = CKC_PROFILE_PLATFORM_FILE_SYNC_ERROR;
   }
   if (ck_linux_call3(CK_SYS_CLOSE, file, 0, 0) < 0) {
-    failed = 1;
+    failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
   }
-  if (!failed && ck_linux_syscall6(
-                     CK_SYS_RENAMEAT2, directory_fd,
-                     (long)(uintptr_t)temporary, directory_fd,
-                     (long)(uintptr_t)completed, CK_LINUX_RENAME_NOREPLACE,
-                     0) < 0) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK &&
+      ck_linux_syscall6(CK_SYS_RENAMEAT2, directory_fd,
+                        (long)(uintptr_t)temporary, directory_fd,
+                        (long)(uintptr_t)completed,
+                        CK_LINUX_RENAME_NOREPLACE, 0) < 0) {
+    failure = CKC_PROFILE_PLATFORM_RENAME_ERROR;
   }
-  if (!failed && ck_linux_call3(CK_SYS_FSYNC, directory_fd, 0, 0) < 0) {
-    failed = 1;
+  if (failure == CKC_PROFILE_PLATFORM_OK &&
+      ck_linux_call3(CK_SYS_FSYNC, directory_fd, 0, 0) < 0) {
+    failure = CKC_PROFILE_PLATFORM_DIRECTORY_SYNC_ERROR;
   }
-  if (failed) {
+  if (failure != CKC_PROFILE_PLATFORM_OK) {
     (void)ck_linux_call3(CK_SYS_UNLINKAT, directory_fd,
                          (long)(uintptr_t)temporary, 0);
   }
   (void)ck_linux_call3(CK_SYS_CLOSE, directory_fd, 0, 0);
-  return failed ? CKC_PROFILE_PLATFORM_ERROR : CKC_PROFILE_PLATFORM_OK;
+  return failure;
 }

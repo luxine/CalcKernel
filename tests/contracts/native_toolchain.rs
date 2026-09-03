@@ -889,6 +889,76 @@ fn linux_profile_runtime_hex_should_avoid_mixed_signedness_under_gcc_werror() {
 }
 
 #[test]
+fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
+    let root = repo_root();
+    let header_path = root.join("native/profile_runtime/include/ckc_profile_atomic.h");
+    assert!(header_path.is_file(), "missing profile atomic abstraction");
+    let header = fs::read_to_string(header_path).expect("read profile atomic abstraction");
+    let collector = read("native/profile_runtime/common/collector.c");
+    let provenance = read("native/profile_runtime/provenance.toml");
+
+    for forbidden in [
+        "<stdatomic.h>",
+        "_Atomic",
+        "atomic_load_explicit",
+        "atomic_store_explicit",
+        "atomic_compare_exchange",
+    ] {
+        assert!(
+            !collector.contains(forbidden),
+            "collector must route {forbidden:?} through ckc_profile_atomic.h"
+        );
+    }
+    for required in [
+        "ATOMIC_LLONG_LOCK_FREE == 2",
+        "InterlockedCompareExchange",
+        "InterlockedExchange",
+        "InterlockedCompareExchange64",
+        "CkProfileAtomicU32",
+        "CkProfileAtomicU64",
+    ] {
+        assert!(
+            header.contains(required),
+            "atomic header missing {required:?}"
+        );
+    }
+    assert!(
+        provenance.contains("include/ckc_profile_atomic.h"),
+        "profile runtime provenance must bind the atomic header"
+    );
+}
+
+#[test]
+fn profile_runtime_platforms_should_name_every_durable_failure_step() {
+    let header = read("native/profile_runtime/include/ckc_profile_platform.h");
+    let combined = [
+        read("native/profile_runtime/platform/linux.c"),
+        read("native/profile_runtime/platform/darwin.c"),
+        read("native/profile_runtime/platform/windows.c"),
+    ]
+    .join("\n");
+
+    for required in [
+        "CKC_PROFILE_PLATFORM_OPEN_ERROR",
+        "CKC_PROFILE_PLATFORM_IDENTITY_ERROR",
+        "CKC_PROFILE_PLATFORM_CREATE_ERROR",
+        "CKC_PROFILE_PLATFORM_WRITE_ERROR",
+        "CKC_PROFILE_PLATFORM_FILE_SYNC_ERROR",
+        "CKC_PROFILE_PLATFORM_RENAME_ERROR",
+        "CKC_PROFILE_PLATFORM_DIRECTORY_SYNC_ERROR",
+    ] {
+        assert!(
+            header.contains(required),
+            "platform header missing {required:?}"
+        );
+        assert!(
+            combined.contains(required),
+            "platform implementations do not report {required:?}"
+        );
+    }
+}
+
+#[test]
 fn tune_cli_host_runner_should_not_use_the_pinned_clang_oracle() {
     let tune_cli = read("tests/cli/tune.rs");
     let fixture = tune_cli

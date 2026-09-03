@@ -1,7 +1,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
+
+use sha2::Digest;
 
 use calckernel::{
     BoundsMode, EmitLlvmOptions, KirConsumer, NativeArtifactKind, NativeArtifactPaths,
@@ -32,6 +35,30 @@ fn native_object(source: &str) -> NativeObject {
         .optimize(&target, NativeOptimizationLevel::O3)
         .expect("optimize native object");
     target.emit_object(module).expect("emit native object")
+}
+
+#[test]
+fn profile_runtime_object_should_match_manifest_and_avoid_unfrozen_symbols() {
+    let object = Path::new(env!("CKC_PROFILE_RUNTIME_OBJECT"));
+    let bytes = fs::read(object).expect("read profile runtime object");
+    assert_eq!(
+        format!("{:x}", sha2::Sha256::digest(&bytes)),
+        env!("CKC_PROFILE_RUNTIME_SHA256")
+    );
+
+    if NativePlatform::host() == NativePlatform::Darwin {
+        let output = Command::new("nm")
+            .arg("-u")
+            .arg(object)
+            .output()
+            .expect("inspect profile runtime symbols");
+        assert!(output.status.success(), "nm failed: {output:?}");
+        let symbols = String::from_utf8(output.stdout).expect("nm output is UTF-8");
+        assert!(
+            !symbols.contains("_fstat$INODE64"),
+            "profile runtime contains an unfrozen Darwin symbol: {symbols}"
+        );
+    }
 }
 
 #[test]
