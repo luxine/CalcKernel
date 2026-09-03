@@ -760,6 +760,11 @@ microkernel, every channel executes four identical unmeasured batches. This
 short-kernel conditioning is recorded in the pinned manifest and applies to CK,
 C, and Rust equally; it does not change the three warm-up rows, twenty timed
 rows, seven timed calls, batch identity, order, statistic, or threshold.
+On Linux release-performance hosts, each three-channel case is measured while
+the benchmark thread is pinned to one CPU selected from its inherited allowed
+affinity set. The original affinity set is restored after the case. This keeps
+all channels and their conditioning on the same core without changing timed
+work or granting any channel a different execution environment.
 
 The release gates are cumulative:
 
