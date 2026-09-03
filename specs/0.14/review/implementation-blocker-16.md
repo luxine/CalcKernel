@@ -1,5 +1,9 @@
 # Implementation blocker 16: cumulative V0.12/V0.13 performance repair
 
+> Superseded by `implementation-blocker-17.md`, which records the residual
+> scheduler migration and schema-8 retention defects found by the next exact
+> V0.13 run and pins the replacement candidates.
+
 Date: 2026-09-04
 
 ## Finding

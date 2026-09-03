@@ -13,7 +13,7 @@
 实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
 `.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
 `65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
-`d67468feec71a539bc436cc67c5b28d1395d5133`，不得用移动分支、tag 或本机现有二进制代替。
+`11ca3dbb1220710f184e3c32c873b267d24a22cb`，不得用移动分支、tag 或本机现有二进制代替。
 
 目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
 移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
@@ -118,8 +118,13 @@ GCC `-Werror` 拒绝 profile-runtime 的 mixed-signedness 条件表达式；Darw
 runtime 引用 `_fstat$INODE64`，但 freestanding `libSystem.tbd` 未导出该符号；同时 v0.13 仍
 replay 已被 v0.12 后续 CI 证明有缺陷的旧候选。复诊与闭环见
 `specs/0.13/review/implementation-blocker-02.md`。v0.13 已继承 v0.12 blocker 04 的修复并将
-exact replay 重钉到 `d67468feec71a539bc436cc67c5b28d1395d5133`；语言/ABI、PGO 语义、
+exact replay 重钉到 `11ca3dbb1220710f184e3c32c873b267d24a22cb`；语言/ABI、PGO 语义、
 schema 8 门槛、corpus、统计与 required job topology 均不变。
 
 Native 阶段使用仓库固定 LLVM/Clang 22.1.8 prefix 与 Rust 1.90.0。若本机缺失 prefix，先按
 README/bootstrap manifest 恢复；阶段 03 之后的 Native acceptance 不能因此跳过。
+
+Exact run `33795954634` 的双 performance 失败复诊见
+`specs/0.13/review/implementation-blocker-09.md`：Linux schema 7 case 现在从 conditioning 到计时
+固定在 inherited affinity 允许的一颗 CPU，schema 8 evidence 同时保留累计 schema 7 JSON 与其
+引用的 `measurement-*` 目录。该闭环未改变 timed work、样本、统计量、门槛、corpus 或平台矩阵。

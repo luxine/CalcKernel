@@ -42,8 +42,9 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
    standard <=30 min/bounds、RSS <=2x、cache <=4 GiB；Linux direct-child wait4 receipt 两侧同协议。
 8. 写 determinism RED：distinct empty cold cache 的 choice/plan/object/link/published identity 一致，warm locked
    inventory 0 compile/measure 且 bytes exact；canonical first cold 决策被 main/validation/size/resource 共用。
-9. 写 historical/cumulative RED：exact v0.13 retained checker 在 detached commit 验历史 schema8；candidate 0.14
-   fresh 重跑全 schema8 compatibility；两者不能互相代替或重写。
+9. 写 historical/cumulative RED：exact v0.13 retained checker 在 detached commit 验历史 schema8；其 evidence
+   root 必须自包含累计 schema 7 JSON 及其引用的 `measurement-*` 目录；candidate 0.14 fresh 重跑全 schema8
+   compatibility；两者不能互相代替或重写。
 10. 写 archive RED：producer exact invocation，POSIX-pax deterministic gzip 仅含排序的 LICENSE、notices、ckc，
     modes 0644/0644/0755，member/content/compression/static-dependency receipt 完整。
 11. 以保留的 native runner 在函数指针循环内部采样并严格校验 `CKPERF/1` 回执，禁止

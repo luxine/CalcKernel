@@ -193,3 +193,35 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         "each seven-call vector sample must reject minority scheduler outliers via its upper median"
     );
 }
+
+#[test]
+fn linux_vector_runtime_gate_should_pin_one_allowed_cpu_before_conditioning() {
+    let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
+        .expect("read vector performance harness");
+    let measure_case = harness
+        .split("fn measure_case(")
+        .nth(1)
+        .and_then(|source| source.split("type MapUnchecked").next())
+        .expect("measure_case implementation");
+
+    for required in [
+        "#[cfg(target_os = \"linux\")]\nstruct LinuxCpuAffinityGuard",
+        "libc::sched_getaffinity",
+        "libc::CPU_ISSET",
+        "libc::sched_setaffinity",
+        "impl Drop for LinuxCpuAffinityGuard",
+    ] {
+        assert!(
+            harness.contains(required),
+            "the Linux performance gate must preserve and pin an allowed CPU via {required:?}"
+        );
+    }
+    assert!(
+        measure_case.contains("let _affinity = LinuxCpuAffinityGuard::pin_current()?;")
+            && measure_case
+                .find("LinuxCpuAffinityGuard::pin_current")
+                .unwrap()
+                < measure_case.find("KernelRunner::new").unwrap(),
+        "the runtime gate must pin one allowed CPU before runner conditioning and timing"
+    );
+}

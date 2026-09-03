@@ -29,6 +29,73 @@ const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
     "416bdfc206ab8199093bbb14b6d6987b7156ffe488651b50d626542657caec30";
 
+#[cfg(target_os = "linux")]
+struct LinuxCpuAffinityGuard {
+    previous: libc::cpu_set_t,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxCpuAffinityGuard {
+    fn pin_current() -> Result<Self, String> {
+        let mut previous = std::mem::MaybeUninit::<libc::cpu_set_t>::zeroed();
+        if unsafe {
+            libc::sched_getaffinity(
+                0,
+                std::mem::size_of::<libc::cpu_set_t>(),
+                previous.as_mut_ptr(),
+            )
+        } != 0
+        {
+            return Err(format!(
+                "read Linux CPU affinity before performance measurement: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let previous = unsafe { previous.assume_init() };
+        let current = unsafe { libc::sched_getcpu() };
+        let selected = if current >= 0 && unsafe { libc::CPU_ISSET(current as usize, &previous) } {
+            current as usize
+        } else {
+            (0..libc::CPU_SETSIZE as usize)
+                .find(|cpu| unsafe { libc::CPU_ISSET(*cpu, &previous) })
+                .ok_or_else(|| "Linux performance affinity has no allowed CPU".to_string())?
+        };
+        let mut pinned = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+        unsafe {
+            libc::CPU_ZERO(&mut pinned);
+            libc::CPU_SET(selected, &mut pinned);
+        }
+        if unsafe { libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &pinned) }
+            != 0
+        {
+            return Err(format!(
+                "pin Linux performance measurement to CPU {selected}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(Self { previous })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxCpuAffinityGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &self.previous);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+struct LinuxCpuAffinityGuard;
+
+#[cfg(not(target_os = "linux"))]
+impl LinuxCpuAffinityGuard {
+    fn pin_current() -> Result<Self, String> {
+        Ok(Self)
+    }
+}
+
 pub(super) struct VectorPerformanceReport {
     pub target_profile_digest: String,
     pub rust_version: String,
@@ -612,6 +679,7 @@ fn measure_case(
     prefixes: [&'static str; 3],
     config: &Config,
 ) -> Result<OracleCase, String> {
+    let _affinity = LinuxCpuAffinityGuard::pin_current()?;
     let mut runners = [
         KernelRunner::new(paths[0], "kernel", name, checked)?,
         KernelRunner::new(paths[1], "ck_oracle_kernel", name, checked)?,

@@ -99,7 +99,7 @@ failing candidate never authorizes weakening this schema.
 report for candidate `0.13.0`. It embeds the independently checked schema-7
 report above, so schema 8 extends rather than replaces every 0.12 cumulative
 gate. The report binds the exact candidate SHA and compiler bytes; exact 0.12
-commit `d67468feec71a539bc436cc67c5b28d1395d5133`, compiler, replay manifest, and
+commit `11ca3dbb1220710f184e3c32c873b267d24a22cb`, compiler, replay manifest, and
 deterministic distribution archive; LLVM/Clang 22.1.8 and its compiler-rt
 profile runtime; Rust 1.90.0; host hardware; and a canonical enhanced-tier
 capability manifest. Missing enhanced hardware is a failed required gate, not a
