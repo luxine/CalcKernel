@@ -1453,3 +1453,18 @@ fn native_toolchain_bridge_should_define_owned_c_abi_results() {
         assert!(repo_root().join(path).is_file(), "missing {path}");
     }
 }
+
+#[test]
+fn x86_integer_reduction_handoff_should_pin_backend_interleave_width() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "attach_x86_integer_reduction_interleave",
+        "llvm.loop.interleave.count",
+        "CKC_X86_REDUCTION_INTERLEAVE = 8",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "x86 integer-reduction handoff omitted {required}"
+        );
+    }
+}
