@@ -580,6 +580,9 @@ pub fn run_kir_pass_pipeline(
                     reason: fallback.reason.stable_name().to_string(),
                 });
             }
+            if !module.profile.vector_operations_enabled() {
+                continue;
+            }
             for descriptor in canonical
                 .loops
                 .iter()
