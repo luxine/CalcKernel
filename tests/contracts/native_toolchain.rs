@@ -1064,7 +1064,7 @@ fn write_executable(path: &Path, source: &str) {
 }
 
 #[test]
-fn darwin_target_should_override_the_jit_large_code_model_for_shared_objects() {
+fn native_pic_target_should_override_the_jit_large_code_model_for_shared_objects() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let creation = bridge
         .split("extern \"C\" int32_t ckc_llvm_target_create_host(")
@@ -1076,7 +1076,11 @@ fn darwin_target_should_override_the_jit_large_code_model_for_shared_objects() {
     assert!(creation.contains("builder->setRelocationModel(llvm::Reloc::PIC_)"));
     assert!(
         creation.contains("builder->setCodeModel(llvm::CodeModel::Small)"),
-        "Mach-O needs an explicit small code model: JIT Large + PIC emits absolute text fixups"
+        "native PIC products need an explicit small code model instead of JIT Large addressing"
+    );
+    assert!(
+        !creation.contains("isOSBinFormatMachO"),
+        "the small code model must also cover ELF and COFF performance artifacts"
     );
 }
 
