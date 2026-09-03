@@ -5,7 +5,6 @@
   .type _start,@function
 _start:
   xor %rbp, %rbp
-  .weak __ck_dispatch_capture_initial_stack
   lea __ck_dispatch_capture_initial_stack(%rip), %rax
   test %rax, %rax
   je 1f
@@ -15,6 +14,11 @@ _start:
   call main
   mov %eax, %edi
   call __ck_platform_exit
+
+  .weak __ck_dispatch_capture_initial_stack
+  .type __ck_dispatch_capture_initial_stack,@function
+__ck_dispatch_capture_initial_stack:
+  ret
 
   .globl __ck_platform_write
   .hidden __ck_platform_write
@@ -61,7 +65,6 @@ __ck_platform_exit:
   .hidden _start
   .type _start,%function
 _start:
-  .weak __ck_dispatch_capture_initial_stack
   adrp x9, __ck_dispatch_capture_initial_stack
   add x9, x9, :lo12:__ck_dispatch_capture_initial_stack
   cbz x9, 1f
@@ -70,6 +73,11 @@ _start:
 1:
   bl main
   bl __ck_platform_exit
+
+  .weak __ck_dispatch_capture_initial_stack
+  .type __ck_dispatch_capture_initial_stack,%function
+__ck_dispatch_capture_initial_stack:
+  ret
 
   .globl __ck_platform_write
   .hidden __ck_platform_write

@@ -505,6 +505,9 @@ fn configure_dispatch_runtime(
                     .flag("-fvisibility=hidden")
                     .flag("-ffunction-sections")
                     .flag("-fdata-sections");
+                if target == "aarch64-unknown-linux-gnu" {
+                    build.flag("-mno-outline-atomics");
+                }
                 if target.contains("apple-darwin") {
                     build.flag("-mmacosx-version-min=11.0");
                 }

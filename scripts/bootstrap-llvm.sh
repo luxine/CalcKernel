@@ -200,6 +200,9 @@ ckc_runtime_flags=(
 if [[ "$ckc_target" == *-apple-darwin ]]; then
   ckc_runtime_flags+=(-mmacosx-version-min=11.0)
 fi
+if [[ "$ckc_target" == "aarch64-unknown-linux-gnu" ]]; then
+  ckc_runtime_flags+=(-mno-outline-atomics)
+fi
 "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
   "$ckc_repo_root/native/runtime/common/runtime.c" -o "$ckc_runtime_dir/runtime.o"
 "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -c \
