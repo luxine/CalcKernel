@@ -722,6 +722,9 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     reason: fallback.reason.stable_name().to_string(),
                 });
             }
+            if !module.profile.vector_operations_enabled() {
+                continue;
+            }
             for descriptor in canonical
                 .loops
                 .iter()

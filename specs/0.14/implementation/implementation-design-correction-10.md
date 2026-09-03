@@ -4,7 +4,7 @@
 
 总验收要求最终 accepted v0.13 revision 被集成或完成逐差异审计，但 v0.14 分支从较早候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05` 开始，未包含最终修订
-`4cbd3d0624a6ccbd7a8a003a04e201201ec019a8` 的累计修复闭包。旧 replay pin 与若干
+`4c46ac36e0c8c71535c0bcdba76bf1faf16e4836` 的累计修复闭包。旧 replay pin 与若干
 跨平台 correctness/performance 修复也因此缺失。完整复现和 RED 证据见
 `specs/0.14/review/implementation-blocker-10.md`。
 

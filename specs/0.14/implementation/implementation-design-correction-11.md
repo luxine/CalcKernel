@@ -26,7 +26,7 @@
   ATTR_CMN_FILEID)` 校验 dev/inode，以 create-new 失败后的 no-follow probe 区分 collision；
   不读取 `errno`，也不调用 `fstat`。`_fgetattrlist` 作为显式冻结的 libSystem import。
 - v0.14 schema-8 replay 固定到包含跨宿主闭包及本轮归约修复的 v0.13 候选
-  `4cbd3d0624a6ccbd7a8a003a04e201201ec019a8`，并重算 manifest SHA-256；旧失败提交不得代签。
+  `4c46ac36e0c8c71535c0bcdba76bf1faf16e4836`，并重算 manifest SHA-256；旧失败提交不得代签。
 
 本修订不改变语言、KIR 3、Bridge ABI 4、Native ABI 1、Runtime ABI 2、CKPROF01、CKPART01、
 CKTUNE01、性能 corpus、统计规则、门槛或十作业拓扑。新提交必须重新执行本地全量验收与
