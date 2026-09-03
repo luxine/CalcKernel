@@ -20,12 +20,13 @@ exact-SHA 十作业 CI。
 ## TDD 顺序
 
 1. 写 schema 8 RED：candidate/replay/toolchain/source/training shards/final profile/target-set/variant object/
-   sample order/hardware/capability/recipe/adapters 全部 exact bytes+SHA；missing/unknown/extra/mismatch fail。
+   sample order/hardware/capability/recipe/adapters 全部 exact bytes+SHA；内嵌 schema 7 JSON 及其引用的
+   `measurement-*` 目录必须共同复制进 schema 8 evidence root，missing/redirect/unknown/extra/mismatch fail。
 2. 写 workload split RED：training 与 held-out 固定分离，correctness 还含 adversarial；timed PGO 只用
    held-out。同 source/mode/input/batch，动态加载/symbol resolve/detector resolve 在 steady timing 前。
 3. 写 sampling RED：保留既有 warmup、rotating order、upper median、stability、fail-fast、等价规则；
    resolver untimed record证明只运行一次，stability fail 是 invalid evidence而非任意重跑许可。
-4. 写 replay/oracle RED：exact 0.12 commit `d67468fe...`、LLVM/Clang 22.1.8、Rust 1.90.0；Clang/
+4. 写 replay/oracle RED：exact 0.12 commit `11ca3dbb...`、LLVM/Clang 22.1.8、Rust 1.90.0；Clang/
    Rust PGO 使用相同 train/eval 与 safety/strict-float precondition，source/recipe/binary/UB audit完整。
 5. 写 ordinary regression RED：0.13 no-PGO baseline/native 相对 exact 0.12 replay geo slowdown <=2%、
    individual <=5%，并保留全部 cumulative 0.12 hand-SIMD/domain/scalar/size/time gates。
@@ -46,7 +47,9 @@ exact-SHA 十作业 CI。
     C/WASM/CLI/fixture differential gate；不得依赖同 owner 私有仓库凭据或以移除 oracle 代替修复。
     required tier 缺失必须失败，不能 skip。
 12. 本地先跑 schema/checker/correctness；稳定 worker执行昂贵 benchmark。失败先诊断实现/测量/环境，
-    不改变 threshold/statistics/corpus/oracle。feature branch push 后显式 dispatch，间隔查询远程状态。
+    不改变 threshold/statistics/corpus/oracle。Linux 每个三通道 schema 7 case 在 conditioning 前把当前
+    线程固定到 inherited affinity 中的一颗 CPU，case 结束恢复；feature branch push 后显式 dispatch，
+    间隔查询远程状态。
 
 ## 执行策略
 

@@ -11,7 +11,7 @@
 - [ ] `main` 未自动合并；未创建/移动 tag，未创建 GitHub Release。
 - [ ] Cargo/lock/CLI/docs 为 0.13.0；LLVM 22.1.8、bridge ABI 4、KIR 3、CKCOBJ03/key+manifest 4、
   Native ABI 1、Runtime ABI 2 与全部 private schema/runtime identity 一致。
-- [ ] exact 0.12 replay 是 `d67468feec71a539bc436cc67c5b28d1395d5133`；最终 CI/report/证据
+- [ ] exact 0.12 replay 是 `11ca3dbb1220710f184e3c32c873b267d24a22cb`；最终 CI/report/证据
   全部绑定同一 candidate SHA。
 
 ## B. 默认行为、语义与 ABI
@@ -73,7 +73,10 @@
 ## G. 性能、尺寸与编译耗时
 
 - [ ] schema 8 在 x86-64/AArch64各有完整 training/held-out/adversarial、0.12 replay、Clang/Rust PGO
-  oracle、profile/target/variant/capability/sample/digest report。
+  oracle、profile/target/variant/capability/sample/digest report；累计 schema 7 JSON 及其引用的
+  `measurement-*` 目录在 schema 8 evidence root 内自包含且通过 redirect/symlink 审计。
+- [ ] Linux schema 7 每个三通道 case 从 conditioning 到计时固定在 inherited affinity 允许的一颗 CPU，
+  case 结束恢复；四批 conditioning、timed work、样本数、统计量、阈值、语料与平台矩阵均未改变。
 - [ ] ordinary no-PGO相对0.12 replay geo slowdown <=2%、individual <=5%，并保留全部0.12累计门槛。
 - [ ] PGO use相对同policy ordinary geo improvement >=5%，held-out individual slowdown <=3%；generate
   execution <=5x ordinary。

@@ -19,6 +19,12 @@ SPEC = importlib.util.spec_from_file_location(
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
+COLLECTOR_SPEC = importlib.util.spec_from_file_location(
+    "collector_v013", REPO / "scripts/measure-v013-performance.py"
+)
+collector = importlib.util.module_from_spec(COLLECTOR_SPEC)
+COLLECTOR_SPEC.loader.exec_module(collector)
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -214,6 +220,45 @@ class SchemaEightGateTests(unittest.TestCase):
 
     def test_complete_schema_eight_passes(self):
         self.check()
+
+    def test_collector_retains_a_self_contained_schema_seven_bundle(self):
+        source_root = self.root / "schema-seven-source"
+        source_root.mkdir()
+        measurement = source_root / "measurement-123-456"
+        measurement.mkdir()
+        (measurement / "payload.bin").write_bytes(b"measured evidence")
+        source = source_root / "results.json"
+        source.write_text(json.dumps({"evidenceDirectory": measurement.name}))
+        destination = self.root / "schema-eight-evidence"
+        destination.mkdir()
+
+        retained = collector.retain_cumulative_schema_seven(source, destination)
+
+        self.assertEqual(retained, destination / "results-schema7.json")
+        self.assertEqual(retained.read_bytes(), source.read_bytes())
+        self.assertEqual(
+            (destination / measurement.name / "payload.bin").read_bytes(),
+            b"measured evidence",
+        )
+
+    def test_collector_rejects_redirected_or_escaping_schema_seven_evidence(self):
+        source_root = self.root / "schema-seven-invalid"
+        source_root.mkdir()
+        source = source_root / "results.json"
+        destination = self.root / "schema-eight-invalid"
+        destination.mkdir()
+
+        source.write_text(json.dumps({"evidenceDirectory": "../outside"}))
+        with self.assertRaisesRegex(ValueError, "evidenceDirectory"):
+            collector.retain_cumulative_schema_seven(source, destination)
+
+        real = source_root / "measurement-real"
+        real.mkdir()
+        redirected = source_root / "measurement-123-456"
+        redirected.symlink_to(real, target_is_directory=True)
+        source.write_text(json.dumps({"evidenceDirectory": redirected.name}))
+        with self.assertRaisesRegex(ValueError, "real directory"):
+            collector.retain_cumulative_schema_seven(source, destination)
 
     def test_identity_capability_profile_and_evidence_fail_closed(self):
         self.reject(lambda r: r.__setitem__("candidateSha", "2" * 40), "candidateSha")

@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - release performance workers are Unix
     resource = None
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-V012_COMMIT = "d67468feec71a539bc436cc67c5b28d1395d5133"
+V012_COMMIT = "11ca3dbb1220710f184e3c32c873b267d24a22cb"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
 CHANNELS = [
@@ -81,6 +81,21 @@ def identity(path: pathlib.Path, name: str | None = None) -> dict:
     if not path.is_file() or path.is_symlink() or metadata.st_size <= 0:
         fail(f"evidence input must be a nonempty regular file: {path}")
     return {"path": name or path.name, "bytes": metadata.st_size, "sha256": sha256(path)}
+
+
+def retain_cumulative_schema_seven(source: pathlib.Path, destination: pathlib.Path) -> pathlib.Path:
+    identity(source)
+    report = json.loads(source.read_text(encoding="utf-8"))
+    directory = report.get("evidenceDirectory") if isinstance(report, dict) else None
+    if not isinstance(directory, str) or re.fullmatch(r"measurement-[0-9]+-[0-9]+", directory) is None:
+        fail("cumulative schema-7 evidenceDirectory is invalid")
+    source_evidence = source.parent / directory
+    if source_evidence.is_symlink() or not source_evidence.is_dir():
+        fail("cumulative schema-7 evidenceDirectory must be a real directory")
+    shutil.copytree(source_evidence, destination / directory, symlinks=True)
+    retained = destination / "results-schema7.json"
+    shutil.copy2(source, retained)
+    return retained
 
 
 def artifact(path: pathlib.Path, case: str, role: str) -> dict:
@@ -610,8 +625,7 @@ def collect(output, quick):
     cumulative_source = REPO / "target/ckc-perf/results-baseline.json"
     if not cumulative_source.is_file():
         cumulative_source = REPO / "target/ckc-perf/results.json"
-    cumulative = evidence / "results-schema7.json"
-    shutil.copy2(cumulative_source, cumulative)
+    cumulative = retain_cumulative_schema_seven(cumulative_source, evidence)
 
     training_records, profile_records, target_sets = [], [], []
     profiles_by_case, generation_by_case = {}, {}

@@ -619,6 +619,9 @@ rotating-three-channel-v1：candidate CK、pinned C 与 pinned Rust。每轮有�
 unmeasured batch。该 short-kernel conditioning 写入固定 manifest，并同等应用于 CK、C 与
 Rust；它不改变三个 warm-up row、二十个 timed row、每 sample 七次 timed call、batch
 identity、order、statistic 或 threshold。
+在 Linux release-performance host 上，每个三 channel case 的测量线程固定到继承 affinity
+set 中的一个允许 CPU，case 结束后恢复原 affinity set。由此三个 channel 及其 conditioning
+始终位于同一 core，而 timed work 不变，也不会给任一 channel 不同的执行环境。
 
 Release gate 为累积门槛：
 
