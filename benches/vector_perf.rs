@@ -26,7 +26,7 @@ const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "7faf23e2f1f7129238e5a024e3dc4918a73b4f3671661097071ce3982666c82f";
+    "416bdfc206ab8199093bbb14b6d6987b7156ffe488651b50d626542657caec30";
 
 pub(super) struct VectorPerformanceReport {
     pub target_profile_digest: String,
@@ -580,12 +580,9 @@ fn measure_case(
             if warmup {
                 runners[channel].measure_once(&expected, batch_iterations)
             } else {
-                let mut minimum = u128::MAX;
-                for _ in 0..SAMPLE_REPETITIONS {
-                    minimum =
-                        minimum.min(runners[channel].measure_once(&expected, batch_iterations)?);
-                }
-                Ok(minimum)
+                runtime_replay::sample_upper_median::<_, SAMPLE_REPETITIONS>(|| {
+                    runners[channel].measure_once(&expected, batch_iterations)
+                })
             }
         },
     )?;

@@ -32,6 +32,7 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "dispatch_protocol = \"cached-typed-entry-v1\"",
         "batch_iterations = 20000000",
         "sample_calls = 7",
+        "sample_statistic = \"upper-median-of-seven\"",
         "short_kernel_conditioning = true",
         "differential_audit = true",
         "ub_audit = true",
@@ -182,5 +183,10 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
             && runner
                 .contains("self.invoke_repeated(batch_iterations)?;\n        }\n        let start"),
         "the four-item SLP kernel must condition the same runner before each timed sample"
+    );
+    assert!(
+        harness.contains("sample_upper_median::<_, SAMPLE_REPETITIONS>")
+            && !harness.contains("minimum.min(runners[channel].measure_once"),
+        "each seven-call vector sample must reject minority scheduler outliers via its upper median"
     );
 }

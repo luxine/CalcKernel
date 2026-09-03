@@ -9,6 +9,7 @@ dispatch_protocol = "cached-typed-entry-v1"
 warmup_rows = 3
 sample_rows = 20
 sample_calls = 7
+sample_statistic = "upper-median-of-seven"
 short_kernel_conditioning = true
 batch_iterations = 20000000
 differential_audit = true
