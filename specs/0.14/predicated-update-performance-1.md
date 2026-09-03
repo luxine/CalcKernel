@@ -491,11 +491,14 @@ A `CacheScratchEvidence` has exactly `command`, `namespace`, `device`, `inode`,
 `lock`, `before`, `after`, `beforeReceipt`, and `afterReceipt`. `command` is exactly
 one of `profileGeneration`, `pgoOnly`, `pgoTuned`, or `replayed`, and rows are
 sorted in that order. `namespace` is exactly the evidence-relative
-`cache/<command>` path; that command's `XDG_CACHE_HOME` value resolves to the
-evidence root joined with this path. It is create-new and empty immediately before
-the child starts. `device` and `inode` are the U64 Linux `fstat` values from a
-no-follow directory descriptor retained until after the child exits and its final
-snapshot is taken. `lock` is a create-new owner-only-write evidence-root regular
+`cache/<command>/ckc` path. That command's `XDG_CACHE_HOME` value is the
+repository-relative `E/cache/<command>` base; resolving that base below the
+evidence root and applying the frozen Linux `+ckc` mapping yields `namespace`.
+Immediately before the child starts, the collector create-news the owner-private
+base and its empty `ckc` mapping directory, failing if either exists. `device` and
+`inode` are the U64 Linux `fstat` values from a no-follow descriptor for that
+mapping directory, retained until after the child exits and its final snapshot is
+taken. `lock` is a create-new owner-only-write evidence-root regular
 file at `cache-locks/<command>.lock` with exact bytes
 `CKPREDLOCK/1 <command>\n`; the collector holds its exclusive advisory lock for
 that same interval. `before` and `after` use the exact schema-9
@@ -518,7 +521,7 @@ CKPREDCACHE/1 command=<command> phase=<phase> device=<device> inode=<inode> coun
 digest equal the corresponding CacheSnapshot. The collector writes each receipt
 immediately after taking that descriptor snapshot. The checker rejects reused
 namespace/device/inode/lock identities, a nonempty before snapshot, an environment
-foreign-key mismatch, an incomplete live after snapshot, or receipts inconsistent
+base-to-namespace mapping mismatch, an incomplete live after snapshot, or receipts inconsistent
 with the closed objects. At checking time the namespace path must resolve no-follow
 to the recorded device/inode. The namespace, lock, receipts, and after-snapshot
 files remain in the final evidence inventory.
@@ -568,10 +571,10 @@ profile and source. Their platform outputs equal their same-name artifact rows;
 the tuned command additionally produces `decision.file` and its PublicationLock
 files. Replay consumes that decision and produces no PublicationLock; tuned/replay
 outputs with each common artifact role are byte-for-byte equal. Each compiler
-command's sole `XDG_CACHE_HOME` value equals its same-name CacheScratchEvidence
-namespace; cache snapshot files are scratch side effects rather than artifact
-outputs. Compiler and runner command executables equal the top-level FileIdentity
-values.
+command's sole `XDG_CACHE_HOME` value resolves to the parent base of its same-name
+CacheScratchEvidence namespace, and the Linux cache mapping appends exactly `ckc`;
+cache snapshot files are scratch side effects rather than artifact outputs.
+Compiler and runner command executables equal the top-level FileIdentity values.
 
 A TimingSplit has exactly:
 
