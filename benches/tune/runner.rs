@@ -1,5 +1,7 @@
 // Standalone schema-1 runner for the frozen CK 0.14 tuning corpus.
 
+mod predicated;
+
 use std::{env, fs, path::PathBuf, time::Instant};
 
 use calckernel::decode_input_map;
@@ -17,10 +19,333 @@ fn dispatch() -> Result<(), String> {
     if arguments == ["--ck-tune"] {
         return run_tune();
     }
+    if arguments == ["--ck-predicated-tune"] {
+        return run_predicated_tune();
+    }
+    if arguments.first().map(String::as_str) == Some("--ck-predicated-profile") {
+        return run_predicated_profile(&arguments);
+    }
+    if arguments.first().map(String::as_str) == Some("--ck-predicated-oracle") {
+        return run_predicated_oracle(&arguments);
+    }
+    if arguments.first().map(String::as_str) == Some("--ck-predicated-perf") {
+        return run_predicated_performance(&arguments);
+    }
     if arguments.first().map(String::as_str) == Some("--ck-perf") {
         return run_performance(&arguments);
     }
-    Err("expected the exact --ck-tune or --ck-perf protocol".to_string())
+    Err("expected one exact supported tuning runner protocol".to_string())
+}
+
+fn run_predicated_tune() -> Result<(), String> {
+    if env::var("CK_TUNE_PROTOCOL").as_deref() != Ok("1")
+        || env::var("CK_TUNE_ARTIFACT_KIND").as_deref() != Ok("dynamic")
+    {
+        return Err("unsupported predicated tuning protocol or artifact kind".to_string());
+    }
+    let case_id = required("CK_TUNE_CASE")?;
+    let expected = match case_id.as_str() {
+        "predicated-update.search" => predicated::TRAINING,
+        "predicated-update.validation" => predicated::VALIDATION,
+        _ => return Err("predicated tuning case is not frozen".to_string()),
+    };
+    let seed = canonical_u64(&required("CK_TUNE_SEED")?, "CK_TUNE_SEED")?;
+    let iterations = canonical_u64(
+        &required("CK_TUNE_ITERATIONS")?,
+        "CK_TUNE_ITERATIONS",
+    )?;
+    if seed != expected.seed {
+        return Err("predicated tuning seed does not match its frozen split".to_string());
+    }
+    predicated::checked_invocation_bytes(expected.n, iterations)?;
+
+    let artifact = PathBuf::from(required("CK_TUNE_ARTIFACT")?);
+    let input_map_path = PathBuf::from(required("CK_TUNE_INPUT_MAP")?);
+    let map = decode_input_map(&fs::read(&input_map_path).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    if map.iter().any(|entry| {
+        entry.logical_path == "fixtures/tune/predicated-update-release.tsv"
+            || entry.logical_path.contains("release-held-out")
+    }) {
+        return Err("release-held-out input is forbidden in CKTIMAP1".to_string());
+    }
+    let logical_path = match expected.name {
+        "training" => "fixtures/tune/predicated-update-training.tsv",
+        "validation" => "fixtures/tune/predicated-update-validation.tsv",
+        _ => return Err("predicated tuning split is not searchable".to_string()),
+    };
+    let entry = map
+        .iter()
+        .find(|entry| entry.logical_path == logical_path)
+        .ok_or_else(|| "required predicated split is absent from CKTIMAP1".to_string())?;
+    let parent = input_map_path
+        .parent()
+        .ok_or_else(|| "input map has no parent".to_string())?;
+    let input = fs::read_to_string(parent.join("inputs").join(&entry.staged_basename))
+        .map_err(|error| error.to_string())?;
+    parse_predicated_input(&input, expected)?;
+
+    let library = DynamicLibrary::open(&artifact)?;
+    let kernel: PredicatedKernel = unsafe { library.symbol("floyd")? };
+    let mut matrices = predicated_matrices(expected, iterations)?;
+    let length = predicated_length(expected.n)?;
+    for matrix in &mut matrices {
+        unsafe { kernel(matrix.values.as_mut_ptr(), length, expected.n) };
+    }
+    validate_predicated_results(&matrices, expected)?;
+    let result = matrices
+        .last()
+        .ok_or_else(|| "predicated tuning produced no result".to_string())?
+        .canonical_result_bytes()?;
+    let digest = result_digest(&case_id, &result)?;
+    println!(
+        "CKTUNE/1 {case_id} {seed} {iterations} {iterations} {}",
+        hex(&digest)
+    );
+    Ok(())
+}
+
+fn run_predicated_profile(arguments: &[String]) -> Result<(), String> {
+    if arguments.len() != 5 {
+        return Err(
+            "--ck-predicated-profile requires library, flush symbol, n, and seed".to_string(),
+        );
+    }
+    let expected = predicated::TRAINING;
+    let n = canonical_u32(&arguments[3], "predicated profile n")?;
+    let seed = canonical_u64(&arguments[4], "predicated profile seed")?;
+    require_frozen_coordinate(expected, n, seed)?;
+    validate_flush_symbol(&arguments[2])?;
+    predicated::checked_invocation_bytes(n, 1)?;
+
+    let library = DynamicLibrary::open(PathBuf::from(&arguments[1]).as_path())?;
+    let kernel: PredicatedKernel = unsafe { library.symbol("floyd")? };
+    let flush: unsafe extern "C" fn() -> i32 = unsafe { library.symbol(&arguments[2])? };
+    let mut matrix = predicated::PredicatedMatrix::generate(n, seed)?;
+    let length = predicated_length(n)?;
+    unsafe { kernel(matrix.values.as_mut_ptr(), length, n) };
+    validate_predicated_result(&matrix, expected)?;
+    let flush_status = unsafe { flush() };
+    if flush_status != 0 {
+        return Err("profile flush returned a nonzero status".to_string());
+    }
+    println!(
+        "CKPREDPROFILE/1 {n} {seed} {} {flush_status}",
+        expected.expected_digest
+    );
+    Ok(())
+}
+
+fn run_predicated_oracle(arguments: &[String]) -> Result<(), String> {
+    if arguments.len() != 4 {
+        return Err("--ck-predicated-oracle requires split, n, and seed".to_string());
+    }
+    let expected = predicated::split(&arguments[1])
+        .ok_or_else(|| "unknown predicated oracle split".to_string())?;
+    let n = canonical_u32(&arguments[2], "predicated oracle n")?;
+    let seed = canonical_u64(&arguments[3], "predicated oracle seed")?;
+    require_frozen_coordinate(expected, n, seed)?;
+    let mut matrix = predicated::PredicatedMatrix::generate(n, seed)?;
+    matrix.scalar_floyd()?;
+    validate_predicated_result(&matrix, expected)?;
+    println!(
+        "CKPREDORACLE/1 {} {n} {seed} {}",
+        expected.name, expected.expected_digest
+    );
+    Ok(())
+}
+
+fn run_predicated_performance(arguments: &[String]) -> Result<(), String> {
+    if arguments.len() != 6 {
+        return Err(
+            "--ck-predicated-perf requires library, split, n, seed, and iterations".to_string(),
+        );
+    }
+    let expected = match arguments[2].as_str() {
+        "validation" => predicated::VALIDATION,
+        "release-held-out" => predicated::RELEASE,
+        _ => return Err("predicated performance split is not measurable".to_string()),
+    };
+    let n = canonical_u32(&arguments[3], "predicated performance n")?;
+    let seed = canonical_u64(&arguments[4], "predicated performance seed")?;
+    let iterations = canonical_u64(&arguments[5], "predicated performance iterations")?;
+    require_frozen_coordinate(expected, n, seed)?;
+    predicated::checked_invocation_bytes(n, iterations)?;
+
+    let library = DynamicLibrary::open(PathBuf::from(&arguments[1]).as_path())?;
+    let kernel: PredicatedKernel = unsafe { library.symbol("floyd")? };
+    let mut matrices = predicated_matrices(expected, iterations)?;
+    let length = predicated_length(n)?;
+    let timer = PredicatedTimer::start()?;
+    for matrix in &mut matrices {
+        unsafe { kernel(matrix.values.as_mut_ptr(), length, n) };
+    }
+    let elapsed_ns = timer.elapsed_ns()?;
+    validate_predicated_results(&matrices, expected)?;
+    println!(
+        "CKPREDPERF/1 {} {n} {seed} {iterations} {iterations} {elapsed_ns} {}",
+        expected.name, expected.expected_digest
+    );
+    Ok(())
+}
+
+type PredicatedKernel = unsafe extern "C" fn(*mut f64, u32, u32);
+
+fn predicated_matrices(
+    split: predicated::FrozenSplit,
+    iterations: u64,
+) -> Result<Vec<predicated::PredicatedMatrix>, String> {
+    let count = usize::try_from(iterations)
+        .map_err(|_| "predicated iteration count is not representable".to_string())?;
+    (0..count)
+        .map(|_| predicated::PredicatedMatrix::generate(split.n, split.seed))
+        .collect()
+}
+
+fn predicated_length(n: u32) -> Result<u32, String> {
+    n.checked_mul(n)
+        .ok_or_else(|| "predicated slice length overflow".to_string())
+}
+
+fn validate_predicated_results(
+    matrices: &[predicated::PredicatedMatrix],
+    split: predicated::FrozenSplit,
+) -> Result<(), String> {
+    for matrix in matrices {
+        validate_predicated_result(matrix, split)?;
+    }
+    Ok(())
+}
+
+fn validate_predicated_result(
+    matrix: &predicated::PredicatedMatrix,
+    split: predicated::FrozenSplit,
+) -> Result<(), String> {
+    if predicated::hex(&matrix.result_digest()?) != split.expected_digest {
+        return Err("predicated Floyd result does not match the frozen scalar oracle".to_string());
+    }
+    Ok(())
+}
+
+fn require_frozen_coordinate(
+    split: predicated::FrozenSplit,
+    n: u32,
+    seed: u64,
+) -> Result<(), String> {
+    if n != split.n || seed != split.seed {
+        return Err("predicated split coordinate does not match the frozen recipe".to_string());
+    }
+    Ok(())
+}
+
+fn parse_predicated_input(
+    input: &str,
+    expected: predicated::FrozenSplit,
+) -> Result<(), String> {
+    if input.contains('\r') || !input.ends_with('\n') {
+        return Err("predicated input is not canonical LF text".to_string());
+    }
+    let lines = input.split_terminator('\n').collect::<Vec<_>>();
+    let expected_id = match expected.name {
+        "training" => "train-floyd-128",
+        "validation" => "validate-floyd-256",
+        "release-held-out" => "release-floyd-1024",
+        _ => return Err("predicated input split is not frozen".to_string()),
+    };
+    let expected_header = format!("ckc-predicated-inputs\t1\t{}", expected.name);
+    let expected_row = format!(
+        "predicated-update\t{expected_id}\t{}\t{}",
+        expected.n, expected.seed
+    );
+    if lines.as_slice() != [expected_header.as_str(), expected_row.as_str()] {
+        return Err("predicated input bytes do not match the frozen split".to_string());
+    }
+    Ok(())
+}
+
+fn canonical_u32(value: &str, field: &str) -> Result<u32, String> {
+    let parsed = value
+        .parse::<u32>()
+        .map_err(|_| format!("invalid {field}"))?;
+    if parsed.to_string() != value {
+        return Err(format!("noncanonical {field}"));
+    }
+    Ok(parsed)
+}
+
+fn canonical_u64(value: &str, field: &str) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("invalid {field}"))?;
+    if parsed.to_string() != value {
+        return Err(format!("noncanonical {field}"));
+    }
+    Ok(parsed)
+}
+
+fn validate_flush_symbol(symbol: &str) -> Result<(), String> {
+    let Some(digest) = symbol.strip_prefix("ck_profile_flush_") else {
+        return Err("profile flush symbol has the wrong prefix".to_string());
+    };
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("profile flush symbol has a noncanonical digest".to_string());
+    }
+    Ok(())
+}
+
+struct PredicatedTimer {
+    #[cfg(target_os = "linux")]
+    started_ns: u64,
+    #[cfg(not(target_os = "linux"))]
+    started: Instant,
+}
+
+impl PredicatedTimer {
+    fn start() -> Result<Self, String> {
+        Ok(Self {
+            #[cfg(target_os = "linux")]
+            started_ns: monotonic_raw_ns()?,
+            #[cfg(not(target_os = "linux"))]
+            started: Instant::now(),
+        })
+    }
+
+    fn elapsed_ns(self) -> Result<u64, String> {
+        #[cfg(target_os = "linux")]
+        {
+            monotonic_raw_ns()?
+                .checked_sub(self.started_ns)
+                .filter(|elapsed| *elapsed > 0)
+                .ok_or_else(|| "predicated performance timer did not advance".to_string())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            elapsed_ns(self.started)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn monotonic_raw_ns() -> Result<u64, String> {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut time) } != 0
+        || time.tv_sec < 0
+        || time.tv_nsec < 0
+    {
+        return Err("CLOCK_MONOTONIC_RAW failed".to_string());
+    }
+    u64::try_from(time.tv_sec)
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1_000_000_000))
+        .and_then(|base| u64::try_from(time.tv_nsec).ok().and_then(|nanos| base.checked_add(nanos)))
+        .ok_or_else(|| "CLOCK_MONOTONIC_RAW overflow".to_string())
 }
 
 fn run_tune() -> Result<(), String> {

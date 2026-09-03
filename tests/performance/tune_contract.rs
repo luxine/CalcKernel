@@ -20,6 +20,53 @@ fn read(path: &str) -> String {
 }
 
 #[test]
+fn predicated_update_assets_should_match_frozen_bytes_and_digests() {
+    let source = read("benches/fixtures/tune/predicated_update.ck");
+    assert_eq!(
+        source,
+        "export unsafe fn floyd(distance: slice<f64>, n: u32) -> void\ncontract {\n  requires n <= 65535;\n  effects readwrite(distance);\n}\n{\n  let k: u32 = 0;\n  while k < n {\n    let k_row: u32 = k * n;\n    let i: u32 = 0;\n    while i < n {\n      let i_row: u32 = i * n;\n      let dik: f64 = distance[i_row + k];\n      let j: u32 = 0;\n      while j < n {\n        let index: u32 = i_row + j;\n        let candidate: f64 = dik + distance[k_row + j];\n        let old: f64 = distance[index];\n        if candidate < old {\n          distance[index] = candidate;\n        }\n        j = j + 1;\n      }\n      i = i + 1;\n    }\n    k = k + 1;\n  }\n}\n"
+    );
+    let inputs = [
+        (
+            "benches/fixtures/tune/predicated-update-training.tsv",
+            "ckc-predicated-inputs\t1\ttraining\npredicated-update\ttrain-floyd-128\t128\t113\n",
+        ),
+        (
+            "benches/fixtures/tune/predicated-update-validation.tsv",
+            "ckc-predicated-inputs\t1\tvalidation\npredicated-update\tvalidate-floyd-256\t256\t127\n",
+        ),
+        (
+            "benches/fixtures/tune/predicated-update-release.tsv",
+            "ckc-predicated-inputs\t1\trelease-held-out\npredicated-update\trelease-floyd-1024\t1024\t131\n",
+        ),
+    ];
+    for (path, exact) in inputs {
+        assert_eq!(read(path), exact);
+    }
+    let manifest = read("benches/tune/workloads/predicated-update.cktune.toml");
+    assert_eq!(
+        manifest,
+        "schema = 1\n\n[runner]\npath = \"../../../target/release/ckc-tune-runner\"\ninput_root = \"../..\"\nargs = [\"--ck-predicated-tune\"]\ninputs = [\"fixtures/tune/predicated-update-training.tsv\", \"fixtures/tune/predicated-update-validation.tsv\"]\ninherit_env = []\ntimeout_ms = 30000\n\n[[case]]\nid = \"predicated-update.search\"\nrole = \"search\"\nseed = 113\nweight = 1\nexpected_digest = \"42c6b833bf2207f5d0716d249099daf28dcf0250e63dbd2a9a4f438a10a215af\"\n\n[[case]]\nid = \"predicated-update.validation\"\nrole = \"validation\"\nseed = 127\nweight = 1\nexpected_digest = \"8b9f2194f5fe7afdfd1d856689ac288d04b70bf984f2310e7011d2ced391aa10\"\n"
+    );
+    let parsed = TuneManifest::parse(
+        manifest.as_bytes(),
+        &repo_root().join("benches/tune/workloads/predicated-update.cktune.toml"),
+    )
+    .expect("predicated manifest");
+    assert_eq!(parsed.cases().len(), 2);
+    assert!(!manifest.contains("release-held-out"));
+
+    let contract = read("specs/0.14/predicated-update-performance-1.md");
+    for digest in [
+        "d6105453012eedb8a8db812555f116dd69ca6a8e0242faf81f10038947581608",
+        "e21128a8623d0c072111b02c8a3f1ce3309d12f8bf0b3beddc1e0f6342dfc6c8",
+        "4d9a1612967ec78ffb3d0ecc035929bb8217cefc13dfeb3fb2e21989186b055d",
+    ] {
+        assert!(contract.contains(digest));
+    }
+}
+
+#[test]
 fn tune_schema_nine_assets_are_exact_and_partitioned_before_measurement() {
     let cargo = read("Cargo.toml");
     for text in [

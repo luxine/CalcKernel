@@ -1,0 +1,23 @@
+schema = 1
+
+[runner]
+path = "../../../target/release/ckc-tune-runner"
+input_root = "../.."
+args = ["--ck-predicated-tune"]
+inputs = ["fixtures/tune/predicated-update-training.tsv", "fixtures/tune/predicated-update-validation.tsv"]
+inherit_env = []
+timeout_ms = 30000
+
+[[case]]
+id = "predicated-update.search"
+role = "search"
+seed = 113
+weight = 1
+expected_digest = "42c6b833bf2207f5d0716d249099daf28dcf0250e63dbd2a9a4f438a10a215af"
+
+[[case]]
+id = "predicated-update.validation"
+role = "validation"
+seed = 127
+weight = 1
+expected_digest = "8b9f2194f5fe7afdfd1d856689ac288d04b70bf984f2310e7011d2ced391aa10"

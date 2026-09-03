@@ -175,6 +175,34 @@ class SchemaNineContractTests(unittest.TestCase):
         self.assertNotIn("perf_counter", timed)
         self.assertNotIn("kernel.run", timed)
 
+    def test_predicated_update_assets_and_runner_protocol_are_frozen(self):
+        expected = {
+            "benches/fixtures/tune/predicated-update-training.tsv":
+                "ckc-predicated-inputs\t1\ttraining\n"
+                "predicated-update\ttrain-floyd-128\t128\t113\n",
+            "benches/fixtures/tune/predicated-update-validation.tsv":
+                "ckc-predicated-inputs\t1\tvalidation\n"
+                "predicated-update\tvalidate-floyd-256\t256\t127\n",
+            "benches/fixtures/tune/predicated-update-release.tsv":
+                "ckc-predicated-inputs\t1\trelease-held-out\n"
+                "predicated-update\trelease-floyd-1024\t1024\t131\n",
+        }
+        for relative, contents in expected.items():
+            self.assertEqual((REPO / relative).read_text(encoding="utf-8"), contents)
+        manifest = (REPO / "benches/tune/workloads/predicated-update.cktune.toml").read_text(
+            encoding="utf-8")
+        self.assertIn('args = ["--ck-predicated-tune"]', manifest)
+        self.assertNotIn("release-held-out", manifest)
+        runner = (REPO / "benches/tune/runner.rs").read_text(encoding="utf-8")
+        for protocol in [
+            "--ck-predicated-tune", "--ck-predicated-profile",
+            "--ck-predicated-oracle", "--ck-predicated-perf",
+            "CLOCK_MONOTONIC_RAW", "unsafe extern \"C\" fn(*mut f64, u32, u32)",
+        ]:
+            self.assertIn(protocol, runner)
+        self.assertNotIn("releaseMaximumNum", runner)
+        self.assertNotIn("validationMaximumNum", runner)
+
     def test_oracle_builds_bind_the_explicit_retained_linker_chain(self):
         build = inspect.getsource(measure.build_oracle)
         self.assertIn('retained["systemLinkerOriginal"]', build)
