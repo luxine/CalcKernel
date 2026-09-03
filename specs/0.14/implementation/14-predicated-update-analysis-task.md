@@ -19,7 +19,6 @@ effect、strict-f64 不一致和 checked proof 不完整。阶段只建立候选
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VectorPredicatedUpdate {
     pub then_block: BlockId,
-    pub else_block: BlockId,
     pub merge_block: BlockId,
     pub condition_instruction: InstructionId,
     pub old_load_instruction: InstructionId,
@@ -32,11 +31,14 @@ pub struct VectorPredicatedUpdate {
 
 - `VectorizationCandidate` 新增
   `predicated_update: Option<VectorPredicatedUpdate>`；与现有 pure
-  `diamond`、`reduction` 互斥。CandidateKey stable text 加入 shape、compare、
-  load、store 和 branch polarity，确保不同 scalar root 不能碰撞。
+  `diamond`、`reduction` 互斥。冻结的 `CandidateKey::LoopFrontier` 保持不变；
+  shape、compare、load、store 和 branch polarity 进入候选证据，并在阶段 16 的
+  source-aware attestation 中重建，确保不同 scalar root 不会被错误接受。
 - `simple_shape` 拆成 pure-diamond 与 predicated-update recognizer。后者只接受
-  五 block canonical loop、恰好一个 Store、另一臂无 memory/effect、merge 的
-  memory phi 恰好选择 old/new version、value args 无第二个 varying merge。
+  CK 当前产生的四块 empty-else canonical loop：conditional body 一条边进入恰好
+  一个 Store 的 arm，另一条边直接进入 merge/latch，store arm 也跳入同一
+  merge/latch；merge 的 memory phi 恰好选择 old/new version，value args 无
+  varying merge。
 - 用现有 `analyze_affine_loop_accesses`、Memory SSA、dominators、effect order 与
   dependence facts 证明 old load 和 store 的 `KirPlace` 完全相等，load 支配
   compare/store，中间没有可能重定义；load/store 均是 unit-stride、同 region、

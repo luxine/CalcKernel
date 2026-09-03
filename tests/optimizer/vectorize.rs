@@ -6,8 +6,9 @@ use calckernel::{
     KirOptimizationLevel, KirOverflowMode, KirProfileOperation, KirSanitizerMode, KirTargetProfile,
     KirTargetProfileBuilder, KirVerifiedProgramState, SourceFile, VectorEpilogue,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
-    discover_vectorization_candidates, import_contract_facts, lower_to_mir,
-    prepare_vectorization_trial, print_kir_module, run_kir_pass_pipeline,
+    discover_tuning_vectorization_candidates, discover_vectorization_candidates,
+    import_contract_facts, lower_to_mir, prepare_vectorization_trial, print_kir_module,
+    run_kir_pass_pipeline,
 };
 
 #[test]
@@ -227,6 +228,107 @@ contract { requires noalias(a, b); effects read(a), write(b); }
   }
 }
 "#;
+
+const PREDICATED_UPDATE_MAP: &str = r#"
+export unsafe fn relax(distance: slice<f64>, candidate_values: slice<f64>, n: u32) -> void
+contract { requires noalias(distance, candidate_values); effects read(candidate_values), readwrite(distance); }
+{
+  let i: u32 = 0;
+  while i < n {
+    let candidate: f64 = candidate_values[i];
+    let old: f64 = distance[i];
+    if candidate < old { distance[i] = candidate; }
+    i = i + 1;
+  }
+}
+"#;
+
+#[test]
+fn predicated_update_discovery_should_accept_same_place_update() {
+    let (pre, _) = map_state(PREDICATED_UPDATE_MAP);
+    let discovery = discover_tuning_vectorization_candidates(&pre);
+    assert!(
+        !discovery.candidates.is_empty(),
+        "{discovery:#?}\n{}",
+        print_kir_module(pre.module())
+    );
+    let candidate = &discovery.candidates[0];
+    let update = candidate
+        .predicated_update
+        .as_ref()
+        .expect("predicated update metadata");
+    assert!(candidate.diamond.is_none());
+    assert!(candidate.reduction.is_none());
+    assert!(update.store_when_true);
+    assert_ne!(update.memory_input, update.memory_output);
+    assert!(candidate.accesses.iter().any(|access| {
+        access.instruction == update.old_load_instruction
+            && access.kind == calckernel::LoopMemoryAccessKind::Read
+    }));
+    assert!(candidate.accesses.iter().any(|access| {
+        access.instruction == update.store_instruction
+            && access.kind == calckernel::LoopMemoryAccessKind::Write
+    }));
+    let keys = discovery
+        .candidates
+        .iter()
+        .map(|candidate| candidate.key.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(keys.len(), discovery.candidates.len());
+}
+
+#[test]
+fn predicated_update_discovery_should_fail_closed_on_false_shapes() {
+    let cases = [
+        (
+            "non-strict-compare",
+            "if candidate <= old { distance[i] = candidate; }",
+        ),
+        ("stores-old", "if candidate < old { distance[i] = old; }"),
+        (
+            "different-index",
+            "if candidate < old { distance[i + 1] = candidate; }",
+        ),
+        (
+            "both-arms-store",
+            "if candidate < old { distance[i] = candidate; } else { distance[i] = old; }",
+        ),
+        (
+            "second-store",
+            "if candidate < old { distance[i + 1] = candidate; distance[i] = candidate; }",
+        ),
+    ];
+    for (name, conditional) in cases {
+        let source = format!(
+            r#"
+export unsafe fn relax(distance: slice<f64>, candidate_values: slice<f64>, n: u32) -> void
+contract {{ requires noalias(distance, candidate_values); effects read(candidate_values), readwrite(distance); }}
+{{
+  let i: u32 = 0;
+  while i < n {{
+    let candidate: f64 = candidate_values[i];
+    let old: f64 = distance[i];
+    {conditional}
+    i = i + 1;
+  }}
+}}
+"#
+        );
+        let (pre, _) = map_state(&source);
+        let discovery = discover_tuning_vectorization_candidates(&pre);
+        assert!(
+            discovery
+                .candidates
+                .iter()
+                .all(|candidate| candidate.predicated_update.is_none()),
+            "false shape `{name}` produced a predicated candidate: {discovery:#?}"
+        );
+        assert!(
+            !discovery.fallbacks.is_empty(),
+            "false shape `{name}` did not retain a stable fallback"
+        );
+    }
+}
 
 const MODULAR_REDUCTIONS: &str = r#"
 export fn sum(a: slice<u32>, n: u32) -> u32 {

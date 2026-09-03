@@ -67,7 +67,7 @@ exact-SHA CI；长任务只做间隔查询，不在前台持续等待。
     运行产物、性能 report、CI artifact、动态 run id 或本地 secret。
 11. 每阶段在 `target/acceptance/v0.14/stage-NN/` 记录被测 SHA、RED 摘要、命令、测试计数、
     Rust/LLVM/Clang/host identity。旧阶段日志不能代替最终 SHA 的总验收。
-12. 实施期成立的真实设计复诊以 `implementation-design-correction-01.md` 至 `08.md` 为完整序列；
+12. 实施期成立的真实设计复诊以 `implementation-design-correction-01.md` 至 `09.md` 为完整序列；
     其中修订只能闭合可实现性与证据真实性，不得降低本总控或规范门槛。
 13. 阶段 12–19 不重写 CKTUNE01、Manifest Schema 1、KIR 3、Native ABI 1 或 Runtime ABI 2。
     predicated-update 继续复用 Loop SIMD payload；独立 gate 通过 source-aware 重建证明唯一 choice

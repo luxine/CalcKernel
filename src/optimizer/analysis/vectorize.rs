@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use num_bigint::BigInt;
 
@@ -6,8 +6,8 @@ use crate::{
     BlockId, CandidateKey, CanonicalLoopDescriptor, FunctionId, InstructionId, KirAlignmentClass,
     KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirInstruction,
     KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
-    LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount, MirBinaryOp, MirCompareOp,
-    MirPrimitiveTypeName, MirType, MirUnaryOp,
+    LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount, MemoryVersionId, MirBinaryOp,
+    MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
 };
 
 use super::{
@@ -38,6 +38,7 @@ pub struct VectorizationCandidate {
     pub exit: BlockId,
     pub scalar_blocks: Vec<BlockId>,
     pub diamond: Option<VectorDiamond>,
+    pub predicated_update: Option<VectorPredicatedUpdate>,
     pub reduction: Option<VectorReduction>,
     pub induction: crate::ValueId,
     pub bound: crate::ValueId,
@@ -59,6 +60,18 @@ pub struct VectorDiamond {
     pub condition: crate::ValueId,
     pub condition_instruction: InstructionId,
     pub selected_param_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorPredicatedUpdate {
+    pub then_block: BlockId,
+    pub merge_block: BlockId,
+    pub condition_instruction: InstructionId,
+    pub old_load_instruction: InstructionId,
+    pub store_instruction: InstructionId,
+    pub store_when_true: bool,
+    pub memory_input: MemoryVersionId,
+    pub memory_output: MemoryVersionId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,12 +213,22 @@ fn discover_one(
         state.contract_facts().map(crate::ContractFactSet::facts),
     )?;
     if !legality.eligible {
-        return Err(legality
-            .fallback_reasons
-            .first()
-            .map_or("vector-loop-is-illegal".to_string(), |reason| {
-                reason.stable_name().to_string()
-            }));
+        let predicated_same_place_pair = shape.predicated_update.as_ref().is_some_and(|update| {
+            legality.dependences.pairs.iter().all(|pair| {
+                pair.kind != super::LoopDependenceKind::Unknown
+                    || [pair.left, pair.right].into_iter().collect::<BTreeSet<_>>()
+                        == [update.old_load_instruction, update.store_instruction]
+                            .into_iter()
+                            .collect::<BTreeSet<_>>()
+            })
+        });
+        let remaining_reason = legality.fallback_reasons.iter().find(|reason| {
+            !predicated_same_place_pair
+                || **reason != super::LoopFallbackReason::UnknownMemoryDependence
+        });
+        if let Some(reason) = remaining_reason {
+            return Err(reason.stable_name().to_string());
+        }
     }
     let mut runtime_predicates = legality
         .dependences
@@ -443,6 +466,25 @@ fn discover_one(
             alignment: KirAlignmentClass::NotApplicable,
         });
     }
+    if let Some(update) = &shape.predicated_update {
+        let selected = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == update.old_load_instruction)
+            .and_then(|instruction| instruction.results.first())
+            .and_then(|result| result.type_node.as_scalar())
+            .and_then(lane_type)
+            .ok_or_else(|| "predicated-update-selected-type-is-unsupported".to_string())?;
+        operations.push(VectorCandidateOperation {
+            scalar: update.condition_instruction,
+            operation: KirProfileOperation::Select,
+            lane_type: selected,
+            result_lane_type: selected,
+            semantics: KirCostSemantics::NotApplicable,
+            alignment: KirAlignmentClass::NotApplicable,
+        });
+    }
     if operations.is_empty()
         || (reduction.is_none()
             && !accesses
@@ -522,6 +564,7 @@ fn discover_one(
                 exit,
                 scalar_blocks: shape.scalar_blocks.clone(),
                 diamond: shape.diamond.clone(),
+                predicated_update: shape.predicated_update.clone(),
                 reduction: reduction.clone(),
                 induction: induction.value,
                 bound: induction.bound,
@@ -805,6 +848,7 @@ struct VectorLoopShape {
     exit: BlockId,
     scalar_blocks: Vec<BlockId>,
     diamond: Option<VectorDiamond>,
+    predicated_update: Option<VectorPredicatedUpdate>,
 }
 
 fn simple_shape(
@@ -850,8 +894,12 @@ fn simple_shape(
                 exit: descriptor.exits[0],
                 scalar_blocks: vec![body.id],
                 diamond: None,
+                predicated_update: None,
             },
         );
+    }
+    if descriptor.blocks.len() == 4 {
+        return predicated_update_shape(function, descriptor, preheader, body);
     }
     if descriptor.blocks.len() != 5 {
         return None;
@@ -964,7 +1012,246 @@ fn simple_shape(
             condition_instruction,
             selected_param_index: *selected_param_index,
         }),
+        predicated_update: None,
     })
+}
+
+fn predicated_update_shape(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    preheader: BlockId,
+    body: &crate::KirBlock,
+) -> Option<VectorLoopShape> {
+    let crate::KirTerminator::Branch {
+        condition,
+        then_edge,
+        else_edge,
+    } = &body.terminator
+    else {
+        return None;
+    };
+    let store_block = function
+        .blocks
+        .iter()
+        .find(|block| block.id == then_edge.target)?;
+    let merge = function
+        .blocks
+        .iter()
+        .find(|block| block.id == else_edge.target)?;
+    let crate::KirTerminator::Jump { edge: store_merge } = &store_block.terminator else {
+        return None;
+    };
+    let crate::KirTerminator::Jump { edge: latch } = &merge.terminator else {
+        return None;
+    };
+    if store_block.id == merge.id
+        || store_merge.target != merge.id
+        || descriptor.latch != Some(merge.id)
+        || latch.target != descriptor.header
+        || then_edge.args.len() != store_block.params.len()
+        || then_edge.memory_args.len() != store_block.memory_params.len()
+        || else_edge.args.len() != merge.params.len()
+        || else_edge.memory_args.len() != merge.memory_params.len()
+        || store_merge.args.len() != merge.params.len()
+        || store_merge.memory_args.len() != merge.memory_params.len()
+    {
+        return None;
+    }
+
+    let [store] = store_block.instructions.as_slice() else {
+        return None;
+    };
+    let KirInstructionKind::Store { place, value } = &store.kind else {
+        return None;
+    };
+    if !matches!(
+        store.effect.as_ref().map(|effect| effect.kind),
+        Some(crate::KirEffectKind::WriteMemory)
+    ) {
+        return None;
+    }
+    let store_memory = store.memory.as_ref()?;
+    let memory_output = store_memory.output?;
+
+    let value_aliases = store_block
+        .params
+        .iter()
+        .zip(&then_edge.args)
+        .map(|(param, source)| (param.value, *source))
+        .collect::<BTreeMap<_, _>>();
+    let memory_aliases = store_block
+        .memory_params
+        .iter()
+        .zip(&then_edge.memory_args)
+        .map(|(param, source)| (param.version, *source))
+        .collect::<BTreeMap<_, _>>();
+
+    if store_merge
+        .args
+        .iter()
+        .zip(&else_edge.args)
+        .any(|(stored, empty)| resolve_value_alias(*stored, &value_aliases) != *empty)
+    {
+        return None;
+    }
+
+    let store_input = resolve_memory_alias(store_memory.input, &memory_aliases);
+    let mut merged_store_region = false;
+    for (index, merge_param) in merge.memory_params.iter().enumerate() {
+        let stored = resolve_memory_alias(store_merge.memory_args[index], &memory_aliases);
+        let empty = else_edge.memory_args[index];
+        if merge_param.region == store_memory.region {
+            if stored != memory_output || empty != store_input {
+                return None;
+            }
+            merged_store_region = true;
+        } else if stored != empty {
+            return None;
+        }
+    }
+    if !merged_store_region {
+        return None;
+    }
+
+    let normalized_place = remap_place_values(place, &value_aliases);
+    let stored_value = resolve_value_alias(*value, &value_aliases);
+    let compare = body.instructions.iter().find(|instruction| {
+        instruction
+            .results
+            .iter()
+            .any(|result| result.value == *condition)
+    })?;
+    let KirInstructionKind::Compare {
+        op: MirCompareOp::Lt,
+        left: candidate,
+        right: old,
+    } = compare.kind
+    else {
+        return None;
+    };
+    if compare.memory.is_some() || compare.effect.is_some() || stored_value != candidate {
+        return None;
+    }
+    let old_load = body
+        .instructions
+        .iter()
+        .find(|instruction| instruction.results.iter().any(|result| result.value == old))?;
+    let KirInstructionKind::Load { place: old_place } = &old_load.kind else {
+        return None;
+    };
+    let old_memory = old_load.memory.as_ref()?;
+    if old_place.as_ref() != &normalized_place
+        || old_memory.region != store_memory.region
+        || old_memory.input != store_input
+        || old_load
+            .results
+            .first()
+            .and_then(|result| result.type_node.as_scalar())
+            != Some(&MirType::Primitive(MirPrimitiveTypeName::F64))
+        || value_type(function, candidate) != Some(&MirType::Primitive(MirPrimitiveTypeName::F64))
+        || body
+            .instructions
+            .iter()
+            .position(|instruction| instruction.id == old_load.id)?
+            >= body
+                .instructions
+                .iter()
+                .position(|instruction| instruction.id == compare.id)?
+    {
+        return None;
+    }
+
+    Some(VectorLoopShape {
+        preheader,
+        body: body.id,
+        latch: merge.id,
+        exit: descriptor.exits[0],
+        scalar_blocks: vec![body.id, store_block.id, merge.id],
+        diamond: None,
+        predicated_update: Some(VectorPredicatedUpdate {
+            then_block: store_block.id,
+            merge_block: merge.id,
+            condition_instruction: compare.id,
+            old_load_instruction: old_load.id,
+            store_instruction: store.id,
+            store_when_true: true,
+            memory_input: store_input,
+            memory_output,
+        }),
+    })
+}
+
+fn resolve_value_alias(
+    value: crate::ValueId,
+    aliases: &BTreeMap<crate::ValueId, crate::ValueId>,
+) -> crate::ValueId {
+    aliases.get(&value).copied().unwrap_or(value)
+}
+
+fn resolve_memory_alias(
+    version: MemoryVersionId,
+    aliases: &BTreeMap<MemoryVersionId, MemoryVersionId>,
+) -> MemoryVersionId {
+    aliases.get(&version).copied().unwrap_or(version)
+}
+
+fn remap_place_values(
+    place: &crate::KirPlace,
+    aliases: &BTreeMap<crate::ValueId, crate::ValueId>,
+) -> crate::KirPlace {
+    match place {
+        crate::KirPlace::Value {
+            value,
+            type_node,
+            region,
+        } => crate::KirPlace::Value {
+            value: resolve_value_alias(*value, aliases),
+            type_node: type_node.clone(),
+            region: *region,
+        },
+        crate::KirPlace::Deref {
+            pointer,
+            type_node,
+            region,
+        } => crate::KirPlace::Deref {
+            pointer: resolve_value_alias(*pointer, aliases),
+            type_node: type_node.clone(),
+            region: *region,
+        },
+        crate::KirPlace::Index {
+            base,
+            index,
+            type_node,
+            region,
+        } => crate::KirPlace::Index {
+            base: Box::new(remap_place_values(base, aliases)),
+            index: resolve_value_alias(*index, aliases),
+            type_node: type_node.clone(),
+            region: *region,
+        },
+        crate::KirPlace::SliceIndex {
+            slice,
+            index,
+            type_node,
+            region,
+        } => crate::KirPlace::SliceIndex {
+            slice: resolve_value_alias(*slice, aliases),
+            index: resolve_value_alias(*index, aliases),
+            type_node: type_node.clone(),
+            region: *region,
+        },
+        crate::KirPlace::Field {
+            base,
+            field_name,
+            type_node,
+            region,
+        } => crate::KirPlace::Field {
+            base: Box::new(remap_place_values(base, aliases)),
+            field_name: field_name.clone(),
+            type_node: type_node.clone(),
+            region: *region,
+        },
+    }
 }
 
 fn scalar_vector_operation(

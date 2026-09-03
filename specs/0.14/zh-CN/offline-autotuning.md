@@ -565,7 +565,8 @@ Loop SIMD 类还拥有针对规范循环形态
 predicate，在 `candidate` 与 `old` 之间 select，再执行一次普通的 unmasked vector store。
 只有不可变改写前 KIR 上同时闭合以下条件时才可使用：
 
-- diamond 一条分支恰好包含一次 store，另一条分支不包含 memory operation；
+- 一条分支路径恰好包含一次 store，空路径不含 memory operation 并直接进入
+  merge/latch，store 路径也汇入同一个 merge/latch；
 - store 目标与支配它的 `old` load 指向相同 affine place，消费其 incoming Memory SSA
   version，且二者之间不存在 memory definition；
 - condition、candidate 与 index computation 不含 call、print、volatile access、possible

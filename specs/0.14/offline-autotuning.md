@@ -660,8 +660,9 @@ computes a vector predicate, selects `candidate` or `old`, and performs one
 ordinary unmasked vector store. It is available only when all of the following
 close over the immutable pre-rewrite KIR:
 
-- one diamond arm contains exactly one store and the other contains no memory
-  operation;
+- one branch path contains exactly one store, the empty path goes directly to the
+  merge/latch without a memory operation, and the store path joins that same
+  merge/latch;
 - the store destination is the same affine place as the dominating `old` load,
   consumes its incoming Memory SSA version, and has no intervening memory
   definition;
