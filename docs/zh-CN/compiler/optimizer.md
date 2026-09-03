@@ -82,9 +82,21 @@ Loop SIMD 只接受 access、dependence graph、strict operation semantics 与 t
 strict `f64` 算术、受支持的 integer-to-`f64` cast、pure compare/select diamond，以及 unchecked
 modular integer add/multiply reduction。结果为 fixed-width vector body 加保持顺序的 scalar
 epilogue。Alias 未知时可生成一个 total、overflow-safe non-overlap predicate，保护逐字节一致
-的 scalar fallback；更复杂 predicate 保持 scalar。Checked/sanitizer mode、floating/checked
+的 scalar fallback；更复杂 predicate 保持 scalar。Sanitizer mode、floating/checked
 reduction、scan、gather/scatter、vector call、masked memory、shuffle 及不支持的
-alignment/operation 都保持 scalar。
+alignment/operation 都保持 scalar。Checked non-reduction loop 只有在 lane bound、overflow
+与 first-failure-order proof 全部闭合时才可处理，否则保持 scalar。
+
+同一 Loop SIMD class 还识别
+`if candidate < old { dst[i] = candidate }` 一类 conditional same-place update，
+其中 `old` 必须是该精确目标位置的支配 load。独立 legality checker 通过后，CK 生成 vector
+compare/select 和一次普通 vector store；false lane 选择 `old`，因此不需要 masked memory。
+Affine access、Memory SSA、alias、cross-lane dependence、strict floating semantics、lane
+bound、checked arithmetic 与 ordered effect 任一无法闭合都拒绝候选。Vector width、
+interleave factor（UF）与 break-even threshold 继续作为 offline tuning 测量的 Loop SIMD alternative，
+scalar loop 与 epilogue 是精确 fallback。
+Tuner 在受限 frontier 中保留不同且 target 支持的合法 VF/UF variant，不会提前折叠为
+ordinary cost-model winner。
 
 Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainder 语义。SLP 只按 source
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
@@ -209,3 +221,6 @@ hand-written SIMD oracle，并 replay exact 0.12 commit
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO、受限 multiversioning
 与 offline Auto-Tuning 在 0.14 交付；indirect calls、scalable KIR 与 adaptive JIT PGO
 仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。
+额外的 predicated-update gate 在 strict `f64` Floyd-Warshall kernel 上比较
+PGO+Auto-Tuning 与完全相同的 PGO-only build。获选 decision 必须包含已验证 Loop SIMD
+alternative，且封存 `N=1024` timing 必须在每个稳定 Linux 性能宿主上至少快 5%。

@@ -646,6 +646,43 @@ by CK:
 - short-slice and loop-versioning choices;
 - CK-owned block, function, and section-layout alternatives.
 
+The Loop SIMD class also owns a predicated same-place update alternative for the
+canonical loop form `if candidate < old { dst[index] = candidate }`. This is not
+masked-memory support. A legal rewrite loads `old` from the exact destination,
+computes a vector predicate, selects `candidate` or `old`, and performs one
+ordinary unmasked vector store. It is available only when all of the following
+close over the immutable pre-rewrite KIR:
+
+- one diamond arm contains exactly one store and the other contains no memory
+  operation;
+- the store destination is the same affine place as the dominating `old` load,
+  consumes its incoming Memory SSA version, and has no intervening memory
+  definition;
+- the condition, candidate, and index computation are free of calls, prints,
+  volatile access, possible failure, and any other ordered effect;
+- the dependence proof excludes loop-carried and cross-lane conflicts for every
+  load and the selected store;
+- strict floating-point compare/select semantics preserve unordered comparisons,
+  NaNs, infinities, signed zero, and operand order without fast math or
+  contraction;
+- every vector lane is in range and every checked arithmetic operation is proven
+  non-failing when checked modes are selected.
+
+The independent vector checker reconstructs the diamond, same-place relation,
+affine accesses, Memory SSA versions, lane bounds, dependence result, and exact
+compare/select/store rewrite. A missing proof rejects the candidate and leaves the
+scalar loop byte-for-byte unchanged. Accepted loops retain the ordinary runtime
+alias/versioning guard when required and always retain an ordered scalar epilogue.
+The alternative uses the existing Loop SIMD unit class and its vector-width,
+interleave-factor (UF), and break-even parameters. It adds no decision-file tag,
+language construct, public/native/runtime ABI surface, or target feature.
+For each eligible loop, the proposer emits the canonical bounded set of distinct
+target-supported VF/UF combinations already representable by that payload instead
+of collapsing them to the ordinary cost-model winner. The ordinary winner remains
+the baseline; legal combinations enter the existing unit-variant bound and are
+measured by the unchanged deterministic frontier search. An unsupported vector
+width, operation, or target feature is never emitted as a trial.
+
 Each decision site and alternative has a canonical stable identifier, precondition
 digest, and ordering. The trace records both accepted and rejected alternatives.
 
@@ -1362,6 +1399,24 @@ The existing ten required jobs remain required:
 All run against the exact candidate SHA. None may use continue-on-error or silently
 skip a required capability.
 
+The matrix is also a portability gate for the native runtime and backend. The
+following are release-blocking requirements, not host-specific test exceptions:
+
+- the profile runtime uses an explicit internal atomic abstraction; Windows uses
+  supported Interlocked operations rather than assuming that MSVC C11 atomics are
+  enabled, while every host preserves the same acquire/release publication model;
+- Linux x86-64 and AArch64 plus Darwin x86-64 and AArch64 must durably publish and
+  reopen profile shards using their platform adapter; directory, open, identity,
+  write, rename, and sync failures retain distinct internal causes before mapping
+  to the stable public status;
+- artifact assertions derive the host filename from `NativeArtifactPaths` and may
+  not hard-code a Darwin extension on Linux or Windows;
+- LLVM call lowering never assigns a value name to a `void` call, and a regression
+  test covers the PGO/tuning fixture that previously exercised that assertion;
+- all six native-host jobs compile the profile runtime, run the exact publication
+  tests, and build both executable and dynamic artifacts before a platform is
+  considered supported.
+
 The six native hosts verify:
 
 - manifest and decision parsing;
@@ -1634,6 +1689,52 @@ Resource and determinism gates are:
 The release evidence records hardware, operating system, compiler identity, raw
 samples, exclusions, and exact artifact digests.
 
+### 19.3 Predicated-update optimization-fulfilment gate
+
+Schema 9 and its frozen corpus remain unchanged. In addition, both stable Linux
+performance hosts run one independent fail-closed gate that proves the new
+predicated-update capability is selected and profitable rather than merely
+present. Its source is a strict-`f64` Floyd-Warshall kernel whose inner loop is the
+canonical same-place conditional update. The source language, ABI, safety modes,
+target, CPU policy, LLVM pipeline, and input generator are identical between
+channels.
+
+The corpus is fixed before measurement: PGO generation and tuning search use a
+deterministic `N=128`, seed-113 matrix; tuning validation uses a disjoint
+deterministic `N=256`, seed-127 matrix; and release timing uses a sealed
+deterministic `N=1024`, seed-131 matrix. The generator emits zero on the diagonal,
+finite non-negative edge weights, and positive infinity for absent edges, so the
+contract contains no negative cycle or NaN input.
+Seeds, source bytes, generator bytes, profile, manifest, decision, artifacts,
+compiler, LLVM, hardware capability, commands, correctness digests, and raw timing
+receipts are retained. Training and validation inputs are never accepted as
+release timing evidence.
+
+There are exactly two release channels:
+
+- `pgoOnly`: `ckc build`, O3, native CPU, explicit PGO-use,
+  `--overflow unchecked --bounds unchecked`, and no tune-use;
+- `pgoTuned`: the same build identity and PGO profile plus the decision produced by
+  `ckc tune build --pgo-use`.
+
+The decision must select a non-baseline plan containing the verified Loop SIMD
+predicated-update alternative. A baseline decision, a plan containing only layout
+or another alternative class, a stale profile/decision, or a decision that cannot
+be replayed exactly fails the gate. Correctness is checked against an independent
+scalar oracle before any timing is considered.
+Separate positive and negative optimizer tests cover checked mode: the same
+rewrite is accepted only when lane bounds, overflow, and first-failure ordering
+are all proven, and otherwise remains scalar.
+
+Timing uses three unscored warm-up rows followed by twenty measured rows, rotates
+the first channel deterministically, retains every raw monotonic-clock receipt,
+uses the upper median, and applies the schema-9 16-of-20 inclusive 80%..120%
+stability rule independently to both streams. On each host `pgoTuned/pgoOnly` must
+be at most `95/100`; no validation case may exceed `102/100`. Failure, instability,
+missing evidence, or a post-result exclusion blocks release. This gate is
+additional to every schema-8/schema-9, resource, size, determinism, and ten-job CI
+requirement and cannot be traded against them.
+
 ## 20. Release gate
 
 CK 0.14 is releasable only when:
@@ -1642,7 +1743,8 @@ CK 0.14 is releasable only when:
 2. every normative behavior in this specification has positive and negative tests;
 3. local total acceptance passes from a clean checkout;
 4. all ten exact-SHA remote jobs pass;
-5. the frozen performance corpus meets every threshold in Section 19;
+5. the frozen schema-9 corpus and the independent predicated-update corpus meet
+   every threshold in Section 19;
 6. documentation, CLI help, examples, schemas, and inspection output agree;
 7. produced executables and dynamic libraries retain the promised zero-dependency
    deployment model;

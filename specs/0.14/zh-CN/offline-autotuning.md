@@ -553,6 +553,34 @@ CK 0.14 只能调优由 CK 事实推导且由 CK 拥有的有限备选项：
 - 短 slice 和循环版本化选择；
 - CK 拥有的基本块、函数和 Section 布局备选项。
 
+Loop SIMD 类还拥有针对规范循环形态
+`if candidate < old { dst[index] = candidate }` 的 predicated same-place update
+备选项。这不是 masked-memory 支持。合法改写从精确目标位置加载 `old`，计算向量
+predicate，在 `candidate` 与 `old` 之间 select，再执行一次普通的 unmasked vector store。
+只有不可变改写前 KIR 上同时闭合以下条件时才可使用：
+
+- diamond 一条分支恰好包含一次 store，另一条分支不包含 memory operation；
+- store 目标与支配它的 `old` load 指向相同 affine place，消费其 incoming Memory SSA
+  version，且二者之间不存在 memory definition；
+- condition、candidate 与 index computation 不含 call、print、volatile access、possible
+  failure 或其他 ordered effect；
+- dependence proof 排除了全部 load 与获选 store 的 loop-carried 和 cross-lane conflict；
+- strict floating-point compare/select 在不使用 fast math 或 contraction 的情况下保持
+  unordered comparison、NaN、infinity、signed zero 与 operand order；
+- checked mode 下每个 vector lane 都已证明在范围内，且每个 checked arithmetic operation
+  都已证明不会失败。
+
+独立 vector checker 必须重建 diamond、same-place relation、affine access、Memory SSA
+version、lane bound、dependence result 以及精确 compare/select/store 改写。缺少任一证明都
+拒绝候选，并保持 scalar loop 逐字节不变。接受的循环在需要时保留普通 runtime
+alias/versioning guard，并始终保留有序 scalar epilogue。该备选项复用现有 Loop SIMD unit
+class 及其 vector-width、interleave-factor（UF）和 break-even 参数，不增加 decision-file tag、
+语言构造、public/native/runtime ABI 表面或 target feature。
+对每个合格循环，proposer 生成该 payload 已能表示且 target 支持的、规范有界的不同 VF/UF
+组合，而不是提前折叠为 ordinary cost-model winner。Ordinary winner 继续作为 baseline；合法
+组合进入既有 unit-variant 上限，并由不变的 deterministic frontier search 测量。任何 target
+不支持的 vector width、operation 或 feature 都不得作为 trial 发出。
+
 每个决策点和备选项都具有规范、稳定的标识、前置条件摘要和顺序。追踪记录
 同时记录接受和拒绝的备选项。
 
@@ -1173,6 +1201,22 @@ CK 0.14 将 CKCOBJ03/schema 4 条目视为干净的 Cache Miss，绝不原地升
 全部 Job 针对精确候选 SHA 运行，不得使用 continue-on-error，也不得静默
 跳过必需能力。
 
+该矩阵同时是 native runtime 与 backend 的 portability gate。以下要求会阻断发布，
+不得作为 host-specific test exception 处理：
+
+- Profile runtime 使用显式 internal atomic abstraction；Windows 使用受支持的 Interlocked
+  operation，不假定 MSVC 已启用 C11 atomics；全部宿主保持相同 acquire/release publication
+  model；
+- Linux x86-64/AArch64 与 Darwin x86-64/AArch64 必须通过各自 platform adapter 持久发布并
+  重新打开 profile shard；directory、open、identity、write、rename 与 sync failure 在映射到
+  稳定 public status 前保留不同 internal cause；
+- Artifact assertion 从 `NativeArtifactPaths` 推导宿主文件名，不得在 Linux 或 Windows 上
+  hard-code Darwin 扩展名；
+- LLVM call lowering 绝不为 `void` call 分配 value name，并以曾触发该断言的 PGO/tuning
+  fixture 建立回归测试；
+- 全部六个 native-host Job 都编译 Profile runtime、运行精确 publication test，并构建
+  executable 与 dynamic artifact，之后才可认为该平台受支持。
+
 六个原生宿主验证：
 
 - Manifest 与决策解析；
@@ -1401,6 +1445,43 @@ Archive；后者包含上述同一候选编译器、仓库 License 与 Notices�
 
 发布证据记录硬件、操作系统、编译器身份、原始样本、排除项和精确产物摘要。
 
+### 19.3 Predicated-update 优化兑现门槛
+
+Schema 9 及其冻结语料保持不变。此外，两个稳定 Linux 性能宿主都运行一个独立的
+fail-closed gate，证明新的 predicated-update 能力确实被选择且具有收益，而不只是代码中
+存在。源码为 strict-`f64` Floyd-Warshall kernel，其内层循环采用规范 same-place
+conditional update。两个 channel 的源语言、ABI、safety mode、target、CPU policy、LLVM
+pipeline 与 input generator 完全相同。
+
+语料在测量前固定：PGO generation 与 tuning search 使用确定性的 `N=128`、seed-113
+matrix；tuning validation 使用互不重叠的确定性 `N=256`、seed-127 matrix；release timing
+使用封存的确定性 `N=1024`、seed-131 matrix。Generator 在对角线上生成零，为存在的边生成
+有限非负权重，为缺失边生成正无穷，因此契约不含 negative cycle 或 NaN input。Seed、
+source bytes、generator bytes、profile、manifest、decision、artifact、
+compiler、LLVM、hardware capability、command、correctness digest 与全部 raw timing receipt
+都必须保留。Training/validation input 不得作为 release timing evidence。
+
+Release 恰好包含两个 channel：
+
+- `pgoOnly`：`ckc build`、O3、native CPU、显式 PGO-use、
+  `--overflow unchecked --bounds unchecked`，且不使用 tune-use；
+- `pgoTuned`：相同 build identity 与 PGO profile，再应用
+  `ckc tune build --pgo-use` 产生的 decision。
+
+Decision 必须选择包含已验证 Loop SIMD predicated-update alternative 的非 baseline plan。
+Baseline decision、只包含 layout 或其他 alternative class 的 plan、stale profile/decision，
+或不能精确 replay 的 decision 都使门槛失败。任何 timing 被采纳前，correctness 必须与独立
+scalar oracle 一致。
+另设 checked mode 正向与负向 optimizer test：只有 lane bound、overflow 与 first-failure
+ordering 全部得到证明时才接受同一改写，否则保持 scalar。
+
+Timing 先运行三个不计分 warm-up row，再运行二十个 measured row，确定性轮换首个 channel，
+保留全部 monotonic-clock raw receipt，使用 upper median，并分别对两个 stream 应用 schema-9
+的 16-of-20、闭区间 80%..120% stability rule。每个宿主上的
+`pgoTuned/pgoOnly` 必须不超过 `95/100`，任一 validation case 不得超过 `102/100`。Failure、
+instability、缺少 evidence 或事后排除都会阻断发布。该门槛叠加于全部 schema-8/schema-9、
+resource、size、determinism 与十 Job CI 要求之上，彼此不得抵销。
+
 ## 20. 发布门槛
 
 只有满足以下全部条件，CK 0.14 才可发布：
@@ -1409,7 +1490,7 @@ Archive；后者包含上述同一候选编译器、仓库 License 与 Notices�
 2. 本规范中的每项规范行为都有正向和负向测试；
 3. 从干净 Checkout 通过本地总验收；
 4. 十个精确 SHA 远程 Job 全部通过；
-5. 冻结性能语料达到第 19 节全部阈值；
+5. 冻结 Schema-9 语料与独立 predicated-update 语料达到第 19 节全部阈值；
 6. 文档、CLI Help、示例、Schema 和检查输出一致；
 7. 生成的可执行文件和动态库保持承诺的零额外依赖部署模型；
 8. 仓库干净，全部发布证据由精确 SHA 的 CI Run 与 Release Archive 保留；生成

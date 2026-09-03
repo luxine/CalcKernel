@@ -101,9 +101,23 @@ supported integer-to-`f64` casts, pure compare/select diamonds, and unchecked
 modular integer add/multiply reductions. It emits a fixed-width vector body plus
 an ordered scalar epilogue. Unknown aliasing may produce one total overflow-safe
 non-overlap predicate guarding a byte-for-byte scalar fallback; more complex
-predicates remain scalar. Checked or sanitizer modes, floating/checked reductions,
-scans, gather/scatter, vector calls, masked memory, shuffles, and unsupported
-alignment/operations remain scalar.
+predicates remain scalar. Sanitizer modes, floating/checked reductions, scans,
+gather/scatter, vector calls, masked memory, shuffles, and unsupported
+alignment/operations remain scalar. Checked non-reduction loops require complete
+lane bounds, overflow, and first-failure-order proofs; otherwise they remain
+scalar.
+
+The same Loop SIMD class recognizes a conditional same-place update such as
+`if candidate < old { dst[i] = candidate }` when `old` is the dominating load of
+that exact destination. After independent legality checking, CK emits vector
+compare/select plus one ordinary vector store; the false lane selects `old`, so
+this does not require masked memory. The candidate is rejected unless affine
+accesses, Memory SSA, aliasing, cross-lane dependence, strict floating semantics,
+lane bounds, checked arithmetic, and ordered effects all close. Vector width,
+interleave factor (UF), and break-even threshold remain measured Loop SIMD alternatives for
+offline tuning, with the scalar loop and epilogue as the exact fallback.
+The tuner keeps distinct legal target-supported VF/UF variants in its bounded
+frontier rather than collapsing them to the ordinary cost-model winner.
 
 Unroll considers factors 2 and 4, preserving exact trip partition and scalar
 remainder semantics. SLP packs only isomorphic, independent, adjacent scalar
@@ -284,3 +298,7 @@ generation overhead, artifact size, compiler archive size, and cache behavior
 have separate gates. PGO, bounded multiversioning, and offline Auto-Tuning ship
 in 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.
+An additional predicated-update gate compares PGO+Auto-Tuning with the identical
+PGO-only build of a strict `f64` Floyd-Warshall kernel. The selected decision must
+contain the verified Loop SIMD alternative, and sealed `N=1024` timing must be at
+least 5% faster on each stable Linux performance host.
