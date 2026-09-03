@@ -3514,8 +3514,12 @@ extern "C" int32_t ckc_llvm_builder_call(
             }
             values.push_back(llvm_value(args[index]));
         }
-        *out = bridge_value(builder->value->CreateCall(
-            callee->getFunctionType(), callee, values, borrowed_string(name)));
+        auto *call = builder->value->CreateCall(callee->getFunctionType(), callee,
+                                                values);
+        if (!callee->getReturnType()->isVoidTy() && name.len != 0) {
+            call->setName(borrowed_string(name));
+        }
+        *out = bridge_value(call);
         return CKC_LLVM_OK;
     });
 }

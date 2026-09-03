@@ -1,3 +1,5 @@
+use std::{fs, process::Command};
+
 use calckernel::{
     EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirCpuIdentity,
     KirMultiversionPlanningRequest, KirMultiversionTierId, KirNativeCpuPolicy,
@@ -7,6 +9,45 @@ use calckernel::{
     import_contract_facts, lower_native_kir_module, lower_to_mir, propose_kir_multiversion_bundle,
     run_kir_pass_pipeline,
 };
+
+use super::support::temp::unique_id;
+
+#[test]
+fn multiversion_dynamic_library_with_void_helper_call_should_build() {
+    let root = std::env::current_dir()
+        .expect("current directory")
+        .join("target/multiversion-void-call-tests")
+        .join(unique_id().to_string());
+    fs::create_dir_all(&root).expect("create multiversion void-call fixture");
+    let output = root.join("library");
+    let build = Command::new(env!("CARGO_BIN_EXE_ckc"))
+        .args([
+            "build",
+            "benches/fixtures/pgo/call_constant_length.ck",
+            "--kind",
+            "dynamic",
+            "--out",
+        ])
+        .arg(&output)
+        .args([
+            "-O3",
+            "--cpu",
+            "multiversion",
+            "--overflow",
+            "unchecked",
+            "--bounds",
+            "unchecked",
+        ])
+        .env("PATH", "")
+        .output()
+        .expect("run multiversion void-call build");
+    assert!(
+        build.status.success(),
+        "multiversion void-call build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    fs::remove_dir_all(root).expect("remove multiversion void-call fixture");
+}
 
 #[test]
 fn target_set_host_should_materialize_exact_separate_llvm_target_machines() {

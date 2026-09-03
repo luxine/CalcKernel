@@ -115,6 +115,10 @@ fn unchecked_guard_free_pipeline_should_skip_unconsumed_scalar_analysis() {
 
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert_eq!(result.stats.scalar_functions_analyzed, 0);
+    assert_eq!(
+        result.stats.loop_legality_candidates, 0,
+        "a target with no vector operations must not run dead dependence analysis"
+    );
 }
 
 #[test]
