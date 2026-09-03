@@ -1707,7 +1707,8 @@ fn x86_integer_reduction_handoff_should_pin_backend_interleave_width() {
         "llvm.loop.interleave.count",
         "CKC_X86_REDUCTION_INTERLEAVE = 8",
         "llvm::CloneFunction",
-        "attached_clone->removeFromParent()",
+        "production_functions",
+        "attached_clone->eraseFromParent()",
         "clone_dominators",
     ] {
         assert!(
