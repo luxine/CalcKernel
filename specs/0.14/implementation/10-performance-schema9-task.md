@@ -1,5 +1,8 @@
 # 阶段 10 任务：schema 9 corpus、collector、checker 与 archive
 
+> **当前定位：已落地的累计基础。** Schema 9 保持冻结；它不包含、也不能代签
+> 阶段 17–18 的 Predicated-Update Performance Contract 1，阶段 19 必须回归两者。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans`; execute inline without subagents.
 
 ## 目标

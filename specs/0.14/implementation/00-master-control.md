@@ -1,8 +1,8 @@
 # CK 0.14 离线自动调优实施总控
 
-> **状态：暂停且不可执行。** 本总控及其阶段 01–11/99 文档早于当前
-> predicated-update 优化兑现与跨平台修复规范。它们在本轮对抗性审查通过并按用户任务链
-> 第 5 步整体重建前，不是实施或验收权威，也不能签署 v0.14 完成。
+> **状态：有效，按阶段 12–19 继续执行。** 阶段 01–11 是当前仓库已经提交的 v0.14
+> 离线自动调优基础，必须在最终 SHA 回归重验；阶段 12–19 是本轮通过对抗性审查后新增的
+> 优化兑现与跨平台修复链。任何阶段都不能单独签署 v0.14 完成。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:executing-plans` and execute this plan inline task-by-task. The
@@ -27,10 +27,12 @@
 - `specs/0.14/publication-journal-1.md`
 - `specs/0.14/performance-schema-9.md`
 - `specs/0.14/review/design-adversarial-review-08.md`
+- `specs/0.14/predicated-update-performance-1.md`
+- `specs/0.14/review/optimization-fulfillment-adversarial-review-06.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
-`379778cbcf8aa4bf2ad8dc9592ae6a080a003676`。v0.14 设计基于 v0.13 候选
+`1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 设计基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；本地 `main` 的
 `6c00b8044fe2e9179726fc2730951403822e7468` 是该候选祖先，差异为单向前进，
 没有待吸收的分叉提交。v0.13 最终 exact-SHA 远程接纳仍是 v0.14 发布门禁；实现可继续，
@@ -43,8 +45,9 @@ exact-SHA CI；长任务只做间隔查询，不在前台持续等待。
 ## 不可变执行规则
 
 1. 本计划提交后完全行内执行，不再创建、恢复或使用任何子代理。
-2. 阶段 01–11 严格顺序执行。每个行为先写最小 RED 并确认失败来自缺失能力，再实现 GREEN；
-   阶段 task 和 acceptance 全部完成后才进入下一阶段。
+2. 阶段 01–11 已形成实现基础；严格按 12–19 顺序执行，且由阶段 19 在最终 SHA 回归 01–11
+   的本地验收。每个新增行为先写最小 RED 并确认失败来自缺失能力，再实现 GREEN；阶段 task
+   和 acceptance 全部完成后才进入下一阶段。
 3. 调优始终显式 opt-in。普通 `check/run/build/build-llvm/emit-*` 不运行 harness、不读写
    `tune-v1`、不读取 `.cktune`，且普通 O3 收益阈值不变。
 4. 测量只证明收益；安全、合法性、guard、first-error、effect order、strict `f64`、目标特性与 ABI
@@ -66,6 +69,9 @@ exact-SHA CI；长任务只做间隔查询，不在前台持续等待。
     Rust/LLVM/Clang/host identity。旧阶段日志不能代替最终 SHA 的总验收。
 12. 实施期成立的真实设计复诊以 `implementation-design-correction-01.md` 至 `08.md` 为完整序列；
     其中修订只能闭合可实现性与证据真实性，不得降低本总控或规范门槛。
+13. 阶段 12–19 不重写 CKTUNE01、Manifest Schema 1、KIR 3、Native ABI 1 或 Runtime ABI 2。
+    predicated-update 继续复用 Loop SIMD payload；独立 gate 通过 source-aware 重建证明唯一 choice
+    和动态可达，不新增可伪造的 wire 布尔字段。
 
 ## 冻结实现架构
 
@@ -78,6 +84,8 @@ explicit CLI + closed manifest -> no-follow runner/input snapshots
   -> independent plan replay + object graph/link recipe verification
   -> CKTUNE01 decision + CKCOBJ04/cache schema 5
   -> overlap-closed journaled decision/sidecar/primary publication
+  -> source-aware single-choice predicated-update attestation
+  -> independent PGO-only versus PGO+tuned Floyd evidence contract
 ```
 
 `src/tune/` 是 compiler-owned 子系统，并与 CK workload profile 的 `src/profile/`、target cost
@@ -100,9 +108,17 @@ recipe 身份，不接受调优策略。`src/cli/tune.rs` 是薄编排层。
 | 09 | 0.14 identity、CKCOBJ04/schema 5、兼容矩阵、双语 current docs 与 release audit | Cargo/docs/contracts | 08 |
 | 10 | schema 9 corpus、runner/oracles、collector、checker、archive 与本地 performance contract | benches/scripts/performance tests | 09 |
 | 11 | exact-SHA 十作业 CI、六 host/两 performance gate、最终本地与远程验收 | workflow/contracts | 10 |
+| 12 | Windows/Unix profile runtime 原子与持久 shard 发布修复 | `native/profile_runtime/`, profile tests | 01–11 已落代码 |
+| 13 | host artifact 路径与 LLVM void-call Native 回归修复 | bridge/CLI/native tests | 12 |
+| 14 | predicated same-place update 发现、Memory SSA 与合法性模型 | vector analysis/tests | 13 |
+| 15 | compare/select/unmasked-store 物化、独立 checker 与 LLVM 结果 | vector pass/checker/native tests | 14 |
+| 16 | Loop SIMD 调优候选保留、唯一 choice 与 source-aware attestation | optimizer/tune/CLI tests | 15 |
+| 17 | 冻结 Floyd source/input/manifest 与四协议 native runner | benches/tune/performance tests | 16 |
+| 18 | Contract 1 collector、closed report、checker 与 mutation tests | benches/scripts/performance tests | 17 |
+| 19 | 十作业 CI 接线、全量本地复验、exact-SHA 远程门禁与交付 | workflow/contracts/final evidence | 18 |
 
-每个阶段都有同号 `*-task.md` 与 `*-acceptance.md`。重建完成后，
-`99-final-acceptance.md` 才恢复为唯一总验收清单；
+每个阶段都有同号 `*-task.md` 与 `*-acceptance.md`。当前
+`99-final-acceptance.md` 是唯一总验收清单；
 阶段通过不能代签 source-aware replay、六平台、性能、exact-SHA CI 或 v0.13 accepted-base 门禁。
 
 ## 提交与执行策略

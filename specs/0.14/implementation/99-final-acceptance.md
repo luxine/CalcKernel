@@ -1,9 +1,9 @@
 # CK 0.14 总验收
 
-> **状态：暂停且不可签署。** 本清单尚未吸收当前 predicated-update 优化兑现、独立性能
-> Contract 1 与跨平台修复门槛；必须在本轮任务第 5 步整体重建后才恢复验收权威。
+> **状态：有效，尚未签署。** 本文件是 0.14 候选的唯一总验收清单；阶段 01–19
+> 的 acceptance 是可追踪子集，不得独立代签最终候选。
 
-重建完成后，本文件是 0.14 候选的唯一总验收清单。所有项目必须由同一最终 candidate SHA 的真实结果支持；
+所有项目必须由同一最终 candidate SHA 的真实结果支持；
 阶段日志、旧 CI、partial report、降低阈值或 skipped required capability 不能代签。
 
 ## A. 分支、基线与版本
@@ -18,6 +18,8 @@
 - [ ] 调优显式 opt-in；普通 check/run/build/emit/release 无 harness、tune cache/decision I/O 或 optimizer 变化。
 - [ ] language/source/strict-f64/checked first-error/effect/print/slice/C/WASM/public Native ABI/Runtime ABI 无回归。
 - [ ] measurement 只授权收益，未建立 range/alias/alignment/effect/bounds proof，未移除 guard 或改变 target feature。
+- [ ] predicated same-place update 只在 exact place、Memory SSA、unit stride、strict compare、无冲突副作用以及
+  checked first-failure 全部可证时物化；否则保持原 scalar CFG。
 - [ ] final executable/dynamic library self-contained，不含 runner/tune symbol/dispatch runtime 或新 shared dependency。
 
 ## C. CKTUNE01、Manifest 与 inspection
@@ -48,12 +50,19 @@
 - [ ] compile/measurement/completed cache 身份、salt、private path、checksum、atomic entry、LRU、4 GiB 与 no-splice 完整。
 - [ ] tune build/inspect/tune-use option matrix、early failure、cold determinism、warm zero-work reuse、no-cache 与 stale replay negative 完整。
 
-## G. 兼容、质量与平台
+## G. 兼容、质量与平台根因修复
 
 - [ ] CKCOBJ03/schema4 clean miss；v0.13 profile mismatch 和 future tune schema fail-closed，不就地升级。
 - [ ] 双语 docs、CLI help、diagnostics、architecture、optimizer、performance、compatibility、release 文档一致。
 - [ ] fmt、clippy `-D warnings`、rustdoc `-D warnings`、feature-disabled/all-features tests 全绿。
-- [ ] 六 Native host 的 ABI、runner、filesystem、journal、cache、artifact 和 ordinary-isolation tests 无 required skip。
+- [ ] Profile Runtime 在 MSVC 使用 Interlocked、在 Unix 使用 compile-time always-lock-free C11 原子；Runtime ABI 2、
+  CKPROF01、CKPART01 和公开状态码未变。
+- [ ] Linux 与 Darwin profile shard 完成 create-new/write/file-sync/no-replace/directory-sync/no-follow reopen；
+  不依赖错误的 raw-stat 布局或未冻结 `_fstat$INODE64` 符号。
+- [ ] dynamic primary/header/import-library 由 `NativeArtifactPaths` 决定；LLVM void call 不获得 SSA 名称，
+  non-void call 名称与 Bridge ABI 4 保持不变。
+- [ ] 六 Native host 的 ABI、runner、filesystem、journal、cache、artifact、profile publish、void call、真实
+  executable/dynamic 和 ordinary-isolation tests 无 required skip。
 
 ## H. Schema 9 性能与证据
 
@@ -63,10 +72,29 @@
 - [ ] artifact <=110%；tune-use compile <=10% geo/20% each；ordinary <=3%/8%；archive <=110%。
 - [ ] standard <=30 min/bounds、RSS <=2x ordinary、cache <=4 GiB；wait4 receipts、cold/warm determinism 和 final dependency audit 完整。
 
-## I. exact-SHA CI 与交付
+## I. Predicated-Update Performance Contract 1
+
+- [ ] 冻结 source、training/validation/release TSV、manifest 的 exact bytes/path/digest 与 Contract 1 一致；
+  SplitMix64 golden cells 和三 split 结果 digest 可独立重算。
+- [ ] runner 的 tune/profile/oracle/perf 四协议具有 exact argv/env/receipt；profile 唯一 flush、timed call fresh
+  matrix、timer 内仅 native kernel，所有负例 fail-closed。
+- [ ] decision 恰有一个 selected `PlanChoice`、一个 Loop SIMD `UnitVariant`、一个目标 `SiteAlternative`；
+  minimum <=128，N/slice 事实证明所有 guard 为真且 N=128/256/1024 都实际执行至少一个向量 chunk。
+- [ ] source-aware attestation 精确绑定 source/KIR/site/candidate/unit/variant/VF/UF/minimum/pre/post digest；
+  replay byte-equal，复合 plan、不可达 rewrite、错误 profile/target/post-state 均被拒绝。
+- [ ] report 的 profile `DirectoryEvidence`、四个 XDG cache base 到实际 `cache/<command>/ckc` namespace、
+  pgoTuned-only publication locks、七命令与完整 regular-file inventory 闭合。
+- [ ] validation 与 release 分别保留 3 warmup、20 measured、每 row/channel 3 calls/min 的全部原始回执；
+  独立 checker 重算 upper median、16-of-20、validation `tuned*100 <= pgoOnly*102` 与 release
+  `tuned*100 <= pgoOnly*95`，collector 不含接受逻辑。
+- [ ] Linux x86-64-v4 与 AArch64 SVE2 两个 stable host 各自真实通过 Contract 1；任一 host、样本、证据或
+  schema 9 外键缺失均不能签署。
+
+## J. exact-SHA CI 与交付
 
 - [ ] quality、native-integration、六 Native host、两 stable performance 共十 job 对同一最终 SHA 全部成功。
-- [ ] schema9 report candidate SHA、compiler bytes、decisions/outputs/receipts/archive 与 CI checkout SHA 相等。
+- [ ] 阶段 01–19 的本地验收已按依赖顺序重放；所有 selector 非零，未以旧阶段记录代签。
+- [ ] schema9 与 Contract 1 report 的 candidate SHA、compiler bytes、decisions/outputs/receipts/archive 与 CI checkout SHA 相等。
 - [ ] generated decisions/reports/cache/temp/run ids 未进入 source commit；worktree 最终 clean。
 - [ ] 最终实现已提交在独立 worktree，未合并 main，等待用户审查。
 

@@ -1,5 +1,8 @@
 # 阶段 11 任务：exact-SHA 十作业 CI 与最终门禁
 
+> **当前定位：已落地的十作业基础。** 本阶段不能单独推送或签署本轮候选；
+> 阶段 19 负责把阶段 12–18 接入同一拓扑并执行唯一最终验收。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans`; execute inline without subagents.
 
 ## 目标
@@ -43,4 +46,3 @@
 - required job/capability/test 不得通过 condition、optional input、continue-on-error 或空 artifact 绕过。
 - remote transient failure 可重跑同 SHA；产品/checker/fixture 变化必须新 SHA 全量重跑。
 - v0.13 accepted-base 若仍未满足，明确保持 release blocked；不得伪造 tag 或降低 v0.14 本身门禁。
-

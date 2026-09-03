@@ -1,5 +1,8 @@
 # 阶段 11 验收：十作业 exact-SHA CI
 
+> **当前定位：已落地的累计基础。** 旧 run、旧 SHA 或仅 schema 9 的结果不能
+> 代签阶段 19；本阶段必须由最终候选 SHA 作为阶段 19 的回归子集重新验证。
+
 ## 本地必须通过
 
 - [ ] `cargo fmt --all -- --check`
@@ -23,4 +26,3 @@
 ## 完成证据
 
 本地记录放 `target/acceptance/v0.14/stage-11/`；远程 run id、job conclusions 与 artifact digests 放 CI artifact/外部审查记录，不回写 candidate SHA。
-

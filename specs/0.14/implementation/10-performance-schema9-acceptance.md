@@ -1,5 +1,8 @@
 # 阶段 10 验收：schema 9 本地契约与真实性基础
 
+> **当前定位：已落地的累计基础。** 本阶段的 schema 9 通过不能替代独立的
+> Predicated-Update Contract 1；最终候选仍须通过阶段 17–19。
+
 ## 本地必须通过
 
 - [ ] `cargo test --test performance tune_ -- --nocapture`
