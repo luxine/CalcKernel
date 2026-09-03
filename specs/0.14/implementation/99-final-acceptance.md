@@ -9,7 +9,7 @@
 ## A. 分支、基线与版本
 
 - [ ] 当前分支为 `design/v0.14-offline-autotuning`，独立 worktree 正确且 clean；`main` 未自动合并。
-- [ ] 最终 accepted v0.13 revision `c44b99cc1954a3ca133cf03c281d0590ce320edb` 已完成逐差异审计与等价集成。
+- [ ] 最终 accepted v0.13 revision `0f9af4ae032c0c3248caff60993795e669d3f8b4` 已完成逐差异审计与等价集成。
 - [ ] Cargo/CLI/docs 为 0.14.0；CKCOBJ04/cache 5、tune schemas 1、KIR 3、bridge 4、Native ABI 1、Runtime ABI 2 一致。
 - [ ] 未创建/移动 tag 或 GitHub Release；所有本地/远程证据绑定同一最终 SHA。
 

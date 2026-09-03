@@ -19,12 +19,12 @@ schema-8 report would weaken the historical boundary and is prohibited.
 ## Correction
 
 V0.13 fixes the bridge at exact candidate revision
-`c44b99cc1954a3ca133cf03c281d0590ce320edb` and adds a subprocess regression for
+`0f9af4ae032c0c3248caff60993795e669d3f8b4` and adds a subprocess regression for
 the exact multiversion dynamic-library command.  V0.14 now pins that whole
 revision directly.  `benches/baselines/v0_13_replay.toml`, the preparation
 script, tests, master-control material, and both normative design languages are
 updated together; the manifest SHA-256 is
-`a7d5df898bb5fa752dbe8c7f5ac4e46bef3c87d30475d3a919c0ab2a8c9732f1`.
+`8f454cac97608432a462d6de89949264d5ab5cc33ee9b94c7cb933829bdb72a0`.
 
 The historical checker, schemas, fixtures, sample statistics, performance
 thresholds, and replay requirement are unchanged.  Remote acceptance must build

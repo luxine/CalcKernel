@@ -12,12 +12,16 @@ O3 production function 原地执行 `mem2reg`。即使 `integer_accumulate` 不�
 
 ## 修订闭包
 
-- 在 detached function clone 上执行临时 `mem2reg` 与 loop 分类；
+- 先冻结 production function 列表，在 module-owned temporary clone 上执行临时 `mem2reg` 与
+  loop 分类，并在映射消费完毕后删除 clone；
 - 只把已证明目标 loop 的 `llvm.loop.interleave.count = 8` metadata 映射回 production loop；
 - 无 non-local load 的函数在 clone 前跳过；
 - 契约测试要求 clone 隔离，并禁止旧的 production-module promotion；
 - V0.13 exact replay pin 前移到包含同一修复的
-  `c44b99cc1954a3ca133cf03c281d0590ce320edb`，manifest digest 同步重算。
+  `0f9af4ae032c0c3248caff60993795e669d3f8b4`，manifest digest 同步重算。
 
 归约策略、interleave 宽度、语言/ABI、安全语义、性能 corpus、样本与阈值均未改变。动态结论仍由
 新 SHA 的 x86-64 远程性能作业签署。
+
+第一版隔离实现过早 detach clone，随后被 exact x86-64 Native CI 以 `SIGSEGV` 拒绝。最终生命周期
+在本机强制执行同一路径后通过，旧的 premature-detach 形态由结构契约禁止。
