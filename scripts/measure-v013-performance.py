@@ -21,7 +21,7 @@ import time
 import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-V012_COMMIT = "1c2596da11242704cc6d875e969fc45cf58ea21d"
+V012_COMMIT = "1009bae18d1a1ebd37ee9ee095cab9a965e69df8"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
 CHANNELS = [
