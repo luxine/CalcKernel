@@ -796,8 +796,9 @@ length before archive or link; caches, debug sidecars, and distribution
 containers are excluded. The source-to-object compile-time corpus uses the same
 source/mode pairs, fresh output paths, disabled artifact caches, three warm-up
 pairs, and fifteen measured pairs. Candidate-first and replay-first order
-alternates, and the upper median is reported. Missing, failed, or mismatched
-objects fail both gates.
+alternates, and the upper median of terminated-child user-plus-system CPU time
+is reported. This excludes hosted-worker descheduling while retaining all
+compiler work; missing, failed, or mismatched objects fail both gates.
 
 The vector corpus includes at least contiguous map/zip, strict element-wise f64,
 integer transform, exact modular integer reduction where target legal, SLP from

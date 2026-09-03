@@ -395,7 +395,7 @@ fn compile_ck(
     kind: &str,
     checked: bool,
 ) -> Result<u128, String> {
-    let start = Instant::now();
+    let timer = compile_timer_start()?;
     let result = Command::new(compiler)
         .arg("build")
         .arg(fixture)
@@ -422,7 +422,65 @@ fn compile_ck(
         ));
     }
     regular_size(output)?;
-    Ok(start.elapsed().as_nanos().max(1))
+    compile_timer_elapsed(timer)
+}
+
+#[cfg(unix)]
+type CompileTimer = u128;
+
+#[cfg(not(unix))]
+type CompileTimer = Instant;
+
+#[cfg(unix)]
+fn compile_timer_start() -> Result<CompileTimer, String> {
+    terminated_child_cpu_time_ns()
+}
+
+#[cfg(not(unix))]
+fn compile_timer_start() -> Result<CompileTimer, String> {
+    Ok(Instant::now())
+}
+
+#[cfg(unix)]
+fn compile_timer_elapsed(timer: CompileTimer) -> Result<u128, String> {
+    Ok(terminated_child_cpu_time_ns()?
+        .checked_sub(timer)
+        .ok_or_else(|| "terminated-child CPU clock moved backwards".to_string())?
+        .max(1))
+}
+
+#[cfg(not(unix))]
+fn compile_timer_elapsed(timer: CompileTimer) -> Result<u128, String> {
+    Ok(timer.elapsed().as_nanos().max(1))
+}
+
+#[cfg(unix)]
+fn terminated_child_cpu_time_ns() -> Result<u128, String> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: getrusage initializes the pointed-to rusage on success. The pointer is valid,
+    // properly aligned, and exclusively owned for the duration of the call.
+    let status = unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr()) };
+    if status != 0 {
+        return Err(format!(
+            "read terminated-child CPU time: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: a zero getrusage status guarantees that usage was initialized.
+    let usage = unsafe { usage.assume_init() };
+    Ok(timeval_ns(usage.ru_utime)? + timeval_ns(usage.ru_stime)?)
+}
+
+#[cfg(unix)]
+fn timeval_ns(value: libc::timeval) -> Result<u128, String> {
+    let seconds = u128::try_from(value.tv_sec)
+        .map_err(|_| "terminated-child CPU time contains negative seconds".to_string())?;
+    let micros = u128::try_from(value.tv_usec)
+        .map_err(|_| "terminated-child CPU time contains negative microseconds".to_string())?;
+    if micros >= 1_000_000 {
+        return Err("terminated-child CPU time contains invalid microseconds".to_string());
+    }
+    Ok(seconds * 1_000_000_000 + micros * 1_000)
 }
 
 fn compile_c_oracle(

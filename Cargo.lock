@@ -76,6 +76,7 @@ version = "0.13.0"
 dependencies = [
  "assert_cmd",
  "cc",
+ "libc",
  "num-bigint",
  "predicates",
  "sha2",

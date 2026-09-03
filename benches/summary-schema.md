@@ -83,8 +83,8 @@ Aggregate candidate growth is at most 35%; no item exceeds 2.5x.
 
 `compileTimeComparisons` uses fresh output paths, no artifact cache, three
 alternating warm-up pairs, fifteen alternating measured pairs, and upper
-medians. Candidate/replayed-0.11 source-to-object time is at most 1.5x in
-geometric mean and 2x individually.
+medians of terminated-child user-plus-system CPU time. Candidate/replayed-0.11
+source-to-object time is at most 1.5x in geometric mean and 2x individually.
 
 Prepare both replay bundles with `scripts/prepare-performance-replay.py`, select
 them through `CKC_V011_RUNTIME_BUNDLE` and `CKC_V010_RUNTIME_BUNDLE`, build the
@@ -135,7 +135,9 @@ PGO/multiversion/combined source-to-object geometric ratios are at most
 1.5x/2.5x/3.5x ordinary and individual ratios at most 2x/3x/4x. Their aggregate
 artifact ratios are at most 1.25x/2x/2x and individual ratios at most
 1.5x/2.5x/2.5x. The canonical candidate distribution archive is at most 15%
-larger than the exact 0.12 archive. Every shard, profile, target set, variant,
+larger than the exact 0.12 archive. Compile-time samples use terminated-child
+user-plus-system CPU time, excluding hosted-worker descheduling while retaining
+all compiler work. Every shard, profile, target set, variant,
 sample order, raw sample, compiler, archive, recipe, source, and capability is
 retained with exact bytes and SHA-256.
 

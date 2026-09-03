@@ -838,6 +838,8 @@ On stable x86-64 and AArch64 workers:
 - PGO-use single-version source-to-object compilation is at most 1.5 times,
   multiversion at most 2.5 times, and combined at most 3.5 times the matching
   ordinary 0.13 baseline geometric mean, with individual limits of 2, 3, and 4;
+  samples use terminated-child user-plus-system CPU time so hosted-worker
+  descheduling is excluded without removing compiler work;
 - PGO-only artifacts are at most 1.25 times the ordinary aggregate size and 1.5
   times any individual; multiversion or combined artifacts are at most 2 times
   aggregate and 2.5 times any individual; and

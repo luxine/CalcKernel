@@ -38,6 +38,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 - PGO/multiversion/combined source-to-object geometric-mean ratio 不超过 ordinary 的
   1.5x/2.5x/3.5x，单项不超过 2x/3x/4x；artifact aggregate 不超过 1.25x/2x/2x，
   单项不超过 1.5x/2.5x/2.5x；distributed `ckc` archive 相对 exact 0.12 最多增长 15%。
+  Source-to-object 样本使用已终止子进程的 user+system CPU time，排除托管 worker 被调度
+  移出的时间，同时不移除任何编译器工作。
 - 保留全部 0.12 累积 gate：Native 至少达到 pinned Clang geometric mean 的 95%，单项最多
   慢 10%，checked proof loop 至少达到 unchecked 的 97%，vector/domain gate 保持，optimizer
   latency 保持既有 suite 2x、单项 3x 上限。
