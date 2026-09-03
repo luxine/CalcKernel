@@ -423,10 +423,15 @@ This supported source surface is not a promise that every kernel is accepted on
 every target. Each concrete target profile must still prove the unchanged 20
 percent profitability threshold. In the pinned baseline profiles, AArch64 may
 accept the complete structural corpus while x86-64 conservatively keeps
-high-throughput strict-f64 division and an unprofitable horizontal integer
-multiplication reduction scalar. Cross-target tests assert the exact accepted
-subset and a stable profitability rejection; structural vector evidence is
-required for every plan that is actually accepted.
+high-throughput strict-f64 division scalar and leaves modular integer
+add/multiply reductions in scalar KIR for the Native LLVM loop vectorizer. The
+latter is a target-specific lowering choice: the fixed-vector KIR plan performs
+a horizontal fold in every chunk, while the pinned x86 backend carries vector
+accumulators and folds once at loop exit. Cross-target tests assert the exact
+accepted subset and a stable fallback; structural KIR vector evidence is
+required for every plan that is actually accepted. Pinned object disassembly
+separately proves SIMD for a benchmark that uses the x86 Native lowering
+fallback and cannot be used to claim that its KIR plan was accepted.
 
 For checked element-wise operations, the fast path is legal only when existing
 facts or permitted version predicates prove that every vector lane cannot fail.
@@ -691,10 +696,11 @@ thresholds:
 4. Adversarial cases retain scalar execution for irreducible control flow,
    unknown write dependence, calls/effects, strict f64 reductions, possible
    first error, overflowing address predicates, and over-budget modules.
-5. KIR and pre-LLVM structural tests prove an accepted vector plan exists and
-   contains the expected vector operations. Pinned object disassembly on x86-64
-   and AArch64 proves real SIMD instructions, so an LLVM scalar fallback cannot
-   falsely satisfy acceptance.
+5. KIR and pre-LLVM structural tests prove that every accepted fixed-vector KIR
+   plan contains the expected vector operations. Pinned object disassembly on
+   x86-64 and AArch64 proves real SIMD instructions. The explicitly named x86
+   horizontal-reduction fallback is accepted only as a Native lowering path and
+   does not count as evidence that a fixed-vector KIR plan was accepted.
 6. Baseline and native CPU policies receive correctness and feature-containment
    tests on every supported host. Native machine code may use only the resolved
    feature string; baseline artifacts must not use optional ISA features.
@@ -749,6 +755,12 @@ before correctness, warm-up, or sampled batches. The timed batch performs only
 calls through that cached entry; dynamic symbol lookup and per-call string
 dispatch are outside the timing region.
 
+Immediately before each timed sample of the fixed four-element `slp_quad`
+microkernel, every channel executes one identical unmeasured batch. This
+short-kernel conditioning is recorded in the pinned manifest and applies to CK,
+C, and Rust equally; it does not change the three warm-up rows, twenty timed
+rows, seven timed calls, batch identity, order, statistic, or threshold.
+
 The release gates are cumulative:
 
 - all existing 0.11 Native/Clang, 0.11/0.10 replay, checked/unchecked, and
@@ -764,6 +776,8 @@ The release gates are cumulative:
   mean of those oracles by at least 5 percent on each architecture;
 - hand-written SIMD oracles receive every equivalent precondition expressible
   by their source language and preserve CK strict-float and safety semantics;
+  in particular, integer conversion oracles implement the complete CK `u32`
+  domain rather than relying on a benchmark corpus whose values fit in `i32`;
 - the unchanged scalar regression corpus is no more than 3 percent slower in
   geometric mean and no individual case more than 8 percent slower than an
   independently replayed pinned 0.11 compiler;

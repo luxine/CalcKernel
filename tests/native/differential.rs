@@ -585,6 +585,8 @@ fn differential_vector_loop_should_match_o0_for_zero_short_exact_remainder_and_o
             "product len={len}"
         );
     }
+    drop(o3);
+    drop(o0);
     fs::remove_dir_all(root).expect("remove vector differential directory");
 }
 
@@ -674,6 +676,8 @@ fn predicated_update_differential_should_match_scalar_strict_f64_bits() {
             "predicated strict-f64 len={len}"
         );
     }
+    drop(o3);
+    drop(o0);
     fs::remove_dir_all(root).expect("remove predicated differential directory");
 }
 
@@ -707,9 +711,9 @@ fn compile_vector_library(
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     if kir_level == KirOptimizationLevel::O3 {
         // The frozen target profile, not the source surface alone, decides the
-        // profitable subset. Baseline x86-64 conservatively rejects the
-        // strict-f64 divide and horizontal multiply-reduction loops at the
-        // unchanged 20% threshold; AArch64 accepts the complete corpus.
+        // profitable subset. Baseline x86-64 conservatively rejects strict-f64
+        // divide and defers both horizontal reductions to LLVM's native loop
+        // vectorizer; AArch64 accepts the complete KIR corpus.
         let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 7 } else { 9 };
         assert_eq!(
             result.stats.vectorized_loops, expected_vectorized_loops,

@@ -12,6 +12,58 @@ fn read(path: &str) -> String {
         .unwrap_or_else(|error| panic!("failed to read {path}: {error}"))
 }
 
+#[test]
+fn vector_differential_should_unload_dynamic_libraries_before_cleanup() {
+    let differential = read("tests/native/differential.rs");
+    let body = differential
+        .split_once(
+            "fn differential_vector_loop_should_match_o0_for_zero_short_exact_remainder_and_overlap_fallback() {",
+        )
+        .expect("vector differential function")
+        .1
+        .split_once("\n}\n\n#[test]\nfn predicated_update_differential")
+        .expect("vector differential function end")
+        .0;
+    let cleanup = body
+        .rfind("fs::remove_dir_all(root)")
+        .expect("vector differential cleanup");
+
+    for unload in ["drop(o3);", "drop(o0);"] {
+        let position = body
+            .rfind(unload)
+            .unwrap_or_else(|| panic!("missing explicit library unload {unload:?}"));
+        assert!(
+            position < cleanup,
+            "{unload} must precede cleanup because Windows cannot delete a loaded DLL"
+        );
+    }
+}
+
+#[test]
+fn predicated_differential_should_unload_dynamic_libraries_before_cleanup() {
+    let differential = read("tests/native/differential.rs");
+    let body = differential
+        .split_once("fn predicated_update_differential_should_match_scalar_strict_f64_bits() {")
+        .expect("predicated differential function")
+        .1
+        .split_once("\n}\n\nfn compile_vector_library")
+        .expect("predicated differential function end")
+        .0;
+    let cleanup = body
+        .rfind("fs::remove_dir_all(root)")
+        .expect("predicated differential cleanup");
+
+    for unload in ["drop(o3);", "drop(o0);"] {
+        let position = body
+            .rfind(unload)
+            .unwrap_or_else(|| panic!("missing explicit library unload {unload:?}"));
+        assert!(
+            position < cleanup,
+            "{unload} must precede cleanup because Windows cannot delete a loaded DLL"
+        );
+    }
+}
+
 fn normalize_powershell_diagnostic(stderr: &str) -> String {
     let mut without_sgr = String::with_capacity(stderr.len());
     let mut remaining = stderr;

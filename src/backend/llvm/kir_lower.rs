@@ -3157,11 +3157,12 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         failed: NativeValue<'module>,
         status: NativeValue<'module>,
     ) -> Result<(), NativeError> {
-        let failure_name = self.name("checked.failure");
         let continue_name = self.name("checked.continue");
-        let failure = self.handle.append_block(&failure_name)?;
         let continuation = self.handle.append_block(&continue_name)?;
-        self.builder.cond_branch(failed, failure, continuation)?;
+        let failure_name = self.name("checked.failure");
+        let failure = self.handle.append_block(&failure_name)?;
+        self.builder
+            .cond_branch_weighted(failed, failure, continuation, 1, 2_000)?;
         self.builder.position(failure)?;
         self.builder.return_value(status)?;
         self.builder.position(continuation)?;

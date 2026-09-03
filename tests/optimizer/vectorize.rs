@@ -40,9 +40,17 @@ fn native_profile_with_interleave(
     consumer: KirConsumer,
     maximum_interleave_factor: u8,
 ) -> KirTargetProfile {
+    native_profile_with_triple(consumer, maximum_interleave_factor, "aarch64-apple-darwin")
+}
+
+fn native_profile_with_triple(
+    consumer: KirConsumer,
+    maximum_interleave_factor: u8,
+    triple: &str,
+) -> KirTargetProfile {
     let mut builder = KirTargetProfileBuilder::native(
         consumer,
-        "aarch64-apple-darwin",
+        triple,
         64,
         true,
         KirNativeCpuPolicy::Baseline,
@@ -971,6 +979,24 @@ fn loop_simd_modular_add_and_multiply_reductions_should_fold_exact_lane_partitio
             assert!(text.contains("vector_reduce_modularmultiply"), "{text}");
         }
     }
+}
+
+#[test]
+fn x86_loop_simd_should_defer_horizontal_reductions_to_the_native_loop_vectorizer() {
+    let profile =
+        native_profile_with_triple(KirConsumer::NativeLibrary, 1, "x86_64-unknown-linux-gnu");
+    let (pre, _) = map_state_with_profile(MODULAR_REDUCTIONS, profile);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .all(|candidate| candidate.reduction.is_none()),
+        "a per-chunk horizontal reduction blocks LLVM's loop-carried vector accumulator: {discovery:#?}"
+    );
+    assert!(discovery.fallbacks.iter().any(|fallback| {
+        fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
+    }));
 }
 
 #[test]

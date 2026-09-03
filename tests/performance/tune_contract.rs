@@ -153,6 +153,8 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         read("scripts/package-v014-performance-archive.py"),
         read("scripts/audit-performance-oracles.py"),
         read("scripts/prepare-performance-replay.py"),
+        read("benches/baselines/v0_13_replay.toml"),
+        read("specs/0.14/implementation/00-master-control.md"),
     ]
     .join("\n");
     for required in [
@@ -169,6 +171,8 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         "--contract-only",
         "--schema-only",
         "--baseline\", choices=(\"0.13\"",
+        "9ce0f3dc061d81ee3165d63bdc80be52b33371fc",
+        "4040fbc3961044f1cec95a8a2940f0ad606bb0a88707cd97ff949f3fc5fb1127",
     ] {
         assert!(
             combined.contains(required),

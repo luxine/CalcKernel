@@ -4,18 +4,18 @@
 
 Status: Proposed design for CK 0.14.0
 
-Base revision: v0.13 candidate 94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05
+Accepted base revision: v0.13 final 9ce0f3dc061d81ee3165d63bdc80be52b33371fc
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
 implementation or release acceptance has completed.
 
-The base revision is provisional until v0.13 passes its remote acceptance gates.
-Implementation may proceed against this exact candidate after a repository-
-difference audit, but release remains blocked. Before final acceptance, the branch
-must be rebased onto, or reviewed against, the final accepted v0.13 revision. Any
-semantic difference must be resolved explicitly; it must not be hidden by adapting
-tests.
+Implementation began from v0.13 candidate
+`94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
+three-commit delta through accepted v0.13 revision
+`9ce0f3dc061d81ee3165d63bdc80be52b33371fc` was reviewed file by file and integrated
+with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
+design correction 10; no semantic difference may be hidden by adapting tests.
 
 ## 1. Objective
 

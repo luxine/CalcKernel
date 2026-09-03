@@ -6,8 +6,8 @@ use crate::{
     BlockId, CandidateKey, CanonicalLoopDescriptor, FunctionId, InstructionId, KirAlignmentClass,
     KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirInstruction,
     KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
-    LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount, MemoryVersionId, MirBinaryOp,
-    MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
+    KirTargetIdentity, LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount,
+    MemoryVersionId, MirBinaryOp, MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
 };
 
 use super::{
@@ -412,6 +412,14 @@ fn discover_one(
         return Err("vector-loop-has-multiple-reductions".to_string());
     }
     let reduction = reductions.pop();
+    if reduction.is_some()
+        && matches!(
+            state.module().profile.target_identity(),
+            KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-")
+        )
+    {
+        return Err("x86-horizontal-reduction-deferred-to-native-loop-vectorizer".to_string());
+    }
 
     let access_ids = accesses
         .accesses

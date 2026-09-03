@@ -780,27 +780,28 @@ fn vector_loop_simd_modular_reductions_should_survive_into_pre_llvm_ir() {
         .expect("reduction loop SIMD contracts");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(result.errors.is_empty(), "{:?}", result.errors);
-    let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 1 } else { 2 };
+    let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 0 } else { 2 };
     assert_eq!(
         result.stats.vectorized_loops, expected_vectorized_loops,
         "{:?}",
         result.analysis_fallbacks
     );
     let kir_text = print_kir_module(result.artifact.as_ref().expect("reduction artifact"));
-    assert!(
-        kir_text.contains("vector_reduce_modularadd"),
-        "missing modular add reduction:\n{kir_text}"
-    );
     if cfg!(target_arch = "x86_64") {
         assert!(
-            !kir_text.contains("vector_reduce_modularmultiply"),
-            "unprofitable x86-64 multiply reduction was accepted:\n{kir_text}"
+            !kir_text.contains("vector_reduce_modularadd")
+                && !kir_text.contains("vector_reduce_modularmultiply"),
+            "per-chunk x86 horizontal reduction blocks LLVM's loop-carried accumulator:\n{kir_text}"
         );
         assert!(result.analysis_fallbacks.iter().any(|fallback| {
             fallback.pass == "loop-simd"
-                && fallback.reason == "vector-profitability-threshold-not-met"
+                && fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
         }));
     } else {
+        assert!(
+            kir_text.contains("vector_reduce_modularadd"),
+            "missing modular add reduction:\n{kir_text}"
+        );
         assert!(
             kir_text.contains("vector_reduce_modularmultiply"),
             "missing modular multiply reduction:\n{kir_text}"
@@ -813,10 +814,11 @@ fn vector_loop_simd_modular_reductions_should_survive_into_pre_llvm_ir() {
         .expect("verify reduction vector loops")
         .to_ir_string()
         .expect("reduction LLVM IR");
-    assert!(llvm.contains("llvm.vector.reduce.add"), "{llvm}");
     if cfg!(target_arch = "x86_64") {
+        assert!(!llvm.contains("llvm.vector.reduce.add"), "{llvm}");
         assert!(!llvm.contains("llvm.vector.reduce.mul"), "{llvm}");
     } else {
+        assert!(llvm.contains("llvm.vector.reduce.add"), "{llvm}");
         assert!(llvm.contains("llvm.vector.reduce.mul"), "{llvm}");
     }
 }

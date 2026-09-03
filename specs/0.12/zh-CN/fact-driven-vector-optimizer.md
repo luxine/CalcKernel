@@ -344,10 +344,13 @@ reduction、scan、recurrence、gather/scatter、complex predication 与 interle
 
 这里的 supported source surface 不承诺每个 kernel 在每个 target 都会被接受。每个具体
 target profile 仍必须证明未改变的 20% profitability threshold。在固定 baseline profile
-中，AArch64 可以接受完整结构 corpus，而 x86-64 会保守地让高吞吐 strict-f64 division
-以及不盈利的 horizontal integer multiplication reduction 保持 scalar。跨 target 测试必须
-断言精确的 accepted subset 与稳定 profitability rejection；每个实际 accepted plan 都必须
-提供结构 vector 证据。
+中，AArch64 可以接受完整结构 corpus，而 x86-64 会保守地让高吞吐 strict-f64 division 保持
+scalar，并让 modular integer add/multiply reduction 以 scalar KIR 交给 Native LLVM loop
+vectorizer。后者是 target-specific lowering 选择：fixed-vector KIR plan 会在每个 chunk 执行
+horizontal fold，而固定 x86 backend 会保留 vector accumulator 并仅在 loop exit fold 一次。
+跨 target 测试必须断言精确的 accepted subset 与稳定 fallback；每个实际 accepted plan 都必须
+提供结构 KIR vector 证据。使用 x86 Native lowering fallback 的 benchmark 还必须通过 pinned
+object disassembly 单独证明 SIMD，但该证据不能宣称其 KIR plan 已被接受。
 
 对于 checked element-wise operation，只有既有 fact 或允许的 version predicate 证明每个
 vector lane 都不会失败时，fast path 才合法。Scalar fallback 保留所有原始 guard。不实现
@@ -566,9 +569,10 @@ table 与 public ABI audit 中排除。
 4. Adversarial case 对 irreducible control flow、unknown write dependence、call/effect、
    strict f64 reduction、possible first error、overflowing address predicate 与 over-budget
    module 保留 scalar execution。
-5. KIR 与 pre-LLVM structural test 证明 accepted vector plan 存在且包含预期 vector
-   operation。x86-64/AArch64 上的 pinned object disassembly 证明存在真实 SIMD instruction，
-   防止 LLVM scalar fallback 假通过验收。
+5. KIR 与 pre-LLVM structural test 证明每个 accepted fixed-vector KIR plan 都含预期 vector
+   operation。x86-64/AArch64 上的 pinned object disassembly 证明存在真实 SIMD instruction。
+   显式命名的 x86 horizontal-reduction fallback 只作为 Native lowering path 验收，不能作为
+   fixed-vector KIR plan 已被接受的证据。
 6. 所有受支持 host 上的 baseline/native CPU policy 都执行 correctness 与 feature-containment
    test。Native machine code 只能使用 resolved feature string；baseline artifact 不得使用
    optional ISA feature。
@@ -611,6 +615,11 @@ rotating-three-channel-v1：candidate CK、pinned C 与 pinned Rust。每轮有�
 打开一次并解析一次 typed kernel entry；计时 batch 只能调用缓存入口，dynamic symbol lookup 与
 逐调用 string dispatch 必须位于计时区外。
 
+固定四元素 `slp_quad` microkernel 的每个 timed sample 之前，三个 channel 都执行一次相同的
+unmeasured batch。该 short-kernel conditioning 写入固定 manifest，并同等应用于 CK、C 与
+Rust；它不改变三个 warm-up row、二十个 timed row、每 sample 七次 timed call、batch
+identity、order、statistic 或 threshold。
+
 Release gate 为累积门槛：
 
 - 所有既有 0.11 Native/Clang、0.11/0.10 replay、checked/unchecked 与 optimizer-latency
@@ -623,7 +632,8 @@ Release gate 为累积门槛：
   每个 kernel 的 generic oracle 是 pinned Clang O3 与 Rust O3 中较快的有效 median；CK 在每个
   架构上至少超过这些 oracle 的 geometric mean 5%；
 - hand-written SIMD oracle 获得其 source language 可表达的全部等价 precondition，并保持
-  CK strict-float 与 safety semantics；
+  CK strict-float 与 safety semantics；尤其 integer conversion oracle 必须实现完整 CK `u32`
+  domain，不能依赖 benchmark corpus 的数值恰好落在 `i32` 范围；
 - unchanged scalar regression corpus 相对 independently replayed pinned 0.11 compiler 的
   geometric mean 最多慢 3%，单项最多慢 8%；
 - Native artifact-size suite 相对 pinned 0.11 compiler aggregate 增长不超过 35%，单项不

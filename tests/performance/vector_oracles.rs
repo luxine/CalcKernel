@@ -32,6 +32,7 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "dispatch_protocol = \"cached-typed-entry-v1\"",
         "batch_iterations = 20000000",
         "sample_calls = 7",
+        "short_kernel_conditioning = true",
         "differential_audit = true",
         "ub_audit = true",
     ] {
@@ -103,6 +104,20 @@ fn oracle_sources_should_be_independent_and_architecture_explicit() {
         assert!(!c.contains(forbidden));
         assert!(!rust.contains(forbidden));
     }
+    for required in [
+        "_mm_unpacklo_epi32(source, zero)",
+        "0x4330_0000_0000_0000",
+        "4_503_599_627_370_496.0",
+    ] {
+        assert!(
+            rust.contains(required),
+            "x86-64 u32-to-f64 SIMD must preserve the full unsigned domain via {required:?}"
+        );
+    }
+    assert!(
+        !rust.contains("_mm_cvtepi32_pd(source)"),
+        "signed x86 conversion is not equivalent for u32 values with the high bit set"
+    );
 }
 
 #[test]
@@ -117,6 +132,8 @@ fn oracle_audit_should_compile_both_languages_compare_every_mode_and_enable_ubsa
         "for checked in (False, True)",
         "for kernel in manifest[\"kernel\"]",
         "compare_kernel",
+        "2_147_483_648",
+        "4_294_967_295",
         "oracle audit passed",
     ] {
         assert!(
@@ -130,6 +147,12 @@ fn oracle_audit_should_compile_both_languages_compare_every_mode_and_enable_ubsa
 fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
     let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
         .expect("read vector performance harness");
+    assert!(
+        harness.contains("x86-horizontal-reduction-deferred-to-native-loop-vectorizer")
+            && harness.contains("KirTargetIdentity::Native { triple }")
+            && harness.contains("!native_llvm_reduction"),
+        "the benchmark must accept x86 modular reduction only through the explicit native LLVM fallback"
+    );
     let runner = harness
         .split("impl KernelRunner {")
         .nth(1)
@@ -154,4 +177,10 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
             "the timed loop must not contain per-call lookup or string dispatch: {forbidden}"
         );
     }
+    assert!(
+        runner.contains("if self.name == \"slp_quad\"")
+            && runner
+                .contains("self.invoke_repeated(batch_iterations)?;\n        }\n        let start"),
+        "the four-item SLP kernel must condition the same runner before each timed sample"
+    );
 }
