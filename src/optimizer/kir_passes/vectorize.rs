@@ -48,6 +48,12 @@ enum VectorScheduleItem<'a> {
         when_true: crate::MemoryVersionId,
         when_false: crate::MemoryVersionId,
     },
+    PredicatedUpdate {
+        store: &'a KirInstruction,
+        condition: crate::ValueId,
+        old: crate::ValueId,
+        merge_memory: crate::MemoryVersionId,
+    },
 }
 
 pub(crate) fn materialize_vectorization_trial(
@@ -542,6 +548,101 @@ fn materialize_vectorization_trial_internal(
                     body_memories.insert(target, when_true);
                     continue;
                 }
+                VectorScheduleItem::PredicatedUpdate {
+                    store,
+                    condition,
+                    old,
+                    merge_memory,
+                } => {
+                    let KirInstructionKind::Store { place, value } = &store.kind else {
+                        return Err("predicated update lost its scalar store".to_string());
+                    };
+                    let access = candidate
+                        .accesses
+                        .iter()
+                        .find(|access| access.instruction == store.id)
+                        .ok_or_else(|| {
+                            "predicated vector store affine record is missing".to_string()
+                        })?;
+                    let operation = candidate
+                        .operations
+                        .iter()
+                        .find(|operation| {
+                            operation.scalar
+                                == candidate
+                                    .predicated_update
+                                    .as_ref()
+                                    .expect("scheduled predicated update")
+                                    .condition_instruction
+                                && operation.operation == crate::KirProfileOperation::Select
+                        })
+                        .ok_or_else(|| "predicated vector select record is missing".to_string())?;
+                    let condition = resolve_value(&mapped, condition);
+                    let candidate_value = resolve_value(&mapped, *value);
+                    let old_value = resolve_value(&mapped, old);
+                    if !condition.vector || !candidate_value.vector || !old_value.vector {
+                        return Err("predicated update operands did not become vectors".to_string());
+                    }
+                    let selected = trial.fresh_value()?;
+                    let select_id = trial.fresh_instruction()?;
+                    emitted.push(KirInstruction {
+                        id: select_id,
+                        results: vec![KirResult {
+                            value: selected,
+                            type_node: KirValueType::FixedVector {
+                                lane: operation.result_lane_type,
+                                lanes: candidate.vf,
+                            },
+                        }],
+                        kind: KirInstructionKind::VectorSelect {
+                            mask: condition.value,
+                            when_true: candidate_value.value,
+                            when_false: old_value.value,
+                            region: vector_region,
+                        },
+                        memory: None,
+                        effect: None,
+                    });
+                    operation_mappings.push((operation.clone(), unroll_index, select_id));
+
+                    let lane = lane_from_mir(&access.element_type)?;
+                    let store_id = trial.fresh_instruction()?;
+                    let memory = map_memory(store, &mut body_memories, &mut trial)?;
+                    let output = memory.output.ok_or_else(|| {
+                        "predicated vector store lacks a memory output".to_string()
+                    })?;
+                    let slice = invariant_root_value(&original, place_slice(place)?)?;
+                    emitted.push(KirInstruction {
+                        id: store_id,
+                        results: Vec::new(),
+                        kind: KirInstructionKind::VectorStore {
+                            access: vector_memory_access(
+                                slice,
+                                resolve_value(&mapped, place_index(place)?).value,
+                                entry_bound,
+                                lane,
+                                candidate.vf,
+                                access,
+                            )?,
+                            value: selected,
+                            region: vector_region,
+                        },
+                        memory: Some(memory),
+                        effect: Some(KirOrderedEffect {
+                            order: next_effect,
+                            kind: KirEffectKind::WriteMemory,
+                        }),
+                    });
+                    next_effect = next_effect.saturating_add(1);
+                    body_memories.insert(merge_memory, output);
+                    memory_records.push((
+                        store.id,
+                        unroll_index,
+                        store_id,
+                        VectorMemoryAccessKind::Write,
+                    ));
+                    continue;
+                }
             };
             match &instruction.kind {
                 KirInstructionKind::ConstInt { value } => {
@@ -723,6 +824,45 @@ fn materialize_vectorization_trial_internal(
                         },
                     );
                     operation_mappings.push((operation.clone(), unroll_index, id));
+                }
+                KirInstructionKind::Binary {
+                    op,
+                    left,
+                    right,
+                    semantics: KirArithmeticSemantics::Modular,
+                } if candidate
+                    .scalar_address_instructions
+                    .contains(&instruction.id) =>
+                {
+                    let left = resolve_value(&mapped, *left);
+                    let right = resolve_value(&mapped, *right);
+                    if left.vector || right.vector {
+                        return Err("vector affine address operands must remain scalar".to_string());
+                    }
+                    let result = scalar_result(instruction)?;
+                    let fresh = trial.fresh_value()?;
+                    emitted.push(KirInstruction {
+                        id: trial.fresh_instruction()?,
+                        results: vec![KirResult {
+                            value: fresh,
+                            type_node: instruction.results[0].type_node.clone(),
+                        }],
+                        kind: KirInstructionKind::Binary {
+                            op: *op,
+                            left: left.value,
+                            right: right.value,
+                            semantics: KirArithmeticSemantics::Modular,
+                        },
+                        memory: None,
+                        effect: None,
+                    });
+                    mapped.insert(
+                        result,
+                        MappedValue {
+                            value: fresh,
+                            vector: false,
+                        },
+                    );
                 }
                 KirInstructionKind::Binary {
                     op,
@@ -1316,6 +1456,97 @@ fn vector_schedule<'a>(
         .iter()
         .map(VectorScheduleItem::Instruction)
         .collect::<Vec<_>>();
+    if let Some(update) = &candidate.predicated_update {
+        let crate::KirTerminator::Branch {
+            condition,
+            then_edge,
+            else_edge,
+        } = &body.terminator
+        else {
+            return Err("predicated update entry lost its branch".to_string());
+        };
+        if then_edge.target != update.then_block || else_edge.target != update.merge_block {
+            return Err("predicated update branch polarity changed".to_string());
+        }
+        let store_block = block(function, update.then_block)?;
+        let merge_block = block(function, update.merge_block)?;
+        let crate::KirTerminator::Jump { edge: store_merge } = &store_block.terminator else {
+            return Err("predicated update store arm lost reconvergence".to_string());
+        };
+        if store_merge.target != merge_block.id {
+            return Err("predicated update store arm changed its merge".to_string());
+        }
+        for (param, source) in store_block.params.iter().zip(&then_edge.args) {
+            schedule.push(VectorScheduleItem::ValueAlias {
+                target: param.value,
+                source: *source,
+            });
+        }
+        for (param, source) in store_block.memory_params.iter().zip(&then_edge.memory_args) {
+            schedule.push(VectorScheduleItem::MemoryAlias {
+                target: param.version,
+                source: *source,
+            });
+        }
+        let store = store_block
+            .instructions
+            .iter()
+            .find(|instruction| instruction.id == update.store_instruction)
+            .ok_or_else(|| "predicated update store disappeared".to_string())?;
+        let old = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == update.old_load_instruction)
+            .and_then(|instruction| instruction.results.first())
+            .map(|result| result.value)
+            .ok_or_else(|| "predicated update old load disappeared".to_string())?;
+        let merge_memory = merge_block
+            .memory_params
+            .iter()
+            .find(|param| {
+                store
+                    .memory
+                    .as_ref()
+                    .is_some_and(|memory| memory.region == param.region)
+            })
+            .map(|param| param.version)
+            .ok_or_else(|| "predicated update merge memory is missing".to_string())?;
+        schedule.push(VectorScheduleItem::PredicatedUpdate {
+            store,
+            condition: *condition,
+            old,
+            merge_memory,
+        });
+        for (index, param) in merge_block.params.iter().enumerate() {
+            schedule.push(VectorScheduleItem::ValueAlias {
+                target: param.value,
+                source: *else_edge
+                    .args
+                    .get(index)
+                    .ok_or_else(|| "predicated update empty-path value is missing".to_string())?,
+            });
+        }
+        for (index, param) in merge_block.memory_params.iter().enumerate() {
+            if param.version == merge_memory {
+                continue;
+            }
+            schedule.push(VectorScheduleItem::MemoryAlias {
+                target: param.version,
+                source: *else_edge
+                    .memory_args
+                    .get(index)
+                    .ok_or_else(|| "predicated update empty-path memory is missing".to_string())?,
+            });
+        }
+        schedule.extend(
+            merge_block
+                .instructions
+                .iter()
+                .map(VectorScheduleItem::Instruction),
+        );
+        return Ok(schedule);
+    }
     let Some(diamond) = &candidate.diamond else {
         return Ok(schedule);
     };
@@ -1606,6 +1837,7 @@ fn materialize_entry_value(
             .ok_or_else(|| "vector entry edge is incomplete".to_string());
     }
     if function.params.iter().any(|param| param.value == value)
+        || preheader.params.iter().any(|param| param.value == value)
         || preheader.instructions.iter().any(|instruction| {
             instruction
                 .results

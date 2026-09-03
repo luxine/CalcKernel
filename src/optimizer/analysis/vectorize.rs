@@ -46,6 +46,7 @@ pub struct VectorizationCandidate {
     pub vf: u16,
     pub uf: u8,
     pub minimum_trip: u32,
+    pub scalar_address_instructions: Vec<InstructionId>,
     pub operations: Vec<VectorCandidateOperation>,
     pub accesses: Vec<AffineMemoryAccess>,
     pub version_predicate: Option<super::TotalVersionPredicate>,
@@ -207,23 +208,34 @@ fn discover_one(
     ) {
         return Err("vector-loop-trip-is-not-countable".to_string());
     }
-    let legality = analyze_loop_legality(
-        function,
-        descriptor,
-        state.contract_facts().map(crate::ContractFactSet::facts),
-    )?;
+    let facts = state.contract_facts().map(crate::ContractFactSet::facts);
+    let accesses = analyze_affine_loop_accesses(function, descriptor, facts)?;
+    let legality = analyze_loop_legality(function, descriptor, facts)?;
     if !legality.eligible {
-        let predicated_same_place_pair = shape.predicated_update.as_ref().is_some_and(|update| {
-            legality.dependences.pairs.iter().all(|pair| {
-                pair.kind != super::LoopDependenceKind::Unknown
-                    || [pair.left, pair.right].into_iter().collect::<BTreeSet<_>>()
-                        == [update.old_load_instruction, update.store_instruction]
-                            .into_iter()
-                            .collect::<BTreeSet<_>>()
-            })
+        let predicated_domain_safe = shape.predicated_update.as_ref().is_some_and(|update| {
+            predicated_floyd_dependences_are_safe(
+                function,
+                descriptor,
+                facts,
+                update,
+                &accesses.accesses,
+            )
         });
+        let predicated_unknown_pairs_closed =
+            shape.predicated_update.as_ref().is_some_and(|update| {
+                legality.dependences.pairs.iter().all(|pair| {
+                    pair.kind != super::LoopDependenceKind::Unknown
+                        || [pair.left, pair.right].into_iter().collect::<BTreeSet<_>>()
+                            == [update.old_load_instruction, update.store_instruction]
+                                .into_iter()
+                                .collect::<BTreeSet<_>>()
+                        || (predicated_domain_safe
+                            && (pair.left == update.store_instruction
+                                || pair.right == update.store_instruction))
+                })
+            });
         let remaining_reason = legality.fallback_reasons.iter().find(|reason| {
-            !predicated_same_place_pair
+            !predicated_unknown_pairs_closed
                 || **reason != super::LoopFallbackReason::UnknownMemoryDependence
         });
         if let Some(reason) = remaining_reason {
@@ -265,11 +277,6 @@ fn discover_one(
         }
         Some(predicate)
     };
-    let accesses = analyze_affine_loop_accesses(
-        function,
-        descriptor,
-        state.contract_facts().map(crate::ContractFactSet::facts),
-    )?;
     let access_lanes = accesses
         .accesses
         .iter()
@@ -411,6 +418,11 @@ fn discover_one(
         .iter()
         .map(|access| access.instruction)
         .collect::<BTreeSet<_>>();
+    let scalar_address_instructions = scalar_address_instruction_ids(
+        function,
+        descriptor,
+        accesses.accesses.iter().map(|access| access.instruction),
+    );
     let mut operations = Vec::new();
     let mut needs_splat = false;
     let scheduled_blocks = shape
@@ -418,7 +430,10 @@ fn discover_one(
         .iter()
         .filter_map(|id| function.blocks.iter().find(|block| block.id == *id));
     for instruction in scheduled_blocks.flat_map(|block| &block.instructions) {
-        if instruction.id == induction_update || access_ids.contains(&instruction.id) {
+        if instruction.id == induction_update
+            || access_ids.contains(&instruction.id)
+            || scalar_address_instructions.contains(&instruction.id)
+        {
             continue;
         }
         if reduction
@@ -572,6 +587,7 @@ fn discover_one(
                 vf,
                 uf,
                 minimum_trip,
+                scalar_address_instructions: scalar_address_instructions.iter().copied().collect(),
                 operations: operations.clone(),
                 accesses: accesses.accesses.clone(),
                 version_predicate: version_predicate.clone(),
@@ -584,6 +600,370 @@ fn discover_one(
             .unwrap_or_else(|| "vector-profitability-threshold-not-met".to_string()));
     }
     Ok(candidates)
+}
+
+fn scalar_address_instruction_ids(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    access_ids: impl IntoIterator<Item = InstructionId>,
+) -> BTreeSet<InstructionId> {
+    let access_ids = access_ids.into_iter().collect::<BTreeSet<_>>();
+    let mut pending = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| access_ids.contains(&instruction.id))
+        .filter_map(|instruction| match &instruction.kind {
+            KirInstructionKind::Load { place } | KirInstructionKind::Store { place, .. } => {
+                match place.as_ref() {
+                    crate::KirPlace::SliceIndex { index, .. }
+                    | crate::KirPlace::Index { index, .. } => Some(*index),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut visited = BTreeSet::new();
+    let mut instructions = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if descriptor
+            .induction
+            .as_ref()
+            .is_some_and(|induction| induction.value == value)
+        {
+            continue;
+        }
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            if descriptor.blocks.binary_search(&block).is_ok() {
+                pending.extend(incoming_values(function, block, index));
+            }
+            continue;
+        }
+        let Some((owner, instruction)) = function.blocks.iter().find_map(|block| {
+            block
+                .instructions
+                .iter()
+                .find(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .any(|result| result.value == value)
+                })
+                .map(|instruction| (block.id, instruction))
+        }) else {
+            continue;
+        };
+        if descriptor.blocks.binary_search(&owner).is_err() {
+            continue;
+        }
+        match instruction.kind {
+            KirInstructionKind::Copy { value } => {
+                instructions.insert(instruction.id);
+                pending.push(value);
+            }
+            KirInstructionKind::Binary {
+                op: MirBinaryOp::Add | MirBinaryOp::Sub | MirBinaryOp::Mul,
+                left,
+                right,
+                semantics: KirArithmeticSemantics::Modular,
+            } => {
+                instructions.insert(instruction.id);
+                pending.extend([left, right]);
+            }
+            _ => {}
+        }
+    }
+    instructions
+}
+
+fn predicated_floyd_dependences_are_safe(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    facts: Option<&crate::FactArena>,
+    update: &VectorPredicatedUpdate,
+    accesses: &[AffineMemoryAccess],
+) -> bool {
+    let Some(store) = accesses
+        .iter()
+        .find(|access| access.instruction == update.store_instruction)
+    else {
+        return false;
+    };
+    let Some(old) = accesses
+        .iter()
+        .find(|access| access.instruction == update.old_load_instruction)
+    else {
+        return false;
+    };
+    let candidate_reads = accesses
+        .iter()
+        .filter(|access| {
+            access.kind == super::LoopMemoryAccessKind::Read
+                && access.instruction != update.old_load_instruction
+        })
+        .collect::<Vec<_>>();
+    let [candidate_read] = candidate_reads.as_slice() else {
+        return false;
+    };
+    if accesses.len() != 3
+        || accesses
+            .iter()
+            .filter(|access| access.kind == super::LoopMemoryAccessKind::Write)
+            .count()
+            != 1
+        || [store, old, *candidate_read].into_iter().any(|access| {
+            !access.unit_stride
+                || access.coefficient != BigInt::from(1)
+                || access.bias != BigInt::from(0)
+                || access.region != store.region
+                || function_parameter_root(function, access.base)
+                    != function_parameter_root(function, store.base)
+        })
+        || old.invariant_offset != store.invariant_offset
+    {
+        return false;
+    }
+    let Some(bound_root) = function_parameter_root(function, store.trip_bound) else {
+        return false;
+    };
+    if [store, old, *candidate_read]
+        .into_iter()
+        .any(|access| function_parameter_root(function, access.trip_bound) != Some(bound_root))
+    {
+        return false;
+    }
+    let Some(interval) = facts.and_then(|facts| {
+        super::contract_scalar_interval(
+            facts.facts().iter().filter_map(|fact| {
+                let in_function = match &fact.scope {
+                    crate::FactScope::FunctionEntry(owner)
+                    | crate::FactScope::Block {
+                        function: owner, ..
+                    } => *owner == function.id,
+                    crate::FactScope::CalleeInstance { callee, .. } => *callee == function.id,
+                    crate::FactScope::InlineClone {
+                        function: owner, ..
+                    } => *owner == function.id,
+                };
+                (in_function && fact.generation == facts.generation())
+                    .then_some(&fact.predicate)
+                    .and_then(|predicate| match predicate {
+                        crate::FactPredicate::Contract(predicate) => Some(predicate),
+                        crate::FactPredicate::ValueInterval { .. } => None,
+                    })
+            }),
+            bound_root,
+            IntegerType::U32,
+        )
+    }) else {
+        return false;
+    };
+    if interval.upper() > &BigInt::from(65_535_u32) {
+        return false;
+    }
+    let loops = analyze_canonical_loops_for_discovery(function);
+    let row_offset_is_closed = |offset: Option<crate::ValueId>| {
+        offset.is_some_and(|offset| {
+            find_floyd_row_induction(function, descriptor, &loops.loops, offset, bound_root)
+        })
+    };
+    row_offset_is_closed(store.invariant_offset)
+        && row_offset_is_closed(candidate_read.invariant_offset)
+}
+
+fn find_floyd_row_induction(
+    function: &crate::KirFunction,
+    inner: &CanonicalLoopDescriptor,
+    loops: &[CanonicalLoopDescriptor],
+    offset: crate::ValueId,
+    bound_root: crate::ValueId,
+) -> bool {
+    let mut pending = vec![offset];
+    let mut visited = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some(instruction) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            })
+        {
+            match instruction.kind {
+                KirInstructionKind::Binary {
+                    op: MirBinaryOp::Mul,
+                    left,
+                    right,
+                    semantics: KirArithmeticSemantics::Modular,
+                } => {
+                    for (index, bound) in [(left, right), (right, left)] {
+                        if function_parameter_root(function, bound) != Some(bound_root) {
+                            continue;
+                        }
+                        if loops.iter().any(|outer| {
+                            outer.depth < inner.depth
+                                && outer.blocks.binary_search(&inner.header).is_ok()
+                                && outer.induction.as_ref().is_some_and(|induction| {
+                                    induction.type_node == IntegerType::U32
+                                        && induction.start == BigInt::from(0)
+                                        && induction.step == BigInt::from(1)
+                                        && induction.comparison == MirCompareOp::Lt
+                                        && induction.wrap_safe_for_strict_bound
+                                        && function_parameter_root(function, induction.bound)
+                                            == Some(bound_root)
+                                        && value_forwards_from(function, index, induction.value)
+                                })
+                        }) {
+                            return true;
+                        }
+                    }
+                }
+                KirInstructionKind::Copy { value } => pending.push(value),
+                _ => {}
+            }
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            pending.extend(incoming_values(function, block, index));
+        }
+    }
+    false
+}
+
+fn function_parameter_root(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+) -> Option<crate::ValueId> {
+    let mut pending = vec![value];
+    let mut visited = BTreeSet::new();
+    let mut roots = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if function.params.iter().any(|param| param.value == value) {
+            roots.insert(value);
+            continue;
+        }
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            pending.extend(incoming_values(function, block, index));
+        } else if let Some(KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            })
+        {
+            pending.push(*value);
+        }
+    }
+    (roots.len() == 1).then(|| *roots.first().expect("one function parameter root"))
+}
+
+fn value_forwards_from(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+    origin: crate::ValueId,
+) -> bool {
+    let mut pending = vec![value];
+    let mut visited = BTreeSet::new();
+    let mut leaves = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if value == origin {
+            leaves.insert(value);
+            continue;
+        }
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            let incoming = incoming_values(function, block, index);
+            if incoming.is_empty() {
+                return false;
+            }
+            pending.extend(incoming);
+        } else if let Some(KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            })
+        {
+            pending.push(*value);
+        } else {
+            leaves.insert(value);
+        }
+    }
+    leaves == BTreeSet::from([origin])
+}
+
+fn incoming_values(
+    function: &crate::KirFunction,
+    target: BlockId,
+    index: usize,
+) -> Vec<crate::ValueId> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| match &block.terminator {
+            crate::KirTerminator::Return { .. } => Vec::new(),
+            crate::KirTerminator::Jump { edge } => vec![edge],
+            crate::KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } => vec![then_edge, else_edge],
+        })
+        .filter(|edge| edge.target == target)
+        .filter_map(|edge| edge.args.get(index).copied())
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]

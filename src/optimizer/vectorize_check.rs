@@ -26,6 +26,7 @@ struct CheckedVectorAccess {
     kind: CheckedMemoryAccessKind,
     region: MemoryRegionId,
     base: ValueId,
+    invariant_offset: Option<ValueId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,23 @@ struct CheckedVectorDiamond {
 }
 
 #[derive(Debug, Clone)]
+struct CheckedPredicatedUpdate {
+    condition_instruction: InstructionId,
+    old_load_instruction: InstructionId,
+    store_instruction: InstructionId,
+    candidate: ValueId,
+    old: ValueId,
+}
+
+#[derive(Debug, Clone)]
+struct CheckedVectorShape {
+    scalar_blocks: Vec<BlockId>,
+    latch: BlockId,
+    diamond: Option<CheckedVectorDiamond>,
+    predicated_update: Option<CheckedPredicatedUpdate>,
+}
+
+#[derive(Debug, Clone)]
 struct CheckedVectorSource {
     function: FunctionId,
     preheader: BlockId,
@@ -70,6 +88,7 @@ struct CheckedVectorSource {
     exit: BlockId,
     scalar_blocks: Vec<BlockId>,
     diamond: Option<CheckedVectorDiamond>,
+    predicated_update: Option<CheckedPredicatedUpdate>,
     reduction: Option<CheckedVectorReduction>,
     induction: ValueId,
     bound: ValueId,
@@ -786,6 +805,177 @@ fn check_vectorization_trial_with_minimum(
             return compiler("vector diamond mask or selected arm mapping is false");
         }
     }
+    if let Some(update) = &candidate.predicated_update {
+        let source_compare = defining_instruction_by_id(original, update.condition_instruction)
+            .ok_or_else(|| {
+                TransactionCheckError::compiler("predicated update compare disappeared")
+            })?;
+        if !matches!(
+            source_compare.kind,
+            KirInstructionKind::Compare {
+                op: crate::MirCompareOp::Lt,
+                left,
+                right,
+            } if left == update.candidate && right == update.old
+        ) {
+            return compiler("predicated update source comparison changed");
+        }
+        for unroll_index in 0..candidate.uf {
+            let compare_mapping = plan
+                .operations
+                .iter()
+                .find(|mapping| {
+                    mapping.scalar == update.condition_instruction
+                        && mapping.operation == KirProfileOperation::Compare
+                        && mapping.unroll_index == unroll_index
+                })
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector compare is missing")
+                })?;
+            let select_mapping = plan
+                .operations
+                .iter()
+                .find(|mapping| {
+                    mapping.scalar == update.condition_instruction
+                        && mapping.operation == KirProfileOperation::Select
+                        && mapping.unroll_index == unroll_index
+                })
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector select is missing")
+                })?;
+            let old_group = plan
+                .memory_groups
+                .iter()
+                .find(|group| {
+                    group.scalar_instructions == [update.old_load_instruction]
+                        && group.unroll_index == unroll_index
+                })
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated old vector load is missing")
+                })?;
+            let store_group = plan
+                .memory_groups
+                .iter()
+                .find(|group| {
+                    group.scalar_instructions == [update.store_instruction]
+                        && group.unroll_index == unroll_index
+                })
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector store is missing")
+                })?;
+            let candidate_vector =
+                mapped_vector_value(original, vector_body, plan, update.candidate, unroll_index)
+                    .ok_or_else(|| {
+                        TransactionCheckError::compiler("predicated candidate vector is missing")
+                    })?;
+            let old_load = vector_body
+                .instructions
+                .iter()
+                .find(|instruction| instruction.id == old_group.vector_instruction)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated old vector load disappeared")
+                })?;
+            let old_vector = old_load
+                .results
+                .first()
+                .map(|result| result.value)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated old vector result is missing")
+                })?;
+            let compare = vector_body
+                .instructions
+                .iter()
+                .find(|instruction| instruction.id == compare_mapping.vector)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector compare disappeared")
+                })?;
+            let mask = compare
+                .results
+                .first()
+                .map(|result| result.value)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector mask is missing")
+                })?;
+            if !matches!(
+                compare.kind,
+                KirInstructionKind::VectorCompare {
+                    op: crate::MirCompareOp::Lt,
+                    left,
+                    right,
+                    ..
+                } if left == candidate_vector && right == old_vector
+            ) {
+                return compiler("predicated vector compare operands are false");
+            }
+            let select = vector_body
+                .instructions
+                .iter()
+                .find(|instruction| instruction.id == select_mapping.vector)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector select disappeared")
+                })?;
+            let selected = select
+                .results
+                .first()
+                .map(|result| result.value)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector select result is missing")
+                })?;
+            if !matches!(
+                select.kind,
+                KirInstructionKind::VectorSelect {
+                    mask: selected_mask,
+                    when_true,
+                    when_false,
+                    ..
+                } if selected_mask == mask
+                    && when_true == candidate_vector
+                    && when_false == old_vector
+            ) {
+                return compiler("predicated vector select operands are false");
+            }
+            let store = vector_body
+                .instructions
+                .iter()
+                .find(|instruction| instruction.id == store_group.vector_instruction)
+                .ok_or_else(|| {
+                    TransactionCheckError::compiler("predicated vector store disappeared")
+                })?;
+            let (
+                KirInstructionKind::VectorLoad {
+                    access: old_access, ..
+                },
+                KirInstructionKind::VectorStore {
+                    access: store_access,
+                    value,
+                    ..
+                },
+                Some(old_memory),
+                Some(store_memory),
+            ) = (&old_load.kind, &store.kind, &old_load.memory, &store.memory)
+            else {
+                return compiler("predicated update is not load/select/unmasked-store");
+            };
+            if old_access != store_access
+                || *value != selected
+                || old_memory.input != store_memory.input
+                || store_memory.output.is_none()
+            {
+                return compiler("predicated vector same-place Memory SSA is false");
+            }
+        }
+        if vector_body
+            .instructions
+            .iter()
+            .filter(|instruction| {
+                matches!(instruction.kind, KirInstructionKind::VectorStore { .. })
+            })
+            .count()
+            != usize::from(candidate.uf)
+        {
+            return compiler("predicated vector body does not contain exactly one store per UF");
+        }
+    }
     let mut scalar_memory = BTreeSet::new();
     for group in &plan.memory_groups {
         let [scalar] = group.scalar_instructions.as_slice() else {
@@ -823,7 +1013,17 @@ fn check_vectorization_trial_with_minimum(
             | KirInstructionKind::VectorStore { access, .. } => access.start,
             _ => return compiler("vector memory instruction kind is false"),
         };
-        if chunk_starts.get(usize::from(group.unroll_index)) != Some(&emitted_start) {
+        let chunk_start = chunk_starts
+            .get(usize::from(group.unroll_index))
+            .copied()
+            .ok_or_else(|| TransactionCheckError::compiler("vector memory UF chunk is missing"))?;
+        if !vector_access_start_matches(
+            original_body,
+            vector_body,
+            expected,
+            emitted_start,
+            chunk_start,
+        ) {
             return compiler("vector memory group is mapped to the wrong UF chunk");
         }
         if !matches!(
@@ -959,6 +1159,40 @@ fn check_vectorization_trial_with_minimum(
     Ok(())
 }
 
+fn vector_access_start_matches(
+    original_body: &crate::KirBlock,
+    vector_body: &crate::KirBlock,
+    access: &CheckedVectorAccess,
+    emitted_start: ValueId,
+    chunk_start: ValueId,
+) -> bool {
+    let Some(offset) = access.invariant_offset else {
+        return emitted_start == chunk_start;
+    };
+    let mapped_offset = original_body
+        .params
+        .iter()
+        .position(|param| param.value == offset)
+        .and_then(|index| vector_body.params.get(index))
+        .map_or(offset, |param| param.value);
+    vector_body.instructions.iter().any(|instruction| {
+        instruction
+            .results
+            .iter()
+            .any(|result| result.value == emitted_start)
+            && matches!(
+                instruction.kind,
+                KirInstructionKind::Binary {
+                    op: MirBinaryOp::Add,
+                    left,
+                    right,
+                    semantics: crate::KirArithmeticSemantics::Modular,
+                } if (left == chunk_start && right == mapped_offset)
+                    || (right == chunk_start && left == mapped_offset)
+            )
+    })
+}
+
 fn reconstruct_vector_source_independently(
     pre_state: &KirVerifiedProgramState,
     trial: &KirVerifiedProgramState,
@@ -1044,8 +1278,11 @@ fn reconstruct_vector_source_independently(
         ));
     }
 
-    let (scalar_blocks, latch, diamond) =
-        recognize_vector_shape(original, header.id, then_edge.target, else_edge.target)?;
+    let shape = recognize_vector_shape(original, header.id, then_edge.target, else_edge.target)?;
+    let scalar_blocks = shape.scalar_blocks;
+    let latch = shape.latch;
+    let diamond = shape.diamond;
+    let predicated_update = shape.predicated_update;
     let body = source_block(original, then_edge.target)
         .ok_or_else(|| malformed("vector source body is missing"))?;
     let KirTerminator::Jump { edge: backedge } = &source_block(original, latch)
@@ -1126,11 +1363,13 @@ fn reconstruct_vector_source_independently(
         induction_transfer.id,
         reduction.as_ref(),
         diamond.as_ref(),
+        predicated_update.as_ref(),
         plan,
     )?;
     let accesses =
         independently_collect_accesses(original, &scalar_blocks, body_induction, induction, plan)?;
-    let required_pairs = independently_required_runtime_pairs(pre_state, original, &accesses)?;
+    let required_pairs =
+        independently_required_runtime_pairs(pre_state, original, body.id, bound, &accesses)?;
     let planned_pairs = plan
         .predicates
         .iter()
@@ -1216,6 +1455,7 @@ fn reconstruct_vector_source_independently(
         exit: else_edge.target,
         scalar_blocks,
         diamond,
+        predicated_update,
         reduction,
         induction,
         bound,
@@ -1234,7 +1474,7 @@ fn recognize_vector_shape(
     header: BlockId,
     body: BlockId,
     exit: BlockId,
-) -> Result<(Vec<BlockId>, BlockId, Option<CheckedVectorDiamond>), TransactionCheckError> {
+) -> Result<CheckedVectorShape, TransactionCheckError> {
     let malformed = |message: &str| TransactionCheckError::compiler(message);
     let body_block =
         source_block(function, body).ok_or_else(|| malformed("vector source body is missing"))?;
@@ -1242,7 +1482,12 @@ fn recognize_vector_shape(
         body_block.terminator,
         KirTerminator::Jump { ref edge } if edge.target == header
     ) {
-        return Ok((vec![body], body, None));
+        return Ok(CheckedVectorShape {
+            scalar_blocks: vec![body],
+            latch: body,
+            diamond: None,
+            predicated_update: None,
+        });
     }
     let KirTerminator::Branch {
         condition,
@@ -1256,6 +1501,16 @@ fn recognize_vector_shape(
         .ok_or_else(|| malformed("vector diamond then block is missing"))?;
     let else_block = source_block(function, else_edge.target)
         .ok_or_else(|| malformed("vector diamond else block is missing"))?;
+    if let Some(predicated) = recognize_predicated_update(
+        function, header, body_block, *condition, then_edge, else_edge, then_block, else_block,
+    )? {
+        return Ok(CheckedVectorShape {
+            scalar_blocks: vec![body, then_block.id, else_block.id],
+            latch: else_block.id,
+            diamond: None,
+            predicated_update: Some(predicated),
+        });
+    }
     let (KirTerminator::Jump { edge: then_merge }, KirTerminator::Jump { edge: else_merge }) =
         (&then_block.terminator, &else_block.terminator)
     else {
@@ -1299,17 +1554,194 @@ fn recognize_vector_shape(
         .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Compare { .. }))
         .map(|instruction| instruction.id)
         .ok_or_else(|| malformed("vector diamond condition is not a scalar compare"))?;
-    Ok((
-        vec![body, then_block.id, else_block.id, merge.id],
-        merge.id,
-        Some(CheckedVectorDiamond {
+    Ok(CheckedVectorShape {
+        scalar_blocks: vec![body, then_block.id, else_block.id, merge.id],
+        latch: merge.id,
+        diamond: Some(CheckedVectorDiamond {
             then_block: then_block.id,
             else_block: else_block.id,
             merge_block: merge.id,
             condition_instruction,
             selected_param_index: *selected_param_index,
         }),
-    ))
+        predicated_update: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recognize_predicated_update(
+    function: &crate::KirFunction,
+    header: BlockId,
+    body: &crate::KirBlock,
+    condition: ValueId,
+    store_edge: &crate::KirEdge,
+    empty_edge: &crate::KirEdge,
+    store_block: &crate::KirBlock,
+    merge: &crate::KirBlock,
+) -> Result<Option<CheckedPredicatedUpdate>, TransactionCheckError> {
+    let malformed = |message: &str| TransactionCheckError::compiler(message);
+    let KirTerminator::Jump { edge: store_merge } = &store_block.terminator else {
+        return Ok(None);
+    };
+    if store_merge.target != merge.id
+        || !matches!(merge.terminator, KirTerminator::Jump { ref edge } if edge.target == header)
+    {
+        return Ok(None);
+    }
+    let [store] = store_block.instructions.as_slice() else {
+        return Err(malformed(
+            "predicated update store arm is not exactly one instruction",
+        ));
+    };
+    let KirInstructionKind::Store { place, value } = &store.kind else {
+        return Err(malformed(
+            "predicated update store arm is not exactly one store",
+        ));
+    };
+    if store.effect.as_ref().map(|effect| effect.kind) != Some(crate::KirEffectKind::WriteMemory) {
+        return Err(malformed("predicated update store effect is not ordered"));
+    }
+    let store_memory = store
+        .memory
+        .as_ref()
+        .ok_or_else(|| malformed("predicated update store lacks Memory SSA"))?;
+    let store_output = store_memory
+        .output
+        .ok_or_else(|| malformed("predicated update store lacks a memory output"))?;
+    let compare = defining_instruction(function, condition)
+        .ok_or_else(|| malformed("predicated update condition is undefined"))?;
+    let KirInstructionKind::Compare {
+        op: crate::MirCompareOp::Lt,
+        left: candidate,
+        right: old,
+    } = compare.kind
+    else {
+        return Err(malformed(
+            "predicated update comparison is not strict less-than",
+        ));
+    };
+    let old_load = defining_instruction(function, old)
+        .ok_or_else(|| malformed("predicated update old value is undefined"))?;
+    let KirInstructionKind::Load { place: old_place } = &old_load.kind else {
+        return Err(malformed("predicated update old value is not a load"));
+    };
+    let old_memory = old_load
+        .memory
+        .as_ref()
+        .ok_or_else(|| malformed("predicated update old load lacks Memory SSA"))?;
+    if !same_forwarded_slice_place(function, place, old_place)
+        || store_memory.region != old_memory.region
+        || !forwards_from(function, *value, candidate)
+        || value_type(function, candidate) != Some(&MirType::Primitive(MirPrimitiveTypeName::F64))
+        || value_type(function, old) != Some(&MirType::Primitive(MirPrimitiveTypeName::F64))
+        || compare.memory.is_some()
+        || compare.effect.is_some()
+    {
+        return Err(malformed(
+            "predicated update scalar compare/load/store relation is false",
+        ));
+    }
+    let store_input = store_block
+        .memory_params
+        .iter()
+        .position(|param| param.version == store_memory.input)
+        .and_then(|index| store_edge.memory_args.get(index).copied())
+        .unwrap_or(store_memory.input);
+    if store_input != old_memory.input
+        || store_edge.args.len() != store_block.params.len()
+        || store_edge.memory_args.len() != store_block.memory_params.len()
+        || empty_edge.args.len() != merge.params.len()
+        || store_merge.args.len() != merge.params.len()
+        || empty_edge.memory_args.len() != merge.memory_params.len()
+        || store_merge.memory_args.len() != merge.memory_params.len()
+    {
+        return Err(malformed(
+            "predicated update incoming Memory SSA or edge arity is false",
+        ));
+    }
+    for (stored, empty) in store_merge.args.iter().zip(&empty_edge.args) {
+        let stored = store_block
+            .params
+            .iter()
+            .position(|param| param.value == *stored)
+            .and_then(|index| store_edge.args.get(index).copied())
+            .unwrap_or(*stored);
+        if stored != *empty {
+            return Err(malformed("predicated update has a varying value merge"));
+        }
+    }
+    let mut found_store_memory = false;
+    for (index, param) in merge.memory_params.iter().enumerate() {
+        let stored = store_block
+            .memory_params
+            .iter()
+            .position(|store_param| store_param.version == store_merge.memory_args[index])
+            .and_then(|store_index| store_edge.memory_args.get(store_index).copied())
+            .unwrap_or(store_merge.memory_args[index]);
+        let empty = empty_edge.memory_args[index];
+        if param.region == store_memory.region {
+            if stored != store_output || empty != store_input {
+                return Err(malformed(
+                    "predicated update merge does not select old/new memory",
+                ));
+            }
+            found_store_memory = true;
+        } else if stored != empty {
+            return Err(malformed(
+                "predicated update changes an unrelated memory region",
+            ));
+        }
+    }
+    if !found_store_memory
+        || body
+            .instructions
+            .iter()
+            .position(|instruction| instruction.id == old_load.id)
+            >= body
+                .instructions
+                .iter()
+                .position(|instruction| instruction.id == compare.id)
+    {
+        return Err(malformed(
+            "predicated update dominance or memory merge is incomplete",
+        ));
+    }
+    Ok(Some(CheckedPredicatedUpdate {
+        condition_instruction: compare.id,
+        old_load_instruction: old_load.id,
+        store_instruction: store.id,
+        candidate,
+        old,
+    }))
+}
+
+fn same_forwarded_slice_place(
+    function: &crate::KirFunction,
+    stored: &crate::KirPlace,
+    loaded: &crate::KirPlace,
+) -> bool {
+    let (
+        crate::KirPlace::SliceIndex {
+            slice: stored_slice,
+            index: stored_index,
+            type_node: stored_type,
+            region: stored_region,
+        },
+        crate::KirPlace::SliceIndex {
+            slice: loaded_slice,
+            index: loaded_index,
+            type_node: loaded_type,
+            region: loaded_region,
+        },
+    ) = (stored, loaded)
+    else {
+        return false;
+    };
+    stored_type == loaded_type
+        && stored_region == loaded_region
+        && invariant_root_value(function, *stored_slice)
+            == invariant_root_value(function, *loaded_slice)
+        && forwards_from(function, *stored_index, *loaded_index)
 }
 
 fn recognize_reduction(
@@ -1397,6 +1829,7 @@ fn independently_collect_operations(
     induction_transfer: InstructionId,
     reduction: Option<&CheckedVectorReduction>,
     diamond: Option<&CheckedVectorDiamond>,
+    predicated_update: Option<&CheckedPredicatedUpdate>,
     plan: &VectorizationPlan,
 ) -> Result<Vec<CheckedVectorOperation>, TransactionCheckError> {
     let malformed = |message: &str| TransactionCheckError::compiler(message);
@@ -1412,13 +1845,22 @@ fn independently_collect_operations(
         })
         .map(|instruction| instruction.id)
         .collect::<BTreeSet<_>>();
+    let scalar_addresses = independent_scalar_address_instruction_ids(
+        function,
+        scalar_blocks,
+        induction_transfer,
+        &memory,
+    );
     let mut expected = Vec::new();
     for instruction in scalar_blocks
         .iter()
         .filter_map(|id| source_block(function, *id))
         .flat_map(|block| &block.instructions)
     {
-        if instruction.id == induction_transfer || memory.contains(&instruction.id) {
+        if instruction.id == induction_transfer
+            || memory.contains(&instruction.id)
+            || scalar_addresses.contains(&instruction.id)
+        {
             continue;
         }
         if reduction.is_some_and(|item| item.instruction == instruction.id) {
@@ -1466,6 +1908,19 @@ fn independently_collect_operations(
             semantics: KirCostSemantics::NotApplicable,
         });
     }
+    if let Some(update) = predicated_update {
+        let selected_lane = defining_instruction_by_id(function, update.old_load_instruction)
+            .and_then(|instruction| instruction.results.first())
+            .and_then(|result| result.type_node.as_scalar())
+            .and_then(lane_from_type)
+            .ok_or_else(|| malformed("predicated update selected lane is unsupported"))?;
+        expected.push(CheckedVectorOperation {
+            scalar: update.condition_instruction,
+            operation: KirProfileOperation::Select,
+            lane_type: selected_lane,
+            semantics: KirCostSemantics::NotApplicable,
+        });
+    }
     expected.sort_by_key(|operation| (operation.scalar, operation.operation));
     let planned_base = plan
         .operations
@@ -1505,6 +1960,84 @@ fn independently_collect_operations(
     Ok(expected)
 }
 
+fn independent_scalar_address_instruction_ids(
+    function: &crate::KirFunction,
+    scalar_blocks: &[BlockId],
+    induction_transfer: InstructionId,
+    access_ids: &BTreeSet<InstructionId>,
+) -> BTreeSet<InstructionId> {
+    let block_ids = scalar_blocks.iter().copied().collect::<BTreeSet<_>>();
+    let mut pending = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| access_ids.contains(&instruction.id))
+        .filter_map(|instruction| match &instruction.kind {
+            KirInstructionKind::Load { place } | KirInstructionKind::Store { place, .. } => {
+                match place.as_ref() {
+                    crate::KirPlace::SliceIndex { index, .. }
+                    | crate::KirPlace::Index { index, .. } => Some(*index),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut visited = BTreeSet::new();
+    let mut result = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            if block_ids.contains(&block) {
+                pending.extend(incoming_values(function, block, index));
+            }
+            continue;
+        }
+        let Some((owner, instruction)) = function.blocks.iter().find_map(|block| {
+            block
+                .instructions
+                .iter()
+                .find(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .any(|result| result.value == value)
+                })
+                .map(|instruction| (block.id, instruction))
+        }) else {
+            continue;
+        };
+        if !block_ids.contains(&owner) || instruction.id == induction_transfer {
+            continue;
+        }
+        match instruction.kind {
+            KirInstructionKind::Copy { value } => {
+                result.insert(instruction.id);
+                pending.push(value);
+            }
+            KirInstructionKind::Binary {
+                op: MirBinaryOp::Add | MirBinaryOp::Sub | MirBinaryOp::Mul,
+                left,
+                right,
+                semantics: crate::KirArithmeticSemantics::Modular,
+            } => {
+                result.insert(instruction.id);
+                pending.extend([left, right]);
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 fn independently_collect_accesses(
     function: &crate::KirFunction,
     scalar_blocks: &[BlockId],
@@ -1535,13 +2068,14 @@ fn independently_collect_accesses(
         else {
             return Err(malformed("vector memory source is not a slice index"));
         };
-        if !forwards_from(function, *index, body_induction)
-            && !forwards_from(function, *index, header_induction)
-        {
-            return Err(malformed(
-                "vector memory source is not exact unit-stride induction",
-            ));
-        }
+        let invariant_offset = independent_unit_stride_offset(
+            function,
+            *index,
+            body_induction,
+            header_induction,
+            scalar_blocks,
+        )
+        .ok_or_else(|| malformed("vector memory source is not exact unit-stride induction"))?;
         if instruction.memory.is_none() {
             return Err(malformed("vector memory source lacks Memory SSA evidence"));
         }
@@ -1550,6 +2084,7 @@ fn independently_collect_accesses(
             kind,
             region: *region,
             base: invariant_root_value(function, *slice).unwrap_or(*slice),
+            invariant_offset,
         });
     }
     accesses.sort_by_key(|access| access.instruction);
@@ -1577,9 +2112,73 @@ fn independently_collect_accesses(
     Ok(accesses)
 }
 
+fn independent_unit_stride_offset(
+    function: &crate::KirFunction,
+    index: ValueId,
+    body_induction: ValueId,
+    header_induction: ValueId,
+    _scalar_blocks: &[BlockId],
+) -> Option<Option<ValueId>> {
+    if forwards_from(function, index, body_induction)
+        || forwards_from(function, index, header_induction)
+    {
+        return Some(None);
+    }
+    let mut pending = vec![index];
+    let mut visited = BTreeSet::new();
+    let mut leaves = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block, param_index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            pending.extend(incoming_values(function, block, param_index));
+        } else if let Some(KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = defining_instruction(function, value)
+        {
+            pending.push(*value);
+        } else {
+            leaves.insert(value);
+        }
+    }
+    let leaves = leaves.into_iter().collect::<Vec<_>>();
+    let [leaf] = leaves.as_slice() else {
+        return None;
+    };
+    let KirInstructionKind::Binary {
+        op: MirBinaryOp::Add,
+        left,
+        right,
+        semantics: crate::KirArithmeticSemantics::Modular,
+    } = defining_instruction(function, *leaf)?.kind
+    else {
+        return None;
+    };
+    for (induction, offset) in [(left, right), (right, left)] {
+        if (forwards_from(function, induction, body_induction)
+            || forwards_from(function, induction, header_induction))
+            && !forwards_from(function, offset, body_induction)
+            && !forwards_from(function, offset, header_induction)
+        {
+            return Some(Some(offset));
+        }
+    }
+    None
+}
+
 fn independently_required_runtime_pairs(
     pre_state: &KirVerifiedProgramState,
     function: &crate::KirFunction,
+    inner_body: BlockId,
+    bound: ValueId,
     accesses: &[CheckedVectorAccess],
 ) -> Result<BTreeSet<(MemoryRegionId, MemoryRegionId)>, TransactionCheckError> {
     let malformed = |message: &str| TransactionCheckError::compiler(message);
@@ -1597,6 +2196,17 @@ fn independently_required_runtime_pairs(
                         "same-region vector accesses have different invariant roots",
                     ));
                 }
+                if (left.kind == CheckedMemoryAccessKind::Write
+                    || right.kind == CheckedMemoryAccessKind::Write)
+                    && left.invariant_offset != right.invariant_offset
+                    && !independently_prove_floyd_row_accesses(
+                        pre_state, function, inner_body, bound, accesses,
+                    )
+                {
+                    return Err(malformed(
+                        "same-region vector accesses have an unproved cross-lane offset",
+                    ));
+                }
                 continue;
             }
             if !has_noalias_fact(pre_state, function.id, left.base, right.base) {
@@ -1605,6 +2215,166 @@ fn independently_required_runtime_pairs(
         }
     }
     Ok(required)
+}
+
+fn independently_prove_floyd_row_accesses(
+    pre_state: &KirVerifiedProgramState,
+    function: &crate::KirFunction,
+    inner_body: BlockId,
+    bound: ValueId,
+    accesses: &[CheckedVectorAccess],
+) -> bool {
+    if accesses.len() != 3
+        || accesses
+            .iter()
+            .filter(|access| access.kind == CheckedMemoryAccessKind::Write)
+            .count()
+            != 1
+    {
+        return false;
+    }
+    let Some(bound_root) = invariant_root_value(function, bound) else {
+        return false;
+    };
+    let Some(facts) = pre_state
+        .contract_facts()
+        .map(crate::ContractFactSet::facts)
+    else {
+        return false;
+    };
+    let interval = super::contract_scalar_interval(
+        facts.facts().iter().filter_map(|fact| {
+            let in_function = match &fact.scope {
+                crate::FactScope::FunctionEntry(owner)
+                | crate::FactScope::Block {
+                    function: owner, ..
+                } => *owner == function.id,
+                crate::FactScope::CalleeInstance { callee, .. } => *callee == function.id,
+                crate::FactScope::InlineClone {
+                    function: owner, ..
+                } => *owner == function.id,
+            };
+            (in_function && fact.generation == facts.generation())
+                .then_some(&fact.predicate)
+                .and_then(|predicate| match predicate {
+                    crate::FactPredicate::Contract(predicate) => Some(predicate),
+                    crate::FactPredicate::ValueInterval { .. } => None,
+                })
+        }),
+        bound_root,
+        super::IntegerType::U32,
+    );
+    if interval.is_none_or(|interval| interval.upper() > &65_535_u32.into()) {
+        return false;
+    }
+    let Some(store) = accesses
+        .iter()
+        .find(|access| access.kind == CheckedMemoryAccessKind::Write)
+    else {
+        return false;
+    };
+    let same_place_reads = accesses
+        .iter()
+        .filter(|access| {
+            access.kind == CheckedMemoryAccessKind::Read
+                && access.region == store.region
+                && access.base == store.base
+                && access.invariant_offset == store.invariant_offset
+        })
+        .count();
+    if same_place_reads != 1
+        || accesses.iter().any(|access| {
+            access.region != store.region
+                || access.base != store.base
+                || access.invariant_offset.is_none()
+        })
+    {
+        return false;
+    }
+    accesses.iter().all(|access| {
+        access.invariant_offset.is_some_and(|offset| {
+            independently_prove_row_offset(function, inner_body, offset, bound_root)
+        })
+    })
+}
+
+fn independently_prove_row_offset(
+    function: &crate::KirFunction,
+    inner_body: BlockId,
+    offset: ValueId,
+    bound_root: ValueId,
+) -> bool {
+    let dominators = compute_kir_dominators(function);
+    let mut pending = vec![offset];
+    let mut visited = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some(instruction) = defining_instruction(function, value) {
+            match instruction.kind {
+                KirInstructionKind::Binary {
+                    op: MirBinaryOp::Mul,
+                    left,
+                    right,
+                    semantics: crate::KirArithmeticSemantics::Modular,
+                } => {
+                    for (index, row_bound) in [(left, right), (right, left)] {
+                        if invariant_root_value(function, row_bound) != Some(bound_root) {
+                            continue;
+                        }
+                        let dominated_by_strict_bound = function.blocks.iter().any(|block| {
+                            if !dominators.dominates(block.id, inner_body) {
+                                return false;
+                            }
+                            let KirTerminator::Branch {
+                                condition,
+                                then_edge,
+                                ..
+                            } = &block.terminator
+                            else {
+                                return false;
+                            };
+                            if !dominators.dominates(then_edge.target, inner_body) {
+                                return false;
+                            }
+                            block.instructions.iter().any(|comparison| {
+                                comparison
+                                    .results
+                                    .iter()
+                                    .any(|result| result.value == *condition)
+                                    && matches!(
+                                        comparison.kind,
+                                        KirInstructionKind::Compare {
+                                            op: crate::MirCompareOp::Lt,
+                                            left,
+                                            right,
+                                        } if forwards_from(function, index, left)
+                                            && invariant_root_value(function, right)
+                                                == Some(bound_root)
+                                    )
+                            })
+                        });
+                        if dominated_by_strict_bound {
+                            return true;
+                        }
+                    }
+                }
+                KirInstructionKind::Copy { value } => pending.push(value),
+                _ => {}
+            }
+        }
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            pending.extend(incoming_values(function, block, index));
+        }
+    }
+    false
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2107,6 +2877,35 @@ fn defining_instruction_by_id(
         .find(|instruction| instruction.id == id)
 }
 
+fn mapped_vector_value(
+    original: &crate::KirFunction,
+    vector_body: &crate::KirBlock,
+    plan: &VectorizationPlan,
+    scalar_value: ValueId,
+    unroll_index: u8,
+) -> Option<ValueId> {
+    let scalar = defining_instruction(original, scalar_value)?.id;
+    let vector_instruction = plan
+        .operations
+        .iter()
+        .find(|mapping| mapping.scalar == scalar && mapping.unroll_index == unroll_index)
+        .map(|mapping| mapping.vector)
+        .or_else(|| {
+            plan.memory_groups
+                .iter()
+                .find(|group| {
+                    group.scalar_instructions == [scalar] && group.unroll_index == unroll_index
+                })
+                .map(|group| group.vector_instruction)
+        })?;
+    vector_body
+        .instructions
+        .iter()
+        .find(|instruction| instruction.id == vector_instruction)
+        .and_then(|instruction| instruction.results.first())
+        .map(|result| result.value)
+}
+
 fn entry_bound_matches(
     original: &crate::KirFunction,
     header: &crate::KirBlock,
@@ -2127,6 +2926,10 @@ fn entry_bound_matches(
         .params
         .iter()
         .any(|param| param.value == source_bound)
+        || original_preheader
+            .params
+            .iter()
+            .any(|param| param.value == source_bound)
         || original_preheader.instructions.iter().any(|instruction| {
             instruction
                 .results

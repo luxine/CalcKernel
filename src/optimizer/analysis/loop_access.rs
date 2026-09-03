@@ -196,6 +196,10 @@ fn affine_form(
                 invariant: None,
                 bias: constant,
             })
+        } else if defining_block(function, value)
+            .is_some_and(|block| descriptor.blocks.binary_search(&block).is_err())
+        {
+            invariant_value(function, descriptor, value)
         } else if let Some((block, index)) = function.blocks.iter().find_map(|block| {
             block
                 .params
@@ -243,6 +247,19 @@ fn affine_form(
     })();
     visiting.remove(&value);
     result
+}
+
+fn defining_block(function: &KirFunction, value: ValueId) -> Option<crate::BlockId> {
+    function.blocks.iter().find_map(|block| {
+        (block.params.iter().any(|param| param.value == value)
+            || block.instructions.iter().any(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            }))
+        .then_some(block.id)
+    })
 }
 
 fn invariant_value(

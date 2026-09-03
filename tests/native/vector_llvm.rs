@@ -50,6 +50,20 @@ contract { requires noalias(a, b); effects read(a), write(b); }
 }
 "#;
 
+const PREDICATED_UPDATE_SOURCE: &str = r#"
+export unsafe fn relax(distance: slice<f64>, candidate_values: slice<f64>, n: u32) -> void
+contract { requires noalias(distance, candidate_values); effects read(candidate_values), readwrite(distance); }
+{
+  let i: u32 = 0;
+  while i < n {
+    let candidate: f64 = candidate_values[i];
+    let old: f64 = distance[i];
+    if candidate < old { distance[i] = candidate; }
+    i = i + 1;
+  }
+}
+"#;
+
 const REDUCTION_LOOP_SIMD_SOURCE: &str = r#"
 export fn sum_u32(a: slice<u32>, n: u32) -> u32 {
   let i: u32 = 0;
@@ -425,6 +439,54 @@ fn vector_llvm_should_lower_every_closed_family_to_fixed_vector_ir() {
         !fadd.contains(" fast ") && !fadd.contains("contract"),
         "{fadd}"
     );
+}
+
+#[test]
+fn predicated_update_llvm_should_use_select_and_unmasked_store() {
+    let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
+    let profile = target
+        .kir_profile(KirConsumer::NativeLibrary)
+        .expect("queried target profile");
+    let checked = check(&SourceFile::new(
+        "predicated-update.ck",
+        PREDICATED_UPDATE_SOURCE,
+    ));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("predicated update MIR");
+    let kir = build_kir_module_with_profile(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+        profile,
+    )
+    .expect("predicated update KIR");
+    let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
+        .expect("predicated update contracts");
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result.stats.vectorized_loops, 1,
+        "{:?}",
+        result.analysis_fallbacks
+    );
+    let context = NativeContext::new().expect("context");
+    let text = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+        .expect("lower predicated update")
+        .verify()
+        .expect("verify predicated update")
+        .to_ir_string()
+        .expect("predicated update LLVM IR");
+    for spelling in ["fcmp olt", "select <", "store <"] {
+        assert!(text.contains(spelling), "missing {spelling}:\n{text}");
+    }
+    assert!(!text.contains("masked.store"), "{text}");
+    for line in text.lines().filter(|line| line.contains("fcmp")) {
+        assert!(!line.contains(" fast "), "{line}");
+    }
 }
 
 #[test]

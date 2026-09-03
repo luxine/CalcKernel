@@ -4,7 +4,7 @@ use calckernel::{
     CandidateDisposition, ContractFactSet, KirAlignmentClass, KirBoundsMode, KirBuildConfig,
     KirConsumer, KirCostKey, KirLegalCost, KirNativeCpuPolicy, KirOperationAvailability,
     KirOptimizationLevel, KirOverflowMode, KirProfileOperation, KirSanitizerMode, KirTargetProfile,
-    KirTargetProfileBuilder, KirVerifiedProgramState, SourceFile, VectorEpilogue,
+    KirTargetProfileBuilder, KirVerifiedProgramState, SourceFile, VectorEpilogue, VectorPredicate,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
     discover_tuning_vectorization_candidates, discover_vectorization_candidates,
     import_contract_facts, lower_to_mir, prepare_vectorization_trial, print_kir_module,
@@ -243,6 +243,37 @@ contract { requires noalias(distance, candidate_values); effects read(candidate_
 }
 "#;
 
+const PREDICATED_UPDATE_FLOYD: &str = r#"
+export unsafe fn floyd(distance: slice<f64>, n: u32) -> void
+contract {
+  requires n <= 65535;
+  effects readwrite(distance);
+}
+{
+  let k: u32 = 0;
+  while k < n {
+    let k_row: u32 = k * n;
+    let i: u32 = 0;
+    while i < n {
+      let i_row: u32 = i * n;
+      let dik: f64 = distance[i_row + k];
+      let j: u32 = 0;
+      while j < n {
+        let index: u32 = i_row + j;
+        let candidate: f64 = dik + distance[k_row + j];
+        let old: f64 = distance[index];
+        if candidate < old {
+          distance[index] = candidate;
+        }
+        j = j + 1;
+      }
+      i = i + 1;
+    }
+    k = k + 1;
+  }
+}
+"#;
+
 #[test]
 fn predicated_update_discovery_should_accept_same_place_update() {
     let (pre, _) = map_state(PREDICATED_UPDATE_MAP);
@@ -275,6 +306,56 @@ fn predicated_update_discovery_should_accept_same_place_update() {
         .map(|candidate| candidate.key.clone())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(keys.len(), discovery.candidates.len());
+}
+
+#[test]
+fn predicated_update_discovery_should_accept_frozen_floyd_inner_loop() {
+    let (pre, _) = map_state(PREDICATED_UPDATE_FLOYD);
+    let discovery = discover_tuning_vectorization_candidates(&pre);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|candidate| candidate.predicated_update.is_some()),
+        "{discovery:#?}\n{}",
+        print_kir_module(pre.module())
+    );
+    let candidate = discovery
+        .candidates
+        .iter()
+        .find(|candidate| candidate.predicated_update.is_some() && candidate.vf == 2)
+        .expect("frozen Floyd VF2 candidate");
+    let prepared = prepare_vectorization_trial(&pre, candidate).expect("Floyd vector trial");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn predicated_update_discovery_should_require_floyd_u32_row_bound_proof() {
+    let source = PREDICATED_UPDATE_FLOYD.replace("requires n <= 65535;", "requires n <= 65536;");
+    let (pre, _) = map_state(&source);
+    let discovery = discover_tuning_vectorization_candidates(&pre);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .all(|candidate| candidate.predicated_update.is_none()),
+        "an overflowing row-domain neighbor must remain scalar: {discovery:#?}"
+    );
+    assert!(
+        discovery
+            .fallbacks
+            .iter()
+            .any(|fallback| fallback.reason == "unknown-memory-dependence"),
+        "{discovery:#?}"
+    );
 }
 
 #[test]
@@ -328,6 +409,170 @@ contract {{ requires noalias(distance, candidate_values); effects read(candidate
             "false shape `{name}` did not retain a stable fallback"
         );
     }
+}
+
+#[test]
+fn predicated_update_should_materialize_select_and_unmasked_store() {
+    let (pre, _) = map_state(PREDICATED_UPDATE_MAP);
+    let candidate = discover_tuning_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 2 && candidate.uf == 1)
+        .expect("VF2 predicated candidate");
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("predicated vector trial");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+    let vector_body = prepared.trial.module().functions[0]
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body");
+    let compares = vector_body
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorCompare {
+                    op: calckernel::MirCompareOp::Lt,
+                    ..
+                }
+            )
+        })
+        .count();
+    let selects = vector_body
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorSelect { .. }
+            )
+        })
+        .count();
+    let stores = vector_body
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorStore { .. }
+            )
+        })
+        .count();
+    assert_eq!((compares, selects, stores), (1, 1, 1));
+    assert!(matches!(
+        prepared.plan.epilogue,
+        VectorEpilogue::Scalar { .. }
+    ));
+}
+
+#[test]
+fn predicated_update_checker_should_reject_rewrite_mutations() {
+    let (pre, _) = map_state(PREDICATED_UPDATE_MAP);
+    let candidate = discover_tuning_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 2 && candidate.uf == 1)
+        .expect("VF2 predicated candidate");
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("predicated vector trial");
+
+    let mut swapped = prepared.trial.clone();
+    let select = swapped.module_mut().functions[0]
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.instructions)
+        .find_map(|instruction| match &mut instruction.kind {
+            calckernel::KirInstructionKind::VectorSelect {
+                when_true,
+                when_false,
+                ..
+            } => Some((when_true, when_false)),
+            _ => None,
+        })
+        .expect("predicated vector select");
+    std::mem::swap(select.0, select.1);
+    assert!(
+        check_vectorization_trial_independently(&pre, &swapped, &prepared.plan, &prepared.charge,)
+            .is_err()
+    );
+
+    let mut wrong_compare = prepared.trial.clone();
+    let compare = wrong_compare.module_mut().functions[0]
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.instructions)
+        .find_map(|instruction| match &mut instruction.kind {
+            calckernel::KirInstructionKind::VectorCompare { op, .. } => Some(op),
+            _ => None,
+        })
+        .expect("predicated vector compare");
+    *compare = calckernel::MirCompareOp::Ge;
+    assert!(
+        check_vectorization_trial_independently(
+            &pre,
+            &wrong_compare,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .is_err()
+    );
+
+    let mut wrong_store = prepared.trial.clone();
+    let candidate_value = wrong_store.module().functions[0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            calckernel::KirInstructionKind::VectorSelect { when_true, .. } => Some(when_true),
+            _ => None,
+        })
+        .expect("predicated candidate vector");
+    let stored = wrong_store.module_mut().functions[0]
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.instructions)
+        .find_map(|instruction| match &mut instruction.kind {
+            calckernel::KirInstructionKind::VectorStore { value, .. } => Some(value),
+            _ => None,
+        })
+        .expect("predicated vector store");
+    *stored = candidate_value;
+    assert!(
+        check_vectorization_trial_independently(
+            &pre,
+            &wrong_store,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .is_err()
+    );
+
+    let mut wrong_minimum = prepared.plan.clone();
+    let Some(VectorPredicate::TripThreshold { minimum, .. }) = wrong_minimum
+        .predicates
+        .iter_mut()
+        .find(|predicate| matches!(predicate, VectorPredicate::TripThreshold { .. }))
+    else {
+        panic!("trip threshold")
+    };
+    *minimum = minimum.saturating_add(2);
+    assert!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &wrong_minimum,
+            &prepared.charge,
+        )
+        .is_err()
+    );
 }
 
 const MODULAR_REDUCTIONS: &str = r#"

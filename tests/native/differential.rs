@@ -87,6 +87,18 @@ contract { requires noalias(a, b); effects read(a), write(b); }
   }
 }
 
+export unsafe fn relax(distance: slice<f64>, candidate_values: slice<f64>, n: u32) -> void
+contract { requires noalias(distance, candidate_values); effects read(candidate_values), readwrite(distance); }
+{
+  let i: u32 = 0;
+  while i < n {
+    let candidate: f64 = candidate_values[i];
+    let old: f64 = distance[i];
+    if candidate < old { distance[i] = candidate; }
+    i = i + 1;
+  }
+}
+
 export fn sum_u32(a: slice<u32>, n: u32) -> u32 {
   let i: u32 = 0;
   let total: u32 = 0;
@@ -576,6 +588,95 @@ fn differential_vector_loop_should_match_o0_for_zero_short_exact_remainder_and_o
     fs::remove_dir_all(root).expect("remove vector differential directory");
 }
 
+#[test]
+fn predicated_update_differential_should_match_scalar_strict_f64_bits() {
+    let root = std::env::temp_dir().join(format!(
+        "ckc-native-predicated-update-differential-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir(&root).expect("create predicated differential directory");
+    let o0_path = compile_vector_library(
+        &root,
+        KirOptimizationLevel::O0,
+        NativeOptimizationLevel::O0,
+        "predicated-o0",
+    );
+    let o3_path = compile_vector_library(
+        &root,
+        KirOptimizationLevel::O3,
+        NativeOptimizationLevel::O3,
+        "predicated-o3",
+    );
+    let o0 = DynamicLibrary::open(&o0_path);
+    let o3 = DynamicLibrary::open(&o3_path);
+    type Relax = unsafe extern "C" fn(*mut f64, u32, *mut f64, u32, u32);
+    let scalar: Relax = unsafe { o0.symbol("relax") };
+    let vector: Relax = unsafe { o3.symbol("relax") };
+    let candidates = [
+        -0.0,
+        0.0,
+        f64::NAN,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        -7.5,
+        2.25,
+        f64::from_bits(0x7ff8_0000_0000_0042),
+        4.0,
+        -11.0,
+        3.5,
+        9.25,
+        -3.0,
+        1.0,
+        8.0,
+        -2.0,
+    ];
+    let initial = [
+        0.0,
+        -0.0,
+        5.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -7.0,
+        f64::NAN,
+        f64::from_bits(0x7ff8_0000_0000_0011),
+        5.0,
+        -12.0,
+        4.0,
+        8.0,
+        -4.0,
+        1.5,
+        7.0,
+        -1.0,
+    ];
+    for len in [0_u32, 1, 3, 4, 5, 8, 15, 16] {
+        let mut expected = initial;
+        let mut actual = initial;
+        unsafe {
+            scalar(
+                expected.as_mut_ptr(),
+                expected.len() as u32,
+                candidates.as_ptr().cast_mut(),
+                candidates.len() as u32,
+                len,
+            );
+            vector(
+                actual.as_mut_ptr(),
+                actual.len() as u32,
+                candidates.as_ptr().cast_mut(),
+                candidates.len() as u32,
+                len,
+            );
+        }
+        assert_eq!(
+            actual.map(f64::to_bits),
+            expected.map(f64::to_bits),
+            "predicated strict-f64 len={len}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove predicated differential directory");
+}
+
 fn compile_vector_library(
     root: &Path,
     kir_level: KirOptimizationLevel,
@@ -609,7 +710,7 @@ fn compile_vector_library(
         // profitable subset. Baseline x86-64 conservatively rejects the
         // strict-f64 divide and horizontal multiply-reduction loops at the
         // unchanged 20% threshold; AArch64 accepts the complete corpus.
-        let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 6 } else { 8 };
+        let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 7 } else { 9 };
         assert_eq!(
             result.stats.vectorized_loops, expected_vectorized_loops,
             "{:?}",
@@ -638,6 +739,7 @@ fn compile_vector_library(
             "map_f64_div".to_string(),
             "map_cast".to_string(),
             "map_diamond".to_string(),
+            "relax".to_string(),
             "sum_u32".to_string(),
             "product_u32".to_string(),
         ],
