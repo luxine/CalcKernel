@@ -329,13 +329,14 @@ after the flush succeeds. The merge command consumes that exact file, not a
 directory or a newly enumerated spelling. Section 8 binds the directory descriptor,
 its empty pre-state, and its one-file post-state.
 
-The `E/cache` namespaces are private compiler scratch, not artifact outputs. The
-collector records the initially absent namespace, lets only its associated compiler
-command populate it, and removes that namespace after the command has returned and
-all declared outputs have been opened and retained. No cache path may escape its
-namespace or alias an evidence member. Cache files therefore do not survive into
-the closed evidence-directory inventory. Persistent publication lock files are not
-scratch and are retained as required by Section 8.
+The `E/cache` namespaces are private compiler scratch, not artifact outputs. For
+each compiler command the collector create-news one empty namespace, holds its
+no-follow directory descriptor and exclusive collector lock from the before
+snapshot through the after snapshot, and lets only that command populate it. No
+cache path may escape its namespace or alias another evidence member. The
+namespaces and their complete post-command contents remain in the evidence tree;
+Section 8 binds their empty pre-state and live post-state. Persistent publication
+lock files are also retained as required by Section 8.
 
 The PGO-only and tuned channels share byte-identical compiler, source, profile,
 target, CPU features, optimization, overflow, and bounds identities. Their only
@@ -418,7 +419,7 @@ exactly these top-level keys:
 ```text
 schemaVersion, candidateVersion, candidateSha, evidenceDirectory,
 toolchain, hardware, recipe, compiler, runner, source, inputs,
-profile, manifest, decision, attestation, artifacts, publicationLocks, commands,
+profile, manifest, decision, attestation, artifacts, publicationLocks, cacheScratch, commands,
 correctness, validation, release
 ```
 
@@ -479,10 +480,48 @@ A `PublicationLock` has exactly `destination`, `destinationId`, and `file`.
 `destination` and `file` are evidence-root FileIdentity values. `destinationId`
 is D32. The checker recomputes it from the destination using Publication Journal
 Schema 1, requires the file basename `.ckc-tune-dest-<destinationId>.lock`, and
-checks its exact `CKTLCK01 || destinationId` bytes and owner-only-write regular
-no-follow mode. Rows are sorted by lock path and contain exactly one row for every
-tuned or replayed decision/artifact destination that that publication protocol
-locks; duplicate destinations or lock files fail.
+requires the destination and lock to have the same parent. It checks the lock's
+exact `CKTLCK01 || destinationId` bytes and owner-only-write regular no-follow
+mode. Rows are sorted by lock path and contain exactly one row for every pgoTuned
+decision/artifact destination; duplicate destinations or lock files fail. Ordinary
+`--tune-use` replay uses its specified atomic artifact transaction, not the tuning
+publication journal, and therefore produces no PublicationLock row.
+
+A `CacheScratchEvidence` has exactly `command`, `namespace`, `device`, `inode`,
+`lock`, `before`, `after`, `beforeReceipt`, and `afterReceipt`. `command` is exactly
+one of `profileGeneration`, `pgoOnly`, `pgoTuned`, or `replayed`, and rows are
+sorted in that order. `namespace` is exactly the evidence-relative
+`cache/<command>` path; that command's `XDG_CACHE_HOME` value resolves to the
+evidence root joined with this path. It is create-new and empty immediately before
+the child starts. `device` and `inode` are the U64 Linux `fstat` values from a
+no-follow directory descriptor retained until after the child exits and its final
+snapshot is taken. `lock` is a create-new owner-only-write evidence-root regular
+file at `cache-locks/<command>.lock` with exact bytes
+`CKPREDLOCK/1 <command>\n`; the collector holds its exclusive advisory lock for
+that same interval. `before` and `after` use the exact schema-9
+`CacheSnapshot` definition, name this namespace, and enumerate every recursively
+reachable regular no-follow file through the retained namespace descriptor;
+directories must also be regular no-follow directories and any other entry kind
+fails. `before.files` is empty. `after.files` is reopened through the same
+descriptor and must equal the live complete recursive inventory when checked.
+
+`beforeReceipt` and `afterReceipt` have exact evidence paths
+`cache-receipts/<command>-before.txt` and
+`cache-receipts/<command>-after.txt`. Their FileIdentity values contain exactly
+one canonical LF-terminated UTF-8 line apiece:
+
+```text
+CKPREDCACHE/1 command=<command> phase=<phase> device=<device> inode=<inode> count=<count> digest=<64hex>\n
+```
+
+`phase` is `before` or `after`; all numbers are canonical U64 decimal; count and
+digest equal the corresponding CacheSnapshot. The collector writes each receipt
+immediately after taking that descriptor snapshot. The checker rejects reused
+namespace/device/inode/lock identities, a nonempty before snapshot, an environment
+foreign-key mismatch, an incomplete live after snapshot, or receipts inconsistent
+with the closed objects. At checking time the namespace path must resolve no-follow
+to the recorded device/inode. The namespace, lock, receipts, and after-snapshot
+files remain in the final evidence inventory.
 
 The remaining objects are closed as follows:
 
@@ -507,7 +546,9 @@ The remaining objects are closed as follows:
   role `primary`, `header`, then `importLibrary`; primary equals the primary-role
   file, and outputs equal the platform-resolved dynamic-library set;
 - `publicationLocks` is the path-sorted nonempty PublicationLock list defined
-  above and has exactly the tuned and replayed publication-lock rows;
+  above and has exactly the pgoTuned decision/artifact publication-lock rows;
+- `cacheScratch` has exactly four CacheScratchEvidence rows, one for each compiler
+  command named above;
 - `commands` has exactly `profileGeneration`, `trainingRun`, `profileMerge`,
   `profileInspect`, `pgoOnly`, `pgoTuned`, and `replayed`, each a CommandEvidence
   from Section 5;
@@ -525,9 +566,11 @@ consumes that exact shard file and produces `profile.final`; profile-inspect con
 its stdout equals `profile.inspection`. The three PGO-use commands consume the same
 profile and source. Their platform outputs equal their same-name artifact rows;
 the tuned command additionally produces `decision.file` and its PublicationLock
-files, while replay produces its PublicationLock files. Replay consumes that
-decision, and tuned/replay outputs with each common artifact role are byte-for-byte
-equal. Compiler and runner command executables equal the top-level FileIdentity
+files. Replay consumes that decision and produces no PublicationLock; tuned/replay
+outputs with each common artifact role are byte-for-byte equal. Each compiler
+command's sole `XDG_CACHE_HOME` value equals its same-name CacheScratchEvidence
+namespace; cache snapshot files are scratch side effects rather than artifact
+outputs. Compiler and runner command executables equal the top-level FileIdentity
 values.
 
 A TimingSplit has exactly:
@@ -574,10 +617,11 @@ The checker first invokes the schema-9 checker on the exact `--schema-nine` path
 and requires success. It then rederives the recipe, generator golden cells and
 frozen result digests, verifies all three retained oracle commands, and checks artifact
 paths, command argv/environment, profile identity, decision and plan identities,
-attestation equality, tuned/replay output equality, schedule, receipts, samples,
-medians, stability, and integer thresholds. Mutation tests independently corrupt
-every top-level object, each attestation binding, both ratio operands, order,
-receipt counts, profile/decision/artifact foreign keys, and evidence closure.
+attestation equality, tuned/replay output equality, publication locks, cache
+before/after snapshots, schedule, receipts, samples, medians, stability, and
+integer thresholds. Mutation tests independently corrupt every top-level object,
+each attestation binding, both ratio operands, order, receipt counts,
+profile/decision/artifact/lock/cache foreign keys, and evidence closure.
 
 The existing two stable performance jobs run schema 9 first and this contract
 second at the same candidate SHA, passing the just-accepted schema-9 report through
