@@ -61,7 +61,7 @@ name = "modular_reduction"
 suite = "vector"
 oracle_case = 5
 ck_source = "benches/oracles/fixtures/modular_reduction.ck"
-ck_sha256 = "4d212c9bcfc4064a8ce631a3721f4cca8005d148288ab545fb2e6ba31bfa477c"
+ck_sha256 = "00e9cf6faf936e510929c1d4352bbaa41d3a24cd837194dbd651e5059f141025"
 valid_domain = "modular_reduction: 4000-element input; n=4000; every input is in 1..=1000002 and the exact sum fits u32"
 
 [[kernel]]

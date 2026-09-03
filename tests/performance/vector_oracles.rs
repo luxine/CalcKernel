@@ -70,6 +70,22 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
 }
 
 #[test]
+fn modular_reduction_fixture_should_expose_its_valid_slice_domain_to_ck() {
+    let source =
+        fs::read_to_string(repo_root().join("benches/oracles/fixtures/modular_reduction.ck"))
+            .expect("read modular reduction CK fixture");
+
+    assert!(
+        source.contains("export unsafe fn kernel"),
+        "the reduction fixture must make its caller-owned valid domain explicit"
+    );
+    assert!(
+        source.contains("requires n <= a.len"),
+        "the fixed oracle domain must authorize CK to eliminate its redundant bounds guard"
+    );
+}
+
+#[test]
 fn oracle_sources_should_be_independent_and_architecture_explicit() {
     let root = repo_root();
     let c = fs::read_to_string(root.join("benches/oracles/c/vector_oracle.c"))
