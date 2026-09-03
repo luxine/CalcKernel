@@ -20,6 +20,11 @@ import tarfile
 import time
 import tomllib
 
+try:
+    import resource
+except ImportError:  # pragma: no cover - release performance workers are Unix
+    resource = None
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 V012_COMMIT = "1009bae18d1a1ebd37ee9ee095cab9a965e69df8"
 LLVM_VERSION = "22.1.8"
@@ -109,6 +114,13 @@ def command_output(command: list[object], *, env=None, cwd=REPO) -> str:
     if result.returncode:
         fail(f"command failed ({result.returncode}): {' '.join(command)}\n{result.stdout[-6000:]}")
     return result.stdout
+
+
+def terminated_child_cpu_time_ns():
+    if resource is None:
+        fail("terminated-child CPU timing requires a Unix performance worker")
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return round((usage.ru_utime + usage.ru_stime) * 1_000_000_000)
 
 
 def clang_profile_runtime(clang):
@@ -246,12 +258,14 @@ def build_ck(compiler: pathlib.Path, case: dict, base: pathlib.Path, *, cpu: str
     if cache_root is not None:
         cache_root.mkdir(parents=True, exist_ok=False)
         environment["XDG_CACHE_HOME"] = str(cache_root)
-    start = time.perf_counter_ns()
+    timer = terminated_child_cpu_time_ns()
     output = command_output(command, env=environment)
-    elapsed = time.perf_counter_ns() - start
+    elapsed = terminated_child_cpu_time_ns() - timer
+    if elapsed < 0:
+        fail("terminated-child CPU clock moved backwards")
     result = output_artifact(base, kind)
     identity(result)
-    return result, elapsed, output
+    return result, max(1, elapsed), output
 
 
 class Kernel:

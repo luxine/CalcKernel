@@ -19,6 +19,11 @@ import tarfile
 import time
 import tomllib
 
+try:
+    import resource
+except ImportError:  # pragma: no cover - full performance workers are Unix
+    resource = None
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 CASE_TABLE = REPO / "benches/cases/tune-cases.tsv"
 REPLAY_MANIFEST = REPO / "benches/baselines/v0_13_replay.toml"
@@ -614,6 +619,30 @@ def run_command(command: dict, evidence: pathlib.Path,
     return elapsed, result.stdout
 
 
+def terminated_child_cpu_time_ns():
+    if resource is None:
+        fail("terminated-child CPU timing requires a Unix performance worker")
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return round((usage.ru_utime + usage.ru_stime) * 1_000_000_000)
+
+
+def run_compile_command(command: dict, evidence: pathlib.Path,
+                        executable_override: pathlib.Path | None = None) -> tuple[int, str]:
+    start = terminated_child_cpu_time_ns()
+    result = subprocess.run(
+        actual_argv(command, evidence), cwd=REPO,
+        env=child_environment(command["environment"]),
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        executable=str(executable_override) if executable_override is not None else None,
+    )
+    elapsed = terminated_child_cpu_time_ns() - start
+    if elapsed < 0:
+        fail("terminated-child CPU clock moved backwards")
+    if result.returncode:
+        fail(f"command failed ({result.returncode}): {' '.join(command['argv'])}\n{result.stdout[-6000:]}")
+    return max(1, elapsed), result.stdout
+
+
 def run_supervised(command: dict, evidence: pathlib.Path, log_relative: str) -> tuple[dict, int, int, str]:
     if platform.system() != "Linux" or not hasattr(os, "wait4"):
         fail("full schema-9 supervision requires Linux wait4")
@@ -1107,7 +1136,7 @@ def compile_comparison(case: dict, evidence: pathlib.Path, retained: dict,
             command = command_factory(channel, invocation)
             output_index = command["argv"].index("--out") + 1
             (REPO / command["argv"][output_index]).parent.mkdir(parents=True, exist_ok=True)
-            elapsed, _ = run_command(command, evidence)
+            elapsed, _ = run_compile_command(command, evidence)
             commands[channel].append({"command": command, "elapsedNs": elapsed})
             transient_outputs = dynamic_outputs(
                 evidence, evidence_relative(evidence, REPO / command["argv"][output_index]))

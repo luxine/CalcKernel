@@ -352,6 +352,32 @@ fn schema_seven_harness_should_measure_vector_domain_size_and_compile_time_corpo
 }
 
 #[test]
+fn source_to_object_compile_time_should_measure_terminated_child_cpu_time() {
+    let vector = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
+        .expect("read vector performance harness");
+    let compile_ck = &vector[vector.find("fn compile_ck(").expect("compile_ck")
+        ..vector
+            .find("#[cfg(unix)]\ntype CompileTimer")
+            .expect("compile timer")];
+
+    for required in [
+        "RUSAGE_CHILDREN",
+        "getrusage",
+        "compile_timer_start()",
+        "compile_timer_elapsed(timer)",
+    ] {
+        assert!(
+            vector.contains(required),
+            "source-to-object measurements must use terminated-child CPU time via {required:?}"
+        );
+    }
+    assert!(
+        !compile_ck.contains("Instant::now()"),
+        "source-to-object measurements must exclude hosted-runner descheduling time"
+    );
+}
+
+#[test]
 fn native_performance_gate_should_enforce_equivalence_stability_and_thresholds() {
     let output = Command::new("python3")
         .arg("-B")

@@ -345,8 +345,10 @@ has 15 positive values, each median is ascending element 7. `commands` is an obj
 with exactly the two channel keys; each value is a list of exactly 18 `TimedCommand`
 objects, the first three corresponding to warmup occurrences and the remaining 15
 to measured occurrences in the retained order. Each entry is a `TimedCommand`
-with exactly `command` and `elapsedNs`; `elapsedNs` is the positive raw wall time
-for that invocation and `command` is the closed `Command` below. The checker
+with exactly `command` and `elapsedNs`; `elapsedNs` is the positive delta of
+terminated-child user-plus-system CPU time for that invocation and `command` is
+the closed `Command` below. Hosted-runner descheduling is excluded, while all CPU
+work performed by the compiler child and its terminated descendants is retained. The checker
 requires each measured `samplesNs` value to equal the corresponding retained
 `TimedCommand.elapsedNs`. A `Command` has exactly `argv`,
 `workingDirectory`, `executable`, `inputs`, `environment`, and

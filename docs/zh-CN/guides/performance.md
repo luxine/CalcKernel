@@ -31,7 +31,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 - Tuned throughput 相对 hand-written C/Rust SIMD 达到 geometric 98%、逐 case 92%；两个
   declared domain kernel 相对更快 generic C/Rust oracle 的 geometric throughput 严格超过 8%。
 - `--tune-use` compile time 相对 0.14 ordinary build 的 geometric/逐 case slowdown 不超过
-  10%/20%；0.14 ordinary 相对 v0.13 保持 3%/8%。Tuned artifact 与 deterministic compiler
+  10%/20%；0.14 ordinary 相对 v0.13 保持 3%/8%。这些编译对比使用已终止子进程的
+  user+system CPU time，排除托管 runner 被调度移出的时间但不移除编译器工作。Tuned artifact 与 deterministic compiler
   archive 均不超过 110%。
 - Standard tuning 不超过 30 分钟及声明的 candidate/resource bound，peak RSS 不超过 2x，
   tuning cache 不超过 4 GiB；两个 empty-cache cold run 与一个 locked warm reuse 满足 exact determinism。
@@ -57,6 +58,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 - PGO/multiversion/combined source-to-object geometric-mean ratio 不超过 ordinary 的
   1.5x/2.5x/3.5x，单项不超过 2x/3x/4x；artifact aggregate 不超过 1.25x/2x/2x，
   单项不超过 1.5x/2.5x/2.5x；distributed `ckc` archive 相对 exact 0.12 最多增长 15%。
+  Source-to-object 样本使用已终止子进程的 user+system CPU time，排除托管 worker 被调度
+  移出的时间，同时不移除任何编译器工作。
 - 保留全部 0.12 累积 gate：Native 至少达到 pinned Clang geometric mean 的 95%，单项最多
   慢 10%，checked proof loop 至少达到 unchecked 的 97%，vector/domain gate 保持，optimizer
   latency 保持既有 suite 2x、单项 3x 上限。

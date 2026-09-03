@@ -18,7 +18,7 @@ O3 production function 原地执行 `mem2reg`。即使 `integer_accumulate` 不�
 - 无 non-local load 的函数在 clone 前跳过；
 - 契约测试要求 clone 隔离，并禁止旧的 production-module promotion；
 - V0.13 exact replay pin 前移到包含同一修复的
-  `0f9af4ae032c0c3248caff60993795e669d3f8b4`，manifest digest 同步重算。
+  `b61d45831f3f351a486722dcd12560507013db1c`，manifest digest 同步重算。
 
 归约策略、interleave 宽度、语言/ABI、安全语义、性能 corpus、样本与阈值均未改变。动态结论仍由
 新 SHA 的 x86-64 远程性能作业签署。

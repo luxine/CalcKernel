@@ -677,7 +677,8 @@ input 分开固定；correctness 覆盖二者及 adversarial input，PGO timed r
   这是 tooling bound，不是 final artifact runtime allowance；
 - PGO-use single-version source-to-object 编译 geometric mean 不超过对应 ordinary 0.13
   baseline 的 1.5 倍，multiversion 不超过 2.5 倍，combined 不超过 3.5 倍；单项上限分别为
-  2、3、4 倍；
+  2、3、4 倍；样本使用已终止子进程的 user+system CPU time，排除托管 worker 被调度移出的
+  时间，同时不移除任何编译器工作；
 - PGO-only aggregate artifact size 不超过 ordinary 的 1.25 倍、单项不超过 1.5 倍；
   multiversion/combined aggregate 不超过 2 倍、单项不超过 2.5 倍；
 - 每个 host 等价 stripping/signing 边界后的 distributed `ckc` archive 相对 exact 0.12

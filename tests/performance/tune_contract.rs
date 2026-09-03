@@ -171,14 +171,41 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         "--contract-only",
         "--schema-only",
         "--baseline\", choices=(\"0.13\"",
-        "0f9af4ae032c0c3248caff60993795e669d3f8b4",
-        "8f454cac97608432a462d6de89949264d5ab5cc33ee9b94c7cb933829bdb72a0",
+        "b61d45831f3f351a486722dcd12560507013db1c",
+        "02d8f1c3b8f8a8c5f2b2a0d42175d0b12fb0117b475ddd63e5030453ec0d9f84",
     ] {
         assert!(
             combined.contains(required),
             "missing schema-9 token {required}"
         );
     }
+}
+
+#[test]
+fn schema_nine_compile_comparison_should_measure_terminated_child_cpu_time() {
+    let collector = read("scripts/measure-v014-performance.py");
+    for required in [
+        "def terminated_child_cpu_time_ns():",
+        "resource.getrusage(resource.RUSAGE_CHILDREN)",
+        "def run_compile_command(",
+        "elapsed, _ = run_compile_command(command, evidence)",
+    ] {
+        assert!(
+            collector.contains(required),
+            "schema-9 compile comparison omitted {required}"
+        );
+    }
+    let compile_runner = collector
+        .split("def run_compile_command(")
+        .nth(1)
+        .expect("compile runner")
+        .split("\ndef ")
+        .next()
+        .expect("compile runner body");
+    assert!(
+        !compile_runner.contains("time.perf_counter_ns()"),
+        "compile comparison must not count hosted-runner descheduling"
+    );
 }
 
 #[test]

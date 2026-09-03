@@ -40,6 +40,8 @@ digests, streams, tiers, or capabilities fail the checker.
   faster generic C/Rust oracle by more than 8% geometrically.
 - `--tune-use` compile time is at most 10% slower geometrically and 20% per
   case than 0.14 ordinary build; 0.14 ordinary stays within 3%/8% of v0.13.
+  These compile comparisons use terminated-child user-plus-system CPU time,
+  excluding hosted-runner descheduling without excluding compiler work.
   Tuned artifacts and the deterministic compiler archive remain within 110%.
 - Standard tuning stays within 30 minutes and its declared candidate/resource
   bounds, peak RSS stays within 2x, tuning cache stays within 4 GiB, and two
@@ -69,7 +71,8 @@ digests, streams, tiers, or capabilities fail the checker.
   1.5x/2.5x/3.5x ordinary and individual ratios at most 2x/3x/4x.
   Artifact aggregate ratios are at most 1.25x/2x/2x and individual ratios at
   most 1.5x/2.5x/2.5x. The distributed `ckc` archive is at most 15% larger than
-  exact 0.12.
+  exact 0.12. Source-to-object samples use terminated-child user-plus-system CPU
+  time, excluding hosted-worker descheduling without removing compiler work.
 - All cumulative 0.12 gates remain: Native reaches at least 95% of pinned Clang
   geometric mean, no item is more than 10% slower, checked proof loops reach at
   least 97% of unchecked throughput, vector/domain gates remain, and optimizer

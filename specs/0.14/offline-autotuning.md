@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 0f9af4ae032c0c3248caff60993795e669d3f8b4
+Accepted base revision: v0.13 repaired candidate b61d45831f3f351a486722dcd12560507013db1c
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 three-commit delta through accepted v0.13 revision
-`0f9af4ae032c0c3248caff60993795e669d3f8b4` was reviewed file by file and integrated
+`b61d45831f3f351a486722dcd12560507013db1c` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
@@ -1605,8 +1605,9 @@ Tune-use compilation time is measured against v0.14 ordinary compilation with
 three warmup pairs and fifteen measured pairs, alternating first channel by row;
 ordinary v0.14 compilation is compared with exact v0.13 ordinary compilation by
 the same protocol. Both use upper medians, bind every raw time to its command in a
-closed `TimedCommand` receipt,
-and exclude tuning search. Artifact size uses the exact primary outputs paired with
+closed `TimedCommand` receipt, measure terminated-child user-plus-system CPU time
+so hosted-runner descheduling is excluded without removing compiler work, and
+exclude tuning search. Artifact size uses the exact primary outputs paired with
 timing. Resource evidence retains standard-session wall time, peak compiler/tuner
 RSS, expansion/compile/finalist counts, and cache bytes. Determinism consists of two
 independent cold-cache sessions compared by measurement-independent choice identity,

@@ -104,6 +104,27 @@ fn schema_eight_checker_regressions_should_pass() {
 }
 
 #[test]
+fn schema_eight_compile_time_should_measure_terminated_child_cpu_time() {
+    let measurement = read("scripts/measure-v013-performance.py");
+    let build_ck = &measurement[measurement.find("def build_ck(").expect("build_ck")
+        ..measurement.find("\n\nclass Kernel:").expect("Kernel")];
+
+    for required in [
+        "def terminated_child_cpu_time_ns():",
+        "resource.getrusage(resource.RUSAGE_CHILDREN)",
+    ] {
+        assert!(
+            measurement.contains(required),
+            "schema-8 compile-time measurement must use {required:?}"
+        );
+    }
+    assert!(
+        !build_ck.contains("time.perf_counter_ns()"),
+        "schema-8 source-to-object samples must exclude hosted-runner descheduling time"
+    );
+}
+
+#[test]
 fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
     let schema = read("benches/summary-schema.md");
     let checker = read("scripts/check-native-performance.py");
