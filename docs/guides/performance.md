@@ -47,7 +47,7 @@ digests, streams, tiers, or capabilities fail the checker.
 - The independent predicated-update gate requires a non-baseline Loop SIMD
   decision. With one immutable PGO profile on both channels, sealed `N=1024`
   strict-`f64` Floyd-Warshall must run at least 5% faster with Auto-Tuning than
-  PGO-only on each stable Linux host; either stream must also satisfy the same
+  PGO-only on each stable Linux host; both streams must also satisfy the same
   16-of-20 stability rule, and validation slowdown may not exceed 2%.
   The closed report and sampling contract is
   [Predicated-Update Performance Contract 1](../../specs/0.14/predicated-update-performance-1.md).

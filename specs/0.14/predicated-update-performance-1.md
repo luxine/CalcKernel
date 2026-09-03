@@ -307,7 +307,7 @@ merge and inspect use an empty environment. No other variable is inherited.
 | --- | --- |
 | profile generation | `C build S --out E/build/generation/artifact --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked --pgo-generate E/profile/shards` |
 | training run | `R --ck-predicated-profile <generation-primary> <flush-symbol> 128 113` |
-| profile merge | `C pgo merge E/profile/shards --out E/profile/predicated.ckprof` |
+| profile merge | `C pgo merge <profile-shard> --out E/profile/predicated.ckprof` |
 | profile inspect | `C pgo inspect E/profile/predicated.ckprof --json` |
 | PGO-only | `C build S --out E/build/pgo-only/artifact --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked --pgo-use E/profile/predicated.ckprof` |
 | tuned | `C tune build S --config <manifest> --out E/build/pgo-tuned/artifact --kind dynamic --cpu native -O3 --overflow unchecked --bounds unchecked --pgo-use E/profile/predicated.ckprof --budget standard --tune-out E/build/pgo-tuned/decision.cktune --no-tune-cache --explain-optimization` |
@@ -320,6 +320,22 @@ inputs, environment, complete platform-resolved outputs, primary output, status,
 stdout, and stderr identities. Every status is zero. The profile has exactly one
 completed shard and its inspected compiler/source/KIR/site-table/target/mode
 identity equals all three PGO-use builds.
+
+Before profile generation, the collector creates `E/profile/shards` as a new empty
+directory, opens it with Linux `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, and retains that
+descriptor through profile generation and the training run. `<profile-shard>` is
+the path of the sole regular no-follow file discovered through that descriptor
+after the flush succeeds. The merge command consumes that exact file, not a
+directory or a newly enumerated spelling. Section 8 binds the directory descriptor,
+its empty pre-state, and its one-file post-state.
+
+The `E/cache` namespaces are private compiler scratch, not artifact outputs. The
+collector records the initially absent namespace, lets only its associated compiler
+command populate it, and removes that namespace after the command has returned and
+all declared outputs have been opened and retained. No cache path may escape its
+namespace or alias an evidence member. Cache files therefore do not survive into
+the closed evidence-directory inventory. Persistent publication lock files are not
+scratch and are retained as required by Section 8.
 
 The PGO-only and tuned channels share byte-identical compiler, source, profile,
 target, CPU features, optimization, overflow, and bounds identities. Their only
@@ -373,13 +389,14 @@ the left rotation of `[pgoOnly,pgoTuned]` by:
 
 ```text
 FIRST_U64_BE(SHA-256("CK-V014-PRED-ORDER\0" ||
-                    candidateSha DigestBytes ||
+                    candidateSha Text ||
                     split Text || phase Text || row U32_BE)) mod 2
 ```
 
 `FIRST_U64_BE` interprets the first eight digest bytes as one unsigned big-endian
-integer. `DigestBytes` is the 32 decoded SHA-256 bytes. Text uses the schema-9
-length-prefixed UTF-8 primitive. Each channel is invoked
+integer. `candidateSha` uses the schema-9 `Text` encoding of its 40 lowercase
+ASCII Git SHA-1 characters; it is not a 32-byte `DigestBytes` value. All `Text`
+values use the schema-9 length-prefixed UTF-8 primitive. Each channel is invoked
 three times per row in its scheduled position. A row sample is the minimum of its
 three elapsed values. Warm-up receipts are retained but not scored. The median is
 ascending measured sample index 10. At least 16 of 20 samples in each channel and
@@ -401,7 +418,7 @@ exactly these top-level keys:
 ```text
 schemaVersion, candidateVersion, candidateSha, evidenceDirectory,
 toolchain, hardware, recipe, compiler, runner, source, inputs,
-profile, manifest, decision, attestation, artifacts, commands,
+profile, manifest, decision, attestation, artifacts, publicationLocks, commands,
 correctness, validation, release
 ```
 
@@ -425,18 +442,58 @@ ordered list of objects with exactly `name`, `value`, and `references`. It is em
 except for the exact build/tune compiler-cache entry required in Section 5; that entry has
 name `XDG_CACHE_HOME`, a repository-relative value below the evidence directory,
 and empty references. Stdout/stderr identities retain exact bytes, including an
-empty file. The executable file bytes equal argv element zero. A path argument has
-one matching input or output identity and no undeclared process output is allowed.
+empty file. Resolve `argv[0]` relative to `workingDirectory` without following
+symlinks; the resolved regular file's bytes and size equal `executable`. Top-level
+compiler and runner identities are immutable evidence-root copies, while source,
+manifest, recipe, and fixed input identities are repository-root identities;
+generated profiles, decisions, artifacts, locks, receipts, and streams are
+evidence-root identities. Every file-valued path argument has one matching input
+or output identity. The profile-generation directory argument uniquely matches
+`profile.directory`. No undeclared file may survive in an artifact, profile, or
+publication location; Section 5 is the only cache-scratch exception.
+
+A `DirectorySnapshot` has exactly `entries`, `digest`, and `receipt`. `entries` is
+a path-sorted FileIdentity list. Its digest is
+
+```text
+P("CK-V014-PRED-DIRECTORY\0", phase Text,
+  entries List<FileIdentityValue>)
+```
+
+where `phase` is exactly `before` or `after`. `receipt` is an evidence-root
+FileIdentity whose UTF-8 bytes are exactly one LF-terminated line:
+
+```text
+CKPREDDIR/1 phase=<phase> device=<device> inode=<inode> count=<count> digest=<64hex>\n
+```
+
+Numbers are canonical U64 decimal and the digest is the snapshot digest. A
+`DirectoryEvidence` has exactly `root`, `path`, `device`, `inode`, `before`, and
+`after`. Root is `evidence`, path is `profile/shards`, and device/inode are the U64
+Linux `fstat` values from the retained descriptor. The checker requires the path
+to resolve no-follow to that same directory identity after collection. `before`
+has no entries; `after` has exactly `profile.shards[0]`. Both snapshots are taken
+by descriptor, and no directory entry other than that shard may occur.
+
+A `PublicationLock` has exactly `destination`, `destinationId`, and `file`.
+`destination` and `file` are evidence-root FileIdentity values. `destinationId`
+is D32. The checker recomputes it from the destination using Publication Journal
+Schema 1, requires the file basename `.ckc-tune-dest-<destinationId>.lock`, and
+checks its exact `CKTLCK01 || destinationId` bytes and owner-only-write regular
+no-follow mode. Rows are sorted by lock path and contain exactly one row for every
+tuned or replayed decision/artifact destination that that publication protocol
+locks; duplicate destinations or lock files fail.
 
 The remaining objects are closed as follows:
 
 - `compiler`, `runner`, `source`, and `manifest` are FileIdentity values;
 - `inputs` has exactly `training`, `validation`, and `release`, each a
   FileIdentity;
-- `profile` has exactly `shards`, `final`, `identityDigest`, and `inspection`;
-  shards is a one-element FileIdentity list, final and inspection are
-  FileIdentity, and identityDigest is the profile identity digest parsed from both
-  final bytes and canonical inspection JSON;
+- `profile` has exactly `directory`, `shards`, `final`, `identityDigest`, and
+  `inspection`; directory is the DirectoryEvidence above, shards is a one-element
+  FileIdentity list, final and inspection are FileIdentity, and identityDigest is
+  the profile identity digest parsed from both final bytes and canonical inspection
+  JSON;
 - `decision` has exactly `file`, `decisionDigest`, `planDigest`, and `selected`;
   selected is true, file is FileIdentity, decisionDigest equals its SHA-256 digest,
   and planDigest is the selected plan D32 decoded from the decision;
@@ -449,6 +506,8 @@ The remaining objects are closed as follows:
   outputs is a nonempty list of objects with exactly `role` and `file`, sorted by
   role `primary`, `header`, then `importLibrary`; primary equals the primary-role
   file, and outputs equal the platform-resolved dynamic-library set;
+- `publicationLocks` is the path-sorted nonempty PublicationLock list defined
+  above and has exactly the tuned and replayed publication-lock rows;
 - `commands` has exactly `profileGeneration`, `trainingRun`, `profileMerge`,
   `profileInspect`, `pgoOnly`, `pgoTuned`, and `replayed`, each a CommandEvidence
   from Section 5;
@@ -459,14 +518,17 @@ The remaining objects are closed as follows:
 - `validation` and `release` are TimingSplit values.
 
 The command graph is closed by exact foreign keys. Profile-generation command
-outputs equal `artifacts.generation`; training-run inputs include that primary and
-header and its sole output equals `profile.shards[0]`; profile-merge consumes that
-shard and produces `profile.final`; profile-inspect consumes the final profile and
+outputs equal `artifacts.generation`; the profile-generation directory argument
+equals `profile.directory.path`; training-run inputs include that primary and
+header and its sole declared output equals `profile.shards[0]`; profile-merge
+consumes that exact shard file and produces `profile.final`; profile-inspect consumes the final profile and
 its stdout equals `profile.inspection`. The three PGO-use commands consume the same
 profile and source. Their platform outputs equal their same-name artifact rows;
-the tuned command additionally produces `decision.file`. Replay consumes that
-decision, and tuned/replay primary plus header bytes are pairwise equal. Compiler
-and runner command executables equal the top-level FileIdentity values.
+the tuned command additionally produces `decision.file` and its PublicationLock
+files, while replay produces its PublicationLock files. Replay consumes that
+decision, and tuned/replay outputs with each common artifact role are byte-for-byte
+equal. Compiler and runner command executables equal the top-level FileIdentity
+values.
 
 A TimingSplit has exactly:
 
