@@ -94,6 +94,22 @@ cache identity 的 schema/version 常量必须集中定义并进入 mutation tes
 - 规范反例：先在 `specs/0.12/review/implementation-blockers-*.md` 复诊，成立后同步修订。
 - 远程 CI：提交/推送后记录 run id 与 exact SHA，30–60 秒以上间隔查询；不持续占用前台等待。
 
+阶段 10 在 GitHub 仓库从 `Rust_CalcKernel` 更名为 `CalcKernel` 后暴露了 TypeScript oracle
+旧仓库名碰撞：quality 的第二次 checkout 会在当前 Rust 仓库中解析退役 TypeScript commit，因而
+不能形成有效的 exact-SHA 验收。复诊与闭环见
+`specs/0.12/review/implementation-blocker-03.md`。修复仅把固定提交的最小 oracle 源码与 fixtures
+固化到 `tests/oracles/typescript`，保留 frozen lockfile、provenance 与 85 项 source manifest，并
+继续执行原有 live differential gate；语言/ABI、性能阈值、corpus、schema 7 与十作业要求均不变。
+
+候选 `8b6feb0dbe7e5df7d8e48d7398a23b9a8285d7ba` 的首次十作业 CI 又暴露了跨平台与性能
+阻断：Windows differential cleanup 保留已加载 DLL；checked branch 未标记冷失败路径；x86
+Rust integer-cast oracle 只实现有符号 `i32` 域；x86 KIR horizontal reduction 在每个 chunk
+过早 fold；AArch64 超短 SLP 的 CK/C/Rust 三方样本共同出现频率状态双峰。复诊和闭环见
+`specs/0.12/review/implementation-blocker-04.md`。本轮不降低 90%/95% 门槛，不改变 timed
+corpus、样本数、统计量或 required job topology；只修复资源生命周期、完整 `u32` oracle
+语义、target-specific lowering、冷路径 metadata，并为三个 channel 增加相同的 unmeasured
+short-kernel conditioning。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。

@@ -51,9 +51,17 @@ mod simd {
     #[inline(always)]
     pub unsafe fn cast(a: *const u32, out: *mut f64, n: u32) {
         let mut i = 0usize;
+        let zero = _mm_setzero_si128();
+        let exponent = _mm_set1_epi64x(0x4330_0000_0000_0000);
+        let bias = _mm_set1_pd(4_503_599_627_370_496.0);
         while i + 2 <= n as usize {
             let source = _mm_loadl_epi64(a.add(i).cast());
-            _mm_storeu_pd(out.add(i), _mm_cvtepi32_pd(source));
+            let widened = _mm_unpacklo_epi32(source, zero);
+            let converted = _mm_sub_pd(
+                _mm_castsi128_pd(_mm_or_si128(widened, exponent)),
+                bias,
+            );
+            _mm_storeu_pd(out.add(i), converted);
             i += 2;
         }
         while i < n as usize {

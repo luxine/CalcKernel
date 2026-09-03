@@ -1,7 +1,7 @@
 use super::*;
 
 use calckernel::{
-    KIR_VECTOR_COST_MODEL_SCHEMA, KIR_VECTOR_PROOF_SCHEMA, KirTargetProfile,
+    KIR_VECTOR_COST_MODEL_SCHEMA, KIR_VECTOR_PROOF_SCHEMA, KirTargetIdentity, KirTargetProfile,
     build_kir_module_with_profile,
 };
 
@@ -26,7 +26,7 @@ const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "7ebe12a1fc4e3217ef7824fa75ad40caa6a76461a05af5f7a4b65a432c902631";
+    "7faf23e2f1f7129238e5a024e3dc4918a73b4f3671661097071ce3982666c82f";
 
 pub(super) struct VectorPerformanceReport {
     pub target_profile_digest: String,
@@ -365,7 +365,21 @@ fn validate_candidate_kir(
         import_contract_facts(&module, &checked_program, 0).map_err(|error| error.to_string())?;
     let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, Some(&contracts));
     let artifact = verified_artifact(&result)?;
-    if require_vector && !checked && !print_kir_module(artifact).contains("vector_") {
+    let native_llvm_reduction = fixture
+        .file_stem()
+        .is_some_and(|name| name == "modular_reduction")
+        && matches!(
+            artifact.profile.target_identity(),
+            KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-")
+        )
+        && result.analysis_fallbacks.iter().any(|fallback| {
+            fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
+        });
+    if require_vector
+        && !checked
+        && !native_llvm_reduction
+        && !print_kir_module(artifact).contains("vector_")
+    {
         return Err(format!(
             "{} did not materialize an accepted KIR vector operation",
             fixture.display()
@@ -699,6 +713,9 @@ impl KernelRunner {
     }
 
     fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
+        if self.name == "slp_quad" {
+            self.invoke_repeated(batch_iterations)?;
+        }
         let start = Instant::now();
         self.invoke_repeated(batch_iterations)?;
         let elapsed = start.elapsed().as_nanos().max(1);

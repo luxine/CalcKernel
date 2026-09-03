@@ -287,6 +287,34 @@ fn checked_lowering_should_cover_all_four_overflow_and_bounds_combinations() {
 }
 
 #[test]
+fn checked_guard_should_place_the_success_path_before_the_cold_failure_path() {
+    let text = checked_llvm(
+        "export fn add(left: u32, right: u32) -> u32 { return left + right; }",
+        OverflowMode::Checked,
+        BoundsMode::Unchecked,
+    );
+    let continuation = text
+        .find("\nchecked.continue")
+        .expect("checked continuation block");
+    let failure = text
+        .find("\nchecked.failure")
+        .expect("checked failure block");
+    assert!(
+        continuation < failure,
+        "the common success path must be laid out before the cold failure path:\n{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.contains("br i1") && line.contains("!prof !")),
+        "checked status guards must carry branch-frequency metadata:\n{text}"
+    );
+    assert!(
+        text.contains("!{!\"branch_weights\", i32 1, i32 2000}"),
+        "checked failures must be explicitly cold relative to continuation:\n{text}"
+    );
+}
+
+#[test]
 fn checked_overflow_should_guard_division_and_modulo_without_traps() {
     let text = checked_llvm(
         r#"

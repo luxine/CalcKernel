@@ -9,6 +9,7 @@ dispatch_protocol = "cached-typed-entry-v1"
 warmup_rows = 3
 sample_rows = 20
 sample_calls = 7
+short_kernel_conditioning = true
 batch_iterations = 20000000
 differential_audit = true
 ub_audit = true
@@ -21,7 +22,7 @@ sha256 = "d5d873334a9070a3b415fd88cc78842d4bc6b6eebcd3bfbd2a4c90fc4f4d1501"
 [[source]]
 language = "rust2021"
 source = "benches/oracles/rust/vector_oracle.rs"
-sha256 = "22f80de2daf8c5fd515ada45cc3b16f0e11b0d1bc56217ae74ed95d0d2d7eb8e"
+sha256 = "38b0aabca865832f1a8b914eb88903e40ff55921b2bdbe40e85f5d86045f8011"
 
 [[kernel]]
 name = "map_u32"

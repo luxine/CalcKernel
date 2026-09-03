@@ -94,6 +94,9 @@ def invoke(library: pathlib.Path, name: str, checked: bool) -> bytes:
     kernel.restype = status_type
     a = u32_values(n, 7)
     b = u32_values(n, 19)
+    if name == "integer_cast":
+        for index, value in enumerate((0, 2_147_483_647, 2_147_483_648, 4_294_967_295)):
+            a[index] = value
     out = (ctypes.c_uint32 * n)()
     if name == "zip_u32":
         args = (a, n, b, n, out, n, n)
