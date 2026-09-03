@@ -73,6 +73,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/SHA256.h>
 #include <llvm/Target/TargetMachine.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #include <lld/Common/Driver.h>
@@ -1894,29 +1895,59 @@ bool is_integer_memory_reduction(const llvm::Loop &loop) {
     return false;
 }
 
+bool may_contain_nonlocal_load(const llvm::Function &function) {
+    for (const llvm::BasicBlock &block : function) {
+        for (const llvm::Instruction &instruction : block) {
+            const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+            if (load != nullptr &&
+                !llvm::isa<llvm::AllocaInst>(
+                    load->getPointerOperand()->stripPointerCasts())) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void attach_x86_integer_reduction_interleave(
     llvm::Module &module, const llvm::TargetMachine &target) {
     if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
         return;
     }
     for (llvm::Function &function : module) {
-        if (function.isDeclaration() || function.empty()) {
+        if (function.isDeclaration() || function.empty() ||
+            !may_contain_nonlocal_load(function)) {
             continue;
         }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *attached_clone =
+            llvm::CloneFunction(&function, clone_map);
+        attached_clone->removeFromParent();
+        std::unique_ptr<llvm::Function> clone(attached_clone);
         llvm::SmallVector<llvm::AllocaInst *, 16> allocas;
-        for (llvm::Instruction &instruction : function.getEntryBlock()) {
+        for (llvm::Instruction &instruction : clone->getEntryBlock()) {
             auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
             if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
                 allocas.push_back(alloca);
             }
         }
-        llvm::DominatorTree dominators(function);
+        llvm::DominatorTree clone_dominators(*clone);
         if (!allocas.empty()) {
-            llvm::PromoteMemToReg(allocas, dominators);
+            llvm::PromoteMemToReg(allocas, clone_dominators);
         }
-        llvm::LoopInfo loops(dominators);
-        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
-            if (!is_integer_memory_reduction(*loop)) {
+        llvm::LoopInfo clone_loops(clone_dominators);
+        llvm::DominatorTree production_dominators(function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *clone_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            if (clone_header == nullptr) {
+                continue;
+            }
+            llvm::Loop *clone_loop = clone_loops.getLoopFor(clone_header);
+            if (clone_loop == nullptr ||
+                clone_loop->getHeader() != clone_header ||
+                !is_integer_memory_reduction(*clone_loop)) {
                 continue;
             }
             auto &context = module.getContext();

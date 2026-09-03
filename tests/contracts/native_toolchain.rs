@@ -1706,10 +1706,17 @@ fn x86_integer_reduction_handoff_should_pin_backend_interleave_width() {
         "attach_x86_integer_reduction_interleave",
         "llvm.loop.interleave.count",
         "CKC_X86_REDUCTION_INTERLEAVE = 8",
+        "llvm::CloneFunction",
+        "attached_clone->removeFromParent()",
+        "clone_dominators",
     ] {
         assert!(
             bridge.contains(required),
             "x86 integer-reduction handoff omitted {required}"
         );
     }
+    assert!(
+        !bridge.contains("llvm::PromoteMemToReg(allocas, dominators)"),
+        "x86 reduction discovery must not promote allocas in the production module"
+    );
 }
