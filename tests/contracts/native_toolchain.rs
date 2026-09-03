@@ -924,6 +924,39 @@ fn linux_profile_runtime_hex_should_avoid_mixed_signedness_under_gcc_werror() {
 }
 
 #[test]
+fn aarch64_linux_profile_runtime_should_use_the_arch_specific_open_flags() {
+    let linux = read("native/profile_runtime/platform/linux.c");
+    for required in [
+        "#elif defined(__aarch64__)",
+        "#define CK_LINUX_O_DIRECTORY 00040000",
+        "#define CK_LINUX_O_NOFOLLOW 00100000",
+    ] {
+        assert!(
+            linux.contains(required),
+            "AArch64 Linux profile publication omitted {required}"
+        );
+    }
+}
+
+#[test]
+fn multiversion_dispatch_should_never_name_a_void_call() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let dispatch = bridge
+        .split_once("auto *call = function_type->getReturnType()->isVoidTy()")
+        .expect("return-type-sensitive multiversion call")
+        .1;
+    assert!(
+        dispatch.contains("CreateCall(function_type, pointer, arguments)"),
+        "void multiversion dispatch call must use the unnamed LLVM overload"
+    );
+    assert!(
+        dispatch.contains("CreateCall(function_type, pointer, arguments,\n")
+            && dispatch.contains("\"ck.dispatch.call\""),
+        "non-void multiversion dispatch call should retain its stable name"
+    );
+}
+
+#[test]
 fn darwin_profile_runtime_imports_should_cover_x86_64_inode64_fstat() {
     let darwin = read("native/profile_runtime/platform/darwin.c");
     let libsystem = read("native/runtime/platform/libSystem.tbd");

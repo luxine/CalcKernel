@@ -3,8 +3,6 @@
 #define CK_LINUX_O_WRONLY 1
 #define CK_LINUX_O_CREAT 0100
 #define CK_LINUX_O_EXCL 0200
-#define CK_LINUX_O_DIRECTORY 00200000
-#define CK_LINUX_O_NOFOLLOW 00400000
 #define CK_LINUX_O_CLOEXEC 02000000
 #define CK_LINUX_MAP_PRIVATE 2
 #define CK_LINUX_MAP_ANONYMOUS 32
@@ -13,6 +11,8 @@
 #define CK_LINUX_RENAME_NOREPLACE 1
 
 #if defined(__x86_64__)
+#define CK_LINUX_O_DIRECTORY 00200000
+#define CK_LINUX_O_NOFOLLOW 00400000
 #define CK_SYS_WRITE 1
 #define CK_SYS_MMAP 9
 #define CK_SYS_CLOSE 3
@@ -36,6 +36,8 @@ static long ck_linux_syscall6(long number, long first, long second, long third,
   return result;
 }
 #elif defined(__aarch64__)
+#define CK_LINUX_O_DIRECTORY 00040000
+#define CK_LINUX_O_NOFOLLOW 00100000
 #define CK_SYS_WRITE 64
 #define CK_SYS_MMAP 222
 #define CK_SYS_CLOSE 57
