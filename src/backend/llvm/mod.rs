@@ -95,7 +95,9 @@ pub use profile_generation::NativeProfileGeneration;
 #[cfg(feature = "native-toolchain")]
 pub use target::{NativeCpu, NativeTarget};
 #[cfg(feature = "native-toolchain")]
-pub use verify::{VerifiedNativeModule, test_invalid_module_verification};
+pub use verify::{
+    VerifiedNativeModule, test_invalid_module_verification, test_named_void_call_module,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EmitLlvmOptions {

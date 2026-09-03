@@ -50,6 +50,7 @@ pub use llvm::{
     test_inject_untracked_flag as native_fact_audit_test_inject_untracked_flag,
     test_inject_untracked_strengthening as native_fact_audit_test_inject_untracked,
     test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
+    test_named_void_call_module,
 };
 pub use llvm::{
     EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, NATIVE_CACHE_ENTRY_MAGIC,

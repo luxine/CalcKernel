@@ -1,4 +1,10 @@
-use super::{context::NativeContext, error::NativeError, ffi, module::NativeModule};
+use super::{
+    builder::{NativeBuilder, NativeType},
+    context::NativeContext,
+    error::NativeError,
+    ffi,
+    module::NativeModule,
+};
 
 /// A structural LLVM module accepted by LLVM's verifier.
 #[derive(Debug)]
@@ -31,4 +37,24 @@ pub fn test_invalid_module_verification() -> NativeError {
     module
         .verify()
         .expect_err("LLVM verifier must reject an unterminated block")
+}
+
+/// Builds and verifies a module that deliberately requests a name for a void call.
+#[doc(hidden)]
+pub fn test_named_void_call_module() -> Result<String, NativeError> {
+    let context = NativeContext::new()?;
+    let module = NativeModule::empty(&context)?;
+    let void = NativeType::void(&context)?;
+    let i32_type = NativeType::int(&context, 32)?;
+    let sink = module.add_function("ck_void_sink", void, &[], true)?;
+    let source = module.add_function("ck_value_source", i32_type, &[], true)?;
+    let caller = module.add_function("ck_void_caller", void, &[], true)?;
+    let entry = caller.append_block("entry")?;
+    let mut builder = NativeBuilder::new(&context, &module)?;
+    builder.position(entry)?;
+    let _ = builder.call(source, &[], "ck.named.result")?;
+    let _ = builder.call(sink, &[], "ck.requested.name")?;
+    builder.return_void()?;
+    drop(builder);
+    module.verify()?.to_ir_string()
 }

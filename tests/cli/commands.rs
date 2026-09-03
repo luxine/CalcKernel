@@ -77,13 +77,17 @@ fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_
 #[cfg(feature = "native-toolchain")]
 #[test]
 fn multiversion_build_should_commit_the_verified_stage09_artifact_bundle() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
     let (dir, source) = fixture("export fn add(a: i32, b: i32) -> i32 { return a + b; }");
-    let artifact = dir.join("libadd.dylib");
+    let base = dir.join("libadd");
+    let paths =
+        NativeArtifactPaths::new(NativePlatform::host(), NativeArtifactKind::Dynamic, &base);
     let output = run([
         os("build"),
         os(&source),
         os("--out"),
-        os(&artifact),
+        os(&base),
         os("--kind"),
         os("dynamic"),
         os("--cpu"),
@@ -96,8 +100,14 @@ fn multiversion_build_should_commit_the_verified_stage09_artifact_bundle() {
         "{}",
         output.stdout
     );
-    assert!(artifact.exists());
-    assert!(dir.join("libadd.h").exists());
+    assert!(paths.primary.exists());
+    assert!(paths.header.as_ref().is_some_and(|path| path.exists()));
+    assert!(
+        paths
+            .import_library
+            .as_ref()
+            .is_none_or(|path| path.exists())
+    );
 }
 
 #[test]

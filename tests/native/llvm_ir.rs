@@ -4,7 +4,7 @@ use calckernel::{
     KirInstructionKind, KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
     NativeOptimizationLevel, NativeStage, NativeTarget, OverflowMode, SourceFile, build_kir_module,
     check, lower_native_kir_module, lower_to_mir, run_kir_pass_pipeline,
-    test_invalid_module_verification,
+    test_invalid_module_verification, test_named_void_call_module,
 };
 
 fn structural_llvm(source_text: &str) -> String {
@@ -37,6 +37,17 @@ fn structural_llvm(source_text: &str) -> String {
         .expect("verify structural module")
         .to_ir_string()
         .expect("LLVM prints module")
+}
+
+#[test]
+fn named_void_call_should_verify_without_an_ssa_result_name() {
+    let text = test_named_void_call_module().expect("verify named void call module");
+    assert!(text.contains("call void @ck_void_sink()"), "{text}");
+    assert!(!text.contains("ck.requested.name = call void"), "{text}");
+    assert!(
+        text.contains("%ck.named.result = call i32 @ck_value_source()"),
+        "{text}"
+    );
 }
 
 fn checked_llvm(source_text: &str, overflow: OverflowMode, bounds: BoundsMode) -> String {

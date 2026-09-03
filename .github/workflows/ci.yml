@@ -96,6 +96,12 @@ jobs:
       - run: cargo test --all-features --locked
       - name: Execute real profile generation runtime paths
         run: cargo test --all-features --locked --test native profile_generation_ -- --nocapture
+      - name: Verify profile runtime object and LLVM void-call behavior
+        run: |
+          cargo test --all-features --locked --test native profile_runtime_ -- --nocapture
+          cargo test --all-features --locked --test native named_void_call_ -- --nocapture
+      - name: Verify host-resolved multiversion artifact paths
+        run: cargo test --all-features --locked --test cli multiversion_build_should_commit_the_verified_stage09_artifact_bundle -- --nocapture
       - name: Execute canonical raw-shard merge paths
         run: cargo test --all-features --locked --test profile profile_merge_ -- --nocapture
       - name: Execute real generate, merge, profile-use, and final artifact transaction
@@ -179,6 +185,10 @@ jobs:
           cargo test --all-features --locked --test native variant_feature_target_profiles_should_be_explicit_and_contained -- --nocapture 2>&1 | tee 'target/capability/${{ matrix.name }}.log'
           cargo test --all-features --locked --test native multiversion_dispatch_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
           cargo test --all-features --locked --test native multiversion_artifact_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
+          cargo test --all-features --locked --test native profile_runtime_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
+          cargo test --all-features --locked --test native profile_generation_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
+          cargo test --all-features --locked --test native named_void_call_ -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
+          cargo test --all-features --locked --test cli multiversion_build_should_commit_the_verified_stage09_artifact_bundle -- --nocapture 2>&1 | tee -a 'target/capability/${{ matrix.name }}.log'
       - name: Upload host capability contract evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

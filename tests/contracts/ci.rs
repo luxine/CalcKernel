@@ -804,3 +804,43 @@ fn ci_should_execute_the_exact_v013_schema_eight_candidate_contract() {
         "schema 7 must pass before schema 8 starts"
     );
 }
+
+#[test]
+fn ci_v014_native_fulfillment_should_run_on_all_six_hosts() {
+    let workflow = read(".github/workflows/ci.yml");
+    let integration = workflow
+        .split("  native-integration:")
+        .nth(1)
+        .expect("native integration job")
+        .split("  native-hosts:")
+        .next()
+        .expect("native integration boundary");
+    let hosts = workflow
+        .split("  native-hosts:")
+        .nth(1)
+        .expect("native host matrix")
+        .split("  performance:")
+        .next()
+        .expect("native host boundary");
+
+    for selector in [
+        "profile_runtime_",
+        "profile_generation_",
+        "named_void_call_",
+        "multiversion_build_should_commit_the_verified_stage09_artifact_bundle",
+    ] {
+        assert!(
+            integration.contains(selector),
+            "native integration must execute nonempty selector {selector:?}"
+        );
+        assert!(
+            hosts.contains(selector),
+            "all six native hosts must execute nonempty selector {selector:?}"
+        );
+    }
+    assert_eq!(
+        hosts.matches("\n            runner: ").count(),
+        6,
+        "native host matrix must retain all six target rows"
+    );
+}
