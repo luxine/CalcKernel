@@ -35,8 +35,9 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
   archive 均不超过 110%。
 - Standard tuning 不超过 30 分钟及声明的 candidate/resource bound，peak RSS 不超过 2x，
   tuning cache 不超过 4 GiB；两个 empty-cache cold run 与一个 locked warm reuse 满足 exact determinism。
-- 独立 predicated-update gate 要求获选包含 Loop SIMD 的非 baseline decision。两个 channel
-  使用同一不可变 PGO profile；封存 `N=1024` strict-`f64` Floyd-Warshall 在每个稳定 Linux
+- 独立 predicated-update gate 要求获选仅含一个 choice 的非 baseline Loop SIMD decision，且固定
+  输入实际执行经证明的 vector body。两个 channel 使用同一不可变 PGO profile；封存 `N=1024`
+  strict-`f64` Floyd-Warshall 在每个稳定 Linux
   宿主上使用 Auto-Tuning 都必须比 PGO-only 至少快 5%。两个 stream 都必须满足同一
   16-of-20 stability rule，validation slowdown 不得超过 2%。
   闭合 report 与 sampling 契约见

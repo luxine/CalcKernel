@@ -1477,10 +1477,13 @@ Release 恰好包含两个 channel：
 - `pgoTuned`：相同 build identity 与 PGO profile，再应用
   `ckc tune build --pgo-use` 产生的 decision。
 
-Decision 必须选择包含已验证 Loop SIMD predicated-update alternative 的非 baseline plan。
-Baseline decision、只包含 layout 或其他 alternative class 的 plan、stale profile/decision，
-或不能精确 replay 的 decision 都使门槛失败。任何 timing 被采纳前，correctness 必须与独立
-scalar oracle 一致。
+Decision 必须选择恰好含一个 PlanChoice 的非 baseline plan。该 choice 必须解析为恰好含一个
+SiteAlternative 的 Loop SIMD UnitVariant，且该 alternative 正是已验证的 predicated-update；
+不得同时包含 layout、short-slice、第二个 Loop SIMD 或任何其他 choice。source-aware checker
+还必须证明记录的 minimum 不大于 128，并证明固定 N/slice 事实使全部 runtime legality guard
+为真，且 training、validation、release 均至少执行一个 vector chunk。Baseline decision、复合
+plan、动态不可达的改写、stale profile/decision，或不能精确 replay 的 decision 都使门槛失败。
+任何 timing 被采纳前，correctness 必须与独立 scalar oracle 一致。
 另设 checked mode 正向与负向 optimizer test：只有 lane bound、overflow 与 first-failure
 ordering 全部得到证明时才接受同一改写，否则保持 scalar。
 

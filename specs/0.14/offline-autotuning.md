@@ -1727,11 +1727,16 @@ There are exactly two release channels:
 - `pgoTuned`: the same build identity and PGO profile plus the decision produced by
   `ckc tune build --pgo-use`.
 
-The decision must select a non-baseline plan containing the verified Loop SIMD
-predicated-update alternative. A baseline decision, a plan containing only layout
-or another alternative class, a stale profile/decision, or a decision that cannot
-be replayed exactly fails the gate. Correctness is checked against an independent
-scalar oracle before any timing is considered.
+The decision must select a non-baseline plan with exactly one PlanChoice. That
+choice resolves to a Loop SIMD UnitVariant containing exactly one SiteAlternative,
+the verified predicated-update alternative; no layout, short-slice, second Loop
+SIMD, or other choice is present. The source-aware checker also proves the recorded
+minimum is at most 128 and that the fixed N/slice facts make every runtime legality
+guard true and execute at least one vector chunk on training, validation, and
+release. A baseline decision, a compound plan, a dynamically unreachable rewrite,
+a stale profile/decision, or a decision that cannot be replayed exactly fails the
+gate. Correctness is checked against an independent scalar oracle before any
+timing is considered.
 Separate positive and negative optimizer tests cover checked mode: the same
 rewrite is accepted only when lane bounds, overflow, and first-failure ordering
 are all proven, and otherwise remains scalar.

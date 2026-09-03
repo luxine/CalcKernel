@@ -25,8 +25,9 @@ sole acceptance authority and rejects missing, extra, reordered, noncanonical,
 unstable, mismatched, unretained, or ineligible evidence. Passing this contract
 requires all of the following on each host:
 
-1. source-aware replay proves that the selected non-baseline plan contains the
-   predicated same-place update alternative for the `floyd` inner loop;
+1. source-aware replay proves that the selected non-baseline plan has exactly one
+   PlanChoice, whose one-site Loop SIMD variant is the predicated same-place update
+   alternative for the `floyd` inner loop and executes on every fixed split;
 2. validation `pgoTuned/pgoOnly` is at most `102/100`;
 3. sealed release `pgoTuned/pgoOnly` is at most `95/100`;
 4. both channels pass the fixed stability and correctness rules;
@@ -368,8 +369,21 @@ and no ordered-effect violation. It independently verifies the post-state contai
 the corresponding vector compare, select(candidate, old), one unmasked vector
 store, runtime legality guard when required, and scalar epilogue. `unit`,
 `variant`, `alternative`, vectorBits/UF/minimum, and pre/post digests must equal the
-selected decision record and replay reconstruction. Tuned and replay attestation
-lines are byte-identical. A different Loop SIMD site cannot satisfy this rule.
+selected decision record and replay reconstruction. The decoded selected Candidate
+has exactly one PlanChoice; its reconstructed TuneUnit resolves to exactly that
+choice's Loop SIMD UnitVariant, and that UnitVariant has exactly one SiteAlternative,
+the attested alternative. Any layout, short-slice, second Loop SIMD, or other
+choice fails this gate even if the whole plan is faster. Tuned and replay
+attestation lines are byte-identical. A different Loop SIMD site cannot satisfy
+this rule.
+
+`minimum` is at most 128. For each fixed invocation `(N, slice length)` in Sections
+3 and 4, the checker independently derives that inner-loop trip count is exactly
+N, slice length is exactly checked `N*N`, `N >= minimum`, `N >= VF*UF`, and every
+emitted alias, alignment, feature, bounds, overflow, and trip-count legality guard
+evaluates true. It also verifies the vector loop's first chunk dominates the scalar
+epilogue for that invocation. Thus training, validation, and release execute at
+least one vector chunk; a present but dynamically unreachable rewrite cannot pass.
 
 This diagnostic adds no `CKTUNE01` field. The existing stable site and alternative
 identities commit to the scalar root and site ordinal, Loop SIMD payload, and
@@ -538,7 +552,9 @@ The remaining objects are closed as follows:
   JSON;
 - `decision` has exactly `file`, `decisionDigest`, `planDigest`, and `selected`;
   selected is true, file is FileIdentity, decisionDigest equals its SHA-256 digest,
-  and planDigest is the selected plan D32 decoded from the decision;
+  and planDigest is the selected plan D32 decoded from the decision; the decoded
+  selected Candidate, reconstructed unit/variant/site cardinalities, and dynamic
+  guard facts satisfy the exact single-choice execution rules in Section 6;
 - `attestation` has exactly `tuned`, `replayed`, and `digest`; tuned/replayed are
   FileIdentity values containing the exact line from Section 6, their bytes are
   equal, and digest is

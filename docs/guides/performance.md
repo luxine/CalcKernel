@@ -44,8 +44,9 @@ digests, streams, tiers, or capabilities fail the checker.
 - Standard tuning stays within 30 minutes and its declared candidate/resource
   bounds, peak RSS stays within 2x, tuning cache stays within 4 GiB, and two
   empty-cache cold runs plus one locked warm reuse satisfy exact determinism.
-- The independent predicated-update gate requires a non-baseline Loop SIMD
-  decision. With one immutable PGO profile on both channels, sealed `N=1024`
+- The independent predicated-update gate requires a single-choice non-baseline
+  Loop SIMD decision whose fixed inputs execute the attested vector body. With one
+  immutable PGO profile on both channels, sealed `N=1024`
   strict-`f64` Floyd-Warshall must run at least 5% faster with Auto-Tuning than
   PGO-only on each stable Linux host; both streams must also satisfy the same
   16-of-20 stability rule, and validation slowdown may not exceed 2%.
