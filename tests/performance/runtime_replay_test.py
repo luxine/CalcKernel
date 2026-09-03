@@ -18,6 +18,41 @@ SPEC.loader.exec_module(PREPARE)
 
 
 class ReplayPreparation(unittest.TestCase):
+    def test_historical_replay_copy_rebinds_only_the_recipe_identity(self):
+        with tempfile.TemporaryDirectory(prefix="ckc-replay-recipe-") as directory:
+            root = pathlib.Path(directory)
+            source = root / "current"
+            destination = root / "historical"
+            source.mkdir()
+            current_recipe = "a" * 64
+            historical_recipe = "b" * 64
+            manifest = (
+                "ckc-v012-runtime-replay\t2\n"
+                f"recipeSha256\t{current_recipe}\n"
+                "compilerSha256\t" + "c" * 64 + "\n"
+            )
+            (source / "replay.tsv").write_text(manifest, encoding="utf-8")
+            (source / "ckc-v012").write_bytes(b"exact compiler")
+
+            PREPARE.copy_replay_for_recipe(
+                source, destination, current_recipe, historical_recipe
+            )
+
+            self.assertEqual(
+                (source / "replay.tsv").read_text(encoding="utf-8"), manifest
+            )
+            rebound = (destination / "replay.tsv").read_text(encoding="utf-8")
+            self.assertIn(f"recipeSha256\t{historical_recipe}\n", rebound)
+            self.assertNotIn(current_recipe, rebound)
+            self.assertEqual(
+                (destination / "ckc-v012").read_bytes(), b"exact compiler"
+            )
+
+            with self.assertRaisesRegex(ValueError, "recipe identity"):
+                PREPARE.copy_replay_for_recipe(
+                    source, root / "mismatch", "d" * 64, historical_recipe
+                )
+
     def test_preparation_must_not_overwrite_an_existing_target(self):
         with tempfile.TemporaryDirectory(prefix="ckc-replay-owned-") as directory:
             root = pathlib.Path(directory)

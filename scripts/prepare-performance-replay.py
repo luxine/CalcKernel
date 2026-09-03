@@ -189,6 +189,44 @@ def recipe_digest(repo: pathlib.Path) -> str:
     return named_digest((name, sha256_file(repo / name)) for name in RECIPE_FILES)
 
 
+def copy_replay_for_recipe(
+    source: pathlib.Path,
+    destination: pathlib.Path,
+    current_recipe: str,
+    historical_recipe: str,
+) -> None:
+    if os.path.lexists(destination):
+        raise ValueError(f"historical replay target already exists: {destination}")
+    if not source.is_dir() or source.is_symlink():
+        raise ValueError(f"replay bundle must be a direct directory: {source}")
+    if any(
+        len(value) != 64 or any(character not in "0123456789abcdef" for character in value)
+        for value in (current_recipe, historical_recipe)
+    ):
+        raise ValueError("replay recipe identity must be a lowercase SHA-256 digest")
+
+    entries = sorted(source.iterdir())
+    if not entries or any(not entry.is_file() or entry.is_symlink() for entry in entries):
+        raise ValueError(f"replay bundle must contain only direct regular files: {source}")
+    manifest = source / "replay.tsv"
+    if manifest not in entries:
+        raise ValueError("replay bundle has no manifest")
+    text = manifest.read_text(encoding="utf-8")
+    old_record = f"recipeSha256\t{current_recipe}\n"
+    if text.count(old_record) != 1 or text.count("recipeSha256\t") != 1:
+        raise ValueError("replay recipe identity does not match the current recipe")
+
+    destination.mkdir(parents=True)
+    for entry in entries:
+        if entry != manifest:
+            shutil.copy2(entry, destination / entry.name)
+    (destination / "replay.tsv").write_text(
+        text.replace(old_record, f"recipeSha256\t{historical_recipe}\n"),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def deterministic_archive(output: pathlib.Path, files: list[tuple[str, pathlib.Path]]) -> None:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
@@ -338,8 +376,25 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
                 raise ValueError(
                     "historical v0.13 performance replay requires " + ", ".join(missing)
                 )
+            historical_recipe = recipe_digest(source)
+            historical_root = source / "target/ckc-perf/historical-replays"
+            historical_bundles = {}
+            for environment_name, retained_name in [
+                ("CKC_V012_RUNTIME_BUNDLE", "replay-v012"),
+                ("CKC_V011_RUNTIME_BUNDLE", "replay-v011"),
+                ("CKC_V010_RUNTIME_BUNDLE", "replay-v010"),
+            ]:
+                historical_bundle = historical_root / retained_name
+                copy_replay_for_recipe(
+                    pathlib.Path(os.environ[environment_name]).absolute(),
+                    historical_bundle,
+                    recipe,
+                    historical_recipe,
+                )
+                historical_bundles[environment_name] = str(historical_bundle)
             replay_environment = {
                 **os.environ,
+                **historical_bundles,
                 "CKC_CANDIDATE_COMPILER": str(compiler),
                 "GITHUB_SHA": identity["commit"],
             }
