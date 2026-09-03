@@ -4,7 +4,7 @@
 
 最终总验收审计发现，v0.14 起点包含 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`，但最终接纳的 v0.13 修订是
-`4c46ac36e0c8c71535c0bcdba76bf1faf16e4836`。原复诊时 `git cherry` 证明修复提交
+`c44b99cc1954a3ca133cf03c281d0590ce320edb`。原复诊时 `git cherry` 证明修复提交
 `f6efbef`、`930ee5f`、`9ce0f3d` 未作为祖先进入 v0.14；原 v0.14 性能 replay 也仍
 固定旧 v0.13 与旧 v0.12 候选。因此“最终 accepted v0.13 revision 已集成或完成逐差异
 审计”的总验收项没有证据支持。
@@ -37,7 +37,7 @@
 - 完整 `u32` oracle 语义、短 kernel 条件化、样本数、rotation、统计量、90%/95% 等阈值和十作业
   拓扑保持不变。
 - v0.12 replay 固定 `1009bae18d1a1ebd37ee9ee095cab9a965e69df8`；v0.13 replay 固定
-  `4c46ac36e0c8c71535c0bcdba76bf1faf16e4836`，并同步重算各自 manifest digest。
+  `c44b99cc1954a3ca133cf03c281d0590ce320edb`，并同步重算各自 manifest digest。
 
 ## TDD 证据
 
