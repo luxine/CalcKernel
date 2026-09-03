@@ -647,8 +647,9 @@ Artifact-size corpus 使用精确相同 source，为两种 safety mode 生成成
 relocatable object。Size 是 archive/link 之前的精确 object byte length；排除 cache、debug
 sidecar 与 distribution container。Source-to-object compile-time corpus 使用相同 source/mode
 pair、全新 output path、禁用 artifact cache、三个 warm-up pair 与十五个 measured pair。
-Candidate-first 与 replay-first 顺序交替，并报告 upper median。缺失、失败或不匹配的 object
-会使两项 gate 失败。
+Candidate-first 与 replay-first 顺序交替，并报告已终止子进程 user+system CPU time 的 upper
+median；它排除托管 worker 被调度移出的时间，但保留全部编译器工作。缺失、失败或不匹配的
+object 会使两项 gate 失败。
 
 Vector corpus 至少包含 contiguous map/zip、strict element-wise f64、integer transform、
 target legal 时的 exact modular integer reduction、来自小型 unrolled body 的 SLP、runtime

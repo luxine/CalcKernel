@@ -83,8 +83,8 @@ Aggregate candidate growth is at most 35%; no item exceeds 2.5x.
 
 `compileTimeComparisons` uses fresh output paths, no artifact cache, three
 alternating warm-up pairs, fifteen alternating measured pairs, and upper
-medians. Candidate/replayed-0.11 source-to-object time is at most 1.5x in
-geometric mean and 2x individually.
+medians of terminated-child user-plus-system CPU time. Candidate/replayed-0.11
+source-to-object time is at most 1.5x in geometric mean and 2x individually.
 
 Prepare both replay bundles with `scripts/prepare-performance-replay.py`, select
 them through `CKC_V011_RUNTIME_BUNDLE` and `CKC_V010_RUNTIME_BUNDLE`, build the

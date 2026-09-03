@@ -45,7 +45,8 @@ audit。缺失、无效或测量后排除 competitor 都会使 gate 失败。
   单项最多慢 8%。
 - Native object size 相对 replayed 0.11 aggregate 增长不超过 35%，单项不超过 2.5x。
   Baseline O3 source-to-object compile time 的 candidate/replay geometric mean 不超过 1.5，
-  单项 ratio 不超过 2。
+  单项 ratio 不超过 2。Compile-time 样本使用已终止子进程的 user+system CPU time，因而排除
+  托管 worker 被调度移出的时间，同时不移除任何编译器工作。
 
 Runtime throughput、optimizer latency、source-to-object time、object size、memory、cold/warm
 run 与 cache behavior 是分离指标。任何 threshold 都不允许削弱 diagnostic、evaluation order、

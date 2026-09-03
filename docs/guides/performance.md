@@ -54,8 +54,9 @@ domain. Missing, invalid, or post-measurement-excluded competitors fail the gate
   no individual case more than 8% slower than independently replayed 0.11.
 - Native object size is no more than 35% larger in aggregate than replayed 0.11
   and no individual object exceeds 2.5x. Baseline O3 source-to-object compile
-  time has a candidate/replay geometric mean at most 1.5 and individual ratios
-  at most 2.
+time has a candidate/replay geometric mean at most 1.5 and individual ratios
+at most 2. Compile-time samples use terminated-child user-plus-system CPU time,
+so hosted-worker descheduling is excluded without removing compiler work.
 
 Runtime throughput, optimizer latency, source-to-object time, object size,
 memory, cold/warm run, and cache behavior remain separate quantities. A threshold
