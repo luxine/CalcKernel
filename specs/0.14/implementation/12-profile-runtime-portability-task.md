@@ -15,7 +15,8 @@ CKPART01 或公开状态码。
 - 新增 `native/profile_runtime/include/ckc_profile_atomic.h`，只暴露内部
   `CkProfileAtomicU32/U64` 与 load/store/CAS 操作。MSVC 使用
   `InterlockedCompareExchange`、`InterlockedExchange`、
-  `InterlockedCompareExchange64`；Unix 使用 C11 lock-free atomics。
+  `InterlockedCompareExchange64`；Linux AArch64 使用内联 acquire/release LL/SC，
+  其余 Unix 使用 C11 lock-free atomics。
 - 修改 `native/profile_runtime/common/collector.c`，删除直接 `_Atomic` 和
   `atomic_*` 调用，全部路由到内部 wrapper；MSVC 的 full barrier 允许强于
   acquire/release，但不能弱于原语义。
@@ -23,7 +24,8 @@ CKPART01 或公开状态码。
   open-directory、same-handle identity、create-new temp、完整写入、file sync、
   no-replace rename、directory sync、失败清理和 close 在所有已声明架构上使用
   正确 ABI。Linux raw syscall stat buffer 用架构显式布局和编译期 offset/size
-  断言；Darwin 不再产生未声明的 `$INODE64` 符号。
+  断言；Darwin 从 retained descriptor 通过 `fgetattrlist` 取得 dev/inode，不再产生
+  未声明的 `$INODE64` 或 `___error` 符号。
 - 修改 `native/profile_runtime/include/ckc_profile_platform.h`，增加仅 runtime
   内部可见的 open/identity/create/write/file-sync/rename/directory-sync failure
   枚举；`collector.c` 仍将其稳定映射到公开 43/44/45 状态。

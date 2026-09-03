@@ -974,6 +974,9 @@ fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
         "InterlockedCompareExchange",
         "InterlockedExchange",
         "InterlockedCompareExchange64",
+        "defined(__aarch64__) && defined(__linux__)",
+        "ldaxr",
+        "stlxr",
         "CkProfileAtomicU32",
         "CkProfileAtomicU64",
     ] {
@@ -986,14 +989,19 @@ fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
         provenance.contains("include/ckc_profile_atomic.h"),
         "profile runtime provenance must bind the atomic header"
     );
+    assert!(
+        !header.contains("__atomic_"),
+        "AArch64 Linux profile atomics must not import compiler helper symbols"
+    );
 }
 
 #[test]
 fn profile_runtime_platforms_should_name_every_durable_failure_step() {
     let header = read("native/profile_runtime/include/ckc_profile_platform.h");
+    let darwin = read("native/profile_runtime/platform/darwin.c");
     let combined = [
         read("native/profile_runtime/platform/linux.c"),
-        read("native/profile_runtime/platform/darwin.c"),
+        darwin.clone(),
         read("native/profile_runtime/platform/windows.c"),
     ]
     .join("\n");
@@ -1014,6 +1022,16 @@ fn profile_runtime_platforms_should_name_every_durable_failure_step() {
         assert!(
             combined.contains(required),
             "platform implementations do not report {required:?}"
+        );
+    }
+    assert!(
+        darwin.contains("fgetattrlist") && darwin.contains("ATTR_CMN_FILEID"),
+        "Darwin must obtain dev/inode identity from the retained directory descriptor"
+    );
+    for forbidden in ["#include <errno.h>", "errno", "fstat("] {
+        assert!(
+            !darwin.contains(forbidden),
+            "Darwin profile publication must not import {forbidden:?}"
         );
     }
 }

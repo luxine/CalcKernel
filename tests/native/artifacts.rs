@@ -54,9 +54,15 @@ fn profile_runtime_object_should_match_manifest_and_avoid_unfrozen_symbols() {
             .expect("inspect profile runtime symbols");
         assert!(output.status.success(), "nm failed: {output:?}");
         let symbols = String::from_utf8(output.stdout).expect("nm output is UTF-8");
+        for forbidden in ["_fstat$INODE64", "___error"] {
+            assert!(
+                !symbols.contains(forbidden),
+                "profile runtime contains an unfrozen Darwin symbol: {symbols}"
+            );
+        }
         assert!(
-            !symbols.contains("_fstat$INODE64"),
-            "profile runtime contains an unfrozen Darwin symbol: {symbols}"
+            symbols.contains("_fgetattrlist"),
+            "profile runtime must obtain identity from its retained Darwin descriptor: {symbols}"
         );
     }
 }

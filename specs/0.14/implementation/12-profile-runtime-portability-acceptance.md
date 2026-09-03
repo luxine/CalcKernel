@@ -12,15 +12,16 @@
 - [ ] MSVC x86-64 与 AArch64 均以 C 模式编译 collector，且不请求 C11 stdatomic。
 - [ ] Linux x86-64/AArch64 与 Darwin x86-64/AArch64 均产生、flush、关闭、
   no-follow reopen 并解析唯一 completed shard。
-- [ ] Darwin runtime object 不包含未冻结 `_fstat$INODE64` 依赖。
+- [ ] Darwin runtime object 使用冻结 `_fgetattrlist`，不包含未冻结 `_fstat$INODE64`
+  或 `___error` 依赖。
 - [ ] 每个平台均验证 create-new、no-replace、file sync、directory sync 和
   identity mismatch fail-closed；任何 required capability 不得 skip。
 
 ## 结构断言
 
 - [ ] 所有 collector 原子访问只经过 `ckc_profile_atomic.h`。
-- [ ] MSVC Interlocked 操作不弱于原 acquire/release/relaxed 语义；Unix 64 位
-  原子在编译期要求 always-lock-free。
+- [ ] MSVC Interlocked 操作不弱于原 acquire/release/relaxed 语义；Linux AArch64
+  内联 LL/SC 不产生 `__atomic_*` helper；其余 Unix 64 位原子在编译期要求 always-lock-free。
 - [ ] 六个发布 failure step 均有注入测试，失败后没有 completed partial file。
 - [ ] Runtime ABI 2、CKPROF01、CKPART01 与公开状态码没有变化。
 - [ ] provenance/component digest 包含新 header，release artifact 不新增依赖。

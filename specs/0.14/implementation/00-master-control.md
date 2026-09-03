@@ -31,12 +31,13 @@
 - `specs/0.14/review/optimization-fulfillment-adversarial-review-06.md`
 - `specs/0.14/review/implementation-blocker-10.md`
 - `specs/0.14/implementation/implementation-design-correction-10.md`
+- `specs/0.14/implementation/implementation-design-correction-11.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`9ce0f3dc061d81ee3165d63bdc80be52b33371fc`。两者之间的三个提交已按
+`4cbd3d0624a6ccbd7a8a003a04e201201ec019a8`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -69,7 +70,7 @@ exact-SHA CI；长任务只做间隔查询，不在前台持续等待。
     运行产物、性能 report、CI artifact、动态 run id 或本地 secret。
 11. 每阶段在 `target/acceptance/v0.14/stage-NN/` 记录被测 SHA、RED 摘要、命令、测试计数、
     Rust/LLVM/Clang/host identity。旧阶段日志不能代替最终 SHA 的总验收。
-12. 实施期成立的真实设计复诊以 `implementation-design-correction-01.md` 至 `10.md` 为完整序列；
+12. 实施期成立的真实设计复诊以 `implementation-design-correction-01.md` 至 `11.md` 为完整序列；
     其中修订只能闭合可实现性与证据真实性，不得降低本总控或规范门槛。
 13. 阶段 12–19 不重写 CKTUNE01、Manifest Schema 1、KIR 3、Native ABI 1 或 Runtime ABI 2。
     predicated-update 继续复用 Loop SIMD payload；独立 gate 通过 source-aware 重建证明唯一 choice

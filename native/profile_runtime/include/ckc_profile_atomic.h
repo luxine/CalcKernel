@@ -70,6 +70,108 @@ static int ck_profile_atomic_u64_compare_exchange_relaxed(
   return 0;
 }
 
+#elif defined(__aarch64__) && defined(__linux__)
+
+typedef struct CkProfileAtomicU32 {
+  uint32_t value;
+} CkProfileAtomicU32;
+
+typedef struct CkProfileAtomicU64 {
+  uint64_t value;
+} CkProfileAtomicU64;
+
+static uint32_t
+ck_profile_atomic_u32_load_acquire(const CkProfileAtomicU32 *atomic) {
+  uint32_t value;
+  __asm__ volatile("ldar %w0, [%1]" : "=r"(value) : "r"(&atomic->value)
+                   : "memory");
+  return value;
+}
+
+static uint32_t
+ck_profile_atomic_u32_load_relaxed(const CkProfileAtomicU32 *atomic) {
+  uint32_t value;
+  __asm__ volatile("ldr %w0, [%1]" : "=r"(value) : "r"(&atomic->value)
+                   : "memory");
+  return value;
+}
+
+static void ck_profile_atomic_u32_store_release(CkProfileAtomicU32 *atomic,
+                                                 uint32_t value) {
+  __asm__ volatile("stlr %w0, [%1]" : : "r"(value), "r"(&atomic->value)
+                   : "memory");
+}
+
+static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
+                                                 uint32_t value) {
+  __asm__ volatile("str %w0, [%1]" : : "r"(value), "r"(&atomic->value)
+                   : "memory");
+}
+
+static int ck_profile_atomic_u32_compare_exchange_acq_rel(
+    CkProfileAtomicU32 *atomic, uint32_t *expected, uint32_t desired) {
+  const uint32_t expected_value = *expected;
+  uint32_t observed;
+  uint32_t status;
+  __asm__ volatile(
+      "0:\n"
+      "ldaxr %w0, [%2]\n"
+      "cmp %w0, %w3\n"
+      "b.ne 1f\n"
+      "stlxr %w1, %w4, [%2]\n"
+      "cbnz %w1, 0b\n"
+      "b 2f\n"
+      "1:\n"
+      "clrex\n"
+      "mov %w1, #1\n"
+      "2:\n"
+      : "=&r"(observed), "=&r"(status)
+      : "r"(&atomic->value), "r"(expected_value), "r"(desired)
+      : "cc", "memory");
+  (void)status;
+  if (observed == expected_value) {
+    return 1;
+  }
+  *expected = observed;
+  return 0;
+}
+
+static uint64_t
+ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
+  uint64_t value;
+  __asm__ volatile("ldr %0, [%1]" : "=r"(value) : "r"(&atomic->value)
+                   : "memory");
+  return value;
+}
+
+static int ck_profile_atomic_u64_compare_exchange_relaxed(
+    CkProfileAtomicU64 *atomic, uint64_t *expected, uint64_t desired) {
+  const uint64_t expected_value = *expected;
+  uint64_t observed;
+  uint32_t status;
+  __asm__ volatile(
+      "0:\n"
+      "ldxr %0, [%2]\n"
+      "cmp %0, %3\n"
+      "b.ne 1f\n"
+      "stxr %w1, %4, [%2]\n"
+      "cbnz %w1, 0b\n"
+      "b 2f\n"
+      "1:\n"
+      "clrex\n"
+      "mov %w1, #1\n"
+      "2:\n"
+      : "=&r"(observed), "=&r"(status)
+      : "r"(&atomic->value), "r"(expected_value), "r"(desired)
+      : "cc", "memory");
+  (void)status;
+  if (observed == expected_value) {
+    return 1;
+  }
+  *expected = observed;
+  return 0;
+}
+
 #else
 
 #include <stdatomic.h>

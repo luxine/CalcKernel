@@ -1,7 +1,6 @@
-#include <errno.h>
 #include <fcntl.h>
+#include <sys/attr.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 extern void arc4random_buf(void *buffer, size_t length);
@@ -95,6 +94,33 @@ static void ck_profile_names(const uint8_t run_id[16], char temporary[49],
   }
 }
 
+typedef struct CkProfileDirectoryIdentity {
+  uint32_t length;
+  dev_t device;
+  uint64_t inode;
+} CkProfileDirectoryIdentity;
+
+_Static_assert(sizeof(dev_t) == sizeof(uint32_t),
+               "Darwin dev_t layout changed");
+_Static_assert(sizeof(CkProfileDirectoryIdentity) == 16u,
+               "Darwin attribute identity layout changed");
+
+static int ck_profile_matches_directory_identity(int directory_fd,
+                                                 uint64_t expected_device,
+                                                 uint64_t expected_inode) {
+  struct attrlist attributes = {0};
+  attributes.bitmapcount = ATTR_BIT_MAP_COUNT;
+  attributes.commonattr = ATTR_CMN_DEVID | ATTR_CMN_FILEID;
+  CkProfileDirectoryIdentity identity = {0};
+  if (fgetattrlist(directory_fd, &attributes, &identity, sizeof(identity), 0u) !=
+      0) {
+    return 0;
+  }
+  return identity.length == sizeof(identity) &&
+         (uint64_t)identity.device == expected_device &&
+         identity.inode == expected_inode;
+}
+
 static int32_t __ck_profile_platform_publish(
     const uint8_t *directory, uint32_t directory_length,
     uint64_t identity_first, uint64_t identity_second,
@@ -104,10 +130,8 @@ static int32_t __ck_profile_platform_publish(
   if (directory_fd < 0) {
     return CKC_PROFILE_PLATFORM_OPEN_ERROR;
   }
-  struct stat metadata;
-  if (fstat(directory_fd, &metadata) != 0 ||
-      (uint64_t)metadata.st_dev != identity_first ||
-      (uint64_t)metadata.st_ino != identity_second) {
+  if (!ck_profile_matches_directory_identity(directory_fd, identity_first,
+                                             identity_second)) {
     close(directory_fd);
     return CKC_PROFILE_PLATFORM_IDENTITY_ERROR;
   }
@@ -118,9 +142,15 @@ static int32_t __ck_profile_platform_publish(
                           O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
                           0600);
   if (file < 0) {
+    const int existing =
+        openat(directory_fd, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    const int32_t failure = existing >= 0 ? CKC_PROFILE_PLATFORM_COLLISION
+                                         : CKC_PROFILE_PLATFORM_CREATE_ERROR;
+    if (existing >= 0) {
+      (void)close(existing);
+    }
     close(directory_fd);
-    return errno == EEXIST ? CKC_PROFILE_PLATFORM_COLLISION
-                           : CKC_PROFILE_PLATFORM_CREATE_ERROR;
+    return failure;
   }
   uint64_t offset = 0;
   int32_t failure = CKC_PROFILE_PLATFORM_OK;

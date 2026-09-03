@@ -9,7 +9,7 @@
 ## A. 分支、基线与版本
 
 - [ ] 当前分支为 `design/v0.14-offline-autotuning`，独立 worktree 正确且 clean；`main` 未自动合并。
-- [ ] 最终 accepted v0.13 revision `9ce0f3dc061d81ee3165d63bdc80be52b33371fc` 已完成逐差异审计与等价集成。
+- [ ] 最终 accepted v0.13 revision `4cbd3d0624a6ccbd7a8a003a04e201201ec019a8` 已完成逐差异审计与等价集成。
 - [ ] Cargo/CLI/docs 为 0.14.0；CKCOBJ04/cache 5、tune schemas 1、KIR 3、bridge 4、Native ABI 1、Runtime ABI 2 一致。
 - [ ] 未创建/移动 tag 或 GitHub Release；所有本地/远程证据绑定同一最终 SHA。
 
@@ -55,10 +55,10 @@
 - [ ] CKCOBJ03/schema4 clean miss；v0.13 profile mismatch 和 future tune schema fail-closed，不就地升级。
 - [ ] 双语 docs、CLI help、diagnostics、architecture、optimizer、performance、compatibility、release 文档一致。
 - [ ] fmt、clippy `-D warnings`、rustdoc `-D warnings`、feature-disabled/all-features tests 全绿。
-- [ ] Profile Runtime 在 MSVC 使用 Interlocked、在 Unix 使用 compile-time always-lock-free C11 原子；Runtime ABI 2、
-  CKPROF01、CKPART01 和公开状态码未变。
+- [ ] Profile Runtime 在 MSVC 使用 Interlocked、在 Linux AArch64 使用内联 LL/SC、在其余 Unix
+  使用 compile-time always-lock-free C11 原子；Runtime ABI 2、CKPROF01、CKPART01 和公开状态码未变。
 - [ ] Linux 与 Darwin profile shard 完成 create-new/write/file-sync/no-replace/directory-sync/no-follow reopen；
-  不依赖错误的 raw-stat 布局或未冻结 `_fstat$INODE64` 符号。
+  不依赖错误的 raw-stat 布局、`___error` 或未冻结 `_fstat$INODE64` 符号。
 - [ ] dynamic primary/header/import-library 由 `NativeArtifactPaths` 决定；LLVM void call 不获得 SSA 名称，
   non-void call 名称与 Bridge ABI 4 保持不变。
 - [ ] 六 Native host 的 ABI、runner、filesystem、journal、cache、artifact、profile publish、void call、真实

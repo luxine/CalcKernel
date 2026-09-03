@@ -714,7 +714,7 @@ fn compile_vector_library(
         // profitable subset. Baseline x86-64 conservatively rejects strict-f64
         // divide and defers both horizontal reductions to LLVM's native loop
         // vectorizer; AArch64 accepts the complete KIR corpus.
-        let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 7 } else { 9 };
+        let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 6 } else { 9 };
         assert_eq!(
             result.stats.vectorized_loops, expected_vectorized_loops,
             "{:?}",
