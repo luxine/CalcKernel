@@ -2875,6 +2875,18 @@ extern "C" int32_t ckc_llvm_function_add_attribute(
     });
 }
 
+extern "C" int32_t ckc_llvm_function_set_noinline(
+    CkcLlvmFunction *function, CkcLlvmError *error) {
+    return guarded(error, "marking LLVM function noinline", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr) {
+            return invalid(error, "LLVM noinline function is null");
+        }
+        value->addFnAttr(llvm::Attribute::NoInline);
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_function_set_memory_effects(
     CkcLlvmFunction *function, uint32_t effects, CkcLlvmError *error) {
     return guarded(error, "setting LLVM function memory effects", [&] {

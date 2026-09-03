@@ -133,3 +133,9 @@ V0.14 run `33808562098` 在 exact V0.13 replay 中再次复现 same-core `slp_qu
 affinity 仍不能排除共享宿主未调度 vCPU 对 wall-clock 的污染。复诊与闭环见
 `specs/0.13/review/implementation-blocker-10.md`：继承的 Linux schema7 runtime sample 改用当前
 线程 CPU time；timed work、样本、统计量、门槛、corpus 与平台矩阵保持不变。
+
+Exact run `33811191360` 的 x86-64 performance job 随后证明 branch-layout generation execution
+超过 ordinary 5x。复诊与闭环见 `specs/0.13/review/implementation-blocker-11.md`：LLVM 把
+compiler-private initialization guard 内联到多个热插桩 site，重复展开完整 initialization 参数
+准备。Guard 现在带 Native `NoInline`；instrumentation site/counter、5x 门槛、timed work、样本、
+统计、corpus 与平台矩阵均不变。

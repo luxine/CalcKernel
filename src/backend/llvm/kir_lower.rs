@@ -676,6 +676,7 @@ fn add_native_profile_support<'module, 'context>(
     let runtime_flush = module.add_function("__ck_profile_flush", types.i32, &[], true)?;
 
     let ensure = module.add_function("__ck_profile_ensure", types.i32, &[], false)?;
+    ensure.set_noinline()?;
     let entry = ensure.append_block("entry")?;
     let mut builder = NativeBuilder::new(context, module)?;
     builder.position(entry)?;

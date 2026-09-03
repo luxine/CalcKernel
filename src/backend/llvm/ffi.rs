@@ -534,6 +534,10 @@ unsafe extern "C" {
         alignment: u32,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_function_set_noinline(
+        function: *mut CkcLlvmFunction,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_function_set_memory_effects(
         function: *mut CkcLlvmFunction,
         effects: u32,
@@ -1421,6 +1425,12 @@ pub(super) fn function_add_attribute(
             alignment,
             error,
         )
+    })
+}
+
+pub(super) fn function_set_noinline(function: NonNull<CkcLlvmFunction>) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_set_noinline(function.as_ptr(), error)
     })
 }
 

@@ -32,6 +32,8 @@ exact-SHA 十作业 CI。
    individual <=5%，并保留全部 cumulative 0.12 hand-SIMD/domain/scalar/size/time gates。
 6. 写 PGO RED：PGO use 对同 0.13 CPU policy geo improvement >=5%，held-out individual slowdown <=3%；
    generation execution <=5x ordinary；所有训练 shard/profile digest可复现。
+   若 generation 超限，必须定位实际插桩 code shape；initialization guard 必须保留 `NoInline`，
+   不能通过放宽 5x、减少 counter/site、batch 或 sample 修复。
 7. 写 multiversion/dispatch RED：eligible suite dispatch 对 portable baseline geo >=8%、individual slowdown
    <=3%；steady dispatch >= selected-direct geo 98%、individual slowdown <=5%，resolver once。
 8. 写 combined/oracle RED：combined 相对 faster PGO-only/multiversion-only geo slowdown <=2%、individual

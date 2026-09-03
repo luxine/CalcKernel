@@ -81,6 +81,8 @@
 - [ ] ordinary no-PGO相对0.12 replay geo slowdown <=2%、individual <=5%，并保留全部0.12累计门槛。
 - [ ] PGO use相对同policy ordinary geo improvement >=5%，held-out individual slowdown <=3%；generate
   execution <=5x ordinary。
+- [ ] Generation initialization guard 保留 Native `NoInline`；hot instrumented path 不包含重复展开的
+  runtime initialization 参数准备，且未减少 instrumentation site/counter 或 timed work。
 - [ ] dispatch相对portable baseline eligible suite geo improvement >=8%、individual slowdown <=3%；
   相对selected-direct geo >=98%、individual slowdown <=5%，resolver once。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价

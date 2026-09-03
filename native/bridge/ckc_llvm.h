@@ -331,6 +331,8 @@ int32_t ckc_llvm_function_add_attribute(CkcLlvmFunction *function,
                                          CkcLlvmType *pointee_type,
                                          uint32_t alignment,
                                          CkcLlvmError *error);
+int32_t ckc_llvm_function_set_noinline(CkcLlvmFunction *function,
+                                        CkcLlvmError *error);
 int32_t ckc_llvm_function_set_memory_effects(CkcLlvmFunction *function,
                                               uint32_t effects,
                                               CkcLlvmError *error);
