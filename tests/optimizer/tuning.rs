@@ -2,10 +2,10 @@ use calckernel::{
     InstructionId, KirBoundsMode, KirBuildConfig, KirConsumer, KirInstruction, KirInstructionKind,
     KirLegalCost, KirNativeCpuPolicy, KirOptimizationLevel, KirOverflowMode, KirResult,
     KirSanitizerMode, KirTargetProfile, KirTargetProfileBuilder, KirVerifiedProgramState,
-    SourceFile, TuneAlternativeClass, TuneBudget, TuningPlan, ValueId, apply_tuning_plan,
-    build_kir_module, build_kir_module_with_profile, check, check_tuning_plan,
-    enumerate_tuning_space, import_contract_facts, lower_to_mir, prepare_kir_pre_tune_state,
-    print_kir_module, run_deterministic_search, run_kir_pass_pipeline,
+    SourceFile, TuneAlternativeClass, TuneAlternativePayload, TuneBudget, TuneVariantAction,
+    TuningPlan, ValueId, apply_tuning_plan, build_kir_module, build_kir_module_with_profile, check,
+    check_tuning_plan, enumerate_tuning_space, import_contract_facts, lower_to_mir,
+    prepare_kir_pre_tune_state, print_kir_module, run_deterministic_search, run_kir_pass_pipeline,
 };
 
 const TUNABLE_SOURCE: &str = "export fn kernel() -> u32 { let i: u32 = 0; let total: u32 = 0; while i < 12 { total = total + i; i = i + 1; } return total; }";
@@ -24,6 +24,90 @@ export fn lanes(a0: i32, a1: i32, a2: i32, a3: i32, b0: i32, b1: i32, b2: i32, b
   return p0 + p1 + p2 + p3;
 }
 "#;
+const PREDICATED_UPDATE_FLOYD: &str = r#"
+export unsafe fn floyd(distance: slice<f64>, n: u32) -> void
+contract {
+  requires n <= 65535;
+  effects readwrite(distance);
+}
+{
+  let k: u32 = 0;
+  while k < n {
+    let k_row: u32 = k * n;
+    let i: u32 = 0;
+    while i < n {
+      let i_row: u32 = i * n;
+      let dik: f64 = distance[i_row + k];
+      let j: u32 = 0;
+      while j < n {
+        let index: u32 = i_row + j;
+        let candidate: f64 = dik + distance[k_row + j];
+        let old: f64 = distance[index];
+        if candidate < old {
+          distance[index] = candidate;
+        }
+        j = j + 1;
+      }
+      i = i + 1;
+    }
+    k = k + 1;
+  }
+}
+"#;
+
+#[test]
+fn predicated_tuning_should_keep_distinct_floyd_variants() {
+    let state = vector_state(PREDICATED_UPDATE_FLOYD);
+    let space = enumerate_tuning_space(&state).expect("Floyd tuning space");
+    let (unit_index, unit) = space
+        .units
+        .iter()
+        .enumerate()
+        .find(|(_, unit)| {
+            unit.variants.iter().any(|variant| {
+                matches!(
+                    &variant.action,
+                    TuneVariantAction::LoopSimd(candidate)
+                        if candidate.predicated_update.is_some()
+                )
+            })
+        })
+        .expect("predicated Floyd tuning unit");
+    assert!(unit.variants.len() >= 2, "{unit:#?}");
+
+    let variant_ids = unit
+        .variants
+        .iter()
+        .map(|variant| variant.variant_id)
+        .collect::<BTreeSet<_>>();
+    let payloads = unit
+        .variants
+        .iter()
+        .map(|variant| match variant.site_alternatives[0].payload {
+            TuneAlternativePayload::LoopSimd {
+                vector_bits,
+                interleave,
+                break_even_iterations,
+            } => (vector_bits, interleave, break_even_iterations),
+            ref other => panic!("unexpected Floyd payload: {other:?}"),
+        })
+        .collect::<BTreeSet<_>>();
+    let post_states = unit
+        .variants
+        .iter()
+        .map(|variant| variant.isolated_post_state_digest)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(variant_ids.len(), unit.variants.len());
+    assert_eq!(payloads.len(), unit.variants.len());
+    assert_eq!(post_states.len(), unit.variants.len());
+    for variant_index in 0..unit.variants.len() {
+        let plan = space
+            .plan_for_variant(&state, unit_index, variant_index)
+            .expect("derive Floyd plan")
+            .expect("Floyd variant plan");
+        apply_tuning_plan(&state, &space, &plan).expect("replay Floyd variant");
+    }
+}
 
 #[test]
 fn tuning_site_unit_and_variant_ids_are_stable() {
@@ -404,7 +488,8 @@ fn vector_state_with_costs(
         .into_iter()
         .filter(|key| {
             ((key.lanes == 2 || key.lanes == 4)
-                && key.lane == calckernel::KirLaneType::U32
+                && (key.lane == calckernel::KirLaneType::U32
+                    || key.lane == calckernel::KirLaneType::F64)
                 && matches!(
                     key.operation,
                     calckernel::KirProfileOperation::Splat
@@ -453,19 +538,27 @@ fn vector_state_with_costs(
                         calckernel::KirLaneType::U32,
                         calckernel::KirProfileOperation::Add
                     ) | (
+                        calckernel::KirLaneType::F64,
+                        calckernel::KirProfileOperation::Add
+                    ) | (
                         calckernel::KirLaneType::I32,
                         calckernel::KirProfileOperation::Multiply
                     )
                 )
         })
     {
+        let legalized_type = if key.lane == calckernel::KirLaneType::F64 {
+            "double".to_string()
+        } else {
+            "i32".to_string()
+        };
         builder
             .set_legal(
                 key,
                 KirLegalCost {
                     cost: scalar_cost,
                     legalization_parts: 1,
-                    legalized_type: "i32".to_string(),
+                    legalized_type,
                 },
             )
             .expect("legal scalar tuning query");

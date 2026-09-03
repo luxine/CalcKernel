@@ -20,8 +20,8 @@ use super::{
     run_kir_pass_pipeline,
 };
 use crate::{
-    BlockId, FunctionId, KirTuneFunctionLayout, KirTuneLayoutPlan, MirPrimitiveTypeName, MirType,
-    SpecializationFactValue, print_kir_module,
+    BlockId, FunctionId, InstructionId, KirTuneFunctionLayout, KirTuneLayoutPlan,
+    MirPrimitiveTypeName, MirType, SpecializationFactValue, print_kir_module,
     tune::{TunePlanChoice, TuningPlan, plan_digest},
 };
 
@@ -190,6 +190,25 @@ pub struct TuningSpace {
     pub digest: [u8; 32],
 }
 
+/// Source-aware facts for the one Floyd predicated-update choice accepted by
+/// the v0.14 performance gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredicatedUpdateAttestation {
+    pub function: String,
+    pub header: BlockId,
+    pub compare: InstructionId,
+    pub load: InstructionId,
+    pub store: InstructionId,
+    pub unit_id: [u8; 32],
+    pub variant_id: [u8; 32],
+    pub alternative_id: [u8; 32],
+    pub vector_bits: u32,
+    pub interleave: u32,
+    pub minimum: u32,
+    pub pre_state_digest: [u8; 32],
+    pub post_state_digest: [u8; 32],
+}
+
 impl TuningSpace {
     /// Builds a one-choice plan for a bounded space member.
     pub fn plan_for_variant(
@@ -326,7 +345,7 @@ pub fn enumerate_tuning_space(
                 preorder_ordinal: candidate.loop_id.index(),
             },
             parameter,
-            candidate.key.stable_text(),
+            vector_candidate_stable_payload(&candidate),
             TuneVariantAction::LoopSimd(candidate),
         ));
         let mut short_candidate = match seeds.last().map(|seed| &seed.action) {
@@ -350,7 +369,7 @@ pub fn enumerate_tuning_space(
                 maximum_length,
                 format!(
                     "{};short-slice-maximum={maximum_length}",
-                    short_candidate.key.stable_text()
+                    vector_candidate_stable_payload(&short_candidate)
                 ),
                 TuneVariantAction::ShortSliceVersioning {
                     candidate: short_candidate,
@@ -675,6 +694,202 @@ pub fn apply_tuning_plan(
             .collect::<Vec<_>>(),
     )
     .map(|(_, replayed)| replayed)
+}
+
+/// Reconstructs and independently checks the exact single predicated Floyd
+/// update selected by a tuning plan.
+///
+/// This is intentionally narrower than ordinary tuning replay: it is the
+/// source-aware authorization boundary for the v0.14 performance attestation,
+/// not a general description of every legal tuning plan.
+///
+/// # Errors
+///
+/// Rejects every unchecked, compound, non-Floyd, non-predicated, structurally
+/// ambiguous, or over-threshold selection.
+pub fn attest_selected_predicated_update(
+    state: &KirVerifiedProgramState,
+    space: &TuningSpace,
+    plan: &TuningPlan,
+) -> Result<PredicatedUpdateAttestation, TuningPlanError> {
+    check_tuning_plan(state, space, plan)?;
+    let [choice] = plan.choices.as_slice() else {
+        return Err(attestation_error(
+            "expected exactly one selected tuning choice",
+        ));
+    };
+    if choice.class != TuneAlternativeClass::LoopSimd {
+        return Err(attestation_error("selected choice is not Loop SIMD"));
+    }
+    let unit = space
+        .units
+        .iter()
+        .find(|unit| unit.unit_id == choice.unit_id)
+        .ok_or(TuningPlanError::UnknownChoice)?;
+    if unit.class != TuneAlternativeClass::LoopSimd || unit.site_ids.len() != 1 {
+        return Err(attestation_error(
+            "selected Loop SIMD unit does not name exactly one site",
+        ));
+    }
+    let variant = unit
+        .variants
+        .iter()
+        .find(|variant| variant.variant_id == choice.variant_id)
+        .ok_or(TuningPlanError::UnknownChoice)?;
+    let [alternative] = variant.site_alternatives.as_slice() else {
+        return Err(attestation_error(
+            "selected Loop SIMD variant does not contain exactly one alternative",
+        ));
+    };
+    if alternative.site_id != unit.site_ids[0]
+        || alternative.pre_state_digest != space.pre_state_digest
+        || alternative.post_state_digest != variant.isolated_post_state_digest
+    {
+        return Err(attestation_error(
+            "selected alternative has inconsistent source identity",
+        ));
+    }
+    let site = space
+        .sites
+        .iter()
+        .find(|site| site.site_id == alternative.site_id)
+        .ok_or_else(|| attestation_error("selected alternative site is absent"))?;
+    if site.class != TuneAlternativeClass::LoopSimd
+        || site.function_symbol != "floyd"
+        || site.root_anchor.function_symbol != site.function_symbol
+    {
+        return Err(attestation_error(
+            "selected alternative is not the target Floyd Loop SIMD site",
+        ));
+    }
+    let TuneVariantAction::LoopSimd(candidate) = &variant.action else {
+        return Err(attestation_error(
+            "selected variant action is not Loop SIMD",
+        ));
+    };
+    if candidate.minimum_trip == 0 || candidate.minimum_trip > 128 {
+        return Err(attestation_error(
+            "selected predicated update minimum is outside 1..=128",
+        ));
+    }
+    let update = candidate
+        .predicated_update
+        .as_ref()
+        .ok_or_else(|| attestation_error("selected Loop SIMD action is not predicated"))?;
+    if candidate.diamond.is_some() || candidate.reduction.is_some() {
+        return Err(attestation_error(
+            "selected predicated update contains another vector shape",
+        ));
+    }
+    let lane_bits = candidate
+        .operations
+        .iter()
+        .map(|operation| {
+            u32::from(operation.lane_type.bit_width())
+                .max(u32::from(operation.result_lane_type.bit_width()))
+        })
+        .max()
+        .ok_or_else(|| attestation_error("selected predicated update has no operations"))?;
+    let vector_bits = u32::from(candidate.vf)
+        .checked_mul(lane_bits)
+        .ok_or(TuningPlanError::ResourceLimit)?;
+    let interleave = u32::from(candidate.uf);
+    if alternative.payload
+        != (TuneAlternativePayload::LoopSimd {
+            vector_bits,
+            interleave,
+            break_even_iterations: candidate.minimum_trip,
+        })
+    {
+        return Err(attestation_error(
+            "selected alternative payload does not match the checked vector action",
+        ));
+    }
+
+    // Run the independent vector checker explicitly at this authorization
+    // boundary, even though full plan checking already replays the same action.
+    let late_state = advance_to_tunable_late_o3(state)?;
+    let prepared = prepare_tuned_vectorization_trial(&late_state, candidate)
+        .map_err(map_materialization_error)?;
+    check_tuned_vectorization_trial_independently(
+        &late_state,
+        &prepared.trial,
+        &prepared.plan,
+        &prepared.charge,
+        candidate.minimum_trip,
+    )
+    .map_err(map_transaction_check_error)?;
+
+    let replayed = apply_tuning_plan(state, space, plan)?;
+    if tuning_kir_state_digest(&replayed)? != choice.post_state_digest {
+        return Err(attestation_error(
+            "selected choice post-state does not match independent replay",
+        ));
+    }
+
+    Ok(PredicatedUpdateAttestation {
+        function: site.function_symbol.clone(),
+        header: candidate.header,
+        compare: update.condition_instruction,
+        load: update.old_load_instruction,
+        store: update.store_instruction,
+        unit_id: unit.unit_id,
+        variant_id: variant.variant_id,
+        alternative_id: alternative.alternative_id,
+        vector_bits,
+        interleave,
+        minimum: candidate.minimum_trip,
+        pre_state_digest: choice.pre_state_digest,
+        post_state_digest: choice.post_state_digest,
+    })
+}
+
+fn attestation_error(reason: &str) -> TuningPlanError {
+    TuningPlanError::IllegalAlternative(format!("predicated-update attestation: {reason}"))
+}
+
+fn vector_candidate_stable_payload(candidate: &VectorizationCandidate) -> String {
+    let shape = if candidate.predicated_update.is_some() {
+        "predicated-same-place-update"
+    } else if candidate.diamond.is_some() {
+        "diamond"
+    } else if candidate.reduction.is_some() {
+        "reduction"
+    } else {
+        "straight-line"
+    };
+    format!("{};shape={shape}", candidate.key.stable_text())
+}
+
+/// Formats the one canonical v0.14 source-aware attestation record.
+#[must_use]
+pub fn format_predicated_update_attestation(attestation: &PredicatedUpdateAttestation) -> String {
+    format!(
+        "CKTUNE-ATTEST/1 shape=predicated-same-place-update function={} header={} compare={} load={} store={} unit={} variant={} alternative={} vectorBits={} uf={} minimum={} pre={} post={}",
+        attestation.function,
+        attestation.header.index(),
+        attestation.compare.index(),
+        attestation.load.index(),
+        attestation.store.index(),
+        encode_attestation_digest(&attestation.unit_id),
+        encode_attestation_digest(&attestation.variant_id),
+        encode_attestation_digest(&attestation.alternative_id),
+        attestation.vector_bits,
+        attestation.interleave,
+        attestation.minimum,
+        encode_attestation_digest(&attestation.pre_state_digest),
+        encode_attestation_digest(&attestation.post_state_digest),
+    )
+}
+
+fn encode_attestation_digest(value: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in value {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 /// Constructs canonical state-linked choices and returns the exact replayed KIR.

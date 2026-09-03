@@ -18,6 +18,45 @@ fn os(value: impl AsRef<std::ffi::OsStr>) -> OsString {
 }
 
 #[test]
+fn predicated_attestation_formatter_is_canonical_and_ordinary_cli_is_silent() {
+    let attestation = calckernel::PredicatedUpdateAttestation {
+        function: "floyd".to_string(),
+        header: calckernel::BlockId::from_index(2),
+        compare: calckernel::InstructionId::from_index(3),
+        load: calckernel::InstructionId::from_index(4),
+        store: calckernel::InstructionId::from_index(5),
+        unit_id: [0x0a; 32],
+        variant_id: [0xb1; 32],
+        alternative_id: [0xc2; 32],
+        vector_bits: 256,
+        interleave: 4,
+        minimum: 128,
+        pre_state_digest: [0xde; 32],
+        post_state_digest: [0xf0; 32],
+    };
+    let line = calckernel::format_predicated_update_attestation(&attestation);
+    assert_eq!(
+        line,
+        format!(
+            "CKTUNE-ATTEST/1 shape=predicated-same-place-update function=floyd header=2 compare=3 load=4 store=5 unit={} variant={} alternative={} vectorBits=256 uf=4 minimum=128 pre={} post={}",
+            "0a".repeat(32),
+            "b1".repeat(32),
+            "c2".repeat(32),
+            "de".repeat(32),
+            "f0".repeat(32),
+        )
+    );
+    assert!(!line.contains('\n'));
+
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/tune/decision-schema1-baseline.cktune");
+    let ordinary = run([os("tune"), os("inspect"), os(&fixture)]);
+    assert!(ordinary.status.success());
+    assert!(!String::from_utf8_lossy(&ordinary.stdout).contains("CKTUNE-ATTEST/"));
+    assert!(!String::from_utf8_lossy(&ordinary.stderr).contains("CKTUNE-ATTEST/"));
+}
+
+#[test]
 fn tune_inspect_is_read_only_and_supports_exact_json_switch() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/tune/decision-schema1-baseline.cktune");

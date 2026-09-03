@@ -1,3 +1,5 @@
+#[path = "tune/attestation.rs"]
+mod attestation;
 #[path = "tune/cache.rs"]
 mod cache;
 #[path = "tune/calibration.rs"]

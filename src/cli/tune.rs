@@ -12,15 +12,17 @@ use calckernel::{decode_tune_decision, inspect_tune_json, inspect_tune_text};
 
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    CandidateOutcome, MeasurementChannel, MeasurementRun, MeasurementScheduler, NativeArtifactKind,
-    NativeArtifactPaths, NativeCpu, NativePlatform, NativeTarget, NonPublishableTuneTrial,
-    PublicationSet, RoundSummary, SelectionEntrant, TuneArtifactKind, TuneArtifactRole, TuneBudget,
-    TuneCache, TuneCacheDomain, TuneCase, TuneDecisionBuildInput, TuneDecisionCandidate,
-    TuneDecisionIdentity, TuneDecisionOutput, TuneInvocation, TuneManifest, TunePublishArtifacts,
-    TuneRecordedCacheOrigin, TuneRunner, TuneTrialBuildRequest, TuningPlan, assemble_decision,
-    calibrate_cases, canonical_frontier_digest, capture_workload, compile_tune_trial,
-    derive_round_summary, derive_search_entrants, derive_selection, derive_tune_session_digest,
-    encode_completed_tune_decision, enumerate_tuning_space, run_deterministic_search,
+    CandidateOutcome, KirVerifiedProgramState, MeasurementChannel, MeasurementRun,
+    MeasurementScheduler, NativeArtifactKind, NativeArtifactPaths, NativeCpu, NativePlatform,
+    NativeTarget, NonPublishableTuneTrial, PublicationSet, RoundSummary, SelectionEntrant,
+    TuneArtifactKind, TuneArtifactRole, TuneBudget, TuneCache, TuneCacheDomain, TuneCase,
+    TuneDecisionBuildInput, TuneDecisionCandidate, TuneDecisionIdentity, TuneDecisionOutput,
+    TuneInvocation, TuneManifest, TunePublishArtifacts, TuneRecordedCacheOrigin, TuneRunner,
+    TuneTrialBuildRequest, TuneVariantAction, TuningPlan, TuningSpace, assemble_decision,
+    attest_selected_predicated_update, calibrate_cases, canonical_frontier_digest,
+    capture_workload, compile_tune_trial, derive_round_summary, derive_search_entrants,
+    derive_selection, derive_tune_session_digest, encode_completed_tune_decision,
+    enumerate_tuning_space, format_predicated_update_attestation, run_deterministic_search,
     select_size_valid_finalists, verify_tune_trials_with_source,
 };
 #[cfg(feature = "native-toolchain")]
@@ -215,7 +217,13 @@ pub(super) fn run_replay(args: &ParsedArgs) -> Result<(), String> {
         return Err("tuning replay output-role set mismatch".to_string());
     }
 
+    let attestation =
+        maybe_predicated_attestation(&product.state, &space, &selected, args.explain_optimization)?;
+
     publish_verified_native_build(&product.paths, product.artifact_kind, &replay_build)?;
+    if let Some(line) = attestation {
+        eprintln!("{line}");
+    }
     println!(
         "OK: built native {} with verified tuning replay",
         match actual_kind {
@@ -308,11 +316,45 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         if !interrupted_baseline {
             verify_warm_identity(&decision, &early, &paths, &artifacts)?;
+            let attestation = if args.explain_optimization {
+                let product = compile_verified_native_product(args)?;
+                verify_product_matches_early(&product, &early)?;
+                let space =
+                    enumerate_tuning_space(&product.state).map_err(|error| error.to_string())?;
+                let frontier =
+                    run_deterministic_search(&product.state, &space, requirements.budget)
+                        .map_err(|error| error.to_string())?;
+                if canonical_frontier_digest(&space, &frontier) != requirements.frontier_digest {
+                    return Err(
+                        "cached tuning decision frontier does not match current compiler analysis"
+                            .to_string(),
+                    );
+                }
+                let selected = if requirements.selected_plan_digest == baseline.digest {
+                    baseline
+                } else {
+                    frontier
+                        .compile_selection
+                        .iter()
+                        .find(|plan| plan.digest == requirements.selected_plan_digest)
+                        .cloned()
+                        .ok_or_else(|| {
+                            "cached tuning decision selected plan is absent from the current frontier"
+                                .to_string()
+                        })?
+                };
+                maybe_predicated_attestation(&product.state, &space, &selected, true)?
+            } else {
+                None
+            };
             let mut publication = PublicationSet::acquire_and_recover(output_set.clone())
                 .map_err(|error| error.to_string())?;
             publication
                 .publish_verified(&decision, artifacts)
                 .map_err(|error| error.to_string())?;
+            if let Some(line) = attestation {
+                eprintln!("{line}");
+            }
             print_tune_outputs(&paths, &decision_path, true);
             return Ok(());
         }
@@ -644,6 +686,22 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
             .get(&selection.selected_plan_digest)
             .ok_or_else(|| "selected tuning build disappeared".to_string())?
     };
+    let selected_plan = if selection.selected_plan_digest == baseline_digest {
+        baseline_plan.clone()
+    } else {
+        frontier
+            .compile_selection
+            .iter()
+            .find(|plan| plan.digest == selection.selected_plan_digest)
+            .cloned()
+            .ok_or_else(|| "selected tuning plan disappeared".to_string())?
+    };
+    let attestation = maybe_predicated_attestation(
+        &product.state,
+        &space,
+        &selected_plan,
+        args.explain_optimization,
+    )?;
     let outputs = decision_outputs(&paths, selected_build)?;
     let build_input = TuneDecisionBuildInput {
         identity: decision_identity,
@@ -683,6 +741,9 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
     publication
         .publish_verified(&decision, artifacts)
         .map_err(|error| error.to_string())?;
+    if let Some(line) = attestation {
+        eprintln!("{line}");
+    }
     let cacheable_completed =
         selection.selected_plan_digest != baseline_digest || timed_out.is_empty();
     if cacheable_completed && let (Some(cache), Some(key)) = (&cache, decision_key) {
@@ -1427,6 +1488,44 @@ fn print_tune_outputs(paths: &NativeArtifactPaths, decision: &Path, warm: bool) 
         println!("{}", path.display());
     }
     println!("{}", decision.display());
+}
+
+#[cfg(feature = "native-toolchain")]
+fn maybe_predicated_attestation(
+    state: &KirVerifiedProgramState,
+    space: &TuningSpace,
+    plan: &TuningPlan,
+    explain: bool,
+) -> Result<Option<String>, String> {
+    if !explain || plan.choices.len() != 1 {
+        return Ok(None);
+    }
+    let choice = &plan.choices[0];
+    let is_target = space
+        .units
+        .iter()
+        .find(|unit| unit.unit_id == choice.unit_id)
+        .and_then(|unit| {
+            unit.variants
+                .iter()
+                .find(|variant| variant.variant_id == choice.variant_id)
+        })
+        .is_some_and(|variant| {
+            matches!(
+                &variant.action,
+                TuneVariantAction::LoopSimd(candidate)
+                    if candidate.predicated_update.is_some()
+                        && state.module().functions.iter().any(|function| {
+                            function.id == candidate.function && function.name == "floyd"
+                        })
+            )
+        });
+    if !is_target {
+        return Ok(None);
+    }
+    let attestation =
+        attest_selected_predicated_update(state, space, plan).map_err(|error| error.to_string())?;
+    Ok(Some(format_predicated_update_attestation(&attestation)))
 }
 
 #[cfg(feature = "native-toolchain")]
