@@ -32,6 +32,9 @@
 - Accepted subset 由固定 target profile 和未降低的 20% 门槛决定；六 host 必须断言各自精确
   subset。合法但不盈利的 x86-64 strict-f64 division / horizontal multiply reduction 必须以
   稳定 `vector-profitability-threshold-not-met` 保持 scalar，不能被测试强制接受。
+- Unknown-trip Loop SIMD 的 independently recomputed runtime admission threshold 必须至少为
+  `max(computed break-even, target floor)`；x86-64 floor 是 `4 * VF * UF`，AArch64 floor 是
+  `2 * VF * UF`。不得把 x86 control penalty 错误套到已证明双 chunk 盈利的 AArch64 path。
 - Zero/short/overlap/misaligned/overflow predicate 走 original scalar fallback；exact/remainder
   coverage 无漏/重迭代或越界访问。
 - Checked first-error、strict f64、print/effect order 与 O0 一致；unsupported reduction保持 scalar。

@@ -66,7 +66,11 @@ required job、旧日志、历史数值或 lowered threshold。
 - [ ] Schema 7 与 rotating-twelve-channel-v1 在 x86-64/AArch64 各有完整报告；实际 0.11/0.10
   replay、current/replay Clang、checked/unchecked streams 都存在。
 - [ ] C/Rust SIMD rotating-three-channel-v1：每 kernel >=90%，两架构各自 geometric mean >=95%。
+- [ ] 四元素 `slp_quad` 在 CK/C/Rust 每个 timed sample 前执行相同的 32-batch unmeasured
+  sustained-state ramp；timed work、sample/order/statistic 与 stability threshold 未改变。
 - [ ] Domain-fact suite 相对更快 generic C/Rust oracle 在两架构 geometric mean 都 >5%。
+- [ ] Unknown-trip Loop SIMD 的 proposer/checker 均执行 target-specific runtime admission floor：
+  x86-64 至少 `4 * VF * UF`、AArch64 至少 `2 * VF * UF`；不得跨 target 套用错误 control penalty。
 - [ ] Scalar corpus 相对 actual 0.11 replay geometric mean slowdown <=3%，individual <=8%；所有
   既有 0.11/0.10/Clang/optimizer latency gate 保持。
 - [ ] Native object size aggregate <=35%，individual <=2.5x；source-to-object compile time geometric

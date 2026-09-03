@@ -24,10 +24,13 @@ const ORACLE_BATCH_ITERATIONS: usize = 20_000_000;
 const QUICK_BATCH_ITERATIONS: usize = 200_000;
 const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
-const SLP_CONDITIONING_BATCHES: usize = 4;
+// The AArch64 release workers expose a shared two-band frequency state for this
+// four-element kernel. A long, identical, untimed ramp places every channel in
+// the sustained state before the unchanged timed batch starts.
+const SLP_CONDITIONING_BATCHES: usize = 32;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "8bc9a23daf5f625b9855dd58c3e31e111ee58c8dc00dadc8af7be767c18f5f06";
+    "9bb4c1c7384a8d5c98e0b120d0daedcf88986be37f3e22487f43033798e8856d";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {

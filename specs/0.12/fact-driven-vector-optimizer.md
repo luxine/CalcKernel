@@ -542,7 +542,10 @@ wall clock, unordered iteration, machine load, or profile feedback.
 For a loop candidate it compares scalar iteration cost with vector body,
 predicate, and epilogue cost over an exact or conservative trip estimate. An
 unknown trip count adds a runtime threshold equal to at least the computed
-break-even and '2 * VF'. A vector loop must predict at least 20 percent execution
+break-even and a target-specific concrete-codegen floor: `4 * VF * UF` on x86-64
+and `2 * VF * UF` on AArch64. The x86 floor accounts for explicit loop control
+which is not amortized by two chunks; AArch64 retains its measured-profitable
+two-chunk paired-vector path. A vector loop must predict at least 20 percent execution
 cost reduction. An SLP pack or specialization must predict at least 10 percent
 local reduction and at least two absolute cost units. Ties select the smaller
 code shape, then lower VF/UF, then source/KIR identity order.
@@ -756,7 +759,7 @@ calls through that cached entry; dynamic symbol lookup and per-call string
 dispatch are outside the timing region.
 
 Immediately before each timed sample of the fixed four-element 'slp_quad'
-microkernel, every channel executes four identical unmeasured batches. This
+microkernel, every channel executes 32 identical unmeasured batches. This
 short-kernel conditioning is recorded in the pinned manifest and applies to CK,
 C, and Rust equally; it does not change the three warm-up rows, twenty timed
 rows, seven timed calls, batch identity, order, statistic, or threshold.

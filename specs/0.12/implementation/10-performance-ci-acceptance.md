@@ -31,12 +31,15 @@ identity/budget debit、incremental module-global identity collision、no-op fro
 function-identity fallback 与 unreported mutation 测试；不得以减少 verifier/checker 覆盖来通过门槛。
 `integer_cast` differential 必须覆盖 `0`、`i32::MAX`、`i32::MAX + 1` 与 `u32::MAX`；x86
 `modular_reduction` 必须记录稳定的 Native-loop-vectorizer fallback 并以 pinned object
-disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个 timed sample 前执行四个
+disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个 timed sample 前执行 32 个
 相同的 unmeasured conditioning batch；Linux release-performance 测量必须在整个三 channel
 case 期间固定到继承 allowed affinity set 中的一个 CPU，并在 case 后恢复。timed
 sample/order/statistic/threshold 保持不变。
 Linux runtime sample 使用当前线程 `CLOCK_THREAD_CPUTIME_ID` 差值包围未改变的 native call
 loop，排除共享宿主未调度该线程的时间；非 Linux 开发运行保留 monotonic wall-clock fallback。
+Domain-fact 短循环还必须证明 proposer 与 independent checker 都把 unknown-trip Loop SIMD 的
+最低 runtime admission threshold 按 target 独立复算：x86-64 至少 `4 * VF * UF`、AArch64
+至少 `2 * VF * UF`；schema 7 的 >5% 门槛、样本、timed work、oracle 与 corpus 均保持不变。
 
 性能失败或显式 diagnostic 模式还必须在同一 worker 对 schema 7 报告中的 48 个 scalar 动态库
 逐一核对整库 SHA 并反汇编：32 个 candidate/current/replay-Clang measured artifacts、8 个 v0.11

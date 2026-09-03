@@ -26,6 +26,9 @@ oracle、domain-fact suite、artifact size/source-to-object compile-time gate，
    typed signature 在 runner 构造时只解析一次，计时循环不得执行 symbol/string dispatch。
 5. 写 vector/domain threshold RED：每 kernel >=90% faster oracle、geo >=95%，domain geo >5%；
    精确等号边界、一个 invalid competitor、geomean counterexample。
+   若 domain-fact 短循环因显式 vector control 未摊销而失败，只能修复 proposer 与 independent
+   checker 共同执行的 target-specific admission floor（x86-64 四 chunk、AArch64 两 chunk）；
+   不得降低 domain gate 或减少 timed work。
 6. 写 scalar regression RED：相对 actual v0.11 replay geo <=3%、individual <=8%，既有 0.10/
    Clang/optimizer limits 全保留。
 7. 写 size/compile-time RED：同 source/mode baseline object，aggregate <=35%、individual <=2.5x；
