@@ -17,9 +17,9 @@ non-local load are skipped before cloning. The fixed interleave
 width, KIR fallback policy, semantics, corpus, statistics, and thresholds are unchanged.
 
 V0.14 also advances its exact V0.13 replay pin to
-`b61d45831f3f351a486722dcd12560507013db1c`, which contains the same correction. The updated
+`d5a2491672477634070b0c36b77cb8ad4bf7df56`, which contains the complete correction. The updated
 `benches/baselines/v0_13_replay.toml` digest is
-`02d8f1c3b8f8a8c5f2b2a0d42175d0b12fb0117b475ddd63e5030453ec0d9f84`. No replay adapter is
+`cc33d80608fea92bb90e4c42ebf1977736bf0c251adb3d0f465449b69f87a51e`. No replay adapter is
 permitted.
 
 ## Acceptance

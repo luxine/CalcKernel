@@ -2464,8 +2464,10 @@ extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
         for (auto &argument : dispatcher->args()) {
             arguments.push_back(&argument);
         }
-        auto *call = dispatch_builder.CreateCall(function_type, pointer,
-                                                 arguments, "ck.dispatch.call");
+        auto *call = function_type->getReturnType()->isVoidTy()
+                         ? dispatch_builder.CreateCall(function_type, pointer, arguments)
+                         : dispatch_builder.CreateCall(function_type, pointer, arguments,
+                                                       "ck.dispatch.call");
         call->setCallingConv(baseline->getCallingConv());
         call->setAttributes(baseline->getAttributes());
         call->setTailCallKind(llvm::CallInst::TCK_MustTail);

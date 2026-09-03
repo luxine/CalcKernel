@@ -20,8 +20,8 @@ v0.13 candidate rather than the repaired accepted-base candidate.
 - The three warmup pairs, fifteen measured pairs, alternating order, upper median,
   corpus, and every threshold remain unchanged.
 - The exact v0.13 replay pin advances to
-  `b61d45831f3f351a486722dcd12560507013db1c`; its replay manifest digest is
-  `02d8f1c3b8f8a8c5f2b2a0d42175d0b12fb0117b475ddd63e5030453ec0d9f84`.
+  `d5a2491672477634070b0c36b77cb8ad4bf7df56`; its replay manifest digest is
+  `cc33d80608fea92bb90e4c42ebf1977736bf0c251adb3d0f465449b69f87a51e`.
 
 ## Regression proof
 
