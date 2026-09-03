@@ -939,6 +939,42 @@ fn darwin_profile_runtime_imports_should_cover_x86_64_inode64_fstat() {
 }
 
 #[test]
+fn linux_runtime_entry_should_define_a_weak_dispatch_capture_fallback() {
+    let syscalls = read("native/runtime/linux/syscalls.S");
+    assert_eq!(
+        syscalls
+            .matches("\n__ck_dispatch_capture_initial_stack:\n")
+            .count(),
+        2,
+        "both Linux entry architectures need an in-object weak no-op fallback for ORC"
+    );
+    assert_eq!(
+        syscalls
+            .matches(".weak __ck_dispatch_capture_initial_stack")
+            .count(),
+        2,
+        "the fallback must remain replaceable by the strong dispatch runtime"
+    );
+}
+
+#[test]
+fn aarch64_linux_private_runtimes_should_not_emit_outline_atomic_helpers() {
+    let bootstrap = read("scripts/bootstrap-llvm.sh");
+    assert!(
+        bootstrap.contains("ckc_target\" == \"aarch64-unknown-linux-gnu")
+            && bootstrap.contains("ckc_runtime_flags+=(-mno-outline-atomics)"),
+        "AArch64 Linux bootstrap must keep private runtime atomics self-contained"
+    );
+
+    let build = read("build.rs");
+    assert!(
+        build.contains("target == \"aarch64-unknown-linux-gnu\"")
+            && build.contains("build.flag(\"-mno-outline-atomics\")"),
+        "fallback dispatch-runtime compilation must match the bootstrap atomic policy"
+    );
+}
+
+#[test]
 fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi() {
     for path in [
         "native/dispatch_runtime/include/ckc_dispatch_runtime.h",
