@@ -609,9 +609,10 @@ fn compile_vector_library(
     if kir_level == KirOptimizationLevel::O3 {
         // The frozen target profile, not the source surface alone, decides the
         // profitable subset. Baseline x86-64 conservatively rejects the
-        // strict-f64 divide and horizontal multiply-reduction loops at the
-        // unchanged 20% threshold; AArch64 accepts the complete corpus.
-        let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 6 } else { 8 };
+        // strict-f64 divide and both horizontal-reduction loops: LLVM keeps a
+        // loop-carried vector accumulator more efficiently than reducing each
+        // CK vector chunk. AArch64 accepts the complete corpus.
+        let expected_vectorized_loops = if cfg!(target_arch = "x86_64") { 5 } else { 8 };
         assert_eq!(
             result.stats.vectorized_loops, expected_vectorized_loops,
             "{:?}",

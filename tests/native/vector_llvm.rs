@@ -868,9 +868,15 @@ fn schema_seven_vector_corpus_should_materialize_vectors_for_both_safety_modes()
                     "{name}/checked must retain its scalar first-error safety boundary:\n{text}"
                 );
             } else {
+                let native_x86_reduction = name == "modular_reduction"
+                    && cfg!(target_arch = "x86_64")
+                    && result.analysis_fallbacks.iter().any(|fallback| {
+                        fallback.reason
+                            == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
+                    });
                 assert!(
-                    text.contains("vector_"),
-                    "{name}/unchecked remained scalar:\n{text}"
+                    native_x86_reduction || text.contains("vector_"),
+                    "{name}/unchecked remained scalar without the audited x86 reduction handoff:\n{text}"
                 );
                 let header = emit_native_header(
                     result.artifact.as_ref().expect("vector header artifact"),

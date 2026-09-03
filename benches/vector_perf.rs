@@ -26,7 +26,7 @@ const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "7faf23e2f1f7129238e5a024e3dc4918a73b4f3671661097071ce3982666c82f";
+    "41a143ce26a47f759b05cbb34a8270fdbcd9437b79f2e75f91cb96df98f6e7fd";
 
 pub(super) struct VectorPerformanceReport {
     pub target_profile_digest: String,

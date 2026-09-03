@@ -61,6 +61,12 @@ def stream(record, prefix, value=100, count=20):
     record[prefix + "SamplesNs"] = [value] * count
 
 
+class RepositoryOracleIdentityTests(unittest.TestCase):
+    def test_checker_manifest_digest_matches_the_frozen_repository_manifest(self):
+        manifest = REPO / "benches/oracles/manifest.toml"
+        self.assertEqual(gate.ORACLE_MANIFEST_SHA256, digest(manifest.read_bytes()))
+
+
 class GateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ckc-schema7-")
