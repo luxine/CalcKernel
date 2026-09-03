@@ -1,10 +1,86 @@
 #include "ckc_dispatch_runtime.h"
 
-#if defined(_MSC_VER) && defined(_M_X64)
+#if defined(_MSC_VER)
 #include <intrin.h>
+#elif !defined(__aarch64__) || !defined(__linux__)
+#include <stdatomic.h>
 #endif
 
-static uint32_t ck_capability_state;
+#if defined(_MSC_VER)
+typedef volatile long ck_dispatch_atomic_u32;
+#elif defined(__aarch64__) && defined(__linux__)
+typedef uint32_t ck_dispatch_atomic_u32;
+#else
+typedef _Atomic uint32_t ck_dispatch_atomic_u32;
+#endif
+
+static ck_dispatch_atomic_u32 ck_capability_state;
+
+static uint32_t
+ck_dispatch_load_acquire(ck_dispatch_atomic_u32 *object) {
+#if defined(_MSC_VER)
+  return (uint32_t)_InterlockedCompareExchange(object, 0, 0);
+#elif defined(__aarch64__) && defined(__linux__)
+  uint32_t value;
+  __asm__ volatile("ldar %w0, [%1]" : "=r"(value) : "r"(object) : "memory");
+  return value;
+#else
+  return atomic_load_explicit(object, memory_order_acquire);
+#endif
+}
+
+static void ck_dispatch_store_release(ck_dispatch_atomic_u32 *object,
+                                      uint32_t value) {
+#if defined(_MSC_VER)
+  (void)_InterlockedExchange(object, (long)value);
+#elif defined(__aarch64__) && defined(__linux__)
+  __asm__ volatile("stlr %w0, [%1]" : : "r"(value), "r"(object) : "memory");
+#else
+  atomic_store_explicit(object, value, memory_order_release);
+#endif
+}
+
+static int ck_dispatch_compare_exchange(ck_dispatch_atomic_u32 *object,
+                                        uint32_t *expected,
+                                        uint32_t desired) {
+#if defined(_MSC_VER)
+  const long observed =
+      _InterlockedCompareExchange(object, (long)desired, (long)*expected);
+  if ((uint32_t)observed == *expected) {
+    return 1;
+  }
+  *expected = (uint32_t)observed;
+  return 0;
+#elif defined(__aarch64__) && defined(__linux__)
+  const uint32_t expected_value = *expected;
+  uint32_t observed;
+  uint32_t status;
+  __asm__ volatile(
+      "0:\n"
+      "ldaxr %w0, [%2]\n"
+      "cmp %w0, %w3\n"
+      "b.ne 1f\n"
+      "stlxr %w1, %w4, [%2]\n"
+      "cbnz %w1, 0b\n"
+      "b 2f\n"
+      "1:\n"
+      "clrex\n"
+      "mov %w1, #1\n"
+      "2:\n"
+      : "=&r"(observed), "=&r"(status)
+      : "r"(object), "r"(expected_value), "r"(desired)
+      : "cc", "memory");
+  (void)status;
+  if (observed == expected_value) {
+    return 1;
+  }
+  *expected = observed;
+  return 0;
+#else
+  return atomic_compare_exchange_strong_explicit(
+      object, expected, desired, memory_order_acq_rel, memory_order_acquire);
+#endif
+}
 
 #if defined(__aarch64__) && defined(__linux__)
 static uintptr_t ck_initial_hwcap;
@@ -141,38 +217,20 @@ static uint32_t ck_detect_uncached(void) {
 }
 
 uint32_t __ck_dispatch_detect_capabilities(void) {
-#if defined(_MSC_VER)
-  long state = _InterlockedCompareExchange((volatile long *)&ck_capability_state,
-                                           1, 0);
-  if (state == 0) {
-    const uint32_t capabilities = ck_detect_uncached();
-    _InterlockedExchange((volatile long *)&ck_capability_state,
-                         (long)(capabilities + 2u));
-    return capabilities;
-  }
-  while (state == 1) {
-    state = _InterlockedCompareExchange((volatile long *)&ck_capability_state,
-                                        1, 1);
-  }
-  return (uint32_t)state - 2u;
-#else
-  uint32_t state = __atomic_load_n(&ck_capability_state, __ATOMIC_ACQUIRE);
+  uint32_t state = ck_dispatch_load_acquire(&ck_capability_state);
   if (state == 0u) {
     uint32_t expected = 0u;
-    if (__atomic_compare_exchange_n(&ck_capability_state, &expected, 1u, 0,
-                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    if (ck_dispatch_compare_exchange(&ck_capability_state, &expected, 1u)) {
       const uint32_t capabilities = ck_detect_uncached();
-      __atomic_store_n(&ck_capability_state, capabilities + 2u,
-                       __ATOMIC_RELEASE);
+      ck_dispatch_store_release(&ck_capability_state, capabilities + 2u);
       return capabilities;
     }
     state = expected;
   }
   while (state == 1u) {
-    state = __atomic_load_n(&ck_capability_state, __ATOMIC_ACQUIRE);
+    state = ck_dispatch_load_acquire(&ck_capability_state);
   }
   return state - 2u;
-#endif
 }
 
 uint32_t __ck_dispatch_select_ranked(const uint32_t *required,

@@ -566,13 +566,17 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
     assert!(runtime.contains("CKC_RUNTIME_JIT_SUPPORT"));
     assert!(
         runtime.lines().any(|line| {
-            line.trim() == "let mut objects: Vec<&'static [u8]> = Vec::with_capacity(6);"
+            line.trim() == "let mut objects: Vec<&'static [u8]> = Vec::with_capacity(7);"
         }),
-        "the Windows x64 JIT anchor must enter an explicitly slice-typed object collection"
+        "the Windows x64 JIT anchor and dispatch runtime must enter an explicitly slice-typed object collection"
     );
     assert!(
         runtime.contains("embedded_runtime_objects"),
         "the five artifact runtime objects remain a separate closed set"
+    );
+    assert!(
+        runtime.contains("objects.push(embedded_dispatch_runtime_object())"),
+        "the JIT graph must define the dispatch stack-capture symbol referenced by the Linux entry object"
     );
 
     let bridge = read("native/bridge/ckc_llvm.cpp");
@@ -584,8 +588,12 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
         "both COFF LLD entry points must use /out:<path>"
     );
     assert!(
+        bridge.contains("runtime_object_count != 7"),
+        "COFF x64 JIT must fail closed unless it receives anchor + five runtime objects + dispatch runtime"
+    );
+    assert!(
         bridge.contains("runtime_object_count != 6"),
-        "COFF x64 JIT must fail closed unless it receives anchor + five runtime objects"
+        "other JIT targets must fail closed unless they receive five runtime objects + dispatch runtime"
     );
     let execute = bridge
         .split_once("extern \"C\" int32_t ckc_llvm_jit_execute(")
@@ -1105,7 +1113,9 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
     for required in [
         "__ck_dispatch_detect_capabilities",
         "__ck_dispatch_select_ranked",
-        "__atomic_compare_exchange_n",
+        "ck_dispatch_compare_exchange",
+        "ldaxr",
+        "stlxr",
         "CK_DISPATCH_BASELINE",
     ] {
         assert!(
@@ -1113,6 +1123,10 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
             "dispatch runtime missing {required}"
         );
     }
+    assert!(
+        !runtime.contains("__atomic_"),
+        "the freestanding dispatch runtime must not import compiler atomic helpers on baseline AArch64"
+    );
     for forbidden in ["getenv(", "malloc(", "free(", "printf(", "getauxval("] {
         assert!(
             !runtime.contains(forbidden),
