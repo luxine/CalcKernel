@@ -35,6 +35,7 @@
 #include <llvm/IR/Comdat.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
@@ -49,6 +50,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ModuleSummaryAnalysis.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Analysis/TargetTransformInfo.h>
@@ -72,6 +74,7 @@
 #include <llvm/Support/SHA256.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
+#include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #include <lld/Common/Driver.h>
 
 #if defined(CKC_LLD_DARWIN)
@@ -1856,6 +1859,88 @@ extern "C" int32_t ckc_llvm_target_profile_query(
     });
 }
 
+namespace {
+
+constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
+
+bool is_integer_memory_reduction(const llvm::Loop &loop) {
+    const auto *header = loop.getHeader();
+    for (const llvm::PHINode &phi : header->phis()) {
+        if (!phi.getType()->isIntegerTy()) {
+            continue;
+        }
+        for (unsigned index = 0; index < phi.getNumIncomingValues(); ++index) {
+            if (!loop.contains(phi.getIncomingBlock(index))) {
+                continue;
+            }
+            const auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(
+                phi.getIncomingValue(index));
+            if (binary == nullptr ||
+                (binary->getOpcode() != llvm::Instruction::Add &&
+                 binary->getOpcode() != llvm::Instruction::Mul)) {
+                continue;
+            }
+            const llvm::Value *other = nullptr;
+            if (binary->getOperand(0) == &phi) {
+                other = binary->getOperand(1);
+            } else if (binary->getOperand(1) == &phi) {
+                other = binary->getOperand(0);
+            }
+            if (llvm::isa_and_nonnull<llvm::LoadInst>(other)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void attach_x86_integer_reduction_interleave(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
+        return;
+    }
+    for (llvm::Function &function : module) {
+        if (function.isDeclaration() || function.empty()) {
+            continue;
+        }
+        llvm::SmallVector<llvm::AllocaInst *, 16> allocas;
+        for (llvm::Instruction &instruction : function.getEntryBlock()) {
+            auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
+            if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
+                allocas.push_back(alloca);
+            }
+        }
+        llvm::DominatorTree dominators(function);
+        if (!allocas.empty()) {
+            llvm::PromoteMemToReg(allocas, dominators);
+        }
+        llvm::LoopInfo loops(dominators);
+        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
+            if (!is_integer_memory_reduction(*loop)) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *count = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_X86_REDUCTION_INTERLEAVE))});
+            llvm::Metadata *operands[] = {nullptr, count};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+    }
+}
+
+} // namespace
+
 extern "C" int32_t ckc_llvm_module_optimize(
     CkcLlvmModule *module, CkcLlvmTarget *target, uint32_t opt_level,
     CkcLlvmError *error) {
@@ -1871,6 +1956,11 @@ extern "C" int32_t ckc_llvm_module_optimize(
         case 2: level = llvm::OptimizationLevel::O2; break;
         case 3: level = llvm::OptimizationLevel::O3; break;
         default: llvm_unreachable("validated optimization level");
+        }
+
+        if (level == llvm::OptimizationLevel::O3) {
+            attach_x86_integer_reduction_interleave(*module->value,
+                                                     *target->value);
         }
 
         llvm::LoopAnalysisManager loop_analyses;
