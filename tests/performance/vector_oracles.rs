@@ -34,7 +34,13 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "sample_calls = 7",
         "sample_statistic = \"upper-median-of-seven\"",
         "short_kernel_conditioning = true",
-        "short_kernel_conditioning_batches = 64",
+        "short_kernel_conditioning_protocol = \"bounded-upper-band-v1\"",
+        "short_kernel_calibration_probes = 64",
+        "short_kernel_calibration_quantile_numerator = 9",
+        "short_kernel_calibration_quantile_denominator = 10",
+        "short_kernel_settling_floor_numerator = 3",
+        "short_kernel_settling_floor_denominator = 4",
+        "short_kernel_settling_max_probes = 256",
         "short_kernel_conditioning_scope = \"once-per-retained-sample\"",
         "differential_audit = true",
         "ub_audit = true",
@@ -199,17 +205,23 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         .and_then(|source| source.split("type MapUnchecked").next())
         .expect("measure_case implementation");
     assert!(
-        harness.contains("const SLP_CONDITIONING_BATCHES: usize = 64;")
+        harness.contains("const SLP_CALIBRATION_PROBES: usize = 64;")
+            && harness.contains("const SLP_SETTLING_MAX_PROBES: usize = 256;")
+            && harness.contains("fn timed_conditioning_probe(")
+            && harness.contains("slp_sustained_floor_ns: Option<u128>")
             && runner.contains("fn condition_short_kernel(")
-            && runner.contains("if self.name == \"slp_quad\"")
-            && runner.contains("for _ in 0..SLP_CONDITIONING_BATCHES")
-            && !measure_once.contains("SLP_CONDITIONING_BATCHES")
+            && runner.contains("if self.name != \"slp_quad\"")
+            && runner.contains("let mut probes = [0u128; SLP_CALIBRATION_PROBES]")
+            && runner.contains("for elapsed in &mut probes")
+            && runner.contains("for _ in 0..SLP_SETTLING_MAX_PROBES")
+            && runner.contains("elapsed >= sustained_floor_ns")
+            && !measure_once.contains("condition_short_kernel")
             && measure_case.contains("runners[channel].condition_short_kernel(batch_iterations)?;")
             && measure_case
                 .find("condition_short_kernel(batch_iterations)")
                 .unwrap()
                 < measure_case.find("sample_upper_median").unwrap(),
-        "the four-item SLP kernel must run exactly one fixed 64-batch ramp before each retained seven-call sample"
+        "the four-item SLP kernel must calibrate and re-enter a bounded upper-duration band before each retained seven-call sample"
     );
     assert!(
         harness.contains("sample_upper_median::<_, SAMPLE_REPETITIONS>")

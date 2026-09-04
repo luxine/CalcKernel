@@ -618,11 +618,13 @@ rotating-three-channel-v1：candidate CK、pinned C 与 pinned Rust。每轮有�
 打开一次并解析一次 typed kernel entry；计时 batch 只能调用缓存入口，dynamic symbol lookup 与
 逐调用 string dispatch 必须位于计时区外。
 
-固定四元素 `slp_quad` microkernel 的每个保留七次计时 sample 之前，三个 channel 都执行一轮
-64 次相同的 unmeasured batch；这轮 ramp 不在七次 timed call 内重复。该 short-kernel
-conditioning 写入固定 manifest，并同等应用于 CK、C 与
-Rust；它不改变三个 warm-up row、二十个 timed row、每 sample 七次 timed call、batch
-identity、order、statistic 或 threshold。
+固定四元素 `slp_quad` microkernel 的每个 channel 独立执行一次
+`bounded-upper-band-v1` 校准：采集 64 个不计时的完整 batch probe，以 nearest-rank 9/10
+耗时分位数为 anchor，并以 `ceil(anchor * 3/4)` 为持续频带下限。每个保留七次计时 sample
+之前，同一 channel 最多执行 256 个不计时的完整 batch probe，必须命中该下限；耗尽上限会
+使测量失败，不能保留混频带 sample。probe 不得进入七次 timed call。该 short-kernel
+conditioning 写入固定 manifest，并同等应用于 CK、C 与 Rust；它不改变三个 warm-up row、
+二十个 timed row、每 sample 七次 timed call、batch identity、order、statistic 或 threshold。
 在 Linux release-performance host 上，每个三 channel case 的测量线程固定到继承 affinity
 set 中的一个允许 CPU，case 结束后恢复原 affinity set。由此三个 channel 及其 conditioning
 始终位于同一 core，而 timed work 不变，也不会给任一 channel 不同的执行环境。

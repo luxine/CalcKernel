@@ -157,6 +157,14 @@ Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 进一�
 保留 sample 的七次 timed call 前执行一次；timed work、20 个样本、七次计时、rotation、
 upper median、stability/performance threshold、corpus 与平台矩阵均不变。
 
+Exact v0.12 run `33825887411` 的 AArch64 performance job `100878495028` 证明固定 64-batch
+ramp 仍不可控制托管 Neoverse-N2 的双频带：unchecked `slp_quad` 三通道均在约 4.42/8.84 ms
+间近乎各半。复诊与闭环见 `specs/0.12/review/implementation-blocker-17.md`。固定 ramp 被替换为
+有界、失败关闭的 `bounded-upper-band-v1`：每通道以 64 个不计时 probe 的 9/10 分位数校准
+持续频带下限，每个保留 sample 前最多用 256 个不计时 probe 重新命中，否则失败。timed
+work、20 个样本、七次计时、rotation、upper median、stability/performance threshold、
+corpus 与平台矩阵均不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。

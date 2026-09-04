@@ -758,12 +758,16 @@ before correctness, warm-up, or sampled batches. The timed batch performs only
 calls through that cached entry; dynamic symbol lookup and per-call string
 dispatch are outside the timing region.
 
-Immediately before each retained seven-call sample of the fixed four-element
-'slp_quad' microkernel, every channel executes one ramp of 64 identical
-unmeasured batches. The ramp is not repeated inside those seven timed calls. This
-short-kernel conditioning is recorded in the pinned manifest and applies to CK,
-C, and Rust equally; it does not change the three warm-up rows, twenty timed
-rows, seven timed calls, batch identity, order, statistic, or threshold.
+For the fixed four-element `slp_quad` microkernel, each channel independently
+calibrates `bounded-upper-band-v1` once from 64 unmeasured full-batch probes. The
+nearest-rank 9/10 duration quantile is its anchor and ceiling(anchor * 3/4) is
+the sustained-band floor. Immediately before each retained seven-call sample,
+the same channel executes at most 256 unmeasured full-batch probes and must hit
+that floor; exhaustion fails the measurement instead of retaining a mixed-band
+sample. No probe is inside the seven timed calls. This short-kernel conditioning
+is recorded in the pinned manifest and applies to CK, C, and Rust equally; it
+does not change the three warm-up rows, twenty timed rows, seven timed calls,
+batch identity, order, statistic, or threshold.
 On Linux release-performance hosts, each three-channel case is measured while
 the benchmark thread is pinned to one CPU selected from its inherited allowed
 affinity set. The original affinity set is restored after the case. This keeps
