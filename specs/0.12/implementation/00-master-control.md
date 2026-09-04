@@ -129,6 +129,20 @@ vCPU 对 wall-clock runtime 样本的污染。复诊与闭环见
 包围未改变的 kernel-call loop，只排除未获 CPU 的宿主停顿；threshold、timed work、样本、
 rotation、upper median、corpus 与平台矩阵均不变。
 
+Exact run `33810653132` 的 x86-64 performance job 随后证明 unknown-trip KIR Loop SIMD 在只有
+两个 vector chunk 时会因显式 setup/backedge/epilogue control 未摊销而使 domain-fact suite
+无法超过 generic oracle 5%。复诊与闭环见
+`specs/0.12/review/implementation-blocker-13.md`。Proposer 与 independent checker 现在按 target
+共同复算 runtime admission floor：x86-64 至少 `4 * VF * UF`，AArch64 保留已证明盈利的
+`2 * VF * UF`；20% cost threshold、domain gate、timed work、样本、统计、corpus 与平台矩阵
+均不变。
+
+同一 run 的 AArch64 performance job `100831900569` 还证明四批 conditioning、same-core affinity
+与 thread CPU time 之后，CK/C/Rust 的 `slp_quad` 仍共同出现约 4.42/8.84 ms 两档持续频率状态。
+复诊与闭环见 `specs/0.12/review/implementation-blocker-14.md`。三个 channel 的相同 unmeasured
+conditioning ramp 增加到 32 batch，使每次计时前进入持续状态；timed batch、样本、rotation、
+upper median、stability/performance threshold、corpus 与平台矩阵均不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。

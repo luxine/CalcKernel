@@ -716,7 +716,14 @@ fn candidate_cost_and_threshold(
     if u64::from(vector_chunk).saturating_mul(100) >= u64::from(scalar_chunk).saturating_mul(80) {
         return Err("vector-profitability-threshold-not-met".to_string());
     }
-    let minimum_trip = (2_u32..=1024)
+    // x86 lowering needs four chunks to amortize the explicit KIR loop's entry,
+    // backedge, and scalar-epilogue control. AArch64's paired vector memory
+    // lowering already clears that bar at the original two-chunk floor.
+    let minimum_chunks = match profile.target_identity() {
+        KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-") => 4_u32,
+        _ => 2_u32,
+    };
+    let minimum_trip = (minimum_chunks..=1024)
         .map(|chunks| chunks.saturating_mul(chunk_width))
         .find(|trip| {
             (0..chunk_width).all(|tail| {

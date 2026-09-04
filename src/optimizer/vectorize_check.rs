@@ -3,10 +3,10 @@ use std::collections::BTreeSet;
 use crate::{
     BlockId, CandidateBudgetCharge, FunctionId, InstructionId, KirAlignmentClass, KirCostEstimate,
     KirCostKey, KirCostSemantics, KirInstruction, KirInstructionKind, KirLaneType,
-    KirOperationAvailability, KirProfileOperation, KirTerminator, LoopId, MemoryRegionId,
-    MirBinaryOp, MirPrimitiveTypeName, MirType, TransactionCheckError, ValueId, VectorEpilogue,
-    VectorMemoryAccessKind, VectorizationPlan, compute_kir_dominators, kir_function_units,
-    validate_kir_module, validate_vectorization_plan,
+    KirOperationAvailability, KirProfileOperation, KirTargetIdentity, KirTerminator, LoopId,
+    MemoryRegionId, MirBinaryOp, MirPrimitiveTypeName, MirType, TransactionCheckError, ValueId,
+    VectorEpilogue, VectorMemoryAccessKind, VectorizationPlan, compute_kir_dominators,
+    kir_function_units, validate_kir_module, validate_vectorization_plan,
 };
 
 use super::KirVerifiedProgramState;
@@ -1808,7 +1808,11 @@ fn independently_price_vector_plan(
             "profitability-threshold-not-met",
         ));
     }
-    let minimum_trip = (2_u32..=1024)
+    let minimum_chunks = match profile.target_identity() {
+        KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-") => 4_u32,
+        _ => 2_u32,
+    };
+    let minimum_trip = (minimum_chunks..=1024)
         .map(|chunks| chunks.saturating_mul(chunk_width))
         .find(|trip| {
             (0..chunk_width).all(|tail| {

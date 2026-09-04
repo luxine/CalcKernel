@@ -269,6 +269,30 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
         vec![(2, 1), (2, 2), (2, 4), (4, 1), (4, 2), (4, 4)],
         "{discovery:#?}"
     );
+    assert!(
+        discovery.candidates.iter().all(|candidate| {
+            candidate.minimum_trip >= u32::from(candidate.vf) * u32::from(candidate.uf) * 2
+        }),
+        "AArch64 runtime-trip Loop SIMD must retain the proven two-chunk floor: {discovery:#?}"
+    );
+    assert!(
+        discovery.candidates.iter().any(|candidate| {
+            candidate.minimum_trip == u32::from(candidate.vf) * u32::from(candidate.uf) * 2
+        }),
+        "AArch64 must not inherit the x86-specific four-chunk penalty: {discovery:#?}"
+    );
+
+    let (x86_pre, _) = map_state_with_profile(
+        INTERLEAVE_MAP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let x86_discovery = discover_vectorization_candidates(&x86_pre);
+    assert!(
+        x86_discovery.candidates.iter().all(|candidate| {
+            candidate.minimum_trip >= u32::from(candidate.vf) * u32::from(candidate.uf) * 4
+        }),
+        "x86 runtime-trip Loop SIMD must amortize custom-loop control over four chunks: {x86_discovery:#?}"
+    );
 
     let candidate = discovery
         .candidates

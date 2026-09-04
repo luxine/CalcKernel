@@ -25,7 +25,7 @@ V011_COMPILER = f"calckernel 0.11.0 ({V011_COMMIT})"
 V011_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
-ORACLE_MANIFEST_SHA256 = "8bc9a23daf5f625b9855dd58c3e31e111ee58c8dc00dadc8af7be767c18f5f06"
+ORACLE_MANIFEST_SHA256 = "9bb4c1c7384a8d5c98e0b120d0daedcf88986be37f3e22487f43033798e8856d"
 DEFAULT_BASELINE_MANIFEST = REPO / "benches/baselines/v0_10_compiler.toml"
 RECIPE_FILES = [
     "scripts/prepare-performance-replay.py",
@@ -61,9 +61,9 @@ CHANNEL_NAMES = [
 ]
 SAMPLE_COUNT = 20
 
-V012_COMMIT = "ea822e343967baa2db113d3dd8f429d8dfdfa779"
+V012_COMMIT = "3bb6d97ced97aa04c22de8e22238c69a6e107eb7"
 V012_COMPILER = f"calckernel 0.12.0 ({V012_COMMIT})"
-V012_MANIFEST_SHA256 = "f4cde938185c1cfd4f63f3c281c36a7924cddc6963b331e63e1cde8984597eb0"
+V012_MANIFEST_SHA256 = "4273f7c2b7f1b91c342874ecdab64bb27e09d1bfe3c3156bcde9d3ccac1324ce"
 PGO_CASES = {
     "branch-layout": (True, False),
     "call-constant-length": (True, True),
