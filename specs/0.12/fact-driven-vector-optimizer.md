@@ -758,8 +758,9 @@ before correctness, warm-up, or sampled batches. The timed batch performs only
 calls through that cached entry; dynamic symbol lookup and per-call string
 dispatch are outside the timing region.
 
-Immediately before each timed sample of the fixed four-element 'slp_quad'
-microkernel, every channel executes 32 identical unmeasured batches. This
+Immediately before each retained seven-call sample of the fixed four-element
+'slp_quad' microkernel, every channel executes one ramp of 32 identical
+unmeasured batches. The ramp is not repeated inside those seven timed calls. This
 short-kernel conditioning is recorded in the pinned manifest and applies to CK,
 C, and Rust equally; it does not change the three warm-up rows, twenty timed
 rows, seven timed calls, batch identity, order, statistic, or threshold.

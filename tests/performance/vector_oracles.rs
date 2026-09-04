@@ -35,6 +35,7 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "sample_statistic = \"upper-median-of-seven\"",
         "short_kernel_conditioning = true",
         "short_kernel_conditioning_batches = 32",
+        "short_kernel_conditioning_scope = \"once-per-retained-sample\"",
         "differential_audit = true",
         "ub_audit = true",
     ] {
@@ -187,14 +188,28 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
             "the timed loop must not contain per-call lookup or string dispatch: {forbidden}"
         );
     }
+    let measure_once = runner
+        .split("fn measure_once(")
+        .nth(1)
+        .and_then(|source| source.split("fn run_batch(").next())
+        .expect("measure_once implementation");
+    let measure_case = harness
+        .split("fn measure_case(")
+        .nth(1)
+        .and_then(|source| source.split("type MapUnchecked").next())
+        .expect("measure_case implementation");
     assert!(
         harness.contains("const SLP_CONDITIONING_BATCHES: usize = 32;")
+            && runner.contains("fn condition_short_kernel(")
             && runner.contains("if self.name == \"slp_quad\"")
             && runner.contains("for _ in 0..SLP_CONDITIONING_BATCHES")
-            && runner.contains(
-                "self.invoke_repeated(batch_iterations)?;\n            }\n        }\n        let timer = runtime_timer_start()?;"
-            ),
-        "the four-item SLP kernel must condition the same runner through a fixed 32-batch ramp before each timed sample"
+            && !measure_once.contains("SLP_CONDITIONING_BATCHES")
+            && measure_case.contains("runners[channel].condition_short_kernel(batch_iterations)?;")
+            && measure_case
+                .find("condition_short_kernel(batch_iterations)")
+                .unwrap()
+                < measure_case.find("sample_upper_median").unwrap(),
+        "the four-item SLP kernel must run exactly one fixed 32-batch ramp before each retained seven-call sample"
     );
     assert!(
         harness.contains("sample_upper_median::<_, SAMPLE_REPETITIONS>")

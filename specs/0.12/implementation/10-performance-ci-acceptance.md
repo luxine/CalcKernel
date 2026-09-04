@@ -31,8 +31,9 @@ identity/budget debit、incremental module-global identity collision、no-op fro
 function-identity fallback 与 unreported mutation 测试；不得以减少 verifier/checker 覆盖来通过门槛。
 `integer_cast` differential 必须覆盖 `0`、`i32::MAX`、`i32::MAX + 1` 与 `u32::MAX`；x86
 `modular_reduction` 必须记录稳定的 Native-loop-vectorizer fallback 并以 pinned object
-disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个 timed sample 前执行 32 个
-相同的 unmeasured conditioning batch；Linux release-performance 测量必须在整个三 channel
+disassembly 证明 SIMD。`slp_quad` 的 CK/C/Rust 三个 channel 在每个保留七次计时 sample 前
+执行一轮 32 个相同的 unmeasured conditioning batch，七次 timed call 内不得重复该 ramp；
+Linux release-performance 测量必须在整个三 channel
 case 期间固定到继承 allowed affinity set 中的一个 CPU，并在 case 后恢复。timed
 sample/order/statistic/threshold 保持不变。
 Linux runtime sample 使用当前线程 `CLOCK_THREAD_CPUTIME_ID` 差值包围未改变的 native call
