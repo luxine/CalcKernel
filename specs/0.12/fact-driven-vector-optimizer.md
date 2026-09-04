@@ -759,7 +759,7 @@ calls through that cached entry; dynamic symbol lookup and per-call string
 dispatch are outside the timing region.
 
 Immediately before each retained seven-call sample of the fixed four-element
-`slp_quad` microkernel, every channel executes one ramp of 32 identical
+`slp_quad` microkernel, every channel executes one ramp of 64 identical
 unmeasured batches. The ramp is not repeated inside those seven timed calls. This
 short-kernel conditioning is recorded in the pinned manifest and applies to CK,
 C, and Rust equally; it does not change the three warm-up rows, twenty timed

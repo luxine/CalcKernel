@@ -26,11 +26,13 @@ const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 // The AArch64 release workers expose a shared two-band frequency state for this
 // four-element kernel. One identical untimed ramp precedes each retained group
-// of seven timed batches without multiplying the ramp inside that group.
-const SLP_CONDITIONING_BATCHES: usize = 32;
+// of seven timed batches without multiplying the ramp inside that group. The
+// 64-batch duration is the minimum fixed margin that closes the residual band
+// seen after a 32-batch ramp on the pinned Neoverse-N2 release worker.
+const SLP_CONDITIONING_BATCHES: usize = 64;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "1fe9755d6f923ea674462894a6aeb4f4b666d0c16c11acb683a5e9849ae0d606";
+    "c97e6d52e7de437993c89f9cb0e31b2c32017642429331f18300b57438799414";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
