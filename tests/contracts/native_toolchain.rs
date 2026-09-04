@@ -957,7 +957,7 @@ fn multiversion_dispatch_should_never_name_a_void_call() {
 }
 
 #[test]
-fn darwin_profile_runtime_imports_should_cover_x86_64_inode64_fstat() {
+fn darwin_profile_runtime_imports_should_cover_sdk_fstat_spellings() {
     let darwin = read("native/profile_runtime/platform/darwin.c");
     let libsystem = read("native/runtime/platform/libSystem.tbd");
 
@@ -968,6 +968,10 @@ fn darwin_profile_runtime_imports_should_cover_x86_64_inode64_fstat() {
     assert!(
         libsystem.contains("_fstat$INODE64"),
         "the freestanding Darwin import surface must resolve Clang's x86_64 inode64 spelling"
+    );
+    assert!(
+        libsystem.contains("_fgetattrlist"),
+        "the freestanding Darwin import surface must resolve the current SDK fstat lowering"
     );
 }
 

@@ -13,7 +13,7 @@
 实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
 `.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
 `65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
-`3bb6d97ced97aa04c22de8e22238c69a6e107eb7`，不得用移动分支、tag 或本机现有二进制代替。
+`0de952ba5f17ad353ffb00f59b6349c96568b239`，不得用移动分支、tag 或本机现有二进制代替。
 
 目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
 移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
@@ -145,3 +145,17 @@ SLP conditioning 不足以进入持续频率状态。v0.13 已逐差异继承
 `3bb6d97ced97aa04c22de8e22238c69a6e107eb7`，并把 exact v0.12 replay 重钉到该提交。复诊见
 `specs/0.13/review/implementation-blocker-12.md`；schema 7/8 门槛、timed work、样本、统计、
 corpus 与平台矩阵均未降低。
+
+Exact run `33820321093` 的 AArch64 performance job `100861409852` 随后证明继承的
+32-batch SLP conditioning 被放在 upper-median 的七次原始计时内，实际每个保留 sample
+执行了 224 个 conditioning batch，并触发 CK/C/Rust 共同的节流双频带。复诊与闭环见
+`specs/0.13/review/implementation-blocker-13.md`：v0.13 继承 exact v0.12
+`0de952ba5f17ad353ffb00f59b6349c96568b239`，每个保留 sample 只在七次 timed call 前执行
+一轮 32-batch ramp；timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
+
+本地 all-features 复验还证明当前 macOS SDK 会把 profile runtime 源码中的 `fstat` 调用降低为
+稳定的 `_fgetattrlist` 系统符号，而封闭 `libSystem.tbd` 尚未声明该导入，导致四个真实 PGO CLI
+链路在 embedded LLD 阶段失败。复诊与闭环见
+`specs/0.13/review/implementation-blocker-14.md`：仅把 macOS 10.6 起可用的 `_fgetattrlist`
+加入固定导入面，同时保留 `_fstat` 与 `_fstat$INODE64` 兼容拼写；没有开放任意系统库、外部
+linker 或新公共 ABI。
