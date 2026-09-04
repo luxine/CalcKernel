@@ -66,8 +66,9 @@ required job、旧日志、历史数值或 lowered threshold。
 - [ ] Schema 7 与 rotating-twelve-channel-v1 在 x86-64/AArch64 各有完整报告；实际 0.11/0.10
   replay、current/replay Clang、checked/unchecked streams 都存在。
 - [ ] C/Rust SIMD rotating-three-channel-v1：每 kernel >=90%，两架构各自 geometric mean >=95%。
-- [ ] 四元素 `slp_quad` 在 CK/C/Rust 每个保留七次计时 sample 前执行一轮相同的 64-batch
-  unmeasured sustained-state ramp，七次 timed call 内不重复；timed work、sample/order/statistic
+- [ ] 四元素 `slp_quad` 的 CK/C/Rust 各自以 64 个不计时 probe 的 9/10 分位数校准
+  `ceil(anchor * 3/4)` 持续频带下限；每个保留七次计时 sample 前最多 256 个不计时 probe
+  必须命中下限，耗尽则失败，七次 timed call 内无 probe；timed work、sample/order/statistic
   与 stability threshold 未改变。
 - [ ] Domain-fact suite 相对更快 generic C/Rust oracle 在两架构 geometric mean 都 >5%。
 - [ ] Unknown-trip Loop SIMD 的 proposer/checker 均执行 target-specific runtime admission floor：

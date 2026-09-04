@@ -25,14 +25,18 @@ const QUICK_BATCH_ITERATIONS: usize = 200_000;
 const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 // The AArch64 release workers expose a shared two-band frequency state for this
-// four-element kernel. One identical untimed ramp precedes each retained group
-// of seven timed batches without multiplying the ramp inside that group. The
-// 64-batch duration is the minimum fixed margin that closes the residual band
-// seen after a 32-batch ramp on the pinned Neoverse-N2 release worker.
-const SLP_CONDITIONING_BATCHES: usize = 64;
+// four-element kernel. Calibrate an upper-duration anchor independently for
+// each channel, then fail closed unless a bounded untimed probe re-enters that
+// sustained band immediately before every retained group of seven timed calls.
+const SLP_CALIBRATION_PROBES: usize = 64;
+const SLP_CALIBRATION_QUANTILE_NUMERATOR: usize = 9;
+const SLP_CALIBRATION_QUANTILE_DENOMINATOR: usize = 10;
+const SLP_SETTLING_FLOOR_NUMERATOR: u128 = 3;
+const SLP_SETTLING_FLOOR_DENOMINATOR: u128 = 4;
+const SLP_SETTLING_MAX_PROBES: usize = 256;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "e98f1fc28d690050e87d7fdfd6f59593692ee58781c1169dda2ff6d18fde73c9";
+    "e093961c5d130841026b0115e1e9d59fd29e7d058ba5cc52490a79fce80f07a2";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
@@ -862,6 +866,7 @@ struct KernelRunner {
     out_u32: Vec<u32>,
     a_f64: Vec<f64>,
     out_f64: Vec<f64>,
+    slp_sustained_floor_ns: Option<u128>,
 }
 
 impl KernelRunner {
@@ -890,16 +895,52 @@ impl KernelRunner {
             out_u32: vec![0; ORACLE_LENGTH],
             a_f64,
             out_f64: vec![0.0; ORACLE_LENGTH],
+            slp_sustained_floor_ns: None,
         })
     }
 
     fn condition_short_kernel(&mut self, batch_iterations: usize) -> Result<(), String> {
-        if self.name == "slp_quad" {
-            for _ in 0..SLP_CONDITIONING_BATCHES {
-                self.invoke_repeated(batch_iterations)?;
+        if self.name != "slp_quad" {
+            return Ok(());
+        }
+
+        let sustained_floor_ns = match self.slp_sustained_floor_ns {
+            Some(value) => value,
+            None => {
+                let mut probes = [0u128; SLP_CALIBRATION_PROBES];
+                for elapsed in &mut probes {
+                    *elapsed = self.timed_conditioning_probe(batch_iterations)?;
+                }
+                probes.sort_unstable();
+                let rank = (probes.len() * SLP_CALIBRATION_QUANTILE_NUMERATOR)
+                    .div_ceil(SLP_CALIBRATION_QUANTILE_DENOMINATOR)
+                    .saturating_sub(1);
+                let anchor_ns = probes[rank];
+                let floor_ns = anchor_ns
+                    .checked_mul(SLP_SETTLING_FLOOR_NUMERATOR)
+                    .ok_or_else(|| "SLP settling floor overflowed".to_string())?
+                    .div_ceil(SLP_SETTLING_FLOOR_DENOMINATOR)
+                    .max(1);
+                self.slp_sustained_floor_ns = Some(floor_ns);
+                floor_ns
+            }
+        };
+
+        for _ in 0..SLP_SETTLING_MAX_PROBES {
+            let elapsed = self.timed_conditioning_probe(batch_iterations)?;
+            if elapsed >= sustained_floor_ns {
+                return Ok(());
             }
         }
-        Ok(())
+        Err(format!(
+            "slp_quad did not re-enter its calibrated sustained band within {SLP_SETTLING_MAX_PROBES} probes"
+        ))
+    }
+
+    fn timed_conditioning_probe(&mut self, batch_iterations: usize) -> Result<u128, String> {
+        let timer = runtime_timer_start()?;
+        self.invoke_repeated(batch_iterations)?;
+        runtime_timer_elapsed(timer)
     }
 
     fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
