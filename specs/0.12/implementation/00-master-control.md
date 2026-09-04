@@ -150,6 +150,13 @@ conditioning batch，并在托管 runner 上触发 CK/C/Rust 共同的 4.42/8.84
 七次 timed call 之前执行一轮 32-batch ramp；timed work、20 个样本、七次计时、rotation、
 upper median、stability/performance threshold、corpus 与平台矩阵均不变。
 
+Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 进一步证明单轮
+32-batch ramp 已把 candidate/C 的另一频带样本分别压到 1/20 与 2/20，但 Rust 仍为 5/20，
+因此以 15/20 未达到稳定性要求的 16/20，门禁正确失败。复诊与闭环见
+`specs/0.12/review/implementation-blocker-16.md`。单轮固定 ramp 增加到 64 batch，仍只在每个
+保留 sample 的七次 timed call 前执行一次；timed work、20 个样本、七次计时、rotation、
+upper median、stability/performance threshold、corpus 与平台矩阵均不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。

@@ -25,7 +25,7 @@ V011_COMPILER = f"calckernel 0.11.0 ({V011_COMMIT})"
 V011_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
-ORACLE_MANIFEST_SHA256 = "7c791aec55c8bd1212adb435a3dead93cccdbbdf7e7ed99febe64b22615eb71d"
+ORACLE_MANIFEST_SHA256 = "e98f1fc28d690050e87d7fdfd6f59593692ee58781c1169dda2ff6d18fde73c9"
 DEFAULT_BASELINE_MANIFEST = REPO / "benches/baselines/v0_10_compiler.toml"
 RECIPE_FILES = [
     "scripts/prepare-performance-replay.py",
