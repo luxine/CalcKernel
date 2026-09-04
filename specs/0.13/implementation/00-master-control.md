@@ -13,7 +13,7 @@
 实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
 `.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
 `65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
-`0de952ba5f17ad353ffb00f59b6349c96568b239`，不得用移动分支、tag 或本机现有二进制代替。
+`a49fa419669c400447dc13bcfa41ea464b3b040d`，不得用移动分支、tag 或本机现有二进制代替。
 
 目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
 移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
@@ -159,3 +159,9 @@ Exact run `33820321093` 的 AArch64 performance job `100861409852` 随后证明�
 `specs/0.13/review/implementation-blocker-14.md`：仅把 macOS 10.6 起可用的 `_fgetattrlist`
 加入固定导入面，同时保留 `_fstat` 与 `_fstat$INODE64` 兼容拼写；没有开放任意系统库、外部
 linker 或新公共 ABI。
+
+Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 随后证明单轮
+32-batch ramp 仍让 Rust `slp_quad` 只有 15/20 个样本落在稳定带内。复诊与闭环见
+`specs/0.12/review/implementation-blocker-16.md`。v0.13 继承 exact v0.12
+`a49fa419669c400447dc13bcfa41ea464b3b040d`，使用每个保留 sample 前一次 64-batch ramp；
+timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
