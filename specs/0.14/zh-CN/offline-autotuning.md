@@ -4,19 +4,19 @@
 
 状态：CK 0.14.0 提议设计
 
-已接纳基线修订：v0.13 修复候选 2baa45a49c687692dc3cba05a627742cbfdcbe69
+已接纳基线修订：v0.13 修复候选 ee8dc5f25e3df085b359608c57a0fba0f3490213
 
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
 实现最初基于 v0.13 候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`。
 最终验收前，已逐文件审计并以 v0.14 等价修复吸收该候选到最终接纳修订
-`2baa45a49c687692dc3cba05a627742cbfdcbe69` 的累计提交差异。主动替代项记录在
+`ee8dc5f25e3df085b359608c57a0fba0f3490213` 的累计提交差异。主动替代项记录在
 实施期设计复诊 10；任何语义差异都不得通过适配测试来掩盖。
 
 Linux 上继承的 schema-7 runtime sample 使用当前线程 CPU time 计量不变的 native
 kernel-call loop；既有的单允许 CPU affinity scope 与每个保留七次计时 sample 前的一轮
-64-batch conditioning 仍为必需。这会排除
+`bounded-upper-band-v1` 校准仍为必需。这会排除
 托管 runner 未调度 benchmark 线程的时间，但不会排除任何 kernel 工作；非 Linux 宿主继续使用
 schema 7 定义的 monotonic timer。Historical schema-8 report 及其 evidence 必须在 retained
 checker 执行前复制到可上传 replay bundle，使 checker 拒绝仍可诊断。
