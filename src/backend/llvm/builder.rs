@@ -214,6 +214,10 @@ impl<'module> NativeFunction<'module> {
         ffi::function_set_dll_export(self.handle)
     }
 
+    pub(super) fn set_noinline(self) -> Result<(), NativeError> {
+        ffi::function_set_noinline(self.handle)
+    }
+
     pub(super) fn set_memory_effects(
         self,
         effects: ffi::BridgeMemoryEffects,

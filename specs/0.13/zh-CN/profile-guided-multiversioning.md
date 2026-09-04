@@ -303,6 +303,11 @@ update 为 relaxed 并检测 wrap；wrap 设置 overflow bit，序列化值为 s
 atomic primitive 的 target 拒绝 generation，不能生成有 data race 的插桩。counter storage
 私有、不可导出，并与 CK-visible memory 分离。
 
+Compiler-private initialization guard 必须生成为不可内联 helper。Instrumented function entry
+可以调用这个紧凑 helper，但 LLVM 不得把 directory/identity/runtime initialization 的参数准备
+展开到每个被内联的 function 或 loop site。这样既保留一次性初始化语义，也不会把冷初始化
+machinery 复制进热插桩路径。
+
 instrumented executable 的 compiler-owned entry wrapper 在 `main()` 正常返回后、process
 返回 OS 前写一个 shard。automatic workflow 只有在 child 自身 exit zero 时才接受该 shard。
 异常终止可以留下 temp，但不能破坏完整 shard；automatic mode 对异常 child 失败。

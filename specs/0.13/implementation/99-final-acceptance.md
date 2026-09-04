@@ -11,7 +11,7 @@
 - [ ] `main` 未自动合并；未创建/移动 tag，未创建 GitHub Release。
 - [ ] Cargo/lock/CLI/docs 为 0.13.0；LLVM 22.1.8、bridge ABI 4、KIR 3、CKCOBJ03/key+manifest 4、
   Native ABI 1、Runtime ABI 2 与全部 private schema/runtime identity 一致。
-- [ ] exact 0.12 replay 是 `ea822e343967baa2db113d3dd8f429d8dfdfa779`；最终 CI/report/证据
+- [ ] exact 0.12 replay 是 `3bb6d97ced97aa04c22de8e22238c69a6e107eb7`；最终 CI/report/证据
   全部绑定同一 candidate SHA。
 
 ## B. 默认行为、语义与 ABI
@@ -76,11 +76,13 @@
   oracle、profile/target/variant/capability/sample/digest report；累计 schema 7 JSON 及其引用的
   `measurement-*` 目录在 schema 8 evidence root 内自包含且通过 redirect/symlink 审计。
 - [ ] Linux schema 7 每个三通道 case 从 conditioning 到计时固定在 inherited affinity 允许的一颗 CPU，
-  case 结束恢复；runtime sample 使用当前线程 CPU time 排除共享宿主 descheduling；四批 conditioning、
+  case 结束恢复；runtime sample 使用当前线程 CPU time 排除共享宿主 descheduling；32 批 conditioning、
   timed work、样本数、统计量、阈值、语料与平台矩阵均未改变。
 - [ ] ordinary no-PGO相对0.12 replay geo slowdown <=2%、individual <=5%，并保留全部0.12累计门槛。
 - [ ] PGO use相对同policy ordinary geo improvement >=5%，held-out individual slowdown <=3%；generate
   execution <=5x ordinary。
+- [ ] Generation initialization guard 保留 Native `NoInline`；hot instrumented path 不包含重复展开的
+  runtime initialization 参数准备，且未减少 instrumentation site/counter 或 timed work。
 - [ ] dispatch相对portable baseline eligible suite geo improvement >=8%、individual slowdown <=3%；
   相对selected-direct geo >=98%、individual slowdown <=5%，resolver once。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价

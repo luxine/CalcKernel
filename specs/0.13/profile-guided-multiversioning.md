@@ -360,6 +360,13 @@ without the required atomic primitive rejects generation rather than emitting
 racy instrumentation. Counter storage is private, non-exported, and separate
 from CK-visible memory.
 
+The compiler-private initialization guard is emitted as a non-inlinable helper.
+Instrumented function entries may call that compact helper, but LLVM must not
+expand the directory/identity/runtime initialization argument setup into each
+inlined function or loop site. This keeps one-time initialization semantics
+without multiplying cold initialization machinery through hot instrumented
+paths.
+
 An instrumented executable's compiler-owned entry wrapper writes one shard
 after `main()` returns normally and before the process returns to the OS. The
 automatic workflow accepts that shard only when the child itself exits zero.

@@ -125,6 +125,30 @@ fn schema_eight_compile_time_should_measure_terminated_child_cpu_time() {
 }
 
 #[test]
+fn profile_generation_initializer_should_remain_out_of_instrumented_hot_paths() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    let builder = read("src/backend/llvm/builder.rs");
+    let ffi = read("src/backend/llvm/ffi.rs");
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+
+    assert!(
+        lowering.contains("ensure.set_noinline()?;"),
+        "the generated initialization wrapper must not be duplicated into hot functions"
+    );
+    for required in [
+        "fn set_noinline",
+        "function_set_noinline",
+        "ckc_llvm_function_set_noinline",
+        "llvm::Attribute::NoInline",
+    ] {
+        assert!(
+            format!("{builder}\n{ffi}\n{bridge}").contains(required),
+            "missing noinline bridge layer {required}"
+        );
+    }
+}
+
+#[test]
 fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
     let schema = read("benches/summary-schema.md");
     let checker = read("scripts/check-native-performance.py");
@@ -134,7 +158,7 @@ fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
 
     for required in [
         "schemaVersion: 8",
-        "ea822e343967baa2db113d3dd8f429d8dfdfa779",
+        "3bb6d97ced97aa04c22de8e22238c69a6e107eb7",
         "0.13.0",
         "22.1.8",
         "1.90.0",

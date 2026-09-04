@@ -51,7 +51,7 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
     Python/FFI 循环开销进入 `elapsedNs`；运行 Python mutation/oracle tests、Rust performance
     contract tests 与 `measure-v014-performance.py --contract-only`；x86-64-v4 精确要求
     AVX-512 F/BW/CD/DQ/VL，缺少 CD 也必须失败。Linux 上继承的 schema-7 runtime sample
-    使用 current-thread CPU time，同时保留 single-CPU affinity 与四轮 conditioning；非 Linux
+    使用 current-thread CPU time，同时保留 single-CPU affinity 与 32 轮 conditioning；非 Linux
     继续使用既有 monotonic timer。
 12. 删除所有不属于 report 的 compile/profile/cache/lock scratch，并由 checker 反向证明
     evidence root 的真实普通文件集合精确等于全部 evidence `FileIdentity` 的闭包。

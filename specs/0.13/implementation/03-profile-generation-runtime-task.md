@@ -32,7 +32,9 @@ flush，以及 `ckc pgo build` 的一次真实训练流程。异常路径不能�
    恰写一个 shard，并发/repeat 返回相同 sticky status；unload/`DllMain` 不 I/O。
 6. 写 event-count differential RED：early return、break/continue、checked failure、recursion、loop/
    slice/constant 对应 exact raw counters/equations；temporary file 被 merge 忽略但计数。
-7. 实现 collector/platform adapter、generated support data、entry/header/link integration；最后实现
+7. 写 code-shape RED：compiler-private initialization guard 带 Native `NoInline` attribute；LLVM
+   不得把完整 runtime initialization 参数准备复制进被内联 function 或 loop site。
+8. 实现 collector/platform adapter、generated support data、entry/header/link integration；最后实现
    `ckc pgo build` 临时目录生命周期、child execution、merge/use handoff和 rollback。
 
 ## 实现边界

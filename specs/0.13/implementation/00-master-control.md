@@ -13,7 +13,7 @@
 实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
 `.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
 `65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
-`ea822e343967baa2db113d3dd8f429d8dfdfa779`，不得用移动分支、tag 或本机现有二进制代替。
+`3bb6d97ced97aa04c22de8e22238c69a6e107eb7`，不得用移动分支、tag 或本机现有二进制代替。
 
 目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
 移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
@@ -133,3 +133,15 @@ V0.14 run `33808562098` 在 exact V0.13 replay 中再次复现 same-core `slp_qu
 affinity 仍不能排除共享宿主未调度 vCPU 对 wall-clock 的污染。复诊与闭环见
 `specs/0.13/review/implementation-blocker-10.md`：继承的 Linux schema7 runtime sample 改用当前
 线程 CPU time；timed work、样本、统计量、门槛、corpus 与平台矩阵保持不变。
+
+Exact run `33811191360` 的 x86-64 performance job 随后证明 branch-layout generation execution
+超过 ordinary 5x。复诊与闭环见 `specs/0.13/review/implementation-blocker-11.md`：LLVM 把
+compiler-private initialization guard 内联到多个热插桩 site，重复展开完整 initialization 参数
+准备。Guard 现在带 Native `NoInline`；instrumentation site/counter、5x 门槛、timed work、样本、
+统计、corpus 与平台矩阵均不变。
+
+同轮 v0.12 exact CI 还暴露 x86/AArch64 不同的短循环 SIMD 摊销边界，以及 AArch64 四批
+SLP conditioning 不足以进入持续频率状态。v0.13 已逐差异继承
+`3bb6d97ced97aa04c22de8e22238c69a6e107eb7`，并把 exact v0.12 replay 重钉到该提交。复诊见
+`specs/0.13/review/implementation-blocker-12.md`；schema 7/8 门槛、timed work、样本、统计、
+corpus 与平台矩阵均未降低。

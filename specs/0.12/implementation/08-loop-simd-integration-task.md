@@ -17,8 +17,9 @@ alternatives 在同一 immutable pre-state 上选唯一 winner，并完成三后
 
 1. 写 simple Loop SIMD RED：unit-stride map/zip、integer transform、strict element-wise f64、cast/
    compare/select、contiguous load/store/splat；pre-LLVM KIR 必须含期望 vector op。
-2. 写 lane/epilogue RED：zero、short、`2*VF`、exact、remainder、maximum-safe trip；无 over-read/
-   write，tail 原序覆盖每 iteration 恰一次。
+2. 写 lane/epilogue RED：zero、short、target-specific `2*VF*UF`/`4*VF*UF` admission boundary、
+   exact、remainder、maximum-safe trip；x86-64 少于四个、AArch64 少于两个完整 vector chunk 时
+   保持 scalar，无 over-read/write，tail 原序覆盖每 iteration 恰一次。
 3. 写 dependence/version RED：static noalias/alignment 正例；unknown read/write 需要 <=4 个完整
    conjunct；overlap/misalignment/short/address overflow 走原始 scalar blocks。
 4. 写 checked RED：只有已有事实证明所有 lane arithmetic/bounds 不失败时 fast path 合法；

@@ -34,6 +34,7 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "sample_calls = 7",
         "sample_statistic = \"upper-median-of-seven\"",
         "short_kernel_conditioning = true",
+        "short_kernel_conditioning_batches = 32",
         "differential_audit = true",
         "ub_audit = true",
     ] {
@@ -179,13 +180,13 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         );
     }
     assert!(
-        harness.contains("const SLP_CONDITIONING_BATCHES: usize = 4;")
+        harness.contains("const SLP_CONDITIONING_BATCHES: usize = 32;")
             && runner.contains("if self.name == \"slp_quad\"")
             && runner.contains("for _ in 0..SLP_CONDITIONING_BATCHES")
             && runner.contains(
                 "self.invoke_repeated(batch_iterations)?;\n            }\n        }\n        let timer = runtime_timer_start()?;"
             ),
-        "the four-item SLP kernel must condition the same runner through a fixed ramp before each timed sample"
+        "the four-item SLP kernel must condition the same runner through a fixed 32-batch ramp before each timed sample"
     );
     assert!(
         harness.contains("sample_upper_median::<_, SAMPLE_REPETITIONS>")
