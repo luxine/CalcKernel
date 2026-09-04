@@ -37,7 +37,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`6dba7ada778dab868a8e7c507db9c2c0d85c9749`。两者之间的累计提交已按
+`2baa45a49c687692dc3cba05a627742cbfdcbe69`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -173,3 +173,10 @@ conditioning 被错误放入七次原始计时调用，实际每个保留 sample
 `6dba7ada778dab868a8e7c507db9c2c0d85c9749`，同时保留 v0.14 已有、更严格的直接
 `fgetattrlist` runtime 实现。复诊见 `specs/0.14/review/implementation-blocker-20.md`；所有性能
 门槛、timed work、样本、统计、corpus、稳定性规则与 required job topology 均保持不变。
+
+Exact v0.12 run `33823603857` 又证明单轮 32-batch settling margin 仍让 Rust `slp_quad`
+只有 15/20 个样本落在稳定带内。v0.14 已继承固定 64-batch、once-per-retained-sample
+ramp，并把 accepted v0.13 与 replay 重钉到
+`2baa45a49c687692dc3cba05a627742cbfdcbe69`。复诊见
+`specs/0.14/review/implementation-blocker-21.md`；所有 timed work、样本、统计、性能与稳定性
+门槛、corpus 及 required job topology 均保持不变。
