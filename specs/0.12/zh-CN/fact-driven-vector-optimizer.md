@@ -618,8 +618,9 @@ rotating-three-channel-v1：candidate CK、pinned C 与 pinned Rust。每轮有�
 打开一次并解析一次 typed kernel entry；计时 batch 只能调用缓存入口，dynamic symbol lookup 与
 逐调用 string dispatch 必须位于计时区外。
 
-固定四元素 `slp_quad` microkernel 的每个 timed sample 之前，三个 channel 都执行 32 次相同的
-unmeasured batch。该 short-kernel conditioning 写入固定 manifest，并同等应用于 CK、C 与
+固定四元素 `slp_quad` microkernel 的每个保留七次计时 sample 之前，三个 channel 都执行一轮
+32 次相同的 unmeasured batch；这轮 ramp 不在七次 timed call 内重复。该 short-kernel
+conditioning 写入固定 manifest，并同等应用于 CK、C 与
 Rust；它不改变三个 warm-up row、二十个 timed row、每 sample 七次 timed call、batch
 identity、order、statistic 或 threshold。
 在 Linux release-performance host 上，每个三 channel case 的测量线程固定到继承 affinity

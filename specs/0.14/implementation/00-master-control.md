@@ -37,7 +37,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`b6f9fae81f547152181684cf80a2be53443ba994`。两者之间的累计提交已按
+`6dba7ada778dab868a8e7c507db9c2c0d85c9749`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -156,12 +156,20 @@ runner 对短测量的 deschedule/throttling 污染。按
 `specs/0.14/review/implementation-blocker-18.md`，继承的 Linux schema-7 runtime
 sample 改用当前线程 CPU time，同时保留原 affinity 与 32 轮 conditioning；失败的 historical
 schema-8 report/evidence 在 checker 前复制到非隐藏 artifact 目录。V0.13 replay 已重钉到
-`b6f9fae81f547152181684cf80a2be53443ba994`。门槛、样本、统计、timed work、corpus、
+`6dba7ada778dab868a8e7c507db9c2c0d85c9749`。门槛、样本、统计、timed work、corpus、
 tuning policy、语言/ABI 与十作业拓扑均未改变。
 
 后续 exact v0.12/v0.13 CI 证明两个 accepted revisions 仍分别存在跨目标短循环摊销与 PGO
 初始化热路径问题。V0.14 已逐差异继承修复后的 v0.12
-`3bb6d97ced97aa04c22de8e22238c69a6e107eb7` 和 v0.13
-`b6f9fae81f547152181684cf80a2be53443ba994`，并重钉两个 replay manifest。复诊见
+`0de952ba5f17ad353ffb00f59b6349c96568b239` 和 v0.13
+`6dba7ada778dab868a8e7c507db9c2c0d85c9749`，并重钉两个 replay manifest。复诊见
 `specs/0.14/review/implementation-blocker-19.md`；所有性能门槛、timed work、样本、统计、
 corpus、稳定性规则与 required job topology 均保持不变。
+
+Exact v0.13 run `33820321093` 的 AArch64 performance job 随后暴露 schema-7 的 32-batch
+conditioning 被错误放入七次原始计时调用，实际每个保留 sample 执行 224 batch；本地复验还
+暴露旧 v0.13 的 Darwin `fstat` SDK 降低符号未闭合。V0.14 已逐差异继承修复后的 exact v0.12
+`0de952ba5f17ad353ffb00f59b6349c96568b239` 与 v0.13
+`6dba7ada778dab868a8e7c507db9c2c0d85c9749`，同时保留 v0.14 已有、更严格的直接
+`fgetattrlist` runtime 实现。复诊见 `specs/0.14/review/implementation-blocker-20.md`；所有性能
+门槛、timed work、样本、统计、corpus、稳定性规则与 required job topology 均保持不变。

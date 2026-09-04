@@ -25,12 +25,12 @@ const QUICK_BATCH_ITERATIONS: usize = 200_000;
 const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 // The AArch64 release workers expose a shared two-band frequency state for this
-// four-element kernel. A long, identical, untimed ramp places every channel in
-// the sustained state before the unchanged timed batch starts.
+// four-element kernel. One identical untimed ramp precedes each retained group
+// of seven timed batches without multiplying the ramp inside that group.
 const SLP_CONDITIONING_BATCHES: usize = 32;
 const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
 const ORACLE_MANIFEST_SHA256: &str =
-    "868a6c584bb41ea64b535b890356db00a8eaeeeaddb842952fbeece647e4090e";
+    "1fe9755d6f923ea674462894a6aeb4f4b666d0c16c11acb683a5e9849ae0d606";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
@@ -758,6 +758,7 @@ fn measure_case(
         config.warmup,
         config.iterations,
         |channel, warmup| {
+            runners[channel].condition_short_kernel(batch_iterations)?;
             if warmup {
                 runners[channel].measure_once(&expected, batch_iterations)
             } else {
@@ -894,12 +895,16 @@ impl KernelRunner {
         })
     }
 
-    fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
+    fn condition_short_kernel(&mut self, batch_iterations: usize) -> Result<(), String> {
         if self.name == "slp_quad" {
             for _ in 0..SLP_CONDITIONING_BATCHES {
                 self.invoke_repeated(batch_iterations)?;
             }
         }
+        Ok(())
+    }
+
+    fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
         let timer = runtime_timer_start()?;
         self.invoke_repeated(batch_iterations)?;
         let elapsed = runtime_timer_elapsed(timer)?;

@@ -127,6 +127,13 @@ Exact run `33810653132` 的 x86-64 performance job 随后证明 unknown-trip KIR
 conditioning ramp 增加到 32 batch，使每次计时前进入持续状态；timed batch、样本、rotation、
 upper median、stability/performance threshold、corpus 与平台矩阵均不变。
 
+Exact v0.13 run `33820321093` 的 AArch64 performance job `100861409852` 证明上一实现把这
+32-batch ramp 放进 upper-median 的七次原始计时内，实际每个保留 sample 执行 224 个
+conditioning batch，并在托管 runner 上触发 CK/C/Rust 共同的 4.42/8.84 ms 节流双频带。
+复诊与闭环见 `specs/0.12/review/implementation-blocker-15.md`。现在每个保留 sample 只在
+七次 timed call 之前执行一轮 32-batch ramp；timed work、20 个样本、七次计时、rotation、
+upper median、stability/performance threshold、corpus 与平台矩阵均不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。
