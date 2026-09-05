@@ -65,7 +65,7 @@ pub fn anchor_profile_directory(path: &Path) -> Result<CkProfileDirectoryAnchor,
     if !metadata.is_dir() {
         return Err(CkProfileError::InvalidValue("generation.directory.type"));
     }
-    let identity = directory_identity(&metadata)?;
+    let identity = directory_identity(path, &metadata)?;
     Ok(CkProfileDirectoryAnchor {
         path: path.to_path_buf(),
         identity,
@@ -279,6 +279,7 @@ fn validate_components_without_indirection(path: &Path) -> Result<(), CkProfileE
 
 #[cfg(unix)]
 fn directory_identity(
+    _: &Path,
     metadata: &fs::Metadata,
 ) -> Result<CkProfileDirectoryIdentity, CkProfileError> {
     use std::os::unix::fs::MetadataExt;
@@ -290,25 +291,35 @@ fn directory_identity(
 
 #[cfg(windows)]
 fn directory_identity(
-    metadata: &fs::Metadata,
+    path: &Path,
+    _: &fs::Metadata,
 ) -> Result<CkProfileDirectoryIdentity, CkProfileError> {
-    use std::os::windows::fs::MetadataExt;
-    let volume = metadata
-        .volume_serial_number()
-        .ok_or(CkProfileError::InvalidValue(
-            "generation.directory.identity",
-        ))?;
-    let index = metadata.file_index().ok_or(CkProfileError::InvalidValue(
-        "generation.directory.identity",
-    ))?;
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
+    };
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|error| CkProfileError::io(path, error))?;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the opened directory handle and output pointer stay valid for the call.
+    if unsafe { GetFileInformationByHandle(directory.as_raw_handle().cast(), &mut info) } == 0 {
+        return Err(CkProfileError::io(path, std::io::Error::last_os_error()));
+    }
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
     Ok(CkProfileDirectoryIdentity {
-        first: u64::from(volume),
+        first: u64::from(info.dwVolumeSerialNumber),
         second: index,
     })
 }
 
 #[cfg(not(any(unix, windows)))]
-fn directory_identity(_: &fs::Metadata) -> Result<CkProfileDirectoryIdentity, CkProfileError> {
+fn directory_identity(
+    _: &Path,
+    _: &fs::Metadata,
+) -> Result<CkProfileDirectoryIdentity, CkProfileError> {
     Err(CkProfileError::InvalidValue(
         "generation.directory.identity",
     ))
