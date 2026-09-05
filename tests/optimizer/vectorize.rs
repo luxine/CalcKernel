@@ -478,6 +478,63 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
 }
 
 #[test]
+fn loop_simd_should_schedule_independent_unrolled_loads_before_stores() {
+    let (pre, _) = map_state_with_profile(
+        INTERLEAVE_MAP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 2, "x86_64-unknown-linux-gnu"),
+    );
+    let candidate = discover_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 4 && candidate.uf == 2)
+        .expect("x86 VF4/UF2 candidate");
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("vector trial");
+    let vector_body = prepared
+        .trial
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.id == candidate.function)
+        .expect("vectorized function")
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body");
+    let load_positions = vector_body
+        .instructions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, instruction)| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorLoad { .. }
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let store_positions = vector_body
+        .instructions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, instruction)| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorStore { .. }
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(load_positions.len(), 2);
+    assert_eq!(store_positions.len(), 2);
+    assert!(
+        load_positions.iter().max() < store_positions.iter().min(),
+        "independent UF chunks must expose both loads before either store:\n{}",
+        print_kir_module(prepared.trial.module())
+    );
+}
+
+#[test]
 fn loop_simd_runtime_map_should_materialize_vector_body_scalar_fallback_and_epilogue() {
     let (pre, _) = map_state(MAP);
     let discovery = discover_vectorization_candidates(&pre);
