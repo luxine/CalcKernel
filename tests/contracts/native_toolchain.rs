@@ -1480,3 +1480,19 @@ fn x86_integer_reduction_handoff_should_pin_backend_interleave_width() {
         "x86 reduction discovery must not promote allocas in the production module"
     );
 }
+
+#[test]
+fn prevectorized_kir_loops_should_disable_redundant_llvm_unrolling() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "attach_prevectorized_loop_unroll_disable",
+        "llvm.loop.unroll.disable",
+        "contains_fixed_vector_operation",
+        "getLoopLatches",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "prevectorized-loop handoff omitted {required}"
+        );
+    }
+}

@@ -485,6 +485,13 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         .expect("audit vector facts")
         .optimize(&target, NativeOptimizationLevel::O3)
         .expect("optimize vector loop");
+    let optimized_ir = optimized
+        .to_ir_string()
+        .expect("print optimized vector loop");
+    assert!(
+        optimized_ir.contains("llvm.loop.unroll.disable"),
+        "prevectorized KIR loop must retain its selected UF:\n{optimized_ir}"
+    );
     let object = target.emit_object(optimized).expect("emit vector object");
     let root = std::env::temp_dir().join(format!("ckc-vector-object-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
