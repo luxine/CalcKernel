@@ -13,7 +13,7 @@
 实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
 `.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
 `65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
-`c70681e578a14ceea0b2bf0d730661140514793e`，不得用移动分支、tag 或本机现有二进制代替。
+`c70681e70f050a8782373af13f58d7803cae1fbf`，不得用移动分支、tag 或本机现有二进制代替。
 
 目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
 移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
@@ -169,6 +169,6 @@ timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
 Exact v0.12 run `33825887411` 的 AArch64 performance job `100878495028` 进一步证明固定
 64-batch ramp 无法控制约 4.42/8.84 ms 双频带。v0.13 继承 v0.12
 `bounded-upper-band-v1` 并把 exact replay 重钉到
-`c70681e578a14ceea0b2bf0d730661140514793e`；复诊见
+`c70681e70f050a8782373af13f58d7803cae1fbf`；复诊见
 `specs/0.13/review/implementation-blocker-16.md`。timed work、样本、统计、性能与稳定性门槛、
 corpus 与平台矩阵均不变。
