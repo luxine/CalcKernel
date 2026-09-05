@@ -44,6 +44,7 @@ pub fn sample_channels<E>(
     sample_rotating_channels(warmup, iterations, call)
 }
 
+#[cfg(test)]
 pub fn sample_three_channels<E>(
     warmup: usize,
     iterations: usize,
@@ -89,6 +90,7 @@ pub fn sample_three_channels_upper_median<E, const REPETITIONS: usize>(
     Ok(result)
 }
 
+#[cfg(test)]
 pub fn sample_upper_median<E, const SAMPLES: usize>(
     mut call: impl FnMut() -> Result<u128, E>,
 ) -> Result<u128, E> {
