@@ -1,7 +1,7 @@
 schema = 1
 dispatch_runtime_schema = 1
 runtime_files = ["include/ckc_dispatch_runtime.h", "dispatch_runtime.c"]
-runtime_source_sha256 = ["d8a977de1e9fdac8e6160f5e50e6d7b148060091766eee3a4cdb881f9b381045", "019369ab1c96f8f13c40a272a896c351390b9582621ae440c219c326660b60b0"]
+runtime_source_sha256 = ["d8a977de1e9fdac8e6160f5e50e6d7b148060091766eee3a4cdb881f9b381045", "28fb6c45b28b1e68dd8e1b368ba1ebb8fcddfe89adffa48057f9eef6eb81c41c"]
 
 [contract]
 compiler_private = true

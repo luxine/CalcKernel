@@ -6,6 +6,10 @@
 #if defined(_MSC_VER)
 
 #include <intrin.h>
+#pragma intrinsic(_InterlockedCompareExchange)
+#pragma intrinsic(_InterlockedCompareExchange64)
+#pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedIncrement)
 
 typedef struct ckc_profile_atomic_u32 {
   volatile long value;

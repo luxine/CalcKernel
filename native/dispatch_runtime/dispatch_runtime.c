@@ -2,6 +2,8 @@
 
 #if defined(_MSC_VER)
 #include <intrin.h>
+#pragma intrinsic(_InterlockedCompareExchange)
+#pragma intrinsic(_InterlockedExchange)
 #elif !defined(__aarch64__) || !defined(__linux__)
 #include <stdatomic.h>
 #endif

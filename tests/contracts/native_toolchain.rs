@@ -1047,6 +1047,15 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
 
     let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
     for required in [
+        "#pragma intrinsic(_InterlockedCompareExchange)",
+        "#pragma intrinsic(_InterlockedExchange)",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "MSVC ARM64 dispatch atomics must be forced to intrinsics: {required}"
+        );
+    }
+    for required in [
         "__ck_dispatch_detect_capabilities",
         "__ck_dispatch_select_ranked",
         "ck_dispatch_compare_exchange",
@@ -1082,6 +1091,10 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
     assert!(!collector.contains("#include <stdatomic.h>"));
     for required in [
         "_InterlockedCompareExchange64",
+        "#pragma intrinsic(_InterlockedCompareExchange)",
+        "#pragma intrinsic(_InterlockedCompareExchange64)",
+        "#pragma intrinsic(_InterlockedExchange)",
+        "#pragma intrinsic(_InterlockedIncrement)",
         "defined(__aarch64__) && defined(__linux__)",
         "ldxr",
         "stxr",
