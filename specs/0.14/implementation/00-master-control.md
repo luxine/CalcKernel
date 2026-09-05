@@ -37,7 +37,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`922b009d5d0d893932600c67353b2da9b5453092`。两者之间的累计提交已按
+`916be56cecfac527644d1aa39bb66c3c87a3a46f`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -185,6 +185,6 @@ Exact v0.12 run `33833225186` 证明绝对目标频带方案不成立，v0.14 �
 `interleaved-upper-median-three-channel-v2`。Exact v0.12 run `33966418774` 又证明 x86
 `VF4/UF2` noalias kernel 的逐 chunk load/compute/store 顺序隐藏了已证明的并行。v0.14 已继承
 x86 `UF > 1` 的 SSA/MemorySSA 就绪列表调度，并把 accepted v0.13 与 replay 重钉到
-`922b009d5d0d893932600c67353b2da9b5453092`。复诊见
+`916be56cecfac527644d1aa39bb66c3c87a3a46f`。复诊见
 `specs/0.14/review/implementation-blocker-23.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus 及 required job topology 均保持不变。

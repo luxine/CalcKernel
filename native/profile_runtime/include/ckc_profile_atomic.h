@@ -15,6 +15,7 @@
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedCompareExchange64)
 #pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedExchangeAdd64)
 #pragma intrinsic(_InterlockedIncrement)
 
 typedef struct CkProfileAtomicU32 {
@@ -62,6 +63,11 @@ static uint64_t
 ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
   return (uint64_t)InterlockedCompareExchange64(
       (volatile LONG64 *)&atomic->value, 0, 0);
+}
+
+static uint64_t ck_profile_atomic_u64_fetch_add_relaxed(
+    CkProfileAtomicU64 *atomic, uint64_t value) {
+  return (uint64_t)InterlockedExchangeAdd64(&atomic->value, (LONG64)value);
 }
 
 static int ck_profile_atomic_u64_compare_exchange_relaxed(
@@ -149,6 +155,23 @@ ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
   return value;
 }
 
+static uint64_t ck_profile_atomic_u64_fetch_add_relaxed(
+    CkProfileAtomicU64 *atomic, uint64_t value) {
+  uint64_t observed;
+  uint64_t next;
+  uint32_t status;
+  __asm__ volatile(
+      "0:\n"
+      "ldxr %0, [%3]\n"
+      "add %2, %0, %4\n"
+      "stxr %w1, %2, [%3]\n"
+      "cbnz %w1, 0b\n"
+      : "=&r"(observed), "=&r"(status), "=&r"(next)
+      : "r"(&atomic->value), "r"(value)
+      : "memory");
+  return observed;
+}
+
 static int ck_profile_atomic_u64_compare_exchange_relaxed(
     CkProfileAtomicU64 *atomic, uint64_t *expected, uint64_t desired) {
   const uint64_t expected_value = *expected;
@@ -222,6 +245,12 @@ static int ck_profile_atomic_u32_compare_exchange_acq_rel(
 static uint64_t
 ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
   return atomic_load_explicit(&atomic->value, memory_order_relaxed);
+}
+
+static uint64_t ck_profile_atomic_u64_fetch_add_relaxed(
+    CkProfileAtomicU64 *atomic, uint64_t value) {
+  return atomic_fetch_add_explicit(&atomic->value, value,
+                                   memory_order_relaxed);
 }
 
 static int ck_profile_atomic_u64_compare_exchange_relaxed(

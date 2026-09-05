@@ -15,7 +15,7 @@ became stale.
 
 V0.14 imports the same x86 `UF > 1` SSA/MemorySSA list scheduler and structural
 regression test. Its accepted-base and independently built V0.13 replay are
-repinned to `922b009d5d0d893932600c67353b2da9b5453092`, including the recomputed
+repinned to `916be56cecfac527644d1aa39bb66c3c87a3a46f`, including the recomputed
 replay-manifest digest.
 
 No V0.14 tuning policy or artifact format changes. No language/ABI rule,

@@ -217,7 +217,7 @@ ordinary optimization。
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
 下使用 schema 9 比较 0.14 ordinary/PGO/multiversion/tuned channel、固定 Clang/Rust PGO、
 hand-written SIMD oracle，并 replay exact 0.12 commit
-`c70681e70f050a8782373af13f58d7803cae1fbf`。Correctness、optimization time、generation
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`。Correctness、optimization time、generation
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO、受限 multiversioning
 与 offline Auto-Tuning 在 0.14 交付；indirect calls、scalable KIR 与 adaptive JIT PGO
 仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。

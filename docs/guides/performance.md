@@ -12,7 +12,7 @@ held-out corpora, profile shards/final profile, target sets, variant objects,
 artifact bytes, sample order, and every raw sample.
 
 The exact ordinary-regression replay is CalcKernel 0.12 commit
-`c70681e70f050a8782373af13f58d7803cae1fbf`. Clang and Rust PGO oracles receive
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`. Clang and Rust PGO oracles receive
 the same training/evaluation split and source-level preconditions as CK, disable
 fast math/contraction, and pass differential plus undefined-behavior audits.
 Training data is never timed as held-out evidence. Correctness also includes a
