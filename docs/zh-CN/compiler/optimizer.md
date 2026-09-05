@@ -191,7 +191,7 @@ Possible checked failure 和 runtime print 是 ordered effect，不能无证明�
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
 下使用 schema 8 比较 0.13 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
 hand-written SIMD oracle，并 replay exact 0.12 commit
-`c70681e70f050a8782373af13f58d7803cae1fbf`。Correctness、optimization time、generation
+`ef253bd55a1b7fd5ceddfeb21f22df5963215af8`。Correctness、optimization time、generation
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
 在 0.13 交付；Auto-Tuning remains 0.14，indirect calls、scalable KIR 与 adaptive JIT PGO
 仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。
