@@ -37,7 +37,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`f82baf42b762e9b19542bcb0af593c1de9252891`。两者之间的累计提交已按
+`c9997786a50e214ead6cc3e8328545ae69999bee`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -184,6 +184,6 @@ ramp，并把 accepted v0.13 与 replay 重钉到
 Exact v0.12 run `33825887411` 随后证明任何固定 ramp 长度都不能可靠选择托管 AArch64
 `slp_quad` 的约 4.42/8.84 ms 频带。v0.14 已继承失败关闭的
 `bounded-upper-band-v1`，并把 accepted v0.13 与 replay 重钉到
-`f82baf42b762e9b19542bcb0af593c1de9252891`。复诊见
+`c9997786a50e214ead6cc3e8328545ae69999bee`。复诊见
 `specs/0.14/review/implementation-blocker-22.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus 及 required job topology 均保持不变。
