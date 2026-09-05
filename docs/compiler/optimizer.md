@@ -262,7 +262,7 @@ Performance gates compare identical algorithms, safety modes, data, hardware,
 CPU policy, training/evaluation split, and strict semantics. Schema 8 compares
 0.13 ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
 hand-written SIMD oracles, and replays exact 0.12 commit
-`ef253bd55a1b7fd5ceddfeb21f22df5963215af8`. Correctness, optimization time,
+`493d3497d3ec89d5cc168d0e92520339e3bf015a`. Correctness, optimization time,
 generation overhead, artifact size, compiler archive size, and cache behavior
 have separate gates. PGO and bounded multiversioning ship in 0.13. Auto-Tuning
 remains 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.

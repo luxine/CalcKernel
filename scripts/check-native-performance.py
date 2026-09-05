@@ -61,9 +61,9 @@ CHANNEL_NAMES = [
 ]
 SAMPLE_COUNT = 20
 
-V012_COMMIT = "ef253bd55a1b7fd5ceddfeb21f22df5963215af8"
+V012_COMMIT = "493d3497d3ec89d5cc168d0e92520339e3bf015a"
 V012_COMPILER = f"calckernel 0.12.0 ({V012_COMMIT})"
-V012_MANIFEST_SHA256 = "0218bf0768655cc05283f5e42bcd259e1f628bcda4bd1d35c4f9f54c44d31c98"
+V012_MANIFEST_SHA256 = "1d1b8a549b2c9bbb0ec811c8453e869093007cd6580ca83dff53cff68b7d8c09"
 PGO_CASES = {
     "branch-layout": (True, False),
     "call-constant-length": (True, True),
