@@ -37,7 +37,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`6b22489930d945dc5bde834cb164362db3033e0d`。两者之间的累计提交已按
+`922b009d5d0d893932600c67353b2da9b5453092`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -181,9 +181,10 @@ ramp，并把 accepted v0.13 与 replay 重钉到
 `specs/0.14/review/implementation-blocker-21.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus 及 required job topology 均保持不变。
 
-Exact v0.12 run `33825887411` 随后证明任何固定 ramp 长度都不能可靠选择托管 AArch64
-`slp_quad` 的约 4.42/8.84 ms 频带。v0.14 已继承失败关闭的
-`bounded-upper-band-v1`，并把 accepted v0.13 与 replay 重钉到
-`6b22489930d945dc5bde834cb164362db3033e0d`。复诊见
-`specs/0.14/review/implementation-blocker-22.md`；所有 timed work、样本、统计、性能与稳定性
+Exact v0.12 run `33833225186` 证明绝对目标频带方案不成立，v0.14 因而继承
+`interleaved-upper-median-three-channel-v2`。Exact v0.12 run `33966418774` 又证明 x86
+`VF4/UF2` noalias kernel 的逐 chunk load/compute/store 顺序隐藏了已证明的并行。v0.14 已继承
+x86 `UF > 1` 的 SSA/MemorySSA 就绪列表调度，并把 accepted v0.13 与 replay 重钉到
+`922b009d5d0d893932600c67353b2da9b5453092`。复诊见
+`specs/0.14/review/implementation-blocker-23.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus 及 required job topology 均保持不变。
