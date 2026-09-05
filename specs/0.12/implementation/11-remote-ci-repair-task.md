@@ -314,3 +314,28 @@ For each branch, prove remote HEAD equals the pushed local HEAD and latest CI
 The heartbeat `calckernel-v0-12-v0-14-ci` rediscovers branch heads every 30
 minutes. Do not block locally on long jobs; it must repair any later failure
 and notify only on meaningful state changes.
+
+### Task 9: Repair x86 cross-UF scheduling exposed by exact CI
+
+**Files:**
+- Add: `specs/0.12/review/implementation-blocker-19.md`
+- Modify: `src/optimizer/kir_passes/vectorize.rs`
+- Modify: `tests/optimizer/vectorize.rs`
+
+- [ ] **Step 1: Prove RED on the exact selected shape**
+
+Construct the x86 `VF4/UF2` noalias map trial and require both vector loads to
+precede either vector store. The old per-chunk materializer order must fail.
+
+- [ ] **Step 2: Schedule only dependency-ready instructions**
+
+For x86-64 `UF > 1`, use local SSA and MemorySSA readiness with stable
+load/setup/vector/store priority. Preserve same-partition memory dependencies
+and renumber effects monotonically. Do not change candidate choice or cost.
+
+- [ ] **Step 3: Verify and publish the replacement chain**
+
+Run focused optimizer and Native LLVM tests, then every required local gate.
+Push V0.12, import and repin it into V0.13, import and repin V0.13 into V0.14,
+and dispatch exact-SHA CI for all three branches. The unchanged x86 domain
+performance gate is authoritative for the performance repair.

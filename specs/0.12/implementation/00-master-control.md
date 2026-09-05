@@ -175,6 +175,14 @@ unroll。复诊与已批准修订见 `specs/0.12/review/implementation-blocker-1
 vector operation，即 `ceil(4 / UF) * VF * UF`；AArch64 两个完整 group 的规则不变。所有 timed
 work、样本数、七次计时、upper median、性能阈值、corpus 与平台矩阵均保持不变。
 
+Exact v0.12 run `33966418774` 的 x86-64 performance job `101307347417` 随后证明，通过准入的
+`VF4/UF2` noalias kernel 仍按每个 UF chunk 分别发射 load/compute/store，隐藏了契约已经证明的
+跨 chunk 内存级并行，导致 unchecked domain-fact 几何均值仅约 1.0057，未达到不变的 1.05
+门槛。复诊与闭环见 `specs/0.12/review/implementation-blocker-19.md`。x86-64 的 `UF > 1`
+vector body 现在按 SSA/MemorySSA 就绪关系执行确定性局部列表调度，优先暴露独立 load 并保持
+同分区依赖、reduction/recurrence 与有序 effect；非 x86、`UF == 1`、门槛、timed work、样本、
+统计、corpus 与平台矩阵均保持不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。
