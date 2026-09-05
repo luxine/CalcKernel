@@ -326,7 +326,7 @@ fn schema_seven_harness_should_measure_vector_domain_size_and_compile_time_corpo
     for required in [
         "\\\"schemaVersion\\\": 7",
         "rotating-twelve-channel-v1",
-        "rotating-three-channel-v1",
+        "interleaved-upper-median-three-channel-v2",
         "targetProfile",
         "runtimeReplayV011",
         "runtimeReplayV010",

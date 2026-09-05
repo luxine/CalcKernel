@@ -1808,12 +1808,14 @@ fn independently_price_vector_plan(
             "profitability-threshold-not-met",
         ));
     }
-    let minimum_chunks = match profile.target_identity() {
-        KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-") => 4_u32,
+    let minimum_groups = match profile.target_identity() {
+        KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-") => {
+            4_u32.div_ceil(u32::from(plan.uf))
+        }
         _ => 2_u32,
     };
-    let minimum_trip = (minimum_chunks..=1024)
-        .map(|chunks| chunks.saturating_mul(chunk_width))
+    let minimum_trip = (minimum_groups..=1024)
+        .map(|groups| groups.saturating_mul(chunk_width))
         .find(|trip| {
             (0..chunk_width).all(|tail| {
                 let iterations = trip.saturating_add(tail);

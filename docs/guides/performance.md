@@ -11,7 +11,7 @@ held-out corpora, profile shards/final profile, target sets, variant objects,
 artifact bytes, sample order, and every raw sample.
 
 The exact ordinary-regression replay is CalcKernel 0.12 commit
-`1009bae18d1a1ebd37ee9ee095cab9a965e69df8`. Clang and Rust PGO oracles receive
+`c70681e578a14ceea0b2bf0d730661140514793e`. Clang and Rust PGO oracles receive
 the same training/evaluation split and source-level preconditions as CK, disable
 fast math/contraction, and pass differential plus undefined-behavior audits.
 Training data is never timed as held-out evidence. Correctness also includes a
@@ -27,6 +27,12 @@ order/sample, use the upper median, and apply the closed stability rule. A
 stability failure invalidates the evidence; it does not authorize arbitrary
 reruns or deletion of a case. Missing/unknown/extra/mismatched report fields,
 digests, streams, tiers, or capabilities fail the checker.
+
+The cumulative 0.12 vector/domain replay uses
+`interleaved-upper-median-three-channel-v2`. Every retained row interleaves seven
+rotations of candidate/C/Rust and stores each channel's upper median. For
+`slp_quad` only, the unchanged 16-of-20 stability band is evaluated after
+per-row common-mode normalization; throughput still uses raw retained durations.
 
 ## Cumulative release gates
 

@@ -87,6 +87,26 @@ fn oracle_sample_repetitions_should_stop_at_the_first_measurement_error() {
 }
 
 #[test]
+fn oracle_upper_median_rows_should_interleave_every_raw_channel_call() {
+    let mut calls = Vec::new();
+    let samples =
+        replay_api::sample_three_channels_upper_median::<(), 7>(0, 1, |channel, warmup| {
+            assert!(!warmup);
+            calls.push(channel);
+            Ok((calls.len() * 10 + channel) as u128)
+        })
+        .unwrap();
+
+    assert_eq!(
+        calls,
+        vec![
+            0, 1, 2, 1, 2, 0, 2, 0, 1, 0, 1, 2, 1, 2, 0, 2, 0, 1, 0, 1, 2,
+        ]
+    );
+    assert_eq!(samples.channels, [vec![100], vec![111], vec![122]]);
+}
+
+#[test]
 fn replay_preparation_should_validate_pinned_sources_and_actual_compiler_output() {
     let output = std::process::Command::new("python3")
         .arg(super::support::oracle::repo_root().join("tests/performance/runtime_replay_test.py"))
