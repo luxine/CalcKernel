@@ -13,7 +13,7 @@
 实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
 `.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
 `65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
-`493d3497d3ec89d5cc168d0e92520339e3bf015a`，不得用移动分支、tag 或本机现有二进制代替。
+`4a1996dcefbc76b45ff8a4552f65c5127cd55d01`，不得用移动分支、tag 或本机现有二进制代替。
 
 目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
 移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
@@ -166,9 +166,11 @@ Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 随后�
 `a49fa419669c400447dc13bcfa41ea464b3b040d`，使用每个保留 sample 前一次 64-batch ramp；
 timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
 
-Exact v0.12 run `33825887411` 的 AArch64 performance job `100878495028` 进一步证明固定
-64-batch ramp 无法控制约 4.42/8.84 ms 双频带。v0.13 继承 v0.12
-`bounded-upper-band-v1` 并把 exact replay 重钉到
-`493d3497d3ec89d5cc168d0e92520339e3bf015a`；复诊见
-`specs/0.13/review/implementation-blocker-16.md`。timed work、样本、统计、性能与稳定性门槛、
+Exact v0.12 run `33833225186` 证明 `bounded-upper-band-v1` 的目标频带假设不成立，因此
+v0.13 继承 `interleaved-upper-median-three-channel-v2`，不再按绝对频带筛选三通道样本。
+Exact v0.12 run `33966418774` 又证明 x86 `VF4/UF2` noalias kernel 的逐 chunk
+load/compute/store 顺序隐藏了已证明的跨 chunk 并行。v0.13 继承 x86 `UF > 1` 的
+SSA/MemorySSA 就绪列表调度，并把 exact v0.12 replay 重钉到
+`4a1996dcefbc76b45ff8a4552f65c5127cd55d01`；复诊见
+`specs/0.13/review/implementation-blocker-17.md`。timed work、样本、统计、性能与稳定性门槛、
 corpus 与平台矩阵均不变。
