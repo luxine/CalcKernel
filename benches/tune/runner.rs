@@ -712,7 +712,7 @@ impl Drop for DynamicLibrary {
         }
         #[cfg(windows)]
         unsafe {
-            windows_sys::Win32::System::LibraryLoader::FreeLibrary(self.0.cast());
+            windows_sys::Win32::Foundation::FreeLibrary(self.0.cast());
         }
     }
 }
