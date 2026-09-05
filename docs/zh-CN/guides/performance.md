@@ -10,7 +10,7 @@ hardware/capability manifest、compiler/oracle/source/recipe digest、training/h
 profile shard/final profile、target set、variant object、artifact bytes、sample order 与全部 raw sample。
 
 Ordinary regression 的精确 replay 是 CalcKernel 0.12 commit
-`1009bae18d1a1ebd37ee9ee095cab9a965e69df8`。Clang/Rust PGO oracle 使用与 CK 相同的
+`c70681e578a14ceea0b2bf0d730661140514793e`。Clang/Rust PGO oracle 使用与 CK 相同的
 training/evaluation split 和 source-level precondition，禁用 fast math/contraction，并通过
 differential 与 undefined-behavior audit。Training data 不作为 held-out timing evidence；
 correctness 另含 adversarial corpus。
@@ -22,6 +22,11 @@ symbol lookup 与 dispatch resolution 在 steady-state timing 前完成，report
 一次。Channel 使用固定 rotating warm-up/sample schedule，保留实际 order/sample，采用 upper
 median，并执行闭合 stability rule。Stability failure 使 evidence 无效，不允许任意重跑或删 case。
 缺少、unknown、extra 或不匹配的 report field、digest、stream、tier、capability 都使 checker 失败。
+
+累积的 0.12 vector/domain replay 使用
+`interleaved-upper-median-three-channel-v2`。每个保留行交错执行七轮 candidate/C/Rust，再保留
+各 channel 的 upper median。仅 `slp_quad` 在逐行 common-mode 归一化后执行未改变的 16/20
+稳定性门槛；throughput 仍只使用原始保留耗时。
 
 ## 累积 release gate
 

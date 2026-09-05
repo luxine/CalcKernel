@@ -52,6 +52,43 @@ pub fn sample_three_channels<E>(
     sample_rotating_channels(warmup, iterations, call)
 }
 
+pub fn sample_three_channels_upper_median<E, const REPETITIONS: usize>(
+    warmup: usize,
+    iterations: usize,
+    mut call: impl FnMut(usize, bool) -> Result<u128, E>,
+) -> Result<RuntimeSamples<3>, E> {
+    assert!(
+        REPETITIONS > 0,
+        "an upper median requires at least one sample"
+    );
+    let mut result = RuntimeSamples {
+        warmup_order: Vec::with_capacity(warmup),
+        sample_order: Vec::with_capacity(iterations),
+        channels: std::array::from_fn(|_| Vec::with_capacity(iterations)),
+    };
+    for round in 0..warmup {
+        let order = rotating_round(round);
+        for channel in order {
+            call(channel, true)?;
+        }
+        result.warmup_order.push(order);
+    }
+    for round in 0..iterations {
+        let mut raw: [Vec<u128>; 3] = std::array::from_fn(|_| Vec::with_capacity(REPETITIONS));
+        for repetition in 0..REPETITIONS {
+            for channel in rotating_round::<3>(round.wrapping_add(repetition)) {
+                raw[channel].push(call(channel, false)?);
+            }
+        }
+        for (channel, samples) in raw.iter_mut().enumerate() {
+            samples.sort_unstable();
+            result.channels[channel].push(samples[REPETITIONS / 2]);
+        }
+        result.sample_order.push(rotating_round(round));
+    }
+    Ok(result)
+}
+
 pub fn sample_upper_median<E, const SAMPLES: usize>(
     mut call: impl FnMut() -> Result<u128, E>,
 ) -> Result<u128, E> {

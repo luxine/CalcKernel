@@ -542,7 +542,8 @@ wall clock, unordered iteration, machine load, or profile feedback.
 For a loop candidate it compares scalar iteration cost with vector body,
 predicate, and epilogue cost over an exact or conservative trip estimate. An
 unknown trip count adds a runtime threshold equal to at least the computed
-break-even and a target-specific concrete-codegen floor: `4 * VF * UF` on x86-64
+break-even and a target-specific concrete-codegen floor:
+`ceil(4 / UF) * VF * UF` on x86-64
 and `2 * VF * UF` on AArch64. The x86 floor accounts for explicit loop control
 which is not amortized by two chunks; AArch64 retains its measured-profitable
 two-chunk paired-vector path. A vector loop must predict at least 20 percent execution
@@ -746,32 +747,33 @@ an input may be excluded only by that pinned manifest, never after measurement.
 A missing or invalid C or Rust artifact fails the gate rather than removing that
 competitor.
 
-Vector and domain-fact runtime gates use 'rotating-three-channel-v1' separately
-for checked and unchecked CK: candidate CK, pinned C, and pinned Rust. Each run
-uses three warm-up rows and twenty sample rows; row r rotates the three channels
-by 'r % 3'. All channels run in one process on identical inputs with the same
-seven calls per sample, fixed batch identity, and upper-median statistic. Every
-actual order and sample is recorded. The generic domain-fact gate substitutes
+Vector and domain-fact runtime gates use
+`interleaved-upper-median-three-channel-v2` separately for checked and unchecked
+CK: candidate CK, pinned C, and pinned Rust. Each run uses three warm-up rows and
+twenty retained rows. For retained row `r` and raw repetition `k` in `0..7`, all
+three channels run once in the rotation starting at `(r + k) mod 3`; each
+channel's retained duration is the upper median of its seven timed full batches.
+All channels run in one process on identical inputs with a fixed batch identity.
+Every actual retained order and sample is recorded. The generic domain-fact gate substitutes
 the pinned generic Clang and Rust artifacts for the hand-SIMD artifacts. Each
 dynamic library is opened and its typed kernel entry is resolved exactly once
 before correctness, warm-up, or sampled batches. The timed batch performs only
 calls through that cached entry; dynamic symbol lookup and per-call string
 dispatch are outside the timing region.
 
-For the fixed four-element `slp_quad` microkernel, each channel independently
-calibrates `bounded-upper-band-v1` once from 64 unmeasured full-batch probes. The
-nearest-rank 9/10 duration quantile is its anchor and ceiling(anchor * 3/4) is
-the sustained-band floor. Immediately before each retained seven-call sample,
-the same channel executes at most 256 unmeasured full-batch probes and must hit
-that floor; exhaustion fails the measurement instead of retaining a mixed-band
-sample. No probe is inside the seven timed calls. This short-kernel conditioning
-is recorded in the pinned manifest and applies to CK, C, and Rust equally; it
-does not change the three warm-up rows, twenty timed rows, seven timed calls,
-batch identity, order, statistic, or threshold.
+For the fixed four-element `slp_quad` microkernel, stability is checked after
+removing only the per-row common multiplicative frequency factor. For row `r`,
+the scale is the geometric mean of the three retained raw channel durations and
+each normalized value is its raw duration divided by that scale. Each channel
+must still place at least 16 of 20 normalized values within 75%..125% of its
+normalized median. Raw positivity, sample count, stored upper median, rotation,
+equivalence, and every performance threshold remain fail-closed. Performance
+ratios use only the retained raw upper-median durations; normalization is never
+used to improve a throughput result. Other cases retain absolute stability.
 On Linux release-performance hosts, each three-channel case is measured while
 the benchmark thread is pinned to one CPU selected from its inherited allowed
 affinity set. The original affinity set is restored after the case. This keeps
-all channels and their conditioning on the same core without changing timed
+all channels on the same core without changing timed
 work or granting any channel a different execution environment.
 
 The release gates are cumulative:

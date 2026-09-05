@@ -636,9 +636,16 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
     let x86_discovery = discover_vectorization_candidates(&x86_pre);
     assert!(
         x86_discovery.candidates.iter().all(|candidate| {
-            candidate.minimum_trip >= u32::from(candidate.vf) * u32::from(candidate.uf) * 4
+            let uf = u32::from(candidate.uf);
+            candidate.minimum_trip >= 4_u32.div_ceil(uf) * u32::from(candidate.vf) * uf
         }),
-        "x86 runtime-trip Loop SIMD must amortize custom-loop control over four chunks: {x86_discovery:#?}"
+        "x86 runtime-trip Loop SIMD must amortize control over four actual vector operations: {x86_discovery:#?}"
+    );
+    assert!(
+        x86_discovery.candidates.iter().any(|candidate| {
+            candidate.vf == 4 && candidate.uf == 4 && candidate.minimum_trip == 16
+        }),
+        "x86 VF4/UF4 must admit the exact 16-element noalias loop: {x86_discovery:#?}"
     );
 
     let candidate = discovery

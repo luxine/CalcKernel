@@ -1162,15 +1162,16 @@ fn candidate_cost_and_threshold(
         return Err("vector-profitability-threshold-not-met".to_string());
     }
     let minimum_trip = if require_static_profitability {
-        // x86 lowering needs four chunks to amortize the explicit KIR loop's
-        // entry, backedge, and scalar-epilogue control. AArch64's paired vector
-        // memory lowering clears that bar at the original two-chunk floor.
-        let minimum_chunks = match profile.target_identity() {
-            KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-") => 4_u32,
+        // x86 needs four actual vector operations to amortize loop control. One
+        // group already contains UF operations; AArch64 retains two groups.
+        let minimum_groups = match profile.target_identity() {
+            KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-") => {
+                4_u32.div_ceil(u32::from(uf))
+            }
             _ => 2_u32,
         };
-        (minimum_chunks..=1024)
-            .map(|chunks| chunks.saturating_mul(chunk_width))
+        (minimum_groups..=1024)
+            .map(|groups| groups.saturating_mul(chunk_width))
             .find(|trip| {
                 (0..chunk_width).all(|tail| {
                     let iterations = trip.saturating_add(tail);

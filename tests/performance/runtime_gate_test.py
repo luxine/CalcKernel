@@ -61,6 +61,17 @@ def stream(record, prefix, value=100, count=20):
     record[prefix + "SamplesNs"] = [value] * count
 
 
+def sampled_stream(record, prefix, values):
+    record[prefix + "MedianNs"] = sorted(values)[len(values) // 2]
+    record[prefix + "SamplesNs"] = values
+
+
+class RepositoryOracleIdentityTests(unittest.TestCase):
+    def test_checker_manifest_digest_matches_the_frozen_repository_manifest(self):
+        manifest = REPO / "benches/oracles/manifest.toml"
+        self.assertEqual(gate.ORACLE_MANIFEST_SHA256, digest(manifest.read_bytes()))
+
+
 class GateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ckc-schema7-")
@@ -296,6 +307,25 @@ class GateTests(unittest.TestCase):
         self.reject(lambda r: stream(r["compileTimeComparisons"][0], "candidate", 201, 15), "2x")
         self.reject(lambda r: [stream(row, "candidate", 151, 15)
                               for row in r["compileTimeComparisons"]], "1.5")
+
+    def test_slp_common_mode_frequency_shift_is_accepted(self):
+        report = copy.deepcopy(self.report)
+        shifts = [100, 200] * 10
+        for suite in report["vectorSuites"]:
+            case = next(case for case in suite["cases"] if case["name"] == "slp_quad")
+            for prefix in ["candidate", "cSimd", "rustSimd"]:
+                sampled_stream(case, prefix, shifts.copy())
+        self.check(report)
+
+    def test_slp_channel_specific_shift_is_rejected(self):
+        def mutate(report):
+            case = next(
+                case for case in report["vectorSuites"][0]["cases"]
+                if case["name"] == "slp_quad"
+            )
+            sampled_stream(case, "rustSimd", [100, 200] * 10)
+
+        self.reject(mutate, "common-mode")
 
     def test_unknown_duplicate_missing_or_redirected_evidence_is_rejected(self):
         report = copy.deepcopy(self.report)

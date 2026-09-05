@@ -439,7 +439,7 @@ cost 组合。它不使用 wall clock、unordered iteration、machine load 或 p
 
 Loop candidate 使用精确或保守 trip estimate 比较 scalar iteration cost 与 vector body、
 predicate、epilogue cost。未知 trip count 增加 runtime threshold，至少为 computed break-even
-与 target-specific concrete-codegen floor：x86-64 为 `4 * VF * UF`，AArch64 为
+与 target-specific concrete-codegen floor：x86-64 为 `ceil(4 / UF) * VF * UF`，AArch64 为
 `2 * VF * UF`。x86 的显式 loop control 在两个 chunk 时尚未摊销；AArch64 保留已经实测盈利的
 双 chunk paired-vector path。Vector loop 必须预测至少 20%
 execution cost reduction。SLP pack 或
@@ -610,23 +610,23 @@ Hand-written SIMD C 使用 pinned Clang 22.1.8 构建，hand-written SIMD Rust �
 C/Rust artifact 会使 gate 失败，不能通过移除该 competitor 处理。
 
 Vector 与 domain-fact runtime gate 对 checked 和 unchecked CK 分别使用
-rotating-three-channel-v1：candidate CK、pinned C 与 pinned Rust。每轮有三个 warm-up row 和
-二十个 sample row；第 r 行按 r % 3 轮换三个 channel。所有 channel 在同一进程、相同输入上
-运行，使用相同的每 sample 七次调用、固定 batch identity 与 upper-median statistic，并记录
-每个实际 order 与 sample。Generic domain-fact gate 使用 pinned generic Clang/Rust artifact
+`interleaved-upper-median-three-channel-v2`：candidate CK、pinned C 与 pinned Rust。每轮有三个
+warm-up row 和二十个保留 sample row。保留行 `r` 的每个 raw repetition `k in 0..7` 都从
+`(r + k) mod 3` 开始轮转并各执行一次三个 channel；每个 channel 保留七次完整计时 batch 的
+上中位数。所有 channel 在同一进程、相同输入上运行，使用固定 batch identity，并记录每个
+实际保留 order 与 sample。Generic domain-fact gate 使用 pinned generic Clang/Rust artifact
 替换 hand-SIMD artifact。每个 dynamic library 只在 correctness、warm-up 与 sampled batch 之前
 打开一次并解析一次 typed kernel entry；计时 batch 只能调用缓存入口，dynamic symbol lookup 与
 逐调用 string dispatch 必须位于计时区外。
 
-固定四元素 `slp_quad` microkernel 的每个 channel 独立执行一次
-`bounded-upper-band-v1` 校准：采集 64 个不计时的完整 batch probe，以 nearest-rank 9/10
-耗时分位数为 anchor，并以 `ceil(anchor * 3/4)` 为持续频带下限。每个保留七次计时 sample
-之前，同一 channel 最多执行 256 个不计时的完整 batch probe，必须命中该下限；耗尽上限会
-使测量失败，不能保留混频带 sample。probe 不得进入七次 timed call。该 short-kernel
-conditioning 写入固定 manifest，并同等应用于 CK、C 与 Rust；它不改变三个 warm-up row、
-二十个 timed row、每 sample 七次 timed call、batch identity、order、statistic 或 threshold。
+固定四元素 `slp_quad` microkernel 的稳定性检查只消除每个保留行中三通道共同的乘性频率
+因子：该行 scale 是三个原始通道耗时的 geometric mean，每个归一化值是原始耗时除以该
+scale。每个 channel 仍必须有至少 16/20 个归一化值位于其归一化 median 的 75%..125%。原始
+值正数性、样本数、存储的 upper median、rotation、等价性及全部性能阈值保持 fail-closed；
+性能比只使用保留的原始 upper-median 耗时，归一化绝不用于改善 throughput。其他 case 继续
+执行绝对稳定性检查。
 在 Linux release-performance host 上，每个三 channel case 的测量线程固定到继承 affinity
-set 中的一个允许 CPU，case 结束后恢复原 affinity set。由此三个 channel 及其 conditioning
+set 中的一个允许 CPU，case 结束后恢复原 affinity set。由此三个 channel
 始终位于同一 core，而 timed work 不变，也不会给任一 channel 不同的执行环境。
 
 Release gate 为累积门槛：

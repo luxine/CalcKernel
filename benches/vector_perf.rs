@@ -24,19 +24,9 @@ const ORACLE_BATCH_ITERATIONS: usize = 20_000_000;
 const QUICK_BATCH_ITERATIONS: usize = 200_000;
 const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
-// The AArch64 release workers expose a shared two-band frequency state for this
-// four-element kernel. Calibrate an upper-duration anchor independently for
-// each channel, then fail closed unless a bounded untimed probe re-enters that
-// sustained band immediately before every retained group of seven timed calls.
-const SLP_CALIBRATION_PROBES: usize = 64;
-const SLP_CALIBRATION_QUANTILE_NUMERATOR: usize = 9;
-const SLP_CALIBRATION_QUANTILE_DENOMINATOR: usize = 10;
-const SLP_SETTLING_FLOOR_NUMERATOR: u128 = 3;
-const SLP_SETTLING_FLOOR_DENOMINATOR: u128 = 4;
-const SLP_SETTLING_MAX_PROBES: usize = 256;
-const ORACLE_SAMPLING_PROTOCOL: &str = "rotating-three-channel-v1";
+const ORACLE_SAMPLING_PROTOCOL: &str = "interleaved-upper-median-three-channel-v2";
 const ORACLE_MANIFEST_SHA256: &str =
-    "85b69bb51c4f8168ef9a5c6641a326249c16352ea044a0e5efa6c7687e48383e";
+    "3697e27608f6d10cc8ba586a001e943b2f54d2cb07d5c8091f7c9be93d3921e2";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
@@ -384,7 +374,9 @@ fn validate_oracle_manifest(repo_root: &Path) -> Result<(), String> {
     let text =
         fs::read_to_string(&manifest).map_err(|error| format!("read oracle manifest: {error}"))?;
     if !text.contains(ORACLE_SAMPLING_PROTOCOL) {
-        return Err("oracle manifest does not pin rotating-three-channel-v1".into());
+        return Err(
+            "oracle manifest does not pin interleaved-upper-median-three-channel-v2".into(),
+        );
     }
     for (name, _) in VECTOR_CASES.into_iter().chain(DOMAIN_CASES) {
         let fixture = repo_root.join(FIXTURES).join(format!("{name}.ck"));
@@ -760,19 +752,10 @@ fn measure_case(
             ));
         }
     }
-    let sampled = runtime_replay::sample_three_channels(
+    let sampled = runtime_replay::sample_three_channels_upper_median::<_, SAMPLE_REPETITIONS>(
         config.warmup,
         config.iterations,
-        |channel, warmup| {
-            runners[channel].condition_short_kernel(batch_iterations)?;
-            if warmup {
-                runners[channel].measure_once(&expected, batch_iterations)
-            } else {
-                runtime_replay::sample_upper_median::<_, SAMPLE_REPETITIONS>(|| {
-                    runners[channel].measure_once(&expected, batch_iterations)
-                })
-            }
-        },
+        |channel, _warmup| runners[channel].measure_once(&expected, batch_iterations),
     )?;
     let medians = std::array::from_fn(|channel| median(&sampled.channels[channel]));
     Ok(OracleCase {
@@ -870,7 +853,6 @@ struct KernelRunner {
     out_u32: Vec<u32>,
     a_f64: Vec<f64>,
     out_f64: Vec<f64>,
-    slp_sustained_floor_ns: Option<u128>,
 }
 
 impl KernelRunner {
@@ -899,52 +881,7 @@ impl KernelRunner {
             out_u32: vec![0; ORACLE_LENGTH],
             a_f64,
             out_f64: vec![0.0; ORACLE_LENGTH],
-            slp_sustained_floor_ns: None,
         })
-    }
-
-    fn condition_short_kernel(&mut self, batch_iterations: usize) -> Result<(), String> {
-        if self.name != "slp_quad" {
-            return Ok(());
-        }
-
-        let sustained_floor_ns = match self.slp_sustained_floor_ns {
-            Some(value) => value,
-            None => {
-                let mut probes = [0u128; SLP_CALIBRATION_PROBES];
-                for elapsed in &mut probes {
-                    *elapsed = self.timed_conditioning_probe(batch_iterations)?;
-                }
-                probes.sort_unstable();
-                let rank = (probes.len() * SLP_CALIBRATION_QUANTILE_NUMERATOR)
-                    .div_ceil(SLP_CALIBRATION_QUANTILE_DENOMINATOR)
-                    .saturating_sub(1);
-                let anchor_ns = probes[rank];
-                let floor_ns = anchor_ns
-                    .checked_mul(SLP_SETTLING_FLOOR_NUMERATOR)
-                    .ok_or_else(|| "SLP settling floor overflowed".to_string())?
-                    .div_ceil(SLP_SETTLING_FLOOR_DENOMINATOR)
-                    .max(1);
-                self.slp_sustained_floor_ns = Some(floor_ns);
-                floor_ns
-            }
-        };
-
-        for _ in 0..SLP_SETTLING_MAX_PROBES {
-            let elapsed = self.timed_conditioning_probe(batch_iterations)?;
-            if elapsed >= sustained_floor_ns {
-                return Ok(());
-            }
-        }
-        Err(format!(
-            "slp_quad did not re-enter its calibrated sustained band within {SLP_SETTLING_MAX_PROBES} probes"
-        ))
-    }
-
-    fn timed_conditioning_probe(&mut self, batch_iterations: usize) -> Result<u128, String> {
-        let timer = runtime_timer_start()?;
-        self.invoke_repeated(batch_iterations)?;
-        runtime_timer_elapsed(timer)
     }
 
     fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
