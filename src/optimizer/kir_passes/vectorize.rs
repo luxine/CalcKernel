@@ -1180,6 +1180,13 @@ fn materialize_vectorization_trial_internal(
         }
     }
 
+    if matches!(
+        pre_state.module().profile.target_identity(),
+        crate::KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-")
+    ) {
+        schedule_unrolled_vector_body(&mut emitted, candidate.uf)?;
+    }
+
     let vector_body = KirBlock {
         id: vector_body_id,
         label: "loop_simd_body".to_string(),
@@ -1367,6 +1374,90 @@ fn materialize_vectorization_trial_internal(
         plan,
         charge,
     })
+}
+
+fn schedule_unrolled_vector_body(
+    instructions: &mut Vec<KirInstruction>,
+    unroll_factor: u8,
+) -> Result<(), String> {
+    if unroll_factor <= 1 {
+        return Ok(());
+    }
+
+    let local_values = instructions
+        .iter()
+        .flat_map(|instruction| instruction.results.iter().map(|result| result.value))
+        .collect::<BTreeSet<_>>();
+    let local_memories = instructions
+        .iter()
+        .filter_map(|instruction| instruction.memory.as_ref()?.output)
+        .collect::<BTreeSet<_>>();
+    let first_effect_order = instructions
+        .iter()
+        .filter_map(|instruction| instruction.effect.as_ref().map(|effect| effect.order))
+        .min();
+    let mut scheduled_values = BTreeSet::new();
+    let mut scheduled_memories = BTreeSet::new();
+    let mut remaining = std::mem::take(instructions)
+        .into_iter()
+        .enumerate()
+        .collect::<Vec<_>>();
+    let mut scheduled = Vec::with_capacity(remaining.len());
+
+    while !remaining.is_empty() {
+        let next = remaining
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, instruction))| {
+                let mut ready = true;
+                crate::visit_instruction_uses(instruction, &mut |value| {
+                    ready &= !local_values.contains(&value) || scheduled_values.contains(&value);
+                });
+                ready
+                    && instruction.memory.as_ref().is_none_or(|memory| {
+                        !local_memories.contains(&memory.input)
+                            || scheduled_memories.contains(&memory.input)
+                    })
+            })
+            .min_by_key(|(_, (original_index, instruction))| {
+                (vector_schedule_priority(instruction), *original_index)
+            })
+            .map(|(position, _)| position)
+            .ok_or_else(|| "unrolled vector body contains a cyclic dependency".to_string())?;
+        let (_, instruction) = remaining.remove(next);
+        scheduled_values.extend(instruction.results.iter().map(|result| result.value));
+        if let Some(output) = instruction.memory.as_ref().and_then(|memory| memory.output) {
+            scheduled_memories.insert(output);
+        }
+        scheduled.push(instruction);
+    }
+
+    if let Some(mut effect_order) = first_effect_order {
+        for instruction in &mut scheduled {
+            if let Some(effect) = &mut instruction.effect {
+                effect.order = effect_order;
+                effect_order = effect_order.saturating_add(1);
+            }
+        }
+    }
+    *instructions = scheduled;
+    Ok(())
+}
+
+fn vector_schedule_priority(instruction: &KirInstruction) -> u8 {
+    match instruction.kind {
+        KirInstructionKind::VectorLoad { .. } => 0,
+        KirInstructionKind::ConstInt { .. }
+        | KirInstructionKind::ConstFloat { .. }
+        | KirInstructionKind::ConstBool { .. }
+        | KirInstructionKind::Copy { .. }
+        | KirInstructionKind::Binary { .. }
+        | KirInstructionKind::Unary { .. }
+        | KirInstructionKind::Compare { .. }
+        | KirInstructionKind::Cast { .. } => 1,
+        KirInstructionKind::VectorStore { .. } => 3,
+        _ => 2,
+    }
 }
 
 fn insert_vector_proofs(
