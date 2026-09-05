@@ -1007,6 +1007,10 @@ fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
         "InterlockedCompareExchange",
         "InterlockedExchange",
         "InterlockedCompareExchange64",
+        "#pragma intrinsic(_InterlockedCompareExchange)",
+        "#pragma intrinsic(_InterlockedCompareExchange64)",
+        "#pragma intrinsic(_InterlockedExchange)",
+        "#pragma intrinsic(_InterlockedIncrement)",
         "defined(__aarch64__) && defined(__linux__)",
         "ldaxr",
         "stlxr",
@@ -1161,6 +1165,15 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
     }
 
     let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
+    for required in [
+        "#pragma intrinsic(_InterlockedCompareExchange)",
+        "#pragma intrinsic(_InterlockedExchange)",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "MSVC ARM64 dispatch atomics must be forced to intrinsics: {required}"
+        );
+    }
     for required in [
         "__ck_dispatch_detect_capabilities",
         "__ck_dispatch_select_ranked",

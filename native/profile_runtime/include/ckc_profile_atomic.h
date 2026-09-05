@@ -11,6 +11,11 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <intrin.h>
+#pragma intrinsic(_InterlockedCompareExchange)
+#pragma intrinsic(_InterlockedCompareExchange64)
+#pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedIncrement)
 
 typedef struct CkProfileAtomicU32 {
   volatile LONG value;
