@@ -1123,6 +1123,42 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
 }
 
 #[test]
+fn profile_generation_should_initialize_only_at_external_entries() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    let entry = lowering
+        .split("fn emit_profile_function_entry")
+        .nth(1)
+        .expect("profile function-entry lowering")
+        .split("fn emit_profile_instruction")
+        .next()
+        .expect("profile function-entry lowering boundary");
+    assert!(
+        entry.contains("if self.function.exported") && entry.contains("self.builder.call(ensure"),
+        "private CK helpers are dominated by an exported entry and must not repeat lazy runtime initialization"
+    );
+}
+
+#[test]
+fn profile_runtime_hot_counter_path_should_use_one_relaxed_fetch_add() {
+    let collector = read("native/profile_runtime/common/collector.c");
+    let atomics = read("native/profile_runtime/include/ckc_profile_atomic.h");
+    assert!(
+        collector.contains("ckc_profile_atomic_fetch_add_relaxed_u64"),
+        "the common counter path must avoid a redundant load plus compare-exchange"
+    );
+    for required in [
+        "ckc_profile_atomic_fetch_add_relaxed_u64",
+        "_InterlockedExchangeAdd64",
+        "atomic_fetch_add_explicit",
+    ] {
+        assert!(
+            atomics.contains(required),
+            "profile atomic portability layer omitted {required}"
+        );
+    }
+}
+
+#[test]
 fn native_cache_schema4_contract_should_bind_complete_bundle_and_atomic_outputs() {
     let key = read("src/cli/cache/key.rs");
     let entry = read("src/cli/cache/entry.rs");
@@ -1774,4 +1810,20 @@ fn x86_integer_reduction_handoff_should_pin_backend_interleave_width() {
         !bridge.contains("llvm::PromoteMemToReg(allocas, dominators)"),
         "x86 reduction discovery must not promote allocas in the production module"
     );
+}
+
+#[test]
+fn prevectorized_kir_loops_should_disable_redundant_llvm_unrolling() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "attach_prevectorized_loop_unroll_disable",
+        "llvm.loop.unroll.disable",
+        "contains_fixed_vector_operation",
+        "getLoopLatches",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "prevectorized-loop handoff omitted {required}"
+        );
+    }
 }

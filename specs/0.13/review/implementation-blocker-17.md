@@ -15,7 +15,7 @@ pin would retain a known failing prerequisite.
 
 V0.13 imports the exact V0.12 x86 `UF > 1` dependency-ready list scheduler and
 its structural regression test. It repins the independently built V0.12 replay
-to `4a1996dcefbc76b45ff8a4552f65c5127cd55d01` and binds the resulting manifest
+to `e1bcea461492a5a2619cdb960ea00dd668847f0a` and binds the resulting manifest
 digest in scripts and tests.
 
 No V0.13 PGO or multiversion behavior changes. No language/ABI rule,

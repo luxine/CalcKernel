@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - release performance workers are Unix
     resource = None
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-V012_COMMIT = "4a1996dcefbc76b45ff8a4552f65c5127cd55d01"
+V012_COMMIT = "e1bcea461492a5a2619cdb960ea00dd668847f0a"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
 CHANNELS = [

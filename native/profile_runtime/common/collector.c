@@ -141,21 +141,16 @@ static void ck_profile_add_cell(uint32_t index, uint64_t value) {
     return;
   }
   ckc_profile_atomic_u64 *counter = &ck_profile_state.counters[index];
-  uint64_t observed = ckc_profile_atomic_load_relaxed_u64(counter);
-  for (;;) {
-    if (observed == UINT64_MAX) {
-      ckc_profile_atomic_store_relaxed_u32(&ck_profile_overflowed, 1u);
-      return;
-    }
-    const uint64_t next = value > UINT64_MAX - observed
-                              ? UINT64_MAX
-                              : observed + value;
-    if (ckc_profile_atomic_compare_exchange_weak_u64(counter, &observed, next)) {
-      if (next == UINT64_MAX) {
-        ckc_profile_atomic_store_relaxed_u32(&ck_profile_overflowed, 1u);
-      }
-      return;
-    }
+  const uint64_t previous =
+      ckc_profile_atomic_fetch_add_relaxed_u64(counter, value);
+  if (value <= UINT64_MAX - previous) {
+    return;
+  }
+  ckc_profile_atomic_store_relaxed_u32(&ck_profile_overflowed, 1u);
+  uint64_t observed = previous + value;
+  while (observed != UINT64_MAX &&
+         !ckc_profile_atomic_compare_exchange_weak_u64(
+             counter, &observed, UINT64_MAX)) {
   }
 }
 

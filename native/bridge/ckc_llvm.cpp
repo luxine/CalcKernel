@@ -1909,6 +1909,54 @@ bool may_contain_nonlocal_load(const llvm::Function &function) {
     return false;
 }
 
+bool contains_fixed_vector_operation(const llvm::Loop &loop) {
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (instruction.getType()->isVectorTy()) {
+                return true;
+            }
+            for (const llvm::Use &operand : instruction.operands()) {
+                if (operand->getType()->isVectorTy()) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void attach_prevectorized_loop_unroll_disable(llvm::Module &module) {
+    for (llvm::Function &function : module) {
+        if (function.isDeclaration() || function.empty()) {
+            continue;
+        }
+        llvm::DominatorTree dominators(function);
+        llvm::LoopInfo loops(dominators);
+        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
+            if (!contains_fixed_vector_operation(*loop)) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *disable = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.unroll.disable")});
+            llvm::Metadata *operands[] = {nullptr, disable};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            for (llvm::BasicBlock *latch : latches) {
+                llvm::Instruction *terminator = latch->getTerminator();
+                if (terminator->getMetadata(llvm::LLVMContext::MD_loop) ==
+                    nullptr) {
+                    terminator->setMetadata(llvm::LLVMContext::MD_loop,
+                                            loop_id);
+                }
+            }
+        }
+    }
+}
+
 void attach_x86_integer_reduction_interleave(
     llvm::Module &module, const llvm::TargetMachine &target) {
     if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
@@ -1994,6 +2042,7 @@ extern "C" int32_t ckc_llvm_module_optimize(
         }
 
         if (level == llvm::OptimizationLevel::O3) {
+            attach_prevectorized_loop_unroll_disable(*module->value);
             attach_x86_integer_reduction_interleave(*module->value,
                                                      *target->value);
         }

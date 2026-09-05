@@ -465,7 +465,11 @@ fn lower_native_kir_module_inner<'context>(
             pgo_branches: &pgo_branches,
         };
         for function in &kir.functions {
-            lower_function(context, &module, function, &environment)?;
+            let profile_entry = kir
+                .entry
+                .as_ref()
+                .is_some_and(|entry| entry.function_name == function.name);
+            lower_function(context, &module, function, profile_entry, &environment)?;
         }
         add_export_thunks(context, &module, target, &shape, &types, &functions, status)?;
         if kir.config.consumer == KirConsumer::NativeExecutable {
@@ -1418,6 +1422,7 @@ struct KirFunctionLowerer<'module, 'context, 'a> {
     structs: &'a [MirStruct],
     handle: NativeFunction<'module>,
     function: &'a KirFunction,
+    profile_entry: bool,
     status_abi: bool,
     result_pointer: Option<NativeValue<'module>>,
     blocks: BTreeMap<BlockId, NativeBlock<'module>>,
@@ -1435,6 +1440,7 @@ fn lower_function<'module, 'context>(
     context: &'context NativeContext,
     module: &'module NativeModule<'context>,
     function: &KirFunction,
+    profile_entry: bool,
     environment: &KirLoweringEnvironment<'module, 'context, '_>,
 ) -> Result<(), NativeError> {
     let handle = require_function(environment.functions, &function.name)?;
@@ -1457,6 +1463,7 @@ fn lower_function<'module, 'context>(
         structs: environment.structs,
         handle,
         function,
+        profile_entry,
         status_abi: environment.status_abi,
         result_pointer: None,
         blocks,
@@ -1566,7 +1573,9 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         let ensure = profile.ensure;
         let increment = profile.increment;
         let site = profile.entries.get(&self.function.id).copied();
-        let _ = self.builder.call(ensure, &[], "ck.profile.ensure.status")?;
+        if self.function.exported || self.profile_entry {
+            let _ = self.builder.call(ensure, &[], "ck.profile.ensure.status")?;
+        }
         if let Some(site) = site {
             let site = self.builder.const_int(self.types.i32, &site.to_string())?;
             let _ = self.builder.call(increment, &[site], "")?;

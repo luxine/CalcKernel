@@ -9,7 +9,7 @@ hardware/capability manifest、compiler/oracle/source/recipe digest、training/h
 profile shard/final profile、target set、variant object、artifact bytes、sample order 与全部 raw sample。
 
 Ordinary regression 的精确 replay 是 CalcKernel 0.12 commit
-`4a1996dcefbc76b45ff8a4552f65c5127cd55d01`。Clang/Rust PGO oracle 使用与 CK 相同的
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`。Clang/Rust PGO oracle 使用与 CK 相同的
 training/evaluation split 和 source-level precondition，禁用 fast math/contraction，并通过
 differential 与 undefined-behavior audit。Training data 不作为 held-out timing evidence；
 correctness 另含 adversarial corpus。

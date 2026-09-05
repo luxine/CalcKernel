@@ -9,6 +9,7 @@
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedCompareExchange64)
 #pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedExchangeAdd64)
 #pragma intrinsic(_InterlockedIncrement)
 
 typedef struct ckc_profile_atomic_u32 {
@@ -55,6 +56,11 @@ static __inline int ckc_profile_atomic_compare_exchange_strong_u32(
 static __inline uint64_t
 ckc_profile_atomic_load_relaxed_u64(ckc_profile_atomic_u64 *object) {
   return (uint64_t)_InterlockedCompareExchange64(&object->value, 0, 0);
+}
+
+static __inline uint64_t ckc_profile_atomic_fetch_add_relaxed_u64(
+    ckc_profile_atomic_u64 *object, uint64_t value) {
+  return (uint64_t)_InterlockedExchangeAdd64(&object->value, (__int64)value);
 }
 
 static __inline int ckc_profile_atomic_compare_exchange_weak_u64(
@@ -144,6 +150,23 @@ ckc_profile_atomic_load_relaxed_u64(ckc_profile_atomic_u64 *object) {
   return value;
 }
 
+static inline uint64_t ckc_profile_atomic_fetch_add_relaxed_u64(
+    ckc_profile_atomic_u64 *object, uint64_t value) {
+  uint64_t observed;
+  uint64_t next;
+  uint32_t status;
+  __asm__ volatile(
+      "0:\n"
+      "ldxr %0, [%3]\n"
+      "add %2, %0, %4\n"
+      "stxr %w1, %2, [%3]\n"
+      "cbnz %w1, 0b\n"
+      : "=&r"(observed), "=&r"(status), "=&r"(next)
+      : "r"(&object->value), "r"(value)
+      : "memory");
+  return observed;
+}
+
 static inline int ckc_profile_atomic_compare_exchange_weak_u64(
     ckc_profile_atomic_u64 *object, uint64_t *expected, uint64_t desired) {
   const uint64_t expected_value = *expected;
@@ -214,6 +237,11 @@ static inline int ckc_profile_atomic_compare_exchange_strong_u32(
 static inline uint64_t
 ckc_profile_atomic_load_relaxed_u64(ckc_profile_atomic_u64 *object) {
   return atomic_load_explicit(object, memory_order_relaxed);
+}
+
+static inline uint64_t ckc_profile_atomic_fetch_add_relaxed_u64(
+    ckc_profile_atomic_u64 *object, uint64_t value) {
+  return atomic_fetch_add_explicit(object, value, memory_order_relaxed);
 }
 
 static inline int ckc_profile_atomic_compare_exchange_weak_u64(
