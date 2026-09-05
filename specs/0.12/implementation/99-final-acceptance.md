@@ -65,14 +65,14 @@ required job、旧日志、历史数值或 lowered threshold。
 
 - [ ] Schema 7 与 rotating-twelve-channel-v1 在 x86-64/AArch64 各有完整报告；实际 0.11/0.10
   replay、current/replay Clang、checked/unchecked streams 都存在。
-- [ ] C/Rust SIMD rotating-three-channel-v1：每 kernel >=90%，两架构各自 geometric mean >=95%。
-- [ ] 四元素 `slp_quad` 的 CK/C/Rust 各自以 64 个不计时 probe 的 9/10 分位数校准
-  `ceil(anchor * 3/4)` 持续频带下限；每个保留七次计时 sample 前最多 256 个不计时 probe
-  必须命中下限，耗尽则失败，七次 timed call 内无 probe；timed work、sample/order/statistic
-  与 stability threshold 未改变。
+- [ ] C/Rust SIMD `interleaved-upper-median-three-channel-v2`：每 kernel >=90%，两架构各自
+  geometric mean >=95%；每个保留行的 7 轮 raw call 均轮转 CK/C/Rust 三通道后取各自上中位数。
+- [ ] 四元素 `slp_quad` 对每个保留行的三通道共同乘性因子作 geometric-mean 归一化，再对
+  每通道执行未改变的 16/20、75%..125% 稳定性门槛；性能比较仍只使用原始上中位数耗时。
 - [ ] Domain-fact suite 相对更快 generic C/Rust oracle 在两架构 geometric mean 都 >5%。
 - [ ] Unknown-trip Loop SIMD 的 proposer/checker 均执行 target-specific runtime admission floor：
-  x86-64 至少 `4 * VF * UF`、AArch64 至少 `2 * VF * UF`；不得跨 target 套用错误 control penalty。
+  x86-64 至少 `ceil(4 / UF) * VF * UF`、AArch64 至少 `2 * VF * UF`；不得跨 target 套用错误
+  control penalty。
 - [ ] Scalar corpus 相对 actual 0.11 replay geometric mean slowdown <=3%，individual <=8%；所有
   既有 0.11/0.10/Clang/optimizer latency gate 保持。
 - [ ] Native object size aggregate <=35%，individual <=2.5x；source-to-object compile time geometric

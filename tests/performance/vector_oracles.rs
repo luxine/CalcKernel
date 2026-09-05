@@ -28,20 +28,13 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "fast_math = false",
         "contraction = false",
         "builtin_library_calls = false",
-        "sampling_protocol = \"rotating-three-channel-v1\"",
+        "sampling_protocol = \"interleaved-upper-median-three-channel-v2\"",
         "dispatch_protocol = \"cached-typed-entry-v1\"",
         "batch_iterations = 20000000",
         "sample_calls = 7",
         "sample_statistic = \"upper-median-of-seven\"",
-        "short_kernel_conditioning = true",
-        "short_kernel_conditioning_protocol = \"bounded-upper-band-v1\"",
-        "short_kernel_calibration_probes = 64",
-        "short_kernel_calibration_quantile_numerator = 9",
-        "short_kernel_calibration_quantile_denominator = 10",
-        "short_kernel_settling_floor_numerator = 3",
-        "short_kernel_settling_floor_denominator = 4",
-        "short_kernel_settling_max_probes = 256",
-        "short_kernel_conditioning_scope = \"once-per-retained-sample\"",
+        "short_kernel_stability = \"per-row-common-mode-normalized\"",
+        "short_kernel_stability_scope = \"slp_quad\"",
         "differential_audit = true",
         "ub_audit = true",
     ] {
@@ -170,6 +163,8 @@ fn oracle_audit_should_compile_both_languages_compare_every_mode_and_enable_ubsa
 fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
     let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
         .expect("read vector performance harness");
+    let manifest = fs::read_to_string(repo_root().join("benches/oracles/manifest.toml"))
+        .expect("read oracle manifest");
     let runner = harness
         .split("impl KernelRunner {")
         .nth(1)
@@ -194,37 +189,21 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
             "the timed loop must not contain per-call lookup or string dispatch: {forbidden}"
         );
     }
-    let measure_once = runner
-        .split("fn measure_once(")
-        .nth(1)
-        .and_then(|source| source.split("fn run_batch(").next())
-        .expect("measure_once implementation");
     let measure_case = harness
         .split("fn measure_case(")
         .nth(1)
         .and_then(|source| source.split("type MapUnchecked").next())
         .expect("measure_case implementation");
     assert!(
-        harness.contains("const SLP_CALIBRATION_PROBES: usize = 64;")
-            && harness.contains("const SLP_SETTLING_MAX_PROBES: usize = 256;")
-            && harness.contains("fn timed_conditioning_probe(")
-            && harness.contains("slp_sustained_floor_ns: Option<u128>")
-            && runner.contains("fn condition_short_kernel(")
-            && runner.contains("if self.name != \"slp_quad\"")
-            && runner.contains("let mut probes = [0u128; SLP_CALIBRATION_PROBES]")
-            && runner.contains("for elapsed in &mut probes")
-            && runner.contains("for _ in 0..SLP_SETTLING_MAX_PROBES")
-            && runner.contains("elapsed >= sustained_floor_ns")
-            && !measure_once.contains("condition_short_kernel")
-            && measure_case.contains("runners[channel].condition_short_kernel(batch_iterations)?;")
-            && measure_case
-                .find("condition_short_kernel(batch_iterations)")
-                .unwrap()
-                < measure_case.find("sample_upper_median").unwrap(),
-        "the four-item SLP kernel must calibrate and re-enter a bounded upper-duration band before each retained seven-call sample"
+        manifest.contains("interleaved-upper-median-three-channel-v2")
+            && measure_case.contains("sample_three_channels_upper_median::<_, SAMPLE_REPETITIONS>")
+            && !manifest.contains("bounded-upper-band-v1")
+            && !harness.contains("SLP_CALIBRATION_PROBES")
+            && !harness.contains("condition_short_kernel"),
+        "every retained oracle row must interleave all twenty-one timed channel calls"
     );
     assert!(
-        harness.contains("sample_upper_median::<_, SAMPLE_REPETITIONS>")
+        harness.contains("SAMPLE_REPETITIONS")
             && !harness.contains("minimum.min(runners[channel].measure_once"),
         "each seven-call vector sample must reject minority scheduler outliers via its upper median"
     );

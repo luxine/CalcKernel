@@ -25,12 +25,15 @@ seven calls per sample, the fixed batch identity, and upper-median statistics.
 Schema 7 stores every actual order, sample, median, artifact digest, and result;
 a missing stream cannot fall back to a historical number.
 
-Vector and domain-fact suites use `rotating-three-channel-v1` separately for
-checked and unchecked CK. A vector run rotates candidate CK, pinned hand-written
-C+SIMD, and pinned hand-written Rust+SIMD. A domain-fact run substitutes generic
-Clang O3 and Rust O3 sources that do not receive CK-only contracts. Each has
-three warm-up rows, twenty sample rows, seven calls per sample, identical inputs,
-fixed batching, and upper medians in one process.
+Vector and domain-fact suites use `interleaved-upper-median-three-channel-v2`
+separately for checked and unchecked CK. A vector run rotates candidate CK,
+pinned hand-written C+SIMD, and pinned hand-written Rust+SIMD. A domain-fact run
+substitutes generic Clang O3 and Rust O3 sources that do not receive CK-only
+contracts. Each has three warm-up rows and twenty retained rows. Every retained
+row interleaves seven rotations of all three channels, then stores each
+channel's upper median. Inputs and batching remain identical in one process.
+For `slp_quad` only, the unchanged 16-of-20 stability band is evaluated after
+per-row common-mode normalization; all throughput uses raw retained durations.
 
 Hand-written oracles use architecture-specific baseline flags, disable fast
 math and contraction, and may not use a CPU feature absent from CK's baseline

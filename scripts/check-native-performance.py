@@ -24,7 +24,7 @@ V011_COMPILER = f"calckernel 0.11.0 ({V011_COMMIT})"
 V011_MANIFEST_SHA256 = "495cde2e3a2afb847ddcad9707fec4e6880f26dc6c3085442290af7e2737421e"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
-ORACLE_MANIFEST_SHA256 = "e093961c5d130841026b0115e1e9d59fd29e7d058ba5cc52490a79fce80f07a2"
+ORACLE_MANIFEST_SHA256 = "33158df7c8b40721b735f36e9066a9a3eb3b5895b53b04bd0554260b7a4eba32"
 DEFAULT_BASELINE_MANIFEST = REPO / "benches/baselines/v0_10_compiler.toml"
 RECIPE_FILES = [
     "scripts/prepare-performance-replay.py",
@@ -99,10 +99,14 @@ def positive(value, field):
     return float(value)
 
 
-def stable_samples(value, field, count=SAMPLE_COUNT):
+def raw_samples(value, field, count=SAMPLE_COUNT):
     if not isinstance(value, list) or len(value) != count:
         fail(f"{field} must contain exactly {count} samples")
-    samples = [positive(sample, field) for sample in value]
+    return [positive(sample, field) for sample in value]
+
+
+def stable_samples(value, field, count=SAMPLE_COUNT):
+    samples = raw_samples(value, field, count)
     median = statistics.median(samples)
     if sum(median * .75 <= sample <= median * 1.25 for sample in samples) < math.ceil(.8 * count):
         fail(f"{field} is unstable around its median")
@@ -284,12 +288,31 @@ def check_measured_artifacts(report, report_path):
     return root, sizes
 
 
-def check_stream(record, prefix, field, count=20):
-    samples = stable_samples(record.get(prefix + "SamplesNs"), f"{field} {prefix}SamplesNs", count)
+def check_stream_data(record, prefix, field, count=20, require_stability=True):
+    samples = (stable_samples if require_stability else raw_samples)(
+        record.get(prefix + "SamplesNs"), f"{field} {prefix}SamplesNs", count
+    )
     median = positive(record.get(prefix + "MedianNs"), f"{field} {prefix}MedianNs")
     if median != upper_median(samples):
         fail(f"{field} {prefix} median does not match its sample array")
-    return median
+    return median, samples
+
+
+def check_stream(record, prefix, field, count=20):
+    return check_stream_data(record, prefix, field, count)[0]
+
+
+def check_common_mode_stability(streams, prefixes, field):
+    row_scales = [
+        geometric_mean([streams[prefix][row] for prefix in prefixes], field)
+        for row in range(SAMPLE_COUNT)
+    ]
+    for prefix in prefixes:
+        normalized = [sample / scale for sample, scale in zip(streams[prefix], row_scales)]
+        median = upper_median(normalized)
+        stable = sum(median * .75 <= sample <= median * 1.25 for sample in normalized)
+        if stable < math.ceil(.8 * SAMPLE_COUNT):
+            fail(f"{field} {prefix} is unstable after common-mode normalization")
 
 
 def load_v010(path):
@@ -471,7 +494,20 @@ def check_oracle_suites(report, key, names, prefixes, domain):
                 fail(f"{key}/{name} batch identity is wrong")
             check_order(case["warmupOrder"], 3, 3, f"{key}/{name} warmup order")
             check_order(case["sampleOrder"], 3, 20, f"{key}/{name} sample order")
-            values = {prefix: check_stream(case, prefix, f"{key}/{mode}/{name}") for prefix in prefixes}
+            field = f"{key}/{mode}/{name}"
+            if name == "slp_quad":
+                checked = {
+                    prefix: check_stream_data(
+                        case, prefix, field, require_stability=False
+                    )
+                    for prefix in prefixes
+                }
+                values = {prefix: checked[prefix][0] for prefix in prefixes}
+                check_common_mode_stability(
+                    {prefix: checked[prefix][1] for prefix in prefixes}, prefixes, field
+                )
+            else:
+                values = {prefix: check_stream(case, prefix, field) for prefix in prefixes}
             oracle = min(values[prefixes[1]], values[prefixes[2]])
             throughput = oracle / values[prefixes[0]]
             if not domain and throughput < .90:

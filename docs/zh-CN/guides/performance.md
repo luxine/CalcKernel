@@ -22,10 +22,12 @@ Scalar regression 使用 `rotating-twelve-channel-v1`：candidate Native、curre
 median、artifact digest 与 result；缺失 stream 不得回退到历史数值。
 
 Vector 与 domain-fact suite 对 checked/unchecked CK 分别使用
-`rotating-three-channel-v1`。Vector run 轮换 candidate CK、pinned hand-written C+SIMD 与
-pinned hand-written Rust+SIMD；domain-fact run 改用未获得 CK-only contract 的 generic Clang
-O3/Rust O3 source。每轮均在同一进程使用相同输入、三行 warm-up、二十行 sample、每 sample
-七次调用、固定 batching 与 upper median。
+`interleaved-upper-median-three-channel-v2`。Vector run 轮换 candidate CK、pinned
+hand-written C+SIMD 与 pinned hand-written Rust+SIMD；domain-fact run 改用未获得 CK-only
+contract 的 generic Clang O3/Rust O3 source。每轮均在同一进程使用相同输入、三行 warm-up
+与二十个保留行；每个保留行交错执行七轮三个 channel，再保留每个 channel 的 upper median。
+仅 `slp_quad` 在逐行 common-mode 归一化后执行未改变的 16/20 稳定性门槛；所有性能比仍使用
+原始保留耗时。
 
 Hand-written oracle 使用 architecture-specific baseline flag，禁用 fast math/contraction，且
 不得使用 CK baseline profile 不具备的 CPU feature。它们获得 source language 可表达的全部

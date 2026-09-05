@@ -41,7 +41,8 @@ sample/order/statistic/threshold 保持不变。
 Linux runtime sample 使用当前线程 `CLOCK_THREAD_CPUTIME_ID` 差值包围未改变的 native call
 loop，排除共享宿主未调度该线程的时间；非 Linux 开发运行保留 monotonic wall-clock fallback。
 Domain-fact 短循环还必须证明 proposer 与 independent checker 都把 unknown-trip Loop SIMD 的
-最低 runtime admission threshold 按 target 独立复算：x86-64 至少 `4 * VF * UF`、AArch64
+最低 runtime admission threshold 按 target 独立复算：x86-64 至少
+`ceil(4 / UF) * VF * UF`、AArch64
 至少 `2 * VF * UF`；schema 7 的 >5% 门槛、样本、timed work、oracle 与 corpus 均保持不变。
 
 性能失败或显式 diagnostic 模式还必须在同一 worker 对 schema 7 报告中的 48 个 scalar 动态库
