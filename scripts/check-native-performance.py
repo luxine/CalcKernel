@@ -63,7 +63,7 @@ SAMPLE_COUNT = 20
 
 V012_COMMIT = "c70681e578a14ceea0b2bf0d730661140514793e"
 V012_COMPILER = f"calckernel 0.12.0 ({V012_COMMIT})"
-V012_MANIFEST_SHA256 = "365b5cb706738f109cf23e22011c97a79a41e0883efa1df3969cc69516dfaded"
+V012_MANIFEST_SHA256 = "f1d9668f59e0767a921fc60b6a72b0cec0dafca88f25d8798b5c69848dba8dba"
 PGO_CASES = {
     "branch-layout": (True, False),
     "call-constant-length": (True, True),
