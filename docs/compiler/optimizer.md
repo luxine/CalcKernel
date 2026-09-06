@@ -317,6 +317,9 @@ generation overhead, artifact size, compiler archive size, and cache behavior
 have separate gates. PGO, bounded multiversioning, and offline Auto-Tuning ship
 in 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.
+Dynamic-library final links also discard unreachable compiler-private sections
+using the native object-format mechanism while retaining CK exports and every
+referenced dispatch/runtime section.
 An additional predicated-update gate compares PGO+Auto-Tuning with the identical
 PGO-only build of a strict `f64` Floyd-Warshall kernel. The selected decision must
 contain the verified Loop SIMD alternative, and sealed `N=1024` timing must be at

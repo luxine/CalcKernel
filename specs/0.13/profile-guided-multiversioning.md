@@ -899,6 +899,10 @@ On stable x86-64 and AArch64 workers:
 - PGO-only artifacts are at most 1.25 times the ordinary aggregate size and 1.5
   times any individual; multiversion or combined artifacts are at most 2 times
   aggregate and 2.5 times any individual; and
+- dynamic-library final links reclaim unreachable compiler-private function and
+  data sections with the native Mach-O, COFF, or ELF dead-section mechanism;
+  exported CK entry points and every referenced dispatch/runtime section remain;
+  and
 - the distributed `ckc` archive is at most 15 percent larger than exact 0.12 on
   each host after equivalent stripping/signing boundaries.
 

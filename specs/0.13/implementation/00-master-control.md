@@ -254,3 +254,12 @@ inline budget，无 profile multiversion 使用 8-instruction compact budget，�
 为被保留的 9..32 instruction pure helper 加 `noinline`，防止 LLVM 撤销已检查的 clone policy；
 PGO-hot budget 仍为 48。语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、
 corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34049750799` 的 AArch64 performance job `101531090175` 随后通过
+累计 schema 7 与 schema 8 runtime gate，但 branch-layout multiversion 动态库以
+`4576 / 1808 = 2.53097 > 2.5` 未通过单项 artifact-size gate。复诊与闭环见
+`specs/0.13/review/implementation-blocker-27.md`：runtime object 已有 function/data
+sections，但 shared-library LLD 入口未启用回收；现按 Mach-O/COFF/ELF 分别使用
+`-dead_strip`、`/opt:ref`、`--gc-sections`，删除未引用的 compiler-private runtime section。
+语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required
+job matrix 均未改变。

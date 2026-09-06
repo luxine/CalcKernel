@@ -234,6 +234,8 @@ hand-written SIMD oracle，并 replay exact 0.12 commit
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO、受限 multiversioning
 与 offline Auto-Tuning 在 0.14 交付；indirect calls、scalable KIR 与 adaptive JIT PGO
 仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。
+Dynamic library final link 还会按 object format 使用原生 dead-section 机制回收未引用的
+compiler-private section，同时保留 CK export 与全部实际引用的 dispatch/runtime section。
 额外的 predicated-update gate 在 strict `f64` Floyd-Warshall kernel 上比较
 PGO+Auto-Tuning 与完全相同的 PGO-only build。获选 decision 必须包含已验证 Loop SIMD
 alternative，且封存 `N=1024` timing 必须在每个稳定 Linux 性能宿主上至少快 5%。

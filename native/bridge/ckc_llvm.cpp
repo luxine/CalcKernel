@@ -4285,6 +4285,7 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("11.0");
         arguments.emplace_back("11.0");
         arguments.emplace_back("-adhoc_codesign");
+        arguments.emplace_back("-dead_strip");
         arguments.emplace_back("-install_name");
         arguments.emplace_back("@rpath/module.dylib");
         for (size_t index = 0; index < export_count; ++index) {
@@ -4302,6 +4303,7 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("/noentry");
         arguments.emplace_back("/nodefaultlib");
         arguments.emplace_back("/timestamp:0");
+        arguments.emplace_back("/opt:ref");
         auto import_path = checked_path(import_library_path_bytes,
                                         "LLD import library path");
         if (!import_path) {
@@ -4321,6 +4323,7 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("ld.lld");
         arguments.emplace_back("-shared");
         arguments.emplace_back("--no-undefined");
+        arguments.emplace_back("--gc-sections");
         for (size_t index = 0; index < export_count; ++index) {
             const llvm::StringRef name = borrowed_string(exports[index]);
             if (name.empty() || name.contains('\0') || name.contains(',')) {

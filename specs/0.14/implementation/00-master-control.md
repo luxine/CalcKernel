@@ -35,12 +35,13 @@
 - `specs/0.14/review/implementation-blocker-25.md`
 - `specs/0.14/review/implementation-blocker-30.md`
 - `specs/0.14/review/implementation-blocker-31.md`
+- `specs/0.14/review/implementation-blocker-32.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`b7da701ff7785c4a687ebfd65a8882b1b2a4eac2`。两者之间的累计提交已按
+`2ba127c18a6c5f831dc55814c37da2dd1ecedea6`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -272,3 +273,14 @@ SVE2 上，无 profile multiversion 将中等冷分支 helper 克隆并重新 in
 `specs/0.14/review/implementation-blocker-31.md`；语言/公开 ABI、strict FP、安全规则、target ISA、
 growth/profitability/性能与稳定性门槛、timed work、样本、corpus、平台及 required job topology
 均保持不变。
+
+Exact v0.13 run `34049750799` 的 AArch64 performance job `101531090175` 随后通过
+累计 schema 7 与全部 schema 8 runtime gate，但 branch-layout multiversion 动态库以
+`4576 / 1808 = 2.53097 > 2.5` 未通过单项 artifact-size gate。V0.14 已逐字继承 exact v0.13
+`2ba127c18a6c5f831dc55814c37da2dd1ecedea6` 的 shared-link dead-section closure：
+Mach-O/COFF/ELF 分别使用 `-dead_strip`、`/opt:ref`、`--gc-sections`，并把 accepted v0.13
+与 replay 重钉到该 SHA；manifest SHA-256 为
+`e4c8fceab818681350f52715ee334ccfe7325a99167261350c0e2269843e7873`。复诊见
+`specs/0.14/review/implementation-blocker-32.md`；语言/公开 ABI、strict FP、安全规则、target ISA、
+tuning/growth/profitability/性能与稳定性门槛、timed work、样本、corpus、平台及 required job
+topology 均保持不变。
