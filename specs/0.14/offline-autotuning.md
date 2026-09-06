@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 2ba127c18a6c5f831dc55814c37da2dd1ecedea6
+Accepted base revision: v0.13 repaired candidate ad44b16a81762610b002a38806673102d3d55ff9
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,9 +13,17 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`2ba127c18a6c5f831dc55814c37da2dd1ecedea6` was reviewed file by file and integrated
+`ad44b16a81762610b002a38806673102d3d55ff9` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
+
+The accepted v0.13 repair also closes schema-8 aggregate multiversion artifact size:
+ELF shared products discard non-loader metadata while retaining the dynamic public
+export and a private pointer-width `.ck_dispatch_slot` `NOBITS` section for exact
+selected-direct evidence. The generated per-root acquire/release pointer slot is the
+only publication layer; the one-shot detector has no redundant process-wide cache and
+is compiled with the frozen size-first runtime recipe. Public ABI, target ISA and all
+performance thresholds remain unchanged.
 
 For inherited schema-7 runtime samples on Linux, the unchanged native kernel-call
 loop is measured with current-thread CPU time. The existing one-allowed-CPU affinity
