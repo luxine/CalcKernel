@@ -91,8 +91,11 @@
   count 精确，hot comparison 无逐 observation atomic runtime call。
 - [ ] dispatch相对portable baseline eligible suite geo improvement >=8%、individual slowdown <=3%；
   相对selected-direct geo >=98%、individual slowdown <=5%，resolver once。
-- [ ] AArch64 generic SVE/SVE2 member 使用固定 `neoverse-n2` schedule-only tuning；target CPU/feature
-  compatibility 与 feature audit 不变，cache codegen contract 明确包含 tuning identity。
+- [ ] AArch64 generic SVE/SVE2 member 显式携带既有 `target-cpu=generic`、精确 feature string 与固定
+  `tune-cpu=neoverse-n2`，真实 object 使用预期机器调度；compatibility、feature audit 与允许 ISA 不变，
+  cache codegen contract 明确包含修订后的 tuning identity。
+- [ ] x86 Native profile 在既有封闭 `UF <= 4` frontier 内至少暴露四路 interleave；strict-f64 与
+  integer-cast 的真实 target plan 选择 `VF2/UF4`，且 legality/profitability/proof/budget checker 不变。
 - [ ] x86 constant-call scalar memory-map handoff按 IR semantics 使用固定 1×5 schedule；不得按 fixture
   名称特判，checked/reduction/pre-vectorized loop 与 cache identity保持各自闭环。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价

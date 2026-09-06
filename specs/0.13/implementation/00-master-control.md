@@ -208,3 +208,12 @@ expected assume/range 各 6、实际各 4。复诊与闭环见
 `specs/0.13/review/implementation-blocker-21.md`：审计记录现在只复制 dispatcher 确实继承的
 alignment/noalias/readonly/writeonly/memory-effects 属性；函数体证据仍只归原 baseline body 所有。
 fact audit、语言/ABI、target、性能门槛、timed work、样本、corpus 与 required job matrix 均不变。
+
+V0.14 exact run `34031421321` 重建 exact V0.13
+`aa155825959e49d61fcea7a953935b179a7a238f` 后又暴露两项稳定性能缺口：x86-64
+`strict_f64`/`integer_cast` 缺少已经处于 KIR 封闭候选上限内的四路独立 vector chain，AArch64
+generic SVE member 的独立函数 subtarget 没有物化既有 CPU/features，导致单独的 `tune-cpu`
+没有进入机器调度。复诊与闭环见 `specs/0.13/review/implementation-blocker-22.md`：x86 profile
+只把最大 interleave 的下限提高到既有 hard cap 4；AArch64 则把原有
+`target-cpu=generic`、显式 features 与 `tune-cpu=neoverse-n2` 一起附着到函数。语言/ABI、目标
+ISA、性能与稳定性门槛、timed work、样本、corpus 与 required job matrix 均未改变。

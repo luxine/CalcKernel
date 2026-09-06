@@ -610,6 +610,21 @@ fn vector_loop_simd_strict_f64_should_lower_without_fast_math_or_contraction() {
         "{:?}",
         result.analysis_fallbacks
     );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let accepted = result
+            .vector_explanations
+            .iter()
+            .find(|explanation| {
+                explanation.disposition == calckernel::CandidateDisposition::Accepted
+            })
+            .expect("accepted strict-f64 vector plan");
+        assert_eq!(
+            (accepted.vf, accepted.uf),
+            (2, 4),
+            "x86 strict-f64 lowering must select four independent vector chains"
+        );
+    }
     let context = NativeContext::new().expect("context");
     let llvm = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
         .expect("lower strict f64 vector loop")
@@ -798,6 +813,16 @@ fn vector_loop_simd_cast_and_pure_diamond_should_survive_into_pre_llvm_ir() {
         result.stats.vectorized_loops, 2,
         "{:?}",
         result.analysis_fallbacks
+    );
+    #[cfg(target_arch = "x86_64")]
+    assert!(
+        result.vector_explanations.iter().any(|explanation| {
+            explanation.disposition == calckernel::CandidateDisposition::Accepted
+                && explanation.vf == 2
+                && explanation.uf == 4
+        }),
+        "x86 integer-cast lowering must select four independent f64 vector chains: {:?}",
+        result.vector_explanations
     );
     let kir_text = print_kir_module(result.artifact.as_ref().expect("cast/diamond artifact"));
     for spelling in ["vector_cast", "vector_compare", "vector_select"] {

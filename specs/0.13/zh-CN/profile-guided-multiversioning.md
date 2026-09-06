@@ -486,8 +486,9 @@ SVE/SVE2 profile 仍只暴露 0.12/0.13 定义的 fixed-width vector KIR operati
 合法地把这些内部 fixed operation lower 为 SVE instruction，但 0.13 不增加 scalable KIR
 value 或公开 ABI。
 为保证 O3 scheduling 确定性，generic SVE/SVE2 multiversion member 使用固定 LLVM
-`neoverse-n2` tuning model。这只是 `tune-cpu` 选择：member 的 `target-cpu=generic`、显式
-feature string、compatibility predicate 与 feature audit 仍是权威，因此 tuning 不能引入未声明
+`neoverse-n2` tuning model。每个函数把既有 `target-cpu=generic`、显式 feature string 与
+`tune-cpu=neoverse-n2` 一起物化，使 LLVM 建立预期的 per-function scheduling subtarget。
+CPU/features、compatibility predicate 与 feature audit 仍是权威，因此 tuning 不能引入未声明
 instruction。该 tuning identity 进入 multiversion cache codegen contract。
 
 baseline-only target set 合法，并输出稳定 `no-compatible-enhanced-tier` explanation。
