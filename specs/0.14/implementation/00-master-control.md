@@ -34,12 +34,13 @@
 - `specs/0.14/implementation/implementation-design-correction-11.md`
 - `specs/0.14/review/implementation-blocker-25.md`
 - `specs/0.14/review/implementation-blocker-30.md`
+- `specs/0.14/review/implementation-blocker-31.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`d2a2e5f9fb7ed0c71b1ded4d3bf8c789b4d774ac`。两者之间的累计提交已按
+`b7da701ff7785c4a687ebfd65a8882b1b2a4eac2`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -258,3 +259,16 @@ freestanding binary `/proc/self/auxv` fallback，并把 accepted v0.13 与 repla
 SHA-256 为 `b730be3b2d40efd7f35195c54e2472b107ccf87f7e85f3095422609f328ea2c0`。复诊见
 `specs/0.14/review/implementation-blocker-30.md`；语言/公开 ABI、strict FP、安全规则、target ISA、
 性能与稳定性门槛、timed work、样本、corpus、平台及 required job topology 均保持不变。
+
+Exact v0.14 run `34041903921` 的 AArch64 performance job `101510076457` 在准备历史
+schema-8 replay 时精确复现 v0.13 run `34041456107` 的两个真实缺口：x86 三流 noalias map 的
+`VF4/UF4` 物化因冗余 stride/MemorySSA 表示越过既有 `2x` KIR growth 上限；AArch64 128-bit
+SVE2 上，无 profile multiversion 将中等冷分支 helper 克隆并重新 inline，dispatch geo 只有
+`1.01545 < 1.08`。V0.14 已逐字继承 exact v0.13
+`b7da701ff7785c4a687ebfd65a8882b1b2a4eac2` 的 compact UF/MemorySSA 表示、独立 checker、
+8-instruction multiversion inline budget 与 Native `noinline` closure，并把 accepted v0.13 与 replay
+重钉到该 SHA；manifest SHA-256 为
+`2bb3430ce53239ab13b91baffb84c3337e2fbe9d9c3b48a34d59f41bb603a8ac`。复诊见
+`specs/0.14/review/implementation-blocker-31.md`；语言/公开 ABI、strict FP、安全规则、target ISA、
+growth/profitability/性能与稳定性门槛、timed work、样本、corpus、平台及 required job topology
+均保持不变。
