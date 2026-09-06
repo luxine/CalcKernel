@@ -25,7 +25,7 @@ regression test. It also accepts the Native LLVM handoff only for the exact
 `specialized_length` fixture paired with the exact audited fallback reason; all
 other vector cases still require materialized KIR vectors. Its accepted-base and
 independently built V0.13 replay are
-repinned to `f98a7b91e27b09ad2f50a8f4808f183cc87e80fe`, including the recomputed
+repinned to `4472330758a71312f9a86b83ab10fdce47791287`, including the recomputed
 replay-manifest digest.
 
 No V0.14 tuning policy or artifact format changes. No language/ABI rule,
