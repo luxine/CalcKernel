@@ -32,8 +32,9 @@ baseline、每 root 至多两个 enhanced implementation 和 closed dispatch pla
    派生；hidden helper 可 clone/inline 但不 export，每 variant 有独立 proof/cost/feature/size digest。
 5. 写 budget RED：每 root baseline + 0..2 enhanced；additional KIR units <= complete post-O3 baseline
    units，最终 <=2x；与 PGO/0.12 clone/transaction ledger 共享，trial/non-winner 不退款。
-6. 写 ranking RED：dynamic cost、smaller size、fewer features、tier identity、root identity total order；
-   v3 可优于 v4/baseline，baseline-only 给 `no-compatible-enhanced-tier`。
+6. 写 ranking RED：已满足收益门槛的候选按 fewer features（更广 runtime compatibility）、dynamic
+   cost、smaller size、tier identity、root identity total order；一个 full-root variant 的 budget 必须
+   保留 broad profitable tier，baseline-only 给 `no-compatible-enhanced-tier`。
 7. 写 checker mutation RED：forged feature/benefit/size/budget/pre-state/proof/mapping/symbol/variant order
    均 withholding bundle；unsupported transform 是 stable baseline fallback。
 8. 实现 canonical tables、explicit target profile queries、planner/independent checker/KIR bundle printer；

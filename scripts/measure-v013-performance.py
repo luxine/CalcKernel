@@ -14,6 +14,7 @@ import pathlib
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -261,6 +262,62 @@ def output_artifact(base: pathlib.Path, kind: str) -> pathlib.Path:
     fail(f"unknown artifact kind {kind}")
 
 
+def dispatch_symbol_values(library: pathlib.Path, public_symbol: str) -> tuple[int, int]:
+    """Read the public entry and its one private dispatch slot from ELF64."""
+    data = library.read_bytes()
+    header_format = "<16sHHIQQQIHHHHHH"
+    section_format = "<IIQQQQIIQQ"
+    symbol_format = "<IBBHQQ"
+    if len(data) < struct.calcsize(header_format):
+        fail("selected-direct artifact is not ELF64")
+    header = struct.unpack_from(header_format, data)
+    identity = header[0]
+    if identity[:7] != b"\x7fELF\x02\x01\x01":
+        fail("selected-direct artifact is not little-endian ELF64")
+    section_offset, section_entry_size, section_count = header[6], header[11], header[12]
+    if section_entry_size != struct.calcsize(section_format) or section_count == 0:
+        fail("selected-direct ELF section table is malformed")
+    sections = []
+    for index in range(section_count):
+        offset = section_offset + index * section_entry_size
+        if offset + section_entry_size > len(data):
+            fail("selected-direct ELF section table is truncated")
+        sections.append(struct.unpack_from(section_format, data, offset))
+    values: dict[str, set[int]] = {}
+    for section in sections:
+        section_type, table_offset, table_size, link, entry_size = (
+            section[1], section[4], section[5], section[6], section[9]
+        )
+        if section_type != 2:
+            continue
+        if entry_size != struct.calcsize(symbol_format) or link >= len(sections):
+            fail("selected-direct ELF symbol table is malformed")
+        strings = sections[link]
+        string_offset, string_size = strings[4], strings[5]
+        if table_offset + table_size > len(data) or string_offset + string_size > len(data):
+            fail("selected-direct ELF symbol data is truncated")
+        string_data = data[string_offset:string_offset + string_size]
+        for offset in range(table_offset, table_offset + table_size, entry_size):
+            name_offset, _, _, _, value, _ = struct.unpack_from(symbol_format, data, offset)
+            if name_offset >= len(string_data):
+                fail("selected-direct ELF symbol name is malformed")
+            end = string_data.find(b"\0", name_offset)
+            if end < 0:
+                fail("selected-direct ELF symbol name is unterminated")
+            name = string_data[name_offset:end].decode("utf-8", errors="strict")
+            values.setdefault(name, set()).add(value)
+    public_values = values.get(public_symbol, set())
+    slot_values = {
+        value
+        for name, candidates in values.items()
+        if name.startswith("__ck_mv_") and name.endswith(f"_{public_symbol}_slot")
+        for value in candidates
+    }
+    if len(public_values) != 1 or len(slot_values) != 1:
+        fail("selected-direct ELF must contain one public symbol and one matching dispatch slot")
+    return next(iter(public_values)), next(iter(slot_values))
+
+
 def build_ck(compiler: pathlib.Path, case: dict, base: pathlib.Path, *, cpu: str,
              kind="dynamic", profile=None, generate=None, cache_root=None):
     command = [compiler, "build", case["source"], "--kind", kind, "--out", base,
@@ -285,12 +342,27 @@ def build_ck(compiler: pathlib.Path, case: dict, base: pathlib.Path, *, cpu: str
 
 class Kernel:
     def __init__(self, library: pathlib.Path, case: dict, record: dict):
+        self.library_path = library
         self.library = ctypes.CDLL(str(library))
         self.function = self.library.kernel
         self.case = case
         self.record = record
         self.keepalive = []
         self.arguments = self._arguments()
+
+    def bind_selected_direct(self):
+        """Resolve once, then call the exact selected hidden member directly."""
+        self.invoke()
+        public_value, slot_value = dispatch_symbol_values(self.library_path, "kernel")
+        public_address = ctypes.cast(self.function, ctypes.c_void_p).value
+        if public_address is None or public_address < public_value:
+            fail("selected-direct public function address is invalid")
+        image_base = public_address - public_value
+        selected_address = ctypes.c_void_p.from_address(image_base + slot_value).value
+        if selected_address is None:
+            fail("selected-direct dispatch slot was not resolved")
+        signature = ctypes.CFUNCTYPE(self.function.restype, *self.function.argtypes)
+        self.function = signature(selected_address)
 
     def _u32(self, length, salt):
         array = (ctypes.c_uint32 * max(1, length))()
@@ -663,11 +735,14 @@ def collect(output, quick, candidate_version="0.13.0"):
             ("pgo", candidate, "baseline", profiles["baseline"]),
             ("multiversion", candidate, "multiversion", None),
             ("combined", candidate, "multiversion", profiles["multiversion"]),
-            ("selectedDirect", candidate, "native", None),
         ]:
             artifacts[role], _, _ = build_ck(
                 compiler, case, evidence / f"{name}-{role}", cpu=cpu, profile=profile
             )
+        artifacts["selectedDirect"] = output_artifact(
+            evidence / f"{name}-selectedDirect", "dynamic"
+        )
+        shutil.copy2(artifacts["multiversion"], artifacts["selectedDirect"])
         training_record = splits["training"][name][0]
         artifacts["clangPgo"] = compile_clang_pgo(clang, profdata, case, training_record, evidence)
         artifacts["rustPgo"] = compile_rust_pgo(profdata, case, training_record, evidence)
@@ -683,6 +758,7 @@ def collect(output, quick, candidate_version="0.13.0"):
 
         held = splits["held-out"][name][0]
         kernels = [Kernel(artifacts[channel], case, held) for channel in CHANNELS]
+        kernels[CHANNELS.index("selectedDirect")].bind_selected_direct()
         resolver_calls = 0
         if case["eligible"]:
             kernels[CHANNELS.index("multiversion")].invoke()

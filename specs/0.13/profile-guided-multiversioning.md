@@ -612,10 +612,12 @@ AArch64 HWCAP mappings are compiler-owned canonical tables pinned with LLVM
 22.1.8; a table change advances the target-set schema.
 
 An enhanced feature level is not automatically faster. The compiler builds its
-target cost profile, proposes only legal transformations, and ranks variants
-per root by predicted cost. A root may prefer v3 over v4 or baseline over both.
-Runtime dispatch follows that per-root order rather than the numeric feature
-level.
+target cost profile and proposes only legal, profitable transformations. Within
+the bounded retained set it first preserves the profitable tier with the widest
+runtime compatibility, then ranks peers by predicted cost and code size. This
+prevents a one-variant budget from retaining only v4/SVE2 while falling back to
+baseline on the required v3/SVE worker. Runtime dispatch follows the retained
+per-root order rather than the numeric feature level.
 
 ## Multiversion eligibility and budgets
 
@@ -640,9 +642,10 @@ In either case:
 - budget exhaustion or insufficient benefit keeps baseline and records a
   stable conservative reason.
 
-Candidate ordering is total: estimated dynamic cost, smaller code size, fewer
-required features, target-tier identity, then root/function identity. Rejected
-trials do not refund audit budgets.
+Candidate ordering is total: fewer required features (wider compatible host
+coverage), estimated dynamic cost, smaller code size, target-tier identity,
+then root/function identity. Every retained candidate has already passed the
+unchanged profitability floors. Rejected trials do not refund audit budgets.
 
 ## Runtime dispatch and public ABI
 
@@ -842,9 +845,10 @@ On stable x86-64 and AArch64 workers:
   geometric-mean throughput by at least 8 percent over portable baseline on a
   worker with the required enhanced tier, with no case more than 3 percent
   slower;
-- after resolution, dispatched throughput is at least 98 percent of a separately
-  linked direct artifact using the same selected tier in geometric mean and no
-  case is more than 5 percent slower;
+- after resolution, dispatched throughput is at least 98 percent of direct calls
+  to the exact hidden member selected by that artifact in geometric mean and no
+  case is more than 5 percent slower; the direct channel resolves a separate
+  loaded copy before timing and bypasses only its public thunk;
 - combined PGO plus multiversion is no more than 2 percent slower in geometric
   mean and 5 percent for any case than the faster applicable PGO-only or
   multiversion-only artifact;

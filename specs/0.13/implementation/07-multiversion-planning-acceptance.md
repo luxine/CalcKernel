@@ -23,6 +23,9 @@
   feature digest、hidden symbols；无 cross-variant LTO。
 - checker 独立复算 eligibility/profit/growth/shared budget/order；每 root 最多两个 enhanced，module
   total KIR <=2x baseline，拒绝/non-winner 不退款。
+- 进入 retained-set 排序的候选已通过不变的 profitability floor；若 shared full-root budget 只容纳
+  一个 enhanced member，先保留 required feature 更少、runtime 兼容覆盖更广的候选，再按 dynamic
+  cost、size、tier 与 root identity 决胜。
 - 非 O3、unsupported consumer/sanitizer/object combination 在任何输出前明确失败。
 
 ## 完成证据

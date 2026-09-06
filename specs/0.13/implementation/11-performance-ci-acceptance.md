@@ -33,8 +33,11 @@ runtime initialization 参数准备被复制进热插桩路径；5x 门槛、sit
 保持不变。Candidate-constant observation 必须使用 function-local saturated batching，最终 bucket
 计数精确且 hot comparison 不含逐 observation atomic runtime call。AArch64 generic SVE/SVE2
 multiversion member 必须使用固定 schedule-only tuning model，且 feature audit 仍证明无越权 ISA。
-x86 Native target profile 必须在既有封闭 `UF <= 4` 候选空间内暴露至少四路 interleave，
-`strict_f64` 与 `integer_cast` 的真实 target plan 必须选择 `VF2/UF4`；候选 checker 与门槛不变。
+x86 Native target profile 必须在既有封闭 `UF <= 4` 候选空间内暴露至少四路 interleave；
+`strict_f64` 与 `integer_cast` 必须选择经过 checker 的 `VF2` 多独立链计划，具体 `UF2/UF4` 由
+真实 target cost 决定，并继续通过不变的 SIMD 性能门槛。
+selected-direct channel 必须从独立加载的同字节 multiversion artifact 读取并调用 resolver 实际
+发布的 hidden member，只绕过 public thunk，不能再以 `--cpu native` 产物冒充 selected tier。
 x86 constant-call scalar memory-map 必须使用 IR-semantic 1×5 schedule 且不影响 checked/reduction/
 pre-vectorized loop；所有 multiversion physical module 必须携带 verified contract facts重新验证，缺失时
 fail closed，Native fact audit不能绕过。

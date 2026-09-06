@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -42,6 +43,31 @@ def order(width, rows):
 def stream(record, prefix, value, count=20):
     record[prefix + "MedianNs"] = value
     record[prefix + "SamplesNs"] = [value] * count
+
+
+def elf_with_symbols(symbols):
+    strings = bytearray(b"\0")
+    name_offsets = {}
+    for name in symbols:
+        name_offsets[name] = len(strings)
+        strings.extend(name.encode() + b"\0")
+    symbol_table = bytearray(24)
+    for name, value in symbols.items():
+        symbol_table.extend(struct.pack("<IBBHQQ", name_offsets[name], 0, 0, 1, value, 0))
+    string_offset = 64
+    symbol_offset = string_offset + len(strings)
+    section_offset = symbol_offset + len(symbol_table)
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF\x02\x01\x01" + b"\0" * 9,
+        3, 62, 1, 0, 0, section_offset, 0, 64, 0, 0, 64, 3, 0,
+    )
+    null_section = bytes(64)
+    string_section = struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, string_offset, len(strings), 0, 0, 1, 0)
+    symbol_section = struct.pack(
+        "<IIQQQQIIQQ", 0, 2, 0, 0, symbol_offset, len(symbol_table), 1, 1, 8, 24
+    )
+    return header + strings + symbol_table + null_section + string_section + symbol_section
 
 
 class SchemaEightGateTests(unittest.TestCase):
@@ -259,6 +285,32 @@ class SchemaEightGateTests(unittest.TestCase):
         source.write_text(json.dumps({"evidenceDirectory": redirected.name}))
         with self.assertRaisesRegex(ValueError, "real directory"):
             collector.retain_cumulative_schema_seven(source, destination)
+
+    def test_collector_reads_the_exact_public_and_dispatch_slot_elf_symbols(self):
+        library = self.root / "selected-direct.so"
+        library.write_bytes(elf_with_symbols({
+            "kernel": 0x1240,
+            "__ck_mv_deadbeef_kernel_slot": 0x3888,
+        }))
+
+        symbols = collector.dispatch_symbol_values(library, "kernel")
+
+        self.assertEqual(symbols, (0x1240, 0x3888))
+
+    def test_collector_rejects_missing_or_ambiguous_dispatch_slots(self):
+        missing = self.root / "missing.so"
+        missing.write_bytes(elf_with_symbols({"kernel": 0x1240}))
+        with self.assertRaisesRegex(ValueError, "dispatch slot"):
+            collector.dispatch_symbol_values(missing, "kernel")
+
+        ambiguous = self.root / "ambiguous.so"
+        ambiguous.write_bytes(elf_with_symbols({
+            "kernel": 0x1240,
+            "__ck_mv_one_kernel_slot": 0x3888,
+            "__ck_mv_two_kernel_slot": 0x3990,
+        }))
+        with self.assertRaisesRegex(ValueError, "dispatch slot"):
+            collector.dispatch_symbol_values(ambiguous, "kernel")
 
     def test_identity_capability_profile_and_evidence_fail_closed(self):
         self.reject(lambda r: r.__setitem__("candidateSha", "2" * 40), "candidateSha")

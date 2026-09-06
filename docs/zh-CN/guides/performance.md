@@ -54,8 +54,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 - PGO use 相对相同 0.13 ordinary CPU policy：geometric-mean improvement 至少 5%，held-out
   单项 slowdown 不超过 3%；固定 instrumentation corpus 上 generation execution 不超过 ordinary 5x。
 - Eligible multiversion dispatch 相对 portable baseline：geometric-mean improvement 至少 8%，
-  单项 slowdown 不超过 3%；dispatch 至少达到 selected-direct geometric mean 的 98%，单项
-  最多慢 5%。
+  单项 slowdown 不超过 3%；dispatch 至少达到独立加载的同字节 artifact 中 resolver 实际选中
+  hidden member direct call geometric mean 的 98%，单项最多慢 5%。
 - Combined PGO+multiversion 相对较快的对应 PGO-only/multiversion-only channel，geometric
   mean 最多慢 2%，单项最多慢 5%。
 - Combined CK 至少达到较快等价 Clang/Rust PGO geometric mean 的 95%，每个 accepted

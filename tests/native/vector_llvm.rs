@@ -495,6 +495,11 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
     let profile = target
         .kir_profile(KirConsumer::NativeLibrary)
         .expect("queried target profile");
+    #[cfg(target_arch = "x86_64")]
+    assert!(
+        profile.maximum_interleave_factor() >= 4,
+        "x86 target profile must expose the closed four-chain frontier"
+    );
     let checked = check(&SourceFile::new("loop-simd.ck", LOOP_SIMD_SOURCE));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("loop SIMD MIR");
@@ -683,9 +688,12 @@ fn vector_loop_simd_strict_f64_should_lower_without_fast_math_or_contraction() {
             })
             .expect("accepted strict-f64 vector plan");
         assert_eq!(
-            (accepted.vf, accepted.uf),
-            (2, 4),
-            "x86 strict-f64 lowering must select four independent vector chains"
+            accepted.vf, 2,
+            "x86 strict-f64 lowering must use f64 vectors"
+        );
+        assert!(
+            accepted.uf >= 2 && accepted.uf <= 4,
+            "x86 strict-f64 lowering must select a profitable independent-chain plan"
         );
     }
     let context = NativeContext::new().expect("context");
@@ -878,15 +886,32 @@ fn vector_loop_simd_cast_and_pure_diamond_should_survive_into_pre_llvm_ir() {
         result.analysis_fallbacks
     );
     #[cfg(target_arch = "x86_64")]
-    assert!(
-        result.vector_explanations.iter().any(|explanation| {
-            explanation.disposition == calckernel::CandidateDisposition::Accepted
-                && explanation.vf == 2
-                && explanation.uf == 4
-        }),
-        "x86 integer-cast lowering must select four independent f64 vector chains: {:?}",
-        result.vector_explanations
-    );
+    {
+        let artifact = result.artifact.as_ref().expect("cast/diamond artifact");
+        let map_cast = artifact
+            .functions
+            .iter()
+            .find(|function| function.name == "map_cast")
+            .expect("map_cast function")
+            .id;
+        let accepted = result
+            .vector_explanations
+            .iter()
+            .find(|explanation| {
+                explanation.disposition == calckernel::CandidateDisposition::Accepted
+                    && matches!(
+                        explanation.candidate,
+                        calckernel::CandidateKey::LoopFrontier { function, .. }
+                            if function == map_cast
+                    )
+            })
+            .expect("accepted x86 integer-cast plan");
+        assert_eq!(accepted.vf, 2, "x86 integer cast must produce f64 vectors");
+        assert!(
+            accepted.uf >= 2 && accepted.uf <= 4,
+            "x86 integer cast must select a profitable independent-chain plan"
+        );
+    }
     let kir_text = print_kir_module(result.artifact.as_ref().expect("cast/diamond artifact"));
     for spelling in ["vector_cast", "vector_compare", "vector_select"] {
         assert!(

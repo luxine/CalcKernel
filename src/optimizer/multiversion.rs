@@ -241,9 +241,15 @@ fn build_candidate_bundle(
         }
         candidates.sort_by_key(|variant| {
             (
+                // When the shared budget can retain only one full root clone,
+                // prefer the profitable tier with the widest runtime coverage.
+                // A v4-only image is unusable on a v3 host even when its static
+                // cost is lower; the compatible v3 member remains selectable on
+                // both v3 and v4 hosts. Cost and size still rank peers with the
+                // same compatibility breadth.
+                variant.required_features.len(),
                 variant.predicted_variant_cost,
                 variant.kir_units,
-                variant.required_features.len(),
                 variant.tier,
                 variant.root,
             )

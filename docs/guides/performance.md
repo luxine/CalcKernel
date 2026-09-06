@@ -68,7 +68,8 @@ per-row common-mode normalization; throughput still uses raw retained durations.
   execution is at most 5x ordinary on the fixed instrumentation corpus.
 - Eligible multiversion dispatch versus portable baseline: geometric-mean
   improvement at least 8%, individual slowdown at most 3%. Dispatch achieves at
-  least 98% of selected-direct geometric mean and is at most 5% slower per case.
+  least 98% of direct calls to the exact resolved hidden member in a separate
+  byte-identical artifact and is at most 5% slower per case.
 - Combined PGO+multiversion is no more than 2% slower in geometric mean and 5%
   individually than the faster matching PGO-only/multiversion-only channel.
 - Combined CK reaches at least 95% of the faster equivalent Clang/Rust PGO
