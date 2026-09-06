@@ -66,6 +66,8 @@
   fail closed，LLVM parameter/alias/effect strengthening仍由 Native fact audit逐项约束。
 - [ ] detector fail-closed且 baseline-safe；capability恰缓存一次，public thunk address/ABI稳定，后续 atomic
   load+indirect tail call；variant/runtime symbols hidden/namespaced，production无强制 unsupported feature seam。
+- [ ] dispatcher fact ledger 只复制其实际继承的参数/函数属性；assume/range/no-wrap/alias-scope 等
+  函数体证据不得重复归属 dispatcher，增强 tier 平台的 pre-LLVM fact audit 必须精确相等。
 - [ ] executable/dynamic/static named-object bundle真实链接；multiversion object拒绝，single-version use
   object支持；final artifact自包含且无 profile/LLVM/compiler/new shared dependency。
 - [ ] CKCOBJ03/key+manifest 4覆盖全部 profile/physical kind/target/variant/dispatch/runtime/budget identity；

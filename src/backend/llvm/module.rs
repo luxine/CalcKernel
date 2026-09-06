@@ -3,7 +3,7 @@ use std::{marker::PhantomData, ptr::NonNull, rc::Rc};
 use super::{
     context::NativeContext,
     error::NativeError,
-    fact_audit::NativeFactProperty,
+    fact_audit::{NativeFactProperty, NativeStrengtheningKind},
     ffi::{self, CkcLlvmModule},
     target::NativeTarget,
 };
@@ -74,7 +74,17 @@ impl<'context> NativeModule<'context> {
         let duplicated = self
             .fact_properties
             .iter()
-            .filter(|property| property.function == public_name)
+            .filter(|property| {
+                property.function == public_name
+                    && matches!(
+                        property.kind,
+                        NativeStrengtheningKind::Alignment
+                            | NativeStrengtheningKind::ReadOnly
+                            | NativeStrengtheningKind::WriteOnly
+                            | NativeStrengtheningKind::MemoryEffects
+                            | NativeStrengtheningKind::ParameterNoAlias
+                    )
+            })
             .cloned()
             .collect::<Vec<_>>();
         self.fact_properties.extend(duplicated);
