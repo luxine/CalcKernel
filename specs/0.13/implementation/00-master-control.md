@@ -189,3 +189,12 @@ multiversion/selected-direct 为约 1.0552，越过 5% individual gate。复诊�
 saturated batching，而 generic SVE/SVE2 member 使用固定 `neoverse-n2` schedule-only tuning。
 Instrumentation site/counter/observation、target CPU/features、timed work、样本、统计、性能与稳定性
 门槛、corpus、target tiers 与 required job matrix 均不变。
+
+Exact V0.13 run `34021087906` 的 x86-64 performance job `101453829767` 随后证明
+`specialized_length` unchecked 仅达到更快 SIMD oracle 的约 88.9%；同 run 的 AArch64
+performance job `101453829694` 证明 `compute-bound` multiversion/selected-direct 约为
+1.0551。复诊与闭环见 `specs/0.13/review/implementation-blocker-20.md`：x86 常量调用边界的
+scalar memory-map handoff 使用固定 1×5 schedule；multiversion baseline/variant 则在独立 KIR
+复验与 LLVM lowering 中强制携带原 verified contract facts，缺失时 fail closed。source semantics、
+target CPU/features、timed work、样本、统计、性能与稳定性门槛、corpus、target tiers 与 required
+job matrix 均不变。

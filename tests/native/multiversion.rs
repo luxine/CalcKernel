@@ -97,6 +97,10 @@ fn variant_feature_modules_should_lower_and_emit_independently_for_each_host_tie
     let contracts = import_contract_facts(&kir, &checked.checked_program, 0).expect("contracts");
     let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let optimized_contracts = optimized
+        .contract_facts
+        .clone()
+        .expect("optimized contracts");
     let request = KirMultiversionPlanningRequest {
         logical_pre_state: optimized.artifact.expect("baseline"),
         target_set: targets.target_set().clone(),
@@ -111,8 +115,11 @@ fn variant_feature_modules_should_lower_and_emit_independently_for_each_host_tie
     let context = NativeContext::new().expect("context");
     for variant in bundle.roots.iter().flat_map(|root| &root.variants) {
         let target = targets.target(variant.tier).expect("variant target");
-        let verified =
-            run_kir_pass_pipeline(variant.module.clone(), KirOptimizationLevel::O0, None);
+        let verified = run_kir_pass_pipeline(
+            variant.module.clone(),
+            KirOptimizationLevel::O0,
+            Some(&optimized_contracts),
+        );
         assert!(verified.errors.is_empty(), "{:?}", verified.errors);
         let object = target
             .emit_object(
@@ -183,6 +190,10 @@ fn multiversion_dispatch_named_objects_should_remain_separate_and_canonical() {
     let contracts = import_contract_facts(&kir, &checked.checked_program, 0).expect("contracts");
     let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let optimized_contracts = optimized
+        .contract_facts
+        .clone()
+        .expect("optimized contracts");
     let request = KirMultiversionPlanningRequest {
         logical_pre_state: optimized.artifact.expect("baseline"),
         target_set: targets.target_set().clone(),
@@ -197,6 +208,7 @@ fn multiversion_dispatch_named_objects_should_remain_separate_and_canonical() {
         &targets,
         &request,
         &bundle,
+        &optimized_contracts,
         None,
         &EmitLlvmOptions::default(),
     )

@@ -61,7 +61,7 @@ pub(super) fn compile_run_object(args: &ParsedArgs) -> Result<NativeObject, Stri
     let cpu = target.cpu().map_err(|error| error.to_string())?;
     let features = target.features().map_err(|error| error.to_string())?;
     let codegen_contract = format!(
-        "kir-v3;strict-fp;entry-wrapper-v1;native-cpu;host-only;sanitizer-contracts={}",
+        "kir-v3;strict-fp;entry-wrapper-v1;native-cpu;host-only;x86-constant-map-schedule-1x5-v1;sanitizer-contracts={}",
         u8::from(args.sanitize_contracts)
     );
     let key_input = CacheKeyInput {
@@ -1469,12 +1469,18 @@ fn run_multiversion_planning_build(
     {
         cached
     } else {
+        let contracts = compiled
+            .result
+            .contract_facts
+            .as_ref()
+            .ok_or_else(|| "multiversion contract facts are missing".to_string())?;
         let context = NativeContext::new().map_err(|error| error.to_string())?;
         let emitted = emit_native_multiversion_objects(
             &context,
             &targets,
             &request,
             &bundle,
+            contracts,
             compiled.result.pgo.as_ref(),
             &EmitLlvmOptions {
                 source_file_name: None,
@@ -1642,7 +1648,7 @@ fn multiversion_cache_manifest(
         bundle.additional_kir_units,
         bundle.total_kir_units,
     );
-    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;aarch64-sve-tune-neoverse-n2-v1".to_string();
+    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;contract-facts-v1;aarch64-sve-tune-neoverse-n2-v1;x86-constant-map-schedule-1x5-v1".to_string();
     let key_input = CacheKeyInput {
         source,
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),

@@ -1864,6 +1864,8 @@ namespace {
 
 constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
 constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
+constexpr uint32_t CKC_X86_CONSTANT_MAP_INTERLEAVE = 1;
+constexpr uint32_t CKC_X86_CONSTANT_MAP_UNROLL = 5;
 constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
 constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = "neoverse-n2";
 
@@ -1927,6 +1929,180 @@ bool may_contain_nonlocal_load(const llvm::Function &function) {
         }
     }
     return false;
+}
+
+bool contains_fixed_vector_operation(const llvm::Loop &loop);
+bool contains_checked_integer_overflow(const llvm::Loop &loop);
+
+void promote_entry_allocas(llvm::Function &function) {
+    llvm::SmallVector<llvm::AllocaInst *, 16> promotable;
+    for (llvm::Instruction &instruction : function.getEntryBlock()) {
+        auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
+        if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
+            promotable.push_back(alloca);
+        }
+    }
+    if (promotable.empty()) {
+        return;
+    }
+    llvm::DominatorTree dominators(function);
+    llvm::PromoteMemToReg(promotable, dominators);
+}
+
+std::optional<unsigned> scalar_memory_map_bound_argument(
+    const llvm::Loop &loop) {
+    if (contains_fixed_vector_operation(loop) ||
+        contains_checked_integer_overflow(loop) ||
+        is_integer_memory_reduction(loop)) {
+        return std::nullopt;
+    }
+    bool saw_nonlocal_load = false;
+    bool saw_nonlocal_store = false;
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+                saw_nonlocal_load = saw_nonlocal_load ||
+                    !llvm::isa<llvm::AllocaInst>(
+                        load->getPointerOperand()->stripPointerCasts());
+            }
+            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+                saw_nonlocal_store = saw_nonlocal_store ||
+                    !llvm::isa<llvm::AllocaInst>(
+                        store->getPointerOperand()->stripPointerCasts());
+            }
+        }
+    }
+    if (!saw_nonlocal_load || !saw_nonlocal_store) {
+        return std::nullopt;
+    }
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            const auto *compare = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
+            if (compare == nullptr) {
+                continue;
+            }
+            for (unsigned operand = 0; operand < 2; ++operand) {
+                const auto *bound = llvm::dyn_cast<llvm::Argument>(
+                    compare->getOperand(operand));
+                const auto *induction = llvm::dyn_cast<llvm::PHINode>(
+                    compare->getOperand(1 - operand));
+                if (bound != nullptr && induction != nullptr &&
+                    induction->getParent() == loop.getHeader() &&
+                    bound->getType()->isIntegerTy()) {
+                    return bound->getArgNo();
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool every_direct_call_has_constant_argument(
+    llvm::Function &function, unsigned argument_index) {
+    bool saw_call = false;
+    llvm::SmallVector<llvm::CallBase *, 8> calls;
+    for (llvm::User *user : function.users()) {
+        auto *call = llvm::dyn_cast<llvm::CallBase>(user);
+        if (call == nullptr ||
+            call->getCalledOperand()->stripPointerCasts() != &function ||
+            argument_index >= call->arg_size()) {
+            return false;
+        }
+        calls.push_back(call);
+    }
+    for (llvm::CallBase *call : calls) {
+        llvm::Function *caller = call->getFunction();
+        if (caller == nullptr || caller == &function) {
+            return false;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *clone = llvm::CloneFunction(caller, clone_map);
+        promote_entry_allocas(*clone);
+        auto *clone_call = llvm::dyn_cast_or_null<llvm::CallBase>(
+            clone_map.lookup(call));
+        const bool constant = clone_call != nullptr &&
+            llvm::isa<llvm::ConstantInt>(
+                clone_call->getArgOperand(argument_index));
+        clone->eraseFromParent();
+        if (!constant) {
+            return false;
+        }
+        saw_call = true;
+    }
+    return saw_call;
+}
+
+void attach_x86_constant_call_map_schedule(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
+        return;
+    }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
+    for (llvm::Function &function : module) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty() ||
+            !function->hasLocalLinkage() ||
+            !may_contain_nonlocal_load(*function)) {
+            continue;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *clone = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*clone);
+        llvm::DominatorTree clone_dominators(*clone);
+        llvm::LoopInfo clone_loops(clone_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *clone_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *clone_loop = clone_header == nullptr
+                ? nullptr
+                : clone_loops.getLoopFor(clone_header);
+            if (clone_loop == nullptr ||
+                clone_loop->getHeader() != clone_header) {
+                continue;
+            }
+            const auto bound = scalar_memory_map_bound_argument(*clone_loop);
+            if (!bound ||
+                !every_direct_call_has_constant_argument(*function, *bound)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto count_node = [&](llvm::StringRef name, uint32_t value) {
+                return llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context, name),
+                     llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                         llvm::Type::getInt32Ty(context), value))});
+            };
+            auto *interleave = count_node(
+                "llvm.loop.interleave.count",
+                CKC_X86_CONSTANT_MAP_INTERLEAVE);
+            auto *unroll = count_node(
+                "llvm.loop.unroll.count", CKC_X86_CONSTANT_MAP_UNROLL);
+            llvm::Metadata *operands[] = {nullptr, interleave, unroll};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+        clone->eraseFromParent();
+    }
 }
 
 bool contains_fixed_vector_operation(const llvm::Loop &loop) {
@@ -2109,18 +2285,8 @@ void attach_x86_integer_reduction_interleave(
         llvm::ValueToValueMapTy clone_map;
         llvm::Function *attached_clone =
             llvm::CloneFunction(function, clone_map);
-        llvm::SmallVector<llvm::AllocaInst *, 16> allocas;
-        for (llvm::Instruction &instruction :
-             attached_clone->getEntryBlock()) {
-            auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
-            if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
-                allocas.push_back(alloca);
-            }
-        }
+        promote_entry_allocas(*attached_clone);
         llvm::DominatorTree clone_dominators(*attached_clone);
-        if (!allocas.empty()) {
-            llvm::PromoteMemToReg(allocas, clone_dominators);
-        }
         llvm::LoopInfo clone_loops(clone_dominators);
         llvm::DominatorTree production_dominators(*function);
         llvm::LoopInfo production_loops(production_dominators);
@@ -2184,6 +2350,8 @@ extern "C" int32_t ckc_llvm_module_optimize(
             attach_x86_checked_loop_unroll(*module->value, *target->value);
             attach_x86_integer_reduction_interleave(*module->value,
                                                      *target->value);
+            attach_x86_constant_call_map_schedule(*module->value,
+                                                  *target->value);
         }
 
         llvm::LoopAnalysisManager loop_analyses;

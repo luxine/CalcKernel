@@ -263,6 +263,41 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
 }
 
 #[test]
+fn native_handoff_repairs_should_preserve_contract_facts_and_constant_map_schedule() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let multiversion = read("src/backend/llvm/multiversion.rs");
+    let commands = read("src/cli/commands.rs");
+
+    for required in [
+        "CKC_X86_CONSTANT_MAP_INTERLEAVE = 1",
+        "CKC_X86_CONSTANT_MAP_UNROLL = 5",
+        "attach_x86_constant_call_map_schedule",
+        "llvm.loop.interleave.count",
+        "llvm.loop.unroll.count",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "Native LLVM handoff must pin `{required}`"
+        );
+    }
+    assert!(
+        !bridge.contains("specialized_length"),
+        "the bridge schedule must be selected from IR semantics, not a fixture name"
+    );
+
+    for required in ["contracts: &ContractFactSet", "Some(contracts)"] {
+        assert!(
+            multiversion.contains(required),
+            "multiversion revalidation must preserve `{required}`"
+        );
+    }
+    assert!(
+        commands.contains("multiversion contract facts are missing"),
+        "the CLI must fail closed instead of silently emitting fact-free variants"
+    );
+}
+
+#[test]
 fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
     let schema = read("benches/summary-schema.md");
     let checker = read("scripts/check-native-performance.py");
