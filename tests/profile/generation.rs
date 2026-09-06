@@ -78,6 +78,22 @@ fn generation_directory_should_capture_stable_absolute_identity() {
     assert_eq!(first, second);
 }
 
+#[cfg(windows)]
+#[test]
+fn generation_directory_should_accept_a_canonical_verbatim_path() {
+    let root = test_root("generation-anchor-verbatim");
+    fs::create_dir_all(&root).expect("create collection directory");
+    let canonical = root
+        .canonicalize()
+        .expect("canonicalize collection directory");
+    assert!(canonical.to_string_lossy().starts_with(r"\\?\"));
+
+    let anchor = anchor_profile_directory(&canonical).expect("anchor verbatim directory");
+    fs::remove_dir_all(&root).expect("remove collection directory");
+
+    assert_eq!(anchor.path, canonical);
+}
+
 #[cfg(unix)]
 #[test]
 fn generation_directory_should_reject_indirection_in_any_component() {

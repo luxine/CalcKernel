@@ -1166,12 +1166,15 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
 
     let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
     for required in [
-        "#pragma intrinsic(_InterlockedCompareExchange)",
-        "#pragma intrinsic(_InterlockedExchange)",
+        "defined(_M_ARM64)",
+        "#pragma intrinsic(_InterlockedCompareExchange_acq)",
+        "#pragma intrinsic(_InterlockedExchange_rel)",
+        "_InterlockedCompareExchange_acq(object, 0, 0)",
+        "_InterlockedExchange_rel(object, (long)value)",
     ] {
         assert!(
             runtime.contains(required),
-            "MSVC ARM64 dispatch atomics must be forced to intrinsics: {required}"
+            "MSVC ARM64 dispatch atomics must use architecture-only intrinsics: {required}"
         );
     }
     for required in [
@@ -1867,6 +1870,84 @@ fn prevectorized_kir_loops_should_disable_redundant_llvm_unrolling() {
             "prevectorized-loop handoff omitted {required}"
         );
     }
+}
+
+#[test]
+fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
+    let collector = read("native/profile_runtime/common/collector.c");
+    let atomics = read("native/profile_runtime/include/ckc_profile_atomic.h");
+    let windows = read("native/profile_runtime/platform/windows.c");
+    let provenance = read("native/profile_runtime/provenance.toml");
+    let windows_bootstrap = read("scripts/bootstrap-llvm.ps1");
+
+    assert!(collector.contains("CkProfileAtomicU64"));
+    assert!(!collector.contains("#include <stdatomic.h>"));
+    for required in [
+        "defined(_M_ARM64)",
+        "#pragma intrinsic(_InterlockedCompareExchange_acq)",
+        "#pragma intrinsic(_InterlockedCompareExchange64_nf)",
+        "#pragma intrinsic(_InterlockedExchange_rel)",
+        "#pragma intrinsic(_InterlockedExchangeAdd64_nf)",
+        "_InterlockedCompareExchange_acq(",
+        "_InterlockedCompareExchange64_nf(",
+        "_InterlockedExchangeAdd64_nf(&atomic->value,",
+        "defined(__aarch64__) && defined(__linux__)",
+        "ldxr",
+        "stxr",
+        "ATOMIC_LLONG_LOCK_FREE",
+    ] {
+        assert!(
+            atomics.contains(required),
+            "atomic portability layer missing {required}"
+        );
+    }
+    assert!(
+        provenance.contains("include/ckc_profile_atomic.h"),
+        "profile runtime provenance must bind the atomic portability layer"
+    );
+    for required in [
+        "#pragma intrinsic(_InterlockedIncrement_nf)",
+        "_InterlockedIncrement_nf(&serial)",
+    ] {
+        assert!(
+            windows.contains(required),
+            "the Windows ARM64 run-id counter must remain an architecture-only intrinsic: {required}"
+        );
+    }
+    let profile_compile = windows_bootstrap
+        .split_once("$profileRuntimeObject =")
+        .expect("Windows profile runtime compile section")
+        .1
+        .split_once("$profileRuntimeHash =")
+        .expect("Windows profile runtime compile boundary")
+        .0;
+    assert!(
+        profile_compile.contains("/Oi"),
+        "the freestanding profile runtime must request intrinsic expansion explicitly"
+    );
+    let dispatch_compile = windows_bootstrap
+        .split_once("$dispatchRuntimeObject =")
+        .expect("Windows dispatch runtime compile section")
+        .1
+        .split_once("$dispatchRuntimeHash =")
+        .expect("Windows dispatch runtime compile boundary")
+        .0;
+    assert!(
+        dispatch_compile.contains("/Oi"),
+        "the freestanding dispatch runtime must request intrinsic expansion explicitly"
+    );
+}
+
+#[test]
+fn coff_link_outputs_should_have_a_reproducible_timestamp() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    assert_eq!(
+        bridge
+            .matches("arguments.emplace_back(\"/timestamp:0\")")
+            .count(),
+        2,
+        "both embedded COFF LLD entry points must suppress wall-clock PE timestamps"
+    );
 }
 
 #[test]
