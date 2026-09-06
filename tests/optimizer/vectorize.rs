@@ -982,6 +982,22 @@ fn loop_simd_strict_f64_elementwise_should_preserve_lane_rounding_without_fast_m
 }
 
 #[test]
+fn loop_simd_x86_strict_f64_should_admit_four_independent_vector_chains() {
+    let (pre, _) = map_state_with_profile(
+        STRICT_F64_MAP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|candidate| candidate.vf == 2 && candidate.uf == 4),
+        "x86 strict-f64 map omitted its four-chain schedule: {discovery:#?}"
+    );
+}
+
+#[test]
 fn loop_simd_strict_f64_unary_and_divide_should_remain_ordered_lane_operations() {
     let (pre, _) = map_state(STRICT_F64_UNARY_DIVIDE_MAP);
     let discovery = discover_vectorization_candidates(&pre);

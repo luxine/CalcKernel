@@ -107,7 +107,7 @@ impl NativeTarget {
         })?;
         let mut builder = KirTargetProfileBuilder::native(
             consumer,
-            triple,
+            triple.clone(),
             pointer_width_bits,
             little_endian,
             match self.cpu_policy {
@@ -158,7 +158,10 @@ impl NativeTarget {
                 builder.set_unavailable(key).map_err(profile_error)?;
             }
         }
-        builder.set_maximum_interleave_factor(maximum_interleave_factor);
+        builder.set_maximum_interleave_factor(bounded_interleave_factor(
+            &triple,
+            maximum_interleave_factor,
+        ));
         builder.set_producer_identity(
             "LLVM 22.1.8 TCK_RecipThroughput",
             format!("ckc-llvm-bridge-abi-{}", ffi::LLVM_BRIDGE_ABI_VERSION),
@@ -198,6 +201,19 @@ impl NativeTarget {
 
 fn profile_error(message: String) -> NativeError {
     NativeError::new(super::error::NativeStage::Target, 3, message)
+}
+
+fn bounded_interleave_factor(triple: &str, llvm_factor: u8) -> u8 {
+    // LLVM's x86 TTI can report two independent chains for an already
+    // vectorized strict-FP loop even though the pinned SIMD oracle and the
+    // generated machine schedule sustain four. Four is already the closed KIR
+    // frontier cap, so this preserves bounded search while exposing the
+    // empirically supported x86 schedule to the checked cost model.
+    if triple.split('-').next() == Some("x86_64") {
+        llvm_factor.max(4)
+    } else {
+        llvm_factor
+    }
 }
 
 const fn operation_tag(operation: KirProfileOperation) -> u32 {
@@ -254,5 +270,115 @@ impl Drop for NativeTarget {
     fn drop(&mut self) {
         // SAFETY: `NativeTarget` is the unique owner and calls dispose once.
         unsafe { ffi::target_dispose(self.handle) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, process::Command};
+
+    use crate::{
+        EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+        KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module_with_profile, check,
+        import_contract_facts, lower_to_mir, run_kir_pass_pipeline,
+    };
+
+    use super::{NativeCpu, NativeTarget};
+    use crate::NativeOptimizationLevel;
+    use crate::backend::llvm::{NativeContext, lower_native_kir_module};
+
+    #[test]
+    fn x86_native_profile_should_allow_four_independent_vector_chains() {
+        assert_eq!(
+            super::bounded_interleave_factor("x86_64-unknown-linux-gnu", 2),
+            4
+        );
+        assert_eq!(
+            super::bounded_interleave_factor("aarch64-unknown-linux-gnu", 2),
+            2
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn generic_sve_tuning_should_reach_machine_scheduling_without_expanding_isa() {
+        let host = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("host target");
+        let triple = host.triple().expect("host triple");
+        drop(host);
+        let target = NativeTarget::explicit_multiversion(
+            &triple,
+            "generic",
+            &["+sve".to_string(), "+sve2".to_string()],
+        )
+        .expect("generic SVE target");
+        let checked = check(&SourceFile::new(
+            "compute-bound.ck",
+            include_str!("../../../benches/fixtures/pgo/compute_bound.ck"),
+        ));
+        assert_eq!(checked.diagnostics, []);
+        let mir = lower_to_mir(&checked.checked_program).expect("compute-bound MIR");
+        let kir = build_kir_module_with_profile(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::NativeLibrary,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+            target
+                .kir_profile(KirConsumer::NativeLibrary)
+                .expect("SVE profile"),
+        )
+        .expect("compute-bound KIR");
+        let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
+            .expect("compute-bound contract facts");
+        let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O2, Some(&contracts));
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+
+        let context = NativeContext::new().expect("native context");
+        let verified =
+            lower_native_kir_module(&context, &target, &optimized, &EmitLlvmOptions::default())
+                .expect("lower generic SVE compute loop")
+                .verify()
+                .expect("verify generic SVE compute loop")
+                .audit()
+                .expect("audit generic SVE compute loop")
+                .optimize(&target, NativeOptimizationLevel::O3)
+                .expect("optimize generic SVE compute loop");
+        let ir = verified.to_ir_string().expect("optimized generic SVE IR");
+        for attribute in [
+            "\"target-cpu\"=\"generic\"",
+            "\"target-features\"=\"+sve,+sve2\"",
+            "\"tune-cpu\"=\"neoverse-n2\"",
+        ] {
+            assert!(ir.contains(attribute), "missing {attribute}:\n{ir}");
+        }
+
+        let object = target
+            .emit_object(verified)
+            .expect("emit generic SVE object");
+        let root =
+            std::env::temp_dir().join(format!("ckc-generic-sve-schedule-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("create schedule test directory");
+        let object_path = root.join("compute-bound.o");
+        fs::write(&object_path, object.as_bytes()).expect("write generic SVE object");
+        let llvm_prefix = std::env::var("CKC_LLVM_PREFIX").expect("pinned LLVM prefix");
+        let output = Command::new(std::path::Path::new(&llvm_prefix).join("bin/llvm-objdump"))
+            .arg("-d")
+            .arg(&object_path)
+            .output()
+            .expect("disassemble generic SVE object");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let disassembly = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+        assert!(
+            disassembly.contains("dech") && disassembly.contains("incb"),
+            "generic SVE member did not use the fixed Neoverse-N2 schedule:\n{disassembly}"
+        );
+        fs::remove_dir_all(root).expect("remove schedule test directory");
     }
 }

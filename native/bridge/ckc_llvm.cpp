@@ -1880,7 +1880,13 @@ void attach_aarch64_sve_tuning(
         if (!function.isDeclaration()) {
             // This changes only LLVM's scheduling model. The exact generic
             // target CPU and explicit SVE/SVE2 feature string remain the ISA
-            // authority for the emitted multiversion member.
+            // authority for the emitted multiversion member. Materialize both
+            // target attributes on the function as Clang does for -mtune;
+            // tune-cpu alone does not create a per-function subtarget and is
+            // consequently ignored by AArch64 machine scheduling.
+            function.addFnAttr("target-cpu", target.getTargetCPU());
+            function.addFnAttr("target-features",
+                               target.getTargetFeatureString());
             function.addFnAttr("tune-cpu", CKC_AARCH64_SVE_TUNE_CPU);
         }
     }

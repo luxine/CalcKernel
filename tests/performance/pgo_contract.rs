@@ -249,7 +249,10 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
         "target.getTargetCPU() != \"generic\"",
         "target.getTargetFeatureString().contains(\"+sve\")",
         "function.addFnAttr(\"tune-cpu\", CKC_AARCH64_SVE_TUNE_CPU)",
-        "aarch64-sve-tune-neoverse-n2-v1",
+        "function.addFnAttr(\"target-cpu\", target.getTargetCPU())",
+        "function.addFnAttr(\"target-features\"",
+        "aarch64-sve-tune-neoverse-n2-v2",
+        "x86-loop-simd-min-interleave-4-v1",
     ] {
         assert!(
             format!("{bridge}\n{commands}").contains(required),
