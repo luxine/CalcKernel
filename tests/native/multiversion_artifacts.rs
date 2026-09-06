@@ -72,6 +72,10 @@ fn object_bundle(source: &str, consumer: KirConsumer) -> NativeMultiversionObjec
     let contracts = import_contract_facts(&kir, &checked.checked_program, 0).expect("contracts");
     let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let optimized_contracts = optimized
+        .contract_facts
+        .clone()
+        .expect("optimized contracts");
     let request = KirMultiversionPlanningRequest {
         logical_pre_state: optimized.artifact.expect("baseline"),
         target_set: targets.target_set().clone(),
@@ -85,6 +89,7 @@ fn object_bundle(source: &str, consumer: KirConsumer) -> NativeMultiversionObjec
         &targets,
         &request,
         &bundle,
+        &optimized_contracts,
         None,
         &EmitLlvmOptions::default(),
     )

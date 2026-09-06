@@ -33,6 +33,9 @@ runtime initialization 参数准备被复制进热插桩路径；5x 门槛、sit
 保持不变。Candidate-constant observation 必须使用 function-local saturated batching，最终 bucket
 计数精确且 hot comparison 不含逐 observation atomic runtime call。AArch64 generic SVE/SVE2
 multiversion member 必须使用固定 schedule-only tuning model，且 feature audit 仍证明无越权 ISA。
+x86 constant-call scalar memory-map 必须使用 IR-semantic 1×5 schedule 且不影响 checked/reduction/
+pre-vectorized loop；所有 multiversion physical module 必须携带 verified contract facts重新验证，缺失时
+fail closed，Native fact audit不能绕过。
 
 ## CI 必须通过
 

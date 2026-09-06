@@ -1,9 +1,9 @@
 use crate::{
-    CkPgoOptimizerPlan, EmitLlvmOptions, FunctionId, KirConsumer, KirMultiversionBundle,
-    KirMultiversionPlanningRequest, KirMultiversionPlatform, KirMultiversionTargetSet,
-    KirMultiversionTargetTier, KirMultiversionTierId, KirOptimizationLevel,
-    check_kir_multiversion_bundle, materialized_tier, project_pgo_plan_for_kir,
-    run_kir_pass_pipeline,
+    CkPgoOptimizerPlan, ContractFactSet, EmitLlvmOptions, FunctionId, KirConsumer,
+    KirMultiversionBundle, KirMultiversionPlanningRequest, KirMultiversionPlatform,
+    KirMultiversionTargetSet, KirMultiversionTargetTier, KirMultiversionTierId,
+    KirOptimizationLevel, check_kir_multiversion_bundle, materialized_tier,
+    project_pgo_plan_for_kir, run_kir_pass_pipeline,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -250,6 +250,7 @@ pub fn emit_native_multiversion_objects(
     targets: &NativeMultiversionTargetSet,
     request: &KirMultiversionPlanningRequest,
     bundle: &KirMultiversionBundle,
+    contracts: &ContractFactSet,
     pgo: Option<&CkPgoOptimizerPlan>,
     options: &EmitLlvmOptions,
 ) -> Result<NativeMultiversionObjectBundle, NativeError> {
@@ -262,8 +263,11 @@ pub fn emit_native_multiversion_objects(
     let baseline_target = targets
         .target(KirMultiversionTierId::Baseline)
         .ok_or_else(|| error("multiversion baseline TargetMachine is missing"))?;
-    let mut baseline_result =
-        run_kir_pass_pipeline(bundle.baseline.clone(), KirOptimizationLevel::O0, None);
+    let mut baseline_result = run_kir_pass_pipeline(
+        bundle.baseline.clone(),
+        KirOptimizationLevel::O0,
+        Some(contracts),
+    );
     if !baseline_result.errors.is_empty() {
         return Err(error(format!(
             "multiversion baseline revalidation failed: {}",
@@ -297,8 +301,11 @@ pub fn emit_native_multiversion_objects(
             let target = targets
                 .target(variant.tier)
                 .ok_or_else(|| error("multiversion variant TargetMachine is missing"))?;
-            let mut result =
-                run_kir_pass_pipeline(variant.module.clone(), KirOptimizationLevel::O0, None);
+            let mut result = run_kir_pass_pipeline(
+                variant.module.clone(),
+                KirOptimizationLevel::O0,
+                Some(contracts),
+            );
             if !result.errors.is_empty() {
                 return Err(error(format!(
                     "multiversion variant revalidation failed: {}",

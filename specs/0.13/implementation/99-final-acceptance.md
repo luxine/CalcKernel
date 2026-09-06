@@ -62,6 +62,8 @@
   Windows AArch64 baseline-only；完整硬件+OS state predicate与 canonical digest。
 - [ ] eligible root benefit >=10%且>=2 units，每 root最多两个 enhanced，全部从同一 baseline pre-state，
   additional KIR <= baseline units，共享预算/order/checker/proof/feature audit正确且无 cross-variant LTO。
+- [ ] baseline 与每个 enhanced module 的独立 KIR 复验携带同一 verified contract facts；缺失 facts
+  fail closed，LLVM parameter/alias/effect strengthening仍由 Native fact audit逐项约束。
 - [ ] detector fail-closed且 baseline-safe；capability恰缓存一次，public thunk address/ABI稳定，后续 atomic
   load+indirect tail call；variant/runtime symbols hidden/namespaced，production无强制 unsupported feature seam。
 - [ ] executable/dynamic/static named-object bundle真实链接；multiversion object拒绝，single-version use
@@ -89,6 +91,8 @@
   相对selected-direct geo >=98%、individual slowdown <=5%，resolver once。
 - [ ] AArch64 generic SVE/SVE2 member 使用固定 `neoverse-n2` schedule-only tuning；target CPU/feature
   compatibility 与 feature audit 不变，cache codegen contract 明确包含 tuning identity。
+- [ ] x86 constant-call scalar memory-map handoff按 IR semantics 使用固定 1×5 schedule；不得按 fixture
+  名称特判，checked/reduction/pre-vectorized loop 与 cache identity保持各自闭环。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价
   Clang/Rust PGO oracle geo >=95%、accepted kernel individual >=90%。
 - [ ] PGO/multi/combined compile geo <=1.5/2.5/3.5、individual <=2/3/4；artifact aggregate <=1.25/

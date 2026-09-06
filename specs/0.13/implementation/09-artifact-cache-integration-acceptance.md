@@ -22,6 +22,8 @@
 - multiversion 只产生 executable/dynamic/static；object 组合在输出前拒绝，single-version use object 正常。
 - cache 是 CKCOBJ03/key+manifest 4；complete dispatcher+variant manifest 验证，任一 missing/extra/
   reorder/redirect/digest/schema mismatch 导致全 bundle miss/reject，generate 永不 cache。
+- separate baseline/variant emission 必须携带 verified contract facts重跑 KIR 验证；缺失 facts 在输出前
+  fail closed，cache codegen identity覆盖 fact transfer 与 target-specific schedule revision。
 - final artifact 无 profile writer/runtime/path/counter/flush/LLVM/compiler/new shared dependency；public
   symbols/header/ABI stable，private symbols hidden/namespace/feature-contained。
 - output set 全部原子 rollback；相同 canonical 输入在 cwd/order/cache hit/miss 间 byte-reproducible。
