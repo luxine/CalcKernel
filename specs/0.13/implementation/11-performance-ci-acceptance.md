@@ -30,7 +30,9 @@ dispatch direct、combined、Clang/Rust PGO oracle、0.12 SIMD/domain、generati
 compile/archive size，且 schema/digest/sample/order/stability完整。
 Generation object audit 还必须证明 compiler-private initialization guard 是 `NoInline`，避免完整
 runtime initialization 参数准备被复制进热插桩路径；5x 门槛、site/counter、batch、样本与 corpus
-保持不变。
+保持不变。Candidate-constant observation 必须使用 function-local saturated batching，最终 bucket
+计数精确且 hot comparison 不含逐 observation atomic runtime call。AArch64 generic SVE/SVE2
+multiversion member 必须使用固定 schedule-only tuning model，且 feature audit 仍证明无越权 ISA。
 
 ## CI 必须通过
 

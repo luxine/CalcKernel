@@ -367,6 +367,12 @@ inlined function or loop site. This keeps one-time initialization semantics
 without multiplying cold initialization machinery through hot instrumented
 paths.
 
+Candidate-constant hit/miss observations are accumulated in two saturated
+function-local `u64` counters and published to the exact profile buckets at
+function exit. This batching changes neither the canonical site table nor the
+number or meaning of observations; it removes one atomic runtime call from
+each instrumented hot comparison.
+
 An instrumented executable's compiler-owned entry wrapper writes one shard
 after `main()` returns normally and before the process returns to the OS. The
 automatic workflow accepts that shard only when the child itself exits zero.
@@ -591,6 +597,12 @@ microarchitecture database:
 SVE and SVE2 profiles still expose only the fixed-width vector KIR operations
 defined by 0.12/0.13. LLVM may legally lower those internal fixed operations
 with SVE instructions, but 0.13 adds no scalable KIR value or public ABI.
+For deterministic O3 scheduling, generic SVE/SVE2 multiversion members use the
+fixed LLVM `neoverse-n2` tuning model. This is a `tune-cpu` choice only: the
+member's `target-cpu=generic`, explicit feature string, compatibility predicate,
+and feature audit remain authoritative, so tuning cannot admit an undeclared
+instruction. The tuning identity is included in the multiversion cache codegen
+contract.
 
 Baseline-only target sets are valid and produce a stable
 `no-compatible-enhanced-tier` explanation. `--cpu native` remains the way to

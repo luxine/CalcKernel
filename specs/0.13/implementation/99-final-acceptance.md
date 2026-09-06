@@ -83,8 +83,12 @@
   execution <=5x ordinary。
 - [ ] Generation initialization guard 保留 Native `NoInline`；hot instrumented path 不包含重复展开的
   runtime initialization 参数准备，且未减少 instrumentation site/counter 或 timed work。
+- [ ] Candidate-constant hit/miss 使用 saturated function-local batching，function exit 发布的 bucket
+  count 精确，hot comparison 无逐 observation atomic runtime call。
 - [ ] dispatch相对portable baseline eligible suite geo improvement >=8%、individual slowdown <=3%；
   相对selected-direct geo >=98%、individual slowdown <=5%，resolver once。
+- [ ] AArch64 generic SVE/SVE2 member 使用固定 `neoverse-n2` schedule-only tuning；target CPU/feature
+  compatibility 与 feature audit 不变，cache codegen contract 明确包含 tuning identity。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价
   Clang/Rust PGO oracle geo >=95%、accepted kernel individual >=90%。
 - [ ] PGO/multi/combined compile geo <=1.5/2.5/3.5、individual <=2/3/4；artifact aggregate <=1.25/
