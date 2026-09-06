@@ -9,7 +9,7 @@
 ## A. 分支、基线与版本
 
 - [ ] 当前分支为 `design/v0.14-offline-autotuning`，独立 worktree 正确且 clean；`main` 未自动合并。
-- [ ] 最终 accepted v0.13 revision `966d54b075a76f2f493d51cb0764688c2ca85675` 已完成逐差异审计与等价集成。
+- [ ] 最终 accepted v0.13 revision `aa155825959e49d61fcea7a953935b179a7a238f` 已完成逐差异审计与等价集成。
 - [ ] Cargo/CLI/docs 为 0.14.0；CKCOBJ04/cache 5、tune schemas 1、KIR 3、bridge 4、Native ABI 1、Runtime ABI 2 一致。
 - [ ] 未创建/移动 tag 或 GitHub Release；所有本地/远程证据绑定同一最终 SHA。
 
@@ -63,6 +63,8 @@
   non-void call 名称与 Bridge ABI 4 保持不变。
 - [ ] 六 Native host 的 ABI、runner、filesystem、journal、cache、artifact、profile publish、void call、真实
   executable/dynamic 和 ordinary-isolation tests 无 required skip。
+- [ ] dispatcher fact ledger 只复制真实继承的参数/函数属性；函数体 assume/range/no-wrap/alias-scope
+  不得重复归属 dispatcher，所有增强 tier 的 pre-LLVM fact audit 保持精确相等。
 
 ## H. Schema 9 性能与证据
 

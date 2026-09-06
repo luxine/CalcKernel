@@ -38,7 +38,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`966d54b075a76f2f493d51cb0764688c2ca85675`。两者之间的累计提交已按
+`aa155825959e49d61fcea7a953935b179a7a238f`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -218,3 +218,13 @@ accepted v0.13 与 replay 重钉到 `966d54b075a76f2f493d51cb0764688c2ca85675`�
 为 `d29ecfde60ef72eb46f51016d9e67d8cd1606bbc206e1a20580dd7cbaf235c62`。复诊见
 `specs/0.14/review/implementation-blocker-26.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus、target CPU/features、target tiers 及 required job topology 均保持不变。
+
+Exact v0.13 run `34028252202` 的 AArch64 Linux native-host job `101473242935`
+与 exact v0.14 run `34028600132` 的 native integration job `101474136852`、x86-64 Linux
+native-host job `101474136938` 随后共同证明，dispatcher fact ledger 会错误重复登记仅存在于
+baseline root 函数体内的 assume/range/no-wrap/alias-scope 证据。V0.14 已继承只复制真实
+dispatcher 参数/函数属性的修复，并把 accepted v0.13 与 replay 重钉到
+`aa155825959e49d61fcea7a953935b179a7a238f`，manifest SHA-256 为
+`d8a0b50eba1957c980b4a6acfed0e2e2e481b9cd804cb8e1b44ae7c7b14129f5`。复诊见
+`specs/0.14/review/implementation-blocker-27.md`；fact-audit equality、语言/ABI、target、性能与
+稳定性门槛、timed work、样本、corpus 及 required job topology 均保持不变。
