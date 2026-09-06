@@ -653,6 +653,22 @@ In either case:
 - budget exhaustion or insufficient benefit keeps baseline and records a
   stable conservative reason.
 
+Ordinary static O3 may inline a pure helper containing at most 32 KIR
+instructions. Unprofiled multiversion compilation uses a compact limit of eight
+because each accepted member would otherwise duplicate that body. A still-called
+pure helper above eight and no larger than the ordinary limit is marked
+`noinline` during Native lowering so the target optimizer cannot silently undo
+the checked KIR clone policy. Profile-proven hot inlining retains its limit of
+48. These limits are deterministic module policy; they do not depend on source
+names, benchmark inputs, or the selected host tier.
+
+Within the inherited Loop-SIMD budget, independent UF chunks share one
+vector-width induction recurrence and a single-predecessor vector body may use
+dominating MemorySSA versions directly. The independent checker reconstructs
+every chunk start and the full `VF * UF` backedge advance. This representation
+does not change the closed `UF <= 4` frontier or the aggregate two-times KIR
+growth ceiling.
+
 Candidate ordering is total: fewer required features (wider compatible host
 coverage), estimated dynamic cost, smaller code size, target-tier identity,
 then root/function identity. Every root with an enhanced retained set has a

@@ -39,12 +39,35 @@ fn multiversion_dynamic_library_with_void_helper_call_should_build() {
             "unchecked",
         ])
         .env("PATH", "")
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .output()
         .expect("run multiversion void-call build");
     assert!(
         build.status.success(),
         "multiversion void-call build failed: {}",
         String::from_utf8_lossy(&build.stderr)
+    );
+    let mut library = output.clone();
+    library.set_extension(std::env::consts::DLL_SUFFIX.trim_start_matches('.'));
+    let prefix = std::env::var_os("CKC_LLVM_PREFIX").expect("pinned LLVM prefix");
+    let symbols = Command::new(std::path::Path::new(&prefix).join("bin/llvm-nm"))
+        .arg("--defined-only")
+        .arg(&library)
+        .output()
+        .expect("inspect multiversion helper symbols");
+    assert!(
+        symbols.status.success(),
+        "llvm-nm failed: {}",
+        String::from_utf8_lossy(&symbols.stderr)
+    );
+    let symbols = String::from_utf8_lossy(&symbols.stdout);
+    assert!(
+        symbols.contains("cold_step"),
+        "multiversion Native optimization re-inlined its KIR-retained large branch helper:\n{symbols}"
+    );
+    assert!(
+        !symbols.contains("hot_step"),
+        "multiversion failed to inline its compact branch helper:\n{symbols}"
     );
     fs::remove_dir_all(root).expect("remove multiversion void-call fixture");
 }

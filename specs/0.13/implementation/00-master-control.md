@@ -235,3 +235,22 @@ baseline。复诊与闭环见 `specs/0.13/review/implementation-blocker-24.md`�
 syscall 读取 binary `/proc/self/auxv`，失败仍 baseline 且不引入 libc/loader dependency。语言/公开
 ABI、strict FP、安全规则、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required
 job matrix 均未改变。
+
+Exact V0.13 run `34041456107` 的 x86-64 performance job `101509032367` 随后证明
+`zip_u32` unchecked 只达到更快 Rust SIMD oracle 的约 89.9924%。稳定的 20 个样本与 object
+反汇编显示 CK 主循环只有两条 128-bit 独立链，而等价 Rust oracle 有四条；`VF4/UF4` 已通过
+target cost 与 legality，却因物化表示的冗余 chunk offset 和单前驱 MemorySSA block 参数越过
+既有 aggregate `2x` KIR growth 上限。复诊与闭环见
+`specs/0.13/review/implementation-blocker-25.md`：UF chunk 改用共享 vector-width stride
+recurrence，vector body 直接使用支配它的 memory version，独立 checker 重建全部 chunk start 与
+完整 backedge。语言/ABI、安全语义、`UF <= 4` frontier、`2x` growth 上限、性能与稳定性门槛、
+timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+同一 exact run 的 AArch64 performance job `101509032163` 随后通过 schema 7，却以
+`1.01545 < 1.08` 未通过 schema 8 的 dispatch geometric-improvement gate；V0.14 exact replay
+job `101510076457` 在准备阶段精确复现该失败。复诊与闭环见
+`specs/0.13/review/implementation-blocker-26.md`：普通 O3 保持 32-instruction pure-helper
+inline budget，无 profile multiversion 使用 8-instruction compact budget，并在 Native lowering
+为被保留的 9..32 instruction pure helper 加 `noinline`，防止 LLVM 撤销已检查的 clone policy；
+PGO-hot budget 仍为 48。语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、
+corpus、平台与 required job matrix 均未改变。

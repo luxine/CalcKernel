@@ -6,7 +6,8 @@ use calckernel::{
     KirBoundsMode, KirBuildConfig, KirConsumer, KirMultiversionTargetSet, KirOptimizationLevel,
     KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module_with_profile, check,
     check_profile_guided_optimization, import_contract_facts, lower_to_mir, prepare_ck_profile_kir,
-    project_pgo_plan_for_kir, propose_profile_guided_optimization, run_kir_pass_pipeline,
+    project_pgo_plan_for_kir, propose_profile_guided_optimization,
+    run_kir_multiversion_pass_pipeline, run_kir_pass_pipeline,
     run_profile_guided_kir_pass_pipeline,
 };
 
@@ -43,6 +44,38 @@ fn cold(x: i32) -> i32 { return x - 1; }
 export fn kernel(x: i32, flag: i32) -> i32 {
   if flag == 7 { return hot(x); }
   return cold(x);
+}
+"#;
+
+const MULTIVERSION_INLINE_SOURCE: &str = r#"
+fn small_path(acc: u32, value: u32) -> u32 {
+  return acc * 3 + value;
+}
+
+fn large_path(acc: u32, value: u32) -> u32 {
+  let next: u32 = acc * 5;
+  next = next - value;
+  next = next * 7;
+  next = next + value;
+  next = next * 3;
+  return next + 11;
+}
+
+export unsafe fn kernel(a: slice<u32>, out: slice<u32>, n: u32) -> void
+contract { requires n <= a.len && n <= out.len; requires noalias(a, out); effects read(a), write(out); }
+{
+  let i: u32 = 0;
+  let acc: u32 = 0;
+  while i < n {
+    let value: u32 = a[i];
+    if value == 13 {
+      acc = small_path(acc, value);
+    } else {
+      acc = large_path(acc, value);
+    }
+    out[i] = acc;
+    i = i + 1;
+  }
 }
 "#;
 
@@ -339,6 +372,52 @@ fn pgo_inline_should_keep_profile_cold_successor_as_the_generic_fallback() {
     };
     assert_eq!(calls(&ordinary), ["hot".to_string()]);
     assert_eq!(calls(&profiled), ["cold".to_string()]);
+}
+
+#[test]
+fn multiversion_inline_should_preserve_large_branch_helpers_under_clone_budget() {
+    let (plan, _, contracts) = fixture(MULTIVERSION_INLINE_SOURCE, 256);
+    let ordinary = run_kir_pass_pipeline(
+        plan.module.clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    let multiversion = run_kir_multiversion_pass_pipeline(
+        plan.module,
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(ordinary.errors.is_empty(), "{:?}", ordinary.errors);
+    assert!(multiversion.errors.is_empty(), "{:?}", multiversion.errors);
+    let calls = |result: &calckernel::KirPassManagerResult| {
+        result
+            .artifact
+            .as_ref()
+            .expect("verified artifact")
+            .functions
+            .iter()
+            .flat_map(|function| &function.blocks)
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                calckernel::KirInstructionKind::Call { function_name, .. } => {
+                    Some(function_name.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        !calls(&ordinary).contains(&"large_path".to_string()),
+        "ordinary O3 control did not inline the large helper"
+    );
+    assert!(
+        !calls(&multiversion).contains(&"small_path".to_string()),
+        "multiversion must still inline the compact branch helper"
+    );
+    assert!(
+        calls(&multiversion).contains(&"large_path".to_string()),
+        "multiversion expanded the large helper into every bounded variant"
+    );
 }
 
 #[test]

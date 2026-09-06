@@ -356,6 +356,9 @@ fn check_vectorization_trial_with_minimum(
         .ok_or_else(|| {
             TransactionCheckError::compiler("vector header induction edge is missing")
         })?;
+    if header_induction != vector_induction {
+        return compiler("vector body induction does not originate at the vector header");
+    }
     let constant_value = |value| {
         vector_body.instructions.iter().find_map(|instruction| {
             instruction
@@ -369,9 +372,7 @@ fn check_vectorization_trial_with_minimum(
                 .flatten()
         })
     };
-    let mut chunk_starts = vec![scalar_chunk_zero];
-    for unroll_index in 1..candidate.uf {
-        let expected_offset = u32::from(unroll_index).saturating_mul(u32::from(candidate.vf));
+    let next_chunk_start = |start| {
         let starts = vector_body
             .instructions
             .iter()
@@ -386,14 +387,22 @@ fn check_vectorization_trial_with_minimum(
                 else {
                     return None;
                 };
-                (left == header_induction && constant_value(right) == Some(expected_offset))
+                (left == start && constant_value(right) == Some(u32::from(candidate.vf)))
                     .then_some(result)
             })
             .collect::<Vec<_>>();
         let [start] = starts.as_slice() else {
-            return compiler("vector UF chunk offset is missing or ambiguous");
+            return Err(TransactionCheckError::compiler(
+                "vector UF chunk stride is missing or ambiguous",
+            ));
         };
-        chunk_starts.push(*start);
+        Ok(*start)
+    };
+    let mut chunk_starts = vec![scalar_chunk_zero];
+    for _ in 1..candidate.uf {
+        chunk_starts.push(next_chunk_start(
+            *chunk_starts.last().expect("initial chunk"),
+        )?);
     }
     let KirTerminator::Jump {
         edge: vector_backedge,
@@ -406,22 +415,7 @@ fn check_vectorization_trial_with_minimum(
         .get(induction_index)
         .copied()
         .ok_or_else(|| TransactionCheckError::compiler("vector backedge induction is missing"))?;
-    let advances_full_chunk = vector_body.instructions.iter().any(|instruction| {
-        instruction
-            .results
-            .iter()
-            .any(|result| result.value == next_induction)
-            && matches!(
-                instruction.kind,
-                KirInstructionKind::Binary {
-                    op: crate::MirBinaryOp::Add,
-                    left,
-                    right,
-                    semantics: crate::KirArithmeticSemantics::Modular,
-                } if left == header_induction && constant_value(right) == Some(chunk_width)
-            )
-    });
-    if !advances_full_chunk {
+    if next_chunk_start(*chunk_starts.last().expect("initial chunk"))? != next_induction {
         return compiler("vector backedge does not advance by VF*UF");
     }
     let [region] = transformed.vector_regions.as_slice() else {

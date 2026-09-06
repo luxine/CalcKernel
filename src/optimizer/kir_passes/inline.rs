@@ -8,13 +8,13 @@ use crate::{
 
 use super::{
     super::{
-        ContractFactSet, ContractInstanceId, KirGuardElimination,
-        clone_contract_instance_for_inline,
+        ContractFactSet, ContractInstanceId, KIR_INLINE_CALLEE_BUDGET,
+        KIR_MULTIVERSION_INLINE_CALLEE_BUDGET, KIR_PGO_HOT_INLINE_CALLEE_BUDGET,
+        KirGuardElimination, clone_contract_instance_for_inline,
     },
     rewrite::{remap_instruction_values, remap_terminator_values},
 };
 
-const INLINE_CALLEE_BUDGET: usize = 32;
 const INLINE_MODULE_BUDGET: u32 = 128;
 
 /// Stable source-side identity of one direct call that the existing
@@ -127,6 +127,7 @@ pub(crate) fn run_effect_aware_inline(
     contracts: &mut Option<ContractFactSet>,
     eliminations: &[KirGuardElimination],
     pgo: Option<&crate::CkPgoOptimizerPlan>,
+    compact_multiversion: bool,
 ) -> u32 {
     let mut allocator = IdAllocator::for_module(module);
     let mut inlined = 0_u32;
@@ -138,6 +139,7 @@ pub(crate) fn run_effect_aware_inline(
             eliminations,
             inlined,
             pgo,
+            compact_multiversion,
             &skipped,
         ) else {
             break;
@@ -166,7 +168,8 @@ pub(crate) fn discover_tuning_inline_candidates(
     let mut skipped = BTreeSet::new();
     let mut candidates = Vec::new();
     while candidates.len() < usize::try_from(INLINE_MODULE_BUDGET).unwrap_or(usize::MAX) {
-        let Some(candidate) = find_candidate(module, contracts, eliminations, 0, None, &skipped)
+        let Some(candidate) =
+            find_candidate(module, contracts, eliminations, 0, None, false, &skipped)
         else {
             break;
         };
@@ -213,6 +216,7 @@ pub(crate) fn materialize_tuning_inline(
             pre_state.eliminated_guards(),
             0,
             None,
+            false,
             &skipped,
         )
         .ok_or_else(|| "inline tuning candidate disappeared during replay".to_string())?;
@@ -267,6 +271,7 @@ fn find_candidate(
     eliminations: &[KirGuardElimination],
     already_inlined: u32,
     pgo: Option<&crate::CkPgoOptimizerPlan>,
+    compact_multiversion: bool,
     skipped: &BTreeSet<(crate::FunctionId, InstructionId)>,
 ) -> Option<InlineCandidate> {
     if already_inlined >= INLINE_MODULE_BUDGET {
@@ -296,9 +301,11 @@ fn find_candidate(
                 let callee_budget = if pgo.is_some_and(|profile| {
                     profile.function_is_hot(caller.id) || profile.function_is_hot(callee.id)
                 }) {
-                    48
+                    KIR_PGO_HOT_INLINE_CALLEE_BUDGET
+                } else if compact_multiversion {
+                    KIR_MULTIVERSION_INLINE_CALLEE_BUDGET
                 } else {
-                    INLINE_CALLEE_BUDGET
+                    KIR_INLINE_CALLEE_BUDGET
                 };
                 if callee.exported
                     || callee.id == caller.id

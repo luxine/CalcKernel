@@ -123,6 +123,13 @@ offline tuning, with the scalar loop and epilogue as the exact fallback.
 The tuner keeps distinct legal target-supported VF/UF variants in its bounded
 frontier rather than collapsing them to the ordinary cost-model winner.
 
+Independent UF chunks use one verified vector-width stride recurrence, and a
+single-predecessor vector body consumes the dominating MemorySSA versions
+directly. This compact representation lets the closed x86 `UF <= 4` frontier
+select four independent chains without exceeding the unchanged aggregate `2x`
+KIR growth ceiling; the independent checker reconstructs every chunk start and
+the full backedge advance.
+
 Unroll considers factors 2 and 4, preserving exact trip partition and scalar
 remainder semantics. SLP packs only isomorphic, independent, adjacent scalar
 operations in source order; it cannot invent shuffle or masked-memory support.
@@ -131,6 +138,14 @@ only one winner commits. A vector candidate must beat the scalar cost by at leas
 20% at its conservative trip threshold; exact shorter trips stay scalar. The
 aggregate O3 growth ceiling and proposer/checker work budgets apply across all
 0.14 speculative transforms, including rejected alternatives and clones.
+
+Ordinary static O3 may inline a pure helper of at most 32 KIR instructions.
+Unprofiled multiversion lowering uses a compact eight-instruction inline budget
+because the helper body would otherwise be duplicated into every retained
+member; larger otherwise-inlineable helpers remain calls and are marked
+`noinline` for Native optimization. Profile-proven hot inlining retains its
+48-instruction budget. This keeps small hot-path helpers inline while avoiding
+branch-heavy code duplication and if-conversion in every target variant.
 
 Integer constant propagation also runs in guard-free functions. It rewrites
 modular arithmetic, integer copies and comparisons, including consumers of

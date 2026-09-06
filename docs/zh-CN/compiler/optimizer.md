@@ -100,12 +100,23 @@ scalar loop 与 epilogue 是精确 fallback。
 Tuner 在受限 frontier 中保留不同且 target 支持的合法 VF/UF variant，不会提前折叠为
 ordinary cost-model winner。
 
+独立 UF chunk 共用一个已验证的 vector-width stride recurrence；单前驱 vector body 直接使用
+支配它的 MemorySSA version。该紧凑表示让封闭的 x86 `UF <= 4` frontier 能选择四条独立链，
+同时不超过既有 aggregate `2x` KIR growth 上限；独立 checker 会重建每个 chunk start 与完整
+backedge advance。
+
 Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainder 语义。SLP 只按 source
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
 提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
 保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.14
 speculative transform，包括被拒绝的 alternative 与 clone。
+
+普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
+lowering 使用紧凑的 8-instruction inline budget，因为 helper body 否则会复制进每个 retained
+member；更大但原本可 inline 的 helper 保持 call，并在 Native optimization 中标记 `noinline`。
+profile 证明为 hot 的 inline 仍使用 48-instruction budget。这样既保留小型 hot-path helper，
+也避免 branch-heavy body 在每个 target variant 中重复并被 if-convert。
 
 整数常量传播也处理无 guard 的函数，实际改写 modular arithmetic、整数 Copy 和比较，
 包括所有输入边均为同一常量的 block parameter 的消费者。每次事务先针对不可变的改写前

@@ -51,6 +51,10 @@ pub const KIR_VECTOR_COST_MODEL_SCHEMA: u32 = 1;
 /// Schema of vector transformation proof records stored in Native cache keys.
 pub const KIR_VECTOR_PROOF_SCHEMA: u32 = 1;
 
+pub(crate) const KIR_INLINE_CALLEE_BUDGET: usize = 32;
+pub(crate) const KIR_MULTIVERSION_INLINE_CALLEE_BUDGET: usize = 8;
+pub(crate) const KIR_PGO_HOT_INLINE_CALLEE_BUDGET: usize = 48;
+
 /// Canonical identity of every fixed 0.12 optimizer budget currently capable
 /// of changing Native object bytes. New budgets must extend this string.
 #[must_use]

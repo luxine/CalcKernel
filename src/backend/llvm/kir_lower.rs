@@ -30,7 +30,7 @@ pub fn lower_native_kir_module<'context>(
     result: &KirPassManagerResult,
     options: &EmitLlvmOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
-    lower_native_kir_module_inner(context, target, result, None, options)
+    lower_native_kir_module_inner(context, target, result, None, false, options)
 }
 
 /// Lowers the immutable baseline module and installs baseline-safe per-root
@@ -43,7 +43,7 @@ pub fn lower_native_multiversion_baseline_module<'context>(
     options: &EmitLlvmOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
     validate_multiversion_lowering_input(result, bundle)?;
-    let mut module = lower_native_kir_module(context, target, result, options)?;
+    let mut module = lower_native_kir_module_inner(context, target, result, None, true, options)?;
     let namespace = dispatch_namespace(&bundle.target_set.digest);
     for entry in &bundle.dispatch_plan {
         if entry.ranked_tiers.len() != entry.implementation_symbols.len()
@@ -124,7 +124,7 @@ pub fn lower_native_multiversion_variant_module<'context>(
         })
         .map(|symbol| symbol.hidden_name.as_str())
         .ok_or_else(|| lowering_error("multiversion variant root symbol is missing"))?;
-    let module = lower_native_kir_module(context, target, result, options)?;
+    let module = lower_native_kir_module_inner(context, target, result, None, true, options)?;
     module.expose_hidden_function(root_symbol)?;
     Ok(module)
 }
@@ -165,6 +165,55 @@ fn dispatch_namespace(digest: &[u8; 32]) -> String {
     output
 }
 
+fn compact_multiversion_noinline_functions(kir: &KirModule) -> HashSet<FunctionId> {
+    let called = kir
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            KirInstructionKind::Call { function_name, .. } => Some(function_name.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    kir.functions
+        .iter()
+        .filter(|function| !function.exported && called.contains(function.name.as_str()))
+        .filter(|function| {
+            let units = function
+                .blocks
+                .iter()
+                .map(|block| block.instructions.len())
+                .sum::<usize>();
+            units > crate::optimizer::KIR_MULTIVERSION_INLINE_CALLEE_BUDGET
+                && units <= crate::optimizer::KIR_INLINE_CALLEE_BUDGET
+        })
+        .filter(|function| {
+            function.blocks.iter().all(|block| {
+                block.instructions.iter().all(|instruction| {
+                    instruction.memory.is_none()
+                        && matches!(
+                            instruction.kind,
+                            KirInstructionKind::Undef { .. }
+                                | KirInstructionKind::ConstInt { .. }
+                                | KirInstructionKind::ConstFloat { .. }
+                                | KirInstructionKind::ConstBool { .. }
+                                | KirInstructionKind::Copy { .. }
+                                | KirInstructionKind::Binary { .. }
+                                | KirInstructionKind::Unary { .. }
+                                | KirInstructionKind::Compare { .. }
+                                | KirInstructionKind::Cast { .. }
+                                | KirInstructionKind::CheckCondition { .. }
+                                | KirInstructionKind::Guard { .. }
+                                | KirInstructionKind::RuntimeCall { .. }
+                        )
+                })
+            })
+        })
+        .map(|function| function.id)
+        .collect()
+}
+
 /// Test-only seam for exercising the exact LLVM thunk transformation on a
 /// host baseline module even when the host target set has no enhanced tier.
 #[doc(hidden)]
@@ -192,7 +241,7 @@ pub fn lower_native_profile_generation_module<'context>(
     profile: &NativeProfileGeneration,
     options: &EmitLlvmOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
-    lower_native_kir_module_inner(context, target, result, Some(profile), options)
+    lower_native_kir_module_inner(context, target, result, Some(profile), false, options)
 }
 
 fn lower_native_kir_module_inner<'context>(
@@ -200,6 +249,7 @@ fn lower_native_kir_module_inner<'context>(
     target: &NativeTarget,
     result: &KirPassManagerResult,
     profile_generation: Option<&NativeProfileGeneration>,
+    compact_multiversion: bool,
     options: &EmitLlvmOptions,
 ) -> Result<NativeModule<'context>, NativeError> {
     if !result.errors.is_empty() {
@@ -327,6 +377,11 @@ fn lower_native_kir_module_inner<'context>(
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
+    let compact_noinline = if compact_multiversion {
+        compact_multiversion_noinline_functions(kir)
+    } else {
+        HashSet::new()
+    };
     for ((function, instruction), (proof, kind)) in &wrap_proofs {
         let function_name = kir
             .functions
@@ -424,6 +479,9 @@ fn lower_native_kir_module_inner<'context>(
             )?;
             if let Some((profile, cold)) = pgo_functions.get(&kir_function.id) {
                 handle.set_profile(profile.entries, profile.hot, *cold)?;
+            }
+            if compact_noinline.contains(&kir_function.id) {
+                handle.set_noinline()?;
             }
             for attribute in contract_attributes
                 .get(&kir_function.id)

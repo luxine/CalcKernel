@@ -97,6 +97,12 @@
 - [ ] x86 Native profile 在既有封闭 `UF <= 4` frontier 内至少暴露四路 interleave；strict-f64 与
   integer-cast 选择 checked `VF2` 多独立链计划，`UF2/UF4` 由真实 target cost 决定，且继续通过
   不变的性能、legality、profitability、proof 与 budget gate。
+- [ ] 无 profile multiversion 使用 8-instruction pure-helper inline budget，普通 O3/PGO-hot 仍为
+  32/48；仍被调用的 9..32 instruction pure helper 在 Native member 中保持 `noinline`，小型
+  hot-path helper 仍 inline，object cache identity 编码 `compact-multiversion-inline-v2`。
+- [ ] x86 三流 noalias integer map 的 checked `VF4/UF4` 计划以共享 stride recurrence 与
+  dominating MemorySSA reuse 在既有 aggregate `2x` KIR growth 上限内物化；独立 checker 验证
+  全部 chunk start/backedge，object 主循环保留四条 128-bit 独立链。
 - [ ] multiversion enhanced retained-set 有通过不变 profitability floor 的 trial 作为 eligibility
   witness；其 predicted non-regressing strict feature subset 可作为 compatibility companion。
   full-root budget 只容纳一个 variant 时保留兼容覆盖最广的 candidate，witness 无需同时物化；

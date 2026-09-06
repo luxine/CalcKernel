@@ -553,6 +553,7 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     &mut result.contract_facts,
                     &result.eliminated_guards,
                     pgo,
+                    defer_native_vectorization,
                 )
             };
         if result.stats.inlined_calls != 0 {

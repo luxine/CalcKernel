@@ -525,6 +525,17 @@ eligible root 是 exported CK function 或 executable entry，其 reachable opti
 - PGO specialization 共享而不是重置全部 0.12 clone/transaction budget；
 - budget exhaustion 或收益不足保留 baseline，并记录稳定保守原因。
 
+普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
+编译使用 8 条的紧凑上限，因为每个 accepted member 否则都会复制该 body。对超过 8、且不超过
+普通上限、仍被调用的 pure helper，Native lowering 标记 `noinline`，防止 target optimizer
+静默撤销已经检查的 KIR clone policy。profile 证明为 hot 的 inline 上限仍为 48。该策略只由
+确定性的 module policy 决定，不依赖 source name、benchmark input 或所选 host tier。
+
+在继承的 Loop-SIMD budget 内，独立 UF chunk 共用一个 vector-width induction recurrence，
+单前驱 vector body 可直接使用支配它的 MemorySSA version。独立 checker 重建每个 chunk start
+和完整 `VF * UF` backedge advance。该表示不改变封闭的 `UF <= 4` frontier，也不改变
+aggregate 两倍 KIR growth 上限。
+
 candidate total order 为：更少 required feature（更广 compatible host coverage）、estimated
 dynamic cost、更小 code size、target-tier identity、root/function identity。每个 enhanced retained-set
 都以一个通过不变 profitability floor 的 trial 作为 eligibility witness；retained companion 必须是
