@@ -36,6 +36,13 @@ multiversion member 必须使用固定 schedule-only tuning model，且 feature 
 x86 Native target profile 必须在既有封闭 `UF <= 4` 候选空间内暴露至少四路 interleave；
 `strict_f64` 与 `integer_cast` 必须选择经过 checker 的 `VF2` 多独立链计划，具体 `UF2/UF4` 由
 真实 target cost 决定，并继续通过不变的 SIMD 性能门槛。
+无 profile multiversion 必须使用确定性的 8-instruction pure-helper inline budget；普通 O3 的
+32-instruction budget 与 PGO-hot 的 48-instruction budget 保持不变。仍被调用的 9..32 instruction
+pure helper 必须在 Native member 中保持 `noinline`，小型 hot-path helper 仍 inline，且 object
+cache identity 必须编码该策略。
+三流 noalias integer map 在 x86 target cost 选择 `VF4/UF4` 时，必须在既有 aggregate `2x`
+KIR growth 上限内物化；chunk start、完整 backedge advance 与 dominating MemorySSA reuse 均由
+独立 checker 验证，机器码主循环每轮至少保留四条 128-bit 独立链。
 selected-direct channel 必须从独立加载的同字节 multiversion artifact 读取并调用 resolver 实际
 发布的 hidden member，只绕过 public thunk，不能再以 `--cpu native` 产物冒充 selected tier。
 x86 constant-call scalar memory-map 必须使用 IR-semantic 1×5 schedule 且不影响 checked/reduction/

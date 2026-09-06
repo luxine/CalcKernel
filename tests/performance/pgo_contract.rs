@@ -243,6 +243,9 @@ fn aarch64_sve_loops_should_request_four_way_llvm_interleave() {
 fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");
+    let inline_policy = read("src/optimizer/mod.rs");
+    let native_lowering = read("src/backend/llvm/kir_lower.rs");
+    let contract = format!("{bridge}\n{commands}\n{inline_policy}\n{native_lowering}");
     for required in [
         "constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = \"neoverse-n2\";",
         "attach_aarch64_sve_tuning",
@@ -254,10 +257,17 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
         "aarch64-sve-tune-neoverse-n2-v2",
         "coverage-first-variant-ranking-v1",
         "coverage-companion-profitability-v1",
+        "compact-multiversion-inline-v2",
         "x86-loop-simd-min-interleave-4-v1",
+        "compact-vector-uf-stride-v1",
+        "KIR_INLINE_CALLEE_BUDGET: usize = 32",
+        "KIR_MULTIVERSION_INLINE_CALLEE_BUDGET: usize = 8",
+        "KIR_PGO_HOT_INLINE_CALLEE_BUDGET: usize = 48",
+        "compact_multiversion_noinline_functions",
+        "handle.set_noinline()",
     ] {
         assert!(
-            format!("{bridge}\n{commands}").contains(required),
+            contract.contains(required),
             "fixed AArch64 SVE scheduling contract is missing {required:?}"
         );
     }

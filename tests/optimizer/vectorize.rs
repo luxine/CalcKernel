@@ -204,6 +204,20 @@ contract { requires noalias(a, b); effects read(a), write(b); }
 }
 "#;
 
+const INTERLEAVE_ZIP: &str = r#"
+export unsafe fn zip_u32(
+  a: slice<u32>, b: slice<u32>, out: slice<u32>, n: u32
+) -> void
+contract {
+  requires noalias(a, b) && noalias(a, out) && noalias(b, out);
+  effects read(a), read(b), write(out);
+}
+{
+  let i: u32 = 0;
+  while i < n { out[i] = a[i] + b[i]; i = i + 1; }
+}
+"#;
+
 const SPECIALIZED_LENGTH_MAP: &str = r#"
 unsafe fn fixed_map(a: slice<u32>, b: slice<u32>, n: u32) -> void
 contract { requires noalias(a, b); effects read(a), write(b); }
@@ -489,7 +503,7 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
             attempt.disposition == CandidateDisposition::Accepted
                 && matches!(
                     attempt.key,
-                    calckernel::CandidateKey::LoopFrontier { vf: 4, uf: 2, .. }
+                    calckernel::CandidateKey::LoopFrontier { vf: 4, uf: 4, .. }
                 )
         }),
         "frontier did not compare runtime-trip candidates at one common scope: {vector_attempts:#?}"
@@ -499,6 +513,78 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
             .iter()
             .any(|attempt| attempt.disposition == CandidateDisposition::NonWinner),
         "{vector_attempts:#?}"
+    );
+}
+
+#[test]
+fn x86_independent_three_stream_loop_should_select_four_vector_chains() {
+    let (pre, contracts) = map_state_with_profile(
+        INTERLEAVE_ZIP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let candidate = discover_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 4 && candidate.uf == 4)
+        .expect("x86 VF4/UF4 three-stream candidate");
+    let prepared =
+        prepare_vectorization_trial(&pre, &candidate).expect("compact x86 VF4/UF4 trial");
+    assert!(
+        prepared.plan.growth.module_after_units
+            <= prepared.plan.growth.module_before_units.saturating_mul(2),
+        "four-chain plan exceeded the unchanged aggregate growth ceiling: {:#?}",
+        prepared.plan.growth
+    );
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+    let mut forged_stride = prepared.trial.clone();
+    let stride = forged_stride.module_mut().functions[0]
+        .blocks
+        .iter_mut()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body")
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.kind {
+            calckernel::KirInstructionKind::ConstInt { value } if value == "4" => Some(value),
+            _ => None,
+        })
+        .expect("shared vector-width stride");
+    *stride = "5".to_string();
+    assert!(
+        check_vectorization_trial_independently(
+            &pre,
+            &forged_stride,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .is_err(),
+        "independent checker accepted a forged UF stride"
+    );
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted x86 three-stream vector plan");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        (4, 4),
+        "x86 independent three-stream loop must amortize control across four chains; explanations={:#?}; audit={:#?}",
+        result.vector_explanations,
+        result.audit.attempts()
     );
 }
 

@@ -146,14 +146,15 @@ pub(crate) fn materialize_vectorization_trial(
         }
     }
     let mut body_memories = BTreeMap::new();
-    let mut vector_body_memory = Vec::new();
-    for param in &original_body.memory_params {
-        let version = trial.fresh_memory_version()?;
+    for (param, source) in original_body
+        .memory_params
+        .iter()
+        .zip(&body_edge.memory_args)
+    {
+        let version = header_memories.get(source).copied().ok_or_else(|| {
+            "vector body memory does not originate at the loop header".to_string()
+        })?;
         body_memories.insert(param.version, version);
-        vector_body_memory.push(KirMemoryBlockParam {
-            version,
-            region: param.region,
-        });
     }
 
     let induction = header_values[&candidate.induction];
@@ -312,15 +313,7 @@ pub(crate) fn materialize_vectorization_trial(
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?,
-                memory_args: body_edge
-                    .memory_args
-                    .iter()
-                    .map(|memory| {
-                        header_memories.get(memory).copied().ok_or_else(|| {
-                            "vector header body edge uses an unknown memory".to_string()
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
+                memory_args: Vec::new(),
             },
             else_edge: KirEdge {
                 target: candidate.header,
@@ -378,46 +371,54 @@ pub(crate) fn materialize_vectorization_trial(
         .unwrap_or(0)
         .saturating_add(1);
 
+    let mut chunk_induction = base_mapped[&body_induction].value;
+    let mut chunk_stride = None;
     for unroll_index in 0..candidate.uf {
         mapped = base_mapped.clone();
         if unroll_index != 0 {
-            let offset = trial.fresh_value()?;
+            let stride = match chunk_stride {
+                Some(stride) => stride,
+                None => {
+                    let stride = trial.fresh_value()?;
+                    emitted.push(KirInstruction {
+                        id: trial.fresh_instruction()?,
+                        results: vec![KirResult {
+                            value: stride,
+                            type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
+                        }],
+                        kind: KirInstructionKind::ConstInt {
+                            value: candidate.vf.to_string(),
+                        },
+                        memory: None,
+                        effect: None,
+                    });
+                    chunk_stride = Some(stride);
+                    stride
+                }
+            };
+            let next_chunk = trial.fresh_value()?;
             emitted.push(KirInstruction {
                 id: trial.fresh_instruction()?,
                 results: vec![KirResult {
-                    value: offset,
-                    type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
-                }],
-                kind: KirInstructionKind::ConstInt {
-                    value: u32::from(unroll_index)
-                        .saturating_mul(u32::from(candidate.vf))
-                        .to_string(),
-                },
-                memory: None,
-                effect: None,
-            });
-            let chunk_induction = trial.fresh_value()?;
-            emitted.push(KirInstruction {
-                id: trial.fresh_instruction()?,
-                results: vec![KirResult {
-                    value: chunk_induction,
+                    value: next_chunk,
                     type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
                 }],
                 kind: KirInstructionKind::Binary {
                     op: MirBinaryOp::Add,
-                    left: header_values[&candidate.induction],
-                    right: offset,
+                    left: chunk_induction,
+                    right: stride,
                     semantics: KirArithmeticSemantics::Modular,
                 },
                 memory: None,
                 effect: None,
             });
-            let chunk_induction = MappedValue {
+            chunk_induction = next_chunk;
+            let mapped_induction = MappedValue {
                 value: chunk_induction,
                 vector: false,
             };
-            mapped.insert(candidate.induction, chunk_induction);
-            mapped.insert(body_induction, chunk_induction);
+            mapped.insert(candidate.induction, mapped_induction);
+            mapped.insert(body_induction, mapped_induction);
         }
         for item in vector_schedule(&original, candidate)? {
             let instruction = match item {
@@ -531,6 +532,15 @@ pub(crate) fn materialize_vectorization_trial(
             match &instruction.kind {
                 KirInstructionKind::ConstInt { value } => {
                     let result = scalar_result(instruction)?;
+                    if instruction_uses_value(&original, candidate.induction_update, result)
+                        && !value_has_use_outside_instruction(
+                            &original,
+                            result,
+                            candidate.induction_update,
+                        )
+                    {
+                        continue;
+                    }
                     let fresh = trial.fresh_value()?;
                     emitted.push(KirInstruction {
                         id: trial.fresh_instruction()?,
@@ -719,23 +729,26 @@ pub(crate) fn materialize_vectorization_trial(
                         continue;
                     }
                     let result = scalar_result(instruction)?;
-                    let left = base_mapped[&candidate.induction];
-                    if left.vector {
-                        return Err("vector induction update input became vector".to_string());
-                    }
-                    let step = trial.fresh_value()?;
-                    emitted.push(KirInstruction {
-                        id: trial.fresh_instruction()?,
-                        results: vec![KirResult {
-                            value: step,
-                            type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
-                        }],
-                        kind: KirInstructionKind::ConstInt {
-                            value: chunk_width.to_string(),
-                        },
-                        memory: None,
-                        effect: None,
-                    });
+                    let step = match chunk_stride {
+                        Some(step) => step,
+                        None => {
+                            let step = trial.fresh_value()?;
+                            emitted.push(KirInstruction {
+                                id: trial.fresh_instruction()?,
+                                results: vec![KirResult {
+                                    value: step,
+                                    type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
+                                }],
+                                kind: KirInstructionKind::ConstInt {
+                                    value: candidate.vf.to_string(),
+                                },
+                                memory: None,
+                                effect: None,
+                            });
+                            chunk_stride = Some(step);
+                            step
+                        }
+                    };
                     let fresh = trial.fresh_value()?;
                     emitted.push(KirInstruction {
                         id: trial.fresh_instruction()?,
@@ -745,7 +758,7 @@ pub(crate) fn materialize_vectorization_trial(
                         }],
                         kind: KirInstructionKind::Binary {
                             op: *op,
-                            left: left.value,
+                            left: chunk_induction,
                             right: step,
                             semantics: *semantics,
                         },
@@ -1036,7 +1049,7 @@ pub(crate) fn materialize_vectorization_trial(
         id: vector_body_id,
         label: "loop_simd_body".to_string(),
         params: vector_body_params,
-        memory_params: vector_body_memory,
+        memory_params: Vec::new(),
         instructions: emitted,
         terminator: crate::KirTerminator::Jump {
             edge: KirEdge {
@@ -1295,6 +1308,56 @@ fn vector_schedule_priority(instruction: &KirInstruction) -> u8 {
         KirInstructionKind::VectorStore { .. } => 3,
         _ => 2,
     }
+}
+
+fn instruction_uses_value(
+    function: &crate::KirFunction,
+    instruction_id: crate::InstructionId,
+    value: crate::ValueId,
+) -> bool {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.id == instruction_id)
+        .is_some_and(|instruction| {
+            let mut used = false;
+            crate::visit_instruction_uses(instruction, &mut |candidate| {
+                used |= candidate == value;
+            });
+            used
+        })
+}
+
+fn value_has_use_outside_instruction(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+    excluded: crate::InstructionId,
+) -> bool {
+    function.blocks.iter().any(|block| {
+        block.instructions.iter().any(|instruction| {
+            if instruction.id == excluded {
+                return false;
+            }
+            let mut used = false;
+            crate::visit_instruction_uses(instruction, &mut |candidate| {
+                used |= candidate == value;
+            });
+            used
+        }) || match &block.terminator {
+            crate::KirTerminator::Return { value: result, .. } => *result == Some(value),
+            crate::KirTerminator::Jump { edge } => edge.args.contains(&value),
+            crate::KirTerminator::Branch {
+                condition,
+                then_edge,
+                else_edge,
+            } => {
+                *condition == value
+                    || then_edge.args.contains(&value)
+                    || else_edge.args.contains(&value)
+            }
+        }
+    })
 }
 
 fn insert_vector_proofs(
