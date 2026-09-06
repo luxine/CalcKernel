@@ -5,10 +5,10 @@ use crate::{
 use super::{
     CandidateBudgetCharge, CandidateDisposition, ContractFactSet, EvidenceValidationError,
     EvidenceValidationResult, FactArena, KirOptimizationAuditState, KirVerifiedProgramState,
-    ProofArena, ProofStep, TransactionOutcome, check_slp_plan_independently,
-    check_specialization_plan_independently, check_unroll_plan_independently,
-    check_vectorization_trial_independently, discover_slp_candidates,
-    discover_specialization_candidates, discover_unroll_candidates,
+    ProofArena, ProofStep, TransactionOutcome, analyze_canonical_loops_for_discovery,
+    check_slp_plan_independently, check_specialization_plan_independently,
+    check_unroll_plan_independently, check_vectorization_trial_independently,
+    discover_slp_candidates, discover_specialization_candidates, discover_unroll_candidates,
     discover_vectorization_candidates, execute_verified_transaction_with_disposition,
     is_specialization_clone, kir_function_units, kir_passes, verify_proof_arena,
 };
@@ -171,7 +171,19 @@ pub fn run_kir_pass_pipeline(
     level: KirOptimizationLevel,
     contracts: Option<&ContractFactSet>,
 ) -> KirPassManagerResult {
-    run_kir_pass_pipeline_with_profile(module, level, contracts, None)
+    run_kir_pass_pipeline_with_profile(module, level, contracts, None, false)
+}
+
+/// Runs O3 while preserving scalar loop shape for independently materialized
+/// multiversion TargetMachines. LLVM then selects each tier's vector width and
+/// unroll factor instead of inheriting the baseline tier's fixed-width KIR.
+#[must_use]
+pub fn run_kir_multiversion_pass_pipeline(
+    module: KirModule,
+    level: KirOptimizationLevel,
+    contracts: Option<&ContractFactSet>,
+) -> KirPassManagerResult {
+    run_kir_pass_pipeline_with_profile(module, level, contracts, None, true)
 }
 
 /// Builds the immutable v0.14 tuning checkpoint immediately before the first
@@ -293,6 +305,7 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
     level: KirOptimizationLevel,
     contracts: Option<&ContractFactSet>,
     pgo: Option<&super::CkPgoOptimizerPlan>,
+    defer_native_vectorization: bool,
 ) -> KirPassManagerResult {
     const GENERATION: u32 = 0;
     let input_audit = KirOptimizationAuditState::for_module(&module);
@@ -922,7 +935,12 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     return result;
                 }
             };
-            let vector = match run_native_vector_frontier(&mut state, &mut result.audit, pgo) {
+            let vector = match run_native_vector_frontier(
+                &mut state,
+                &mut result.audit,
+                pgo,
+                defer_native_vectorization,
+            ) {
                 Ok(vector) => vector,
                 Err(error) => {
                     result.errors.push(error);
@@ -1373,12 +1391,30 @@ fn run_native_vector_frontier(
     state: &mut KirVerifiedProgramState,
     audit: &mut KirOptimizationAuditState,
     pgo: Option<&super::CkPgoOptimizerPlan>,
+    defer_to_llvm: bool,
 ) -> Result<VectorFrontierResult, String> {
     let mut result = VectorFrontierResult::default();
     if !matches!(
         state.module().config.consumer,
         crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
     ) {
+        return Ok(result);
+    }
+    if defer_to_llvm {
+        for function in &state.module().functions {
+            let loops = analyze_canonical_loops_for_discovery(function);
+            result.fallbacks.extend(
+                loops
+                    .loops
+                    .iter()
+                    .filter(|descriptor| descriptor.innermost)
+                    .map(|_descriptor| KirAnalysisFallback {
+                        function: function.id,
+                        pass: "loop-simd".to_string(),
+                        reason: "multiversion-loop-deferred-to-native-loop-vectorizer".to_string(),
+                    }),
+            );
+        }
         return Ok(result);
     }
     let mut processed = std::collections::BTreeSet::new();

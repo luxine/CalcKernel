@@ -51,7 +51,7 @@ fn fixture(source: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 #[test]
 fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_pruning() {
     let (_dir, source) = fixture(
-        "export fn sum(items: slice<i32>, n: u32) -> i32 { let i: u32 = 0; let total: i32 = 0; while i < n { total = total + items[i]; i = i + 1; } return total; }",
+        "export unsafe fn map(a: slice<u32>, out: slice<u32>, n: u32) -> void contract { requires n <= a.len && n <= out.len; requires noalias(a, out); effects read(a), write(out); } { let i: u32 = 0; while i < n { out[i] = a[i] + 7; i = i + 1; } }",
     );
     let output = run([
         os("emit-kir"),
@@ -72,6 +72,11 @@ fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_
     ] {
         assert!(output.stdout.contains(needle), "{}", output.stdout);
     }
+    assert!(
+        !output.stdout.contains("vector_"),
+        "multiversion inspection must preserve scalar loop KIR for per-tier LLVM optimization:\n{}",
+        output.stdout
+    );
 }
 
 #[cfg(feature = "native-toolchain")]

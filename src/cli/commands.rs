@@ -11,7 +11,7 @@ use calckernel::{
     emit_c_kir_header, emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
     format_diagnostics, import_contract_facts, lower_to_mir, prepare_kir_pre_tune_state,
     print_fact_arena, print_kir_module, print_mir_module, print_optimization_audit,
-    print_proof_arena, run_kir_pass_pipeline,
+    print_proof_arena, run_kir_multiversion_pass_pipeline, run_kir_pass_pipeline,
 };
 
 #[cfg(feature = "native-toolchain")]
@@ -36,7 +36,8 @@ use calckernel::{
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
     lower_native_kir_module, lower_native_profile_generation_module,
     pass_result_from_verified_tuning_state, prepare_ck_profile_kir, print_kir_multiversion_bundle,
-    propose_kir_multiversion_bundle, read_profile_input, run_profile_guided_kir_pass_pipeline,
+    propose_kir_multiversion_bundle, read_profile_input,
+    run_profile_guided_kir_multiversion_pass_pipeline, run_profile_guided_kir_pass_pipeline,
     validate_profile_analysis_for_optimizer,
 };
 #[cfg(feature = "native-toolchain")]
@@ -243,6 +244,52 @@ fn compile_kir(
     sanitize_contracts: bool,
     args: &ParsedArgs,
 ) -> Result<CompiledKir, String> {
+    compile_kir_with_vector_policy(
+        program,
+        target,
+        overflow_mode,
+        bounds_mode,
+        opt_level,
+        sanitize_contracts,
+        args,
+        false,
+    )
+}
+
+#[cfg(feature = "native-toolchain")]
+#[allow(clippy::too_many_arguments)]
+fn compile_multiversion_kir(
+    program: &CheckedProgram,
+    target: KirCompilationTarget,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+    sanitize_contracts: bool,
+    args: &ParsedArgs,
+) -> Result<CompiledKir, String> {
+    compile_kir_with_vector_policy(
+        program,
+        target,
+        overflow_mode,
+        bounds_mode,
+        opt_level,
+        sanitize_contracts,
+        args,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_kir_with_vector_policy(
+    program: &CheckedProgram,
+    target: KirCompilationTarget,
+    overflow_mode: OverflowMode,
+    bounds_mode: BoundsMode,
+    opt_level: u8,
+    sanitize_contracts: bool,
+    args: &ParsedArgs,
+    defer_native_vectorization: bool,
+) -> Result<CompiledKir, String> {
     let semantic_mir = lower_to_mir(program).map_err(|error| error.to_string())?;
     let config = KirBuildConfig {
         consumer: target.consumer,
@@ -280,7 +327,11 @@ fn compile_kir(
         ))
     .then(|| prepare_kir_pre_tune_state(kir.clone(), Some(&contracts)))
     .transpose()?;
-    let result = run_kir_pass_pipeline(kir, level, Some(&contracts));
+    let result = if defer_native_vectorization {
+        run_kir_multiversion_pass_pipeline(kir, level, Some(&contracts))
+    } else {
+        run_kir_pass_pipeline(kir, level, Some(&contracts))
+    };
     if !result.errors.is_empty() {
         return Err(format!(
             "KIR verification failed: {}",
@@ -476,7 +527,17 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
     let profile = None;
     #[cfg(feature = "native-toolchain")]
     let compiled = if let Some(application) = &multiversion_application {
-        compile_profile_guided_kir(&checked.checked_program, application, args)?
+        compile_profile_guided_kir(&checked.checked_program, application, args, true)?
+    } else if multiversion_targets.is_some() {
+        compile_multiversion_kir(
+            &checked.checked_program,
+            KirCompilationTarget { consumer, profile },
+            overflow_mode,
+            bounds_mode,
+            opt_level,
+            false,
+            args,
+        )?
     } else {
         compile_kir(
             &checked.checked_program,
@@ -969,7 +1030,7 @@ pub(super) fn compile_verified_native_product(
     let compiled = if let Some(application) = profile_application.as_ref()
         && opt_level == 3
     {
-        compile_profile_guided_kir(&checked.checked_program, application, args)?
+        compile_profile_guided_kir(&checked.checked_program, application, args, false)?
     } else {
         compile_kir(
             &checked.checked_program,
@@ -1355,9 +1416,9 @@ fn run_multiversion_planning_build(
         })
         .transpose()?;
     let compiled = if let Some(application) = &application {
-        compile_profile_guided_kir(program, application, args)?
+        compile_profile_guided_kir(program, application, args, true)?
     } else {
-        compile_kir(
+        compile_multiversion_kir(
             program,
             KirCompilationTarget {
                 consumer,
@@ -1954,18 +2015,28 @@ fn compile_profile_guided_kir(
     program: &CheckedProgram,
     application: &PreparedProfileApplication,
     args: &ParsedArgs,
+    defer_native_vectorization: bool,
 ) -> Result<CompiledKir, String> {
     let immutable = CkImmutableProfileAnalysis::new(application.analysis.clone());
     let pre_tune = Some(prepare_kir_pre_tune_state(
         application.use_plan.module.clone(),
         application.contracts.as_ref(),
     )?);
-    let result = run_profile_guided_kir_pass_pipeline(
-        &application.use_plan,
-        &immutable,
-        &application.contract,
-        application.contracts.as_ref(),
-    );
+    let result = if defer_native_vectorization {
+        run_profile_guided_kir_multiversion_pass_pipeline(
+            &application.use_plan,
+            &immutable,
+            &application.contract,
+            application.contracts.as_ref(),
+        )
+    } else {
+        run_profile_guided_kir_pass_pipeline(
+            &application.use_plan,
+            &immutable,
+            &application.contract,
+            application.contracts.as_ref(),
+        )
+    };
     if !result.errors.is_empty() {
         return Err(format!(
             "KIR PGO verification failed: {}",
