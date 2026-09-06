@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate aa155825959e49d61fcea7a953935b179a7a238f
+Accepted base revision: v0.13 repaired candidate bd0210b4ce89c5001f46ab2128a8c7a73dc6323a
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`aa155825959e49d61fcea7a953935b179a7a238f` was reviewed file by file and integrated
+`bd0210b4ce89c5001f46ab2128a8c7a73dc6323a` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 

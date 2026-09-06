@@ -38,7 +38,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`aa155825959e49d61fcea7a953935b179a7a238f`。两者之间的累计提交已按
+`bd0210b4ce89c5001f46ab2128a8c7a73dc6323a`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -227,4 +227,14 @@ dispatcher 参数/函数属性的修复，并把 accepted v0.13 与 replay 重�
 `aa155825959e49d61fcea7a953935b179a7a238f`，manifest SHA-256 为
 `d8a0b50eba1957c980b4a6acfed0e2e2e481b9cd804cb8e1b44ae7c7b14129f5`。复诊见
 `specs/0.14/review/implementation-blocker-27.md`；fact-audit equality、语言/ABI、target、性能与
+稳定性门槛、timed work、样本、corpus 及 required job topology 均保持不变。
+
+Exact v0.14 run `34031421321` 的 x86-64/AArch64 performance jobs
+`101481682943`/`101481682918` 在准备 exact v0.13 replay 时又证明，x86 target profile 未向
+checked KIR cost model 暴露已在封闭 frontier 内的四路 vector chain，而 AArch64 generic SVE
+函数只带 `tune-cpu` 时没有形成实际使用该调度模型的 per-function subtarget。V0.14 已继承
+exact v0.13 `bd0210b4ce89c5001f46ab2128a8c7a73dc6323a` 的两项修复，并把 accepted v0.13
+与 replay 重钉到该 SHA，manifest SHA-256 为
+`925eb2410310f4e3aa31247be37f3576468a12cb2a54a421a64f7ed651304d6d`。复诊见
+`specs/0.14/review/implementation-blocker-28.md`；语言/ABI、target ISA、tuning search、性能与
 稳定性门槛、timed work、样本、corpus 及 required job topology 均保持不变。
