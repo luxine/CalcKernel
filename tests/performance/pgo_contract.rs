@@ -192,6 +192,23 @@ fn x86_checked_loops_should_request_bounded_llvm_unrolling() {
 }
 
 #[test]
+fn aarch64_sve_loops_should_request_four_way_llvm_interleave() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;",
+        "attach_aarch64_sve_loop_interleave",
+        "target.getTargetFeatureString().contains(\"+sve\")",
+        "llvm.loop.interleave.count",
+        "CKC_AARCH64_SVE_LOOP_INTERLEAVE",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "AArch64 SVE loop interleave handoff is missing {required:?}"
+        );
+    }
+}
+
+#[test]
 fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
     let schema = read("benches/summary-schema.md");
     let checker = read("scripts/check-native-performance.py");

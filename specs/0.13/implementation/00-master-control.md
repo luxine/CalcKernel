@@ -172,3 +172,11 @@ Exact v0.12 run `33825887411` 的 AArch64 performance job `100878495028` 进一�
 `af9aa37d262d9b447f407f07aa73e33ed63b4926`；复诊见
 `specs/0.13/review/implementation-blocker-16.md`。timed work、样本、统计、性能与稳定性门槛、
 corpus 与平台矩阵均不变。
+
+V0.14 exact run `34014114894` 的 AArch64 performance job `101435039015` 在重建
+exact V0.13 replay 后证明，128-bit SVE 上 LLVM 默认的 scalable-vector interleave 与
+Advanced-SIMD baseline 每轮处理量和独立工作数基本相同，eligible suite 的 dispatch geo
+improvement 只有约 1.003。复诊与闭环见
+`specs/0.13/review/implementation-blocker-18.md`：仅对 exact feature string 含 `+sve` 的
+AArch64 scalar loop 请求四路 LLVM interleave；既有 loop metadata 与 fixed-vector KIR 不变。
+timed work、样本、统计、性能与稳定性门槛、corpus、target tiers 与 required job matrix 均不变。

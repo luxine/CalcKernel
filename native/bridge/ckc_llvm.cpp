@@ -1864,6 +1864,7 @@ namespace {
 
 constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
 constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
+constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
 
 bool is_integer_memory_reduction(const llvm::Loop &loop) {
     const auto *header = loop.getHeader();
@@ -1953,6 +1954,51 @@ void attach_prevectorized_loop_unroll_disable(llvm::Module &module) {
                     terminator->setMetadata(llvm::LLVMContext::MD_loop,
                                             loop_id);
                 }
+            }
+        }
+    }
+}
+
+void attach_aarch64_sve_loop_interleave(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::aarch64 ||
+        !target.getTargetFeatureString().contains("+sve")) {
+        return;
+    }
+    for (llvm::Function &function : module) {
+        if (function.isDeclaration() || function.empty()) {
+            continue;
+        }
+        llvm::DominatorTree dominators(function);
+        llvm::LoopInfo loops(dominators);
+        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
+            if (contains_fixed_vector_operation(*loop)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *count = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_AARCH64_SVE_LOOP_INTERLEAVE))});
+            llvm::Metadata *operands[] = {nullptr, count};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
             }
         }
     }
@@ -2114,6 +2160,8 @@ extern "C" int32_t ckc_llvm_module_optimize(
 
         if (level == llvm::OptimizationLevel::O3) {
             attach_prevectorized_loop_unroll_disable(*module->value);
+            attach_aarch64_sve_loop_interleave(*module->value,
+                                               *target->value);
             attach_x86_checked_loop_unroll(*module->value, *target->value);
             attach_x86_integer_reduction_interleave(*module->value,
                                                      *target->value);
