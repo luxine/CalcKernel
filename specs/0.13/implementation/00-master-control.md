@@ -198,3 +198,11 @@ scalar memory-map handoff 使用固定 1×5 schedule；multiversion baseline/var
 复验与 LLVM lowering 中强制携带原 verified contract facts，缺失时 fail closed。source semantics、
 target CPU/features、timed work、样本、统计、性能与稳定性门槛、corpus、target tiers 与 required
 job matrix 均不变。
+
+Exact V0.13 run `34028252202` 的 AArch64 Linux native-host job `101473242935`
+证明，新启用的 contract-fact transfer 暴露了 dispatcher fact audit 的既有错误：dispatcher 只复制
+函数和参数属性，却把 root 函数体内的 assume/range/no-wrap/alias-scope 证据也重复登记，导致审计
+expected assume/range 各 6、实际各 4。复诊与闭环见
+`specs/0.13/review/implementation-blocker-21.md`：审计记录现在只复制 dispatcher 确实继承的
+alignment/noalias/readonly/writeonly/memory-effects 属性；函数体证据仍只归原 baseline body 所有。
+fact audit、语言/ABI、target、性能门槛、timed work、样本、corpus 与 required job matrix 均不变。

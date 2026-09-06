@@ -358,6 +358,39 @@ fn abi_multiversion_llvm_thunk_should_keep_public_abi_and_publish_one_tail_targe
     assert!(!object.is_empty());
 }
 
+#[test]
+fn multiversion_dispatch_should_preserve_audited_contract_assumes() {
+    let source = std::fs::read_to_string("benches/fixtures/pgo/call_constant_length.ck")
+        .expect("contracted multiversion fixture");
+    let kir = optimized_module(
+        &source,
+        3,
+        KirConsumer::NativeLibrary,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
+    let context = calckernel::NativeContext::new().expect("context");
+    let target =
+        NativeTarget::host_with_cpu(calckernel::NativeCpu::Baseline).expect("baseline target");
+    let mut dispatched =
+        lower_native_kir_module(&context, &target, &kir, &EmitLlvmOptions::default())
+            .expect("contracted dispatch lowering");
+    test_add_multiversion_dispatch(
+        &mut dispatched,
+        "kernel",
+        "__ck_impl_kernel",
+        "__ck_mv_kernel_fixture_v3",
+        NativeCapabilitySet::X86_V3.bits().into(),
+    )
+    .expect("install contracted dispatcher");
+
+    dispatched
+        .verify()
+        .expect("contracted dispatch verify")
+        .audit()
+        .expect("contracted dispatch fact audit");
+}
+
 fn definition_signature<'a>(ir: &'a str, name: &str) -> &'a str {
     ir.lines()
         .find(|line| line.starts_with("define ") && line.contains(&format!("@{name}(")))
