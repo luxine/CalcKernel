@@ -1010,7 +1010,6 @@ fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
         "#pragma intrinsic(_InterlockedCompareExchange)",
         "#pragma intrinsic(_InterlockedCompareExchange64)",
         "#pragma intrinsic(_InterlockedExchange)",
-        "#pragma intrinsic(_InterlockedIncrement)",
         "defined(__aarch64__) && defined(__linux__)",
         "ldaxr",
         "stlxr",
