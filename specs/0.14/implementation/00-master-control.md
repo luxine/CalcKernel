@@ -33,12 +33,13 @@
 - `specs/0.14/implementation/implementation-design-correction-10.md`
 - `specs/0.14/implementation/implementation-design-correction-11.md`
 - `specs/0.14/review/implementation-blocker-25.md`
+- `specs/0.14/review/implementation-blocker-30.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`4a04fb34eb0f1358d0f8fa308f95d031954e72b0`。两者之间的累计提交已按
+`d2a2e5f9fb7ed0c71b1ded4d3bf8c789b4d774ac`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -247,3 +248,13 @@ v0.13 `4a04fb34eb0f1358d0f8fa308f95d031954e72b0` 的完整闭环，并把 accept
 `b713147e369c2c4ebd5debcf61005531e5154961ddf864f14bede8baa8599eca`。复诊见
 `specs/0.14/review/implementation-blocker-29.md`；语言/ABI、target ISA、profitability floor、性能
 与稳定性门槛、timed work、样本、corpus 及 required job topology 均保持不变。
+
+Exact v0.14 run `34038295553` 的独立 v0.13 replay 证明上一轮 coverage-first 修复仍发生在
+isolated profitability filter 之后，因此 x86 required v3 worker 看不到仅物化的 v4 member；同一
+run 还证明 Linux AArch64 dynamic library 没有 CK startup entry capture，resolver 因 auxv 不可用
+合法退回 baseline。V0.14 已逐字继承 exact v0.13
+`d2a2e5f9fb7ed0c71b1ded4d3bf8c789b4d774ac` 的 compatibility-companion retained-set 与
+freestanding binary `/proc/self/auxv` fallback，并把 accepted v0.13 与 replay 重钉到该 SHA；manifest
+SHA-256 为 `b730be3b2d40efd7f35195c54e2472b107ccf87f7e85f3095422609f328ea2c0`。复诊见
+`specs/0.14/review/implementation-blocker-30.md`；语言/公开 ABI、strict FP、安全规则、target ISA、
+性能与稳定性门槛、timed work、样本、corpus、平台及 required job topology 均保持不变。

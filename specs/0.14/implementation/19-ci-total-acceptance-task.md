@@ -69,5 +69,5 @@ cargo build --release --features native-toolchain --locked
 - 不增加第十一个 job，不减少 matrix row，不把 required test/performance 改为
   diagnostic、optional、continue-on-error 或空 selector。
 - 不自动合并 main，不创建或移动 tag/Release。
-- v0.13 accepted-base 必须精确为 `4a04fb34eb0f1358d0f8fa308f95d031954e72b0`；逐差异
+- v0.13 accepted-base 必须精确为 `d2a2e5f9fb7ed0c71b1ded4d3bf8c789b4d774ac`；逐差异
   审计与等价集成是 release gate，不能由旧 run 或移动引用代签。
