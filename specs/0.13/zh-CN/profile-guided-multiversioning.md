@@ -308,6 +308,10 @@ Compiler-private initialization guard 必须生成为不可内联 helper。Instr
 展开到每个被内联的 function 或 loop site。这样既保留一次性初始化语义，也不会把冷初始化
 machinery 复制进热插桩路径。
 
+Candidate-constant 的 hit/miss observation 使用两个 saturated function-local `u64` counter
+聚合，并在 function exit 时一次性发布到精确 profile bucket。该 batching 不改变 canonical site
+table，也不改变 observation 的数量和语义；它只移除每个热 comparison 的一次 atomic runtime call。
+
 instrumented executable 的 compiler-owned entry wrapper 在 `main()` 正常返回后、process
 返回 OS 前写一个 shard。automatic workflow 只有在 child 自身 exit zero 时才接受该 shard。
 异常终止可以留下 temp，但不能破坏完整 shard；automatic mode 对异常 child 失败。
@@ -481,6 +485,10 @@ variant 使用相同 public ABI 与 source safety mode。
 SVE/SVE2 profile 仍只暴露 0.12/0.13 定义的 fixed-width vector KIR operation。LLVM 可以
 合法地把这些内部 fixed operation lower 为 SVE instruction，但 0.13 不增加 scalable KIR
 value 或公开 ABI。
+为保证 O3 scheduling 确定性，generic SVE/SVE2 multiversion member 使用固定 LLVM
+`neoverse-n2` tuning model。这只是 `tune-cpu` 选择：member 的 `target-cpu=generic`、显式
+feature string、compatibility predicate 与 feature audit 仍是权威，因此 tuning 不能引入未声明
+instruction。该 tuning identity 进入 multiversion cache codegen contract。
 
 baseline-only target set 合法，并输出稳定 `no-compatible-enhanced-tier` explanation。
 需要一个本地 Apple/其他 CPU exact model 时继续使用 `--cpu native`。x86 level feature list

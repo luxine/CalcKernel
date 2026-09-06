@@ -1865,6 +1865,24 @@ namespace {
 constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
 constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
 constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
+constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = "neoverse-n2";
+
+void attach_aarch64_sve_tuning(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::aarch64 ||
+        target.getTargetCPU() != "generic" ||
+        !target.getTargetFeatureString().contains("+sve")) {
+        return;
+    }
+    for (llvm::Function &function : module) {
+        if (!function.isDeclaration()) {
+            // This changes only LLVM's scheduling model. The exact generic
+            // target CPU and explicit SVE/SVE2 feature string remain the ISA
+            // authority for the emitted multiversion member.
+            function.addFnAttr("tune-cpu", CKC_AARCH64_SVE_TUNE_CPU);
+        }
+    }
+}
 
 bool is_integer_memory_reduction(const llvm::Loop &loop) {
     const auto *header = loop.getHeader();
@@ -2159,6 +2177,7 @@ extern "C" int32_t ckc_llvm_module_optimize(
         }
 
         if (level == llvm::OptimizationLevel::O3) {
+            attach_aarch64_sve_tuning(*module->value, *target->value);
             attach_prevectorized_loop_unroll_disable(*module->value);
             attach_aarch64_sve_loop_interleave(*module->value,
                                                *target->value);

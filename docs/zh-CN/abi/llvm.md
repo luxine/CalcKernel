@@ -67,6 +67,8 @@ lowering。每个 object 在 assembly 前都通过 verifier 与 feature audit。
 acquire-release atomic 发布一次 process-local selection。Public Native C ABI thunk 的 name、
 address、signature、checked-status behavior 与 visibility 保持；baseline、variant、detector、
 runtime symbol 都隐藏。
+Generic AArch64 SVE/SVE2 member 只为 scheduling 使用固定 `neoverse-n2` LLVM tuning model；
+`target-cpu=generic`、显式 feature、runtime compatibility 与 feature audit 保持不变并继续作为权威。
 
 named-object bundle 可链接为 executable、dynamic library 或 static archive。multiversion object
 output 会拒绝，因为 0.13 不定义 partial-link bundle contract；baseline/native single-version

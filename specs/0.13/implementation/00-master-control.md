@@ -182,3 +182,12 @@ improvement 只有约 1.003。复诊与闭环见
 `specs/0.13/review/implementation-blocker-18.md`：仅对 exact feature string 含 `+sve` 的
 AArch64 scalar loop 请求四路 LLVM interleave；既有 loop metadata 与 fixed-vector KIR 不变。
 timed work、样本、统计、性能与稳定性门槛、corpus、target tiers 与 required job matrix 均不变。
+
+Exact V0.13 run `34017771182` 的 x86-64 performance job `101444674413` 随后证明
+`branch-layout` generation 仍为 ordinary 的约 5.68 倍；V0.14 exact replay run
+`34017772543` 的 AArch64 performance job `101444700041` 同时证明 compute-bound
+multiversion/selected-direct 为约 1.0552，越过 5% individual gate。复诊与闭环见
+`specs/0.13/review/implementation-blocker-19.md`：candidate hit/miss 改为 function-local
+saturated batching，而 generic SVE/SVE2 member 使用固定 `neoverse-n2` schedule-only tuning。
+Instrumentation site/counter/observation、target CPU/features、timed work、样本、统计、性能与稳定性
+门槛、corpus、target tiers 与 required job matrix 均不变。

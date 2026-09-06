@@ -176,6 +176,37 @@ fn profile_generation_edges_should_batch_locally_until_function_exit() {
 }
 
 #[test]
+fn profile_generation_candidates_should_batch_locally_until_function_exit() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    let runtime = read("native/profile_runtime/common/collector.c");
+    let header = read("native/profile_runtime/include/ckc_profile_runtime.h");
+    for required in [
+        "candidate_storage: BTreeMap<u32, NativeProfileCandidateStorage<'module>>",
+        "fn allocate_profile_candidate_counters",
+        "fn add_profile_candidate_local",
+        "fn flush_profile_candidate_counters",
+        "__ck_profile_add_bucket",
+    ] {
+        assert!(
+            format!("{lowering}\n{runtime}\n{header}").contains(required),
+            "profile candidate batching is missing {required:?}"
+        );
+    }
+    let instruction_lowering = lowering
+        .split("fn emit_profile_instruction")
+        .nth(1)
+        .expect("profile instruction lowering")
+        .split("fn instruction")
+        .next()
+        .expect("profile instruction lowering boundary");
+    assert!(instruction_lowering.contains("self.add_profile_candidate_local"));
+    assert!(
+        !instruction_lowering.contains("builder.call(candidate_function"),
+        "instrumented candidate sites must not call the atomic runtime in the hot path"
+    );
+}
+
+#[test]
 fn x86_checked_loops_should_request_bounded_llvm_unrolling() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     for required in [
@@ -206,6 +237,29 @@ fn aarch64_sve_loops_should_request_four_way_llvm_interleave() {
             "AArch64 SVE loop interleave handoff is missing {required:?}"
         );
     }
+}
+
+#[test]
+fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let commands = read("src/cli/commands.rs");
+    for required in [
+        "constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = \"neoverse-n2\";",
+        "attach_aarch64_sve_tuning",
+        "target.getTargetCPU() != \"generic\"",
+        "target.getTargetFeatureString().contains(\"+sve\")",
+        "function.addFnAttr(\"tune-cpu\", CKC_AARCH64_SVE_TUNE_CPU)",
+        "aarch64-sve-tune-neoverse-n2-v1",
+    ] {
+        assert!(
+            format!("{bridge}\n{commands}").contains(required),
+            "fixed AArch64 SVE scheduling contract is missing {required:?}"
+        );
+    }
+    assert!(
+        !bridge.contains("function.addFnAttr(\"target-cpu\", CKC_AARCH64_SVE_TUNE_CPU)"),
+        "the scheduling model must not imply additional ISA features"
+    );
 }
 
 #[test]

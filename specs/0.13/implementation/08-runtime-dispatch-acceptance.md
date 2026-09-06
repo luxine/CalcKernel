@@ -28,6 +28,8 @@
 - capability cache 恰一次，后续 steady call 是 atomic load + indirect tail call；concurrent first calls
   只发布 compatible verified pointer。
 - baseline/thunk/detector 无 optional instruction，variant 不越声明 feature，无 cross-module leakage。
+- generic AArch64 SVE/SVE2 member 只设置固定 `tune-cpu=neoverse-n2` 调度模型；target CPU 仍为
+  `generic`，显式 feature string 与 feature audit 不变，cache codegen contract 包含 tuning identity。
 
 ## 完成证据
 

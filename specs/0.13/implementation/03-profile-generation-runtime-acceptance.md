@@ -24,6 +24,8 @@
   是强制行为。
 - compiler-private initialization guard 必须保留 `NoInline`；generation object 的 hot instrumented
   function/loop site 只能调用紧凑 guard，不得重复展开完整 initialization 参数准备。
+- candidate-constant hit/miss 必须在 saturated function-local counter 中精确聚合并在 function exit
+  发布；hot comparison 不得逐 observation 调用 atomic runtime，最终两个 bucket count 必须精确。
 - executable 只在 normal zero-result automatic workflow 接受 shard；library flush 是完整 64-hex、
   exactly-one publisher、concurrent/repeat sticky，unload path 无 I/O。
 - directory every component no-follow/identity anchored，replacement/symlink/reparse/overwrite 被拒绝；

@@ -91,6 +91,9 @@ dispatch runtime as separate named-object members. Every object is verified and
 feature-audited before assembly. The baseline-safe detector recognizes only the
 closed x86-64 v3/v4 and Linux AArch64 SVE/SVE2 tiers, fails closed on incomplete
 state, and publishes one process-local selection through acquire-release atomics.
+Generic AArch64 SVE/SVE2 members use a fixed `neoverse-n2` LLVM tuning model for
+scheduling only; `target-cpu=generic`, explicit features, runtime compatibility,
+and the feature audit remain unchanged and authoritative.
 Public Native C ABI thunks keep their names, addresses, signatures, checked-status
 behavior, and visibility; baseline, variant, detector, and runtime symbols stay hidden.
 

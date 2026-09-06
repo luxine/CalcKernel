@@ -166,6 +166,16 @@ void __ck_profile_add(uint32_t site_index, uint64_t value) {
   }
 }
 
+void __ck_profile_add_bucket(uint32_t site_index, uint32_t bucket_index,
+                             uint64_t value) {
+  if (site_index >= ck_profile_state.site_count ||
+      bucket_index >= ck_profile_state.site_counts[site_index]) {
+    return;
+  }
+  ck_profile_add_cell(ck_profile_state.site_first[site_index] + bucket_index,
+                      value);
+}
+
 void __ck_profile_observe(uint32_t site_index, uint32_t bucket_index) {
   if (site_index >= ck_profile_state.site_count) {
     return;

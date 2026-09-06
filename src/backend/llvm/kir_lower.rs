@@ -509,9 +509,9 @@ struct NativeProfileRuntime<'module> {
     ensure: NativeFunction<'module>,
     increment: NativeFunction<'module>,
     add: NativeFunction<'module>,
+    add_bucket: NativeFunction<'module>,
     observe_u32: NativeFunction<'module>,
     observe_trip: NativeFunction<'module>,
-    candidate_i64: NativeFunction<'module>,
     flush_control: NativeFunction<'module>,
     entries: BTreeMap<FunctionId, u32>,
     edges: BTreeMap<(FunctionId, BlockId, BlockId), u32>,
@@ -659,6 +659,12 @@ fn add_native_profile_support<'module, 'context>(
         &[types.i32, types.i64],
         true,
     )?;
+    let add_bucket = module.add_function(
+        "__ck_profile_add_bucket",
+        types.void,
+        &[types.i32, types.i32, types.i64],
+        true,
+    )?;
     let observe_u32 = module.add_function(
         "__ck_profile_observe_u32",
         types.void,
@@ -669,12 +675,6 @@ fn add_native_profile_support<'module, 'context>(
         "__ck_profile_observe_trip",
         types.void,
         &[types.i32, types.i64],
-        true,
-    )?;
-    let candidate_i64 = module.add_function(
-        "__ck_profile_candidate_i64",
-        types.void,
-        &[types.i32, types.i64, types.i64],
         true,
     )?;
     let runtime_flush = module.add_function("__ck_profile_flush", types.i32, &[], true)?;
@@ -755,9 +755,9 @@ fn add_native_profile_support<'module, 'context>(
         ensure,
         increment,
         add,
+        add_bucket,
         observe_u32,
         observe_trip,
-        candidate_i64,
         flush_control,
         entries: BTreeMap::new(),
         edges: BTreeMap::new(),
@@ -1413,6 +1413,12 @@ struct Storage<'module> {
     pointer: NativeValue<'module>,
 }
 
+#[derive(Clone, Copy)]
+struct NativeProfileCandidateStorage<'module> {
+    matched: Storage<'module>,
+    other: Storage<'module>,
+}
+
 struct KirFunctionLowerer<'module, 'context, 'a> {
     context: &'context NativeContext,
     builder: NativeBuilder<'module, 'context>,
@@ -1434,6 +1440,7 @@ struct KirFunctionLowerer<'module, 'context, 'a> {
     pgo_branches: &'a BTreeMap<(FunctionId, BlockId), (u64, u64)>,
     loop_storage: BTreeMap<u32, Storage<'module>>,
     edge_storage: BTreeMap<u32, Storage<'module>>,
+    candidate_storage: BTreeMap<u32, NativeProfileCandidateStorage<'module>>,
     temporary: u32,
 }
 
@@ -1484,12 +1491,14 @@ fn lower_function<'module, 'context>(
         pgo_branches: environment.pgo_branches,
         loop_storage: BTreeMap::new(),
         edge_storage: BTreeMap::new(),
+        candidate_storage: BTreeMap::new(),
         temporary: 0,
     };
     lowerer.builder.position(entry)?;
     lowerer.allocate_values()?;
     lowerer.allocate_profile_loop_counters()?;
     lowerer.allocate_profile_edge_counters()?;
+    lowerer.allocate_profile_candidate_counters()?;
     lowerer.store_parameters()?;
     lowerer.emit_profile_function_entry()?;
     lowerer.emit_contract_checks()?;
@@ -1592,6 +1601,41 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         Ok(())
     }
 
+    fn allocate_profile_candidate_counters(&mut self) -> Result<(), NativeError> {
+        let sites = self
+            .profile
+            .map(|profile| {
+                profile
+                    .candidates
+                    .iter()
+                    .filter(|((function, _), _)| *function == self.function.id)
+                    .map(|(_, candidate)| candidate.site)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for site in sites {
+            let matched = self.builder.alloca(
+                self.types.i64,
+                &format!("ck.profile.candidate.{site}.matched"),
+            )?;
+            let other = self.builder.alloca(
+                self.types.i64,
+                &format!("ck.profile.candidate.{site}.other"),
+            )?;
+            let zero = self.builder.const_int(self.types.i64, "0")?;
+            self.builder.store(zero, matched)?;
+            self.builder.store(zero, other)?;
+            self.candidate_storage.insert(
+                site,
+                NativeProfileCandidateStorage {
+                    matched: Storage { pointer: matched },
+                    other: Storage { pointer: other },
+                },
+            );
+        }
+        Ok(())
+    }
+
     fn emit_profile_function_entry(&mut self) -> Result<(), NativeError> {
         let Some(profile) = self.profile else {
             return Ok(());
@@ -1625,16 +1669,12 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             .get(&(self.function.id, instruction.id))
             .copied();
         let observe = profile.observe_u32;
-        let candidate_function = profile.candidate_i64;
         if let Some((site, value)) = slice {
             let site = self.builder.const_int(self.types.i32, &site.to_string())?;
             let value = self.load(value)?;
             let _ = self.builder.call(observe, &[site, value], "")?;
         }
         if let Some(candidate) = candidate {
-            let site = self
-                .builder
-                .const_int(self.types.i32, &candidate.site.to_string())?;
             let observed_type = self.type_of(candidate.observed)?.clone();
             let observed = self.load(candidate.observed)?;
             let observed = match observed_type {
@@ -1660,9 +1700,13 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             let expected = self
                 .builder
                 .const_int(self.types.i64, &candidate.candidate.to_string())?;
-            let _ = self
-                .builder
-                .call(candidate_function, &[site, observed, expected], "")?;
+            let matched = self.builder.compare(
+                BridgeCompareOp::IcmpEq,
+                observed,
+                expected,
+                "ck.profile.candidate.matched",
+            )?;
+            self.add_profile_candidate_local(candidate.site, matched)?;
         }
         Ok(())
     }
@@ -2881,7 +2925,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
     ) -> Result<(), NativeError> {
         match terminator {
             KirTerminator::Return { value, .. } => {
-                self.flush_profile_edge_counters()?;
+                self.flush_profile_counters()?;
                 if self.status_abi {
                     if let Some(value) = value {
                         let value = self.load(*value)?;
@@ -3051,6 +3095,63 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         self.builder.store(next, storage.pointer)
     }
 
+    fn add_profile_candidate_local(
+        &mut self,
+        site: u32,
+        matched: NativeValue<'module>,
+    ) -> Result<(), NativeError> {
+        let storage = self.candidate_storage.get(&site).copied().ok_or_else(|| {
+            lowering_error(format!(
+                "profile candidate site {site} has no local counters"
+            ))
+        })?;
+        let one = self.builder.const_int(self.types.i64, "1")?;
+        let zero = self.builder.const_int(self.types.i64, "0")?;
+        let matched_amount =
+            self.builder
+                .select(matched, one, zero, "ck.profile.candidate.match.amount")?;
+        let other_amount =
+            self.builder
+                .select(matched, zero, one, "ck.profile.candidate.other.amount")?;
+        self.add_profile_local_counter(storage.matched, matched_amount, "candidate.match")?;
+        self.add_profile_local_counter(storage.other, other_amount, "candidate.other")
+    }
+
+    fn add_profile_local_counter(
+        &mut self,
+        storage: Storage<'module>,
+        amount: NativeValue<'module>,
+        label: &str,
+    ) -> Result<(), NativeError> {
+        let current = self.builder.load(
+            self.types.i64,
+            storage.pointer,
+            &format!("ck.profile.{label}.count"),
+        )?;
+        let pair = self.builder.overflow(
+            BridgeOverflowOp::UnsignedAdd,
+            current,
+            amount,
+            &format!("ck.profile.{label}.add"),
+        )?;
+        let value = self
+            .builder
+            .extract_value(pair, 0, &format!("ck.profile.{label}.next"))?;
+        let overflow =
+            self.builder
+                .extract_value(pair, 1, &format!("ck.profile.{label}.overflow"))?;
+        let maximum = self
+            .builder
+            .const_int(self.types.i64, "18446744073709551615")?;
+        let next = self.builder.select(
+            overflow,
+            maximum,
+            value,
+            &format!("ck.profile.{label}.saturated"),
+        )?;
+        self.builder.store(next, storage.pointer)
+    }
+
     fn flush_profile_edge_counters(&mut self) -> Result<(), NativeError> {
         let Some(profile) = self.profile else {
             return Ok(());
@@ -3069,6 +3170,38 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             let _ = self.builder.call(add, &[site, value], "")?;
         }
         Ok(())
+    }
+
+    fn flush_profile_candidate_counters(&mut self) -> Result<(), NativeError> {
+        let Some(profile) = self.profile else {
+            return Ok(());
+        };
+        let add_bucket = profile.add_bucket;
+        let counters = self
+            .candidate_storage
+            .iter()
+            .map(|(site, storage)| (*site, *storage))
+            .collect::<Vec<_>>();
+        for (site, storage) in counters {
+            let site = self.builder.const_int(self.types.i32, &site.to_string())?;
+            for (bucket, storage) in [(0_u32, storage.matched), (1_u32, storage.other)] {
+                let bucket = self
+                    .builder
+                    .const_int(self.types.i32, &bucket.to_string())?;
+                let value = self.builder.load(
+                    self.types.i64,
+                    storage.pointer,
+                    "ck.profile.candidate.flush",
+                )?;
+                let _ = self.builder.call(add_bucket, &[site, bucket, value], "")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_profile_counters(&mut self) -> Result<(), NativeError> {
+        self.flush_profile_edge_counters()?;
+        self.flush_profile_candidate_counters()
     }
 
     fn current_block(&self) -> Result<NativeBlock<'module>, NativeError> {
@@ -3237,7 +3370,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         let failure = self.handle.append_block(&failure_name)?;
         self.builder.cond_branch(failed, failure, continuation)?;
         self.builder.position(failure)?;
-        self.flush_profile_edge_counters()?;
+        self.flush_profile_counters()?;
         self.builder.return_value(status)?;
         self.builder.position(continuation)?;
         self.current_block = Some(continuation);

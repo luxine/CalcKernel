@@ -1413,8 +1413,7 @@ fn multiversion_cache_manifest(
         bundle.additional_kir_units,
         bundle.total_kir_units,
     );
-    let codegen_contract =
-        "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1".to_string();
+    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;aarch64-sve-tune-neoverse-n2-v1".to_string();
     let key_input = CacheKeyInput {
         source,
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),
