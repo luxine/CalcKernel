@@ -38,7 +38,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`b159ea7588359116bb94396215ff793b69e77235`。两者之间的累计提交已按
+`966d54b075a76f2f493d51cb0764688c2ca85675`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -207,3 +207,14 @@ direct 调用慢约 5.52%，超过不变的 5% 上限。V0.14 已继承 candidat
 重钉到 `b159ea7588359116bb94396215ff793b69e77235`。复诊见
 `specs/0.14/review/implementation-blocker-25.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus、target tiers 及 required job topology 均保持不变。
+
+Exact v0.13 run `34021087906` 的 x86-64 performance job `101453829767` 随后证明，
+`specialized_length` 的 Native handoff 只形成四向 XMM 调度，未达到相同语义下两份五向 SIMD
+oracle 的不变 90% 门槛；同 run 的 AArch64 performance job `101453829694` 还证明，独立
+multiversion module 的 KIR 复验丢失 verified contract facts，令 `compute-bound` SVE member
+重新引入 alias-versioning，并以约 5.51% 超过不变的 5% direct-dispatch 上限。Exact v0.14
+run `34021089423` 的 replay job `101453852634` 复现后者。V0.14 已逐差异继承两项修复，并把
+accepted v0.13 与 replay 重钉到 `966d54b075a76f2f493d51cb0764688c2ca85675`，manifest SHA-256
+为 `d29ecfde60ef72eb46f51016d9e67d8cd1606bbc206e1a20580dd7cbaf235c62`。复诊见
+`specs/0.14/review/implementation-blocker-26.md`；所有 timed work、样本、统计、性能与稳定性
+门槛、corpus、target CPU/features、target tiers 及 required job topology 均保持不变。
