@@ -32,12 +32,13 @@
 - `specs/0.14/review/implementation-blocker-10.md`
 - `specs/0.14/implementation/implementation-design-correction-10.md`
 - `specs/0.14/implementation/implementation-design-correction-11.md`
+- `specs/0.14/review/implementation-blocker-25.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`4472330758a71312f9a86b83ab10fdce47791287`。两者之间的累计提交已按
+`b159ea7588359116bb94396215ff793b69e77235`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -195,4 +196,14 @@ schema-8 eligible suite 的 dispatch geo improvement 只有约 1.003。V0.14 已
 v0.13 的 AArch64 SVE 四路 LLVM interleave 修复，并把 accepted v0.13 与 replay 重钉到
 `4472330758a71312f9a86b83ab10fdce47791287`。复诊见
 `specs/0.14/review/implementation-blocker-24.md`；所有 timed work、样本、统计、性能与稳定性
+门槛、corpus、target tiers 及 required job topology 均保持不变。
+
+Exact v0.13 run `34017771182` 的 x86-64 performance job `101444674413` 随后证明，
+candidate-constant profiling 的逐元素原子调用会令 `branch-layout` generation 开销达到 ordinary
+的 5.68 倍，超过不变的 5.0 上限。Exact v0.14 run `34017772543` 的 AArch64 performance
+job `101444700041` 同时证明，generic SVE 的默认调度在 `compute-bound` 上比同一已选 target 的
+direct 调用慢约 5.52%，超过不变的 5% 上限。V0.14 已继承 candidate counter 函数内批处理和
+固定 `neoverse-n2` 调度模型（不扩展 generic SVE/SVE2 ISA），并把 accepted v0.13 与 replay
+重钉到 `b159ea7588359116bb94396215ff793b69e77235`。复诊见
+`specs/0.14/review/implementation-blocker-25.md`；所有 timed work、样本、统计、性能与稳定性
 门槛、corpus、target tiers 及 required job topology 均保持不变。
