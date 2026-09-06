@@ -67,6 +67,9 @@ lowering。每个 object 在 assembly 前都通过 verifier 与 feature audit。
 acquire-release atomic 发布一次 process-local selection。Public Native C ABI thunk 的 name、
 address、signature、checked-status behavior 与 visibility 保持；baseline、variant、detector、
 runtime symbol 都隐藏。
+Linux AArch64 executable 使用 startup-stack auxv snapshot；没有 CK entry point 的 dynamic
+library 通过 freestanding direct syscall 读取 `/proc/self/auxv`，fallback 不可用或不完整时
+fail closed 到 baseline，且不增加 libc 或 loader dependency。
 Generic AArch64 SVE/SVE2 member 只为 scheduling 使用固定 `neoverse-n2` LLVM tuning model；
 `target-cpu=generic`、显式 feature、runtime compatibility 与 feature audit 保持不变并继续作为权威。
 

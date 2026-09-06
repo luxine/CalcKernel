@@ -67,11 +67,15 @@ proof/fact state, mapping, and audit ledger together or rolls them all back;
 rejected proposals and exhausted searches do not refund budget.
 
 Multiversion planning also starts baseline and every enhanced variant from the
-same pre-state. Eligible exported roots need the closed minimum profile benefit;
-each target variant reruns the normal verifier, fact audit, target-feature audit,
-and object audit. Cross-variant LTO is forbidden, so an enhanced assumption
-cannot strengthen baseline or a sibling variant. The baseline-safe dispatcher
-selects a verified compatible variant without changing public semantics.
+same pre-state. Eligible exported roots need at least one enhanced tier to meet
+the closed minimum profile benefit. If that profitable tier has a strict
+feature-subset tier whose target cost is no worse than baseline, the planner may
+retain the subset as its compatibility companion; this prevents a bounded image
+from abandoning a capable lower-tier host. Every retained target variant reruns
+the normal verifier, fact audit, target-feature audit, and object audit.
+Cross-variant LTO is forbidden, so an enhanced assumption cannot strengthen
+baseline or a sibling variant. The baseline-safe dispatcher selects a verified
+compatible variant without changing public semantics.
 
 Every KIR module carries a canonical `KirTargetProfile`. Inspection, portable
 C, WebAssembly, Native library, and Native executable profiles identify their

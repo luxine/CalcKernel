@@ -97,9 +97,14 @@
 - [ ] x86 Native profile 在既有封闭 `UF <= 4` frontier 内至少暴露四路 interleave；strict-f64 与
   integer-cast 选择 checked `VF2` 多独立链计划，`UF2/UF4` 由真实 target cost 决定，且继续通过
   不变的性能、legality、profitability、proof 与 budget gate。
-- [ ] multiversion 在 full-root budget 只容纳一个 variant 时保留兼容覆盖最广的 profitable tier；
-  selected-direct 从独立加载的同字节 artifact 调用 resolver 实际发布的 hidden member，而非
-  `--cpu native` 近似物。
+- [ ] multiversion enhanced retained-set 有通过不变 profitability floor 的 trial 作为 eligibility
+  witness；其 predicted non-regressing strict feature subset 可作为 compatibility companion。
+  full-root budget 只容纳一个 variant 时保留兼容覆盖最广的 candidate，witness 无需同时物化；
+  selected-direct 从独立加载的同字节 artifact 调用
+  resolver 实际发布的 hidden member，而非 `--cpu native` 近似物。
+- [ ] Linux AArch64 executable 从 startup stack 捕获 auxv；dynamic library 无 CK entry capture 时
+  freestanding direct-syscall 读取 binary `/proc/self/auxv`。失败/不完整仍 baseline，且产物无新增
+  libc/loader/allocator/compiler dependency。
 - [ ] x86 constant-call scalar memory-map handoff按 IR semantics 使用固定 1×5 schedule；不得按 fixture
   名称特判，checked/reduction/pre-vectorized loop 与 cache identity保持各自闭环。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价

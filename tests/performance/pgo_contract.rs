@@ -253,6 +253,7 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
         "function.addFnAttr(\"target-features\"",
         "aarch64-sve-tune-neoverse-n2-v2",
         "coverage-first-variant-ranking-v1",
+        "coverage-companion-profitability-v1",
         "x86-loop-simd-min-interleave-4-v1",
     ] {
         assert!(
