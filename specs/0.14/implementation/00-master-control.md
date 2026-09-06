@@ -38,7 +38,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`bd0210b4ce89c5001f46ab2128a8c7a73dc6323a`。两者之间的累计提交已按
+`4a04fb34eb0f1358d0f8fa308f95d031954e72b0`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -238,3 +238,12 @@ exact v0.13 `bd0210b4ce89c5001f46ab2128a8c7a73dc6323a` 的两项修复，并把 
 `925eb2410310f4e3aa31247be37f3576468a12cb2a54a421a64f7ed651304d6d`。复诊见
 `specs/0.14/review/implementation-blocker-28.md`；语言/ABI、target ISA、tuning search、性能与
 稳定性门槛、timed work、样本、corpus 及 required job topology 均保持不变。
+
+Exact v0.14 run `34034844096` 的 v0.13 replay 随后证明，full-root budget 只保留 v4 时 required
+v3 worker 会退回 baseline，而旧 `selectedDirect` 实际是 `--cpu native` 近似物；同 run 的 x86
+native/Clippy 还暴露 exact `UF4` 代理断言与 target-specific test import 问题。V0.14 已继承 exact
+v0.13 `4a04fb34eb0f1358d0f8fa308f95d031954e72b0` 的完整闭环，并把 accepted v0.13 与 replay
+重钉到该 SHA，manifest SHA-256 为
+`b713147e369c2c4ebd5debcf61005531e5154961ddf864f14bede8baa8599eca`。复诊见
+`specs/0.14/review/implementation-blocker-29.md`；语言/ABI、target ISA、profitability floor、性能
+与稳定性门槛、timed work、样本、corpus 及 required job topology 均保持不变。
