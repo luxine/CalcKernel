@@ -1863,6 +1863,7 @@ extern "C" int32_t ckc_llvm_target_profile_query(
 namespace {
 
 constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
+constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
 
 bool is_integer_memory_reduction(const llvm::Loop &loop) {
     const auto *header = loop.getHeader();
@@ -1957,6 +1958,76 @@ void attach_prevectorized_loop_unroll_disable(llvm::Module &module) {
     }
 }
 
+bool contains_checked_integer_overflow(const llvm::Loop &loop) {
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            const llvm::Function *callee =
+                call == nullptr ? nullptr : call->getCalledFunction();
+            if (callee == nullptr || !callee->isIntrinsic()) {
+                continue;
+            }
+            switch (callee->getIntrinsicID()) {
+            case llvm::Intrinsic::uadd_with_overflow:
+            case llvm::Intrinsic::usub_with_overflow:
+            case llvm::Intrinsic::umul_with_overflow:
+            case llvm::Intrinsic::sadd_with_overflow:
+            case llvm::Intrinsic::ssub_with_overflow:
+            case llvm::Intrinsic::smul_with_overflow:
+                return true;
+            default:
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+void attach_x86_checked_loop_unroll(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
+        return;
+    }
+    for (llvm::Function &function : module) {
+        if (function.isDeclaration() || function.empty()) {
+            continue;
+        }
+        llvm::DominatorTree dominators(function);
+        llvm::LoopInfo loops(dominators);
+        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
+            if (contains_fixed_vector_operation(*loop) ||
+                !contains_checked_integer_overflow(*loop)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *count = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.unroll.count"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_X86_CHECKED_LOOP_UNROLL))});
+            llvm::Metadata *operands[] = {nullptr, count};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+    }
+}
+
 void attach_x86_integer_reduction_interleave(
     llvm::Module &module, const llvm::TargetMachine &target) {
     if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
@@ -2043,6 +2114,7 @@ extern "C" int32_t ckc_llvm_module_optimize(
 
         if (level == llvm::OptimizationLevel::O3) {
             attach_prevectorized_loop_unroll_disable(*module->value);
+            attach_x86_checked_loop_unroll(*module->value, *target->value);
             attach_x86_integer_reduction_interleave(*module->value,
                                                      *target->value);
         }

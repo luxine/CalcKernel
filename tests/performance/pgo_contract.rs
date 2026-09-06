@@ -149,6 +149,49 @@ fn profile_generation_initializer_should_remain_out_of_instrumented_hot_paths() 
 }
 
 #[test]
+fn profile_generation_edges_should_batch_locally_until_function_exit() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    for required in [
+        "edge_storage: BTreeMap<u32, Storage<'module>>",
+        "fn add_profile_edge_local",
+        "fn flush_profile_edge_counters",
+    ] {
+        assert!(
+            lowering.contains(required),
+            "profile edge batching is missing {required:?}"
+        );
+    }
+    let edge_lowering = lowering
+        .split("fn emit_profile_edge")
+        .nth(1)
+        .expect("profile edge lowering")
+        .split("fn current_block")
+        .next()
+        .expect("profile edge lowering boundary");
+    assert!(edge_lowering.contains("self.add_profile_edge_local"));
+    assert!(
+        !edge_lowering.contains("self.builder.call(increment"),
+        "instrumented loop edges must not perform atomic increments"
+    );
+}
+
+#[test]
+fn x86_checked_loops_should_request_bounded_llvm_unrolling() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    for required in [
+        "attach_x86_checked_loop_unroll",
+        "llvm.loop.unroll.count",
+        "llvm::Intrinsic::uadd_with_overflow",
+        "llvm::Triple::x86_64",
+    ] {
+        assert!(
+            bridge.contains(required),
+            "x86 checked-loop unroll handoff is missing {required:?}"
+        );
+    }
+}
+
+#[test]
 fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
     let schema = read("benches/summary-schema.md");
     let checker = read("scripts/check-native-performance.py");
