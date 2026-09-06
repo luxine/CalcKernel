@@ -172,7 +172,7 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
     assert!(
         harness.contains("x86-horizontal-reduction-deferred-to-native-loop-vectorizer")
             && harness.contains("KirTargetIdentity::Native { triple }")
-            && harness.contains("!native_llvm_reduction"),
+            && harness.contains("!native_llvm_handoff"),
         "the benchmark must accept x86 modular reduction only through the explicit native LLVM fallback"
     );
     let runner = harness
