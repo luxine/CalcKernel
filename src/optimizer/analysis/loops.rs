@@ -817,11 +817,46 @@ fn defining_instruction(function: &KirFunction, value: ValueId) -> Option<&crate
 }
 
 fn resolve_constant(function: &KirFunction, value: ValueId) -> Option<BigInt> {
-    let instruction = defining_instruction(function, value)?;
-    let KirInstructionKind::ConstInt { value } = &instruction.kind else {
-        return None;
-    };
-    value.parse().ok()
+    fn resolve(
+        function: &KirFunction,
+        value: ValueId,
+        active: &mut BTreeSet<ValueId>,
+    ) -> Option<BigInt> {
+        if !active.insert(value) {
+            return None;
+        }
+        let result = if let Some(instruction) = defining_instruction(function, value) {
+            match &instruction.kind {
+                KirInstructionKind::ConstInt { value } => value.parse().ok(),
+                KirInstructionKind::Copy { value } => resolve(function, *value, active),
+                _ => None,
+            }
+        } else {
+            function.blocks.iter().find_map(|block| {
+                let index = block
+                    .params
+                    .iter()
+                    .position(|parameter| parameter.value == value)?;
+                let mut constant = None;
+                for (_, edge) in incoming_edges(function, block.id) {
+                    let input = *edge.args.get(index)?;
+                    if input == value {
+                        continue;
+                    }
+                    let input = resolve(function, input, active)?;
+                    if constant.as_ref().is_some_and(|known| known != &input) {
+                        return None;
+                    }
+                    constant = Some(input);
+                }
+                constant
+            })
+        };
+        active.remove(&value);
+        result
+    }
+
+    resolve(function, value, &mut BTreeSet::new())
 }
 
 fn predecessor_map(function: &KirFunction) -> BTreeMap<BlockId, Vec<BlockId>> {

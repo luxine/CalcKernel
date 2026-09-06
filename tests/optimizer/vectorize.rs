@@ -7,7 +7,8 @@ use calckernel::{
     KirTargetProfileBuilder, KirVerifiedProgramState, SourceFile, VectorEpilogue,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
     discover_vectorization_candidates, import_contract_facts, lower_to_mir,
-    prepare_vectorization_trial, print_kir_module, run_kir_pass_pipeline,
+    prepare_vectorization_trial, print_kir_module, run_kir_multiversion_pass_pipeline,
+    run_kir_pass_pipeline,
 };
 
 #[test]
@@ -200,6 +201,21 @@ contract { requires noalias(a, b); effects read(a), write(b); }
 {
   let i: u32 = 0;
   while i < n { b[i] = a[i] + 7; i = i + 1; }
+}
+"#;
+
+const SPECIALIZED_LENGTH_MAP: &str = r#"
+unsafe fn fixed_map(a: slice<u32>, b: slice<u32>, n: u32) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] + 13; i = i + 1; }
+}
+
+export unsafe fn map(a: slice<u32>, b: slice<u32>) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  unsafe { fixed_map(a, b, 4000); }
 }
 "#;
 
@@ -778,6 +794,63 @@ fn aarch64_sve_tiers_should_defer_whole_loops_to_the_scalable_native_vectorizer(
             .candidates
             .is_empty(),
         "the AArch64 baseline tier must retain fixed-width KIR vectorization"
+    );
+}
+
+#[test]
+fn multiversion_baseline_should_defer_whole_loops_to_each_native_target_vectorizer() {
+    for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
+        let profile = native_profile_with_cpu_features(
+            KirConsumer::NativeLibrary,
+            4,
+            triple,
+            KirNativeCpuPolicy::Multiversion,
+            vec!["+neon".to_string()],
+        );
+        let (pre, contracts) = map_state_with_profile(INTERLEAVE_MAP, profile);
+        let ordinary = run_kir_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        let deferred = run_kir_multiversion_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        assert!(
+            ordinary.stats.vectorized_loops > 0,
+            "ordinary Native O3 should still use verified KIR vectors: {ordinary:#?}"
+        );
+        assert_eq!(deferred.stats.vectorized_loops, 0);
+        assert_eq!(
+            deferred.stats.full_unrolled_loops
+                + deferred.stats.partial_unrolled_loops_factor_2
+                + deferred.stats.partial_unrolled_loops_factor_4,
+            0,
+            "multiversion loop shape must remain available to each LLVM target: {deferred:#?}"
+        );
+        assert!(deferred.analysis_fallbacks.iter().any(|fallback| {
+            fallback.reason == "multiversion-loop-deferred-to-native-loop-vectorizer"
+        }));
+    }
+}
+
+#[test]
+fn constant_call_loop_should_defer_unroll_and_vector_width_to_native_llvm() {
+    let profile =
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu");
+    let (pre, _) = map_state_with_profile(SPECIALIZED_LENGTH_MAP, profile);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery.candidates.is_empty(),
+        "the constant-call loop must remain scalar for LLVM: {discovery:#?}"
+    );
+    assert!(
+        discovery.fallbacks.iter().any(|fallback| {
+            fallback.reason == "constant-call-loop-deferred-to-native-loop-vectorizer"
+        }),
+        "missing constant-call deferral: {discovery:#?}"
     );
 }
 

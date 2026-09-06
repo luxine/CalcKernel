@@ -299,6 +299,40 @@ pub fn run_profile_guided_kir_pass_pipeline(
     contract: &CkProfileContract,
     contracts: Option<&ContractFactSet>,
 ) -> KirPassManagerResult {
+    run_profile_guided_kir_pass_pipeline_with_vector_policy(
+        profile_plan,
+        analysis,
+        contract,
+        contracts,
+        false,
+    )
+}
+
+/// Applies the checked PGO plan while keeping loops scalar until each
+/// multiversion LLVM TargetMachine chooses its own vector width.
+#[must_use]
+pub fn run_profile_guided_kir_multiversion_pass_pipeline(
+    profile_plan: &CkProfileKirPlan,
+    analysis: &CkImmutableProfileAnalysis,
+    contract: &CkProfileContract,
+    contracts: Option<&ContractFactSet>,
+) -> KirPassManagerResult {
+    run_profile_guided_kir_pass_pipeline_with_vector_policy(
+        profile_plan,
+        analysis,
+        contract,
+        contracts,
+        true,
+    )
+}
+
+fn run_profile_guided_kir_pass_pipeline_with_vector_policy(
+    profile_plan: &CkProfileKirPlan,
+    analysis: &CkImmutableProfileAnalysis,
+    contract: &CkProfileContract,
+    contracts: Option<&ContractFactSet>,
+    defer_native_vectorization: bool,
+) -> KirPassManagerResult {
     let mut proposal = match propose_profile_guided_optimization(profile_plan, analysis, contract)
         .and_then(|proposal| {
             check_profile_guided_optimization(profile_plan, analysis, contract, &proposal)?;
@@ -312,6 +346,7 @@ pub fn run_profile_guided_kir_pass_pipeline(
         KirOptimizationLevel::O3,
         contracts,
         Some(&proposal),
+        defer_native_vectorization,
     );
     if result.errors.is_empty()
         && let Some(artifact) = result.artifact.as_ref()

@@ -167,6 +167,9 @@ fn discover_one(
     ) {
         return Err("aarch64-sve-loop-deferred-to-native-loop-vectorizer".to_string());
     }
+    if has_constant_call_bound(state.module(), function, descriptor) {
+        return Err("constant-call-loop-deferred-to-native-loop-vectorizer".to_string());
+    }
     let preheader = shape.preheader;
     let body = shape.body;
     let exit = shape.exit;
@@ -541,6 +544,73 @@ fn discover_one(
             .unwrap_or_else(|| "vector-profitability-threshold-not-met".to_string()));
     }
     Ok(candidates)
+}
+
+fn has_constant_call_bound(
+    module: &crate::KirModule,
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+) -> bool {
+    let Some(induction) = descriptor.induction.as_ref() else {
+        return false;
+    };
+    let Some(parameter_index) = function
+        .params
+        .iter()
+        .position(|parameter| parameter.value == induction.bound)
+    else {
+        return false;
+    };
+    let mut saw_call = false;
+    for caller in &module.functions {
+        for instruction in caller.blocks.iter().flat_map(|block| &block.instructions) {
+            let KirInstructionKind::Call {
+                function_name,
+                args,
+            } = &instruction.kind
+            else {
+                continue;
+            };
+            if function_name != &function.name {
+                continue;
+            }
+            saw_call = true;
+            let Some(argument) = args.get(parameter_index) else {
+                return false;
+            };
+            if !is_constant_integer(caller, *argument, &mut BTreeSet::new()) {
+                return false;
+            }
+        }
+    }
+    saw_call
+}
+
+fn is_constant_integer(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+    active: &mut BTreeSet<crate::ValueId>,
+) -> bool {
+    if !active.insert(value) {
+        return false;
+    }
+    let result = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == value)
+        })
+        .is_some_and(|instruction| match &instruction.kind {
+            KirInstructionKind::ConstInt { .. } => true,
+            KirInstructionKind::Copy { value } => is_constant_integer(function, *value, active),
+            _ => false,
+        });
+    active.remove(&value);
+    result
 }
 
 fn candidate_cost_and_threshold(
