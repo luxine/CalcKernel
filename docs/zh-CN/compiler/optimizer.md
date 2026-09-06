@@ -56,10 +56,12 @@ static cost、growth、profile mapping 与 shared budget。一个 transaction �
 module、proof/fact state、mapping 与 audit ledger，或全部回滚；被拒 proposal 与耗尽搜索不退款。
 
 Multiversion planning 同样让 baseline 与全部 enhanced variant 从 same pre-state 开始。
-Eligible exported root 必须达到闭合的 profile benefit 下限；每个 target variant 都重跑 normal
-verifier、fact audit、target-feature audit 与 object audit。Cross-variant LTO 禁止，因此 enhanced
-assumption 不能强化 baseline 或 sibling variant。baseline-safe dispatcher 只选择已验证的兼容
-variant，不改变 public semantics。
+Eligible exported root 至少要有一个 enhanced tier 达到闭合的 profile benefit 下限。若该 profitable
+tier 存在 required-feature strict subset，且 subset 的 target cost 不差于 baseline，planner 可将
+subset 保留为 compatibility companion，避免有界产物放弃能运行增强代码的低阶 host。每个 retained
+target variant 都重跑 normal verifier、fact audit、target-feature audit 与 object audit。
+Cross-variant LTO 禁止，因此 enhanced assumption 不能强化 baseline 或 sibling variant。
+baseline-safe dispatcher 只选择已验证的兼容 variant，不改变 public semantics。
 
 每个 KIR module 都携带规范化 `KirTargetProfile`。Inspection、portable C、WebAssembly、
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation

@@ -225,3 +225,13 @@ target cost 选择并通过性能门槛的 `VF2/UF2` 被过强的 exact `UF4` �
 selected member，结构断言允许封闭 frontier 内的真实 cost winner。x86 Clippy 暴露的 AArch64-only
 test import 同时按 target cfg 隔离。语言/ABI、目标 ISA、profitability floor、性能与稳定性门槛、
 timed work、样本、corpus 与 required job matrix 均未改变。
+
+V0.14 exact replay run `34038295553` 继续证明两项真实选择缺口：x86 required v3 worker 的产物
+仍只有 v4 member，因为 coverage-first 排序发生在 isolated profitability filter 之后；Linux
+AArch64 dynamic library 没有 CK startup entry，因而从未取得 initial auxv，resolver 合法退回
+baseline。复诊与闭环见 `specs/0.13/review/implementation-blocker-24.md`：root eligibility 仍要求
+至少一个 tier 通过不变 profitability floor，但其 predicted non-regressing strict feature subset 可
+作为 compatibility companion 进入有界 retained-set；AArch64 dynamic library 用 freestanding direct
+syscall 读取 binary `/proc/self/auxv`，失败仍 baseline 且不引入 libc/loader dependency。语言/公开
+ABI、strict FP、安全规则、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required
+job matrix 均未改变。

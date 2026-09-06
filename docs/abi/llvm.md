@@ -91,6 +91,10 @@ dispatch runtime as separate named-object members. Every object is verified and
 feature-audited before assembly. The baseline-safe detector recognizes only the
 closed x86-64 v3/v4 and Linux AArch64 SVE/SVE2 tiers, fails closed on incomplete
 state, and publishes one process-local selection through acquire-release atomics.
+Linux AArch64 executables use the startup-stack auxv snapshot; dynamic libraries
+that have no CK entry point read `/proc/self/auxv` through freestanding direct
+system calls and fail closed to baseline if that fallback is unavailable or
+incomplete. This adds no libc or loader dependency.
 Generic AArch64 SVE/SVE2 members use a fixed `neoverse-n2` LLVM tuning model for
 scheduling only; `target-cpu=generic`, explicit features, runtime compatibility,
 and the feature audit remain unchanged and authoritative.

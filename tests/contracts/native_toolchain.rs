@@ -1113,6 +1113,29 @@ fn linux_runtime_entry_should_define_a_weak_dispatch_capture_fallback() {
 }
 
 #[test]
+fn aarch64_linux_dynamic_dispatch_should_read_auxv_without_libc() {
+    let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
+    for required in [
+        "CK_LINUX_AT_FDCWD",
+        "CK_LINUX_SYS_OPENAT",
+        "CK_LINUX_SYS_READ",
+        "CK_LINUX_SYS_CLOSE",
+        "ck_dispatch_read_proc_auxv",
+        "\"/proc/self/auxv\"",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "AArch64 Linux dynamic-library dispatch must have a freestanding auxv fallback: {required}"
+        );
+    }
+    assert!(
+        runtime.contains("ck_initial_auxv_valid == 0u")
+            && runtime.contains("ck_dispatch_read_proc_auxv(&hwcap, &hwcap2)"),
+        "the fallback must run only when an executable entry point did not capture auxv"
+    );
+}
+
+#[test]
 fn aarch64_linux_private_runtimes_should_not_emit_outline_atomic_helpers() {
     let bootstrap = read("scripts/bootstrap-llvm.sh");
     assert!(

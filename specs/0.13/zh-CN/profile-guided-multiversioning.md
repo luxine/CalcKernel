@@ -16,9 +16,10 @@
 
 CK 0.13 在不要求日常开发执行训练的前提下，引入真实 workload 信息和可移植 CPU
 特化。编译器把 CK 自有静态事实与有界执行频率证据组合起来，为合格 Native Kernel
-保留一个可移植 baseline，并只生成有收益的 feature variant。产物在运行时只解析
-一次，选择编译器排序中当前 CPU 可兼容的最佳 variant，同时完整保留 CK 安全、严格
-浮点、effect 与 ABI 语义。
+保留一个可移植 baseline、有收益的 feature variant，以及至多一个让 profitable strict-superset
+tier 能覆盖低阶 capable host 的 non-regressing compatibility companion。产物在运行时只解析
+一次，选择编译器排序中当前 CPU 可兼容的最佳 variant，同时完整保留 CK 安全、严格浮点、
+effect 与 ABI 语义。
 
 本版本有五个互相关联的交付项：
 
@@ -43,9 +44,10 @@ CK 0.13 在不要求日常开发执行训练的前提下，引入真实 workload
   profile writer、输出路径或 profile 采集依赖。
 - final profile 是终态聚合物。schema 1 merge 只接受完整 raw shard，因此同一次 recorded run
   不能藏在重叠嵌套聚合中被重复计数。
-- `--cpu multiversion` 必须显式启用。每个合格 root 保留一个 ABI-compatible
-  baseline，最多生成两个有收益的增强 variant；普通 `baseline` 与 `native` 继续保持
-  0.12 含义。
+- `--cpu multiversion` 必须显式启用。每个合格 root 保留一个 ABI-compatible baseline，最多
+  生成两个增强 variant；至少一个 trial 必须通过固定 profitability floor，retained-set 可包含该
+  profitable strict-superset tier 的闭合 non-regressing compatibility companion。普通 `baseline`
+  与 `native` 继续保持 0.12 含义。
 - runtime CPU detection fail-closed。未知、矛盾、不可用或不支持的 feature 信息一律
   选择 baseline，不能乐观选择增强 variant。
 - exported function 的公开地址始终是稳定 dispatcher thunk。variant 与支持符号隐藏，
@@ -496,10 +498,14 @@ baseline-only target set 合法，并输出稳定 `no-compatible-enhanced-tier` 
 与 AArch64 HWCAP mapping 是随 LLVM 22.1.8 固定的 compiler-owned canonical table；表变化
 推进 target-set schema。
 
-feature level 更高不代表一定更快。编译器建立该 level 的 target cost profile，只提出合法且
-有收益的变换；在有界保留集合中先保留 runtime 兼容覆盖最广的 profitable tier，再按预测成本
-与 code size 排序同覆盖候选。这样，一个 variant 的 budget 不会只保留 v4/SVE2，却在 required
-v3/SVE worker 上退回 baseline。runtime 使用这个 per-root order，而不是数字最大的 feature level。
+feature level 更高不代表一定更快。编译器建立该 level 的 target cost profile，并要求至少一个
+合法 enhanced tier 通过固定 profitability floor。若 profitable tier 存在 required-feature strict
+subset，且 subset 的预测成本不差于 baseline，则即使 subset 单独预测未达到固定收益下限，也可
+作为 compatibility companion。这是有界覆盖规则，不是 safety 或 profitability 声明：profitable
+strict superset 仍是 root eligibility witness，companion 仍需独立 verifier 与 feature audit。
+在有界保留集合中先保留 runtime 兼容覆盖最广的 candidate，再按预测成本与 code size 排序同覆盖
+候选。这样，一个 variant 的 budget 不会只保留 v4/SVE2，却在 required v3/SVE worker 上退回
+baseline。runtime 使用这个 per-root order，而不是数字最大的 feature level。
 
 ## Multiversion eligibility 与 budget
 
@@ -520,8 +526,10 @@ eligible root 是 exported CK function 或 executable entry，其 reachable opti
 - budget exhaustion 或收益不足保留 baseline，并记录稳定保守原因。
 
 candidate total order 为：更少 required feature（更广 compatible host coverage）、estimated
-dynamic cost、更小 code size、target-tier identity、root/function identity。进入排序的每个
-candidate 已通过不变的 profitability floor；rejected trial 不返还 audit budget。
+dynamic cost、更小 code size、target-tier identity、root/function identity。每个 enhanced retained-set
+都以一个通过不变 profitability floor 的 trial 作为 eligibility witness；retained companion 必须是
+该 witness 的 strict feature subset，且不得预测为比 baseline 更慢。full-root growth budget 只容纳
+companion 时，witness 无需同时物化。rejected trial 不返还 audit budget。
 
 ## Runtime dispatch 与公开 ABI
 
@@ -536,9 +544,11 @@ first call 获取一次 process-local normalized capability bitset，按 root va
 执行 CPUID/HWCAP query。public function address 始终是 thunk。
 
 x86-64 使用 compiler-owned CPUID/XGETBV，同时要求 hardware bit 与 OS register-state。
-AArch64 Linux 使用启动 auxiliary-vector HWCAP/HWCAP2，不解析可变文本。unsupported OS/
-architecture 只提供 baseline。query failure、heterogeneous uncertainty、malformed state 或
-未知未来 bit 一律 baseline。
+AArch64 Linux executable 使用启动 auxiliary-vector HWCAP/HWCAP2；没有 CK entry capture 的
+dynamic library 通过 freestanding direct syscall 从 `/proc/self/auxv` 读取相同 binary auxv record。
+记录不可用或不完整时 fail closed，且不引入 libc/loader dependency。unsupported OS/architecture
+只提供 baseline。query failure、heterogeneous uncertainty、malformed state 或未知未来 bit 一律
+baseline。
 
 production artifact 没有可以强制不支持 feature 的 environment variable/public API。测试
 只能把 private detector seam 链进 test fixture。static archive 用 target-set digest namespace

@@ -106,6 +106,64 @@ static int ck_dispatch_compare_exchange(ck_dispatch_atomic_u32 *object,
 static uintptr_t ck_initial_hwcap;
 static uintptr_t ck_initial_hwcap2;
 static uint32_t ck_initial_auxv_valid;
+
+enum {
+  CK_LINUX_AT_FDCWD = -100,
+  CK_LINUX_SYS_OPENAT = 56,
+  CK_LINUX_SYS_CLOSE = 57,
+  CK_LINUX_SYS_READ = 63
+};
+
+static long ck_linux_syscall4(long number, long argument0, long argument1,
+                              long argument2, long argument3) {
+  register long x0 __asm__("x0") = argument0;
+  register long x1 __asm__("x1") = argument1;
+  register long x2 __asm__("x2") = argument2;
+  register long x3 __asm__("x3") = argument3;
+  register long x8 __asm__("x8") = number;
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x1), "r"(x2), "r"(x3), "r"(x8)
+                   : "cc", "memory");
+  return x0;
+}
+
+static uint32_t ck_dispatch_read_proc_auxv(uintptr_t *hwcap,
+                                           uintptr_t *hwcap2) {
+  enum { CK_AT_NULL = 0, CK_AT_HWCAP = 16, CK_AT_HWCAP2 = 26 };
+  static const char path[] = "/proc/self/auxv";
+  struct ck_auxv_entry {
+    uintptr_t type;
+    uintptr_t value;
+  } entry;
+  const long descriptor = ck_linux_syscall4(
+      CK_LINUX_SYS_OPENAT, CK_LINUX_AT_FDCWD, (long)(uintptr_t)path, 0, 0);
+  uint32_t saw_hwcap = 0;
+  uint32_t saw_hwcap2 = 0;
+  if (descriptor < 0) {
+    return 0;
+  }
+  for (;;) {
+    const long bytes = ck_linux_syscall4(
+        CK_LINUX_SYS_READ, descriptor, (long)(uintptr_t)&entry,
+        (long)sizeof(entry), 0);
+    if (bytes != (long)sizeof(entry)) {
+      break;
+    }
+    if (entry.type == CK_AT_NULL) {
+      break;
+    }
+    if (entry.type == CK_AT_HWCAP) {
+      *hwcap = entry.value;
+      saw_hwcap = 1u;
+    } else if (entry.type == CK_AT_HWCAP2) {
+      *hwcap2 = entry.value;
+      saw_hwcap2 = 1u;
+    }
+  }
+  (void)ck_linux_syscall4(CK_LINUX_SYS_CLOSE, descriptor, 0, 0, 0);
+  return saw_hwcap & saw_hwcap2;
+}
 #endif
 
 void __ck_dispatch_capture_initial_stack(const uintptr_t *stack) {
@@ -223,11 +281,16 @@ static uint32_t ck_detect_uncached(void) {
   return ck_detect_x86();
 #elif defined(__aarch64__) && defined(__linux__)
   enum { CK_HWCAP_SVE = 1u << 22, CK_HWCAP2_SVE2 = 1u << 1 };
-  if (ck_initial_auxv_valid == 0u ||
-      (ck_initial_hwcap & CK_HWCAP_SVE) == 0u) {
+  uintptr_t hwcap = ck_initial_hwcap;
+  uintptr_t hwcap2 = ck_initial_hwcap2;
+  if (ck_initial_auxv_valid == 0u &&
+      ck_dispatch_read_proc_auxv(&hwcap, &hwcap2) == 0u) {
     return CK_DISPATCH_BASELINE;
   }
-  if ((ck_initial_hwcap2 & CK_HWCAP2_SVE2) != 0u) {
+  if ((hwcap & CK_HWCAP_SVE) == 0u) {
+    return CK_DISPATCH_BASELINE;
+  }
+  if ((hwcap2 & CK_HWCAP2_SVE2) != 0u) {
     return CK_DISPATCH_ARM_SVE2;
   }
   return CK_DISPATCH_ARM_SVE;

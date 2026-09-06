@@ -9,7 +9,8 @@ public thunk。失败/未知/矛盾/heterogeneous uncertainty 全部选 baseline
 ## 仓库落点
 
 - 新建 `native/dispatch_runtime/` 的 private ABI/common 与 x86 CPUID/XGETBV、Linux AArch64 initial
-  auxv HWCAP/HWCAP2、Darwin/Windows baseline adapter；修改 bootstrap/build manifest，身份独立。
+  auxv HWCAP/HWCAP2 加 dynamic-library freestanding `/proc/self/auxv` fallback、Darwin/Windows
+  baseline adapter；修改 bootstrap/build manifest，身份独立。
 - 修改 `src/backend/llvm/{kir_lower.rs,entry.rs,names.rs,verify.rs,fact_audit.rs}`，生成 public thunk、
   hidden implementation/table/support modules与 test-only detector seam。
 - 修改 Native header/export/object/disassembly audit；static support symbol 以 target-set digest namespace。
@@ -38,7 +39,8 @@ public thunk。失败/未知/矛盾/heterogeneous uncertainty 全部选 baseline
 ## 实现边界
 
 - 不解析 mutable text，不联网、不用 LLVM runtime，不增加 CK-visible CPU API。
-- initial auxiliary vector 在进程初始化的 private support 中捕获；查询不可用即 baseline。
+- executable 的 initial auxiliary vector 在进程初始化 private support 中捕获；dynamic library 没有
+  CK entry capture 时只可 direct-syscall 读取 binary `/proc/self/auxv`；查询不可用即 baseline。
 - dynamic loader/symbol resolution 与 first-call resolution 性能分开记录；steady-state 不允许重复解析。
 
 ## RED/GREEN 证据

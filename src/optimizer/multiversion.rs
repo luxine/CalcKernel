@@ -174,6 +174,7 @@ fn build_candidate_bundle(
                     "no-target-dependent-benefit",
                 ));
             } else {
+                let mut trials = Vec::new();
                 for tier in request.target_set.tiers.iter().skip(1) {
                     let (module, symbols) = build_hidden_variant_module(
                         baseline,
@@ -196,17 +197,8 @@ fn build_candidate_bundle(
                     );
                     let benefit = baseline_cost.saturating_sub(variant_cost);
                     let percentage = benefit.saturating_mul(100) / baseline_cost.max(1);
-                    if benefit < KIR_MULTIVERSION_MINIMUM_BENEFIT_UNITS
-                        || percentage < KIR_MULTIVERSION_MINIMUM_BENEFIT_PERCENT
-                    {
-                        explanations.push(explanation(
-                            root,
-                            Some(tier.id),
-                            false,
-                            "insufficient-target-benefit",
-                        ));
-                        continue;
-                    }
+                    let profitable = benefit >= KIR_MULTIVERSION_MINIMUM_BENEFIT_UNITS
+                        && percentage >= KIR_MULTIVERSION_MINIMUM_BENEFIT_PERCENT;
                     let module_digest = kir_multiversion_module_digest(&module);
                     let feature_audit_digest =
                         digest_feature_audit(tier.id, &tier.required_features, &module_digest);
@@ -221,21 +213,48 @@ fn build_candidate_bundle(
                         units,
                         &symbols,
                     );
-                    candidates.push(KirMultiversionVariant {
-                        root,
-                        tier: tier.id,
-                        module,
-                        logical_pre_state_digest: pre_state_digest,
-                        target_profile_digest: tier.profile.digest_hex(),
-                        required_features: tier.required_features.clone(),
-                        predicted_baseline_cost: baseline_cost,
-                        predicted_variant_cost: variant_cost,
-                        kir_units: units,
-                        proof_digest,
-                        feature_audit_digest,
-                        codegen_digest,
-                        hidden_symbols: symbols,
-                    });
+                    trials.push((
+                        KirMultiversionVariant {
+                            root,
+                            tier: tier.id,
+                            module,
+                            logical_pre_state_digest: pre_state_digest,
+                            target_profile_digest: tier.profile.digest_hex(),
+                            required_features: tier.required_features.clone(),
+                            predicted_baseline_cost: baseline_cost,
+                            predicted_variant_cost: variant_cost,
+                            kir_units: units,
+                            proof_digest,
+                            feature_audit_digest,
+                            codegen_digest,
+                            hidden_symbols: symbols,
+                        },
+                        profitable,
+                    ));
+                }
+                let profitable_feature_sets = trials
+                    .iter()
+                    .filter(|(_, profitable)| *profitable)
+                    .map(|(variant, _)| variant.required_features.clone())
+                    .collect::<Vec<_>>();
+                for (candidate, profitable) in trials {
+                    if profitable
+                        || coverage_companion_allowed(
+                            candidate.predicted_variant_cost,
+                            candidate.predicted_baseline_cost,
+                            &candidate.required_features,
+                            &profitable_feature_sets,
+                        )
+                    {
+                        candidates.push(candidate);
+                    } else {
+                        explanations.push(explanation(
+                            root,
+                            Some(candidate.tier),
+                            false,
+                            "insufficient-target-benefit",
+                        ));
+                    }
                 }
             }
         }
@@ -611,6 +630,21 @@ fn estimated_cost(reachable_units: u32, dependent_work: u64, vector_score: u64) 
     )
 }
 
+fn coverage_companion_allowed(
+    variant_cost: u64,
+    baseline_cost: u64,
+    required_features: &[String],
+    profitable_feature_sets: &[Vec<String>],
+) -> bool {
+    variant_cost <= baseline_cost
+        && profitable_feature_sets.iter().any(|profitable| {
+            required_features.len() < profitable.len()
+                && required_features
+                    .iter()
+                    .all(|feature| profitable.binary_search(feature).is_ok())
+        })
+}
+
 fn module_units(module: &KirModule) -> u32 {
     module.functions.iter().fold(0u32, |total, function| {
         total.saturating_add(kir_function_units(function))
@@ -689,4 +723,39 @@ fn digest_codegen(module: &[u8; 32], tier: &[u8; 32], audit: &[u8; 32]) -> [u8; 
     hasher.update(tier);
     hasher.update(audit);
     hasher.finalize().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coverage_companion_allowed;
+
+    #[test]
+    fn coverage_companion_requires_non_regression_and_a_profitable_strict_superset() {
+        let v3 = vec!["avx".to_string(), "avx2".to_string()];
+        let v4 = vec!["avx".to_string(), "avx2".to_string(), "avx512f".to_string()];
+        assert!(coverage_companion_allowed(
+            100,
+            100,
+            &v3,
+            std::slice::from_ref(&v4)
+        ));
+        assert!(!coverage_companion_allowed(
+            101,
+            100,
+            &v3,
+            std::slice::from_ref(&v4)
+        ));
+        assert!(!coverage_companion_allowed(
+            100,
+            100,
+            &v4,
+            std::slice::from_ref(&v3)
+        ));
+        assert!(!coverage_companion_allowed(
+            100,
+            100,
+            &v3,
+            std::slice::from_ref(&v3)
+        ));
+    }
 }

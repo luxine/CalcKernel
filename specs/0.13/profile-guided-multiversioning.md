@@ -20,7 +20,9 @@ implementation staging, and acceptance evidence belong outside this document.
 CK 0.13 adds workload knowledge and portable CPU specialization without making
 normal CK development depend on a training step. It combines CK-owned static
 facts with bounded execution-frequency evidence, then emits one portable
-baseline and only the profitable feature variants of eligible Native kernels.
+baseline, profitable feature variants of eligible Native kernels, and at most
+one non-regressing compatibility companion required to make a profitable
+strict-superset tier useful on a lower capable host.
 The resulting artifact selects the best compiler-ranked compatible variant once
 at runtime and retains the exact CK safety, strict floating-point, effect, and
 ABI semantics.
@@ -55,7 +57,10 @@ The release has five connected deliverables:
   shards only, so one recorded run cannot be hidden inside overlapping nested
   aggregates and counted twice.
 - `--cpu multiversion` is explicit. It keeps one ABI-compatible baseline and
-  emits at most two profitable enhanced variants per eligible root. Ordinary
+  emits at most two enhanced variants per eligible root. At least one trial must
+  pass the fixed profitability floor; the retained set may include the closed
+  non-regressing compatibility companion of that profitable strict-superset
+  tier. Ordinary
   `baseline` and `native` policies retain their 0.12 meanings.
 - Runtime CPU detection is fail-closed. Unknown, contradictory, unavailable, or
   unsupported feature information selects baseline; it never selects a variant
@@ -612,8 +617,14 @@ AArch64 HWCAP mappings are compiler-owned canonical tables pinned with LLVM
 22.1.8; a table change advances the target-set schema.
 
 An enhanced feature level is not automatically faster. The compiler builds its
-target cost profile and proposes only legal, profitable transformations. Within
-the bounded retained set it first preserves the profitable tier with the widest
+target cost profile and requires at least one legal enhanced tier to pass the
+fixed profitability floor. When a profitable tier has a strict feature-subset
+tier whose predicted cost is no worse than baseline, that subset is a legal
+compatibility companion even if its isolated prediction is below the fixed
+benefit floor. This is a bounded coverage rule, not a safety or profitability
+claim: the profitable strict superset remains the root's eligibility witness,
+and the companion is independently verified and feature-audited. Within the
+bounded retained set the compiler first preserves the candidate with the widest
 runtime compatibility, then ranks peers by predicted cost and code size. This
 prevents a one-variant budget from retaining only v4/SVE2 while falling back to
 baseline on the required v3/SVE worker. Runtime dispatch follows the retained
@@ -644,8 +655,11 @@ In either case:
 
 Candidate ordering is total: fewer required features (wider compatible host
 coverage), estimated dynamic cost, smaller code size, target-tier identity,
-then root/function identity. Every retained candidate has already passed the
-unchanged profitability floors. Rejected trials do not refund audit budgets.
+then root/function identity. Every root with an enhanced retained set has a
+profitable trial as its eligibility witness; a retained companion must be that
+witness's strict feature subset and must not predict a regression against
+baseline. The witness need not fit beside its broader companion in the final
+full-root growth budget. Rejected trials do not refund audit budgets.
 
 ## Runtime dispatch and public ABI
 
@@ -663,11 +677,13 @@ and indirect tail call; they do not repeat CPUID/HWCAP queries. The public
 function address remains the thunk before and after resolution.
 
 x86-64 detection uses compiler-owned CPUID and XGETBV checks and requires both
-hardware bits and OS register-state support. AArch64 Linux uses the initial
-auxiliary-vector HWCAP/HWCAP2 state captured without parsing mutable text.
-Unsupported OS/architecture pairs expose baseline only. Query failure,
-heterogeneous uncertainty, malformed state, or an unknown future feature bit
-selects baseline.
+hardware bits and OS register-state support. AArch64 Linux executables use the
+initial auxiliary-vector HWCAP/HWCAP2 state. A dynamic library with no CK entry
+capture reads the same binary auxv records from `/proc/self/auxv` with direct
+freestanding system calls; unavailable or incomplete records fail closed and
+introduce no libc/loader dependency. Unsupported OS/architecture pairs expose
+baseline only. Query failure, heterogeneous uncertainty, malformed state, or
+an unknown future feature bit selects baseline.
 
 Production artifacts provide no environment variable or public API that can
 force unsupported features. Tests may link a private detector seam into test

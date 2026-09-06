@@ -21,8 +21,10 @@
 
 ## 结构断言
 
-- detector/query failure/unknown/contradictory/unsupported OS 均 baseline；x86 检查硬件与 OS state，
-  Linux AArch64 只用 initial auxv state。
+- detector/query failure/unknown/contradictory/unsupported OS 均 baseline；x86 检查硬件与 OS state。
+  Linux AArch64 executable 优先使用 initial auxv state；没有 CK entry capture 的 dynamic library
+  通过 freestanding direct syscall 读取 `/proc/self/auxv`，不可用或不完整时退回 baseline，且不得
+  引入 libc、loader 或 allocator dependency。
 - public address 恒为 baseline-safe thunk；variant/runtime symbol hidden，ABI/header/export bytes 与
   单版本一致；static private symbol 含 target-set digest namespace。
 - capability cache 恰一次，后续 steady call 是 atomic load + indirect tail call；concurrent first calls
