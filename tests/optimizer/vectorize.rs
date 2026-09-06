@@ -48,16 +48,25 @@ fn native_profile_with_triple(
     maximum_interleave_factor: u8,
     triple: &str,
 ) -> KirTargetProfile {
-    let mut builder = KirTargetProfileBuilder::native(
+    native_profile_with_cpu_features(
         consumer,
+        maximum_interleave_factor,
         triple,
-        64,
-        true,
         KirNativeCpuPolicy::Baseline,
-        "generic",
         vec!["+neon".to_string()],
     )
-    .expect("native profile builder");
+}
+
+fn native_profile_with_cpu_features(
+    consumer: KirConsumer,
+    maximum_interleave_factor: u8,
+    triple: &str,
+    policy: KirNativeCpuPolicy,
+    features: Vec<String>,
+) -> KirTargetProfile {
+    let mut builder =
+        KirTargetProfileBuilder::native(consumer, triple, 64, true, policy, "generic", features)
+            .expect("native profile builder");
     for key in KirTargetProfile::fixed_query_universe()
         .into_iter()
         .filter(|key| {
@@ -1085,6 +1094,38 @@ fn x86_loop_simd_should_defer_horizontal_reductions_to_the_native_loop_vectorize
     assert!(discovery.fallbacks.iter().any(|fallback| {
         fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
     }));
+}
+
+#[test]
+fn aarch64_sve_tiers_should_defer_whole_loops_to_the_scalable_native_vectorizer() {
+    for feature in ["+sve", "+sve2"] {
+        let profile = native_profile_with_cpu_features(
+            KirConsumer::NativeLibrary,
+            1,
+            "aarch64-unknown-linux-gnu",
+            KirNativeCpuPolicy::Multiversion,
+            vec!["+neon".to_string(), feature.to_string()],
+        );
+        let (pre, _) = map_state_with_profile(INTERLEAVE_MAP, profile);
+        let discovery = discover_vectorization_candidates(&pre);
+        assert!(
+            discovery.candidates.is_empty(),
+            "fixed-width KIR vectors preempt the SVE whole-loop vectorizer: {discovery:#?}"
+        );
+        assert!(discovery.fallbacks.iter().any(|fallback| {
+            fallback.reason == "aarch64-sve-loop-deferred-to-native-loop-vectorizer"
+        }));
+    }
+
+    let baseline =
+        native_profile_with_triple(KirConsumer::NativeLibrary, 1, "aarch64-unknown-linux-gnu");
+    let (pre, _) = map_state_with_profile(INTERLEAVE_MAP, baseline);
+    assert!(
+        !discover_vectorization_candidates(&pre)
+            .candidates
+            .is_empty(),
+        "the AArch64 baseline tier must retain fixed-width KIR vectorization"
+    );
 }
 
 #[test]

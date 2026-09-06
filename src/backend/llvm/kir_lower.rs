@@ -1443,6 +1443,7 @@ struct KirFunctionLowerer<'module, 'context, 'a> {
     profile: Option<&'a NativeProfileRuntime<'module>>,
     pgo_branches: &'a BTreeMap<(FunctionId, BlockId), (u64, u64)>,
     loop_storage: BTreeMap<u32, Storage<'module>>,
+    edge_storage: BTreeMap<u32, Storage<'module>>,
     temporary: u32,
 }
 
@@ -1492,11 +1493,13 @@ fn lower_function<'module, 'context>(
         profile: environment.profile,
         pgo_branches: environment.pgo_branches,
         loop_storage: BTreeMap::new(),
+        edge_storage: BTreeMap::new(),
         temporary: 0,
     };
     lowerer.builder.position(entry)?;
     lowerer.allocate_values()?;
     lowerer.allocate_profile_loop_counters()?;
+    lowerer.allocate_profile_edge_counters()?;
     lowerer.store_parameters()?;
     lowerer.emit_profile_function_entry()?;
     lowerer.emit_contract_checks()?;
@@ -1572,6 +1575,29 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             let zero = self.builder.const_int(self.types.i64, "0")?;
             self.builder.store(zero, pointer)?;
             self.loop_storage.insert(site, Storage { pointer });
+        }
+        Ok(())
+    }
+
+    fn allocate_profile_edge_counters(&mut self) -> Result<(), NativeError> {
+        let sites = self
+            .profile
+            .map(|profile| {
+                profile
+                    .edges
+                    .iter()
+                    .filter(|((function, _, _), _)| *function == self.function.id)
+                    .map(|(_, site)| *site)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for site in sites {
+            let pointer = self
+                .builder
+                .alloca(self.types.i64, &format!("ck.profile.edge.{site}"))?;
+            let zero = self.builder.const_int(self.types.i64, "0")?;
+            self.builder.store(zero, pointer)?;
+            self.edge_storage.insert(site, Storage { pointer });
         }
         Ok(())
     }
@@ -2865,6 +2891,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
     ) -> Result<(), NativeError> {
         match terminator {
             KirTerminator::Return { value, .. } => {
+                self.flush_profile_edge_counters()?;
                 if self.status_abi {
                     if let Some(value) = value {
                         let value = self.load(*value)?;
@@ -2950,8 +2977,6 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             .cloned()
             .collect::<Vec<_>>();
         let observe_trip = profile.observe_trip;
-        let increment = profile.increment;
-        let add = profile.add;
         let edge_site = profile
             .edges
             .get(&(self.function.id, source, target))
@@ -2990,10 +3015,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                         .get(&(self.function.id, latch, event.header))
                         .copied()
                     {
-                        let edge_site = self
-                            .builder
-                            .const_int(self.types.i32, &edge_site.to_string())?;
-                        let _ = self.builder.call(add, &[edge_site, value], "")?;
+                        self.add_profile_edge_local(edge_site, value)?;
                     }
                 }
                 let zero = self.builder.const_int(self.types.i64, "0")?;
@@ -3001,8 +3023,60 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
             }
         }
         if let Some(site) = edge_site.filter(|_| !aggregate_edge) {
+            let one = self.builder.const_int(self.types.i64, "1")?;
+            self.add_profile_edge_local(site, one)?;
+        }
+        Ok(())
+    }
+
+    fn add_profile_edge_local(
+        &mut self,
+        site: u32,
+        amount: NativeValue<'module>,
+    ) -> Result<(), NativeError> {
+        let storage = self.edge_storage.get(&site).copied().ok_or_else(|| {
+            lowering_error(format!("profile edge site {site} has no local counter"))
+        })?;
+        let current =
+            self.builder
+                .load(self.types.i64, storage.pointer, "ck.profile.edge.count")?;
+        let pair = self.builder.overflow(
+            BridgeOverflowOp::UnsignedAdd,
+            current,
+            amount,
+            "ck.profile.edge.add",
+        )?;
+        let value = self
+            .builder
+            .extract_value(pair, 0, "ck.profile.edge.next")?;
+        let overflow = self
+            .builder
+            .extract_value(pair, 1, "ck.profile.edge.overflow")?;
+        let maximum = self
+            .builder
+            .const_int(self.types.i64, "18446744073709551615")?;
+        let next = self
+            .builder
+            .select(overflow, maximum, value, "ck.profile.edge.saturated")?;
+        self.builder.store(next, storage.pointer)
+    }
+
+    fn flush_profile_edge_counters(&mut self) -> Result<(), NativeError> {
+        let Some(profile) = self.profile else {
+            return Ok(());
+        };
+        let add = profile.add;
+        let counters = self
+            .edge_storage
+            .iter()
+            .map(|(site, storage)| (*site, *storage))
+            .collect::<Vec<_>>();
+        for (site, storage) in counters {
+            let value =
+                self.builder
+                    .load(self.types.i64, storage.pointer, "ck.profile.edge.flush")?;
             let site = self.builder.const_int(self.types.i32, &site.to_string())?;
-            let _ = self.builder.call(increment, &[site], "")?;
+            let _ = self.builder.call(add, &[site, value], "")?;
         }
         Ok(())
     }
@@ -3174,6 +3248,7 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
         self.builder
             .cond_branch_weighted(failed, failure, continuation, 1, 2_000)?;
         self.builder.position(failure)?;
+        self.flush_profile_edge_counters()?;
         self.builder.return_value(status)?;
         self.builder.position(continuation)?;
         self.current_block = Some(continuation);

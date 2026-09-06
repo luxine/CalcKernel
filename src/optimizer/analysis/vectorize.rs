@@ -4,8 +4,8 @@ use num_bigint::BigInt;
 
 use crate::{
     BlockId, CandidateKey, CanonicalLoopDescriptor, FunctionId, InstructionId, KirAlignmentClass,
-    KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirInstruction,
-    KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
+    KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirCpuIdentity,
+    KirInstruction, KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
     KirTargetIdentity, LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount,
     MemoryVersionId, MirBinaryOp, MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
 };
@@ -188,6 +188,16 @@ fn discover_one(
 ) -> Result<Vec<VectorizationCandidate>, String> {
     let shape = simple_shape(function, descriptor)
         .ok_or_else(|| "unsupported-vector-loop-shape".to_string())?;
+    if matches!(
+        state.module().profile.target_identity(),
+        KirTargetIdentity::Native { triple } if triple.starts_with("aarch64-")
+    ) && matches!(
+        state.module().profile.cpu_identity(),
+        KirCpuIdentity::Native { features, .. }
+            if features.iter().any(|feature| matches!(feature.as_str(), "+sve" | "+sve2"))
+    ) {
+        return Err("aarch64-sve-loop-deferred-to-native-loop-vectorizer".to_string());
+    }
     let preheader = shape.preheader;
     let body = shape.body;
     let exit = shape.exit;
