@@ -117,6 +117,9 @@
   Clang/Rust PGO oracle geo >=95%、accepted kernel individual >=90%。
 - [ ] PGO/multi/combined compile geo <=1.5/2.5/3.5、individual <=2/3/4；artifact aggregate <=1.25/
   2/2、individual <=1.5/2.5/2.5；distributed archive <= exact 0.12 +15%。
+- [ ] dynamic library final link 在 Mach-O/COFF/ELF 上回收未引用 private function/data section；
+  user exports、实际 dispatch detector/member 与 referenced helper 保留，未使用的 startup capture/
+  generic selector 不进入 multiversion shared artifact。
 
 ## H. 本地质量与审计
 

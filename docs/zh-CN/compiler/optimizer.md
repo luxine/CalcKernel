@@ -208,3 +208,5 @@ hand-written SIMD oracle，并 replay exact 0.12 commit
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
 在 0.13 交付；Auto-Tuning remains 0.14，indirect calls、scalable KIR 与 adaptive JIT PGO
 仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。
+Dynamic library final link 还会按 object format 使用原生 dead-section 机制回收未引用的
+compiler-private section，同时保留 CK export 与全部实际引用的 dispatch/runtime section。

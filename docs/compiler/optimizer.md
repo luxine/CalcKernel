@@ -286,3 +286,6 @@ generation overhead, artifact size, compiler archive size, and cache behavior
 have separate gates. PGO and bounded multiversioning ship in 0.13. Auto-Tuning
 remains 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.
+Dynamic-library final links also discard unreachable compiler-private sections
+using the native object-format mechanism while retaining CK exports and every
+referenced dispatch/runtime section.

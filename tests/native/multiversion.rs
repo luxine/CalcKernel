@@ -69,6 +69,15 @@ fn multiversion_dynamic_library_with_void_helper_call_should_build() {
         !symbols.contains("hot_step"),
         "multiversion failed to inline its compact branch helper:\n{symbols}"
     );
+    for unreachable in [
+        "__ck_dispatch_capture_initial_stack",
+        "__ck_dispatch_select_ranked",
+    ] {
+        assert!(
+            !symbols.contains(unreachable),
+            "dynamic multiversion link retained unreachable private runtime symbol {unreachable}:\n{symbols}"
+        );
+    }
     fs::remove_dir_all(root).expect("remove multiversion void-call fixture");
 }
 

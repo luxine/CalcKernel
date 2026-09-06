@@ -719,6 +719,9 @@ input 分开固定；correctness 覆盖二者及 adversarial input，PGO timed r
   时间，同时不移除任何编译器工作；
 - PGO-only aggregate artifact size 不超过 ordinary 的 1.25 倍、单项不超过 1.5 倍；
   multiversion/combined aggregate 不超过 2 倍、单项不超过 2.5 倍；
+- dynamic library final link 使用 Mach-O、COFF 或 ELF 的原生 dead-section 机制回收未引用的
+  compiler-private function/data section；导出的 CK entry 与全部实际引用的 dispatch/runtime
+  section 必须保留；
 - 每个 host 等价 stripping/signing 边界后的 distributed `ckc` archive 相对 exact 0.12
   不超过 15%。
 

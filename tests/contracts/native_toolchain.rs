@@ -1189,6 +1189,28 @@ fn coff_link_outputs_should_have_a_reproducible_timestamp() {
 }
 
 #[test]
+fn shared_link_outputs_should_discard_unreachable_private_sections() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let shared = bridge
+        .split_once("extern \"C\" int32_t ckc_lld_link_shared(")
+        .expect("embedded shared-link entry point")
+        .1
+        .split_once("extern \"C\" int32_t ckc_lld_link_executable(")
+        .expect("embedded shared-link boundary")
+        .0;
+    for required in [
+        "arguments.emplace_back(\"-dead_strip\")",
+        "arguments.emplace_back(\"/opt:ref\")",
+        "arguments.emplace_back(\"--gc-sections\")",
+    ] {
+        assert!(
+            shared.contains(required),
+            "shared links must discard unreachable function/data sections via {required}"
+        );
+    }
+}
+
+#[test]
 fn profile_generation_should_initialize_only_at_external_entries() {
     let lowering = read("src/backend/llvm/kir_lower.rs");
     let entry = lowering
