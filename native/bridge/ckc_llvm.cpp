@@ -4066,6 +4066,7 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("/dll");
         arguments.emplace_back("/noentry");
         arguments.emplace_back("/nodefaultlib");
+        arguments.emplace_back("/timestamp:0");
         auto import_path = checked_path(import_library_path_bytes,
                                         "LLD import library path");
         if (!import_path) {
@@ -4223,6 +4224,7 @@ extern "C" int32_t ckc_lld_link_executable(
         arguments.emplace_back("/subsystem:console");
         arguments.emplace_back("/entry:mainCRTStartup");
         arguments.emplace_back("/nodefaultlib");
+        arguments.emplace_back("/timestamp:0");
 #else
         arguments.emplace_back("ld.lld");
         arguments.emplace_back("-static");

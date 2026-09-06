@@ -6,11 +6,19 @@
 #if defined(_MSC_VER)
 
 #include <intrin.h>
+#if defined(_M_ARM64)
+#pragma intrinsic(_InterlockedCompareExchange_acq)
+#pragma intrinsic(_InterlockedCompareExchange_nf)
+#pragma intrinsic(_InterlockedCompareExchange64_nf)
+#pragma intrinsic(_InterlockedExchange_nf)
+#pragma intrinsic(_InterlockedExchange_rel)
+#pragma intrinsic(_InterlockedExchangeAdd64_nf)
+#else
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedCompareExchange64)
 #pragma intrinsic(_InterlockedExchange)
 #pragma intrinsic(_InterlockedExchangeAdd64)
-#pragma intrinsic(_InterlockedIncrement)
+#endif
 
 typedef struct ckc_profile_atomic_u32 {
   volatile long value;
@@ -22,30 +30,51 @@ typedef struct ckc_profile_atomic_u64 {
 
 static __inline uint32_t
 ckc_profile_atomic_load_acquire_u32(ckc_profile_atomic_u32 *object) {
+#if defined(_M_ARM64)
+  return (uint32_t)_InterlockedCompareExchange_acq(&object->value, 0, 0);
+#else
   return (uint32_t)_InterlockedCompareExchange(&object->value, 0, 0);
+#endif
 }
 
 static __inline uint32_t
 ckc_profile_atomic_load_relaxed_u32(ckc_profile_atomic_u32 *object) {
+#if defined(_M_ARM64)
+  return (uint32_t)_InterlockedCompareExchange_nf(&object->value, 0, 0);
+#else
   return ckc_profile_atomic_load_acquire_u32(object);
+#endif
 }
 
 static __inline void
 ckc_profile_atomic_store_release_u32(ckc_profile_atomic_u32 *object,
                                      uint32_t value) {
+#if defined(_M_ARM64)
+  (void)_InterlockedExchange_rel(&object->value, (long)value);
+#else
   (void)_InterlockedExchange(&object->value, (long)value);
+#endif
 }
 
 static __inline void
 ckc_profile_atomic_store_relaxed_u32(ckc_profile_atomic_u32 *object,
                                      uint32_t value) {
+#if defined(_M_ARM64)
+  (void)_InterlockedExchange_nf(&object->value, (long)value);
+#else
   ckc_profile_atomic_store_release_u32(object, value);
+#endif
 }
 
 static __inline int ckc_profile_atomic_compare_exchange_strong_u32(
     ckc_profile_atomic_u32 *object, uint32_t *expected, uint32_t desired) {
+#if defined(_M_ARM64)
+  const long observed = _InterlockedCompareExchange_acq(
+      &object->value, (long)desired, (long)*expected);
+#else
   const long observed = _InterlockedCompareExchange(
       &object->value, (long)desired, (long)*expected);
+#endif
   if ((uint32_t)observed == *expected) {
     return 1;
   }
@@ -55,18 +84,31 @@ static __inline int ckc_profile_atomic_compare_exchange_strong_u32(
 
 static __inline uint64_t
 ckc_profile_atomic_load_relaxed_u64(ckc_profile_atomic_u64 *object) {
+#if defined(_M_ARM64)
+  return (uint64_t)_InterlockedCompareExchange64_nf(&object->value, 0, 0);
+#else
   return (uint64_t)_InterlockedCompareExchange64(&object->value, 0, 0);
+#endif
 }
 
 static __inline uint64_t ckc_profile_atomic_fetch_add_relaxed_u64(
     ckc_profile_atomic_u64 *object, uint64_t value) {
+#if defined(_M_ARM64)
+  return (uint64_t)_InterlockedExchangeAdd64_nf(&object->value, (__int64)value);
+#else
   return (uint64_t)_InterlockedExchangeAdd64(&object->value, (__int64)value);
+#endif
 }
 
 static __inline int ckc_profile_atomic_compare_exchange_weak_u64(
     ckc_profile_atomic_u64 *object, uint64_t *expected, uint64_t desired) {
+#if defined(_M_ARM64)
+  const __int64 observed = _InterlockedCompareExchange64_nf(
+      &object->value, (__int64)desired, (__int64)*expected);
+#else
   const __int64 observed = _InterlockedCompareExchange64(
       &object->value, (__int64)desired, (__int64)*expected);
+#endif
   if ((uint64_t)observed == *expected) {
     return 1;
   }

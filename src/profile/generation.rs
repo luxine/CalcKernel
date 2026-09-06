@@ -258,15 +258,27 @@ fn checked_u32(value: usize) -> Result<u32, CkProfileError> {
 fn validate_components_without_indirection(path: &Path) -> Result<(), CkProfileError> {
     let mut current = PathBuf::new();
     for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => current.push(prefix.as_os_str()),
-            Component::RootDir => current.push(component.as_os_str()),
-            Component::Normal(part) => current.push(part),
+        let validate_current = match component {
+            Component::Prefix(prefix) => {
+                current.push(prefix.as_os_str());
+                false
+            }
+            Component::RootDir => {
+                current.push(component.as_os_str());
+                false
+            }
+            Component::Normal(part) => {
+                current.push(part);
+                true
+            }
             Component::CurDir | Component::ParentDir => {
                 return Err(CkProfileError::InvalidValue(
                     "generation.directory.normalized",
                 ));
             }
+        };
+        if !validate_current {
+            continue;
         }
         let metadata =
             fs::symlink_metadata(&current).map_err(|error| CkProfileError::io(&current, error))?;

@@ -2,8 +2,13 @@
 
 #if defined(_MSC_VER)
 #include <intrin.h>
+#if defined(_M_ARM64)
+#pragma intrinsic(_InterlockedCompareExchange_acq)
+#pragma intrinsic(_InterlockedExchange_rel)
+#else
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedExchange)
+#endif
 #elif !defined(__aarch64__) || !defined(__linux__)
 #include <stdatomic.h>
 #endif
@@ -21,7 +26,11 @@ static ck_dispatch_atomic_u32 ck_capability_state;
 static uint32_t
 ck_dispatch_load_acquire(ck_dispatch_atomic_u32 *object) {
 #if defined(_MSC_VER)
+#if defined(_M_ARM64)
+  return (uint32_t)_InterlockedCompareExchange_acq(object, 0, 0);
+#else
   return (uint32_t)_InterlockedCompareExchange(object, 0, 0);
+#endif
 #elif defined(__aarch64__) && defined(__linux__)
   uint32_t value;
   __asm__ volatile("ldar %w0, [%1]" : "=r"(value) : "r"(object) : "memory");
@@ -34,7 +43,11 @@ ck_dispatch_load_acquire(ck_dispatch_atomic_u32 *object) {
 static void ck_dispatch_store_release(ck_dispatch_atomic_u32 *object,
                                       uint32_t value) {
 #if defined(_MSC_VER)
+#if defined(_M_ARM64)
+  (void)_InterlockedExchange_rel(object, (long)value);
+#else
   (void)_InterlockedExchange(object, (long)value);
+#endif
 #elif defined(__aarch64__) && defined(__linux__)
   __asm__ volatile("stlr %w0, [%1]" : : "r"(value), "r"(object) : "memory");
 #else
@@ -46,8 +59,13 @@ static int ck_dispatch_compare_exchange(ck_dispatch_atomic_u32 *object,
                                         uint32_t *expected,
                                         uint32_t desired) {
 #if defined(_MSC_VER)
+#if defined(_M_ARM64)
+  const long observed =
+      _InterlockedCompareExchange_acq(object, (long)desired, (long)*expected);
+#else
   const long observed =
       _InterlockedCompareExchange(object, (long)desired, (long)*expected);
+#endif
   if ((uint32_t)observed == *expected) {
     return 1;
   }
