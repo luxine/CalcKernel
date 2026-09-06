@@ -7,9 +7,9 @@ use super::support::compiler::optimized_module;
 
 use calckernel::{
     Aarch64AuxvSnapshot, BoundsMode, EmitLlvmOptions, KirConsumer, NATIVE_DISPATCH_RUNTIME_SHA256,
-    NativeCapabilityCache, NativeCapabilitySet, NativeDispatchCandidate, NativeDispatchCell,
-    NativeDispatchTable, NativeDispatchTier, NativeOptimizationLevel, NativeTarget, OverflowMode,
-    X86CpuidSnapshot, detect_aarch64_auxv, detect_host_cpu_capabilities, detect_x86_cpuid,
+    NativeCapabilitySet, NativeDispatchCandidate, NativeDispatchCell, NativeDispatchTable,
+    NativeDispatchTier, NativeOptimizationLevel, NativeTarget, OverflowMode, X86CpuidSnapshot,
+    detect_aarch64_auxv, detect_host_cpu_capabilities, detect_x86_cpuid,
     embedded_dispatch_runtime_object, lower_native_kir_module, test_add_multiversion_dispatch,
 };
 
@@ -140,26 +140,24 @@ fn multiversion_dispatch_should_reject_malformed_or_unknown_tables() {
 }
 
 #[test]
-fn multiversion_dispatch_concurrent_first_call_should_query_once_and_publish_compatible_pointer() {
+fn multiversion_dispatch_concurrent_first_call_may_detect_in_parallel_and_publish_one_pointer() {
     let table = Arc::new(table(&[
         NativeDispatchTier::X86_64V4,
         NativeDispatchTier::X86_64V3,
         NativeDispatchTier::Baseline,
     ]));
-    let cache = Arc::new(NativeCapabilityCache::new());
     let cell = Arc::new(NativeDispatchCell::new());
     let queries = Arc::new(AtomicUsize::new(0));
     let start = Arc::new(Barrier::new(17));
     let mut threads = Vec::new();
     for _ in 0..16 {
         let table = Arc::clone(&table);
-        let cache = Arc::clone(&cache);
         let cell = Arc::clone(&cell);
         let queries = Arc::clone(&queries);
         let start = Arc::clone(&start);
         threads.push(std::thread::spawn(move || {
             start.wait();
-            cell.resolve(&table, &cache, || {
+            cell.resolve(&table, || {
                 queries.fetch_add(1, Ordering::SeqCst);
                 NativeCapabilitySet::X86_V3
             })
@@ -170,8 +168,7 @@ fn multiversion_dispatch_concurrent_first_call_should_query_once_and_publish_com
     for thread in threads {
         assert_eq!(thread.join().expect("join"), 0x1001);
     }
-    assert_eq!(queries.load(Ordering::SeqCst), 1);
-    assert_eq!(cache.initialization_count(), 1);
+    assert!((1..=16).contains(&queries.load(Ordering::SeqCst)));
     assert_eq!(cell.slow_path_count(), 1);
     assert_eq!(cell.resolve_count(), 16);
 }
@@ -218,26 +215,21 @@ fn ownership_multiversion_dispatch_state_should_release_after_concurrent_use() {
         NativeDispatchTier::X86_64V3,
         NativeDispatchTier::Baseline,
     ]));
-    let cache = Arc::new(NativeCapabilityCache::new());
     let cell = Arc::new(NativeDispatchCell::new());
     let weak_table = Arc::downgrade(&table);
-    let weak_cache = Arc::downgrade(&cache);
     let weak_cell = Arc::downgrade(&cell);
     let thread = {
         let table = Arc::clone(&table);
-        let cache = Arc::clone(&cache);
         let cell = Arc::clone(&cell);
         std::thread::spawn(move || {
-            cell.resolve(&table, &cache, || NativeCapabilitySet::X86_V3)
+            cell.resolve(&table, || NativeCapabilitySet::X86_V3)
                 .expect("resolve")
         })
     };
     assert_eq!(thread.join().expect("join"), 0x1000);
     drop(table);
-    drop(cache);
     drop(cell);
     assert!(weak_table.upgrade().is_none());
-    assert!(weak_cache.upgrade().is_none());
     assert!(weak_cell.upgrade().is_none());
 }
 

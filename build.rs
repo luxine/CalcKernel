@@ -490,12 +490,13 @@ fn configure_dispatch_runtime(
                 .static_crt(true)
                 .warnings(true)
                 .warnings_into_errors(true)
-                .debug(false)
-                .opt_level(3);
+                .debug(false);
+            build.opt_level(1);
             if target.ends_with("-msvc") {
                 build.flag("/std:c11").flag("/GS-").flag("/Zl");
             } else {
                 build
+                    .flag("-Oz")
                     .flag("-std=c11")
                     .flag("-fPIC")
                     .flag("-ffreestanding")

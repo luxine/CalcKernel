@@ -1,8 +1,5 @@
 use std::collections::BTreeSet;
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Closed normalized capability bitset consumed by CK's private dispatcher.
 /// A value outside these five normalized states is treated as baseline.
@@ -425,42 +422,10 @@ pub struct NativeDispatchThunkContract {
     pub abi_signature: String,
 }
 
-/// One process-local capability value shared by every per-root dispatch cell.
-#[derive(Debug, Default)]
-pub struct NativeCapabilityCache {
-    value: OnceLock<NativeCapabilitySet>,
-    initialization_count: AtomicUsize,
-}
-
-impl NativeCapabilityCache {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            value: OnceLock::new(),
-            initialization_count: AtomicUsize::new(0),
-        }
-    }
-
-    fn get_or_init(&self, query: impl FnOnce() -> NativeCapabilitySet) -> NativeCapabilitySet {
-        *self.value.get_or_init(|| {
-            self.initialization_count.fetch_add(1, Ordering::Relaxed);
-            let capabilities = query();
-            if capabilities.is_normalized() {
-                capabilities
-            } else {
-                NativeCapabilitySet::BASELINE
-            }
-        })
-    }
-
-    #[must_use]
-    pub fn initialization_count(&self) -> usize {
-        self.initialization_count.load(Ordering::Relaxed)
-    }
-}
-
 /// Per-public-root pointer slot. The fast path is one acquire load; the winner
 /// publishes one verified non-null table pointer with release ordering.
+/// Concurrent first callers may perform the baseline-safe capability query in
+/// parallel; the slot is the sole publication and cache layer.
 #[derive(Debug, Default)]
 pub struct NativeDispatchCell {
     pointer: AtomicUsize,
@@ -481,7 +446,6 @@ impl NativeDispatchCell {
     pub fn resolve(
         &self,
         table: &NativeDispatchTable,
-        capabilities: &NativeCapabilityCache,
         query: impl FnOnce() -> NativeCapabilitySet,
     ) -> Result<usize, String> {
         self.resolve_count.fetch_add(1, Ordering::Relaxed);
@@ -489,7 +453,7 @@ impl NativeDispatchCell {
         if published != 0 {
             return Ok(published);
         }
-        let selected = table.select(capabilities.get_or_init(query))?.address;
+        let selected = table.select(query())?.address;
         match self
             .pointer
             .compare_exchange(0, selected, Ordering::Release, Ordering::Acquire)

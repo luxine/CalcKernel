@@ -263,7 +263,7 @@ def output_artifact(base: pathlib.Path, kind: str) -> pathlib.Path:
 
 
 def dispatch_symbol_values(library: pathlib.Path, public_symbol: str) -> tuple[int, int]:
-    """Read the public entry and its one private dispatch slot from ELF64."""
+    """Read the public entry and dedicated private dispatch slot from stripped ELF64."""
     data = library.read_bytes()
     header_format = "<16sHHIQQQIHHHHHH"
     section_format = "<IIQQQQIIQQ"
@@ -274,7 +274,9 @@ def dispatch_symbol_values(library: pathlib.Path, public_symbol: str) -> tuple[i
     identity = header[0]
     if identity[:7] != b"\x7fELF\x02\x01\x01":
         fail("selected-direct artifact is not little-endian ELF64")
-    section_offset, section_entry_size, section_count = header[6], header[11], header[12]
+    section_offset, section_entry_size, section_count, section_name_index = (
+        header[6], header[11], header[12], header[13]
+    )
     if section_entry_size != struct.calcsize(section_format) or section_count == 0:
         fail("selected-direct ELF section table is malformed")
     sections = []
@@ -283,12 +285,30 @@ def dispatch_symbol_values(library: pathlib.Path, public_symbol: str) -> tuple[i
         if offset + section_entry_size > len(data):
             fail("selected-direct ELF section table is truncated")
         sections.append(struct.unpack_from(section_format, data, offset))
+    if section_name_index == 0 or section_name_index >= len(sections):
+        section_names = b""
+    else:
+        names = sections[section_name_index]
+        names_offset, names_size = names[4], names[5]
+        if names[1] != 3 or names_offset + names_size > len(data):
+            fail("selected-direct ELF section-name table is malformed")
+        section_names = data[names_offset:names_offset + names_size]
+
+    def section_name(section):
+        offset = section[0]
+        if offset >= len(section_names):
+            return ""
+        end = section_names.find(b"\0", offset)
+        if end < 0:
+            fail("selected-direct ELF section name is unterminated")
+        return section_names[offset:end].decode("utf-8", errors="strict")
+
     values: dict[str, set[int]] = {}
     for section in sections:
         section_type, table_offset, table_size, link, entry_size = (
             section[1], section[4], section[5], section[6], section[9]
         )
-        if section_type != 2:
+        if section_type not in (2, 11):
             continue
         if entry_size != struct.calcsize(symbol_format) or link >= len(sections):
             fail("selected-direct ELF symbol table is malformed")
@@ -308,10 +328,14 @@ def dispatch_symbol_values(library: pathlib.Path, public_symbol: str) -> tuple[i
             values.setdefault(name, set()).add(value)
     public_values = values.get(public_symbol, set())
     slot_values = {
-        value
-        for name, candidates in values.items()
-        if name.startswith("__ck_mv_") and name.endswith(f"_{public_symbol}_slot")
-        for value in candidates
+        section[3]
+        for section in sections
+        if section_name(section) == ".ck_dispatch_slot"
+        and section[1] == 8
+            and (section[2] & 0x403) == 0x3
+        and section[3] != 0
+        and section[5] == struct.calcsize("P")
+        and section[8] == struct.calcsize("P")
     }
     if len(public_values) != 1 or len(slot_values) != 1:
         fail("selected-direct ELF must contain one public symbol and one matching dispatch slot")

@@ -27,8 +27,9 @@
   引入 libc、loader 或 allocator dependency。
 - public address 恒为 baseline-safe thunk；variant/runtime symbol hidden，ABI/header/export bytes 与
   单版本一致；static private symbol 含 target-set digest namespace。
-- capability cache 恰一次，后续 steady call 是 atomic load + indirect tail call；concurrent first calls
-  只发布 compatible verified pointer。
+- concurrent first calls 可重复 capability detection，但 per-root acquire/release slot 是唯一
+  publication/cache layer且只发布一个 compatible verified pointer；后续 steady call 是 atomic load +
+  indirect tail call，不再 detection。
 - baseline/thunk/detector 无 optional instruction，variant 不越声明 feature，无 cross-module leakage。
 - generic AArch64 SVE/SVE2 member 把既有 `target-cpu=generic`、显式 feature string 与固定
   `tune-cpu=neoverse-n2` 一起物化到函数，真实 object 使用预期调度；feature audit 与允许 ISA 不变，

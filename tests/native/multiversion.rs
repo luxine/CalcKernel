@@ -50,33 +50,49 @@ fn multiversion_dynamic_library_with_void_helper_call_should_build() {
     let mut library = output.clone();
     library.set_extension(std::env::consts::DLL_SUFFIX.trim_start_matches('.'));
     let prefix = std::env::var_os("CKC_LLVM_PREFIX").expect("pinned LLVM prefix");
-    let symbols = Command::new(std::path::Path::new(&prefix).join("bin/llvm-nm"))
-        .arg("--defined-only")
-        .arg(&library)
-        .output()
-        .expect("inspect multiversion helper symbols");
-    assert!(
-        symbols.status.success(),
-        "llvm-nm failed: {}",
-        String::from_utf8_lossy(&symbols.stderr)
-    );
-    let symbols = String::from_utf8_lossy(&symbols.stdout);
-    assert!(
-        symbols.contains("cold_step"),
-        "multiversion Native optimization re-inlined its KIR-retained large branch helper:\n{symbols}"
-    );
-    assert!(
-        !symbols.contains("hot_step"),
-        "multiversion failed to inline its compact branch helper:\n{symbols}"
-    );
-    for unreachable in [
-        "__ck_dispatch_capture_initial_stack",
-        "__ck_dispatch_select_ranked",
-    ] {
+    if cfg!(target_os = "linux") {
+        let sections = Command::new(std::path::Path::new(&prefix).join("bin/llvm-readobj"))
+            .args(["--sections", "--dyn-symbols"])
+            .arg(&library)
+            .output()
+            .expect("inspect stripped multiversion product");
         assert!(
-            !symbols.contains(unreachable),
-            "dynamic multiversion link retained unreachable private runtime symbol {unreachable}:\n{symbols}"
+            sections.status.success(),
+            "llvm-readobj failed: {}",
+            String::from_utf8_lossy(&sections.stderr)
         );
+        let sections = String::from_utf8_lossy(&sections.stdout);
+        assert!(sections.contains("Name: .ck_dispatch_slot"), "{sections}");
+        assert!(!sections.contains("Name: .symtab"), "{sections}");
+    } else {
+        let symbols = Command::new(std::path::Path::new(&prefix).join("bin/llvm-nm"))
+            .arg("--defined-only")
+            .arg(&library)
+            .output()
+            .expect("inspect multiversion helper symbols");
+        assert!(
+            symbols.status.success(),
+            "llvm-nm failed: {}",
+            String::from_utf8_lossy(&symbols.stderr)
+        );
+        let symbols = String::from_utf8_lossy(&symbols.stdout);
+        assert!(
+            symbols.contains("cold_step"),
+            "multiversion Native optimization re-inlined its KIR-retained large branch helper:\n{symbols}"
+        );
+        assert!(
+            !symbols.contains("hot_step"),
+            "multiversion failed to inline its compact branch helper:\n{symbols}"
+        );
+        for unreachable in [
+            "__ck_dispatch_capture_initial_stack",
+            "__ck_dispatch_select_ranked",
+        ] {
+            assert!(
+                !symbols.contains(unreachable),
+                "dynamic multiversion link retained unreachable private runtime symbol {unreachable}:\n{symbols}"
+            );
+        }
     }
     fs::remove_dir_all(root).expect("remove multiversion void-call fixture");
 }

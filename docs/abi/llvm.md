@@ -90,7 +90,9 @@ verified target variants from the same KIR pre-state, and the compiler-private
 dispatch runtime as separate named-object members. Every object is verified and
 feature-audited before assembly. The baseline-safe detector recognizes only the
 closed x86-64 v3/v4 and Linux AArch64 SVE/SVE2 tiers, fails closed on incomplete
-state, and publishes one process-local selection through acquire-release atomics.
+state, and returns one normalized result to the unresolved root. That root's
+private acquire-release function-pointer slot is the sole publication/cache
+layer; concurrent first calls may repeat detection, while later calls never do.
 Linux AArch64 executables use the startup-stack auxv snapshot; dynamic libraries
 that have no CK entry point read `/proc/self/auxv` through freestanding direct
 system calls and fail closed to baseline if that fallback is unavailable or
@@ -100,6 +102,9 @@ scheduling only; `target-cpu=generic`, explicit features, runtime compatibility,
 and the feature audit remain unchanged and authoritative.
 Public Native C ABI thunks keep their names, addresses, signatures, checked-status
 behavior, and visibility; baseline, variant, detector, and runtime symbols stay hidden.
+ELF shared products strip non-loader symbols and retain the one generated slot
+in a private pointer-width `.ck_dispatch_slot` `NOBITS` section. The section is
+not exported and does not extend the Native C ABI.
 
 The named-object bundle links as an executable, dynamic library, or static archive.
 A multiversion object output is rejected because 0.13 has no partial-link bundle

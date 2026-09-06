@@ -46,9 +46,9 @@ mod verify;
 pub use context::{NativeContext, NativeToolchain};
 #[cfg(feature = "native-toolchain")]
 pub use dispatch::{
-    Aarch64AuxvSnapshot, NativeCapabilityCache, NativeCapabilitySet, NativeDispatchCandidate,
-    NativeDispatchCell, NativeDispatchTable, NativeDispatchThunkContract, NativeDispatchTier,
-    X86CpuidSnapshot, detect_aarch64_auxv, detect_host_cpu_capabilities, detect_x86_cpuid,
+    Aarch64AuxvSnapshot, NativeCapabilitySet, NativeDispatchCandidate, NativeDispatchCell,
+    NativeDispatchTable, NativeDispatchThunkContract, NativeDispatchTier, X86CpuidSnapshot,
+    detect_aarch64_auxv, detect_host_cpu_capabilities, detect_x86_cpuid,
 };
 #[cfg(feature = "native-toolchain")]
 pub use error::{NativeError, NativeStage};

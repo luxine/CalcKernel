@@ -2745,6 +2745,9 @@ extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
             llvm::GlobalValue::InternalLinkage, null_pointer,
             stem + "_slot");
         slot->setAlignment(llvm::Align(8));
+#if defined(CKC_LLD_ELF)
+        slot->setSection(".ck_dispatch_slot");
+#endif
 
         auto *i32_type = llvm::Type::getInt32Ty(context);
         auto *detector_type = llvm::FunctionType::get(i32_type, false);
@@ -4330,6 +4333,7 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("-shared");
         arguments.emplace_back("--no-undefined");
         arguments.emplace_back("--gc-sections");
+        arguments.emplace_back("--strip-all");
         for (size_t index = 0; index < export_count; ++index) {
             const llvm::StringRef name = borrowed_string(exports[index]);
             if (name.empty() || name.contains('\0') || name.contains(',')) {
