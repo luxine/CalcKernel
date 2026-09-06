@@ -63,10 +63,14 @@ LLVM safety metadata 或 proof。
 `--cpu multiversion` 将 verified baseline module、从 same KIR pre-state 生成的零个或多个独立
 verified target variant，以及 compiler-private dispatch runtime 作为不同 named-object member
 lowering。每个 object 在 assembly 前都通过 verifier 与 feature audit。baseline-safe detector
-只识别闭合的 x86-64 v3/v4 和 Linux AArch64 SVE/SVE2 tier；状态不完整时 fail closed，并以
-acquire-release atomic 发布一次 process-local selection。Public Native C ABI thunk 的 name、
+只识别闭合的 x86-64 v3/v4 和 Linux AArch64 SVE/SVE2 tier；状态不完整时 fail closed，并把
+normalized result 返回给未解析 root。该 root 的 private acquire-release function-pointer slot
+是唯一 publication/cache layer；并发 first call 可以重复 detection，后续调用不会重复。
+Public Native C ABI thunk 的 name、
 address、signature、checked-status behavior 与 visibility 保持；baseline、variant、detector、
 runtime symbol 都隐藏。
+ELF shared product 删除 loader 不需要的 symbol，并把唯一 generated slot 保留在 private
+pointer-width `.ck_dispatch_slot` `NOBITS` section；该 section 不 export，也不扩展 Native C ABI。
 Linux AArch64 executable 使用 startup-stack auxv snapshot；没有 CK entry point 的 dynamic
 library 通过 freestanding direct syscall 读取 `/proc/self/auxv`，fallback 不可用或不完整时
 fail closed 到 baseline，且不增加 libc 或 loader dependency。

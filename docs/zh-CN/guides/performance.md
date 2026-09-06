@@ -56,6 +56,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 - Eligible multiversion dispatch 相对 portable baseline：geometric-mean improvement 至少 8%，
   单项 slowdown 不超过 3%；dispatch 至少达到独立加载的同字节 artifact 中 resolver 实际选中
   hidden member direct call geometric mean 的 98%，单项最多慢 5%。
+  ELF collector 从 `.dynsym` 读取 public entry，并从 private `.ck_dispatch_slot` section 读取
+  实际发布 pointer，因此 shipped product 无需保留完整 local symbol table 也能维持该证明。
 - Combined PGO+multiversion 相对较快的对应 PGO-only/multiversion-only channel，geometric
   mean 最多慢 2%，单项最多慢 5%。
 - Combined CK 至少达到较快等价 Clang/Rust PGO geometric mean 的 95%，每个 accepted

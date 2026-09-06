@@ -87,8 +87,9 @@ contract-aware runtime ABI remains version 2.
 `native/profile_runtime/` exists only in generation artifacts and publishes
 completed shards through a directory-anchored transaction. Library users call
 the full-identity `ck_profile_flush_*` control symbol only after quiescence.
-`native/dispatch_runtime/` owns the baseline-safe detector and process-local
-acquire-release publication. Public ABI thunks remain stable; baseline,
+`native/dispatch_runtime/` owns the baseline-safe detector; each generated
+root's private acquire-release slot owns the sole process-local publication.
+Public ABI thunks remain stable; baseline,
 variant, and runtime implementations remain hidden named-object members.
 
 `src/tune/` owns explicit offline Auto-Tuning. It parses a closed workload,

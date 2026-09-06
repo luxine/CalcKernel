@@ -70,6 +70,9 @@ per-row common-mode normalization; throughput still uses raw retained durations.
   improvement at least 8%, individual slowdown at most 3%. Dispatch achieves at
   least 98% of direct calls to the exact resolved hidden member in a separate
   byte-identical artifact and is at most 5% slower per case.
+  On ELF, the collector reads the public entry from `.dynsym` and the exact
+  published pointer from the private `.ck_dispatch_slot` section, so shipped
+  products can omit the full local symbol table without changing this proof.
 - Combined PGO+multiversion is no more than 2% slower in geometric mean and 5%
   individually than the faster matching PGO-only/multiversion-only channel.
 - Combined CK reaches at least 95% of the faster equivalent Clang/Rust PGO

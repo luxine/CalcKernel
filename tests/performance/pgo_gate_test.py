@@ -70,6 +70,45 @@ def elf_with_symbols(symbols):
     return header + strings + symbol_table + null_section + string_section + symbol_section
 
 
+def stripped_elf_with_dispatch(public_symbol="kernel", public_value=0x1240,
+                                slot_value=0x3888, slot_size=8):
+    dynamic_strings = b"\0" + public_symbol.encode() + b"\0"
+    dynamic_symbols = bytes(24) + struct.pack(
+        "<IBBHQQ", 1, 0x12, 0, 1, public_value, 0
+    )
+    section_names = b"\0.dynstr\0.dynsym\0.ck_dispatch_slot\0.shstrtab\0"
+    dynamic_string_offset = 64
+    dynamic_symbol_offset = dynamic_string_offset + len(dynamic_strings)
+    section_name_offset = dynamic_symbol_offset + len(dynamic_symbols)
+    section_offset = section_name_offset + len(section_names)
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF\x02\x01\x01" + b"\0" * 9,
+        3, 62, 1, 0, 0, section_offset, 0, 64, 0, 0, 64, 5, 4,
+    )
+    null_section = bytes(64)
+    dynamic_string_section = struct.pack(
+        "<IIQQQQIIQQ", 1, 3, 0, 0, dynamic_string_offset,
+        len(dynamic_strings), 0, 0, 1, 0
+    )
+    dynamic_symbol_section = struct.pack(
+        "<IIQQQQIIQQ", 9, 11, 0, 0, dynamic_symbol_offset,
+        len(dynamic_symbols), 1, 1, 8, 24
+    )
+    dispatch_slot_section = struct.pack(
+        "<IIQQQQIIQQ", 17, 8, 3, slot_value, 0, slot_size, 0, 0, 8, 0
+    )
+    section_name_section = struct.pack(
+        "<IIQQQQIIQQ", 35, 3, 0, 0, section_name_offset,
+        len(section_names), 0, 0, 1, 0
+    )
+    return (
+        header + dynamic_strings + dynamic_symbols + section_names + null_section
+        + dynamic_string_section + dynamic_symbol_section + dispatch_slot_section
+        + section_name_section
+    )
+
+
 class SchemaEightGateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ckc-schema8-")
@@ -286,12 +325,9 @@ class SchemaEightGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "real directory"):
             collector.retain_cumulative_schema_seven(source, destination)
 
-    def test_collector_reads_the_exact_public_and_dispatch_slot_elf_symbols(self):
+    def test_collector_reads_public_dynsym_and_dedicated_stripped_dispatch_slot(self):
         library = self.root / "selected-direct.so"
-        library.write_bytes(elf_with_symbols({
-            "kernel": 0x1240,
-            "__ck_mv_deadbeef_kernel_slot": 0x3888,
-        }))
+        library.write_bytes(stripped_elf_with_dispatch())
 
         symbols = collector.dispatch_symbol_values(library, "kernel")
 
@@ -304,11 +340,7 @@ class SchemaEightGateTests(unittest.TestCase):
             collector.dispatch_symbol_values(missing, "kernel")
 
         ambiguous = self.root / "ambiguous.so"
-        ambiguous.write_bytes(elf_with_symbols({
-            "kernel": 0x1240,
-            "__ck_mv_one_kernel_slot": 0x3888,
-            "__ck_mv_two_kernel_slot": 0x3990,
-        }))
+        ambiguous.write_bytes(stripped_elf_with_dispatch(slot_size=16))
         with self.assertRaisesRegex(ValueError, "dispatch slot"):
             collector.dispatch_symbol_values(ambiguous, "kernel")
 

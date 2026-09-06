@@ -64,8 +64,10 @@
   additional KIR <= baseline units，共享预算/order/checker/proof/feature audit正确且无 cross-variant LTO。
 - [ ] baseline 与每个 enhanced module 的独立 KIR 复验携带同一 verified contract facts；缺失 facts
   fail closed，LLVM parameter/alias/effect strengthening仍由 Native fact audit逐项约束。
-- [ ] detector fail-closed且 baseline-safe；capability恰缓存一次，public thunk address/ABI稳定，后续 atomic
-  load+indirect tail call；variant/runtime symbols hidden/namespaced，production无强制 unsupported feature seam。
+- [ ] detector fail-closed且 baseline-safe；concurrent first calls 可重复 detection，但 per-root
+  acquire/release slot 是唯一 publication/cache layer且只发布一个 compatible verified pointer；public
+  thunk address/ABI稳定，后续 atomic load+indirect tail call；variant/runtime symbols hidden/namespaced，
+  production无强制 unsupported feature seam。
 - [ ] dispatcher fact ledger 只复制其实际继承的参数/函数属性；assume/range/no-wrap/alias-scope 等
   函数体证据不得重复归属 dispatcher，增强 tier 平台的 pre-LLVM fact audit 必须精确相等。
 - [ ] executable/dynamic/static named-object bundle真实链接；multiversion object拒绝，single-version use
@@ -120,6 +122,11 @@
 - [ ] dynamic library final link 在 Mach-O/COFF/ELF 上回收未引用 private function/data section；
   user exports、实际 dispatch detector/member 与 referenced helper 保留，未使用的 startup capture/
   generic selector 不进入 multiversion shared artifact。
+- [ ] ELF dynamic product 使用 LLD `--strip-all`，只保留 loader 所需 dynamic export；每个
+  benchmark root 的唯一 pointer-width/aligned resolver slot 位于 private `.ck_dispatch_slot`
+  `NOBITS` section，selected-direct 从同字节 artifact 的 `.dynsym` 与该 section 解析地址。
+  Generated acquire/release slot 是唯一 publication layer；one-shot detector 不再维护第二份
+  process cache，并以 size-first recipe 编译。
 
 ## H. 本地质量与审计
 

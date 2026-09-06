@@ -217,7 +217,7 @@ fi
   "$ckc_repo_root/native/profile_runtime/profile_runtime.c" \
   -o "$ckc_runtime_dir/profile_runtime.o"
 "$ckc_runtime_cc" "${ckc_runtime_flags[@]}" -std=c11 \
-  -I"$ckc_repo_root/native/dispatch_runtime/include" -c \
+  -Oz -I"$ckc_repo_root/native/dispatch_runtime/include" -c \
   "$ckc_repo_root/native/dispatch_runtime/dispatch_runtime.c" \
   -o "$ckc_runtime_dir/dispatch_runtime.o"
 if [[ "$ckc_target" == *-apple-darwin ]]; then

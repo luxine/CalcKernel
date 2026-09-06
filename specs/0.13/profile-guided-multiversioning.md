@@ -685,10 +685,11 @@ checked status/result-slot behavior, slice flattening, alignment, unwind policy,
 and symbol visibility. Each implementation symbol contains a content digest
 and is hidden from headers, export tables, and ordinary symbol lookup.
 
-The first call obtains one process-local normalized capability bitset, ranks
-that root's variants, and publishes the chosen function pointer with
-acquire/release atomics. Concurrent first calls may compute the same answer but
-only publish a compatible verified pointer. Later calls perform one atomic load
+The first call obtains a normalized capability bitset, ranks that root's
+variants, and publishes the chosen function pointer in the root's private slot
+with acquire/release atomics. Concurrent first calls may repeat detection and
+compute the same answer, but only publish a compatible verified pointer. That
+slot is the sole publication/cache layer. Later calls perform one atomic load
 and indirect tail call; they do not repeat CPUID/HWCAP queries. The public
 function address remains the thunk before and after resolution.
 
@@ -706,6 +707,12 @@ force unsupported features. Tests may link a private detector seam into test
 fixtures only. Static archives namespace private support symbols by target-set
 digest; dynamic libraries and executables hide them. Resolver and thunk code is
 compiled for baseline and is audited to contain no optional instructions.
+
+ELF shared products strip non-loader symbol metadata. The generated resolver
+slot resides in a private pointer-width `.ck_dispatch_slot` `NOBITS` section;
+it is neither a dynamic export nor a public ABI symbol. This section lets the
+selected-direct evidence path resolve the exact published member from a
+byte-identical artifact without retaining the full local symbol table.
 
 ## Native LLVM and artifact contracts
 

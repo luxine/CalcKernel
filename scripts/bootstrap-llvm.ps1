@@ -256,7 +256,7 @@ $dispatchRuntimeObject = "dispatch_runtime.obj"
 $dispatchRuntimeSource = Join-Path $repoRoot "native/dispatch_runtime/dispatch_runtime.c"
 $dispatchRuntimePath = Join-Path $runtimeDir $dispatchRuntimeObject
 $dispatchRuntimeInclude = Join-Path $repoRoot "native/dispatch_runtime/include"
-& cl.exe /nologo /c /TC /std:c11 /O2 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$dispatchRuntimeInclude" "/Fo$dispatchRuntimePath" $dispatchRuntimeSource
+& cl.exe /nologo /c /TC /std:c11 /O1 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$dispatchRuntimeInclude" "/Fo$dispatchRuntimePath" $dispatchRuntimeSource
 if ($LASTEXITCODE -ne 0) { throw "dispatch runtime compilation failed: $dispatchRuntimeSource" }
 $dispatchRuntimeHash = (Get-FileHash -LiteralPath $dispatchRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runtimeJitSupport = $null

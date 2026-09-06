@@ -1187,29 +1187,30 @@ fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi
     }
 
     let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
-    for required in [
-        "defined(_M_ARM64)",
-        "#pragma intrinsic(_InterlockedCompareExchange_acq)",
-        "#pragma intrinsic(_InterlockedExchange_rel)",
-        "_InterlockedCompareExchange_acq(object, 0, 0)",
-        "_InterlockedExchange_rel(object, (long)value)",
-    ] {
-        assert!(
-            runtime.contains(required),
-            "MSVC ARM64 dispatch atomics must use architecture-only intrinsics: {required}"
-        );
-    }
+    assert!(
+        !runtime.contains("_Interlocked") && !runtime.contains("<stdatomic.h>"),
+        "one-shot capability detection must not retain a second atomic publication layer"
+    );
     for required in [
         "__ck_dispatch_detect_capabilities",
         "__ck_dispatch_select_ranked",
-        "ck_dispatch_compare_exchange",
-        "ldaxr",
-        "stlxr",
+        "return ck_detect_uncached();",
         "CK_DISPATCH_BASELINE",
     ] {
         assert!(
             runtime.contains(required),
             "dispatch runtime missing {required}"
+        );
+    }
+    for redundant_cache in [
+        "ck_capability_state",
+        "ck_dispatch_load_acquire",
+        "ck_dispatch_store_release",
+        "ck_dispatch_compare_exchange",
+    ] {
+        assert!(
+            !runtime.contains(redundant_cache),
+            "per-function dispatch publication must be the only capability cache: {redundant_cache}"
         );
     }
     assert!(
@@ -1986,12 +1987,56 @@ fn shared_link_outputs_should_discard_unreachable_private_sections() {
         "arguments.emplace_back(\"-dead_strip\")",
         "arguments.emplace_back(\"/opt:ref\")",
         "arguments.emplace_back(\"--gc-sections\")",
+        "arguments.emplace_back(\"--strip-all\")",
     ] {
         assert!(
             shared.contains(required),
             "shared links must discard unreachable function/data sections via {required}"
         );
     }
+    assert!(
+        bridge.contains("slot->setSection(\".ck_dispatch_slot\")"),
+        "stripped ELF multiversion products need one dedicated private slot section for exact direct-call evidence"
+    );
+}
+
+#[test]
+fn dispatch_runtime_should_optimize_one_shot_detection_for_size() {
+    let bootstrap = read("scripts/bootstrap-llvm.sh");
+    let dispatch_compile = bootstrap
+        .split_once("native/dispatch_runtime/dispatch_runtime.c")
+        .expect("dispatch runtime bootstrap compile")
+        .0
+        .rsplit_once("$ckc_runtime_cc")
+        .expect("dispatch runtime compiler invocation")
+        .1;
+    assert!(
+        dispatch_compile.contains("-Oz"),
+        "the one-shot private detector must be optimized for final artifact size"
+    );
+
+    let windows_bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let dispatch_compile = windows_bootstrap
+        .split_once("$dispatchRuntimeObject =")
+        .expect("Windows dispatch runtime compile section")
+        .1
+        .split_once("$dispatchRuntimeHash =")
+        .expect("Windows dispatch runtime compile boundary")
+        .0;
+    assert!(
+        dispatch_compile.contains("/O1"),
+        "the Windows one-shot private detector must optimize for final artifact size"
+    );
+
+    let build = read("build.rs");
+    let fallback = build
+        .split_once("fn configure_dispatch_runtime(")
+        .expect("dispatch runtime fallback")
+        .1;
+    assert!(
+        fallback.contains("build.opt_level(1)") && fallback.contains(".flag(\"-Oz\")"),
+        "fallback runtime compilation must match the size-first release recipe"
+    );
 }
 
 #[test]

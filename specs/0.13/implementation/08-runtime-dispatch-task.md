@@ -2,8 +2,8 @@
 
 ## 目标
 
-实现 compiler-private runtime dispatch：baseline-safe capability detection、per-process normalized bitset、
-per-root compiler-ranked variant selection、acquire/release exactly-once-compatible pointer publication和稳定
+实现 compiler-private runtime dispatch：baseline-safe capability detection、per-root normalized bitset 与
+compiler-ranked variant selection、acquire/release exactly-once-compatible pointer publication和稳定
 public thunk。失败/未知/矛盾/heterogeneous uncertainty 全部选 baseline，variant/support symbols 保持隐藏。
 
 ## 仓库落点
@@ -25,8 +25,9 @@ public thunk。失败/未知/矛盾/heterogeneous uncertainty 全部选 baseline
    each enhanced module 不超声明 feature，跨 variant reference/LTO 泄漏拒绝。
 3. 写 dispatch RED：每 root 依 compiler-ranked order 选择最高兼容且实际有收益的 variant，而非数字
    tier；baseline-only 与 no-compatible tier 稳定；production 无 env/public force override。
-4. 写 concurrency RED：首调用可并行计算兼容答案，仅发布 verified pointer；capability state process-local
-   恰初始化一次，后续每 call 一个 atomic load + indirect tail call，不再 CPUID/HWCAP。
+4. 写 concurrency RED：首调用可并行 detection 并计算兼容答案，per-root slot 仅发布一个 verified
+   pointer；该 slot 是唯一 process-local publication/cache layer，后续每 call 一个 atomic load +
+   indirect tail call，不再 CPUID/HWCAP。
 5. 写 ABI RED：public symbol/address 始终是 thunk；calling convention、slice flatten、checked status/
    result slot、alignment/unwind/visibility/header/export 与单版本完全一致；hidden digest symbols 不可查找。
 6. 写 failure/test seam RED：private seam 可强制“兼容”variant做 differential，但不能强制 unsupported

@@ -549,10 +549,11 @@ accepted exported root 的原 public symbol 指向 baseline-safe dispatcher thun
 与 symbol visibility。implementation symbol 含 content digest，并从 header、export table 与
 普通 symbol lookup 隐藏。
 
-first call 获取一次 process-local normalized capability bitset，按 root variant 排序选择，
-再用 acquire/release atomic 发布 function pointer。并发 first call 可以计算同一答案，但只能
-发布 compatible verified pointer。后续调用执行一次 atomic load 与 indirect tail call，不再
-执行 CPUID/HWCAP query。public function address 始终是 thunk。
+first call 获取 normalized capability bitset，按 root variant 排序选择，再用 acquire/release
+atomic 把 function pointer 发布到该 root 的 private slot。并发 first call 可以重复 detection 并
+计算同一答案，但只能发布 compatible verified pointer；该 slot 是唯一 publication/cache layer。
+后续调用执行一次 atomic load 与 indirect tail call，不再执行 CPUID/HWCAP query。public
+function address 始终是 thunk。
 
 x86-64 使用 compiler-owned CPUID/XGETBV，同时要求 hardware bit 与 OS register-state。
 AArch64 Linux executable 使用启动 auxiliary-vector HWCAP/HWCAP2；没有 CK entry capture 的
@@ -565,6 +566,11 @@ production artifact 没有可以强制不支持 feature 的 environment variable
 只能把 private detector seam 链进 test fixture。static archive 用 target-set digest namespace
 私有符号；dynamic library/executable 隐藏它们。resolver 与 thunk 按 baseline 编译，并审计
 不能含 optional instruction。
+
+ELF shared product 会删除 loader 不需要的 symbol metadata。Generated resolver slot 位于
+private pointer-width `.ck_dispatch_slot` `NOBITS` section；它既不是 dynamic export，也不是
+public ABI symbol。selected-direct evidence 可由此从同字节 artifact 解析实际发布的 member，
+而无需保留完整 local symbol table。
 
 ## Native LLVM 与 artifact 契约
 

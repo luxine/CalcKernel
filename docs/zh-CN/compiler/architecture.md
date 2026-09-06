@@ -71,8 +71,9 @@ attribute/metadata，验证 IR，最后由 host TargetMachine 输出 object。
 
 `native/profile_runtime/` 只存在于 generation artifact，通过 directory-anchored transaction
 发布 completed shard。Library user 在 quiescence 后调用 full-identity
-`ck_profile_flush_*` control symbol。`native/dispatch_runtime/` 负责 baseline-safe detector 与
-process-local acquire-release publication；public ABI thunk 保持稳定，baseline、variant 与
+`ck_profile_flush_*` control symbol。`native/dispatch_runtime/` 负责 baseline-safe detector；
+每个 generated root 的 private acquire-release slot 负责唯一 process-local publication；public
+ABI thunk 保持稳定，baseline、variant 与
 runtime implementation 是隐藏的 named-object member。
 
 `src/tune/` 负责显式 offline Auto-Tuning：解析 closed workload，以 no-follow 方式捕获
