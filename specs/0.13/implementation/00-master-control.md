@@ -217,3 +217,13 @@ generic SVE member 的独立函数 subtarget 没有物化既有 CPU/features，�
 只把最大 interleave 的下限提高到既有 hard cap 4；AArch64 则把原有
 `target-cpu=generic`、显式 features 与 `tune-cpu=neoverse-n2` 一起附着到函数。语言/ABI、目标
 ISA、性能与稳定性门槛、timed work、样本、corpus 与 required job matrix 均未改变。
+
+Exact V0.13 run `34034445336` 与 V0.14 exact replay run `34034844096` 随后证明三个独立问题：
+一个 full-root variant 的 budget 在 x86-64 上只保留 v4，导致 required v3 worker 正确退回
+baseline；`selectedDirect` 实际是 `--cpu native` 近似物而不是 resolver 选中的 hidden member；真实
+target cost 选择并通过性能门槛的 `VF2/UF2` 被过强的 exact `UF4` 结构断言拒绝。复诊与闭环见
+`specs/0.13/review/implementation-blocker-23.md`：profitable variant 改为 compatibility breadth
+优先保留，direct channel 从独立加载的同字节 multiversion artifact 读取 dispatch slot 并调用实际
+selected member，结构断言允许封闭 frontier 内的真实 cost winner。x86 Clippy 暴露的 AArch64-only
+test import 同时按 target cfg 隔离。语言/ABI、目标 ISA、profitability floor、性能与稳定性门槛、
+timed work、样本、corpus 与 required job matrix 均未改变。

@@ -54,6 +54,11 @@ fn multiversion_planner_should_build_a_closed_verified_bundle_from_one_pre_state
     assert_eq!(first.baseline, request.logical_pre_state);
     assert!(!first.roots.is_empty());
     assert!(first.roots[0].variants.len() <= 2);
+    assert_eq!(
+        first.roots[0].variants[0].tier,
+        calckernel::KirMultiversionTierId::X86_64V3,
+        "a one-variant budget must retain the broadly compatible profitable tier"
+    );
     assert!(
         first.roots[0]
             .variants

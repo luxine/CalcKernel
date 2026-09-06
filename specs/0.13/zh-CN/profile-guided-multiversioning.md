@@ -496,9 +496,10 @@ baseline-only target set 合法，并输出稳定 `no-compatible-enhanced-tier` 
 与 AArch64 HWCAP mapping 是随 LLVM 22.1.8 固定的 compiler-owned canonical table；表变化
 推进 target-set schema。
 
-feature level 更高不代表一定更快。编译器建立该 level 的 target cost profile，只提出合法
-变换并按 root 预测成本排序；root 可以优先 v3 而不是 v4，也可以优先 baseline。runtime
-使用这个 per-root order，而不是数字最大的 feature level。
+feature level 更高不代表一定更快。编译器建立该 level 的 target cost profile，只提出合法且
+有收益的变换；在有界保留集合中先保留 runtime 兼容覆盖最广的 profitable tier，再按预测成本
+与 code size 排序同覆盖候选。这样，一个 variant 的 budget 不会只保留 v4/SVE2，却在 required
+v3/SVE worker 上退回 baseline。runtime 使用这个 per-root order，而不是数字最大的 feature level。
 
 ## Multiversion eligibility 与 budget
 
@@ -518,8 +519,9 @@ eligible root 是 exported CK function 或 executable entry，其 reachable opti
 - PGO specialization 共享而不是重置全部 0.12 clone/transaction budget；
 - budget exhaustion 或收益不足保留 baseline，并记录稳定保守原因。
 
-candidate total order 为：estimated dynamic cost、更小 code size、更少 required feature、
-target-tier identity、root/function identity。rejected trial 不返还 audit budget。
+candidate total order 为：更少 required feature（更广 compatible host coverage）、estimated
+dynamic cost、更小 code size、target-tier identity、root/function identity。进入排序的每个
+candidate 已通过不变的 profitability floor；rejected trial 不返还 audit budget。
 
 ## Runtime dispatch 与公开 ABI
 
@@ -680,8 +682,9 @@ input 分开固定；correctness 覆盖二者及 adversarial input，PGO timed r
 - feature-eligible multiversion suite 中，在具备 required enhanced tier 的 worker 上，
   dispatched artifact 相对 portable baseline 的 geometric mean 至少提升 8%，单项不允许
   慢 3% 以上；
-- resolver 完成后，dispatch throughput 的 geometric mean 至少达到相同 selected tier direct
-  artifact 的 98%，单项不允许慢 5% 以上；
+- resolver 完成后，dispatch throughput 的 geometric mean 至少达到该 artifact 实际选中 hidden
+  member 的 direct call 的 98%，单项不允许慢 5% 以上；direct channel 在计时前解析一个独立加载
+  copy，并且只绕过 public thunk；
 - combined PGO+multiversion 相对适用的 PGO-only/multiversion-only 较快者，geometric mean
   不允许慢 2% 以上，单项不允许慢 5% 以上；
 - 相对使用同一 training/evaluation split 与 safety/float precondition 的等价 pinned

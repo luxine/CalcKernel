@@ -1419,7 +1419,7 @@ fn multiversion_cache_manifest(
         bundle.additional_kir_units,
         bundle.total_kir_units,
     );
-    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;contract-facts-v1;aarch64-sve-tune-neoverse-n2-v2;x86-loop-simd-min-interleave-4-v1;x86-constant-map-schedule-1x5-v1".to_string();
+    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;contract-facts-v1;coverage-first-variant-ranking-v1;aarch64-sve-tune-neoverse-n2-v2;x86-loop-simd-min-interleave-4-v1;x86-constant-map-schedule-1x5-v1".to_string();
     let key_input = CacheKeyInput {
         source,
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),

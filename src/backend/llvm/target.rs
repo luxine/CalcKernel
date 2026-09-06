@@ -275,16 +275,21 @@ impl Drop for NativeTarget {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "aarch64")]
     use std::{fs, process::Command};
 
+    #[cfg(target_arch = "aarch64")]
     use crate::{
         EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
         KirOverflowMode, KirSanitizerMode, SourceFile, build_kir_module_with_profile, check,
         import_contract_facts, lower_to_mir, run_kir_pass_pipeline,
     };
 
+    #[cfg(target_arch = "aarch64")]
     use super::{NativeCpu, NativeTarget};
+    #[cfg(target_arch = "aarch64")]
     use crate::NativeOptimizationLevel;
+    #[cfg(target_arch = "aarch64")]
     use crate::backend::llvm::{NativeContext, lower_native_kir_module};
 
     #[test]

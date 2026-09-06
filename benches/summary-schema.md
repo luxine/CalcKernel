@@ -120,8 +120,11 @@ floating policy, safety preconditions, and UB audit.
 
 `rotating-eight-channel-v1` interleaves ordinary 0.13, exact 0.12 replay, CK PGO,
 CK multiversion, CK combined PGO+multiversion, selected-direct CK, Clang PGO,
-and Rust PGO. Dynamic loading, symbol lookup, and dispatch resolution are
-outside steady timing. Three warm-up rows and twenty sample rows are retained;
+and Rust PGO. The selected-direct channel loads a separate byte-identical
+multiversion artifact, resolves it before timing, and calls the exact hidden
+member published in its private slot; only the public thunk is bypassed.
+Dynamic loading, symbol lookup, and dispatch resolution are outside steady
+timing. Three warm-up rows and twenty sample rows are retained;
 each sample is the minimum of seven equal batches and each result uses the upper
 median. At least 80% of a stream must be within 25% of its median. Instability
 invalidates the complete evidence and never permits selective reruns.

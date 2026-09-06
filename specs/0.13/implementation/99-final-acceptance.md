@@ -95,7 +95,11 @@
   `tune-cpu=neoverse-n2`，真实 object 使用预期机器调度；compatibility、feature audit 与允许 ISA 不变，
   cache codegen contract 明确包含修订后的 tuning identity。
 - [ ] x86 Native profile 在既有封闭 `UF <= 4` frontier 内至少暴露四路 interleave；strict-f64 与
-  integer-cast 的真实 target plan 选择 `VF2/UF4`，且 legality/profitability/proof/budget checker 不变。
+  integer-cast 选择 checked `VF2` 多独立链计划，`UF2/UF4` 由真实 target cost 决定，且继续通过
+  不变的性能、legality、profitability、proof 与 budget gate。
+- [ ] multiversion 在 full-root budget 只容纳一个 variant 时保留兼容覆盖最广的 profitable tier；
+  selected-direct 从独立加载的同字节 artifact 调用 resolver 实际发布的 hidden member，而非
+  `--cpu native` 近似物。
 - [ ] x86 constant-call scalar memory-map handoff按 IR semantics 使用固定 1×5 schedule；不得按 fixture
   名称特判，checked/reduction/pre-vectorized loop 与 cache identity保持各自闭环。
 - [ ] combined相对faster PGO-only/multiversion-only geo slowdown <=2%、individual <=5%；相对等价
