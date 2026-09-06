@@ -489,7 +489,7 @@ fn validate_candidate_kir(
         import_contract_facts(&module, &checked_program, 0).map_err(|error| error.to_string())?;
     let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, Some(&contracts));
     let artifact = verified_artifact(&result)?;
-    let native_llvm_reduction = fixture
+    let native_llvm_handoff = (fixture
         .file_stem()
         .is_some_and(|name| name == "modular_reduction")
         && matches!(
@@ -498,10 +498,16 @@ fn validate_candidate_kir(
         )
         && result.analysis_fallbacks.iter().any(|fallback| {
             fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
-        });
+        }))
+        || (fixture
+            .file_stem()
+            .is_some_and(|name| name == "specialized_length")
+            && result.analysis_fallbacks.iter().any(|fallback| {
+                fallback.reason == "constant-call-loop-deferred-to-native-loop-vectorizer"
+            }));
     if require_vector
         && !checked
-        && !native_llvm_reduction
+        && !native_llvm_handoff
         && !print_kir_module(artifact).contains("vector_")
     {
         return Err(format!(

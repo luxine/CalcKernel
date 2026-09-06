@@ -17,6 +17,24 @@ const VECTOR_CASES: [&str; 8] = [
 const DOMAIN_CASES: [&str; 2] = ["contract_noalias", "contract_fixed_length"];
 
 #[test]
+fn vector_benchmark_should_accept_only_audited_native_llvm_handoffs() {
+    let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
+        .expect("read vector performance harness");
+    for required in [
+        "name == \"modular_reduction\"",
+        "x86-horizontal-reduction-deferred-to-native-loop-vectorizer",
+        "name == \"specialized_length\"",
+        "constant-call-loop-deferred-to-native-loop-vectorizer",
+        "!native_llvm_handoff",
+    ] {
+        assert!(
+            harness.contains(required),
+            "vector preflight must retain audited Native LLVM handoff `{required}`"
+        );
+    }
+}
+
+#[test]
 fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() {
     let root = repo_root();
     let manifest_path = root.join("benches/oracles/manifest.toml");
