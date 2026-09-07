@@ -729,7 +729,9 @@ def remove_publication_locks(evidence: pathlib.Path, directory: pathlib.Path) ->
 
 
 def snapshot_cache(evidence: pathlib.Path, namespace: pathlib.Path) -> dict:
-    namespace.mkdir(parents=True, exist_ok=True)
+    namespace.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "posix":
+        namespace.chmod(0o700)
     relative = evidence_relative(evidence, namespace)
     files = []
     for entry in sorted(namespace.rglob("*")):

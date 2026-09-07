@@ -323,3 +323,11 @@ worker 独立重建的 v0.13 合约版本为 8,253,184 ns，v0.14 遗漏版本�
 `00e9cf6faf936e510929c1d4352bbaa41d3a24cd837194dbd651e5059f141025`，并以 source-byte 与
 Native trusted-contract 回归锁定。复诊见 `specs/0.14/review/implementation-blocker-35.md`；
 语言/公开 ABI、安全模式、oracle、工作量、样本、统计方法、平台、required job 与全部门槛不变。
+
+Exact v0.14 run `34090234424` 的 AArch64 performance job `101642274522`
+通过累计 schema 7/8 后，在 schema-9 第一次 cold tune 前拒绝 collector 以默认 `0755` 创建的
+`cache/branch-layout/cold-one/ckc`。复诊与闭环见
+`specs/0.14/review/implementation-blocker-36.md`：collector-owned cache namespace 现在显式以
+POSIX `0700` 创建并在 snapshot 前复核模式；编译器既有 no-follow、owner-only 与 fail-closed
+安全契约未放宽。语言/公开 ABI、tuning choice、cache key、工作量、样本、统计方法、平台、
+required job 与全部门槛不变。

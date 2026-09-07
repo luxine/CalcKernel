@@ -6,7 +6,9 @@ import copy
 import importlib.util
 import inspect
 import json
+import os
 import pathlib
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -159,6 +161,16 @@ class SchemaNineContractTests(unittest.TestCase):
         (evidence / "unidentified.bin").write_bytes(b"not evidence")
         with self.assertRaisesRegex(ValueError, "closure mismatch"):
             gate.schema9_check_evidence_closure(self.report, evidence)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX cache mode contract")
+    def test_cache_snapshot_creates_an_owner_only_namespace(self):
+        evidence = pathlib.Path(self.temporary.name) / "cache-evidence"
+        evidence.mkdir()
+        namespace = evidence / "cache/branch-layout/cold-one/ckc"
+
+        measure.snapshot_cache(evidence, namespace)
+
+        self.assertEqual(stat.S_IMODE(namespace.stat().st_mode), 0o700)
 
     def test_integer_product_thresholds_and_strict_domain_gate(self):
         self.assertTrue(gate.schema9_ratio_le([95, 95], [100, 100], 95, 100))
