@@ -8,7 +8,7 @@ use crate::{
     KirMultiversionHiddenSymbol, KirMultiversionRootBundle, KirMultiversionTargetSet,
     KirMultiversionTierId, KirMultiversionVariant, KirOperationAvailability, KirSanitizerMode,
     KirTargetProfile, KirTerminator, KirValueType, kir_function_units,
-    kir_multiversion_module_digest, validate_kir_module,
+    kir_multiversion_module_digest, print_kir_module, validate_kir_module,
 };
 
 /// Fixed CK 0.13 multiversion profitability threshold.
@@ -275,9 +275,10 @@ fn build_candidate_bundle(
         });
         let mut accepted = Vec::new();
         for candidate in candidates {
+            let growth_charge = variant_growth_charge(&candidate, &accepted, baseline_profile);
             if accepted.len() == KIR_MULTIVERSION_MAX_ENHANCED_VARIANTS {
                 explanations.push(explanation(root, Some(candidate.tier), false, "non-winner"));
-            } else if accepted_growth.saturating_add(candidate.kir_units) > growth_limit {
+            } else if accepted_growth.saturating_add(growth_charge) > growth_limit {
                 explanations.push(explanation(
                     root,
                     Some(candidate.tier),
@@ -285,7 +286,7 @@ fn build_candidate_bundle(
                     "shared-growth-budget-exhausted",
                 ));
             } else {
-                accepted_growth = accepted_growth.saturating_add(candidate.kir_units);
+                accepted_growth = accepted_growth.saturating_add(growth_charge);
                 explanations.push(explanation(root, Some(candidate.tier), true, "accepted"));
                 accepted.push(candidate);
             }
@@ -305,12 +306,7 @@ fn build_candidate_bundle(
         });
     }
 
-    let additional_kir_units = root_bundles
-        .iter()
-        .flat_map(|root| &root.variants)
-        .fold(0u32, |total, variant| {
-            total.saturating_add(variant.kir_units)
-        });
+    let additional_kir_units = accepted_growth.saturating_sub(request.shared_growth_consumed);
     if additional_kir_units > baseline_kir_units.saturating_sub(request.shared_growth_consumed) {
         return Err("multiversion accepted variants exceed shared growth budget".to_string());
     }
@@ -362,6 +358,52 @@ fn build_candidate_bundle(
     };
     bundle.digest = Sha256::digest(bundle.canonical_bytes_without_digest()).into();
     Ok(bundle)
+}
+
+fn variant_growth_charge(
+    candidate: &KirMultiversionVariant,
+    accepted: &[KirMultiversionVariant],
+    baseline_profile: &KirTargetProfile,
+) -> u32 {
+    let candidate_body = normalized_variant_kir_body(candidate, baseline_profile);
+    if accepted
+        .iter()
+        .any(|variant| normalized_variant_kir_body(variant, baseline_profile) == candidate_body)
+    {
+        0
+    } else {
+        candidate.kir_units
+    }
+}
+
+fn normalized_variant_kir_body(
+    variant: &KirMultiversionVariant,
+    baseline_profile: &KirTargetProfile,
+) -> String {
+    let mut module = variant.module.clone();
+    module.profile = baseline_profile.clone();
+    let source_names = variant
+        .hidden_symbols
+        .iter()
+        .map(|symbol| (symbol.hidden_name.as_str(), symbol.source_name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    for function in &mut module.functions {
+        if let Some(source_name) = source_names.get(function.name.as_str()) {
+            function.name = (*source_name).to_string();
+        }
+        for instruction in function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+        {
+            if let KirInstructionKind::Call { function_name, .. } = &mut instruction.kind
+                && let Some(source_name) = source_names.get(function_name.as_str())
+            {
+                function_name.clone_from(&(*source_name).to_string());
+            }
+        }
+    }
+    print_kir_module(&module)
 }
 
 fn validate_request(request: &KirMultiversionPlanningRequest) -> Result<(), String> {

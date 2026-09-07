@@ -53,11 +53,20 @@ fn multiversion_planner_should_build_a_closed_verified_bundle_from_one_pre_state
     assert_eq!(first, second);
     assert_eq!(first.baseline, request.logical_pre_state);
     assert!(!first.roots.is_empty());
-    assert!(first.roots[0].variants.len() <= 2);
+    assert_eq!(
+        first.roots[0].variants.len(),
+        2,
+        "target-profile-only variants with the same normalized KIR body must share the fixed growth budget"
+    );
     assert_eq!(
         first.roots[0].variants[0].tier,
         calckernel::KirMultiversionTierId::X86_64V3,
-        "a one-variant budget must retain the broadly compatible profitable tier"
+        "coverage-first ranking must retain the broadly compatible profitable tier first"
+    );
+    assert_eq!(
+        first.roots[0].variants[1].tier,
+        calckernel::KirMultiversionTierId::X86_64V4,
+        "a v4 host must retain its profitable AVX-512 member when it shares the v3 logical KIR body"
     );
     assert!(
         first.roots[0]
@@ -66,6 +75,10 @@ fn multiversion_planner_should_build_a_closed_verified_bundle_from_one_pre_state
             .all(|variant| variant.logical_pre_state_digest == first.logical_pre_state_digest)
     );
     assert!(first.additional_kir_units <= first.baseline_kir_units);
+    assert_eq!(
+        first.additional_kir_units, first.roots[0].variants[0].kir_units,
+        "identical normalized KIR bodies must be charged exactly once"
+    );
     assert!(first.total_kir_units <= first.baseline_kir_units.saturating_mul(2));
 }
 

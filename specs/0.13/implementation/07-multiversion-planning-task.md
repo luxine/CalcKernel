@@ -30,8 +30,11 @@ baseline、每 root 至多两个 enhanced implementation 和 closed dispatch pla
    benefit 同时 >=10% 且 >=2 units；有 profile 时只考虑 PGO-hot，无 profile 用 ordinary static cost。
 4. 写 variant RED：所有 variant 从同一 verified logical KIR pre-state 独立生成，不能从另一个 variant
    派生；hidden helper 可 clone/inline 但不 export，每 variant 有独立 proof/cost/feature/size digest。
-5. 写 budget RED：每 root baseline + 0..2 enhanced；additional KIR units <= complete post-O3 baseline
-   units，最终 <=2x；与 PGO/0.12 clone/transaction ledger 共享，trial/non-winner 不退款。
+5. 写 budget RED：每 root baseline + 0..2 enhanced；additional unique normalized KIR-body units <=
+   complete post-O3 baseline units，logical growth 最终 <=2x；仅 target profile/tier-derived hidden name
+   不同且规范化后逐字节相同的 member 共享一次 body charge，真实结构差异完整计费；各 target module、
+   object 与 artifact-size gate 仍独立。预算与 PGO/0.12 clone/transaction ledger 共享，trial/non-winner
+   不退款。
 6. 写 ranking RED：enhanced retained-set 至少有一个达到收益门槛的 trial 作为 eligibility witness；
    profitable strict superset 的
    predicted non-regressing required-feature subset 可作为 compatibility companion。候选按 fewer

@@ -309,6 +309,7 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
         "aarch64-sve-tune-neoverse-n2-v2",
         "coverage-first-variant-ranking-v1",
         "coverage-companion-profitability-v1",
+        "shared-target-neutral-variant-budget-v1",
         "compact-multiversion-inline-v2",
         "x86-loop-simd-min-interleave-4-v1",
         "compact-vector-uf-stride-v1",
