@@ -1,7 +1,8 @@
 use std::{ffi::OsString, fs, process::Command};
 
 use calckernel::{
-    CkProfileCounter, NativeArtifactKind, NativeArtifactPaths, NativePlatform, parse_profile_shard,
+    CkProfileCounter, CkProfileSiteKind, NativeArtifactKind, NativeArtifactPaths, NativePlatform,
+    parse_profile_shard,
 };
 
 use super::support::temp::unique_id;
@@ -312,6 +313,62 @@ fn profile_generation_candidate_batching_should_publish_exact_bucket_counts() {
         } => candidates == &[2000] && *other == 2000,
         _ => false,
     }));
+    fs::remove_dir_all(root).expect("remove generation fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_generation_internal_helper_entries_should_retain_exact_call_counts() {
+    use std::ffi::CString;
+
+    let (root, input) = fixture(
+        "fn helper(value: u64) -> u64 { return value + 1; }\n\
+         export fn kernel(n: u32) -> u64 { let i: u32 = 0; let total: u64 = 0;\n\
+           while i < n { total = helper(total); i = i + 1; } return total; }",
+    );
+    let paths = build_library(&root, &input, true);
+    let header = fs::read_to_string(paths.header.expect("generation header"))
+        .expect("read generation header");
+    let flush_name = flush_symbol(&header);
+    unsafe {
+        let path_text = paths.primary.to_string_lossy().into_owned();
+        let path = CString::new(path_text.as_bytes()).expect("library path");
+        let handle = dlopen(path.as_ptr(), 2);
+        assert!(!handle.is_null(), "dlopen generation library");
+        let kernel_name = CString::new("kernel").expect("kernel symbol");
+        let kernel_address = dlsym(handle, kernel_name.as_ptr());
+        assert!(!kernel_address.is_null(), "dlsym kernel");
+        let kernel: unsafe extern "C" fn(u32) -> u64 = std::mem::transmute(kernel_address);
+        assert_eq!(kernel(4000), 4000);
+        assert_eq!(kernel(4000), 4000);
+
+        let flush_name = CString::new(flush_name).expect("flush symbol");
+        let flush_address = dlsym(handle, flush_name.as_ptr());
+        assert!(!flush_address.is_null(), "dlsym flush");
+        let flush: unsafe extern "C" fn() -> i32 = std::mem::transmute(flush_address);
+        assert_eq!(flush(), 0);
+        assert_eq!(dlclose(handle), 0);
+    }
+    let shards = completed_shards(&root.join("library-shards"));
+    assert_eq!(shards.len(), 1, "completed shards: {shards:?}");
+    let shard = parse_profile_shard(&fs::read(&shards[0]).expect("read completed shard"))
+        .expect("parse completed shard");
+    let mut entries = shard
+        .sites
+        .iter()
+        .zip(&shard.counters)
+        .filter_map(|(site, counter)| {
+            if !matches!(site.kind, CkProfileSiteKind::FunctionEntry) {
+                return None;
+            }
+            let CkProfileCounter::Scalar(value) = counter.counter else {
+                panic!("function entry did not use a scalar counter")
+            };
+            Some(value)
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable();
+    assert_eq!(entries, [2, 8000]);
     fs::remove_dir_all(root).expect("remove generation fixture");
 }
 

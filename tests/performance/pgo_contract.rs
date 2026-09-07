@@ -176,6 +176,40 @@ fn profile_generation_edges_should_batch_locally_until_function_exit() {
 }
 
 #[test]
+fn profile_generation_internal_entries_should_batch_at_static_calls_until_caller_exit() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    let commands = read("src/cli/commands.rs");
+    for required in [
+        "callsite_entries: BTreeMap<String, u32>",
+        "entry_storage: BTreeMap<u32, Storage<'module>>",
+        "fn allocate_profile_entry_counters",
+        "fn add_profile_entry_local",
+        "fn flush_profile_entry_counters",
+    ] {
+        assert!(
+            format!("{lowering}\n{commands}").contains(required),
+            "profile entry call-site batching is missing {required:?}"
+        );
+    }
+    let call_lowering = lowering
+        .split("fn call(")
+        .nth(1)
+        .expect("call lowering")
+        .split("fn terminator")
+        .next()
+        .expect("call lowering boundary");
+    assert!(call_lowering.contains("self.add_profile_entry_local(name)?;"));
+    let entry_lowering = lowering
+        .split("fn emit_profile_function_entry")
+        .nth(1)
+        .expect("function-entry lowering")
+        .split("fn emit_profile_instruction")
+        .next()
+        .expect("function-entry lowering boundary");
+    assert!(entry_lowering.contains("self.function.exported || self.profile_entry"));
+}
+
+#[test]
 fn profile_generation_candidates_should_batch_locally_until_function_exit() {
     let lowering = read("src/backend/llvm/kir_lower.rs");
     let runtime = read("native/profile_runtime/common/collector.c");

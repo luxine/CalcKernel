@@ -295,3 +295,14 @@ integer map 与三流 map 继续选择四链。ordinary/multiversion native obje
 加入 `x86-widening-cast-frontend-budget-2-v1`，禁止复用旧 `UF4` 产物。语言/ABI、安全语义、目标 ISA、`UF <= 4` frontier、
 legality/profitability/proof/growth gate、性能与稳定性门槛、timed work、样本、corpus、平台与
 required job matrix 均未改变。
+
+V0.14 exact replay run `34100659848` 的 x86-64 performance job
+`101674461128` 重建 exact v0.13 `002100719bdefdabb0fece50a363e1b797c464d2`
+后，`branch-layout` generation 以 `782,368 / 152,662 = 5.1248x` 未通过不变的 `5.0x`
+overhead 门槛。全部 20 个样本稳定；失败 artifact 的机器码显示 LLVM 内联两个 helper 算术后，
+每个 loop element 仍执行两次 internal function-entry atomic publication。复诊与闭环见
+`specs/0.13/review/implementation-blocker-32.md`：只有 non-exported、non-entry internal function
+的 entry observation 被精确迁移到各 static call site 的 caller-local saturating counter，并在
+caller 正常或 checked-failure return 时通过既有 bulk-add 原子发布；export 与 module entry
+保持直接发布。site/counter 意义、profile schema、语言/ABI、安全语义、目标 ISA、性能与稳定性
+门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
