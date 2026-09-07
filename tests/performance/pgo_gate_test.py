@@ -71,7 +71,7 @@ def elf_with_symbols(symbols):
 
 
 def stripped_elf_with_dispatch(public_symbol="kernel", public_value=0x1240,
-                                slot_value=0x3888, slot_size=8):
+                                slot_value=0x3888, slot_size=8, slot_type=8):
     dynamic_strings = b"\0" + public_symbol.encode() + b"\0"
     dynamic_symbols = bytes(24) + struct.pack(
         "<IBBHQQ", 1, 0x12, 0, 1, public_value, 0
@@ -96,7 +96,7 @@ def stripped_elf_with_dispatch(public_symbol="kernel", public_value=0x1240,
         len(dynamic_symbols), 1, 1, 8, 24
     )
     dispatch_slot_section = struct.pack(
-        "<IIQQQQIIQQ", 17, 8, 3, slot_value, 0, slot_size, 0, 0, 8, 0
+        "<IIQQQQIIQQ", 17, slot_type, 3, slot_value, 0, slot_size, 0, 0, 8, 0
     )
     section_name_section = struct.pack(
         "<IIQQQQIIQQ", 35, 3, 0, 0, section_name_offset,
@@ -328,6 +328,14 @@ class SchemaEightGateTests(unittest.TestCase):
     def test_collector_reads_public_dynsym_and_dedicated_stripped_dispatch_slot(self):
         library = self.root / "selected-direct.so"
         library.write_bytes(stripped_elf_with_dispatch())
+
+        symbols = collector.dispatch_symbol_values(library, "kernel")
+
+        self.assertEqual(symbols, (0x1240, 0x3888))
+
+    def test_collector_accepts_lld_materialized_progbits_dispatch_slot(self):
+        library = self.root / "selected-direct-progbits.so"
+        library.write_bytes(stripped_elf_with_dispatch(slot_type=1))
 
         symbols = collector.dispatch_symbol_values(library, "kernel")
 
