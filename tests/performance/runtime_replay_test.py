@@ -18,6 +18,24 @@ SPEC.loader.exec_module(PREPARE)
 
 
 class ReplayPreparation(unittest.TestCase):
+    def test_compiler_integrity_is_bound_to_the_frozen_replay_copy(self):
+        with tempfile.TemporaryDirectory(prefix="ckc-replay-compiler-") as directory:
+            root = pathlib.Path(directory)
+            build_compiler = root / "target" / "release" / "ckc"
+            frozen_compiler = root / "replay" / "ckc-v013"
+            build_compiler.parent.mkdir(parents=True)
+            frozen_compiler.parent.mkdir(parents=True)
+            build_compiler.write_bytes(b"compiler before cargo bench")
+            frozen_compiler.write_bytes(build_compiler.read_bytes())
+            digest = PREPARE.sha256_file(frozen_compiler)
+
+            build_compiler.write_bytes(b"cargo bench rebuilt this path")
+            PREPARE.validate_frozen_compiler(frozen_compiler, digest)
+
+            frozen_compiler.write_bytes(b"mutated replay compiler")
+            with self.assertRaisesRegex(ValueError, "baseline compiler changed"):
+                PREPARE.validate_frozen_compiler(frozen_compiler, digest)
+
     def test_historical_replay_copy_rebinds_only_the_recipe_identity(self):
         with tempfile.TemporaryDirectory(prefix="ckc-replay-recipe-") as directory:
             root = pathlib.Path(directory)

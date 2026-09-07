@@ -65,6 +65,11 @@ def sha256_file(path: pathlib.Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def validate_frozen_compiler(compiler: pathlib.Path, expected_digest: str) -> None:
+    if sha256_file(compiler) != expected_digest:
+        raise ValueError("baseline compiler changed during library emission")
+
+
 def baseline_identity(version: str) -> dict:
     if version == "0.13":
         return {
@@ -336,7 +341,8 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
         # build.rs embeds the installed component manifest, not the source recipe.
         validate_compiler_output(verbose, triple, component_digest, identity["version"])
         compiler_digest = sha256_file(compiler)
-        shutil.copy2(compiler, out / identity["compiler"])
+        frozen_compiler = out / identity["compiler"]
+        shutil.copy2(compiler, frozen_compiler)
         artifacts = []
         if version in {"0.12", "0.13"}:
             archive = out / f"ckc-v{version.replace('.', '')}-distribution.tar.gz"
@@ -395,7 +401,7 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
             replay_environment = {
                 **os.environ,
                 **historical_bundles,
-                "CKC_CANDIDATE_COMPILER": str(compiler),
+                "CKC_CANDIDATE_COMPILER": str(frozen_compiler),
                 "GITHUB_SHA": identity["commit"],
             }
             run([
@@ -459,8 +465,7 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
             raise ValueError("preparation/replay implementation changed during preparation")
         if sha256_file(component_manifest) != component_digest:
             raise ValueError("installed LLVM component identity changed during preparation")
-        if sha256_file(compiler) != compiler_digest or sha256_file(out / identity["compiler"]) != compiler_digest:
-            raise ValueError("baseline compiler changed during library emission")
+        validate_frozen_compiler(frozen_compiler, compiler_digest)
 
         metadata = {
             "commit": identity["commit"],
