@@ -2765,6 +2765,14 @@ extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
             stem + "_resolve", llvm_module);
         resolver->addFnAttr(llvm::Attribute::NoInline);
         resolver->addFnAttr(llvm::Attribute::Cold);
+        auto *resolve_entry = llvm::Function::Create(
+            function_type, llvm::GlobalValue::InternalLinkage,
+            stem + "_resolve_entry", llvm_module);
+        resolve_entry->setCallingConv(baseline->getCallingConv());
+        resolve_entry->setAttributes(baseline->getAttributes());
+        resolve_entry->addFnAttr(llvm::Attribute::NoInline);
+        resolve_entry->addFnAttr(llvm::Attribute::Cold);
+        slot->setInitializer(resolve_entry);
         auto *resolver_entry =
             llvm::BasicBlock::Create(context, "entry", resolver);
         llvm::IRBuilder<> resolver_builder(resolver_entry);
@@ -2787,7 +2795,7 @@ extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
                 compatible, variants[index], selected, "ck.selected");
         }
         auto *publication = resolver_builder.CreateAtomicCmpXchg(
-            slot, null_pointer, selected, llvm::Align(8),
+            slot, resolve_entry, selected, llvm::Align(8),
             llvm::AtomicOrdering::AcquireRelease,
             llvm::AtomicOrdering::Acquire);
         publication->setWeak(false);
@@ -2799,6 +2807,31 @@ extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
             published, selected, winner, "ck.resolved.pointer");
         resolver_builder.CreateRet(resolved);
 
+        auto *resolve_entry_block =
+            llvm::BasicBlock::Create(context, "entry", resolve_entry);
+        llvm::IRBuilder<> resolve_entry_builder(resolve_entry_block);
+        auto *fresh = resolve_entry_builder.CreateCall(
+            resolver, {}, "ck.dispatch.fresh");
+        std::vector<llvm::Value *> resolve_arguments;
+        resolve_arguments.reserve(resolve_entry->arg_size());
+        for (auto &argument : resolve_entry->args()) {
+            resolve_arguments.push_back(&argument);
+        }
+        auto *resolve_call = function_type->getReturnType()->isVoidTy()
+                                 ? resolve_entry_builder.CreateCall(
+                                       function_type, fresh, resolve_arguments)
+                                 : resolve_entry_builder.CreateCall(
+                                       function_type, fresh, resolve_arguments,
+                                       "ck.dispatch.call");
+        resolve_call->setCallingConv(baseline->getCallingConv());
+        resolve_call->setAttributes(baseline->getAttributes());
+        resolve_call->setTailCallKind(llvm::CallInst::TCK_MustTail);
+        if (function_type->getReturnType()->isVoidTy()) {
+            resolve_entry_builder.CreateRetVoid();
+        } else {
+            resolve_entry_builder.CreateRet(resolve_call);
+        }
+
         auto *dispatcher = llvm::Function::Create(
             function_type, llvm::GlobalValue::InternalLinkage,
             implementation_name, llvm_module);
@@ -2806,32 +2839,19 @@ extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
         dispatcher->setAttributes(baseline->getAttributes());
         dispatcher->addFnAttr(llvm::Attribute::AlwaysInline);
         auto *entry = llvm::BasicBlock::Create(context, "entry", dispatcher);
-        auto *slow = llvm::BasicBlock::Create(context, "resolve", dispatcher);
-        auto *invoke = llvm::BasicBlock::Create(context, "invoke", dispatcher);
         llvm::IRBuilder<> dispatch_builder(entry);
         auto *cached = dispatch_builder.CreateLoad(pointer_type, slot,
                                                    "ck.dispatch.pointer");
         cached->setAtomic(llvm::AtomicOrdering::Acquire);
         cached->setAlignment(llvm::Align(8));
-        auto *uninitialized = dispatch_builder.CreateICmpEQ(
-            cached, null_pointer, "ck.dispatch.uninitialized");
-        dispatch_builder.CreateCondBr(uninitialized, slow, invoke);
-        dispatch_builder.SetInsertPoint(slow);
-        auto *fresh = dispatch_builder.CreateCall(resolver, {}, "ck.dispatch.fresh");
-        dispatch_builder.CreateBr(invoke);
-        dispatch_builder.SetInsertPoint(invoke);
-        auto *pointer = dispatch_builder.CreatePHI(pointer_type, 2,
-                                                  "ck.dispatch.target");
-        pointer->addIncoming(cached, entry);
-        pointer->addIncoming(fresh, slow);
         std::vector<llvm::Value *> arguments;
         arguments.reserve(dispatcher->arg_size());
         for (auto &argument : dispatcher->args()) {
             arguments.push_back(&argument);
         }
         auto *call = function_type->getReturnType()->isVoidTy()
-                         ? dispatch_builder.CreateCall(function_type, pointer, arguments)
-                         : dispatch_builder.CreateCall(function_type, pointer, arguments,
+                         ? dispatch_builder.CreateCall(function_type, cached, arguments)
+                         : dispatch_builder.CreateCall(function_type, cached, arguments,
                                                        "ck.dispatch.call");
         call->setCallingConv(baseline->getCallingConv());
         call->setAttributes(baseline->getAttributes());

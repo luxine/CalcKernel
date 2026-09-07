@@ -941,16 +941,30 @@ fn aarch64_linux_profile_runtime_should_use_the_arch_specific_open_flags() {
 #[test]
 fn multiversion_dispatch_should_never_name_a_void_call() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
+    let resolve_entry = bridge
+        .split_once("auto *resolve_call = function_type->getReturnType()->isVoidTy()")
+        .expect("return-type-sensitive multiversion resolve-entry call")
+        .1;
+    assert!(
+        resolve_entry.contains("CreateCall(\n                                       function_type, fresh, resolve_arguments)"),
+        "void multiversion resolve-entry call must use the unnamed LLVM overload"
+    );
+    assert!(
+        resolve_entry.contains("CreateCall(\n                                       function_type, fresh, resolve_arguments,\n")
+            && resolve_entry.contains("\"ck.dispatch.call\""),
+        "non-void multiversion resolve-entry call should retain its stable name"
+    );
+
     let dispatch = bridge
         .split_once("auto *call = function_type->getReturnType()->isVoidTy()")
         .expect("return-type-sensitive multiversion call")
         .1;
     assert!(
-        dispatch.contains("CreateCall(function_type, pointer, arguments)"),
+        dispatch.contains("CreateCall(function_type, cached, arguments)"),
         "void multiversion dispatch call must use the unnamed LLVM overload"
     );
     assert!(
-        dispatch.contains("CreateCall(function_type, pointer, arguments,\n")
+        dispatch.contains("CreateCall(function_type, cached, arguments,\n")
             && dispatch.contains("\"ck.dispatch.call\""),
         "non-void multiversion dispatch call should retain its stable name"
     );

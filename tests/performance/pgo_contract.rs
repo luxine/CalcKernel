@@ -125,6 +125,24 @@ fn schema_eight_compile_time_should_measure_terminated_child_cpu_time() {
 }
 
 #[test]
+fn multiversion_dispatch_hot_path_should_not_branch_on_a_null_slot() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let commands = read("src/cli/commands.rs");
+    assert!(
+        bridge.contains("_resolve_entry"),
+        "the dispatch slot must start at an ABI-preserving cold resolver entry"
+    );
+    assert!(
+        !bridge.contains("ck.dispatch.uninitialized"),
+        "the steady-state thunk must not retain a null test and branch"
+    );
+    assert!(
+        commands.contains("dispatch-resolver-sentinel-v2"),
+        "the object-affecting dispatcher change must invalidate Native caches"
+    );
+}
+
+#[test]
 fn profile_generation_initializer_should_remain_out_of_instrumented_hot_paths() {
     let lowering = read("src/backend/llvm/kir_lower.rs");
     let builder = read("src/backend/llvm/builder.rs");

@@ -549,11 +549,12 @@ accepted exported root 的原 public symbol 指向 baseline-safe dispatcher thun
 与 symbol visibility。implementation symbol 含 content digest，并从 header、export table 与
 普通 symbol lookup 隐藏。
 
-first call 获取 normalized capability bitset，按 root variant 排序选择，再用 acquire/release
-atomic 把 function pointer 发布到该 root 的 private slot。并发 first call 可以重复 detection 并
-计算同一答案，但只能发布 compatible verified pointer；该 slot 是唯一 publication/cache layer。
-后续调用执行一次 atomic load 与 indirect tail call，不再执行 CPUID/HWCAP query。public
-function address 始终是 thunk。
+root 的 private slot 初始指向 cold、baseline-safe 且保持 ABI 的 resolver entry。first call
+通过普通 thunk load 与 tail call 到达该入口，获取 normalized capability bitset，按 root variant
+排序选择，再用 acquire/release atomic 把 resolver entry 替换为选定 function pointer。并发
+first call 可以重复 detection 并计算同一答案，但只能发布 compatible verified pointer；该 slot
+是唯一 publication/cache layer。后续调用执行相同的一次 atomic load 与 indirect tail call，
+不含 null test，也不再执行 CPUID/HWCAP query。public function address 始终是 thunk。
 
 x86-64 使用 compiler-owned CPUID/XGETBV，同时要求 hardware bit 与 OS register-state。
 AArch64 Linux executable 使用启动 auxiliary-vector HWCAP/HWCAP2；没有 CK entry capture 的
