@@ -4,15 +4,21 @@
 
 状态：CK 0.14.0 提议设计
 
-已接纳基线修订：v0.13 修复候选 0b2eaa52682d06300a009b2378a9ce00697f93f5
+已接纳基线修订：v0.13 修复候选 7b883bf36a2edfb6720caa69aa7f10c94ebb9e43
 
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
 实现最初基于 v0.13 候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`。
 最终验收前，已逐文件审计并以 v0.14 等价修复吸收该候选到最终接纳修订
-`0b2eaa52682d06300a009b2378a9ce00697f93f5` 的累计提交差异。主动替代项记录在
+`7b883bf36a2edfb6720caa69aa7f10c94ebb9e43` 的累计提交差异。主动替代项记录在
 实施期设计复诊 10；任何语义差异都不得通过适配测试来掩盖。
+
+已接纳基线还会对 normalized target-neutral multiversion KIR body 使用结构相等性，并把一次
+opaque independent-check authority 保留到 emission，同时保证 raw public emitter fail closed。
+coverage-first retention 与 predicted-cost-first runtime dispatch 是两套独立 total order，因此
+高阶 host 选择其最快 compatible retained member，又不会移除低阶 coverage companion。编译耗时
+与运行时性能门槛保持不变。
 
 已接纳的 v0.13 修复同时关闭 schema 8 multiversion 产物总尺寸：ELF shared 产物移除
 loader 不需要的元数据，同时保留动态公开导出以及供精确 selected-direct 证据使用的私有、

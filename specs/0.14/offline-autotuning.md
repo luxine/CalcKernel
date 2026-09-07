@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 0b2eaa52682d06300a009b2378a9ce00697f93f5
+Accepted base revision: v0.13 repaired candidate 7b883bf36a2edfb6720caa69aa7f10c94ebb9e43
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,9 +13,16 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`0b2eaa52682d06300a009b2378a9ce00697f93f5` was reviewed file by file and integrated
+`7b883bf36a2edfb6720caa69aa7f10c94ebb9e43` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
+
+The accepted base also compares normalized target-neutral multiversion KIR bodies
+structurally and retains one opaque independent-check authority through emission,
+while keeping the raw public emitter fail closed. Coverage-first retention and
+predicted-cost-first runtime dispatch are separate total orders, so a higher-tier
+host selects its fastest compatible retained member without removing the lower-tier
+coverage companion. Compile and runtime performance thresholds are unchanged.
 
 The accepted v0.13 repair also closes schema-8 aggregate multiversion artifact size:
 ELF shared products discard non-loader metadata while retaining the dynamic public
