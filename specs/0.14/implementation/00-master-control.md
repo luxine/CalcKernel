@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`ad44b16a81762610b002a38806673102d3d55ff9`。两者之间的累计提交已按
+`fb6ce267c4e17dc894cd1fd9d7b6505cccc6db89`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -290,13 +290,14 @@ Exact v0.13 run `34051103711` 的 AArch64 performance job `101534772807` 在前�
 单项尺寸修复后通过全部 runtime gate，但五个 multiversion 动态库总尺寸仍为
 `20584 / 9632 = 2.13704 > 2.0`；exact v0.14 run `34051523126` 的 job
 `101535896793` 在准备同一历史 replay 时精确复现该阻断。V0.14 已逐字继承 exact v0.13
-`ad44b16a81762610b002a38806673102d3d55ff9` 的 closure：ELF shared link 使用
+`fb6ce267c4e17dc894cd1fd9d7b6505cccc6db89` 的 closure：ELF shared link 使用
 `--strip-all`，公开入口由 `.dynsym` 解析，唯一私有 resolver slot 位于 pointer-width/aligned
-`.ck_dispatch_slot` `NOBITS` section；生成的 per-root acquire/release slot 是唯一 publication
+`.ck_dispatch_slot` section，允许 LLD 的 `SHT_PROGBITS` 或 `SHT_NOBITS` allocated writable
+表示；生成的 per-root acquire/release slot 是唯一 publication
 layer，one-shot detector 删除重复的 process cache 并按 size-first recipe 编译。重建失败
 artifact 的同形链接得到 aggregate `14792 / 8544 = 1.73127`，低于未改变的 `2.0` 门槛；
 accepted v0.13 与 replay 重钉到该 SHA，manifest SHA-256 为
-`563df5c58baec8e0e23f95a8c23670823809c79f99c869ee8d1e543c33d52885`。复诊见
+`c94692bebd54d7f6ea42939348a678f3553dd8280771afed2d72a6c5a0480862`。复诊见
 `specs/0.14/review/implementation-blocker-33.md`；语言/公开 ABI、strict FP、安全规则、
 target ISA、tuning/growth/profitability/性能与稳定性门槛、timed work、样本、corpus、平台及
 required job topology 均保持不变。

@@ -124,7 +124,8 @@ and Rust PGO. The selected-direct channel loads a separate byte-identical
 multiversion artifact, resolves it before timing, and calls the exact hidden
 member published in its private slot; only the public thunk is bypassed.
 For stripped ELF products, the public entry comes from `.dynsym` and the unique
-pointer-width slot comes from the private `.ck_dispatch_slot` `NOBITS` section;
+pointer-width, pointer-aligned slot comes from the private `.ck_dispatch_slot`
+section. Both LLD representations, `SHT_PROGBITS` and `SHT_NOBITS`, are valid;
 the full local symbol table is not part of the evidence contract.
 Dynamic loading, symbol lookup, and dispatch resolution are outside steady
 timing. Three warm-up rows and twenty sample rows are retained;

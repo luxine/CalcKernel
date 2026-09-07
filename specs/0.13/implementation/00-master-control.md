@@ -269,8 +269,9 @@ multiversion 动态库总计 `20584 / 9632 = 2.13704 > 2.0`，未通过 aggregat
 gate；V0.14 replay job `101535896793` 精确复现。复诊与闭环见
 `specs/0.13/review/implementation-blocker-28.md`：ELF shared product 只保留 loader 所需
 dynamic export，LLD 使用 `--strip-all`，唯一 resolver slot 进入 private
-`.ck_dispatch_slot` `NOBITS` section，使同字节 selected-direct evidence 不依赖完整 local
-symbol table；generated acquire/release slot 成为唯一 publication layer，one-shot detector
+`.ck_dispatch_slot` section，并允许 LLD 的 `SHT_PROGBITS` 或 `SHT_NOBITS` allocated writable
+表示，使同字节 selected-direct evidence 不依赖完整 local symbol table；generated
+acquire/release slot 成为唯一 publication layer，one-shot detector
 改为 size-first 编译。以失败 job 的 exact AArch64 archives 重建为 `14792 / 8544 =
 1.73127`。语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、
 平台与 required job matrix 均未改变。

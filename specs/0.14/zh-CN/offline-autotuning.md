@@ -4,19 +4,20 @@
 
 状态：CK 0.14.0 提议设计
 
-已接纳基线修订：v0.13 修复候选 ad44b16a81762610b002a38806673102d3d55ff9
+已接纳基线修订：v0.13 修复候选 fb6ce267c4e17dc894cd1fd9d7b6505cccc6db89
 
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
 实现最初基于 v0.13 候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`。
 最终验收前，已逐文件审计并以 v0.14 等价修复吸收该候选到最终接纳修订
-`ad44b16a81762610b002a38806673102d3d55ff9` 的累计提交差异。主动替代项记录在
+`fb6ce267c4e17dc894cd1fd9d7b6505cccc6db89` 的累计提交差异。主动替代项记录在
 实施期设计复诊 10；任何语义差异都不得通过适配测试来掩盖。
 
 已接纳的 v0.13 修复同时关闭 schema 8 multiversion 产物总尺寸：ELF shared 产物移除
 loader 不需要的元数据，同时保留动态公开导出以及供精确 selected-direct 证据使用的私有、
-指针宽度 `.ck_dispatch_slot` `NOBITS` section。生成的每 root acquire/release 指针 slot
+指针宽度、指针对齐的 `.ck_dispatch_slot` section；LLD 可将这个 allocated writable
+section 表示为 `SHT_PROGBITS` 或 `SHT_NOBITS`。生成的每 root acquire/release 指针 slot
 是唯一 publication layer；one-shot detector 不再维护重复的进程级缓存，并使用冻结的
 size-first runtime recipe 编译。公开 ABI、目标 ISA 与全部性能门槛保持不变。
 

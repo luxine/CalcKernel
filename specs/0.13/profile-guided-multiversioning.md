@@ -709,8 +709,9 @@ digest; dynamic libraries and executables hide them. Resolver and thunk code is
 compiled for baseline and is audited to contain no optional instructions.
 
 ELF shared products strip non-loader symbol metadata. The generated resolver
-slot resides in a private pointer-width `.ck_dispatch_slot` `NOBITS` section;
-it is neither a dynamic export nor a public ABI symbol. This section lets the
+slot resides in a private pointer-width, pointer-aligned `.ck_dispatch_slot`
+section; LLD may materialize it as `SHT_PROGBITS` or `SHT_NOBITS`. It is neither
+a dynamic export nor a public ABI symbol. This section lets the
 selected-direct evidence path resolve the exact published member from a
 byte-identical artifact without retaining the full local symbol table.
 

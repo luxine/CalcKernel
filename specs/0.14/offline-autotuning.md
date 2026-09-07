@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate ad44b16a81762610b002a38806673102d3d55ff9
+Accepted base revision: v0.13 repaired candidate fb6ce267c4e17dc894cd1fd9d7b6505cccc6db89
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,14 +13,15 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`ad44b16a81762610b002a38806673102d3d55ff9` was reviewed file by file and integrated
+`fb6ce267c4e17dc894cd1fd9d7b6505cccc6db89` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
 The accepted v0.13 repair also closes schema-8 aggregate multiversion artifact size:
 ELF shared products discard non-loader metadata while retaining the dynamic public
-export and a private pointer-width `.ck_dispatch_slot` `NOBITS` section for exact
-selected-direct evidence. The generated per-root acquire/release pointer slot is the
+export and a private pointer-width, pointer-aligned `.ck_dispatch_slot` section for
+exact selected-direct evidence. LLD may represent that allocated writable section as
+`SHT_PROGBITS` or `SHT_NOBITS`. The generated per-root acquire/release pointer slot is the
 only publication layer; the one-shot detector has no redundant process-wide cache and
 is compiled with the frozen size-first runtime recipe. Public ABI, target ISA and all
 performance thresholds remain unchanged.
