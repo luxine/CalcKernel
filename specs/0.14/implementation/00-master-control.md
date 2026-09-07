@@ -39,12 +39,13 @@
 - `specs/0.14/review/implementation-blocker-33.md`
 - `specs/0.14/review/implementation-blocker-45.md`
 - `specs/0.14/review/implementation-blocker-46.md`
+- `specs/0.14/review/implementation-blocker-47.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`6fd8234859dfe667419b7be9e601ad79426fd2dd`。两者之间的累计提交已按
+`e869763366283e46cd76ffbf3bb85c6c3959c25c`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -64,6 +65,17 @@ runtime ident 体积、Windows stripped-PE 观察点和 ARM64 `_Interlocked*` �
 SHA-256 为 `138f4fe15331698f8b14c1b5fba56057d4935dfbbe1948fd5f22f935ee932932`。
 同一 run 的 x86 worker 只有 v3、缺少 schema 9 规范要求的 v4；该环境失败保持 hard fail，不能以
 降低 required tier、skip 或模拟计时规避。语言/公开 ABI、安全语义、目标 ISA、schema 9、性能/
+稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34155662442` 的 ARM64 Native jobs 证明新增 helper regression 误走 ordinary
+KIR O3，x86-64 performance job 同时证明 checked constant-bound map 被 streaming-map
+`unroll.disable` 覆盖。Exact V0.14 run `34155664658` 在两套 ARM64 Native jobs 复现同一
+test-path 缺陷。复诊与继承闭环见
+`specs/0.14/review/implementation-blocker-47.md`：V0.14 精确吸收 V0.13
+`e869763366283e46cd76ffbf3bb85c6c3959c25c`，Native regression 改走真实 multiversion KIR
+管线；checked constant-call map 恢复既有有界二路 schedule，unknown-length checked streaming
+map 继续禁止有害展开。replay manifest 重钉到该 SHA，SHA-256 为
+`4e9b37ae4687fa5f11c3da029e57fd3e1e6bd9512a2b66bd8599de9fd2337c3d`。语言/公开 ABI、安全语义、目标 ISA、schema 9、inline/growth budget、性能/
 稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
 
 目标是在本 worktree 形成完整、可审查的 0.14.0 候选并提交。不得自动合并 `main`，不得
@@ -447,3 +459,15 @@ stripped-PE 私有符号误判和 ARM64 `_Interlocked*` 未展开链接失败。
 v4，保持 required-capability hard fail，等待 replacement exact-SHA run 分配真实 v4 host。
 语言/公开 ABI、安全语义、target ISA、schema 9、性能/稳定性/产物门槛、timed work、样本、
 corpus、平台与 required job 均不变。
+
+Exact V0.13 run `34155662442` 的 ARM64 Native jobs 证明新增 helper regression 误走 ordinary
+KIR O3，x86-64 performance job 则以 checked `specialized_length`
+`4,860,459 / 4,052,972 ns` 未通过不变的 90% throughput 门槛。Exact V0.14 run
+`34155664658` 在两套 ARM64 Native jobs 复现同一 test-path 缺陷。V0.14 已精确继承 V0.13
+`e869763366283e46cd76ffbf3bb85c6c3959c25c`：regression 使用真实 multiversion KIR 管线并先
+验证 helper 保留状态；checked constant-call map 使用有界二路 schedule，unknown-length checked
+streaming map 继续禁止有害展开；replay manifest SHA-256 更新为
+`4e9b37ae4687fa5f11c3da029e57fd3e1e6bd9512a2b66bd8599de9fd2337c3d`。复诊见
+`specs/0.14/review/implementation-blocker-47.md`；语言/公开 ABI、安全语义、target ISA、
+schema 9、inline/growth budget、性能/稳定性/产物门槛、timed work、样本、corpus、平台与
+required job 均不变。
