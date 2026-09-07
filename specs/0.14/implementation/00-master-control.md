@@ -38,12 +38,13 @@
 - `specs/0.14/review/implementation-blocker-32.md`
 - `specs/0.14/review/implementation-blocker-33.md`
 - `specs/0.14/review/implementation-blocker-45.md`
+- `specs/0.14/review/implementation-blocker-46.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`7b883bf36a2edfb6720caa69aa7f10c94ebb9e43`。两者之间的累计提交已按
+`6fd8234859dfe667419b7be9e601ad79426fd2dd`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -55,6 +56,15 @@ exact V0.13 时以 multiversion source-to-object geometric ratio
 一次 independent-check authority 保留到 emission，coverage-first retention 与
 predicted-cost-first runtime dispatch 分离。性能/稳定性门槛、timed work、样本、corpus、平台与
 required job matrix 均未改变。
+
+Exact V0.14 run `34133617471` 随后重放了 V0.13 的 checked x86 map 有害展开、Unix private
+runtime ident 体积、Windows stripped-PE 观察点和 ARM64 `_Interlocked*` 链接问题。复诊与继承
+闭环见 `specs/0.14/review/implementation-blocker-46.md`：V0.14 精确吸收 V0.13
+`6fd8234859dfe667419b7be9e601ad79426fd2dd` 并将 replay manifest 重钉到该 SHA，manifest
+SHA-256 为 `138f4fe15331698f8b14c1b5fba56057d4935dfbbe1948fd5f22f935ee932932`。
+同一 run 的 x86 worker 只有 v3、缺少 schema 9 规范要求的 v4；该环境失败保持 hard fail，不能以
+降低 required tier、skip 或模拟计时规避。语言/公开 ABI、安全语义、目标 ISA、schema 9、性能/
+稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
 
 目标是在本 worktree 形成完整、可审查的 0.14.0 候选并提交。不得自动合并 `main`，不得
 创建或移动 tag，不得创建 GitHub Release。只有在本地门禁完成后才能推送 feature branch 触发
@@ -428,3 +438,12 @@ oracle 门槛。V0.14 已精确继承 exact v0.13
 SHA-256 为 `b2fb99873ac107481bac79529b4ac1bdc5e63abbbd2a8e925d6e9c935c612ffd`。
 复诊见 `specs/0.14/review/implementation-blocker-44.md`；`2x` logical KIR growth、语言/ABI、
 安全语义、target ISA、性能/稳定性门槛、timed work、样本、corpus、平台与 required job 均不变。
+
+Exact V0.14 run `34133617471` 在重建 V0.13 `7b883bf36a2edfb6720caa69aa7f10c94ebb9e43`
+时复现了 checked x86 streaming map 有害二路展开、Unix private runtime ident 聚合体积、Windows
+stripped-PE 私有符号误判和 ARM64 `_Interlocked*` 未展开链接失败。V0.14 已精确继承 V0.13
+`6fd8234859dfe667419b7be9e601ad79426fd2dd` 的闭环并重钉 replay manifest；复诊见
+`specs/0.14/review/implementation-blocker-46.md`。同 run 的 x86 runner 只有 v3 而缺少规范要求的
+v4，保持 required-capability hard fail，等待 replacement exact-SHA run 分配真实 v4 host。
+语言/公开 ABI、安全语义、target ISA、schema 9、性能/稳定性/产物门槛、timed work、样本、
+corpus、平台与 required job 均不变。
