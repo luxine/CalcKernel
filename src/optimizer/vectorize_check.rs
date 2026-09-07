@@ -214,7 +214,7 @@ fn check_vectorization_trial_with_minimum(
         .instructions
         .get(..preheader_before.instructions.len())
         != Some(preheader_before.instructions.as_slice())
-        || !(preheader_before.instructions.len() + 4..=preheader_before.instructions.len() + 6)
+        || !(preheader_before.instructions.len() + 3..=preheader_before.instructions.len() + 6)
             .contains(&preheader_after.instructions.len())
     {
         return compiler("vector preheader predicate is not a closed append-only rewrite");
@@ -344,18 +344,28 @@ fn check_vectorization_trial_with_minimum(
     let body_induction_index =
         original_header_body_induction_index(original, &candidate, original_body)
             .map_err(TransactionCheckError::compiler)?;
-    let scalar_chunk_zero = vector_body
-        .params
-        .get(body_induction_index)
-        .map(|param| param.value)
-        .ok_or_else(|| TransactionCheckError::compiler("vector body induction is missing"))?;
-    let header_induction = vector_body_edge
-        .args
-        .get(body_induction_index)
-        .copied()
-        .ok_or_else(|| {
-            TransactionCheckError::compiler("vector header induction edge is missing")
-        })?;
+    let compact_interleaved_body =
+        candidate.uf > 1 && candidate.diamond.is_none() && candidate.reduction.is_none();
+    let (scalar_chunk_zero, header_induction) = if compact_interleaved_body {
+        if !vector_body.params.is_empty() || !vector_body_edge.args.is_empty() {
+            return compiler("compact vector body retained redundant block parameters");
+        }
+        (vector_induction, vector_induction)
+    } else {
+        let scalar_chunk_zero = vector_body
+            .params
+            .get(body_induction_index)
+            .map(|param| param.value)
+            .ok_or_else(|| TransactionCheckError::compiler("vector body induction is missing"))?;
+        let header_induction = vector_body_edge
+            .args
+            .get(body_induction_index)
+            .copied()
+            .ok_or_else(|| {
+                TransactionCheckError::compiler("vector header induction edge is missing")
+            })?;
+        (scalar_chunk_zero, header_induction)
+    };
     if header_induction != vector_induction {
         return compiler("vector body induction does not originate at the vector header");
     }

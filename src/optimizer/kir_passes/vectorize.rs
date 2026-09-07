@@ -148,22 +148,30 @@ fn materialize_vectorization_trial_internal(
         });
     }
 
+    let compact_interleaved_body =
+        candidate.uf > 1 && candidate.diamond.is_none() && candidate.reduction.is_none();
     let mut body_values = BTreeMap::new();
     let mut vector_body_params = Vec::new();
     for (index, param) in original_body.params.iter().enumerate() {
-        let value = trial.fresh_value()?;
-        body_values.insert(param.value, value);
-        vector_body_params.push(KirBlockParam {
-            value,
-            slot: format!("loop_simd_{}", param.slot),
-            type_node: param.type_node.clone(),
-        });
         let source = *body_edge
             .args
             .get(index)
             .ok_or_else(|| "vector candidate body argument is missing".to_string())?;
-        if let Some(header_value) = header_values.get(&source) {
-            body_values.insert(source, *header_value);
+        let header_value = header_values
+            .get(&source)
+            .copied()
+            .ok_or_else(|| "vector body value does not originate at the loop header".to_string())?;
+        body_values.insert(source, header_value);
+        if compact_interleaved_body {
+            body_values.insert(param.value, header_value);
+        } else {
+            let value = trial.fresh_value()?;
+            body_values.insert(param.value, value);
+            vector_body_params.push(KirBlockParam {
+                value,
+                slot: format!("loop_simd_{}", param.slot),
+                type_node: param.type_node.clone(),
+            });
         }
     }
     let mut body_memories = BTreeMap::new();
@@ -223,19 +231,24 @@ fn materialize_vectorization_trial_internal(
         memory: None,
         effect: None,
     });
-    let vf_value = trial.fresh_value()?;
-    transformed_preheader.instructions.push(KirInstruction {
-        id: trial.fresh_instruction()?,
-        results: vec![KirResult {
-            value: vf_value,
-            type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
-        }],
-        kind: KirInstructionKind::ConstInt {
-            value: chunk_width.to_string(),
-        },
-        memory: None,
-        effect: None,
-    });
+    let vf_value = if candidate.minimum_trip == chunk_width {
+        minimum_value
+    } else {
+        let value = trial.fresh_value()?;
+        transformed_preheader.instructions.push(KirInstruction {
+            id: trial.fresh_instruction()?,
+            results: vec![KirResult {
+                value,
+                type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
+            }],
+            kind: KirInstructionKind::ConstInt {
+                value: chunk_width.to_string(),
+            },
+            memory: None,
+            effect: None,
+        });
+        value
+    };
     let vector_limit = trial.fresh_value()?;
     transformed_preheader.instructions.push(KirInstruction {
         id: trial.fresh_instruction()?,
@@ -325,15 +338,19 @@ fn materialize_vectorization_trial_internal(
             condition: vector_condition,
             then_edge: KirEdge {
                 target: vector_body_id,
-                args: body_edge
-                    .args
-                    .iter()
-                    .map(|value| {
-                        header_values.get(value).copied().ok_or_else(|| {
-                            "vector header body edge uses a non-parameter value".to_string()
+                args: if compact_interleaved_body {
+                    Vec::new()
+                } else {
+                    body_edge
+                        .args
+                        .iter()
+                        .map(|value| {
+                            header_values.get(value).copied().ok_or_else(|| {
+                                "vector header body edge uses a non-parameter value".to_string()
+                            })
                         })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
+                        .collect::<Result<Vec<_>, _>>()?
+                },
                 memory_args: Vec::new(),
             },
             else_edge: KirEdge {

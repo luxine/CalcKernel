@@ -935,6 +935,53 @@ fn x86_independent_three_stream_loop_should_select_four_vector_chains() {
 }
 
 #[test]
+fn x86_single_map_loop_should_select_four_vector_chains_without_padding_the_module() {
+    let (pre, contracts) = map_state_with_profile(
+        MAP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted x86 map vector plan");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        (4, 4),
+        "a standalone x86 streaming map must retain four independent chains under the unchanged module-growth ceiling; explanations={:#?}; audit={:#?}",
+        result.vector_explanations,
+        result.audit.attempts()
+    );
+    assert!(
+        accepted.growth.module_after_units <= accepted.growth.module_before_units.saturating_mul(2),
+        "standalone four-chain map exceeded the unchanged aggregate growth ceiling: {:#?}",
+        accepted.growth
+    );
+    let vector_body = result
+        .artifact
+        .as_ref()
+        .expect("vectorized artifact")
+        .functions
+        .iter()
+        .find(|function| function.name == "map")
+        .expect("vectorized function")
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body");
+    assert!(
+        vector_body.params.is_empty(),
+        "single-predecessor interleaved vector body retained redundant parameters"
+    );
+}
+
+#[test]
 fn loop_simd_should_schedule_independent_unrolled_loads_before_stores() {
     let (pre, _) = map_state_with_profile(
         INTERLEAVE_MAP,

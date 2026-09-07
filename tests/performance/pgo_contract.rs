@@ -260,6 +260,7 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
         "compact-multiversion-inline-v2",
         "x86-loop-simd-min-interleave-4-v1",
         "compact-vector-uf-stride-v1",
+        "compact-vector-body-state-v2",
         "KIR_INLINE_CALLEE_BUDGET: usize = 32",
         "KIR_MULTIVERSION_INLINE_CALLEE_BUDGET: usize = 8",
         "KIR_PGO_HOT_INLINE_CALLEE_BUDGET: usize = 48",
