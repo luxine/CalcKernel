@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`7a292bc74a87591437fc87ceb06df1fbb1bb28fd`。两者之间的累计提交已按
+`dd6239e677720845dee874ac3095710941b58d5b`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -397,3 +397,13 @@ must-tail 调用，稳态只保留 acquire load + indirect must-tail call；code
 `0cd154de78d8b305e73f9707ee8236fdb6064977b4f0be136a814d1a4fdda6e2`。复诊见
 `specs/0.14/review/implementation-blocker-42.md`；V0.13 仍独立验收，语言/公开 ABI、profile
 格式、target ISA、性能/稳定性门槛、timed work、样本、corpus、平台与 required job 均不变。
+
+Replacement exact v0.13 run `34116187720` 在 native integration、x86-64 Linux 与
+AArch64 Darwin 一致证明 resolver entry 的 inherited fact lineage 少登记一份：LLVM 正确携带
+四份 readonly/writeonly，而 CK ledger 只预期三份。V0.14 已精确继承 exact v0.13
+`dd6239e677720845dee874ac3095710941b58d5b`，为 cold resolver entry 与 steady dispatcher
+分别登记 closed inherited property set，同时继续禁止复制 body-owned evidence；v0.14 独有的
+profile-runtime contract 在机械冲突处理时完整保留。replay manifest 重钉到该 SHA，SHA-256 为
+`cc16808de13642e65c843668e60ac93ca2db0d0c6b4d1247346544fe5bcfcea3`。复诊见
+`specs/0.14/review/implementation-blocker-43.md`；fact-audit equality、语言/ABI、性能/稳定性
+门槛、timed work、样本、corpus、平台与 required job 均不变。
