@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 60e26ac01444903180b90ee3bf7da08c905c0915
+Accepted base revision: v0.13 repaired candidate 002100719bdefdabb0fece50a363e1b797c464d2
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`60e26ac01444903180b90ee3bf7da08c905c0915` was reviewed file by file and integrated
+`002100719bdefdabb0fece50a363e1b797c464d2` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
@@ -25,6 +25,13 @@ exact selected-direct evidence. LLD may represent that allocated writable sectio
 only publication layer; the one-shot detector has no redundant process-wide cache and
 is compiled with the frozen size-first runtime recipe. Public ABI, target ISA and all
 performance thresholds remain unchanged.
+
+It also carries the target-specific x86 frontend budget for vector widening
+`u32 -> f64`: candidates with more than two independent conversion chains remain
+fully checked but rank behind candidates within the frontend budget. Ordinary
+integer maps retain their four-chain schedule. Both native object-cache paths encode
+this scheduling policy, so replay cannot reuse an older object selected under the
+previous cost model.
 
 For inherited schema-7 runtime samples on Linux, the unchanged native kernel-call
 loop is measured with current-thread CPU time. The existing one-allowed-CPU affinity

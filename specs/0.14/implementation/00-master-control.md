@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`60e26ac01444903180b90ee3bf7da08c905c0915`。两者之间的累计提交已按
+`002100719bdefdabb0fece50a363e1b797c464d2`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -341,3 +341,15 @@ required job 与全部门槛不变。
 `a8feea2ad72cfdae9135ff5ba43add8071fbdb7344b3021d2c03aa243aa4eddf`。复诊见
 `specs/0.14/review/implementation-blocker-37.md`；工作量、样本、corpus、平台、required job、
 性能与稳定性门槛均保持不变。
+
+Exact v0.14 run `34095419897` 的 x86-64 performance job `101658156635`
+重建 accepted v0.13 `60e26ac01444903180b90ee3bf7da08c905c0915` 后，unchecked
+`integer_cast` 仅达到较快 Rust SIMD oracle 约 `87.19%`，未通过不变的 `90%` 门槛。
+稳定样本、KIR 与反汇编证明 `VF2/UF4` 的多指令 `u32 -> f64` legalization 把热循环扩大到
+约 98 bytes，而 oracle 的同语义双链热循环约 52 bytes。V0.13 已在
+`002100719bdefdabb0fece50a363e1b797c464d2` 加入 x86 widening-cast 两链 frontend budget；
+`UF4` 仍被发现、物化和独立检查，普通与三流 integer map 仍使用四链。V0.14 精确继承该修复，
+同步更新 ordinary/multiversion object cache identity，并把 replay manifest SHA-256 重钉为
+`2304bb4a6dab1ef060b37200063f1d33f34429c6cf03ad08e774110f91604eca`。复诊见
+`specs/0.14/review/implementation-blocker-38.md`；语言/公开 ABI、安全语义、目标 ISA、候选
+frontier、工作量、样本、corpus、平台、required job、性能与稳定性门槛均保持不变。
