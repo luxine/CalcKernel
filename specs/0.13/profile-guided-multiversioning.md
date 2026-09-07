@@ -674,9 +674,13 @@ every chunk start and the full `VF * UF` backedge advance. This representation
 does not change the closed `UF <= 4` frontier or the aggregate two-times KIR
 growth ceiling.
 
-Candidate ordering is total: fewer required features (wider compatible host
-coverage), estimated dynamic cost, smaller code size, target-tier identity,
-then root/function identity. Every root with an enhanced retained set has a
+Candidate retention ordering is total: fewer required features (wider compatible
+host coverage), estimated dynamic cost, smaller code size, target-tier identity,
+then root/function identity. Runtime dispatch independently orders the retained
+set by estimated dynamic cost, compatibility breadth, code size, tier identity,
+then root identity; first-compatible selection therefore uses a profitable v4 or
+SVE2 member on a host that supports it while preserving the v3 or SVE companion
+for lower-tier hosts. Every root with an enhanced retained set has a
 profitable trial as its eligibility witness; a retained companion must be that
 witness's strict feature subset and must not predict a regression against
 baseline. The witness need not fit beside its broader companion in the final

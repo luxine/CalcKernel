@@ -324,3 +324,13 @@ Darwin 一致暴露 fact-audit 计数不闭合：新 resolver entry 正确继承
 现在为 resolver entry 与 steady dispatcher 各登记一次；body-owned assume/range/no-wrap/alias-scope
 仍不复制，fact audit 相等性不放宽。语言/ABI、profile、目标 ISA、性能与稳定性门槛、timed work、
 样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.14 replay run `34123758500` 的 AArch64 performance job `101747821716` 重建 exact
+V0.13 `0b2eaa52682d06300a009b2378a9ce00697f93f5` 后，multiversion source-to-object
+compile geometric ratio 以 `2.5245647 > 2.5` 未通过不变门槛；五个 case 中 branch-layout、
+call-constant-length 与 memory-bound 均超过 `2.5x`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-36.md`：normalized target-neutral KIR body 改用结构
+相等性，CLI 保留一次独立 checker 的 opaque authority 到 emission，raw public emitter 仍
+fail closed；coverage-first retained-set 与 predicted-cost-first runtime dispatch 排序分离。
+语言/ABI、安全语义、目标 ISA、growth/profitability/性能与稳定性门槛、timed work、样本、corpus、
+平台与 required job matrix 均未改变。

@@ -84,6 +84,15 @@ charge. Each target variant still has an independent verifier, feature audit,
 LLVM module, object, cache identity, and artifact-size gate; body sharing cannot
 weaken target isolation or hide physical output growth.
 
+Retention remains coverage-first so a bounded bundle keeps its lower-tier
+companion. The dispatch plan separately ranks retained members by predicted
+cost before compatibility breadth and size. A v4/SVE2 host therefore selects
+the faster supported member, while a v3/SVE host skips it and selects the
+compatible companion. The raw public emitter still checks arbitrary bundles;
+the CLI retains the opaque independent-check authority through emission so it
+does not reconstruct the same proposal a second time on the source-to-object
+path.
+
 Every KIR module carries a canonical `KirTargetProfile`. Inspection, portable
 C, WebAssembly, Native library, and Native executable profiles identify their
 consumer, target, CPU policy, operation availability and exact fixed-width

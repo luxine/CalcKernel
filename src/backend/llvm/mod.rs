@@ -81,6 +81,7 @@ pub use module::NativeModule;
 pub use multiversion::{
     NativeMultiversionObject, NativeMultiversionObjectBundle, NativeMultiversionObjectRole,
     NativeMultiversionTargetSet, emit_native_multiversion_objects,
+    emit_native_multiversion_objects_checked,
 };
 pub use notices::{
     EmbeddedNotice, NATIVE_ABI_VERSION, NATIVE_CACHE_ENTRY_MAGIC, NATIVE_CACHE_KEY_SCHEMA,

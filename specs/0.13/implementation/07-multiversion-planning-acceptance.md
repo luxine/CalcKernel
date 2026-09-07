@@ -29,7 +29,12 @@
   profitable strict superset 的 required-feature subset 只有在 predicted cost 不差于 baseline 时，
   才可作为 compatibility companion 进入 retained-set。若 shared full-root budget 只容纳一个 enhanced
   member，先保留 required feature 更少、runtime 兼容覆盖更广的候选；witness 无需同时物化，再按
-  dynamic cost、size、tier 与 root identity 决胜。
+  dynamic cost、size、tier 与 root identity 决胜。retained-set 的 coverage-first 顺序不得直接充当
+  runtime priority；dispatch plan 必须对 retained member 独立按 predicted dynamic cost、compatibility
+  breadth、size、tier 与 root identity 排序，使高阶 host 选择更快 member、低阶 host 安全跳过它。
+- planner/checker 对 normalized target-neutral KIR body 使用结构相等性，不在 source-to-object 热路径
+  序列化完整 module；CLI 保留 opaque independent-check authority 到 emission。raw public emitter
+  仍必须对任意 request/bundle 独立检查后 fail closed。
 - 非 O3、unsupported consumer/sanitizer/object combination 在任何输出前明确失败。
 
 ## 完成证据

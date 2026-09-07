@@ -39,8 +39,11 @@ baseline、每 root 至多两个 enhanced implementation 和 closed dispatch pla
    profitable strict superset 的
    predicted non-regressing required-feature subset 可作为 compatibility companion。候选按 fewer
    features（更广 runtime compatibility）、dynamic cost、smaller size、tier identity、root identity
-   total order；一个 full-root variant 的 budget 必须保留最广 compatible candidate，witness 无需
-   同时物化；baseline-only 给 `no-compatible-enhanced-tier`。
+   total order 决定有界 retained-set；一个 full-root variant 的 budget 必须保留最广 compatible
+   candidate，witness 无需同时物化。dispatch plan 对 retained member 独立按 predicted dynamic cost、
+   compatibility breadth、size、tier identity、root identity 排序，first-compatible selection 在高阶
+   host 优先选择更快 member，在低阶 host 跳过不兼容项；baseline-only 给
+   `no-compatible-enhanced-tier`。
 7. 写 checker mutation RED：forged feature/benefit/size/budget/pre-state/proof/mapping/symbol/variant order
    均 withholding bundle；unsupported transform 是 stable baseline fallback。
 8. 实现 canonical tables、explicit target profile queries、planner/independent checker/KIR bundle printer；

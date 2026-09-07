@@ -68,6 +68,12 @@ baseline-safe dispatcher 只选择已验证的兼容 variant，不改变 public 
 完整 charge。每个 target variant 仍有独立 verifier、feature audit、LLVM module、object、cache
 identity 与 artifact-size gate，共享 body 计费不能削弱 target 隔离或隐藏物理产物增长。
 
+Retained-set 继续 coverage-first，确保有界 bundle 保留低阶 companion；dispatch plan 则对已保留
+member 独立按 predicted cost、compatibility breadth 与 size 排序。因此 v4/SVE2 host 选择更快的
+受支持 member，v3/SVE host 跳过不兼容项并选择 companion。raw public emitter 仍检查任意 bundle；
+CLI 将 opaque independent-check authority 保留到 emission，source-to-object path 不再重复重建
+同一 proposal。
+
 每个 KIR module 都携带规范化 `KirTargetProfile`。Inspection、portable C、WebAssembly、
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；

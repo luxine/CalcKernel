@@ -1,6 +1,6 @@
 use crate::{
-    CkPgoOptimizerPlan, ContractFactSet, EmitLlvmOptions, FunctionId, KirConsumer,
-    KirMultiversionBundle, KirMultiversionPlanningRequest, KirMultiversionPlatform,
+    CheckedKirMultiversionBundle, CkPgoOptimizerPlan, ContractFactSet, EmitLlvmOptions, FunctionId,
+    KirConsumer, KirMultiversionBundle, KirMultiversionPlanningRequest, KirMultiversionPlatform,
     KirMultiversionTargetSet, KirMultiversionTargetTier, KirMultiversionTierId,
     KirOptimizationLevel, check_kir_multiversion_bundle, materialized_tier,
     project_pgo_plan_for_kir, run_kir_pass_pipeline,
@@ -254,7 +254,23 @@ pub fn emit_native_multiversion_objects(
     pgo: Option<&CkPgoOptimizerPlan>,
     options: &EmitLlvmOptions,
 ) -> Result<NativeMultiversionObjectBundle, NativeError> {
-    check_kir_multiversion_bundle(request, bundle).map_err(error)?;
+    let checked = check_kir_multiversion_bundle(request, bundle).map_err(error)?;
+    emit_native_multiversion_objects_checked(context, targets, &checked, contracts, pgo, options)
+}
+
+/// Emits a bundle using authority retained from the independent checker. The
+/// raw public entry remains available for callers that do not already own this
+/// proof and therefore must reconstruct it before emission.
+pub fn emit_native_multiversion_objects_checked(
+    context: &NativeContext,
+    targets: &NativeMultiversionTargetSet,
+    checked: &CheckedKirMultiversionBundle<'_>,
+    contracts: &ContractFactSet,
+    pgo: Option<&CkPgoOptimizerPlan>,
+    options: &EmitLlvmOptions,
+) -> Result<NativeMultiversionObjectBundle, NativeError> {
+    let request = checked.request();
+    let bundle = checked.bundle();
     if targets.target_set() != &bundle.target_set {
         return Err(error(
             "materialized target set does not match the checked multiversion bundle",
