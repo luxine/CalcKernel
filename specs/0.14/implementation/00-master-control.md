@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`dd6239e677720845dee874ac3095710941b58d5b`。两者之间的累计提交已按
+`0b2eaa52682d06300a009b2378a9ce00697f93f5`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -407,3 +407,14 @@ profile-runtime contract 在机械冲突处理时完整保留。replay manifest 
 `cc16808de13642e65c843668e60ac93ca2db0d0c6b4d1247346544fe5bcfcea3`。复诊见
 `specs/0.14/review/implementation-blocker-43.md`；fact-audit equality、语言/ABI、性能/稳定性
 门槛、timed work、样本、corpus、平台与 required job 均不变。
+
+Exact v0.13 run `34117792378` 的 x86-64 performance job `101728726666` 随后证明，
+coverage-first retained-set 在只按每个 target profile 的完整 clone 计费时，仅能保留 v3，
+使具备 AVX-512 的 v4 runner 仍执行 AVX2 member 并未通过不变的 compute-bound 90% PGO
+oracle 门槛。V0.14 已精确继承 exact v0.13
+`0b2eaa52682d06300a009b2378a9ce00697f93f5`：只有 target profile 与 tier-derived hidden name
+不同、规范化后完整 KIR bytes 一致的 member 才共享一次 logical body charge；任何真实结构差异
+仍完整计费，各 target module/object/audit/artifact gate 仍独立。replay manifest 重钉到该 SHA，
+SHA-256 为 `b2fb99873ac107481bac79529b4ac1bdc5e63abbbd2a8e925d6e9c935c612ffd`。
+复诊见 `specs/0.14/review/implementation-blocker-44.md`；`2x` logical KIR growth、语言/ABI、
+安全语义、target ISA、性能/稳定性门槛、timed work、样本、corpus、平台与 required job 均不变。
