@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`5c6220758718b1ceac8ae32aec80c660d7b67b5e`。两者之间的累计提交已按
+`60e26ac01444903180b90ee3bf7da08c905c0915`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -331,3 +331,13 @@ Exact v0.14 run `34090234424` 的 AArch64 performance job `101642274522`
 POSIX `0700` 创建并在 snapshot 前复核模式；编译器既有 no-follow、owner-only 与 fail-closed
 安全契约未放宽。语言/公开 ABI、tuning choice、cache key、工作量、样本、统计方法、平台、
 required job 与全部门槛不变。
+
+同一 exact v0.14 run `34090234424` 的 x86-64 performance job `101642274739`
+重建 accepted v0.13 replay 时，Dijkstra KIR optimizer 以 `2,531,741 / 832,254 =
+3.041x` 超过未改变的单项 `3.0x` 门槛；前一 v0.13 exact run 的 `2.951x` 仅有不足够的
+波动余量。V0.13 已在 `60e26ac01444903180b90ee3bf7da08c905c0915` 将 phi pruning 中
+仅用于键查询的短生命周期有序映射改为 `HashMap`，保留确定性 live-value set 与全部 KIR
+语义。V0.14 已精确继承该修复，并把 replay accepted commit 与 manifest SHA-256 重钉为
+`a8feea2ad72cfdae9135ff5ba43add8071fbdb7344b3021d2c03aa243aa4eddf`。复诊见
+`specs/0.14/review/implementation-blocker-37.md`；工作量、样本、corpus、平台、required job、
+性能与稳定性门槛均保持不变。
