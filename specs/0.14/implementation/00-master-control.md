@@ -40,12 +40,13 @@
 - `specs/0.14/review/implementation-blocker-45.md`
 - `specs/0.14/review/implementation-blocker-46.md`
 - `specs/0.14/review/implementation-blocker-47.md`
+- `specs/0.14/review/implementation-blocker-48.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`e869763366283e46cd76ffbf3bb85c6c3959c25c`。两者之间的累计提交已按
+`aa757ca0f78664cbfa4f824d655d820c87368dd3`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -470,4 +471,16 @@ streaming map 继续禁止有害展开；replay manifest SHA-256 更新为
 `4e9b37ae4687fa5f11c3da029e57fd3e1e6bd9512a2b66bd8599de9fd2337c3d`。复诊见
 `specs/0.14/review/implementation-blocker-47.md`；语言/公开 ABI、安全语义、target ISA、
 schema 9、inline/growth budget、性能/稳定性/产物门槛、timed work、样本、corpus、平台与
+required job 均不变。
+
+Exact V0.14 run `34165564989` 随后重建 V0.13
+`e869763366283e46cd76ffbf3bb85c6c3959c25c`，x86-64 checked domain suites 以
+`1.0413218x` 与 `1.0415426x` 未通过不变的 `1.05x` 几何门槛。完整样本稳定，机器码证明固定
+长度契约在 pre-O3 alloca IR 中被误判为 unknown-length streaming map 并附加
+`unroll.disable`。V0.14 已按 `specs/0.14/review/implementation-blocker-48.md` 精确继承 V0.13
+`aa757ca0f78664cbfa4f824d655d820c87368dd3`：analysis clone 先经 mem2reg，再从 constant
+direct call 或 `llvm.assume(n == constant)` 恢复固定边界；仅固定边界使用有界二路 schedule，
+未知长度 checked streaming map 保持禁止有害展开。replay manifest SHA-256 重钉为
+`d58fd2cbaaf35fb611bd666b0e027f4467291d06a27bb073ddfb54d431062898`。语言/公开 ABI、
+安全语义、target ISA、schema 9、性能/稳定性/产物门槛、timed work、样本、corpus、平台与
 required job 均不变。

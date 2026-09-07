@@ -27,7 +27,7 @@
 - [ ] 动态日志只在 ignored acceptance 目录/CI artifact；source commit 无 profile、
   report、decision、cache、run id 或 secret。
 - [ ] feature branch 已提交并推送，worktree clean；main 未合并，tag/Release 未创建。
-- [ ] v0.13 accepted-base `e869763366283e46cd76ffbf3bb85c6c3959c25c` 的差异审计与等价集成单独记录，未用移动引用或旧 run 代签。
+- [ ] v0.13 accepted-base `aa757ca0f78664cbfa4f824d655d820c87368dd3` 的差异审计与等价集成单独记录，未用移动引用或旧 run 代签。
 
 ## 完成证据
 
