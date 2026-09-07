@@ -277,3 +277,11 @@ acquire/release slot 成为唯一 publication layer，one-shot detector
 改为 size-first 编译。以失败 job 的 exact AArch64 archives 重建为 `14792 / 8544 =
 1.73127`。语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、
 平台与 required job matrix 均未改变。
+
+V0.14 exact replay run `34090234424` 的 x86-64 performance job
+`101642274739` 重建 exact V0.13 后，`example-dijkstra` KIR optimizer median 以约
+`3.041x > 3x` 未通过累计 schema 7 单项门槛；此前 V0.13 自身只以约 2.951x 窄幅通过，不能靠
+重试闭环。复诊与闭环见 `specs/0.13/review/implementation-blocker-30.md`：phi pruning 中三个
+只作 key lookup 的短生命周期 ordered map 改为 function-local hash lookup，保留全部 block/edge/
+parameter 顺序、proof 与 malformed-CFG fail-closed 行为。语言/ABI、优化结果、安全语义、目标
+ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
