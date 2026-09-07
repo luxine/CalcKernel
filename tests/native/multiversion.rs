@@ -3,11 +3,11 @@ use std::{fs, process::Command};
 use calckernel::{
     EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirCpuIdentity,
     KirMultiversionPlanningRequest, KirMultiversionTierId, KirNativeCpuPolicy,
-    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
-    NativeMultiversionObjectRole, NativeMultiversionTargetSet, NativeOptimizationLevel, SourceFile,
-    build_kir_module, check, check_kir_multiversion_bundle, emit_native_multiversion_objects,
-    import_contract_facts, lower_native_kir_module, lower_to_mir, propose_kir_multiversion_bundle,
-    run_kir_pass_pipeline,
+    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeArtifactKind,
+    NativeArtifactPaths, NativeContext, NativeMultiversionObjectRole, NativeMultiversionTargetSet,
+    NativeOptimizationLevel, NativePlatform, SourceFile, build_kir_module, check,
+    check_kir_multiversion_bundle, emit_native_multiversion_objects, import_contract_facts,
+    lower_native_kir_module, lower_to_mir, propose_kir_multiversion_bundle, run_kir_pass_pipeline,
 };
 
 use super::support::temp::unique_id;
@@ -47,8 +47,9 @@ fn multiversion_dynamic_library_with_void_helper_call_should_build() {
         "multiversion void-call build failed: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let mut library = output.clone();
-    library.set_extension(std::env::consts::DLL_SUFFIX.trim_start_matches('.'));
+    let library =
+        NativeArtifactPaths::new(NativePlatform::host(), NativeArtifactKind::Dynamic, &output)
+            .primary;
     let prefix = std::env::var_os("CKC_LLVM_PREFIX").expect("pinned LLVM prefix");
     if cfg!(target_os = "linux") {
         let sections = Command::new(std::path::Path::new(&prefix).join("bin/llvm-readobj"))

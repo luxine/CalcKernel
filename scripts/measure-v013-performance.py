@@ -331,8 +331,8 @@ def dispatch_symbol_values(library: pathlib.Path, public_symbol: str) -> tuple[i
         section[3]
         for section in sections
         if section_name(section) == ".ck_dispatch_slot"
-        and section[1] == 8
-            and (section[2] & 0x403) == 0x3
+        and section[1] in (1, 8)
+        and (section[2] & 0x403) == 0x3
         and section[3] != 0
         and section[5] == struct.calcsize("P")
         and section[8] == struct.calcsize("P")

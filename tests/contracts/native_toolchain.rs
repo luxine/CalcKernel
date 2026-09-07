@@ -1118,14 +1118,13 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
     assert!(collector.contains("ckc_profile_atomic_u64"));
     assert!(!collector.contains("#include <stdatomic.h>"));
     for required in [
-        "defined(_M_ARM64)",
-        "#pragma intrinsic(_InterlockedCompareExchange_acq)",
-        "#pragma intrinsic(_InterlockedCompareExchange64_nf)",
-        "#pragma intrinsic(_InterlockedExchange_rel)",
-        "#pragma intrinsic(_InterlockedExchangeAdd64_nf)",
-        "_InterlockedCompareExchange_acq(&object->value, 0, 0)",
-        "_InterlockedCompareExchange64_nf(&object->value, 0, 0)",
-        "_InterlockedExchangeAdd64_nf(&object->value, (__int64)value)",
+        "#pragma intrinsic(_InterlockedCompareExchange)",
+        "#pragma intrinsic(_InterlockedCompareExchange64)",
+        "#pragma intrinsic(_InterlockedExchange)",
+        "#pragma intrinsic(_InterlockedExchangeAdd64)",
+        "_InterlockedCompareExchange(&object->value, 0, 0)",
+        "_InterlockedCompareExchange64(&object->value, 0, 0)",
+        "_InterlockedExchangeAdd64(&object->value, (__int64)value)",
         "defined(__aarch64__) && defined(__linux__)",
         "ldxr",
         "stxr",
@@ -1136,13 +1135,26 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
             "atomic portability layer missing {required}"
         );
     }
+    for forbidden in [
+        "_InterlockedCompareExchange_acq",
+        "_InterlockedCompareExchange_nf",
+        "_InterlockedCompareExchange64_nf",
+        "_InterlockedExchange_nf",
+        "_InterlockedExchange_rel",
+        "_InterlockedExchangeAdd64_nf",
+    ] {
+        assert!(
+            !atomics.contains(forbidden),
+            "MSVC profile atomics must not rely on an unexpanded ARM64 spelling: {forbidden}"
+        );
+    }
     assert!(
         provenance.contains("include/ckc_profile_atomic.h"),
         "profile runtime provenance must bind the atomic portability layer"
     );
     for required in [
-        "#pragma intrinsic(_InterlockedIncrement_nf)",
-        "_InterlockedIncrement_nf(&serial)",
+        "#pragma intrinsic(_InterlockedIncrement)",
+        "_InterlockedIncrement(&serial)",
     ] {
         assert!(
             windows.contains(required),
