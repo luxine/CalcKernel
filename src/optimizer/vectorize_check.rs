@@ -344,8 +344,10 @@ fn check_vectorization_trial_with_minimum(
     let body_induction_index =
         original_header_body_induction_index(original, &candidate, original_body)
             .map_err(TransactionCheckError::compiler)?;
-    let compact_interleaved_body =
-        candidate.uf > 1 && candidate.diamond.is_none() && candidate.reduction.is_none();
+    let compact_interleaved_body = candidate.uf > 1
+        && candidate.diamond.is_none()
+        && candidate.predicated_update.is_none()
+        && candidate.reduction.is_none();
     let (scalar_chunk_zero, header_induction) = if compact_interleaved_body {
         if !vector_body.params.is_empty() || !vector_body_edge.args.is_empty() {
             return compiler("compact vector body retained redundant block parameters");

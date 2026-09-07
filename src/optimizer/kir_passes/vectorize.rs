@@ -148,8 +148,10 @@ fn materialize_vectorization_trial_internal(
         });
     }
 
-    let compact_interleaved_body =
-        candidate.uf > 1 && candidate.diamond.is_none() && candidate.reduction.is_none();
+    let compact_interleaved_body = candidate.uf > 1
+        && candidate.diamond.is_none()
+        && candidate.predicated_update.is_none()
+        && candidate.reduction.is_none();
     let mut body_values = BTreeMap::new();
     let mut vector_body_params = Vec::new();
     for (index, param) in original_body.params.iter().enumerate() {
