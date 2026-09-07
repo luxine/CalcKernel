@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`002100719bdefdabb0fece50a363e1b797c464d2`。两者之间的累计提交已按
+`280388a396e85f8876300427cd56b627b08b3e45`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -353,3 +353,16 @@ Exact v0.14 run `34095419897` 的 x86-64 performance job `101658156635`
 `2304bb4a6dab1ef060b37200063f1d33f34429c6cf03ad08e774110f91604eca`。复诊见
 `specs/0.14/review/implementation-blocker-38.md`；语言/公开 ABI、安全语义、目标 ISA、候选
 frontier、工作量、样本、corpus、平台、required job、性能与稳定性门槛均保持不变。
+
+Exact v0.14 run `34100659848` 的 x86-64 performance job `101674461128`
+重建 accepted v0.13 `002100719bdefdabb0fece50a363e1b797c464d2` 后，
+`branch-layout` generation 以 `782,368 / 152,662 = 5.1248x` 未通过不变的
+`5.0x` overhead 门槛。稳定样本与 artifact 反汇编证明，LLVM 内联两个 internal helper
+算术后，每个 loop element 仍保留两次 function-entry atomic publication。V0.13 已在
+`280388a396e85f8876300427cd56b627b08b3e45` 将 internal、non-exported、non-entry
+function-entry observation 精确迁移到 static call-site caller-local 饱和计数器，并在
+return 时 bulk-add 发布；export 与 module entry 保持直接发布。V0.14 已精确继承该修复，
+并把 replay manifest SHA-256 重钉为
+`81a052192afc6ae7d124f6ae36e56636e0c0d26b72f29c510a98a41dab559d17`。复诊见
+`specs/0.14/review/implementation-blocker-39.md`；语言/公开 ABI、安全语义、profile schema、
+目标 ISA、工作量、样本、corpus、平台、required job、性能与稳定性门槛均保持不变。

@@ -4,14 +4,14 @@
 
 状态：CK 0.14.0 提议设计
 
-已接纳基线修订：v0.13 修复候选 002100719bdefdabb0fece50a363e1b797c464d2
+已接纳基线修订：v0.13 修复候选 280388a396e85f8876300427cd56b627b08b3e45
 
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
 实现最初基于 v0.13 候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`。
 最终验收前，已逐文件审计并以 v0.14 等价修复吸收该候选到最终接纳修订
-`002100719bdefdabb0fece50a363e1b797c464d2` 的累计提交差异。主动替代项记录在
+`280388a396e85f8876300427cd56b627b08b3e45` 的累计提交差异。主动替代项记录在
 实施期设计复诊 10；任何语义差异都不得通过适配测试来掩盖。
 
 已接纳的 v0.13 修复同时关闭 schema 8 multiversion 产物总尺寸：ELF shared 产物移除
@@ -25,6 +25,11 @@ size-first runtime recipe 编译。公开 ABI、目标 ISA 与全部性能门槛
 两条独立转换链的候选仍须完整检查，但排序在 frontend budget 内候选之后；普通 integer map
 继续使用四链 schedule。两个 native object cache 路径都编码该调度策略，replay 不得复用旧
 cost model 选择的产物。
+
+profile generation 还会在静态调用点使用 caller-local 饱和计数器，精确批量统计 internal、
+non-exported helper 的 function-entry observation，并在每个 return 经既有 atomic bulk-add
+发布。exported function 与 module entry 仍直接发布，外部发起的调用不会丢失。这个修复不改变
+profile schema 或 function-entry 含义，只移除了 instrumented hot loop 中逐调用的原子操作。
 
 Linux 上继承的 schema-7 runtime sample 使用当前线程 CPU time 计量不变的 native
 kernel-call loop；既有的单允许 CPU affinity scope 与每个保留七次计时 sample 前的一轮
