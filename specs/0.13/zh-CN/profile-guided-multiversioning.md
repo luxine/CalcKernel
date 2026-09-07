@@ -568,8 +568,9 @@ production artifact 没有可以强制不支持 feature 的 environment variable
 不能含 optional instruction。
 
 ELF shared product 会删除 loader 不需要的 symbol metadata。Generated resolver slot 位于
-private pointer-width `.ck_dispatch_slot` `NOBITS` section；它既不是 dynamic export，也不是
-public ABI symbol。selected-direct evidence 可由此从同字节 artifact 解析实际发布的 member，
+private、pointer-width、pointer-aligned `.ck_dispatch_slot` section；LLD 可将其表示为
+`SHT_PROGBITS` 或 `SHT_NOBITS`。它既不是 dynamic export，也不是 public ABI symbol。
+selected-direct evidence 可由此从同字节 artifact 解析实际发布的 member，
 而无需保留完整 local symbol table。
 
 ## Native LLVM 与 artifact 契约

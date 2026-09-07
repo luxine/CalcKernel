@@ -103,8 +103,9 @@ and the feature audit remain unchanged and authoritative.
 Public Native C ABI thunks keep their names, addresses, signatures, checked-status
 behavior, and visibility; baseline, variant, detector, and runtime symbols stay hidden.
 ELF shared products strip non-loader symbols and retain the one generated slot
-in a private pointer-width `.ck_dispatch_slot` `NOBITS` section. The section is
-not exported and does not extend the Native C ABI.
+in a private pointer-width, pointer-aligned `.ck_dispatch_slot` section. LLD may
+materialize the allocated writable section as `SHT_PROGBITS` or `SHT_NOBITS`.
+The section is not exported and does not extend the Native C ABI.
 
 The named-object bundle links as an executable, dynamic library, or static archive.
 A multiversion object output is rejected because 0.13 has no partial-link bundle

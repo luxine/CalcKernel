@@ -69,8 +69,9 @@ normalized result 返回给未解析 root。该 root 的 private acquire-release
 Public Native C ABI thunk 的 name、
 address、signature、checked-status behavior 与 visibility 保持；baseline、variant、detector、
 runtime symbol 都隐藏。
-ELF shared product 删除 loader 不需要的 symbol，并把唯一 generated slot 保留在 private
-pointer-width `.ck_dispatch_slot` `NOBITS` section；该 section 不 export，也不扩展 Native C ABI。
+ELF shared product 删除 loader 不需要的 symbol，并把唯一 generated slot 保留在 private、
+pointer-width、pointer-aligned `.ck_dispatch_slot` section；LLD 可将这个 allocated writable
+section 表示为 `SHT_PROGBITS` 或 `SHT_NOBITS`。该 section 不 export，也不扩展 Native C ABI。
 Linux AArch64 executable 使用 startup-stack auxv snapshot；没有 CK entry point 的 dynamic
 library 通过 freestanding direct syscall 读取 `/proc/self/auxv`，fallback 不可用或不完整时
 fail closed 到 baseline，且不增加 libc 或 loader dependency。
