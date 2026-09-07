@@ -306,3 +306,13 @@ overhead 门槛。全部 20 个样本稳定；失败 artifact 的机器码显示
 caller 正常或 checked-failure return 时通过既有 bulk-add 原子发布；export 与 module entry
 保持直接发布。site/counter 意义、profile schema、语言/ABI、安全语义、目标 ISA、性能与稳定性
 门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34106156091` 的 x86-64 performance job `101691953958` 随后以
+`14,142 / 13,272 = 1.06555 > 1.05` 未通过 `trip-unroll-simd` 的 dispatch/direct 单项门槛。
+二十个样本稳定、batch 保持 16、resolver 恰好一次；保留 ELF 显示稳态 public thunk 仍在 atomic
+load 后执行 null test 与 conditional branch。复诊与闭环见
+`specs/0.13/review/implementation-blocker-33.md`：private slot 初始改为指向 cold、
+baseline-safe、ABI-preserving `resolve_entry`，首次调用由该入口解析并 acquire/release 发布，
+后续 public thunk 只执行 atomic load 与 indirect must-tail call。object cache identity 加入
+`dispatch-resolver-sentinel-v2`；语言/ABI、安全语义、目标 ISA、门槛、timed work、样本、corpus、
+平台与 required job matrix 均未改变。

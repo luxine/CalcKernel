@@ -64,7 +64,8 @@
   additional KIR <= baseline units，共享预算/order/checker/proof/feature audit正确且无 cross-variant LTO。
 - [ ] baseline 与每个 enhanced module 的独立 KIR 复验携带同一 verified contract facts；缺失 facts
   fail closed，LLVM parameter/alias/effect strengthening仍由 Native fact audit逐项约束。
-- [ ] detector fail-closed且 baseline-safe；concurrent first calls 可重复 detection，但 per-root
+- [ ] detector fail-closed且 baseline-safe；slot 初始指向 cold ABI-preserving resolver entry，稳态
+  thunk 不含 null branch；concurrent first calls 可重复 detection，但 per-root
   acquire/release slot 是唯一 publication/cache layer且只发布一个 compatible verified pointer；public
   thunk address/ABI稳定，后续 atomic load+indirect tail call；variant/runtime symbols hidden/namespaced，
   production无强制 unsupported feature seam。

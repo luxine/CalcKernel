@@ -327,6 +327,14 @@ fn abi_multiversion_llvm_thunk_should_keep_public_abi_and_publish_one_tail_targe
     assert!(text.contains("cmpxchg ptr"), "{text}");
     assert!(text.contains("musttail call"), "{text}");
     assert!(
+        text.contains("_resolve_entry"),
+        "the dispatch slot must start at the cold ABI-preserving resolver entry:\n{text}"
+    );
+    assert!(
+        !text.contains("ck.dispatch.uninitialized"),
+        "the steady-state thunk must not retain a null test and branch:\n{text}"
+    );
+    assert!(
         text.contains("@__ck_dispatch_detect_capabilities"),
         "{text}"
     );

@@ -685,13 +685,16 @@ checked status/result-slot behavior, slice flattening, alignment, unwind policy,
 and symbol visibility. Each implementation symbol contains a content digest
 and is hidden from headers, export tables, and ordinary symbol lookup.
 
-The first call obtains a normalized capability bitset, ranks that root's
-variants, and publishes the chosen function pointer in the root's private slot
-with acquire/release atomics. Concurrent first calls may repeat detection and
-compute the same answer, but only publish a compatible verified pointer. That
-slot is the sole publication/cache layer. Later calls perform one atomic load
-and indirect tail call; they do not repeat CPUID/HWCAP queries. The public
-function address remains the thunk before and after resolution.
+The root's private slot initially points to a cold, baseline-safe,
+ABI-preserving resolver entry. The first call reaches that entry through the
+ordinary thunk load and tail call, obtains a normalized capability bitset, ranks
+that root's variants, and replaces the resolver entry with the chosen function
+pointer using acquire/release atomics. Concurrent first calls may repeat detection
+and compute the same answer, but only publish a compatible verified pointer. That
+slot is the sole publication/cache layer. Later calls perform the same one atomic
+load and indirect tail call; they contain no null test and do not repeat
+CPUID/HWCAP queries. The public function address remains the thunk before and
+after resolution.
 
 x86-64 detection uses compiler-owned CPUID and XGETBV checks and requires both
 hardware bits and OS register-state support. AArch64 Linux executables use the

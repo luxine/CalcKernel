@@ -28,7 +28,8 @@ public thunk。失败/未知/矛盾/heterogeneous uncertainty 全部选 baseline
 4. 写 concurrency RED：首调用可并行 detection 并计算兼容答案，per-root slot 仅发布一个 verified
    pointer；该 slot 是唯一 process-local publication/cache layer，后续每 call 一个 atomic load +
    indirect tail call，不再 CPUID/HWCAP。
-5. 写 ABI RED：public symbol/address 始终是 thunk；calling convention、slice flatten、checked status/
+5. 写 ABI RED：public symbol/address 始终是 thunk；slot 初始指向 cold ABI-preserving resolver entry，
+   稳态 thunk 只有 atomic load + indirect tail call 且无 null branch；calling convention、slice flatten、checked status/
    result slot、alignment/unwind/visibility/header/export 与单版本完全一致；hidden digest symbols 不可查找。
 6. 写 failure/test seam RED：private seam 可强制“兼容”variant做 differential，但不能强制 unsupported
    feature production execution；malformed table/pointer/digest withholding artifact。

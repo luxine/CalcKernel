@@ -27,7 +27,8 @@
   引入 libc、loader 或 allocator dependency。
 - public address 恒为 baseline-safe thunk；variant/runtime symbol hidden，ABI/header/export bytes 与
   单版本一致；static private symbol 含 target-set digest namespace。
-- concurrent first calls 可重复 capability detection，但 per-root acquire/release slot 是唯一
+- slot 初始指向 cold ABI-preserving resolver entry；稳态 thunk 无 null branch；concurrent first calls
+  可重复 capability detection，但 per-root acquire/release slot 是唯一
   publication/cache layer且只发布一个 compatible verified pointer；后续 steady call 是 atomic load +
   indirect tail call，不再 detection。
 - baseline/thunk/detector 无 optional instruction，variant 不越声明 feature，无 cross-module leakage。
