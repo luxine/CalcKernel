@@ -345,3 +345,14 @@ checked scalar loop 仍保留有界 schedule；ordinary/multiversion cache ident
 private runtime 使用 `-fno-ident`；helper inline policy 改在 strip 前的 optimized IR 验证；ARM64
 profile atomics 使用既有 kernel32 import closure，x64 仍使用 intrinsic。语言/公开 ABI、安全语义、
 目标 ISA、性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Replacement exact V0.13 run `34155662442` 的 Linux/Darwin ARM64 Native jobs 随后证明新
+pre-strip helper regression 误走 ordinary O3，在 multiversion 规划前已按 ordinary budget 内联
+`cold_step`；同 run 的 x86-64 performance job 以 checked `specialized_length`
+`4,860,459 / 4,052,972 ns` 未通过不变的 90% throughput 门槛，反汇编显示 constant-bound map
+被 unknown-length streaming-map 的 `unroll.disable` 覆盖而只保留单路迭代。复诊与闭环见
+`specs/0.13/review/implementation-blocker-38.md`：Native test 改走真实 multiversion KIR 管线并
+先验证 helper KIR 保留状态；checked constant-call map 使用有界二路 schedule，unknown-length
+checked streaming map 继续禁止有害展开，cache identity 更新为
+`x86-checked-memory-map-schedule-v2`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
+性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
