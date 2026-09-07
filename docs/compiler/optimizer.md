@@ -77,6 +77,13 @@ Cross-variant LTO is forbidden, so an enhanced assumption cannot strengthen
 baseline or a sibling variant. The baseline-safe dispatcher selects a verified
 compatible variant without changing public semantics.
 
+The fixed `2x` logical KIR-growth budget charges an exact normalized KIR body
+once when target variants differ only in target profile and tier-derived hidden
+names. A real instruction, CFG, ABI, or structural difference pays the full
+charge. Each target variant still has an independent verifier, feature audit,
+LLVM module, object, cache identity, and artifact-size gate; body sharing cannot
+weaken target isolation or hide physical output growth.
+
 Every KIR module carries a canonical `KirTargetProfile`. Inspection, portable
 C, WebAssembly, Native library, and Native executable profiles identify their
 consumer, target, CPU policy, operation availability and exact fixed-width

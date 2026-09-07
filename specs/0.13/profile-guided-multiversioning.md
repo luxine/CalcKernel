@@ -646,8 +646,13 @@ In either case:
 - every enhanced variant starts from the same verified logical KIR pre-state;
 - each variant has its own target-profile digest, proof roots, costs, code size,
   and feature audit;
-- total additional multiversion KIR units cannot exceed the complete post-O3
-  baseline module units, so final module KIR is at most twice baseline;
+- total additional unique multiversion KIR-body units cannot exceed the complete
+  post-O3 baseline module units, so logical KIR growth remains at most twice
+  baseline. Enhanced members whose modules become byte-identical after replacing
+  only their target profile and tier-derived hidden names with the common baseline
+  identity share one body charge. Any instruction, CFG, ABI, or other structural
+  difference pays its full units. Shared charging never merges the separately
+  verified, feature-audited, emitted, or object-size-gated target modules;
 - PGO specialization still shares, rather than resets, all 0.12 clone and
   transaction budgets; and
 - budget exhaustion or insufficient benefit keeps baseline and records a

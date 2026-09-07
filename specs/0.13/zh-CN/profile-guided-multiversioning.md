@@ -520,8 +520,11 @@ eligible root 是 exported CK function 或 executable entry，其 reachable opti
 - 一个 root 精确包含一个 baseline 与零至两个 accepted enhanced variant；
 - 每个 enhanced variant 从同一 verified logical KIR pre-state 开始；
 - 每个 variant 有独立 target-profile digest、proof root、cost、code size、feature audit；
-- multiversion 额外 KIR units 不能超过完整 post-O3 baseline module units，因此最终 module
-  KIR 最多为 baseline 两倍；
+- multiversion 额外 unique KIR-body units 不能超过完整 post-O3 baseline module units，因此
+  logical KIR growth 最多为 baseline 两倍。Enhanced member 只有在把 target profile 与 tier-derived
+  hidden name 还原为公共 baseline identity 后 module 逐字节一致时，才共享一次 body charge；任何
+  instruction、CFG、ABI 或其他结构差异都支付完整 units。共享计费不合并仍需分别验证、feature audit、
+  emit 与接受 object-size gate 的 target module；
 - PGO specialization 共享而不是重置全部 0.12 clone/transaction budget；
 - budget exhaustion 或收益不足保留 baseline，并记录稳定保守原因。
 

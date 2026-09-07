@@ -21,8 +21,10 @@
   完整，Darwin/Windows AArch64 schema 1 baseline-only。
 - 所有 accepted variant 从同一 baseline logical pre-state，separate LLVM module、独立 proof/cost/
   feature digest、hidden symbols；无 cross-variant LTO。
-- checker 独立复算 eligibility/profit/growth/shared budget/order；每 root 最多两个 enhanced，module
-  total KIR <=2x baseline，拒绝/non-winner 不退款。
+- checker 独立复算 eligibility/profit/growth/shared budget/order；每 root 最多两个 enhanced，unique
+  normalized KIR-body total <=2x baseline。仅 profile/tier hidden name 不同且规范化后逐字节一致的
+  member 共享 body charge，真实结构差异完整计费；独立 target module/object/audit 与 artifact gate
+  不共享，拒绝/non-winner 不退款。
 - enhanced retained-set 必须有一个通过不变 profitability floor 的 trial 作为 eligibility witness；
   profitable strict superset 的 required-feature subset 只有在 predicted cost 不差于 baseline 时，
   才可作为 compatibility companion 进入 retained-set。若 shared full-root budget 只容纳一个 enhanced

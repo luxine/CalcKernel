@@ -60,8 +60,10 @@
 
 - [ ] target set schema 1精确覆盖 x86 baseline/v3/v4、Linux AArch64 baseline/SVE/SVE2、Darwin/
   Windows AArch64 baseline-only；完整硬件+OS state predicate与 canonical digest。
-- [ ] eligible root benefit >=10%且>=2 units，每 root最多两个 enhanced，全部从同一 baseline pre-state，
-  additional KIR <= baseline units，共享预算/order/checker/proof/feature audit正确且无 cross-variant LTO。
+- [ ] eligible root benefit >=10%且>=2 units，每 root最多两个 enhanced，全部从同一 baseline pre-state；
+  additional unique normalized KIR-body <= baseline units，仅 profile/tier hidden name 不同且规范化后逐字节
+  一致的 member 共享 body charge，真实结构差异完整计费；独立 target module/object/audit 与 artifact gate
+  不共享，预算/order/checker/proof/feature audit正确且无 cross-variant LTO。
 - [ ] baseline 与每个 enhanced module 的独立 KIR 复验携带同一 verified contract facts；缺失 facts
   fail closed，LLVM parameter/alias/effect strengthening仍由 Native fact audit逐项约束。
 - [ ] detector fail-closed且 baseline-safe；slot 初始指向 cold ABI-preserving resolver entry，稳态

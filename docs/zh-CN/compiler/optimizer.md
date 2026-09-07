@@ -63,6 +63,11 @@ target variant 都重跑 normal verifier、fact audit、target-feature audit 与
 Cross-variant LTO 禁止，因此 enhanced assumption 不能强化 baseline 或 sibling variant。
 baseline-safe dispatcher 只选择已验证的兼容 variant，不改变 public semantics。
 
+固定的 `2x` logical KIR-growth budget 对仅 target profile 与 tier-derived hidden name 不同、
+规范化后逐字节一致的 KIR body 只计费一次；instruction、CFG、ABI 或其他真实结构差异仍支付
+完整 charge。每个 target variant 仍有独立 verifier、feature audit、LLVM module、object、cache
+identity 与 artifact-size gate，共享 body 计费不能削弱 target 隔离或隐藏物理产物增长。
+
 每个 KIR module 都携带规范化 `KirTargetProfile`。Inspection、portable C、WebAssembly、
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
