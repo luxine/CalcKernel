@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 280388a396e85f8876300427cd56b627b08b3e45
+Accepted base revision: v0.13 repaired candidate 7a292bc74a87591437fc87ceb06df1fbb1bb28fd
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`280388a396e85f8876300427cd56b627b08b3e45` was reviewed file by file and integrated
+`7a292bc74a87591437fc87ceb06df1fbb1bb28fd` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
@@ -39,6 +39,13 @@ then publishes them through the existing atomic bulk-add on every return. Export
 and module-entry functions retain direct publication, so externally initiated calls
 remain visible. This changes neither the profile schema nor function-entry meaning;
 it removes only per-call atomic traffic from instrumented hot loops.
+
+The generated multiversion dispatch slot is initialized to one private cold
+resolver entry with the exact target ABI. The resolver entry publishes the
+selected member and must-tail-calls it; every steady-state public dispatch
+therefore performs one acquire load followed directly by one indirect must-tail
+call, without a per-call null test or conditional branch. This preserves the
+existing one-shot selection and concurrent publication semantics.
 
 For inherited schema-7 runtime samples on Linux, the unchanged native kernel-call
 loop is measured with current-thread CPU time. The existing one-allowed-CPU affinity

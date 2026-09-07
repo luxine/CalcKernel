@@ -42,7 +42,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`280388a396e85f8876300427cd56b627b08b3e45`。两者之间的累计提交已按
+`7a292bc74a87591437fc87ceb06df1fbb1bb28fd`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -384,3 +384,16 @@ evidence 后，detached v0.13 checker 因 outer evidence root 保持相对路径
 evidence root 绝对化，并以 outer owner 下的 absolute report argument 调用历史 checker；identity、
 byte、tree、symlink、commit 与 checker 等字节验证不变。性能/稳定性门槛、timed work、样本、corpus、
 平台和 required job 均保持不变。
+
+Exact v0.13 run `34106156091` 的 x86-64 performance job `101691953958` 以
+`14142 / 13272 = 1.0656 > 1.05` 未通过 `trip-unroll-simd` 的 dispatch/direct
+门槛。稳定 samples、byte-identical selected-direct artifact 与反汇编证明 one-shot publish
+完成后，公开 dispatcher 仍逐调用执行 acquire load、null test、conditional branch 与 indirect
+jump。V0.14 已逐字继承 exact v0.13
+`7a292bc74a87591437fc87ceb06df1fbb1bb28fd` 的 resolver-sentinel closure：slot 初值是
+exact-ABI cold resolver entry，首次调用沿既有 acquire-release publication 获得 winner 并
+must-tail 调用，稳态只保留 acquire load + indirect must-tail call；codegen/cache identity 同步
+更新。replay manifest 重钉到该 SHA，SHA-256 为
+`0cd154de78d8b305e73f9707ee8236fdb6064977b4f0be136a814d1a4fdda6e2`。复诊见
+`specs/0.14/review/implementation-blocker-42.md`；V0.13 仍独立验收，语言/公开 ABI、profile
+格式、target ISA、性能/稳定性门槛、timed work、样本、corpus、平台与 required job 均不变。
