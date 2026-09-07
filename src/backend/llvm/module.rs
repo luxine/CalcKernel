@@ -87,6 +87,7 @@ impl<'context> NativeModule<'context> {
             })
             .cloned()
             .collect::<Vec<_>>();
+        self.fact_properties.extend(duplicated.iter().cloned());
         self.fact_properties.extend(duplicated);
         Ok(())
     }

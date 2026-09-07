@@ -31,6 +31,8 @@
   可重复 capability detection，但 per-root acquire/release slot 是唯一
   publication/cache layer且只发布一个 compatible verified pointer；后续 steady call 是 atomic load +
   indirect tail call，不再 detection。
+- resolver entry 与 steady dispatcher 实际继承的 parameter/function attribute 均有独立、source-linked
+  fact ledger 记录；assume/range/no-wrap/alias-scope 等 body evidence 不复制，审计计数精确相等。
 - baseline/thunk/detector 无 optional instruction，variant 不越声明 feature，无 cross-module leakage。
 - generic AArch64 SVE/SVE2 member 把既有 `target-cpu=generic`、显式 feature string 与固定
   `tune-cpu=neoverse-n2` 一起物化到函数，真实 object 使用预期调度；feature audit 与允许 ISA 不变，

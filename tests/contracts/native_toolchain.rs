@@ -996,6 +996,20 @@ fn multiversion_dispatch_should_never_name_a_void_call() {
 }
 
 #[test]
+fn multiversion_dispatch_fact_ledger_should_cover_both_generated_call_layers() {
+    let module = read("src/backend/llvm/module.rs");
+    let dispatch = module
+        .split_once("fn add_multiversion_dispatch(")
+        .expect("multiversion dispatch module wrapper")
+        .1;
+    assert!(
+        dispatch.contains("self.fact_properties.extend(duplicated.iter().cloned());")
+            && dispatch.contains("self.fact_properties.extend(duplicated);"),
+        "the CK fact ledger must register inherited attributes for both the resolver entry and steady dispatcher"
+    );
+}
+
+#[test]
 fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
     let root = repo_root();
     let header_path = root.join("native/profile_runtime/include/ckc_profile_atomic.h");

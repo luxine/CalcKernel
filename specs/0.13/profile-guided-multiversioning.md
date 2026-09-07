@@ -695,6 +695,10 @@ slot is the sole publication/cache layer. Later calls perform the same one atomi
 load and indirect tail call; they contain no null test and do not repeat
 CPUID/HWCAP queries. The public function address remains the thunk before and
 after resolution.
+The cold resolver entry and steady dispatcher both inherit only the baseline's
+applicable parameter/function attributes, and the CK fact ledger records one
+source-linked copy for each generated call layer. Body-owned assume, range,
+no-wrap, and alias-scope evidence is never duplicated onto either layer.
 
 x86-64 detection uses compiler-owned CPUID and XGETBV checks and requires both
 hardware bits and OS register-state support. AArch64 Linux executables use the

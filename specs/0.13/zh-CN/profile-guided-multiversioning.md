@@ -555,6 +555,9 @@ root 的 private slot 初始指向 cold、baseline-safe 且保持 ABI 的 resolv
 first call 可以重复 detection 并计算同一答案，但只能发布 compatible verified pointer；该 slot
 是唯一 publication/cache layer。后续调用执行相同的一次 atomic load 与 indirect tail call，
 不含 null test，也不再执行 CPUID/HWCAP query。public function address 始终是 thunk。
+cold resolver entry 与 steady dispatcher 都只继承 baseline 中适用的 parameter/function attribute，
+CK fact ledger 为两个生成 call layer 分别登记一份 source-linked 属性；body-owned assume、range、
+no-wrap 与 alias-scope evidence 不得复制到任一层。
 
 x86-64 使用 compiler-owned CPUID/XGETBV，同时要求 hardware bit 与 OS register-state。
 AArch64 Linux executable 使用启动 auxiliary-vector HWCAP/HWCAP2；没有 CK entry capture 的

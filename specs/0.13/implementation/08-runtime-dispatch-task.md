@@ -30,7 +30,8 @@ public thunk。失败/未知/矛盾/heterogeneous uncertainty 全部选 baseline
    indirect tail call，不再 CPUID/HWCAP。
 5. 写 ABI RED：public symbol/address 始终是 thunk；slot 初始指向 cold ABI-preserving resolver entry，
    稳态 thunk 只有 atomic load + indirect tail call 且无 null branch；calling convention、slice flatten、checked status/
-   result slot、alignment/unwind/visibility/header/export 与单版本完全一致；hidden digest symbols 不可查找。
+   result slot、alignment/unwind/visibility/header/export 与单版本完全一致；resolver entry 与 steady dispatcher
+   的 inherited parameter/function attribute 各自在 CK fact ledger 登记，body fact 不复制；hidden digest symbols 不可查找。
 6. 写 failure/test seam RED：private seam 可强制“兼容”variant做 differential，但不能强制 unsupported
    feature production execution；malformed table/pointer/digest withholding artifact。
 7. 写 real-hardware/differential RED：支持的本机 tier 真选择，不支持主机 baseline；ordinary/forced
