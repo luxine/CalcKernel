@@ -982,6 +982,39 @@ fn x86_single_map_loop_should_select_four_vector_chains_without_padding_the_modu
 }
 
 #[test]
+fn x86_widening_integer_cast_should_respect_the_two_chain_frontend_budget() {
+    let source = r#"
+export unsafe fn map_cast(a: slice<u32>, out: slice<f64>, n: u32) -> void
+contract { requires n <= a.len && n <= out.len; requires noalias(a, out); effects read(a), write(out); }
+{
+  let i: u32 = 0;
+  while i < n { out[i] = u32_to_f64(a[i]); i = i + 1; }
+}
+"#;
+    let (pre, contracts) = map_state_with_profile(
+        source,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted x86 widening-cast vector plan");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        (2, 2),
+        "the x86 u32-to-f64 expansion must stay within the measured two-chain frontend budget; explanations={:#?}",
+        result.vector_explanations
+    );
+}
+
+#[test]
 fn loop_simd_should_schedule_independent_unrolled_loads_before_stores() {
     let (pre, _) = map_state_with_profile(
         INTERLEAVE_MAP,

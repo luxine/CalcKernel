@@ -279,6 +279,17 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
 }
 
 #[test]
+fn x86_widening_cast_frontend_budget_should_invalidate_every_native_object_cache() {
+    let commands = read("src/cli/commands.rs");
+    let identity = "x86-widening-cast-frontend-budget-2-v1";
+    assert_eq!(
+        commands.matches(identity).count(),
+        2,
+        "ordinary and multiversion native objects must both encode the widening-cast scheduling policy"
+    );
+}
+
+#[test]
 fn native_handoff_repairs_should_preserve_contract_facts_and_constant_map_schedule() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let multiversion = read("src/backend/llvm/multiversion.rs");
