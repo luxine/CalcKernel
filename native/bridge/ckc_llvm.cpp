@@ -1983,6 +1983,40 @@ std::optional<unsigned> scalar_memory_map_bound_argument(
     return std::nullopt;
 }
 
+bool argument_has_constant_equality_assume(
+    const llvm::Function &function, unsigned argument_index) {
+    for (const llvm::BasicBlock &block : function) {
+        for (const llvm::Instruction &instruction : block) {
+            const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            const llvm::Function *callee =
+                call == nullptr ? nullptr : call->getCalledFunction();
+            if (callee == nullptr || !callee->isIntrinsic() ||
+                callee->getIntrinsicID() != llvm::Intrinsic::assume ||
+                call->arg_empty()) {
+                continue;
+            }
+            const auto *compare = llvm::dyn_cast<llvm::ICmpInst>(
+                call->getArgOperand(0));
+            if (compare == nullptr ||
+                compare->getPredicate() != llvm::ICmpInst::ICMP_EQ) {
+                continue;
+            }
+            for (unsigned operand = 0; operand < 2; ++operand) {
+                const auto *argument = llvm::dyn_cast<llvm::Argument>(
+                    compare->getOperand(operand));
+                if (argument != nullptr &&
+                    argument->getParent() == &function &&
+                    argument->getArgNo() == argument_index &&
+                    llvm::isa<llvm::ConstantInt>(
+                        compare->getOperand(1 - operand))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool is_scalar_memory_map(const llvm::Loop &loop) {
     if (contains_fixed_vector_operation(loop) ||
         is_integer_memory_reduction(loop)) {
@@ -2238,15 +2272,31 @@ void attach_x86_checked_loop_unroll(
     if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
         return;
     }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
     for (llvm::Function &function : module) {
-        if (function.isDeclaration() || function.empty()) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty()) {
             continue;
         }
-        llvm::DominatorTree dominators(function);
-        llvm::LoopInfo loops(dominators);
-        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
-            if (contains_fixed_vector_operation(*loop) ||
-                !contains_checked_integer_overflow(*loop)) {
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *analysis = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*analysis);
+        llvm::DominatorTree analysis_dominators(*analysis);
+        llvm::LoopInfo analysis_loops(analysis_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *analysis_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *analysis_loop = analysis_header == nullptr
+                ? nullptr
+                : analysis_loops.getLoopFor(analysis_header);
+            if (analysis_loop == nullptr ||
+                analysis_loop->getHeader() != analysis_header ||
+                contains_fixed_vector_operation(*analysis_loop) ||
+                !contains_checked_integer_overflow(*analysis_loop)) {
                 continue;
             }
             llvm::SmallVector<llvm::BasicBlock *, 4> latches;
@@ -2261,11 +2311,15 @@ void attach_x86_checked_loop_unroll(
                 continue;
             }
             auto &context = module.getContext();
-            const auto bound = scalar_memory_map_bound_argument(*loop);
+            const auto bound =
+                scalar_memory_map_bound_argument(*analysis_loop);
             const bool checked_constant_call_map = bound &&
-                every_direct_call_has_constant_argument(function, *bound);
+                every_direct_call_has_constant_argument(*function, *bound);
+            const bool checked_constant_bound_map = bound &&
+                argument_has_constant_equality_assume(*analysis, *bound);
             llvm::Metadata *schedule = nullptr;
-            if (is_scalar_memory_map(*loop) && !checked_constant_call_map) {
+            if (is_scalar_memory_map(*analysis_loop) &&
+                !checked_constant_call_map && !checked_constant_bound_map) {
                 schedule = llvm::MDNode::get(
                     context,
                     {llvm::MDString::get(context,
@@ -2286,6 +2340,7 @@ void attach_x86_checked_loop_unroll(
                                                     loop_id);
             }
         }
+        analysis->eraseFromParent();
     }
 }
 
