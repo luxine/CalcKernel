@@ -460,6 +460,21 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         "{:?}",
         result.analysis_fallbacks
     );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let accepted = result
+            .vector_explanations
+            .iter()
+            .find(|explanation| {
+                explanation.disposition == calckernel::CandidateDisposition::Accepted
+            })
+            .expect("accepted x86 streaming-map vector plan");
+        assert_eq!(
+            (accepted.vf, accepted.uf),
+            (4, 4),
+            "x86 streaming map must retain four independent vector chains"
+        );
+    }
     let kir_text = print_kir_module(result.artifact.as_ref().expect("vector artifact"));
     for spelling in [
         "loop_simd_body",
