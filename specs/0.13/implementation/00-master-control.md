@@ -285,3 +285,15 @@ V0.14 exact replay run `34090234424` 的 x86-64 performance job
 只作 key lookup 的短生命周期 ordered map 改为 function-local hash lookup，保留全部 block/edge/
 parameter 顺序、proof 与 malformed-CFG fail-closed 行为。语言/ABI、优化结果、安全语义、目标
 ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact replay run `34095419897` 的 x86-64 performance job
+`101658156635` 重建 exact V0.13 后，unchecked `integer_cast` 以
+`4,247,259 / 3,703,185` 仅达到较快 Rust SIMD oracle 约 `87.19%`，未通过不变的 `90%`
+单项门槛。全部样本稳定；反汇编显示 CK 的 `VF2/UF4` 把多指令 `u32 -> f64` 展开复制为约
+98-byte 热循环，而较快 oracle 的同语义 `UF2` 热循环约 52 bytes。复诊与闭环见
+`specs/0.13/review/implementation-blocker-31.md`：x86 widening cast 的 target-specific
+frontend budget 限制为两条独立链，`UF4` 仍被发现、物化和独立检查后作为 non-winner，普通
+integer map 与三流 map 继续选择四链。ordinary/multiversion native object cache identity 同步
+加入 `x86-widening-cast-frontend-budget-2-v1`，禁止复用旧 `UF4` 产物。语言/ABI、安全语义、目标 ISA、`UF <= 4` frontier、
+legality/profitability/proof/growth gate、性能与稳定性门槛、timed work、样本、corpus、平台与
+required job matrix 均未改变。

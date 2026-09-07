@@ -1266,6 +1266,21 @@ fn vector_loop_scope_cost(
         .saturating_add(u64::from(epilogue_entry_cost) * u64::from(u8::from(tail != 0)))
 }
 
+fn exceeds_x86_widening_cast_frontend_budget(
+    profile: &crate::KirTargetProfile,
+    candidate: &super::VectorizationCandidate,
+) -> bool {
+    matches!(
+        profile.target_identity(),
+        crate::KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-")
+    ) && candidate.uf > 2
+        && candidate.operations.iter().any(|operation| {
+            operation.operation == crate::KirProfileOperation::Cast
+                && operation.lane_type == crate::KirLaneType::U32
+                && operation.result_lane_type == crate::KirLaneType::F64
+        })
+}
+
 fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations: u32) -> u64 {
     let transformed_body = scalar_body_cost
         .saturating_sub(plan.cost.scalar)
@@ -1460,6 +1475,10 @@ fn run_native_vector_frontier(
             |(left_cost, left_candidate, left, _, _),
              (right_cost, right_candidate, right, _, _)| {
                 (
+                    exceeds_x86_widening_cast_frontend_budget(
+                        &state.module().profile,
+                        left_candidate,
+                    ),
                     *left_cost,
                     left.plan.growth.transformed_units,
                     left.plan.vf,
@@ -1467,6 +1486,10 @@ fn run_native_vector_frontier(
                     &left_candidate.key,
                 )
                     .cmp(&(
+                        exceeds_x86_widening_cast_frontend_budget(
+                            &state.module().profile,
+                            right_candidate,
+                        ),
                         *right_cost,
                         right.plan.growth.transformed_units,
                         right.plan.vf,
