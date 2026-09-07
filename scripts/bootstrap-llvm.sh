@@ -192,7 +192,7 @@ ckc_runtime_cc="${CC:-cc}"
 ckc_runtime_flags=(
   -std=c11 -O3 -DNDEBUG -DCKC_RYU_NO_MALLOC=1 -fPIC
   -ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables
-  -fno-unwind-tables -fvisibility=hidden -ffunction-sections -fdata-sections
+  -fno-unwind-tables -fno-ident -fvisibility=hidden -ffunction-sections -fdata-sections
   -Wall -Wextra -Werror
   -I"$ckc_repo_root/native/runtime/include"
   -I"$ckc_repo_root/native/runtime/vendor"

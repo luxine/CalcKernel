@@ -5,8 +5,16 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+#if defined(_M_ARM64)
+#ifdef InterlockedIncrement
+#undef InterlockedIncrement
+#endif
+__declspec(dllimport) long InterlockedIncrement(volatile long *value);
+#else
 #include <intrin.h>
 #pragma intrinsic(_InterlockedIncrement)
+#endif
 
 static void *__ck_profile_platform_allocate(uint64_t length) {
   if (length == 0u || length > (uint64_t)SIZE_MAX) {
@@ -29,7 +37,11 @@ static int32_t __ck_profile_platform_random(uint8_t output[16]) {
       (uint64_t)ticks.QuadPart,
       ((uint64_t)GetCurrentProcessId() << 32u) |
           ((uint64_t)GetCurrentThreadId() << 1u) |
+#if defined(_M_ARM64)
+          (uint32_t)InterlockedIncrement(&serial)};
+#else
           (uint32_t)_InterlockedIncrement(&serial)};
+#endif
   CkProfileSha256 sha;
   uint8_t digest[32];
   static const uint8_t domain[] = "CK-PROFILE-WINDOWS-RUN-ID\0";

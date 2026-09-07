@@ -7,7 +7,8 @@ use calckernel::{
     NativeArtifactPaths, NativeContext, NativeMultiversionObjectRole, NativeMultiversionTargetSet,
     NativeOptimizationLevel, NativePlatform, SourceFile, build_kir_module, check,
     check_kir_multiversion_bundle, emit_native_multiversion_objects, import_contract_facts,
-    lower_native_kir_module, lower_to_mir, propose_kir_multiversion_bundle, run_kir_pass_pipeline,
+    lower_native_kir_module, lower_native_multiversion_baseline_module, lower_to_mir,
+    propose_kir_multiversion_bundle, run_kir_pass_pipeline,
 };
 
 use super::support::temp::unique_id;
@@ -65,7 +66,7 @@ fn multiversion_dynamic_library_with_void_helper_call_should_build() {
         let sections = String::from_utf8_lossy(&sections.stdout);
         assert!(sections.contains("Name: .ck_dispatch_slot"), "{sections}");
         assert!(!sections.contains("Name: .symtab"), "{sections}");
-    } else {
+    } else if cfg!(target_os = "macos") {
         let symbols = Command::new(std::path::Path::new(&prefix).join("bin/llvm-nm"))
             .arg("--defined-only")
             .arg(&library)
@@ -94,8 +95,100 @@ fn multiversion_dynamic_library_with_void_helper_call_should_build() {
                 "dynamic multiversion link retained unreachable private runtime symbol {unreachable}:\n{symbols}"
             );
         }
+    } else {
+        let exports = Command::new(std::path::Path::new(&prefix).join("bin/llvm-readobj"))
+            .arg("--coff-exports")
+            .arg(&library)
+            .output()
+            .expect("inspect stripped Windows multiversion exports");
+        assert!(
+            exports.status.success(),
+            "llvm-readobj failed: {}",
+            String::from_utf8_lossy(&exports.stderr)
+        );
+        let exports = String::from_utf8_lossy(&exports.stdout);
+        assert!(exports.contains("Name: kernel"), "{exports}");
+        assert!(!exports.contains("Name: cold_step"), "{exports}");
+        assert!(!exports.contains("Name: hot_step"), "{exports}");
     }
     fs::remove_dir_all(root).expect("remove multiversion void-call fixture");
+}
+
+#[test]
+fn compact_multiversion_helper_policy_should_survive_o3_before_symbol_stripping() {
+    let targets = NativeMultiversionTargetSet::host(KirConsumer::NativeLibrary)
+        .expect("materialized host target set");
+    let source = fs::read_to_string("benches/fixtures/pgo/call_constant_length.ck")
+        .expect("multiversion helper fixture");
+    let checked = check(&SourceFile::new("call_constant_length.ck", source));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let mut kir = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    kir.profile = targets.target_set().tiers[0].profile.clone();
+    let contracts = import_contract_facts(&kir, &checked.checked_program, 0).expect("contracts");
+    let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
+    assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let optimized_contracts = optimized
+        .contract_facts
+        .clone()
+        .expect("optimized contracts");
+    let request = KirMultiversionPlanningRequest {
+        logical_pre_state: optimized.artifact.expect("baseline"),
+        target_set: targets.target_set().clone(),
+        pgo_hot_roots: None,
+        shared_growth_consumed: 0,
+    };
+    let bundle = propose_kir_multiversion_bundle(&request).expect("bundle");
+    check_kir_multiversion_bundle(&request, &bundle).expect("checked bundle");
+    let baseline_result = run_kir_pass_pipeline(
+        bundle.baseline.clone(),
+        KirOptimizationLevel::O0,
+        Some(&optimized_contracts),
+    );
+    assert!(
+        baseline_result.errors.is_empty(),
+        "{:?}",
+        baseline_result.errors
+    );
+    let context = NativeContext::new().expect("context");
+    let baseline_target = targets
+        .target(KirMultiversionTierId::Baseline)
+        .expect("baseline target");
+    let ir = lower_native_multiversion_baseline_module(
+        &context,
+        baseline_target,
+        &baseline_result,
+        &bundle,
+        &EmitLlvmOptions::default(),
+    )
+    .expect("compact multiversion lowering")
+    .verify()
+    .expect("LLVM verification")
+    .audit()
+    .expect("fact audit")
+    .optimize(baseline_target, NativeOptimizationLevel::O3)
+    .expect("LLVM O3")
+    .to_ir_string()
+    .expect("optimized LLVM IR");
+    assert!(
+        ir.lines()
+            .any(|line| line.starts_with("define ") && line.contains("@cold_step(")),
+        "KIR-retained large helper was re-inlined before link stripping:\n{ir}"
+    );
+    assert!(
+        !ir.lines()
+            .any(|line| line.starts_with("define ") && line.contains("@hot_step(")),
+        "compact helper was not inlined before link stripping:\n{ir}"
+    );
 }
 
 #[test]

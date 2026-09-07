@@ -269,7 +269,6 @@ pub fn emit_native_multiversion_objects_checked(
     pgo: Option<&CkPgoOptimizerPlan>,
     options: &EmitLlvmOptions,
 ) -> Result<NativeMultiversionObjectBundle, NativeError> {
-    let request = checked.request();
     let bundle = checked.bundle();
     if targets.target_set() != &bundle.target_set {
         return Err(error(
