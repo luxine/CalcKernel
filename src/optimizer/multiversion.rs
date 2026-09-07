@@ -8,7 +8,7 @@ use crate::{
     KirMultiversionHiddenSymbol, KirMultiversionRootBundle, KirMultiversionTargetSet,
     KirMultiversionTierId, KirMultiversionVariant, KirOperationAvailability, KirSanitizerMode,
     KirTargetProfile, KirTerminator, KirValueType, kir_function_units,
-    kir_multiversion_module_digest, print_kir_module, validate_kir_module,
+    kir_multiversion_module_digest, validate_kir_module,
 };
 
 /// Fixed CK 0.13 multiversion profitability threshold.
@@ -29,6 +29,27 @@ pub struct KirMultiversionPlanningRequest {
     pub shared_growth_consumed: u32,
 }
 
+/// Opaque proof that one proposal was independently reconstructed from the
+/// exact immutable request. Consumers can retain this authority across later
+/// emission stages without rerunning the deterministic checker.
+#[derive(Debug)]
+pub struct CheckedKirMultiversionBundle<'a> {
+    request: &'a KirMultiversionPlanningRequest,
+    bundle: &'a KirMultiversionBundle,
+}
+
+impl<'a> CheckedKirMultiversionBundle<'a> {
+    #[must_use]
+    pub const fn request(&self) -> &'a KirMultiversionPlanningRequest {
+        self.request
+    }
+
+    #[must_use]
+    pub const fn bundle(&self) -> &'a KirMultiversionBundle {
+        self.bundle
+    }
+}
+
 /// Produces a deterministic proposal. The returned value is not authoritative
 /// until `check_kir_multiversion_bundle` succeeds.
 pub fn propose_kir_multiversion_bundle(
@@ -39,10 +60,10 @@ pub fn propose_kir_multiversion_bundle(
 
 /// Independently reconstructs the closed plan from the immutable inputs and
 /// rejects any mutated feature, proof, mapping, symbol, budget, or order data.
-pub fn check_kir_multiversion_bundle(
-    request: &KirMultiversionPlanningRequest,
-    proposal: &KirMultiversionBundle,
-) -> Result<(), String> {
+pub fn check_kir_multiversion_bundle<'a>(
+    request: &'a KirMultiversionPlanningRequest,
+    proposal: &'a KirMultiversionBundle,
+) -> Result<CheckedKirMultiversionBundle<'a>, String> {
     let expected = build_candidate_bundle(request, PlanningAuthority::Checker)?;
     if proposal.schema_version != expected.schema_version
         || proposal.logical_pre_state_digest != expected.logical_pre_state_digest
@@ -114,7 +135,10 @@ pub fn check_kir_multiversion_bundle(
     if proposal.digest != expected.digest {
         return Err("multiversion bundle digest mismatch".to_string());
     }
-    Ok(())
+    Ok(CheckedKirMultiversionBundle {
+        request,
+        bundle: proposal,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -313,14 +337,22 @@ fn build_candidate_bundle(
     let dispatch_plan = root_bundles
         .iter()
         .map(|root| {
-            let mut ranked_tiers = root
-                .variants
+            let mut runtime_variants = root.variants.iter().collect::<Vec<_>>();
+            runtime_variants.sort_by_key(|variant| {
+                (
+                    variant.predicted_variant_cost,
+                    variant.required_features.len(),
+                    variant.kir_units,
+                    variant.tier,
+                    variant.root,
+                )
+            });
+            let mut ranked_tiers = runtime_variants
                 .iter()
                 .map(|variant| variant.tier)
                 .collect::<Vec<_>>();
             ranked_tiers.push(KirMultiversionTierId::Baseline);
-            let mut implementation_symbols = root
-                .variants
+            let mut implementation_symbols = runtime_variants
                 .iter()
                 .map(|variant| {
                     variant
@@ -379,7 +411,7 @@ fn variant_growth_charge(
 fn normalized_variant_kir_body(
     variant: &KirMultiversionVariant,
     baseline_profile: &KirTargetProfile,
-) -> String {
+) -> KirModule {
     let mut module = variant.module.clone();
     module.profile = baseline_profile.clone();
     let source_names = variant
@@ -403,7 +435,7 @@ fn normalized_variant_kir_body(
             }
         }
     }
-    print_kir_module(&module)
+    module
 }
 
 fn validate_request(request: &KirMultiversionPlanningRequest) -> Result<(), String> {

@@ -30,7 +30,7 @@ use calckernel::{
     NativeProfileGeneration, NativeTarget, anchor_profile_directory, apply_profile,
     build_late_profile_layout_plan, check_kir_multiversion_bundle,
     create_native_multiversion_static_archive, create_native_profile_generation_static_archive,
-    create_native_static_archive, emit_native_header, emit_native_multiversion_objects,
+    create_native_static_archive, emit_native_header, emit_native_multiversion_objects_checked,
     emit_native_profile_generation_header, link_native_dynamic_library, link_native_executable,
     link_native_multiversion_dynamic_library, link_native_multiversion_executable,
     link_native_profile_generation_dynamic_library, link_native_profile_generation_executable,
@@ -1220,7 +1220,7 @@ fn run_multiversion_planning_build(
         shared_growth_consumed: 0,
     };
     let bundle = propose_kir_multiversion_bundle(&request)?;
-    check_kir_multiversion_bundle(&request, &bundle)?;
+    let checked_bundle = check_kir_multiversion_bundle(&request, &bundle)?;
     if let Some(application) = &application {
         emit_profile_analysis(&application.analysis, args)?;
     }
@@ -1246,11 +1246,10 @@ fn run_multiversion_planning_build(
             .as_ref()
             .ok_or_else(|| "multiversion contract facts are missing".to_string())?;
         let context = NativeContext::new().map_err(|error| error.to_string())?;
-        let emitted = emit_native_multiversion_objects(
+        let emitted = emit_native_multiversion_objects_checked(
             &context,
             &targets,
-            &request,
-            &bundle,
+            &checked_bundle,
             contracts,
             compiled.result.pgo.as_ref(),
             &EmitLlvmOptions {
@@ -1419,7 +1418,7 @@ fn multiversion_cache_manifest(
         bundle.additional_kir_units,
         bundle.total_kir_units,
     );
-    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;dispatch-resolver-sentinel-v2;contract-facts-v1;coverage-first-variant-ranking-v1;coverage-companion-profitability-v1;shared-target-neutral-variant-budget-v1;compact-multiversion-inline-v2;aarch64-sve-tune-neoverse-n2-v2;x86-loop-simd-min-interleave-4-v1;x86-widening-cast-frontend-budget-2-v1;compact-vector-uf-stride-v1;compact-vector-body-state-v2;x86-constant-map-schedule-1x5-v1".to_string();
+    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;dispatch-resolver-sentinel-v2;contract-facts-v1;coverage-first-variant-ranking-v1;performance-first-dispatch-ranking-v1;coverage-companion-profitability-v1;shared-target-neutral-variant-budget-v1;compact-multiversion-inline-v2;aarch64-sve-tune-neoverse-n2-v2;x86-loop-simd-min-interleave-4-v1;x86-widening-cast-frontend-budget-2-v1;compact-vector-uf-stride-v1;compact-vector-body-state-v2;x86-constant-map-schedule-1x5-v1".to_string();
     let key_input = CacheKeyInput {
         source,
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),

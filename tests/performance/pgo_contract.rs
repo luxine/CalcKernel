@@ -125,6 +125,31 @@ fn schema_eight_compile_time_should_measure_terminated_child_cpu_time() {
 }
 
 #[test]
+fn multiversion_source_to_object_should_not_repeat_checked_frontend_work() {
+    let planner = read("src/optimizer/multiversion.rs");
+    let native = read("src/backend/llvm/multiversion.rs");
+    let commands = read("src/cli/commands.rs");
+
+    assert!(
+        !planner.contains("print_kir_module"),
+        "target-neutral body sharing must use structural KIR equality without serializing modules on the build path"
+    );
+    assert!(
+        commands.contains("let checked_bundle = check_kir_multiversion_bundle"),
+        "the CLI must retain the independent checker authority"
+    );
+    assert!(
+        commands.contains("emit_native_multiversion_objects_checked"),
+        "the CLI must pass the retained authority instead of reconstructing the proposal during emission"
+    );
+    assert!(
+        native.contains("pub fn emit_native_multiversion_objects(")
+            && native.contains("check_kir_multiversion_bundle(request, bundle)"),
+        "the public raw-bundle entry must remain fail closed"
+    );
+}
+
+#[test]
 fn multiversion_dispatch_hot_path_should_not_branch_on_a_null_slot() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");
@@ -308,6 +333,7 @@ fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() 
         "function.addFnAttr(\"target-features\"",
         "aarch64-sve-tune-neoverse-n2-v2",
         "coverage-first-variant-ranking-v1",
+        "performance-first-dispatch-ranking-v1",
         "coverage-companion-profitability-v1",
         "shared-target-neutral-variant-budget-v1",
         "compact-multiversion-inline-v2",

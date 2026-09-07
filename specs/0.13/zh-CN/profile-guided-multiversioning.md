@@ -539,8 +539,11 @@ eligible root 是 exported CK function 或 executable entry，其 reachable opti
 和完整 `VF * UF` backedge advance。该表示不改变封闭的 `UF <= 4` frontier，也不改变
 aggregate 两倍 KIR growth 上限。
 
-candidate total order 为：更少 required feature（更广 compatible host coverage）、estimated
-dynamic cost、更小 code size、target-tier identity、root/function identity。每个 enhanced retained-set
+candidate retention total order 为：更少 required feature（更广 compatible host coverage）、estimated
+dynamic cost、更小 code size、target-tier identity、root/function identity。Runtime dispatch 对已保留
+member 独立按 estimated dynamic cost、compatibility breadth、code size、tier identity、root identity
+排序，因此 first-compatible selection 在支持时选择 profitable v4/SVE2，同时为低阶 host 保留 v3/SVE
+companion。每个 enhanced retained-set
 都以一个通过不变 profitability floor 的 trial 作为 eligibility witness；retained companion 必须是
 该 witness 的 strict feature subset，且不得预测为比 baseline 更慢。full-root growth budget 只容纳
 companion 时，witness 无需同时物化。rejected trial 不返还 audit budget。

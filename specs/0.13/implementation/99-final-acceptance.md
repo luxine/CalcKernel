@@ -112,6 +112,8 @@
 - [ ] multiversion enhanced retained-set 有通过不变 profitability floor 的 trial 作为 eligibility
   witness；其 predicted non-regressing strict feature subset 可作为 compatibility companion。
   full-root budget 只容纳一个 variant 时保留兼容覆盖最广的 candidate，witness 无需同时物化；
+  runtime dispatch 与 coverage-first retention 独立，按 predicted cost 优先选择 retained member，
+  高阶 host 不得因 retained-set 存储顺序错误选择低阶 compatible tier；
   selected-direct 从独立加载的同字节 artifact 调用
   resolver 实际发布的 hidden member，而非 `--cpu native` 近似物。
 - [ ] Linux AArch64 executable 从 startup stack 捕获 auxv；dynamic library 无 CK entry capture 时
@@ -123,6 +125,9 @@
   Clang/Rust PGO oracle geo >=95%、accepted kernel individual >=90%。
 - [ ] PGO/multi/combined compile geo <=1.5/2.5/3.5、individual <=2/3/4；artifact aggregate <=1.25/
   2/2、individual <=1.5/2.5/2.5；distributed archive <= exact 0.12 +15%。
+- [ ] normalized target-neutral KIR body sharing 使用结构相等性；source-to-object 路径只重建一次
+  independent checker authority 并保留到 emission。raw public emitter 对未携带 authority 的任意
+  request/bundle 仍独立检查，不能以编译耗时优化绕过 fail-closed checker。
 - [ ] dynamic library final link 在 Mach-O/COFF/ELF 上回收未引用 private function/data section；
   user exports、实际 dispatch detector/member 与 referenced helper 保留，未使用的 startup capture/
   generic selector 不进入 multiversion shared artifact。

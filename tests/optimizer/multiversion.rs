@@ -68,6 +68,15 @@ fn multiversion_planner_should_build_a_closed_verified_bundle_from_one_pre_state
         calckernel::KirMultiversionTierId::X86_64V4,
         "a v4 host must retain its profitable AVX-512 member when it shares the v3 logical KIR body"
     );
+    assert_eq!(
+        first.dispatch_plan[0].ranked_tiers,
+        [
+            calckernel::KirMultiversionTierId::X86_64V4,
+            calckernel::KirMultiversionTierId::X86_64V3,
+            calckernel::KirMultiversionTierId::Baseline,
+        ],
+        "runtime selection must prefer the cheapest retained compatible target while keeping the coverage companion"
+    );
     assert!(
         first.roots[0]
             .variants
