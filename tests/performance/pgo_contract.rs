@@ -284,10 +284,13 @@ fn profile_generation_candidates_should_batch_locally_until_function_exit() {
 }
 
 #[test]
-fn x86_checked_loops_should_request_bounded_llvm_unrolling() {
+fn x86_checked_loops_should_use_a_memory_aware_bounded_schedule() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
+    let commands = read("src/cli/commands.rs");
     for required in [
         "attach_x86_checked_loop_unroll",
+        "is_scalar_memory_map",
+        "llvm.loop.unroll.disable",
         "llvm.loop.unroll.count",
         "llvm::Intrinsic::uadd_with_overflow",
         "llvm::Triple::x86_64",
@@ -297,6 +300,13 @@ fn x86_checked_loops_should_request_bounded_llvm_unrolling() {
             "x86 checked-loop unroll handoff is missing {required:?}"
         );
     }
+    assert_eq!(
+        commands
+            .matches("x86-checked-memory-map-schedule-v1")
+            .count(),
+        2,
+        "ordinary and multiversion Native object caches must bind the checked-map schedule"
+    );
 }
 
 #[test]

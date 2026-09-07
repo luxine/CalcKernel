@@ -1939,6 +1939,7 @@ bool may_contain_nonlocal_load(const llvm::Function &function) {
 
 bool contains_fixed_vector_operation(const llvm::Loop &loop);
 bool contains_checked_integer_overflow(const llvm::Loop &loop);
+bool is_scalar_memory_map(const llvm::Loop &loop);
 
 void promote_entry_allocas(llvm::Function &function) {
     llvm::SmallVector<llvm::AllocaInst *, 16> promotable;
@@ -1957,28 +1958,8 @@ void promote_entry_allocas(llvm::Function &function) {
 
 std::optional<unsigned> scalar_memory_map_bound_argument(
     const llvm::Loop &loop) {
-    if (contains_fixed_vector_operation(loop) ||
-        contains_checked_integer_overflow(loop) ||
-        is_integer_memory_reduction(loop)) {
-        return std::nullopt;
-    }
-    bool saw_nonlocal_load = false;
-    bool saw_nonlocal_store = false;
-    for (const llvm::BasicBlock *block : loop.blocks()) {
-        for (const llvm::Instruction &instruction : *block) {
-            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
-                saw_nonlocal_load = saw_nonlocal_load ||
-                    !llvm::isa<llvm::AllocaInst>(
-                        load->getPointerOperand()->stripPointerCasts());
-            }
-            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
-                saw_nonlocal_store = saw_nonlocal_store ||
-                    !llvm::isa<llvm::AllocaInst>(
-                        store->getPointerOperand()->stripPointerCasts());
-            }
-        }
-    }
-    if (!saw_nonlocal_load || !saw_nonlocal_store) {
+    if (contains_checked_integer_overflow(loop) ||
+        !is_scalar_memory_map(loop)) {
         return std::nullopt;
     }
     for (const llvm::BasicBlock *block : loop.blocks()) {
@@ -2001,6 +1982,30 @@ std::optional<unsigned> scalar_memory_map_bound_argument(
         }
     }
     return std::nullopt;
+}
+
+bool is_scalar_memory_map(const llvm::Loop &loop) {
+    if (contains_fixed_vector_operation(loop) ||
+        is_integer_memory_reduction(loop)) {
+        return false;
+    }
+    bool saw_nonlocal_load = false;
+    bool saw_nonlocal_store = false;
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+                saw_nonlocal_load = saw_nonlocal_load ||
+                    !llvm::isa<llvm::AllocaInst>(
+                        load->getPointerOperand()->stripPointerCasts());
+            }
+            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+                saw_nonlocal_store = saw_nonlocal_store ||
+                    !llvm::isa<llvm::AllocaInst>(
+                        store->getPointerOperand()->stripPointerCasts());
+            }
+        }
+    }
+    return saw_nonlocal_load && saw_nonlocal_store;
 }
 
 bool every_direct_call_has_constant_argument(
@@ -2257,13 +2262,21 @@ void attach_x86_checked_loop_unroll(
                 continue;
             }
             auto &context = module.getContext();
-            auto *count = llvm::MDNode::get(
-                context,
-                {llvm::MDString::get(context, "llvm.loop.unroll.count"),
-                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-                     llvm::Type::getInt32Ty(context),
-                     CKC_X86_CHECKED_LOOP_UNROLL))});
-            llvm::Metadata *operands[] = {nullptr, count};
+            llvm::Metadata *schedule = nullptr;
+            if (is_scalar_memory_map(*loop)) {
+                schedule = llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context,
+                                         "llvm.loop.unroll.disable")});
+            } else {
+                schedule = llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context, "llvm.loop.unroll.count"),
+                     llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                         llvm::Type::getInt32Ty(context),
+                         CKC_X86_CHECKED_LOOP_UNROLL))});
+            }
+            llvm::Metadata *operands[] = {nullptr, schedule};
             auto *loop_id = llvm::MDNode::getDistinct(context, operands);
             loop_id->replaceOperandWith(0, loop_id);
             for (llvm::BasicBlock *latch : latches) {

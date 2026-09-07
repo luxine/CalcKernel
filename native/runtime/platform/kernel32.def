@@ -11,6 +11,10 @@ EXPORTS
   GetLastError
   GetStdHandle
   GetSystemTimeAsFileTime
+  InterlockedCompareExchange
+  InterlockedCompareExchange64
+  InterlockedExchange
+  InterlockedExchangeAdd64
   InterlockedIncrement
   MoveFileExW
   MultiByteToWideChar

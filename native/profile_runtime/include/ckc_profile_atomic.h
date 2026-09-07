@@ -11,11 +11,37 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+#if defined(_M_ARM64)
+#ifdef InterlockedCompareExchange
+#undef InterlockedCompareExchange
+#endif
+#ifdef InterlockedCompareExchange64
+#undef InterlockedCompareExchange64
+#endif
+#ifdef InterlockedExchange
+#undef InterlockedExchange
+#endif
+#ifdef InterlockedExchangeAdd64
+#undef InterlockedExchangeAdd64
+#endif
+__declspec(dllimport) LONG InterlockedCompareExchange(volatile LONG *object,
+                                                      LONG exchange,
+                                                      LONG compare);
+__declspec(dllimport) LONG64
+InterlockedCompareExchange64(volatile LONG64 *object, LONG64 exchange,
+                             LONG64 compare);
+__declspec(dllimport) LONG InterlockedExchange(volatile LONG *object,
+                                               LONG value);
+__declspec(dllimport) LONG64 InterlockedExchangeAdd64(volatile LONG64 *object,
+                                                      LONG64 value);
+#else
 #include <intrin.h>
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedCompareExchange64)
 #pragma intrinsic(_InterlockedExchange)
 #pragma intrinsic(_InterlockedExchangeAdd64)
+#endif
 
 typedef struct CkProfileAtomicU32 {
   volatile LONG value;
@@ -27,8 +53,13 @@ typedef struct CkProfileAtomicU64 {
 
 static uint32_t
 ck_profile_atomic_u32_load_acquire(const CkProfileAtomicU32 *atomic) {
+#if defined(_M_ARM64)
+  return (uint32_t)InterlockedCompareExchange(
+      (volatile LONG *)&atomic->value, 0, 0);
+#else
   return (uint32_t)_InterlockedCompareExchange(
       (volatile LONG *)&atomic->value, 0, 0);
+#endif
 }
 
 static uint32_t
@@ -38,7 +69,11 @@ ck_profile_atomic_u32_load_relaxed(const CkProfileAtomicU32 *atomic) {
 
 static void ck_profile_atomic_u32_store_release(CkProfileAtomicU32 *atomic,
                                                  uint32_t value) {
+#if defined(_M_ARM64)
+  (void)InterlockedExchange(&atomic->value, (LONG)value);
+#else
   (void)_InterlockedExchange(&atomic->value, (LONG)value);
+#endif
 }
 
 static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
@@ -48,8 +83,13 @@ static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
 
 static int ck_profile_atomic_u32_compare_exchange_acq_rel(
     CkProfileAtomicU32 *atomic, uint32_t *expected, uint32_t desired) {
+#if defined(_M_ARM64)
+  const LONG observed = InterlockedCompareExchange(
+      &atomic->value, (LONG)desired, (LONG)*expected);
+#else
   const LONG observed = _InterlockedCompareExchange(
       &atomic->value, (LONG)desired, (LONG)*expected);
+#endif
   if ((uint32_t)observed == *expected) {
     return 1;
   }
@@ -59,19 +99,33 @@ static int ck_profile_atomic_u32_compare_exchange_acq_rel(
 
 static uint64_t
 ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
+#if defined(_M_ARM64)
+  return (uint64_t)InterlockedCompareExchange64(
+      (volatile LONG64 *)&atomic->value, 0, 0);
+#else
   return (uint64_t)_InterlockedCompareExchange64(
       (volatile LONG64 *)&atomic->value, 0, 0);
+#endif
 }
 
 static uint64_t ck_profile_atomic_u64_fetch_add_relaxed(
     CkProfileAtomicU64 *atomic, uint64_t value) {
+#if defined(_M_ARM64)
+  return (uint64_t)InterlockedExchangeAdd64(&atomic->value, (LONG64)value);
+#else
   return (uint64_t)_InterlockedExchangeAdd64(&atomic->value, (LONG64)value);
+#endif
 }
 
 static int ck_profile_atomic_u64_compare_exchange_relaxed(
     CkProfileAtomicU64 *atomic, uint64_t *expected, uint64_t desired) {
+#if defined(_M_ARM64)
+  const LONG64 observed = InterlockedCompareExchange64(
+      &atomic->value, (LONG64)desired, (LONG64)*expected);
+#else
   const LONG64 observed = _InterlockedCompareExchange64(
       &atomic->value, (LONG64)desired, (LONG64)*expected);
+#endif
   if ((uint64_t)observed == *expected) {
     return 1;
   }

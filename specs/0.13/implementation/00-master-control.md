@@ -334,3 +334,14 @@ call-constant-length 与 memory-bound 均超过 `2.5x`。复诊与闭环见
 fail closed；coverage-first retained-set 与 predicted-cost-first runtime dispatch 排序分离。
 语言/ABI、安全语义、目标 ISA、growth/profitability/性能与稳定性门槛、timed work、样本、corpus、
 平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34133617442` 随后暴露四个独立闭环缺口：全 feature Clippy 中 checked
+emitter 残留未使用绑定；x86 checked `map_u32` 被全局强制二路展开后仅达到较快 oracle 的约
+85.4%；AArch64 五个 multiversion 产物因 private dispatch runtime 重复携带 GCC ident 而以
+`16,408 / 8,160 = 2.01078` 略超 aggregate `2x`；Windows 已剥离 PE 无私有 COFF symbols，且
+ARM64 MSVC `/Oi` 没有展开 profile runtime 的 `_Interlocked*`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-37.md`：checked streaming map 禁止有害 unroll，其他
+checked scalar loop 仍保留有界 schedule；ordinary/multiversion cache identity 同步更新；Unix
+private runtime 使用 `-fno-ident`；helper inline policy 改在 strip 前的 optimized IR 验证；ARM64
+profile atomics 使用既有 kernel32 import closure，x64 仍使用 intrinsic。语言/公开 ABI、安全语义、
+目标 ISA、性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。

@@ -1930,6 +1930,7 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
     let windows = read("native/profile_runtime/platform/windows.c");
     let provenance = read("native/profile_runtime/provenance.toml");
     let windows_bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let kernel32 = read("native/runtime/platform/kernel32.def");
 
     assert!(collector.contains("CkProfileAtomicU64"));
     assert!(!collector.contains("#include <stdatomic.h>"));
@@ -1964,17 +1965,36 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
             "MSVC profile atomics must not rely on an unexpanded ARM64 spelling: {forbidden}"
         );
     }
+    for required in [
+        "defined(_M_ARM64)",
+        "InterlockedCompareExchange(\n      (volatile LONG *)&atomic->value, 0, 0)",
+        "InterlockedCompareExchange64(\n      (volatile LONG64 *)&atomic->value, 0, 0)",
+        "InterlockedExchange(&atomic->value, (LONG)value)",
+        "InterlockedExchangeAdd64(&atomic->value, (LONG64)value)",
+    ] {
+        assert!(
+            atomics.contains(required),
+            "Windows ARM64 profile atomics must use the existing kernel32 import closure: {required}"
+        );
+    }
     assert!(
         provenance.contains("include/ckc_profile_atomic.h"),
         "profile runtime provenance must bind the atomic portability layer"
     );
+    assert!(
+        windows.contains("InterlockedIncrement(&serial)"),
+        "the Windows ARM64 run-id counter must use the existing kernel32 import"
+    );
     for required in [
-        "#pragma intrinsic(_InterlockedIncrement)",
-        "_InterlockedIncrement(&serial)",
+        "InterlockedCompareExchange",
+        "InterlockedCompareExchange64",
+        "InterlockedExchange",
+        "InterlockedExchangeAdd64",
+        "InterlockedIncrement",
     ] {
         assert!(
-            windows.contains(required),
-            "the Windows ARM64 run-id counter must remain an architecture-only intrinsic: {required}"
+            kernel32.lines().any(|line| line.trim() == required),
+            "kernel32 import definition is missing {required}"
         );
     }
     let profile_compile = windows_bootstrap
@@ -1998,6 +2018,22 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
     assert!(
         dispatch_compile.contains("/Oi"),
         "the freestanding dispatch runtime must request intrinsic expansion explicitly"
+    );
+}
+
+#[test]
+fn unix_runtime_objects_should_omit_compiler_ident_sections() {
+    let bootstrap = read("scripts/bootstrap-llvm.sh");
+    let flags = bootstrap
+        .split_once("ckc_runtime_flags=(")
+        .expect("Unix runtime flags")
+        .1
+        .split_once(')')
+        .expect("Unix runtime flags boundary")
+        .0;
+    assert!(
+        flags.contains("-fno-ident"),
+        "private runtime objects must not duplicate compiler identity strings in final artifacts"
     );
 }
 
