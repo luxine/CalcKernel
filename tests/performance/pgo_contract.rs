@@ -290,6 +290,9 @@ fn x86_checked_loops_should_use_a_memory_aware_bounded_schedule() {
     for required in [
         "attach_x86_checked_loop_unroll",
         "is_scalar_memory_map",
+        "checked_constant_call_map",
+        "scalar_memory_map_bound_argument(*loop)",
+        "every_direct_call_has_constant_argument(function, *bound)",
         "llvm.loop.unroll.disable",
         "llvm.loop.unroll.count",
         "llvm::Intrinsic::uadd_with_overflow",
@@ -302,7 +305,7 @@ fn x86_checked_loops_should_use_a_memory_aware_bounded_schedule() {
     }
     assert_eq!(
         commands
-            .matches("x86-checked-memory-map-schedule-v1")
+            .matches("x86-checked-memory-map-schedule-v2")
             .count(),
         2,
         "ordinary and multiversion Native object caches must bind the checked-map schedule"

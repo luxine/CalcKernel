@@ -1958,8 +1958,7 @@ void promote_entry_allocas(llvm::Function &function) {
 
 std::optional<unsigned> scalar_memory_map_bound_argument(
     const llvm::Loop &loop) {
-    if (contains_checked_integer_overflow(loop) ||
-        !is_scalar_memory_map(loop)) {
+    if (!is_scalar_memory_map(loop)) {
         return std::nullopt;
     }
     for (const llvm::BasicBlock *block : loop.blocks()) {
@@ -2262,8 +2261,11 @@ void attach_x86_checked_loop_unroll(
                 continue;
             }
             auto &context = module.getContext();
+            const auto bound = scalar_memory_map_bound_argument(*loop);
+            const bool checked_constant_call_map = bound &&
+                every_direct_call_has_constant_argument(function, *bound);
             llvm::Metadata *schedule = nullptr;
-            if (is_scalar_memory_map(*loop)) {
+            if (is_scalar_memory_map(*loop) && !checked_constant_call_map) {
                 schedule = llvm::MDNode::get(
                     context,
                     {llvm::MDString::get(context,

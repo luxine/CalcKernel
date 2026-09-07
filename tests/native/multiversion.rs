@@ -8,7 +8,7 @@ use calckernel::{
     NativeOptimizationLevel, NativePlatform, SourceFile, build_kir_module, check,
     check_kir_multiversion_bundle, emit_native_multiversion_objects, import_contract_facts,
     lower_native_kir_module, lower_native_multiversion_baseline_module, lower_to_mir,
-    propose_kir_multiversion_bundle, run_kir_pass_pipeline,
+    propose_kir_multiversion_bundle, run_kir_multiversion_pass_pipeline, run_kir_pass_pipeline,
 };
 
 use super::support::temp::unique_id;
@@ -135,8 +135,32 @@ fn compact_multiversion_helper_policy_should_survive_o3_before_symbol_stripping(
     .expect("KIR");
     kir.profile = targets.target_set().tiers[0].profile.clone();
     let contracts = import_contract_facts(&kir, &checked.checked_program, 0).expect("contracts");
-    let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
+    let optimized =
+        run_kir_multiversion_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
     assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let retained_calls = optimized
+        .artifact
+        .as_ref()
+        .expect("multiversion baseline")
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            calckernel::KirInstructionKind::Call { function_name, .. } => {
+                Some(function_name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        retained_calls.contains(&"cold_step"),
+        "multiversion KIR must retain the large branch helper"
+    );
+    assert!(
+        !retained_calls.contains(&"hot_step"),
+        "multiversion KIR must inline the compact branch helper"
+    );
     let optimized_contracts = optimized
         .contract_facts
         .clone()
