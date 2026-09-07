@@ -287,25 +287,36 @@ fn profile_generation_candidates_should_batch_locally_until_function_exit() {
 fn x86_checked_loops_should_use_a_memory_aware_bounded_schedule() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");
+    let checked_schedule = bridge
+        .split("void attach_x86_checked_loop_unroll")
+        .nth(1)
+        .expect("x86 checked-loop schedule")
+        .split("void attach_x86_integer_reduction_interleave")
+        .next()
+        .expect("x86 checked-loop schedule boundary");
     for required in [
-        "attach_x86_checked_loop_unroll",
-        "is_scalar_memory_map",
+        "CloneFunction(function, clone_map)",
+        "promote_entry_allocas(*analysis)",
+        "clone_map.lookup(loop->getHeader())",
+        "checked_constant_bound_map",
+        "argument_has_constant_equality_assume(*analysis, *bound)",
         "checked_constant_call_map",
-        "scalar_memory_map_bound_argument(*loop)",
-        "every_direct_call_has_constant_argument(function, *bound)",
+        "scalar_memory_map_bound_argument(*analysis_loop)",
+        "every_direct_call_has_constant_argument(*function, *bound)",
+        "is_scalar_memory_map(*analysis_loop)",
         "llvm.loop.unroll.disable",
         "llvm.loop.unroll.count",
-        "llvm::Intrinsic::uadd_with_overflow",
-        "llvm::Triple::x86_64",
     ] {
         assert!(
-            bridge.contains(required),
+            checked_schedule.contains(required),
             "x86 checked-loop unroll handoff is missing {required:?}"
         );
     }
+    assert!(bridge.contains("bool argument_has_constant_equality_assume("));
+    assert!(bridge.contains("llvm::Intrinsic::assume"));
     assert_eq!(
         commands
-            .matches("x86-checked-memory-map-schedule-v2")
+            .matches("x86-checked-memory-map-schedule-v3")
             .count(),
         2,
         "ordinary and multiversion Native object caches must bind the checked-map schedule"

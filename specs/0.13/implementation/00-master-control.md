@@ -358,3 +358,14 @@ pre-strip helper regression 误走 ordinary O3，在 multiversion 规划前已�
 checked streaming map 继续禁止有害展开，cache identity 更新为
 `x86-checked-memory-map-schedule-v2`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
 性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact replay run `34165564989` 的 x86-64 performance job `101876627269` 随后重建
+exact V0.13 `e869763366283e46cd76ffbf3bb85c6c3959c25c`，checked domain suites 仅达到
+`1.0413x` 与 `1.0415x`，未通过不变的 `1.05x` 几何门槛。完整二十个样本稳定；保留机器码显示
+`contract_fixed_length` 仍为单元素 checked scalar loop，而历史有界二路 schedule 对同 case
+达到 `1.5461x`。复诊与闭环见 `specs/0.13/review/implementation-blocker-39.md`：checked-loop
+调度器现在在独立 analysis clone 上先做 mem2reg，再从 `llvm.assume(n == constant)` 或全 direct
+call 常量实参识别固定边界，并只对这些循环恢复既有有界二路 schedule；unknown-length checked
+streaming map 继续禁止有害展开，ordinary/multiversion cache identity 更新为
+`x86-checked-memory-map-schedule-v3`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
+性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
