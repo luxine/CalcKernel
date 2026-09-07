@@ -159,6 +159,115 @@ fn selection_search_entrants_use_checked_q32_and_total_rank() {
 }
 
 #[test]
+fn selection_search_rank_is_stable_in_the_same_percent_ceiling_bucket() {
+    let cases = vec![case("s", TuneCaseRole::Search, 1)];
+    let baseline = [0; 32];
+    let larger = [1; 32];
+    let smaller = [2; 32];
+    let ranks = vec![
+        CandidateRank {
+            plan_digest: larger,
+            primary_artifact_bytes: 4_000,
+            choice_count: 2,
+        },
+        CandidateRank {
+            plan_digest: smaller,
+            primary_artifact_bytes: 3_900,
+            choice_count: 3,
+        },
+    ];
+    let session = |larger_ns, smaller_ns| {
+        derive_search_entrants(
+            baseline,
+            &ranks,
+            &cases,
+            &[
+                stream(
+                    MeasurementPhase::SearchMeasured,
+                    0,
+                    "s",
+                    baseline,
+                    [10_000; 20],
+                ),
+                stream(
+                    MeasurementPhase::SearchMeasured,
+                    0,
+                    "s",
+                    larger,
+                    [larger_ns; 20],
+                ),
+                stream(
+                    MeasurementPhase::SearchMeasured,
+                    0,
+                    "s",
+                    smaller,
+                    [smaller_ns; 20],
+                ),
+            ],
+            2,
+        )
+        .expect("entrants")
+        .into_iter()
+        .map(|entry| entry.plan_digest)
+        .collect::<Vec<_>>()
+    };
+
+    assert_eq!(session(8_910, 8_920), vec![smaller, larger]);
+    assert_eq!(session(8_920, 8_910), vec![smaller, larger]);
+}
+
+#[test]
+fn selection_validation_rank_is_stable_in_the_same_percent_ceiling_bucket() {
+    let cases = vec![case("v", TuneCaseRole::Validation, 1)];
+    let baseline = [0; 32];
+    let larger = [1; 32];
+    let smaller = [2; 32];
+    let ranks = vec![
+        CandidateRank {
+            plan_digest: larger,
+            primary_artifact_bytes: 4_000,
+            choice_count: 2,
+        },
+        CandidateRank {
+            plan_digest: smaller,
+            primary_artifact_bytes: 3_900,
+            choice_count: 3,
+        },
+    ];
+    let round = |number, phase, larger_ns, smaller_ns| {
+        derive_round_summary(
+            number,
+            baseline,
+            &ranks,
+            &cases,
+            &[
+                stream(phase, number, "v", baseline, [10_000; 20]),
+                stream(phase, number, "v", larger, [larger_ns; 20]),
+                stream(phase, number, "v", smaller, [smaller_ns; 20]),
+            ],
+        )
+        .expect("round")
+    };
+    let one = round(1, MeasurementPhase::ValidationOneMeasured, 8_910, 8_920);
+    let two = round(2, MeasurementPhase::ValidationTwoMeasured, 8_920, 8_910);
+
+    assert_eq!(one.ranked_plan_digests, vec![smaller, larger]);
+    assert_eq!(two.ranked_plan_digests, vec![smaller, larger]);
+    let selected = derive_selection(
+        baseline,
+        &[
+            SelectionEntrant::active(larger),
+            SelectionEntrant::active(smaller),
+        ],
+        &one,
+        &two,
+    )
+    .expect("selection");
+    assert_eq!(selected.reason, SelectionReason::Tuned);
+    assert_eq!(selected.selected_plan_digest, smaller);
+}
+
+#[test]
 fn selection_validation_rederives_thresholds_paired_wins_and_four_row_table() {
     let cases = vec![case("v", TuneCaseRole::Validation, 1)];
     let baseline = [0; 32];

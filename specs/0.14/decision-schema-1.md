@@ -421,12 +421,17 @@ from every validation case, computes each per-case ratio with the same ceiling,
 then the same weighted aggregate. `pairedWins` is exactly the count whose aggregate
 is strictly below `2^32`. `stable` is the conjunction of the attachment's 16-of-20
 rule for every referenced baseline and candidate stream. `thresholdPassed` and
-`rankedPlanDigests` are then rederived as above; ranking uses aggregate ratio,
-candidate primary bytes, choice count, then plan digest.
+`rankedPlanDigests` are then rederived as above. Define
+`scorePercentCeiling = ceil(aggregateRatioQ32 * 100 / 2^32)` with checked `u128`
+and a `u64` result. Ranking uses lower `scorePercentCeiling`, candidate primary
+bytes, choice count, then plan digest. Exact Q32 continues to decide every
+qualification threshold; the one-percentage-point ranking resolution changes no
+threshold.
 
 The validation-entrant set is itself rederived from complete stable phase-3 search
-streams: compute their weighted Q32 score with the same formulas, rank by score,
-primary bytes, choice count, and plan digest, and take the preset bound. A
+streams: compute their weighted Q32 score with the same formulas, derive the same
+`scorePercentCeiling`, rank by that ceiling, primary bytes, choice count, and plan
+digest, and take the preset bound. A
 candidate absent from that set cannot have validation streams. A timeout at phase
 4..7 proves prior entry but is excluded from both ranked qualifier lists. These
 equalities connect calibration iterations, raw rows, candidates, rounds, and final

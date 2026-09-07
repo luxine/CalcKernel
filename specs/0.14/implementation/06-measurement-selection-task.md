@@ -25,10 +25,12 @@
    channel exactly 3 calls、store min；timeout 后保留 exact earlier complete-stream set，survivor order 不变。
 3. 写 stability/score RED：upper median index 10、inclusive 80..120%、至少 16/20、weighted ceil Q32、
    checked u128；任一 required unstable stream abort，不得 selective rerun。
-4. 写 entrant RED：search score→artifact bytes→choice count→plan digest total order，preset entrant bound；
+4. 写 entrant RED：精确 search Q32 先以 checked u128 派生一个百分点上取整排名桶，再按
+   bucket→artifact bytes→choice count→plan digest total order，preset entrant bound；
    timed-out/search-nonwinner/compiled-unmeasured 状态从完整 source-aware finalist 集派生。
-5. 写双轮 validation RED：phase 5/7 独立 rotations；每轮 <=97%、每 case <=102%、paired wins >=16；
-   RoundPlan/CaseMedian/aggregate/rank/threshold 全部从 raw rows 重算。
+5. 写双轮 validation RED：phase 5/7 独立 rotations；每轮精确 Q32 <=97%、每 case <=102%、
+   paired wins >=16；排名使用同一百分点上取整桶；RoundPlan/CaseMedian/aggregate/rank/threshold
+   全部从 raw rows 重算。
 6. 写 selection table RED：no entrant、empty Q、same winner、different winner 四行互斥完备；certificate 仅 tuned，
    timed-out 保留，其他 entrant outcome 精确。
 7. 写 abort/publish boundary RED：baseline/runner/protocol/correctness/instability/incomplete validation/replay/
@@ -40,4 +42,3 @@
 - 内部 decision measurement 每 evaluation 三次，与阶段 10 external release benchmark 的七批次严格分离。
 - 时间值允许两次真实 cold session 不同；choice identity/plan/object/link/published bytes 必须相同。
 - 没有任意 retry、sample clipping、floating selection 或结果观察后的 workload 排除。
-

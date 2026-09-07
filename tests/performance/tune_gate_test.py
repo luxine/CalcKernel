@@ -11,7 +11,7 @@ import pathlib
 import stat
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -161,6 +161,51 @@ class SchemaNineContractTests(unittest.TestCase):
         (evidence / "unidentified.bin").write_bytes(b"not evidence")
         with self.assertRaisesRegex(ValueError, "closure mismatch"):
             gate.schema9_check_evidence_closure(self.report, evidence)
+
+    def test_historical_checker_receives_an_absolute_retained_report(self):
+        evidence = pathlib.Path(self.temporary.name) / "relative-evidence"
+        replay_root = evidence / "replay-v013"
+        replay_root.mkdir(parents=True)
+        manifest = replay_root / "v0_13_replay.toml"
+        manifest.write_bytes(gate.V013_REPLAY_MANIFEST.read_bytes())
+        checker = replay_root / "check-native-performance-v013.py"
+        checker.write_bytes(b"pinned historical checker\n")
+        historical_report = replay_root / "schema8/v0.13-results.json"
+        historical_report.parent.mkdir()
+        historical_report.write_text("{}\n", encoding="utf-8")
+        commit = gate.tomllib.loads(manifest.read_text(encoding="utf-8"))["commit"]
+        replay = {
+            "commit": commit,
+            "manifest": {"path": "replay-v013/v0_13_replay.toml"},
+            "compiler": {"path": "replay-v013/ckc-v013"},
+            "archive": {"path": "replay-v013/ckc-v013-distribution.tar.gz"},
+            "schemaEight": {"path": "replay-v013/schema8/v0.13-results.json"},
+            "checker": {"path": "replay-v013/check-native-performance-v013.py"},
+            "evidenceFiles": [],
+        }
+        report = {"v013ReplayBundle": replay, "v013ReplayCommit": commit}
+        calls = []
+
+        def run(command, **_kwargs):
+            calls.append(command)
+            if command[:2] == ["git", "show"]:
+                return Mock(returncode=0, stdout=checker.read_bytes(), stderr=b"")
+            if command[:2] in (["git", "clone"], ["git", "checkout"]):
+                return Mock(returncode=0, stdout="", stderr="")
+            return Mock(returncode=1, stdout="historical sentinel", stderr="")
+
+        relative_evidence = pathlib.Path(os.path.relpath(evidence, REPO))
+        with patch.object(gate, "check_schema9_file"), \
+                patch.object(gate, "schema9_check_tree"), \
+                patch.object(gate.subprocess, "run", side_effect=run):
+            with self.assertRaisesRegex(ValueError, "historical sentinel"):
+                gate.schema9_check_replay(report, relative_evidence)
+
+        historical_command = calls[-1]
+        self.assertTrue(
+            pathlib.Path(historical_command[-1]).is_absolute(),
+            "the detached historical checker must not resolve evidence relative to its checkout",
+        )
 
     @unittest.skipUnless(os.name == "posix", "POSIX cache mode contract")
     def test_cache_snapshot_creates_an_owner_only_namespace(self):

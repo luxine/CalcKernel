@@ -24,7 +24,8 @@
 - [ ] schema 9 exact keys/cardinality/order/statistics/foreign keys/thresholds 均由 mutation tests fail-closed。
 - [ ] v0.13 historical schema8 与 v0.14 cumulative schema8 分离且分别由正确 commit/checker 验证；每个
   schema8 evidence root 都自包含累计 schema7 JSON 及其引用的 `measurement-*` 目录，historical
-  report/evidence 在 checker 前已复制到可上传目录。
+  report/evidence 在 checker 前已复制到可上传目录，detached checker 接收 outer evidence owner 下的
+  absolute report path，不依赖 child cwd。
 - [ ] wait4 RSS、compile/size/archive/cache/session、cold/warm determinism 都有 retained raw receipt。
 - [ ] collector 无 accept 逻辑，checker 无重建/重计时/selective-rerun 权限。
 - [ ] 稳态 `elapsedNs` 只覆盖 native runner 内的 kernel 迭代循环；启动、加载、分配、摘要和 Python/FFI 开销均在计时外。

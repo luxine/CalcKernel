@@ -366,3 +366,21 @@ return 时 bulk-add 发布；export 与 module entry 保持直接发布。V0.14 
 `81a052192afc6ae7d124f6ae36e56636e0c0d26b72f29c510a98a41dab559d17`。复诊见
 `specs/0.14/review/implementation-blocker-39.md`；语言/公开 ABI、安全语义、profile schema、
 目标 ISA、工作量、样本、corpus、平台、required job、性能与稳定性门槛均保持不变。
+
+Exact v0.14 run `34106159689` 的 x86-64 performance job `101691955900`
+在 schema-7/schema-8 成功后，schema-9 的 `contract-fixed-length` 两个独立 cold session
+分别选择 tuned plan `493f1128...` 与 `validation-disagreement` baseline。完整 raw streams
+证明所有相关流稳定且候选通过既有收益门槛，但当前 exact-Q32 排名把远低于一个百分点的纳秒
+波动置于 artifact/choice/digest 确定性键之前，同时 search entrant 集也随之改变。复诊见
+`specs/0.14/review/implementation-blocker-40.md`：search/validation 现以 checked u128 派生
+`ceil(score_q32 * 100 / 2^32)` 的冻结百分点上取整桶，再按 artifact bytes、choice count、
+plan digest 全序。精确 Q32 记录、0.97/1.02 门槛、16/20 paired wins、工作量、样本、corpus、
+平台和 required job 均保持不变。
+
+同一 exact run 的 AArch64 performance job `101691955647` 在成功写出完整 schema-9
+evidence 后，detached v0.13 checker 因 outer evidence root 保持相对路径而从 child checkout
+错误解析历史 report。artifact 已证明该 report 与完整 tree 实际存在。复诊见
+`specs/0.14/review/implementation-blocker-41.md`：跨入 detached checkout 前，checker 现在把
+evidence root 绝对化，并以 outer owner 下的 absolute report argument 调用历史 checker；identity、
+byte、tree、symlink、commit 与 checker 等字节验证不变。性能/稳定性门槛、timed work、样本、corpus、
+平台和 required job 均保持不变。

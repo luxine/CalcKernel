@@ -2349,6 +2349,7 @@ def schema9_check_evidence_closure(report, evidence_root):
 
 
 def schema9_check_replay(report, evidence_root):
+    evidence_root = evidence_root.resolve()
     replay = report["v013ReplayBundle"]
     exact_keys(replay, {"commit", "manifest", "compiler", "archive", "schemaEight", "checker",
                         "evidenceFiles"}, "schema-9 v013ReplayBundle")

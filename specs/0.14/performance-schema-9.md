@@ -142,7 +142,10 @@ duplicate, or symlink entry is invalid. Its commit and all identities must equal
 commit, the retained checker is byte-equal to `scripts/check-native-performance.py`
 there and the checkout copy accepts the retained historical report with its
 recorded `candidateVersion=0.13.0`, SHA equal to that checkout, and evidence root
-reconstructed at the report's recorded relative location. Historical acceptance
+reconstructed at the report's recorded relative location. Before the checker
+crosses into that detached checkout, the schema-9 evidence root and retained
+report argument are resolved to absolute paths owned by the outer evidence
+closure; the child working directory must never reinterpret them. Historical acceptance
 completes before the separate v0.14 compatibility run or any schema-9 threshold is
 evaluated.
 
@@ -612,6 +615,13 @@ not change. Its `cacheAfter` equals `cacheBefore` except for deterministic acces
 metadata excluded from cache identity. Hand-copying one result into multiple run
 fields cannot satisfy the distinct command, namespace, snapshot, and event-log
 equalities.
+
+Decision Schema 1 derives search and validation ordering at its frozen
+one-percentage-point `scorePercentCeiling` resolution before applying artifact
+bytes, choice count, and plan digest. Exact Q32 samples remain in each cold decision
+and continue to enforce all unchanged profitability and stability thresholds; they
+are not used to claim a reproducible order below the declared measurement
+resolution.
 
 `correctness` has exactly `search`, `validation`, `adversarial`,
 `validationDifferential`, `releaseHeldOutDifferential`, `domainDifferential`,

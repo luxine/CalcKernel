@@ -208,17 +208,21 @@ pub fn derive_search_entrants(
             choice_count: candidate.choice_count,
         });
     }
-    entrants.sort_by_key(|entry| {
+    let mut ranked = entrants
+        .into_iter()
+        .map(|entry| Ok((score_percent_ceiling(entry.score_q32)?, entry)))
+        .collect::<Result<Vec<_>, SelectionError>>()?;
+    ranked.sort_by_key(|(score_percent_ceiling, entry)| {
         (
-            entry.score_q32,
+            *score_percent_ceiling,
             entry.primary_artifact_bytes,
             entry.choice_count,
             entry.plan_digest,
         )
     });
-    entrants.truncate(usize::try_from(limit).map_err(|_| SelectionError::Overflow)?);
+    ranked.truncate(usize::try_from(limit).map_err(|_| SelectionError::Overflow)?);
     let _ = ranks;
-    Ok(entrants)
+    Ok(ranked.into_iter().map(|(_, entry)| entry).collect())
 }
 
 /// Recomputes all fields and qualification ranking for one validation round.
@@ -293,14 +297,14 @@ pub fn derive_round_summary(
         .filter(|plan| plan.threshold_passed)
         .map(|plan| {
             let rank = ranks[&plan.plan_digest];
-            (
-                plan.aggregate_ratio_q32,
+            Ok((
+                score_percent_ceiling(plan.aggregate_ratio_q32)?,
                 rank.primary_artifact_bytes,
                 rank.choice_count,
                 plan.plan_digest,
-            )
+            ))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, SelectionError>>()?;
     passing.sort();
     Ok(RoundSummary {
         round,
@@ -440,6 +444,14 @@ fn rank_map(
         }
     }
     Ok(ranks)
+}
+
+/// Collapses timing evidence to the frozen one-percentage-point ranking resolution.
+fn score_percent_ceiling(score_q32: u64) -> Result<u64, SelectionError> {
+    let scaled = u128::from(score_q32)
+        .checked_mul(100)
+        .ok_or(SelectionError::Overflow)?;
+    u64::try_from(scaled.div_ceil(u128::from(Q32_ONE))).map_err(|_| SelectionError::Overflow)
 }
 
 fn index_streams<'a>(

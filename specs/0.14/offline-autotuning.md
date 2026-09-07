@@ -947,12 +947,16 @@ Search ranks candidates with exact integer Q32 normalized time:
 
     ratio_q32 = ceil(candidate_ns * 2^32 / baseline_ns)
     score_q32 = ceil(sum(weight * ratio_q32) / sum(weight))
+    score_percent_ceiling = ceil(score_q32 * 100 / 2^32)
 
-No floating-point arithmetic participates in selection. Entrants are totally
-ordered by lower search score, smaller actual primary-artifact bytes, fewer
+No floating-point arithmetic participates in selection. Exact Q32 remains the
+recorded measurement and is used unchanged by every performance threshold. Timing
+only ranks at a frozen one-percentage-point resolution so that sub-resolution
+measurement noise cannot change plan identity. Entrants are totally ordered by
+lower `score_percent_ceiling`, smaller actual primary-artifact bytes, fewer
 non-baseline choices, then lower plan digest; the best bounded entrants advance to
-validation. All products and sums use checked u128 arithmetic, and the persisted
-Q32 result must fit u64.
+validation. All products and sums use checked u128 arithmetic, and both derived
+integer results must fit u64.
 
 ### 11.2 Validation phase
 
@@ -976,12 +980,17 @@ matching calibration records and phase-5/7 raw streams: case medians, Q32 ratios
 weighted aggregate, stability, paired wins, entrant membership, threshold bit, and
 rank cannot be supplied independently.
 
-Within each round, qualifying plans are ranked and ties are resolved by:
+Within each round, qualifying plans are ranked by the same frozen resolution and
+deterministic keys:
 
-1. lower validation score;
+1. lower `score_percent_ceiling` derived from the validation score;
 2. smaller artifact;
 3. fewer non-baseline choices;
 4. lower plan digest.
+
+Exact Q32, not the ranking bucket, continues to decide all three qualification
+conditions above. The bucket therefore rejects unsupported sub-resolution ordering
+claims without weakening admission or validation.
 
 Let `Q1` and `Q2` be the ordered qualifying-plan lists for rounds 1 and 2. Selection
 is the following disjoint and exhaustive table, evaluated in order:

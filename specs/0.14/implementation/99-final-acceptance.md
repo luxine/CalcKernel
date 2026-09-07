@@ -71,7 +71,8 @@
 - [ ] exact 七 case、三 partitions、CK/C/Rust oracle、recipe/evidence identities 与 historical/fresh schema8 closure 完整；
   schema8 evidence 自包含累计 schema7 JSON 与其 `measurement-*` 目录，Linux schema7 每个 case 在 conditioning
   前固定到 inherited affinity 允许的一颗 CPU、在结束后恢复，并以 current-thread CPU time 计量不变的
-  native kernel-call loop；historical schema8 report/evidence 在 checker 前已复制到可上传目录。
+  native kernel-call loop；historical schema8 report/evidence 在 checker 前已复制到可上传目录，且 detached
+  checker 只接收不受 child cwd 影响的 absolute retained report path。
 - [ ] held-out 相对 faster v0.13 baseline geo >=5%，selected each >=2%，validation/held-out each slowdown <=2%。
 - [ ] 相对 faster hand SIMD geo >=98%、each >=92%；两个 domain case 相对 generic C/Rust geo >8%。
 - [ ] artifact <=110%；tune-use compile <=10% geo/20% each；ordinary <=3%/8%；archive <=110%。
