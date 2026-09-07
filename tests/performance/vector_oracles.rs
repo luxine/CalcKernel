@@ -17,6 +17,27 @@ const VECTOR_CASES: [&str; 8] = [
 const DOMAIN_CASES: [&str; 2] = ["contract_noalias", "contract_fixed_length"];
 
 #[test]
+fn v014_vector_corpus_should_preserve_the_accepted_v013_modular_contract() {
+    let source =
+        fs::read_to_string(repo_root().join("benches/oracles/fixtures/modular_reduction.ck"))
+            .expect("read modular reduction fixture");
+    assert_eq!(
+        source,
+        concat!(
+            "export unsafe fn kernel(a: slice<u32>, n: u32) -> u32\n",
+            "contract { requires n <= a.len; effects read(a); }\n",
+            "{\n",
+            "  let i: u32 = 0;\n",
+            "  let total: u32 = 0;\n",
+            "  while i < n { total = total + a[i]; i = i + 1; }\n",
+            "  return total;\n",
+            "}\n",
+        ),
+        "v0.14 must not silently weaken the accepted v0.13 corpus contract"
+    );
+}
+
+#[test]
 fn vector_benchmark_should_accept_only_audited_native_llvm_handoffs() {
     let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
         .expect("read vector performance harness");

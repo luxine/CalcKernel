@@ -313,3 +313,13 @@ UF4 closure，并重钉 replay manifest SHA-256
 identity input。复诊见 `specs/0.14/review/implementation-blocker-34.md`；语言/公开 ABI、
 strict FP、安全规则、target ISA、growth/profitability/性能与稳定性门槛、timed work、样本、
 corpus、平台及 required job topology 均保持不变。
+
+Exact v0.14 run `34087252444` 的 AArch64 performance job `101633869632` 在 replay
+准备成功后，因当前 v0.14 `checked/modular_reduction` 仅达到较快 SIMD oracle 的
+`85.85%` 而失败。下载的 KIR 与机器码证明 v0.14 遗漏了 accepted v0.13 corpus 源码已冻结的
+`unsafe` 合约 `requires n <= a.len; effects read(a);`，从而在每次迭代保留额外边界退出；同一
+worker 独立重建的 v0.13 合约版本为 8,253,184 ns，v0.14 遗漏版本为 10,527,912 ns。V0.14
+已恢复 exact v0.13 源码字节及 manifest SHA-256
+`00e9cf6faf936e510929c1d4352bbaa41d3a24cd837194dbd651e5059f141025`，并以 source-byte 与
+Native trusted-contract 回归锁定。复诊见 `specs/0.14/review/implementation-blocker-35.md`；
+语言/公开 ABI、安全模式、oracle、工作量、样本、统计方法、平台、required job 与全部门槛不变。

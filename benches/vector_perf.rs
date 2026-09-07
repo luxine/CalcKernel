@@ -26,7 +26,7 @@ const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
 const ORACLE_SAMPLING_PROTOCOL: &str = "interleaved-upper-median-three-channel-v2";
 const ORACLE_MANIFEST_SHA256: &str =
-    "3697e27608f6d10cc8ba586a001e943b2f54d2cb07d5c8091f7c9be93d3921e2";
+    "33158df7c8b40721b735f36e9066a9a3eb3b5895b53b04bd0554260b7a4eba32";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {

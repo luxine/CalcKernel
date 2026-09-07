@@ -1002,6 +1002,19 @@ fn schema_seven_vector_corpus_should_materialize_vectors_for_both_safety_modes()
                     text.contains("check_condition") || text.contains("guard"),
                     "{name}/checked must retain its scalar first-error safety boundary:\n{text}"
                 );
+                if name == "modular_reduction" {
+                    assert!(
+                        result
+                            .eliminated_guards
+                            .iter()
+                            .any(|guard| guard.used_trusted_contract),
+                        "the accepted modular reduction contract must justify its bounds-check elimination"
+                    );
+                    assert!(
+                        !text.contains("else OutOfBounds"),
+                        "the accepted n <= a.len contract must remove the per-iteration bounds failure:\n{text}"
+                    );
+                }
             } else {
                 let native_llvm_handoff = (name == "modular_reduction"
                     && cfg!(target_arch = "x86_64")
