@@ -971,6 +971,20 @@ fn multiversion_dispatch_should_never_name_a_void_call() {
 }
 
 #[test]
+fn multiversion_dispatch_fact_ledger_should_cover_both_generated_call_layers() {
+    let module = read("src/backend/llvm/module.rs");
+    let dispatch = module
+        .split_once("fn add_multiversion_dispatch(")
+        .expect("multiversion dispatch module wrapper")
+        .1;
+    assert!(
+        dispatch.contains("self.fact_properties.extend(duplicated.iter().cloned());")
+            && dispatch.contains("self.fact_properties.extend(duplicated);"),
+        "the CK fact ledger must register inherited attributes for both the resolver entry and steady dispatcher"
+    );
+}
+
+#[test]
 fn darwin_profile_runtime_imports_should_cover_sdk_fstat_spellings() {
     let darwin = read("native/profile_runtime/platform/darwin.c");
     let libsystem = read("native/runtime/platform/libSystem.tbd");

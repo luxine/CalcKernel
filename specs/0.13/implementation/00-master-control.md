@@ -318,3 +318,11 @@ baseline-safe、ABI-preserving `resolve_entry`，首次调用由该入口解析�
 后续 public thunk 只执行 atomic load 与 indirect must-tail call。object cache identity 加入
 `dispatch-resolver-sentinel-v2`；语言/ABI、安全语义、目标 ISA、门槛、timed work、样本、corpus、
 平台与 required job matrix 均未改变。
+
+Replacement exact run `34116187720` 随后在 native integration、x86-64 Linux 与 AArch64
+Darwin 一致暴露 fact-audit 计数不闭合：新 resolver entry 正确继承 baseline 的 readonly/writeonly
+等 attribute，但 CK ledger 只为 steady dispatcher 登记一份 inherited lineage，导致实际 4、预期 3。
+复诊与闭环见 `specs/0.13/review/implementation-blocker-34.md`：closed inherited-attribute set
+现在为 resolver entry 与 steady dispatcher 各登记一次；body-owned assume/range/no-wrap/alias-scope
+仍不复制，fact audit 相等性不放宽。语言/ABI、profile、目标 ISA、性能与稳定性门槛、timed work、
+样本、corpus、平台与 required job matrix 均未改变。
