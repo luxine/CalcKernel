@@ -213,6 +213,16 @@ class SchemaNineContractTests(unittest.TestCase):
             commit,
             "the detached historical checker must receive the historical checkout identity",
         )
+        for environment_name, retained_name in [
+            ("CKC_V012_RUNTIME_BUNDLE", "replay-v012"),
+            ("CKC_V011_RUNTIME_BUNDLE", "replay-v011"),
+            ("CKC_V010_RUNTIME_BUNDLE", "replay-v010"),
+        ]:
+            self.assertEqual(
+                environments[-1].get(environment_name),
+                str((historical_report.parent / retained_name).resolve()),
+                "the historical checker must resolve its retained replay dependencies",
+            )
 
     @unittest.skipUnless(os.name == "posix", "POSIX cache mode contract")
     def test_cache_snapshot_creates_an_owner_only_namespace(self):

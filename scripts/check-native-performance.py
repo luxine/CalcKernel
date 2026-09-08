@@ -2386,17 +2386,25 @@ def schema9_check_replay(report, evidence_root):
         )
         if checkout_result.returncode:
             fail(f"schema-9 v0.13 checker revision failed: {checkout_result.stdout[-2000:]}")
+        historical_report_path = evidence_root / replay["schemaEight"]["path"]
         historical_environment = os.environ.copy()
         historical_environment["GITHUB_SHA"] = replay["commit"]
+        for environment_name, retained_name in [
+            ("CKC_V012_RUNTIME_BUNDLE", "replay-v012"),
+            ("CKC_V011_RUNTIME_BUNDLE", "replay-v011"),
+            ("CKC_V010_RUNTIME_BUNDLE", "replay-v010"),
+        ]:
+            historical_environment[environment_name] = str(
+                (historical_report_path.parent / retained_name).resolve()
+            )
         historical = subprocess.run(
             [sys.executable, "-B", checkout / "scripts/check-native-performance.py",
-             evidence_root / replay["schemaEight"]["path"]], cwd=checkout,
+             historical_report_path], cwd=checkout,
             env=historical_environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
         )
         if historical.returncode:
             fail(f"schema-9 retained v0.13 historical evidence failed: {historical.stdout[-3000:]}")
-    historical_report_path = evidence_root / replay["schemaEight"]["path"]
     historical_report = json.loads(historical_report_path.read_text(encoding="utf-8"))
     if (historical_report.get("candidateVersion") != "0.13.0"
             or historical_report.get("candidateSha") != replay["commit"]):

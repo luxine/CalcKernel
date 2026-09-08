@@ -45,6 +45,7 @@
 - `specs/0.14/review/implementation-blocker-50.md`
 - `specs/0.14/review/implementation-blocker-51.md`
 - `specs/0.14/review/implementation-blocker-52.md`
+- `specs/0.14/review/implementation-blocker-53.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -535,3 +536,13 @@ job `101923906271` 则被分配到仅支持 v3 的 AMD EPYC 7763，按冻结的 
 replacement run 仍必须取得真实 v4 worker。历史证据、语言/公开 ABI、strict-FP、安全语义、
 target ISA、schema 8/9、性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required
 job 均未改变。
+
+Replacement V0.14 exact run `34187453075` 的 AArch64 performance job
+`101938700087` 已越过 blocker 52 的历史 checkout SHA 校验，随后证明 retained V0.13 checker
+仍继承外层 V0.14 的 `CKC_V012_RUNTIME_BUNDLE`、`CKC_V011_RUNTIME_BUNDLE` 与
+`CKC_V010_RUNTIME_BUNDLE`，把 recipe `104e7f…` 错当成 V0.13 历史 closure 的
+`ac4fda…`。复诊与闭环见 `specs/0.14/review/implementation-blocker-53.md`：三条环境路径现
+精确绑定到 retained schema-8 report 同级的 `replay-v012`、`replay-v011`、`replay-v010`
+目录；x86-64 job `101938700084` 再次取得仅 v3 的 AMD EPYC 7763，仍按冻结 v4 要求 hard
+fail。历史证据、语言/公开 ABI、strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性/
+产物门槛、timed work、样本、corpus、平台与 required job 均未改变。
