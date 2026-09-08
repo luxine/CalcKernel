@@ -125,6 +125,25 @@ fn schema_eight_compile_time_should_measure_terminated_child_cpu_time() {
 }
 
 #[test]
+fn schema_eight_runtime_channels_should_share_one_workspace() {
+    let measurement = read("scripts/measure-v013-performance.py");
+
+    assert!(
+        measurement.contains("class KernelWorkspace:"),
+        "schema-8 channels must separate mutable workload storage from loaded code"
+    );
+    assert!(
+        measurement.contains("workspace = KernelWorkspace(case, held)")
+            && measurement.contains("Kernel(artifacts[channel], case, workspace)"),
+        "all timed channels must use the exact same input/output addresses"
+    );
+    assert!(
+        measurement.contains("rotating-eight-channel-shared-workspace-v2"),
+        "the changed sampling protocol must have a new replay identity"
+    );
+}
+
+#[test]
 fn multiversion_source_to_object_should_not_repeat_checked_frontend_work() {
     let planner = read("src/optimizer/multiversion.rs");
     let native = read("src/backend/llvm/multiversion.rs");
@@ -141,6 +160,11 @@ fn multiversion_source_to_object_should_not_repeat_checked_frontend_work() {
     assert!(
         commands.contains("emit_native_multiversion_objects_checked"),
         "the CLI must pass the retained authority instead of reconstructing the proposal during emission"
+    );
+    assert!(
+        commands.contains("&compiled.result")
+            && native.contains("baseline_result: &KirPassManagerResult"),
+        "native emission must reuse the already verified baseline result instead of running an O0 pipeline over it"
     );
     assert!(
         native.contains("pub fn emit_native_multiversion_objects(")
@@ -441,7 +465,7 @@ fn schema_eight_docs_and_scripts_should_pin_exact_v013_contract() {
         "0.13.0",
         "22.1.8",
         "1.90.0",
-        "rotating-eight-channel-v1",
+        "rotating-eight-channel-shared-workspace-v2",
         "candidateSha",
         "capabilityManifest",
         "trainingShards",

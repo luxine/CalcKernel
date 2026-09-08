@@ -1469,18 +1469,15 @@ fn run_multiversion_planning_build(
     {
         cached
     } else {
-        let contracts = compiled
-            .result
-            .contract_facts
-            .as_ref()
-            .ok_or_else(|| "multiversion contract facts are missing".to_string())?;
+        if compiled.result.contract_facts.is_none() {
+            return Err("multiversion contract facts are missing".to_string());
+        }
         let context = NativeContext::new().map_err(|error| error.to_string())?;
         let emitted = emit_native_multiversion_objects_checked(
             &context,
             &targets,
             &checked_bundle,
-            contracts,
-            compiled.result.pgo.as_ref(),
+            &compiled.result,
             &EmitLlvmOptions {
                 source_file_name: None,
                 target_triple: args.target.clone(),

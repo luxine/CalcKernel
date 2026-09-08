@@ -364,29 +364,12 @@ def build_ck(compiler: pathlib.Path, case: dict, base: pathlib.Path, *, cpu: str
     return result, max(1, elapsed), output
 
 
-class Kernel:
-    def __init__(self, library: pathlib.Path, case: dict, record: dict):
-        self.library_path = library
-        self.library = ctypes.CDLL(str(library))
-        self.function = self.library.kernel
+class KernelWorkspace:
+    def __init__(self, case: dict, record: dict):
         self.case = case
         self.record = record
         self.keepalive = []
         self.arguments = self._arguments()
-
-    def bind_selected_direct(self):
-        """Resolve once, then call the exact selected hidden member directly."""
-        self.invoke()
-        public_value, slot_value = dispatch_symbol_values(self.library_path, "kernel")
-        public_address = ctypes.cast(self.function, ctypes.c_void_p).value
-        if public_address is None or public_address < public_value:
-            fail("selected-direct public function address is invalid")
-        image_base = public_address - public_value
-        selected_address = ctypes.c_void_p.from_address(image_base + slot_value).value
-        if selected_address is None:
-            fail("selected-direct dispatch slot was not resolved")
-        signature = ctypes.CFUNCTYPE(self.function.restype, *self.function.argtypes)
-        self.function = signature(selected_address)
 
     def _u32(self, length, salt):
         array = (ctypes.c_uint32 * max(1, length))()
@@ -414,11 +397,6 @@ class Kernel:
         abi = self.case["abi"]
         if abi == "slice-branch-u64":
             items = self._branch_u64(length, int(self.record["parameter"]))
-            self.function.argtypes = [
-                ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32,
-                ctypes.c_uint32, ctypes.c_uint64,
-            ]
-            self.function.restype = ctypes.c_uint64
             return items, length, length, salt
         if abi in {"slice-fixed-u32", "slice-map-u32"}:
             actual = 4000 if abi == "slice-fixed-u32" else length
@@ -430,29 +408,75 @@ class Kernel:
             else:
                 a = self._u32(actual, salt)
             out = self._u32(actual, 0)
-            self.function.argtypes = [
-                ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
-                ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
-            ] + ([ctypes.c_uint32] if abi == "slice-map-u32" else [])
             arguments = [a, actual, out, actual]
             if abi == "slice-map-u32":
                 arguments.append(length)
             return tuple(arguments)
         if abi == "slice-zip-u32":
             a, b, out = self._u32(length, salt), self._u32(length, salt + 17), self._u32(length, 0)
+            return a, length, b, length, out, length, length
+        if abi == "slice-f64":
+            a, out = self._f64(length, salt), self._f64(length, 0)
+            return a, length, out, length, length, self.record["parameter"]
+        fail(f"unsupported PGO ABI {abi}")
+
+    def result_digest(self, result):
+        if self.case["abi"] == "slice-branch-u64":
+            data = int(result).to_bytes(8, "little", signed=False)
+        else:
+            data = bytes(self.keepalive[-1])
+        return hashlib.sha256(data).hexdigest()
+
+
+class Kernel:
+    def __init__(self, library: pathlib.Path, case: dict, workspace: KernelWorkspace):
+        self.library_path = library
+        self.library = ctypes.CDLL(str(library))
+        self.function = self.library.kernel
+        self.case = case
+        self.workspace = workspace
+        self.arguments = workspace.arguments
+        self._bind_signature()
+
+    def _bind_signature(self):
+        abi = self.case["abi"]
+        if abi == "slice-branch-u64":
+            self.function.argtypes = [
+                ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32,
+                ctypes.c_uint32, ctypes.c_uint64,
+            ]
+            self.function.restype = ctypes.c_uint64
+        elif abi in {"slice-fixed-u32", "slice-map-u32"}:
+            self.function.argtypes = [
+                ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
+            ] + ([ctypes.c_uint32] if abi == "slice-map-u32" else [])
+        elif abi == "slice-zip-u32":
             self.function.argtypes = [
                 ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
                 ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
                 ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_uint32,
             ]
-            return a, length, b, length, out, length, length
-        if abi == "slice-f64":
-            a, out = self._f64(length, salt), self._f64(length, 0)
+        elif abi == "slice-f64":
             self.function.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_uint32,
                                       ctypes.POINTER(ctypes.c_double), ctypes.c_uint32,
                                       ctypes.c_uint32, ctypes.c_double]
-            return a, length, out, length, length, self.record["parameter"]
-        fail(f"unsupported PGO ABI {abi}")
+        else:
+            fail(f"unsupported PGO ABI {abi}")
+
+    def bind_selected_direct(self):
+        """Resolve once, then call the exact selected hidden member directly."""
+        self.invoke()
+        public_value, slot_value = dispatch_symbol_values(self.library_path, "kernel")
+        public_address = ctypes.cast(self.function, ctypes.c_void_p).value
+        if public_address is None or public_address < public_value:
+            fail("selected-direct public function address is invalid")
+        image_base = public_address - public_value
+        selected_address = ctypes.c_void_p.from_address(image_base + slot_value).value
+        if selected_address is None:
+            fail("selected-direct dispatch slot was not resolved")
+        signature = ctypes.CFUNCTYPE(self.function.restype, *self.function.argtypes)
+        self.function = signature(selected_address)
 
     def invoke(self):
         return self.function(*self.arguments)
@@ -462,12 +486,7 @@ class Kernel:
             self.invoke()
 
     def result_digest(self):
-        result = self.invoke()
-        if self.case["abi"] == "slice-branch-u64":
-            data = int(result).to_bytes(8, "little", signed=False)
-        else:
-            data = bytes(self.keepalive[-1])
-        return hashlib.sha256(data).hexdigest()
+        return self.workspace.result_digest(self.invoke())
 
     def write_profile(self):
         try:
@@ -517,7 +536,7 @@ def train_profile(compiler, case, record, policy, evidence, warmup, samples, cal
     shard_dir.mkdir()
     base = evidence / f"{case['name']}-{policy}-generation"
     library, _, _ = build_ck(compiler, case, base, cpu=policy, generate=shard_dir)
-    kernel = Kernel(library, case, record)
+    kernel = Kernel(library, case, KernelWorkspace(case, record))
     for _ in range(warmup):
         kernel.run_batch(case["batchCalls"])
     generation_samples = [
@@ -775,13 +794,15 @@ def collect(output, quick, candidate_version="0.13.0"):
 
         for split_name in ["training", "held-out", "adversarial"]:
             for record in splits[split_name].get(name, []):
-                digests = {channel: Kernel(artifacts[channel], case, record).result_digest()
+                workspace = KernelWorkspace(case, record)
+                digests = {channel: Kernel(artifacts[channel], case, workspace).result_digest()
                            for channel in CHANNELS}
                 if len(set(digests.values())) != 1:
                     fail(f"differential result mismatch for {name}/{split_name}: {digests}")
 
         held = splits["held-out"][name][0]
-        kernels = [Kernel(artifacts[channel], case, held) for channel in CHANNELS]
+        workspace = KernelWorkspace(case, held)
+        kernels = [Kernel(artifacts[channel], case, workspace) for channel in CHANNELS]
         kernels[CHANNELS.index("selectedDirect")].bind_selected_direct()
         resolver_calls = 0
         if case["eligible"]:
@@ -858,7 +879,7 @@ def collect(output, quick, candidate_version="0.13.0"):
         "trainingShards": training_records, "finalProfiles": profile_records,
         "targetSets": target_sets, "variantObjects": variant_records,
         "sampling": {
-            "protocol": "rotating-eight-channel-v1", "warmupRows": warmup,
+            "protocol": "rotating-eight-channel-shared-workspace-v2", "warmupRows": warmup,
             "sampleRows": samples, "callsPerSample": calls_per_sample,
             "channelNames": CHANNELS,
             "stabilityPolicy": "at-least-80-percent-within-25-percent-of-median",
@@ -890,7 +911,8 @@ def main() -> int:
         args = parser.parse_args()
         try:
             case = next(item for item in parse_cases() if item["name"] == args.case)
-            kernel = Kernel(args.train_library, case, json.loads(args.record_json))
+            record = json.loads(args.record_json)
+            kernel = Kernel(args.train_library, case, KernelWorkspace(case, record))
             kernel.run_batch(args.calls)
             kernel.write_profile()
         except (OSError, ValueError, StopIteration, json.JSONDecodeError) as error:

@@ -118,9 +118,13 @@ all three splits pass CK/Clang-PGO/Rust-PGO differential correctness before
 timing. The PGO oracle manifest pins the C11 and Rust 2024 source bytes, strict
 floating policy, safety preconditions, and UB audit.
 
-`rotating-eight-channel-v1` interleaves ordinary 0.13, exact 0.12 replay, CK PGO,
+`rotating-eight-channel-shared-workspace-v2` interleaves ordinary 0.13, exact
+0.12 replay, CK PGO,
 CK multiversion, CK combined PGO+multiversion, selected-direct CK, Clang PGO,
-and Rust PGO. The selected-direct channel loads a separate byte-identical
+and Rust PGO. Every channel receives the same input and output allocation for
+each correctness record and timed case, so address alignment, page placement,
+and cache-set placement cannot bias comparisons between generated programs.
+The selected-direct channel loads a separate byte-identical
 multiversion artifact, resolves it before timing, and calls the exact hidden
 member published in its private slot; only the public thunk is bypassed.
 For stripped ELF products, the public entry comes from `.dynsym` and the unique

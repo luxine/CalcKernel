@@ -382,3 +382,14 @@ corpus 与门槛不变。sampling identity 更新为
 `e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3`。语言/公开 ABI、
 strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性/产物门槛、平台与 required job matrix
 均未改变。
+
+V0.14 exact replay run `34172973863` 的 x86-64 与 AArch64 performance jobs 随后分别
+暴露 schema-8 通道地址偏差和重复 baseline 验证：x86 `memory-bound` 的
+multiversion/ordinary 为 `1.04241 > 1.03`，但 multiversion/selected-direct 为
+`0.99547`；AArch64 multiversion source-to-object 几何均值为 `2.52084 > 2.5`。
+复诊与闭环见 `specs/0.13/review/implementation-blocker-41.md`：八条代码通道现在共享唯一
+`KernelWorkspace`，sampling identity 更新为
+`rotating-eight-channel-shared-workspace-v2`；checked native emission 复用主 O3 管线已经验证的
+baseline result，raw public emitter 与所有 enhanced variant 仍 fail closed。语言/公开 ABI、
+strict-FP、安全语义、目标 ISA、multiversion frontier、growth/profitability/性能/稳定性/产物门槛、
+timed work、样本、corpus、平台与 required job matrix 均未改变。
