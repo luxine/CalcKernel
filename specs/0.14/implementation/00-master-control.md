@@ -51,7 +51,7 @@
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`77e5e0a95b83d0faa8f63ddc8f2451a9b1322a40`。两者之间的累计提交已按
+`528f0734a0c4525a2c84158c4d73067e468f292c`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -545,4 +545,15 @@ Replacement V0.14 exact run `34187453075` 的 AArch64 performance job
 精确绑定到 retained schema-8 report 同级的 `replay-v012`、`replay-v011`、`replay-v010`
 目录；x86-64 job `101938700084` 再次取得仅 v3 的 AMD EPYC 7763，仍按冻结 v4 要求 hard
 fail。历史证据、语言/公开 ABI、strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性/
+产物门槛、timed work、样本、corpus、平台与 required job 均未改变。
+
+Exact V0.13 run `34182330156` 随后暴露 Windows canonical verbatim root 的 component
+遍历错误，V0.14 run `34192455322` 因而固定了已被拒绝的历史依赖；该 V0.14 AArch64 run
+还以 `2.5002854475` 未通过不变的 schema-8 multiversion compile `2.5` 门槛。依赖复诊见
+`specs/0.14/review/implementation-blocker-54.md`：V0.14 已精确吸收 V0.13
+`528f0734a0c4525a2c84158c4d73067e468f292c` 的 Windows root 修复，accepted-base 与独立
+replay 重钉到该 SHA，manifest SHA-256 为
+`2b2d2e66333b3eed4b8bd260325f3440e0040e6cdf43c1f4d81546eb5756eba4`。被替代的性能结果未
+通过修改门槛、样本、timed work 或选择性 replay 掩盖；replacement exact-SHA workflow 必须
+完整重建并重测。语言/公开 ABI、strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性/
 产物门槛、timed work、样本、corpus、平台与 required job 均未改变。
