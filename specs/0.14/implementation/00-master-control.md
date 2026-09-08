@@ -50,6 +50,7 @@
 - `specs/0.14/review/implementation-blocker-55.md`
 - `specs/0.14/review/implementation-blocker-56.md`
 - `specs/0.14/review/implementation-blocker-57.md`
+- `specs/0.14/review/implementation-blocker-58.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -597,3 +598,15 @@ decision` 失败；逐字段复诊证明唯一差异是 collector 把 inspector 
 replacement exact-SHA run 获取真实 v4 worker。语言/公开 ABI、strict-FP/安全语义、tuning
 decision、证据字段、schema 版本、target eligibility、性能/稳定性/size 门槛、timed work、
 样本、corpus、平台与 required job matrix 均未改变。
+
+Replacement exact V0.14 run `34225333284` 的 AArch64 performance job
+`102058308732` 完成 schema 8 与全部 schema-9 采集后，独立 checker 拒绝把 evidence-root
+profile 排在 repository-root source 之前的混合根命令输入；完整报告复诊证明 producer 错把
+root 名称按文本排序，而冻结 schema 要求 repository 后 evidence 的显式语义顺序。x86-64
+job `102058308829` 同样已通过 schema 8，随后因 AMD EPYC 7763 仅有 v3、没有 AVX-512
+而按冻结规则拒绝 schema 9。复诊与闭环见
+`specs/0.14/review/implementation-blocker-58.md`：producer 与独立 checker 的各自实现现在
+使用相同的显式 root rank 后接 UTF-8 path bytes，并由 RED/GREEN 混合根回归锁定；x86 v4
+要求保持 hard fail，由 replacement exact-SHA run 获取真实 v4 worker。语言/公开 ABI、
+strict-FP/安全语义、tuning decision、证据字段、schema 版本、target eligibility、性能/稳定性/
+size 门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。

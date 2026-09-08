@@ -1478,13 +1478,18 @@ def schema9_u64(value, field, *, positive_value=False):
     return value
 
 
+def schema9_file_sort_key(value):
+    return (0 if value["root"] == "repository" else 1,
+            value["path"].encode("utf-8"))
+
+
 def schema9_sorted_files(values, evidence_root, field, expected_root=None):
     if not isinstance(values, list):
         fail(f"{field} must be a list")
     keys = []
     for index, value in enumerate(values):
         check_schema9_file(value, evidence_root, f"{field}[{index}]", expected_root)
-        keys.append((0 if value["root"] == "repository" else 1, value["path"].encode("utf-8")))
+        keys.append(schema9_file_sort_key(value))
     if keys != sorted(keys) or len(keys) != len(set(keys)):
         fail(f"{field} must be path-sorted and unique")
     return values
@@ -1744,7 +1749,7 @@ def schema9_check_channel_template(build, evidence_root, field, channel, source,
         fail(f"{field} has an unknown build channel {channel}")
     if argv != expected:
         fail(f"{field} does not match the closed {channel} command template")
-    expected_inputs.sort(key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    expected_inputs.sort(key=schema9_file_sort_key)
     if command["inputs"] != expected_inputs:
         fail(f"{field} does not retain the complete {channel} input set")
 
@@ -1757,11 +1762,11 @@ def schema9_check_ck_environment(command, evidence_root, report, field):
         "CKC_LLVM_PREFIX": sorted([
             report["toolchain"]["componentManifest"], report["toolchain"]["clangBinary"],
             report["toolchain"]["clangProfileRuntime"],
-        ], key=lambda item: (item["root"], item["path"].encode("utf-8"))),
+        ], key=schema9_file_sort_key),
         "CKC_V013_REPLAY_BUNDLE": sorted([
             report["v013ReplayBundle"][key]
             for key in ["manifest", "compiler", "archive", "schemaEight", "checker"]
-        ], key=lambda item: (item["root"], item["path"].encode("utf-8"))),
+        ], key=schema9_file_sort_key),
     }
     if set(entries) != {*expected, "XDG_CACHE_HOME"}:
         fail(f"{field} does not contain the exact Linux CK environment")
@@ -2271,7 +2276,7 @@ def schema9_check_archive(value, evidence_root, report):
         ("ckc-v0.14/ckc", 0o755, report["candidateBinary"]),
     ]
     expected_inputs = sorted([item[2] for item in expected_members],
-                             key=lambda item: (item["root"], item["path"].encode("utf-8")))
+                             key=schema9_file_sort_key)
     if value["command"]["inputs"] != expected_inputs:
         fail("schema-9 archive command input set mismatch")
     expected_argv = [

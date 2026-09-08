@@ -559,9 +559,13 @@ def file_argument(file: dict, evidence: pathlib.Path) -> str:
             else repository_relative(evidence / file["path"]))
 
 
+def file_sort_key(file: dict) -> tuple[int, bytes]:
+    return (0 if file["root"] == "repository" else 1, file["path"].encode("utf-8"))
+
+
 def environment_entry(name: str, value: str, references: list[dict]) -> dict:
-    return {"name": name, "value": value, "references": sorted(
-        references, key=lambda item: (item["root"], item["path"].encode("utf-8")))}
+    return {"name": name, "value": value,
+            "references": sorted(references, key=file_sort_key)}
 
 
 def environment_digest(entries: list[dict]) -> str:
@@ -577,7 +581,7 @@ def command_record(argv: list[str], executable: dict, inputs: list[dict],
     environment = sorted(environment, key=lambda item: item["name"].encode("utf-8"))
     return {
         "argv": argv, "workingDirectory": "repository", "executable": executable,
-        "inputs": sorted(inputs, key=lambda item: (item["root"], item["path"].encode("utf-8"))),
+        "inputs": sorted(inputs, key=file_sort_key),
         "environment": environment, "environmentDigest": environment_digest(environment),
     }
 
@@ -709,7 +713,7 @@ def copy_tree(source: pathlib.Path, evidence: pathlib.Path, prefix: str) -> list
             fail(f"retained tree contains a special entry: {entry}")
         relative = f"{prefix}/{entry.relative_to(source).as_posix()}"
         output.append(copy_retained(entry, evidence, relative, executable=os.access(entry, os.X_OK)))
-    return sorted(output, key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    return sorted(output, key=file_sort_key)
 
 
 def remove_owned_tree(evidence: pathlib.Path, path: pathlib.Path) -> None:
@@ -739,7 +743,7 @@ def snapshot_cache(evidence: pathlib.Path, namespace: pathlib.Path) -> dict:
             fail(f"cache namespace contains an unsafe entry: {entry}")
         if entry.is_file():
             files.append(evidence_identity(evidence, evidence_relative(evidence, entry)))
-    files.sort(key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    files.sort(key=file_sort_key)
     digest = p(b"CK-V014-CACHE-SNAPSHOT\0", text(relative),
                list_value([file_value(item) for item in files]))
     return {"namespace": relative, "files": files, "digest": digest}
@@ -1283,7 +1287,7 @@ def prepare_full_retained(evidence: pathlib.Path) -> dict:
     replay_manifest = copy_retained(REPLAY_MANIFEST, evidence,
                                     "replay-v013/v0_13_replay.toml")
     replay_files.append(replay_manifest)
-    replay_files.sort(key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    replay_files.sort(key=file_sort_key)
     by_suffix = lambda suffix: next(
         item for item in replay_files if item["path"].endswith(suffix))
     replay = {
@@ -1300,7 +1304,7 @@ def prepare_full_retained(evidence: pathlib.Path) -> dict:
                                       "compat-schema8/results-schema8-v014-compat.json")]
     cumulative_files.extend(copy_tree(schema8_dir, evidence,
                                       f"compat-schema8/{schema8_dir.name}"))
-    cumulative_files.sort(key=lambda item: (item["root"], item["path"].encode("utf-8")))
+    cumulative_files.sort(key=file_sort_key)
     cumulative = {"report": cumulative_files[0], "files": cumulative_files}
     oracle_manifest = repository_identity("benches/oracles/tune/manifest.toml")
     c_oracle = repository_identity("benches/oracles/tune/c/tune_oracle.c")
@@ -1568,7 +1572,7 @@ def full_report(output: pathlib.Path) -> dict:
 
     recipe_files = sorted(
         (repository_identity(name) for name in RECIPE_FILES),
-        key=lambda item: (item["root"], item["path"].encode("utf-8")),
+        key=file_sort_key,
     )
     archive = build_archive(evidence, retained)
     report = {
@@ -1659,7 +1663,7 @@ def contract_report(output: pathlib.Path) -> dict:
         evidence, "toolchain/system-linker.bin", b"system linker contract-only\n")
     runner = retained_marker(evidence, "workload/ckc-tune-runner", marker)
     recipe_files = sorted((repository_identity(name) for name in RECIPE_FILES),
-                          key=lambda item: (item["root"], item["path"].encode()))
+                          key=file_sort_key)
     sources = sorted((repository_identity(case["source"]) for case in cases),
                      key=lambda item: item["path"].encode())
     manifests = sorted((repository_identity(f"benches/tune/workloads/{case['manifest']}")

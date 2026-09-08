@@ -175,6 +175,19 @@ class SchemaNineContractTests(unittest.TestCase):
         self.assertTrue(summary["outputRecords"])
         self.assertIs(type(summary["outputRecords"][0]["bytes"]), int)
 
+    def test_command_inputs_use_normative_repository_before_evidence_order(self):
+        source = self.report["workload"]["sources"][0]
+        candidate = self.report["candidateBinary"]
+
+        command = measure.command_record(
+            ["fixture"], candidate, [candidate, source], [],
+        )
+
+        self.assertEqual(
+            [item["root"] for item in command["inputs"]],
+            ["repository", "evidence"],
+        )
+
     def test_historical_checker_receives_an_absolute_retained_report(self):
         evidence = pathlib.Path(self.temporary.name) / "relative-evidence"
         replay_root = evidence / "replay-v013"
