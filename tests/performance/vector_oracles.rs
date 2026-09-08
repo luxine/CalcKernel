@@ -67,7 +67,7 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "fast_math = false",
         "contraction = false",
         "builtin_library_calls = false",
-        "sampling_protocol = \"interleaved-upper-median-three-channel-v2\"",
+        "sampling_protocol = \"interleaved-upper-median-three-channel-v3\"",
         "dispatch_protocol = \"cached-typed-entry-v1\"",
         "batch_iterations = 20000000",
         "sample_calls = 7",
@@ -206,8 +206,13 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         runner.contains("KernelEntry::load(&library, symbol, name, checked)"),
         "the dynamic symbol and signature must be resolved while constructing the runner"
     );
+    let workspace = harness
+        .split("impl KernelWorkspace {")
+        .nth(1)
+        .and_then(|source| source.split("fn work_items(").next())
+        .expect("KernelWorkspace implementation");
     assert!(
-        runner.contains("match self.entry"),
+        workspace.contains("match entry"),
         "the timed batch must dispatch once to a cached typed entry"
     );
     for forbidden in [
@@ -226,7 +231,7 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         .and_then(|source| source.split("type MapUnchecked").next())
         .expect("measure_case implementation");
     assert!(
-        manifest.contains("interleaved-upper-median-three-channel-v2")
+        manifest.contains("interleaved-upper-median-three-channel-v3")
             && measure_case.contains("sample_three_channels_upper_median::<_, SAMPLE_REPETITIONS>")
             && !manifest.contains("bounded-upper-band-v1")
             && !harness.contains("SLP_CALIBRATION_PROBES")

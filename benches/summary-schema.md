@@ -63,7 +63,7 @@ KIR/0.10 MIR optimizer gate remains 2x suite median and 3x individual.
 reduction, SLP, runtime no-alias versioning, and fixed-length specialization.
 `domainFactSuites` covers no-alias and fixed-length contract advantages. Both
 separate checked and unchecked modes and use
-`interleaved-upper-median-three-channel-v2` with three warm-up rows and twenty
+`interleaved-upper-median-three-channel-v3` with one shared data workspace, three warm-up rows, and twenty
 sample rows. Within each retained row, seven raw rounds rotate candidate/C/Rust,
 then retain each channel's upper median. Inputs and batching are identical, and
 the report retains the upper median of the twenty stored rows.

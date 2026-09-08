@@ -166,11 +166,14 @@ Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 随后�
 `a49fa419669c400447dc13bcfa41ea464b3b040d`，使用每个保留 sample 前一次 64-batch ramp；
 timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
 
-Exact v0.12 run `33825887411` 的 AArch64 performance job `100878495028` 进一步证明固定
-64-batch ramp 无法控制约 4.42/8.84 ms 双频带。v0.13 继承 v0.12
-`bounded-upper-band-v1` 并把 exact replay 重钉到
-`af9aa37d262d9b447f407f07aa73e33ed63b4926`；复诊见
-`specs/0.13/review/implementation-blocker-16.md`。timed work、样本、统计、性能与稳定性门槛、
+Exact v0.12 run `33833225186` 证明 `bounded-upper-band-v1` 的目标频带假设不成立，因此
+v0.13 使用 `interleaved-upper-median-three-channel-v3`，不再按绝对频带筛选三通道样本，
+并让 candidate/C/Rust 三通道复用同一数据工作区以消除分配位置偏差。
+Exact v0.12 run `33966418774` 又证明 x86 `VF4/UF2` noalias kernel 的逐 chunk
+load/compute/store 顺序隐藏了已证明的跨 chunk 并行。v0.13 继承 x86 `UF > 1` 的
+SSA/MemorySSA 就绪列表调度，并把 exact v0.12 replay 重钉到
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`；复诊见
+`specs/0.13/review/implementation-blocker-17.md`。timed work、样本、统计、性能与稳定性门槛、
 corpus 与平台矩阵均不变。
 
 V0.14 exact run `34014114894` 的 AArch64 performance job `101435039015` 在重建
@@ -356,3 +359,26 @@ pre-strip helper regression 误走 ordinary O3，在 multiversion 规划前已�
 checked streaming map 继续禁止有害展开，cache identity 更新为
 `x86-checked-memory-map-schedule-v2`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
 性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+V0.14 exact replay run `34165564989` 的 x86-64 performance job `101876627269` 随后重建
+exact V0.13 `e869763366283e46cd76ffbf3bb85c6c3959c25c`，checked domain suites 仅达到
+`1.0413x` 与 `1.0415x`，未通过不变的 `1.05x` 几何门槛。完整二十个样本稳定；保留机器码显示
+`contract_fixed_length` 仍为单元素 checked scalar loop，而历史有界二路 schedule 对同 case
+达到 `1.5461x`。复诊与闭环见 `specs/0.13/review/implementation-blocker-39.md`：checked-loop
+调度器现在在独立 analysis clone 上先做 mem2reg，再从 `llvm.assume(n == constant)` 或全 direct
+call 常量实参识别固定边界，并只对这些循环恢复既有有界二路 schedule；unknown-length checked
+streaming map 继续禁止有害展开，ordinary/multiversion cache identity 更新为
+`x86-checked-memory-map-schedule-v3`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
+性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Replacement V0.14 exact replay run `34169415571` 的 x86-64 performance job
+`101886905457` 随后以 checked `strict_f64` `3,601,329 / 3,164,344 ns` 未通过不变的 90%
+单项吞吐门槛。与上一 run 比较，candidate 与 Rust oracle 动态库分别逐字节相同，candidate
+反汇编亦相同；上一 run 的对应结果为 `3,194,955 / 3,191,369 ns`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-40.md`：旧 harness 为 candidate/C/Rust 分别分配
+数据缓冲区，使内存对齐、物理页和 cache-set 位置成为持久通道偏差。三条通道现在保留各自已加载
+entry，但复用唯一 `KernelWorkspace`；交错顺序、七次 upper median、二十样本、timed work、
+corpus 与门槛不变。sampling identity 更新为
+`interleaved-upper-median-three-channel-v3`，oracle manifest SHA-256 更新为
+`e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3`。语言/公开 ABI、
+strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性/产物门槛、平台与 required job matrix
+均未改变。
