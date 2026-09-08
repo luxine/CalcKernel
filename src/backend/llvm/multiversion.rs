@@ -2,7 +2,7 @@ use crate::{
     CheckedKirMultiversionBundle, CkPgoOptimizerPlan, ContractFactSet, EmitLlvmOptions, FunctionId,
     KirConsumer, KirMultiversionBundle, KirMultiversionPlanningRequest, KirMultiversionPlatform,
     KirMultiversionTargetSet, KirMultiversionTargetTier, KirMultiversionTierId,
-    KirOptimizationLevel, check_kir_multiversion_bundle, materialized_tier,
+    KirOptimizationLevel, KirPassManagerResult, check_kir_multiversion_bundle, materialized_tier,
     project_pgo_plan_for_kir, run_kir_pass_pipeline,
 };
 use sha2::{Digest, Sha256};
@@ -255,29 +255,6 @@ pub fn emit_native_multiversion_objects(
     options: &EmitLlvmOptions,
 ) -> Result<NativeMultiversionObjectBundle, NativeError> {
     let checked = check_kir_multiversion_bundle(request, bundle).map_err(error)?;
-    emit_native_multiversion_objects_checked(context, targets, &checked, contracts, pgo, options)
-}
-
-/// Emits a bundle using authority retained from the independent checker. The
-/// raw public entry remains available for callers that do not already own this
-/// proof and therefore must reconstruct it before emission.
-pub fn emit_native_multiversion_objects_checked(
-    context: &NativeContext,
-    targets: &NativeMultiversionTargetSet,
-    checked: &CheckedKirMultiversionBundle<'_>,
-    contracts: &ContractFactSet,
-    pgo: Option<&CkPgoOptimizerPlan>,
-    options: &EmitLlvmOptions,
-) -> Result<NativeMultiversionObjectBundle, NativeError> {
-    let bundle = checked.bundle();
-    if targets.target_set() != &bundle.target_set {
-        return Err(error(
-            "materialized target set does not match the checked multiversion bundle",
-        ));
-    }
-    let baseline_target = targets
-        .target(KirMultiversionTierId::Baseline)
-        .ok_or_else(|| error("multiversion baseline TargetMachine is missing"))?;
     let mut baseline_result = run_kir_pass_pipeline(
         bundle.baseline.clone(),
         KirOptimizationLevel::O0,
@@ -292,11 +269,37 @@ pub fn emit_native_multiversion_objects_checked(
     baseline_result.pgo = pgo
         .map(|plan| project_pgo_plan_for_kir(&bundle.baseline, plan).map_err(error))
         .transpose()?;
+    emit_native_multiversion_objects_checked(context, targets, &checked, &baseline_result, options)
+}
+
+/// Emits a bundle using authority retained from the independent checker. The
+/// raw public entry remains available for callers that do not already own this
+/// proof and therefore must reconstruct it before emission.
+pub fn emit_native_multiversion_objects_checked(
+    context: &NativeContext,
+    targets: &NativeMultiversionTargetSet,
+    checked: &CheckedKirMultiversionBundle<'_>,
+    baseline_result: &KirPassManagerResult,
+    options: &EmitLlvmOptions,
+) -> Result<NativeMultiversionObjectBundle, NativeError> {
+    let bundle = checked.bundle();
+    if targets.target_set() != &bundle.target_set {
+        return Err(error(
+            "materialized target set does not match the checked multiversion bundle",
+        ));
+    }
+    let baseline_target = targets
+        .target(KirMultiversionTierId::Baseline)
+        .ok_or_else(|| error("multiversion baseline TargetMachine is missing"))?;
+    let contracts = baseline_result
+        .contract_facts
+        .as_ref()
+        .ok_or_else(|| error("multiversion verified baseline has no contract facts"))?;
     let baseline = baseline_target.emit_object(
         lower_native_multiversion_baseline_module(
             context,
             baseline_target,
-            &baseline_result,
+            baseline_result,
             bundle,
             options,
         )?
@@ -327,7 +330,9 @@ pub fn emit_native_multiversion_objects_checked(
                     result.errors.join("; ")
                 )));
             }
-            result.pgo = pgo
+            result.pgo = baseline_result
+                .pgo
+                .as_ref()
                 .map(|plan| project_pgo_plan_for_kir(&variant.module, plan).map_err(error))
                 .transpose()?;
             let object = target.emit_object(

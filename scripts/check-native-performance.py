@@ -1066,7 +1066,7 @@ def check_schema8(report, path, baseline_manifest):
     sampling = report["sampling"]
     exact_keys(sampling, {"protocol", "warmupRows", "sampleRows", "callsPerSample", "channelNames", "stabilityPolicy", "rerunPolicy"}, "sampling")
     if sampling != {
-        "protocol": "rotating-eight-channel-v1", "warmupRows": 3, "sampleRows": 20,
+        "protocol": "rotating-eight-channel-shared-workspace-v2", "warmupRows": 3, "sampleRows": 20,
         "callsPerSample": 7, "channelNames": PGO_CHANNELS,
         "stabilityPolicy": "at-least-80-percent-within-25-percent-of-median",
         "rerunPolicy": "unstable-evidence-is-invalid-no-selective-rerun",
