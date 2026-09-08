@@ -43,12 +43,13 @@
 - `specs/0.14/review/implementation-blocker-48.md`
 - `specs/0.14/review/implementation-blocker-49.md`
 - `specs/0.14/review/implementation-blocker-50.md`
+- `specs/0.14/review/implementation-blocker-51.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`21448738b90ccfd1ea9ab79e9355450ef325769c`。两者之间的累计提交已按
+`77e5e0a95b83d0faa8f63ddc8f2451a9b1322a40`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -513,3 +514,13 @@ replay manifest SHA-256 重钉为
 `8852346e6263c3dcf86a30ef2b0084e029865f9deb0545231f73169f0982b148`。语言/公开 ABI、
 strict-FP、安全语义、target ISA、schema 9、优化策略、性能/稳定性/产物门槛、timed work、
 样本、corpus、平台与 required job 均未改变。
+
+Exact V0.13 run `34178811720` 随后在两个 performance jobs 的 PGO oracle 审计中一致失败：
+schema-8 已要求 `KernelWorkspace`，但审计仍向 `Kernel` 传入原始 record dict。V0.14 exact run
+`34178814878` 因而同时携带过时审计和已被拒绝的 replay pin。复诊与继承闭环见
+`specs/0.14/review/implementation-blocker-51.md`：V0.14 精确吸收 V0.13
+`77e5e0a95b83d0faa8f63ddc8f2451a9b1322a40`，三种 PGO oracle 共享每个 record 的唯一 workspace；
+accepted-base 与 replay 重钉到同一 SHA，manifest SHA-256 为
+`9cb05a28b504e504ccd6dca50617241e11a29a8e8d9034b35f4d2b72d181dfe8`。语言/公开 ABI、
+strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性门槛、timed work、样本、corpus、平台
+与 required job 均未改变。
