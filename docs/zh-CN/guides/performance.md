@@ -23,7 +23,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 缺少、unknown、extra 或不匹配的 report field、digest、stream、tier、capability 都使 checker 失败。
 
 累积的 0.12 vector/domain replay 使用
-`interleaved-upper-median-three-channel-v2`。每个保留行交错执行七轮 candidate/C/Rust，再保留
+`interleaved-upper-median-three-channel-v3`。三条通道使用同一数据工作区，避免分配位置差异伪装成
+代码性能差异。每个保留行交错执行七轮 candidate/C/Rust，再保留
 各 channel 的 upper median。仅 `slp_quad` 在逐行 common-mode 归一化后执行未改变的 16/20
 稳定性门槛；throughput 仍只使用原始保留耗时。
 

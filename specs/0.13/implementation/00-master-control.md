@@ -167,7 +167,8 @@ Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 随后�
 timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
 
 Exact v0.12 run `33833225186` 证明 `bounded-upper-band-v1` 的目标频带假设不成立，因此
-v0.13 继承 `interleaved-upper-median-three-channel-v2`，不再按绝对频带筛选三通道样本。
+v0.13 使用 `interleaved-upper-median-three-channel-v3`，不再按绝对频带筛选三通道样本，
+并让 candidate/C/Rust 三通道复用同一数据工作区以消除分配位置偏差。
 Exact v0.12 run `33966418774` 又证明 x86 `VF4/UF2` noalias kernel 的逐 chunk
 load/compute/store 顺序隐藏了已证明的跨 chunk 并行。v0.13 继承 x86 `UF > 1` 的
 SSA/MemorySSA 就绪列表调度，并把 exact v0.12 replay 重钉到
@@ -369,3 +370,16 @@ call 常量实参识别固定边界，并只对这些循环恢复既有有界二
 streaming map 继续禁止有害展开，ordinary/multiversion cache identity 更新为
 `x86-checked-memory-map-schedule-v3`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
 性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Replacement V0.14 exact replay run `34169415571` 的 x86-64 performance job
+`101886905457` 随后以 checked `strict_f64` `3,601,329 / 3,164,344 ns` 未通过不变的 90%
+单项吞吐门槛。与上一 run 比较，candidate 与 Rust oracle 动态库分别逐字节相同，candidate
+反汇编亦相同；上一 run 的对应结果为 `3,194,955 / 3,191,369 ns`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-40.md`：旧 harness 为 candidate/C/Rust 分别分配
+数据缓冲区，使内存对齐、物理页和 cache-set 位置成为持久通道偏差。三条通道现在保留各自已加载
+entry，但复用唯一 `KernelWorkspace`；交错顺序、七次 upper median、二十样本、timed work、
+corpus 与门槛不变。sampling identity 更新为
+`interleaved-upper-median-three-channel-v3`，oracle manifest SHA-256 更新为
+`e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3`。语言/公开 ABI、
+strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性/产物门槛、平台与 required job matrix
+均未改变。

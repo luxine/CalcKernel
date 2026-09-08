@@ -29,7 +29,8 @@ reruns or deletion of a case. Missing/unknown/extra/mismatched report fields,
 digests, streams, tiers, or capabilities fail the checker.
 
 The cumulative 0.12 vector/domain replay uses
-`interleaved-upper-median-three-channel-v2`. Every retained row interleaves seven
+`interleaved-upper-median-three-channel-v3`. All three channels use one shared data
+workspace so allocation placement cannot masquerade as a code-performance difference. Every retained row interleaves seven
 rotations of candidate/C/Rust and stores each channel's upper median. For
 `slp_quad` only, the unchanged 16-of-20 stability band is evaluated after
 per-row common-mode normalization; throughput still uses raw retained durations.
