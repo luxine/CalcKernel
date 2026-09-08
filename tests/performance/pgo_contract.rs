@@ -180,6 +180,35 @@ fn multiversion_source_to_object_should_not_repeat_checked_frontend_work() {
 }
 
 #[test]
+fn checked_multiversion_emission_should_not_repeat_variant_evidence_validation() {
+    let pipeline = read("src/optimizer/kir_pipeline.rs");
+    let native = read("src/backend/llvm/multiversion.rs");
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+
+    for required in [
+        "checked_multiversion_variant_result",
+        "std::ptr::eq(candidate, variant)",
+        "verification_cache: None",
+    ] {
+        assert!(
+            pipeline.contains(required),
+            "checked variant handoff omitted {required}"
+        );
+    }
+    assert!(
+        native.contains("checked_multiversion_variant_result(checked, variant, contracts)")
+            && !native.contains(
+                "run_kir_pass_pipeline(\n                variant.module.clone(),\n                KirOptimizationLevel::O0"
+            ),
+        "native emission must reuse the checked variant instead of repeating its O0 evidence validation"
+    );
+    assert!(
+        lowering.contains("validate_kir_optimization_evidence(\n        kir,"),
+        "LLVM lowering must retain the final fail-closed evidence validation"
+    );
+}
+
+#[test]
 fn multiversion_dispatch_hot_path_should_not_branch_on_a_null_slot() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");
