@@ -46,12 +46,14 @@
 - `specs/0.14/review/implementation-blocker-51.md`
 - `specs/0.14/review/implementation-blocker-52.md`
 - `specs/0.14/review/implementation-blocker-53.md`
+- `specs/0.14/review/implementation-blocker-54.md`
+- `specs/0.14/review/implementation-blocker-55.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`528f0734a0c4525a2c84158c4d73067e468f292c`。两者之间的累计提交已按
+`6258089cf44ebc317247e3fc38e2c765e424132e`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -557,3 +559,16 @@ replay 重钉到该 SHA，manifest SHA-256 为
 通过修改门槛、样本、timed work 或选择性 replay 掩盖；replacement exact-SHA workflow 必须
 完整重建并重测。语言/公开 ABI、strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性/
 产物门槛、timed work、样本、corpus、平台与 required job 均未改变。
+
+Exact V0.14 run `34198065606` 的 AArch64 performance job `101970492265` 在重建
+accepted V0.13 schema-8 replay 时，以 multiversion source-to-object 几何均值
+`2.500001057595058 > 2.5` 失败。完整十五样本覆盖证明不存在缺失或选择性重放；同一
+accepted SHA 的独立 V0.13 AArch64 job 为 `2.35826535437881`，差异来自 retained V0.14
+环境对 ordinary 路径的相对加速。复诊与继承闭环见
+`specs/0.14/review/implementation-blocker-55.md`：V0.14 精确吸收 V0.13
+`6258089cf44ebc317247e3fc38e2c765e424132e`，checked multiversion variant 在 opaque bundle
+checker 已完成独立结构验证后复用 O0-shaped handoff，LLVM lowering 前的最终 evidence
+validation 保持不变；accepted-base 与 replay 重钉到该 SHA，manifest SHA-256 为
+`6a3f2768b56c737d6060d0f7ed03a103ed7570c4064c6cfe9532b2a91d23d230`。语言/公开 ABI、
+strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性/产物门槛、timed work、样本、
+corpus、平台与 required job 均未改变。

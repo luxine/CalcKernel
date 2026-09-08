@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 528f0734a0c4525a2c84158c4d73067e468f292c
+Accepted base revision: v0.13 repaired candidate 6258089cf44ebc317247e3fc38e2c765e424132e
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`528f0734a0c4525a2c84158c4d73067e468f292c` was reviewed file by file and integrated
+`6258089cf44ebc317247e3fc38e2c765e424132e` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
@@ -23,6 +23,9 @@ while keeping the raw public emitter fail closed. Coverage-first retention and
 predicted-cost-first runtime dispatch are separate total orders, so a higher-tier
 host selects its fastest compatible retained member without removing the lower-tier
 coverage companion. Compile and runtime performance thresholds are unchanged.
+Checked emission may reuse an O0-shaped variant handoff only after proving pointer
+ownership by that opaque bundle; the final lowering evidence validation remains
+mandatory, while the redundant intermediate O0 evidence pass is omitted.
 
 The accepted v0.13 repair also closes schema-8 aggregate multiversion artifact size:
 ELF shared products discard non-loader metadata while retaining the dynamic public
