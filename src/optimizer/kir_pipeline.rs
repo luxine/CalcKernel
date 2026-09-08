@@ -300,6 +300,49 @@ pub fn pass_result_from_verified_tuning_state(
     })
 }
 
+/// Builds the O0-shaped handoff for a variant owned by an independently
+/// checked multiversion bundle. Structural KIR validation is retained by the
+/// bundle checker and evidence is validated again immediately before LLVM
+/// lowering, so repeating the full O0 evidence pass here adds no authority.
+#[cfg(feature = "native-toolchain")]
+pub(crate) fn checked_multiversion_variant_result(
+    checked: &crate::CheckedKirMultiversionBundle<'_>,
+    variant: &crate::KirMultiversionVariant,
+    contracts: &ContractFactSet,
+) -> Result<KirPassManagerResult, String> {
+    let belongs_to_checked_bundle = checked
+        .bundle()
+        .roots
+        .iter()
+        .flat_map(|root| &root.variants)
+        .any(|candidate| std::ptr::eq(candidate, variant));
+    if !belongs_to_checked_bundle {
+        return Err("multiversion variant is not owned by the checked bundle".to_string());
+    }
+
+    let module = variant.module.clone();
+    Ok(KirPassManagerResult {
+        audit: KirOptimizationAuditState::for_module(&module),
+        artifact: Some(module.clone()),
+        module,
+        records: vec![KirPassRecord {
+            name: "reuse-checked-multiversion-variant".to_string(),
+            changed: false,
+            verified: true,
+        }],
+        errors: Vec::new(),
+        proofs: ProofArena::new(0),
+        eliminated_guards: Vec::new(),
+        explanations: Vec::new(),
+        vector_explanations: Vec::new(),
+        analysis_fallbacks: Vec::new(),
+        contract_facts: Some(contracts.clone()),
+        stats: KirOptimizationStats::default(),
+        pgo: None,
+        verification_cache: None,
+    })
+}
+
 pub(crate) fn run_kir_pass_pipeline_with_profile(
     mut module: KirModule,
     level: KirOptimizationLevel,

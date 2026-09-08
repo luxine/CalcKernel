@@ -409,3 +409,13 @@ separator 当作普通 component 遍历，四条真实 PGO CLI 路径因此都�
 verbatim drive 与 verbatim UNC root，只从 root 后检查 component，全部后续 component/final directory
 的 no-follow、reparse 与 file identity 检查保持 fail closed。profile schema、语言/公开 ABI、安全语义、
 优化策略、性能/稳定性门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact run `34198065606` 随后在 AArch64 worker 重建 accepted V0.13
+`528f0734a0c4525a2c84158c4d73067e468f292c`，完整 schema-8 multiversion compile
+geometric mean 为 `2.5000010576`，未通过不变的 `2.5` 门槛；同一 SHA 的独立 V0.13 AArch64
+job 为 `2.3582653544`。复诊与闭环见 `specs/0.13/review/implementation-blocker-44.md`：
+独立 bundle checker 已重建并验证每个 variant，LLVM lowering 还会在 IR 构造前 fail closed
+重验 evidence，因此 checked emission 只移除两者之间重复的完整 O0 evidence pass，并以 opaque
+checked bundle 中的 variant 地址约束该快速 handoff。checker、最终 evidence validation、输出
+artifact、语言/公开 ABI、安全与 strict-FP 语义、target ISA、性能/稳定性/size 门槛、timed work、
+样本、corpus、平台与 required job matrix 均未改变。

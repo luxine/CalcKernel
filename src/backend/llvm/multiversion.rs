@@ -2,8 +2,9 @@ use crate::{
     CheckedKirMultiversionBundle, CkPgoOptimizerPlan, ContractFactSet, EmitLlvmOptions, FunctionId,
     KirConsumer, KirMultiversionBundle, KirMultiversionPlanningRequest, KirMultiversionPlatform,
     KirMultiversionTargetSet, KirMultiversionTargetTier, KirMultiversionTierId,
-    KirOptimizationLevel, KirPassManagerResult, check_kir_multiversion_bundle, materialized_tier,
-    project_pgo_plan_for_kir, run_kir_pass_pipeline,
+    KirOptimizationLevel, KirPassManagerResult, check_kir_multiversion_bundle,
+    checked_multiversion_variant_result, materialized_tier, project_pgo_plan_for_kir,
+    run_kir_pass_pipeline,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -319,17 +320,8 @@ pub fn emit_native_multiversion_objects_checked(
             let target = targets
                 .target(variant.tier)
                 .ok_or_else(|| error("multiversion variant TargetMachine is missing"))?;
-            let mut result = run_kir_pass_pipeline(
-                variant.module.clone(),
-                KirOptimizationLevel::O0,
-                Some(contracts),
-            );
-            if !result.errors.is_empty() {
-                return Err(error(format!(
-                    "multiversion variant revalidation failed: {}",
-                    result.errors.join("; ")
-                )));
-            }
+            let mut result =
+                checked_multiversion_variant_result(checked, variant, contracts).map_err(error)?;
             result.pgo = baseline_result
                 .pgo
                 .as_ref()
