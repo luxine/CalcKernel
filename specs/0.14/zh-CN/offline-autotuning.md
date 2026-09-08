@@ -4,14 +4,14 @@
 
 状态：CK 0.14.0 提议设计
 
-已接纳基线修订：v0.13 修复候选 f62149d8bed686032a2631305cb3af0de30df54d
+已接纳基线修订：v0.13 修复候选 8286b32174e33a4b874d71e8c17a5a605a382f0d
 
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
 实现最初基于 v0.13 候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`。
 最终验收前，已逐文件审计并以 v0.14 等价修复吸收该候选到最终接纳修订
-`f62149d8bed686032a2631305cb3af0de30df54d` 的累计提交差异。主动替代项记录在
+`8286b32174e33a4b874d71e8c17a5a605a382f0d` 的累计提交差异。主动替代项记录在
 实施期设计复诊 10；任何语义差异都不得通过适配测试来掩盖。
 
 已接纳基线还会对 normalized target-neutral multiversion KIR body 使用结构相等性，并把一次
@@ -26,6 +26,11 @@ handoff；最终 lowering evidence validation 仍为强制步骤，只省略重�
 算术操作、无 fast-math operation 且无既有 loop schedule 的 compute-dense strict-`f64`
 memory map 授权八路 vector width。其他 loop 保持 LLVM 普通 target cost 决策。该修复关闭
 仅发生在 v4 的 256-bit fallback，不改变 eligibility、strict-FP 语义或任何性能门槛。
+
+已接纳基线保持 Windows ARM64 profile runtime 为 lock-free `std::atomic_ref` 所需的
+C++20 frontend。Win32 调用使用 SDK 声明的 `LPSECURITY_ATTRIBUTES` 与
+`LPOVERLAPPED` 空参数类型，因此同一份源码在 ARM64 C++20 与 x64 C frontend 下均能
+通过 `/WX`；除 provenance 绑定修复后的源码字节外，profile publication 行为不变。
 
 已接纳的 v0.13 修复同时关闭 schema 8 multiversion 产物总尺寸：ELF shared 产物移除
 loader 不需要的元数据，同时保留动态公开导出以及供精确 selected-direct 证据使用的私有、

@@ -51,12 +51,13 @@
 - `specs/0.14/review/implementation-blocker-56.md`
 - `specs/0.14/review/implementation-blocker-57.md`
 - `specs/0.14/review/implementation-blocker-58.md`
+- `specs/0.14/review/implementation-blocker-59.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`f62149d8bed686032a2631305cb3af0de30df54d`。两者之间的累计提交已按
+`8286b32174e33a4b874d71e8c17a5a605a382f0d`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -630,3 +631,15 @@ upper-median 和 16/20 paired-row 收益，否则发布 byte-identical ordinary 
 仅作诊断。未来 PGO + Auto-Tuning 组合模式必须增加“不弱于对应 PGO”的硬门槛。
 缺少 x86-64-v4/AVX-512 或 AArch64 SVE2 必须以带缺失 feature/CPU 的 runner
 capability/infrastructure failure 失败关闭，不得 skip，也不得误报 compiler regression。
+
+Exact V0.13 run `34241617859` 随后在 Windows ARM64 job `102113212994` 证明，
+profile runtime 为 lock-free `std::atomic_ref` 使用 C++20 frontend 后，遗留的 C 风格
+`(void *)0` 无法隐式转换为 `CreateFileW` 与 `WriteFile` 的具体 SDK 指针类型。复诊与继承
+闭环见 `specs/0.14/review/implementation-blocker-59.md`：V0.14 对三个安全属性参数和一个
+overlapped 参数应用同一精确类型修复并更新 provenance；accepted v0.13 base、replay manifest、
+preparer 与当前验收文档重钉到独立修复提交
+`8286b32174e33a4b874d71e8c17a5a605a382f0d`，manifest SHA-256 为
+`26f30615b9e87f7c3d88d5dd14e00e635e891637792cc445a9ecd812d3a2fbae`。历史记录保留
+旧身份作为证据；语言/公开 ABI、profile/schema 8/9、安全与 strict-FP 语义、优化与 tuning
+策略、target eligibility、性能/稳定性/size 门槛、timed work、样本、corpus、平台与
+required job matrix 均未改变。

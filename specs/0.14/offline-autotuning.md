@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate f62149d8bed686032a2631305cb3af0de30df54d
+Accepted base revision: v0.13 repaired candidate 8286b32174e33a4b874d71e8c17a5a605a382f0d
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`f62149d8bed686032a2631305cb3af0de30df54d` was reviewed file by file and integrated
+`8286b32174e33a4b874d71e8c17a5a605a382f0d` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
@@ -33,6 +33,13 @@ eight scalar arithmetic operations, no fast-math operation, and no prior loop
 schedule. Other loops keep LLVM's normal target cost decision. This closes the
 v4-only 256-bit fallback without changing eligibility, strict-FP semantics, or any
 performance threshold.
+
+The accepted base preserves the C++20 Windows ARM64 profile-runtime frontend
+required by its lock-free `std::atomic_ref` implementation. Win32 calls use
+the SDK-declared `LPSECURITY_ATTRIBUTES` and `LPOVERLAPPED` null argument types,
+so the same source remains valid under both the ARM64 C++20 and x64 C frontends
+with `/WX`; profile publication behavior and provenance remain unchanged apart
+from binding the repaired source bytes.
 
 The accepted v0.13 repair also closes schema-8 aggregate multiversion artifact size:
 ELF shared products discard non-loader metadata while retaining the dynamic public

@@ -2071,6 +2071,22 @@ fn windows_profile_runtime_should_not_treat_the_verbatim_root_as_a_component() {
 }
 
 #[test]
+fn windows_arm64_profile_runtime_should_use_cpp_compatible_win32_nulls() {
+    let windows = read("native/profile_runtime/platform/windows.c");
+
+    assert_eq!(
+        windows.matches("(LPSECURITY_ATTRIBUTES)0").count(),
+        3,
+        "CreateFileW security attributes must remain valid when the Windows ARM64 profile runtime is compiled as C++20"
+    );
+    assert_eq!(
+        windows.matches("(LPOVERLAPPED)0").count(),
+        1,
+        "WriteFile's overlapped argument must remain valid when the Windows ARM64 profile runtime is compiled as C++20"
+    );
+}
+
+#[test]
 fn unix_runtime_objects_should_omit_compiler_ident_sections() {
     let bootstrap = read("scripts/bootstrap-llvm.sh");
     let flags = bootstrap

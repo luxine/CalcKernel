@@ -144,7 +144,8 @@ static int ck_profile_directory_identity(const wchar_t *path, int length,
     mutable_path[index] = 0;
     HANDLE handle = CreateFileW(
         path, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, (void *)0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        (LPSECURITY_ATTRIBUTES)0,
         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
         (HANDLE)0);
     mutable_path[index] = saved;
@@ -162,7 +163,8 @@ static int ck_profile_directory_identity(const wchar_t *path, int length,
   }
   HANDLE directory = CreateFileW(
       path, FILE_READ_ATTRIBUTES,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, (void *)0,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      (LPSECURITY_ATTRIBUTES)0,
       OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
       (HANDLE)0);
   if (directory == INVALID_HANDLE_VALUE) {
@@ -232,8 +234,9 @@ static int32_t __ck_profile_platform_publish(
   for (uint32_t index = 0; index < 13u; ++index) {
     completed[completed_offset++] = completed_suffix[index];
   }
-  HANDLE file = CreateFileW(temporary, GENERIC_WRITE, 0, (void *)0, CREATE_NEW,
-                            FILE_ATTRIBUTE_NORMAL, (HANDLE)0);
+  HANDLE file =
+      CreateFileW(temporary, GENERIC_WRITE, 0, (LPSECURITY_ATTRIBUTES)0,
+                  CREATE_NEW, FILE_ATTRIBUTE_NORMAL, (HANDLE)0);
   if (file == INVALID_HANDLE_VALUE) {
     return GetLastError() == ERROR_FILE_EXISTS
                ? CKC_PROFILE_PLATFORM_COLLISION
@@ -245,7 +248,8 @@ static int32_t __ck_profile_platform_publish(
     const uint64_t remaining = length - offset;
     const DWORD request = remaining > 0x7fffffffu ? 0x7fffffffu : (DWORD)remaining;
     DWORD written = 0;
-    if (!WriteFile(file, bytes + offset, request, &written, (void *)0) ||
+    if (!WriteFile(file, bytes + offset, request, &written,
+                   (LPOVERLAPPED)0) ||
         written == 0u) {
       failure = CKC_PROFILE_PLATFORM_WRITE_ERROR;
       break;
