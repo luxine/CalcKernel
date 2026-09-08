@@ -83,23 +83,55 @@ Both stable performance jobs require `os="linux"`. The x86-64 job requires
 `requiredTier="x86-64-v4"`; the AArch64 job requires
 `requiredTier="aarch64-sve2"`. That tier must occur in `availableTiers` and all of
 its required features in `features`. Missing required hardware fails instead of
-skipping.
+skipping. This outcome is a fail-closed runner capability/infrastructure failure,
+not a compiler performance regression: the diagnostic names the required tier,
+missing features, available tiers, and CPU model so the runner can be repaired.
 For `x86-64-v4`, the required feature set is exactly AVX-512 F/BW/CD/DQ/VL;
 omitting AVX-512CD must fail the tier gate.
 
-`recipe` has exactly `schema`, `files`, `digest`, and `thresholds`. `schema=1`.
+`recipe` has exactly `schema`, `files`, `digest`, and `thresholds`. Report
+`schemaVersion=9` remains the envelope format. `recipe.schema = 2` is the current
+acceptance revision; `recipe.schema=1` remains readable and is evaluated only with
+its original thresholds, three-channel validation protocol, and original runtime
+semantics. A checker must not silently reinterpret a revision-1 report as revision
+2.
 `files` is a path-sorted list of `FileIdentity` covering every path named in Section
 19.1 of the design, all with `root="repository"`. `digest` is
 `P("CK-V014-PERF-RECIPE\0", schema U32, files List<FileIdentityValue>,
 thresholds List<ThresholdEntry>)`; `ThresholdEntry` is key `Text` then value `U64`,
-and all threshold keys are encoded in lexicographic UTF-8 order. `thresholds` has
-exactly:
+and all threshold keys are encoded in lexicographic UTF-8 order.
+
+Revision 1 had exactly the following legacy threshold map and keeps its original
+meaning for retained reports:
 
 | Key | Value |
 | --- | ---: |
 | `heldOutGeomeanMaximumNum/Den` | 95 / 100 |
 | `selectedCaseMaximumNum/Den` | 98 / 100 |
 | `validationOrHeldOutMaximumNum/Den` | 102 / 100 |
+| `oracleGeomeanThroughputMinimumNum/Den` | 98 / 100 |
+| `oracleCaseThroughputMinimumNum/Den` | 92 / 100 |
+| `domainThroughputMinimumNum/Den` | 108 / 100, strict |
+| `artifactMaximumNum/Den` | 110 / 100 |
+| `tuneUseCompileGeomeanMaximumNum/Den` | 110 / 100 |
+| `tuneUseCompileCaseMaximumNum/Den` | 120 / 100 |
+| `ordinaryCompileGeomeanMaximumNum/Den` | 103 / 100 |
+| `ordinaryCompileCaseMaximumNum/Den` | 108 / 100 |
+| `archiveMaximumNum/Den` | 110 / 100 |
+| `standardWallMsMaximum` | 1,800,000 |
+| `peakRssMaximumNum/Den` | 2 / 1 |
+| `cacheBytesMaximum` | 4,294,967,296 |
+
+Revision 2 has exactly:
+
+| Key | Value |
+| --- | ---: |
+| `ordinaryRuntimeCaseMaximumNum/Den` | 103 / 100 |
+| `ordinaryRuntimeGeomeanMaximumNum/Den` | 100 / 100 |
+| `tunedRuntimeCaseMaximumNum/Den` | 103 / 100 |
+| `tunedRuntimeGeomeanMaximumNum/Den` | 100 / 100 |
+| `tunedHeldOutGainMaximumNum/Den` | 97 / 100 |
+| `tunedHeldOutGainCaseMinimum` | 2 |
 | `oracleGeomeanThroughputMinimumNum/Den` | 98 / 100 |
 | `oracleCaseThroughputMinimumNum/Den` | 92 / 100 |
 | `domainThroughputMinimumNum/Den` | 108 / 100, strict |
@@ -182,10 +214,12 @@ the audited CK, C, and Rust implementations and requires all results to match.
 `stabilityPolicy`, and `rerunPolicy`. Values are exactly:
 
 - `mainProtocol="rotating-six-channel-v1"`;
-- `validationProtocol="rotating-three-channel-v1"`;
+- for `recipe.schema=1`, `validationProtocol="rotating-three-channel-v1"` and
+  validation channels `[tuned,v013Ordinary,v013Pgo]`;
+- for `recipe.schema = 2`, `validationProtocol="rotating-four-channel-v2"` and
+  validation channels `[tuned,v014Ordinary,v013Ordinary,v013Pgo]`;
 - `domainProtocol="rotating-three-channel-v1"`;
 - main channels `[tuned,v014Ordinary,v013Ordinary,v013Pgo,cSimd,rustSimd]`;
-- validation channels `[tuned,v013Ordinary,v013Pgo]`;
 - domain channels `[tuned,genericC,genericRust]`;
 - warmups 3, samples 20, calls 7, statistic `minimum-then-upper-median`; warmup
   receipts are retained but excluded from the statistic;
@@ -245,7 +279,8 @@ exactly two `DomainCase` objects for `contract-fixed-length` and
 
 An `ExternalCalibration` has exactly `channel`, `attempts`,
 `selectedIterationsPerCall`, and `confirmation`. The calibration channel is
-`v014Ordinary` for main, `v013Ordinary` for validation, and `genericC` for domain.
+`v014Ordinary` for main, `v014Ordinary` for revision-2 validation
+(`v013Ordinary` for retained revision-1 validation), and `genericC` for domain.
 Starting at one iteration, it records one through 32 `CalibrationAttempt` objects,
 each with exactly `iterations`, `elapsedNs`, `completed`, and `correctnessDigest`,
 doubling with checked `u64` arithmetic until the first elapsed value at least
@@ -330,14 +365,36 @@ the `decision` and `outputs` of that case's `determinism.coldOne` record. The fi
 main rows, all seven validation rows, and both domain rows therefore time that
 canonical first-cold output set through the foreign keys above.
 
-The main gates use release-held-out rows only. For every selected tuned case,
-`tuned/v013-faster` is at most 98/100; every case, including baseline selections,
-enters the five-case held-out geometric gate of at most 95/100; no validation or
-release-held-out ratio exceeds 102/100. Every validation case compares tuned time
-with the lower median of v0.13 ordinary and v0.13 PGO and is at most 102/100 of
-that faster comparator. Oracle throughput meets 98/100 geometric
-and 92/100 per case. The two domain cases jointly satisfy the strict 108/100
-throughput gate against the faster generic oracle.
+For `recipe.schema = 2`, comparisons are like-for-like. Version regression compares
+v0.14 ordinary with the exact replayed v0.13 ordinary channel. Auto-Tuning compares
+v0.14 tuned with v0.14 ordinary from the same candidate SHA, safety mode, target,
+input, and timing row. For both comparisons, a case fails when its upper-median
+ratio exceeds 103/100 and at least 16 of 20 paired rows show the left channel no
+faster. The ordinary aggregate fails when the product of upper medians is slower
+than parity and at least 16 of 20 per-row cross-case products are slower. The tuned
+aggregate has a stricter hard parity gate: its upper-median product must not exceed
+the matching v0.14 ordinary product, independent of the paired-row count. The
+paired rules reuse the tuner's existing 16-of-20 evidence model and distinguish a
+credible per-case or version regression from an uncorroborated fluctuation without
+widening the 3% bound. They apply to both release-held-out and validation rows.
+
+Every selected tuned decision must also demonstrate on validation an upper-median
+ratio at most 97/100 and at least 16 of 20 paired rows at that same 3% gain. Any
+decision without this reliable benefit must use an ordinary fallback; each fallback
+tuned artifact must have the same byte count and SHA-256 as v0.14 ordinary. On the
+sealed release-held-out corpus, at least two selected workloads must independently
+meet the same repeatable 3% gain rule. All five declared workloads remain in both
+geometric aggregates regardless of selection.
+
+The complete v0.13 PGO channel, samples, correctness results, build records,
+profiles, and artifacts remain mandatory diagnostic evidence. v0.13 PGO is
+diagnostic-only for revision-2 runtime acceptance and is not a hard comparator for
+unprofiled Auto-Tuning. Once a PGO + Auto-Tuning mode exists, its own revision must
+add the hard requirement that the combined mode is not weaker than matching PGO.
+Oracle throughput still meets 98/100 geometric and 92/100 per case. The two domain
+cases jointly satisfy the strict 108/100 throughput gate against the faster generic
+oracle. `recipe.schema=1` retains the old v0.13-faster runtime gates listed in its
+threshold map above.
 
 ## 6. Compilation, size, and resource records
 

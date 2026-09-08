@@ -251,6 +251,7 @@ fn ci_v014_should_bind_tuning_and_all_three_performance_schemas_to_one_sha() {
         "--schema 9 target/ckc-perf/v0.14-results.json",
         "v0.14-results.json",
         "v014-measurement-*",
+        "Gate cumulative schemas 7/8 and schema-9 recipe revision 2 like-for-like performance",
     ] {
         assert!(workflow.contains(required), "v0.14 CI omitted {required:?}");
     }

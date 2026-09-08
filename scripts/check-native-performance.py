@@ -107,7 +107,7 @@ SCHEMA9_TOP_KEYS = {
     "tuneUseCompileTime", "ordinaryCompileRegression", "artifactSize", "archiveSize",
     "resourceUse", "determinism", "correctness",
 }
-SCHEMA9_THRESHOLDS = {
+SCHEMA9_THRESHOLDS_V1 = {
     "archiveMaximumDen": 100, "archiveMaximumNum": 110,
     "artifactMaximumDen": 100, "artifactMaximumNum": 110,
     "cacheBytesMaximum": 4_294_967_296,
@@ -123,6 +123,26 @@ SCHEMA9_THRESHOLDS = {
     "tuneUseCompileCaseMaximumDen": 100, "tuneUseCompileCaseMaximumNum": 120,
     "tuneUseCompileGeomeanMaximumDen": 100, "tuneUseCompileGeomeanMaximumNum": 110,
     "validationOrHeldOutMaximumDen": 100, "validationOrHeldOutMaximumNum": 102,
+}
+SCHEMA9_THRESHOLDS = {
+    "archiveMaximumDen": 100, "archiveMaximumNum": 110,
+    "artifactMaximumDen": 100, "artifactMaximumNum": 110,
+    "cacheBytesMaximum": 4_294_967_296,
+    "domainThroughputMinimumDen": 100, "domainThroughputMinimumNum": 108,
+    "oracleCaseThroughputMinimumDen": 100, "oracleCaseThroughputMinimumNum": 92,
+    "oracleGeomeanThroughputMinimumDen": 100, "oracleGeomeanThroughputMinimumNum": 98,
+    "ordinaryCompileCaseMaximumDen": 100, "ordinaryCompileCaseMaximumNum": 108,
+    "ordinaryCompileGeomeanMaximumDen": 100, "ordinaryCompileGeomeanMaximumNum": 103,
+    "ordinaryRuntimeCaseMaximumDen": 100, "ordinaryRuntimeCaseMaximumNum": 103,
+    "ordinaryRuntimeGeomeanMaximumDen": 100, "ordinaryRuntimeGeomeanMaximumNum": 100,
+    "peakRssMaximumDen": 1, "peakRssMaximumNum": 2,
+    "standardWallMsMaximum": 1_800_000,
+    "tunedHeldOutGainCaseMinimum": 2,
+    "tunedHeldOutGainMaximumDen": 100, "tunedHeldOutGainMaximumNum": 97,
+    "tunedRuntimeCaseMaximumDen": 100, "tunedRuntimeCaseMaximumNum": 103,
+    "tunedRuntimeGeomeanMaximumDen": 100, "tunedRuntimeGeomeanMaximumNum": 100,
+    "tuneUseCompileCaseMaximumDen": 100, "tuneUseCompileCaseMaximumNum": 120,
+    "tuneUseCompileGeomeanMaximumDen": 100, "tuneUseCompileGeomeanMaximumNum": 110,
 }
 SCHEMA9_RECIPE_FILES = [
     "benches/cases/tune-cases.tsv",
@@ -152,7 +172,8 @@ SCHEMA9_DOMAIN_CASES = {"contract-fixed-length", "contract-noalias"}
 SCHEMA9_MAIN_CHANNELS = [
     "tuned", "v014Ordinary", "v013Ordinary", "v013Pgo", "cSimd", "rustSimd",
 ]
-SCHEMA9_VALIDATION_CHANNELS = ["tuned", "v013Ordinary", "v013Pgo"]
+SCHEMA9_VALIDATION_CHANNELS_V1 = ["tuned", "v013Ordinary", "v013Pgo"]
+SCHEMA9_VALIDATION_CHANNELS = ["tuned", "v014Ordinary", "v013Ordinary", "v013Pgo"]
 SCHEMA9_DOMAIN_CHANNELS = ["tuned", "genericC", "genericRust"]
 
 
@@ -324,7 +345,11 @@ def check_schema9_hardware(value, contract_only):
                 or any(not isinstance(item, str) or not item for item in value[key])):
             fail(f"schema-9 hardware {key} must be sorted unique text")
     if value["requiredTier"] not in value["availableTiers"]:
-        fail("schema-9 required hardware tier is unavailable")
+        fail(
+            "schema-9 infrastructure failure: runner capability does not include "
+            f"required tier={value['requiredTier']}; available tiers="
+            f"{','.join(value['availableTiers'])}; cpu={value['cpuModel']}"
+        )
     material = [
         schema9_text(value[key]) for key in [
             "target", "arch", "os", "osBuild", "kernel", "cpuModel",
@@ -339,19 +364,36 @@ def check_schema9_hardware(value, contract_only):
         fail("schema-9 hardware capabilityDigest mismatch")
     if not contract_only:
         if value["arch"] not in {"x86_64", "aarch64"}:
-            fail("schema-9 release evidence has an unsupported architecture")
+            fail(
+                "schema-9 infrastructure failure: runner capability has unsupported "
+                f"architecture={value['arch']}; cpu={value['cpuModel']}"
+            )
         required = "x86-64-v4" if value["arch"] == "x86_64" else "aarch64-sve2"
         needed = ({"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
                   if value["arch"] == "x86_64" else {"sve", "sve2"})
         if value["os"] != "linux" or value["requiredTier"] != required:
-            fail("schema-9 release evidence requires a stable Linux hardware tier")
+            fail(
+                "schema-9 infrastructure failure: runner capability does not match "
+                f"required stable platform linux/{required}; actual={value['os']}/"
+                f"{value['requiredTier']}; cpu={value['cpuModel']}"
+            )
         if not needed.issubset(value["features"]):
-            fail("schema-9 release evidence lacks required hardware features")
+            missing = sorted(needed - set(value["features"]))
+            fail(
+                "schema-9 infrastructure failure: runner capability lacks required "
+                f"hardware features for required tier={required}; missing features="
+                f"{','.join(missing)}; cpu={value['cpuModel']}"
+            )
 
 
 def check_schema9_recipe(value, evidence_root):
     exact_keys(value, {"schema", "files", "digest", "thresholds"}, "schema-9 recipe")
-    if value["schema"] != 1 or value["thresholds"] != SCHEMA9_THRESHOLDS:
+    revision = value["schema"]
+    expected_thresholds = {
+        1: SCHEMA9_THRESHOLDS_V1,
+        2: SCHEMA9_THRESHOLDS,
+    }.get(revision)
+    if expected_thresholds is None or value["thresholds"] != expected_thresholds:
         fail("schema-9 recipe schema or thresholds mismatch")
     if not isinstance(value["files"], list) or len(value["files"]) != len(SCHEMA9_RECIPE_FILES):
         fail("schema-9 recipe file cardinality mismatch")
@@ -362,14 +404,15 @@ def check_schema9_recipe(value, evidence_root):
     if paths != sorted(SCHEMA9_RECIPE_FILES) or len(paths) != len(set(paths)):
         fail("schema-9 recipe file set/order mismatch")
     threshold_values = [schema9_text(name) + number.to_bytes(8, "big")
-                        for name, number in sorted(SCHEMA9_THRESHOLDS.items())]
+                        for name, number in sorted(expected_thresholds.items())]
     expected = schema9_digest(
-        b"CK-V014-PERF-RECIPE\0", (1).to_bytes(4, "big"),
+        b"CK-V014-PERF-RECIPE\0", revision.to_bytes(4, "big"),
         schema9_list([schema9_file_value(item) for item in value["files"]]),
         schema9_list(threshold_values),
     )
     if value["digest"] != expected:
         fail("schema-9 recipe digest mismatch")
+    return revision
 
 
 def check_schema9_workload(value, evidence_root, table):
@@ -430,13 +473,17 @@ def check_schema9_workload(value, evidence_root, table):
         fail("schema-9 expected results are not case-name sorted")
 
 
-def check_schema9_sampling(value):
+def check_schema9_sampling(value, recipe_revision):
+    validation_channels = (SCHEMA9_VALIDATION_CHANNELS_V1
+                           if recipe_revision == 1 else SCHEMA9_VALIDATION_CHANNELS)
+    validation_protocol = ("rotating-three-channel-v1" if recipe_revision == 1
+                           else "rotating-four-channel-v2")
     expected = {
         "mainProtocol": "rotating-six-channel-v1",
-        "validationProtocol": "rotating-three-channel-v1",
+        "validationProtocol": validation_protocol,
         "domainProtocol": "rotating-three-channel-v1",
         "mainChannels": SCHEMA9_MAIN_CHANNELS,
-        "validationChannels": SCHEMA9_VALIDATION_CHANNELS,
+        "validationChannels": validation_channels,
         "domainChannels": SCHEMA9_DOMAIN_CHANNELS,
         "warmupRows": 3, "sampleRows": 20, "callsPerSample": 7,
         "statistic": "minimum-then-upper-median",
@@ -489,13 +536,14 @@ def check_schema9_schema_only(report, path):
         check_schema9_file(report["toolchain"][key], root, f"schema-9 toolchain {key}", "evidence")
     check_schema9_file(report["candidateBinary"], root, "schema-9 candidateBinary", "evidence")
     check_schema9_hardware(report["hardware"], contract_only)
-    check_schema9_recipe(report["recipe"], root)
+    recipe_revision = check_schema9_recipe(report["recipe"], root)
     table = schema9_case_table()
     check_schema9_workload(report["workload"], root, table)
-    check_schema9_sampling(report["sampling"])
-    if report["resourceUse"].get("cacheHardLimitBytes") != SCHEMA9_THRESHOLDS["cacheBytesMaximum"]:
+    check_schema9_sampling(report["sampling"], recipe_revision)
+    thresholds = SCHEMA9_THRESHOLDS_V1 if recipe_revision == 1 else SCHEMA9_THRESHOLDS
+    if report["resourceUse"].get("cacheHardLimitBytes") != thresholds["cacheBytesMaximum"]:
         fail("schema-9 cache hard limit mismatch")
-    return contract_only, root, table
+    return contract_only, root, table, recipe_revision
 
 
 def check_order(value, width, rows, field):
@@ -1863,7 +1911,8 @@ def schema9_case_record(value, evidence_root, field, *, case, channels, protocol
     if any(value["correctnessDigests"][channel] != expected_digest for channel in channels):
         fail(f"{field} differential correctness mismatch")
     calibration_channel = {
-        "release-held-out": "v014Ordinary", "validation": "v013Ordinary",
+        "release-held-out": "v014Ordinary",
+        "validation": ("v014Ordinary" if "v014Ordinary" in channels else "v013Ordinary"),
         "domain-release-held-out": "genericC",
     }[split]
     iterations = schema9_calibration(value["calibration"], f"{field}.calibration",
@@ -1936,6 +1985,138 @@ def schema9_throughput_ge(candidate, baseline, num, den, *, strict=False):
     left = math.prod(value * den for value in baseline)
     right = math.prod(value * num for value in candidate)
     return left > right if strict else left >= right
+
+
+def schema9_check_runtime_gates_v1(main, validation_cases, decision_map, thresholds):
+    tuned_times = [row["mediansNs"]["tuned"] for row in main]
+    baseline_times = [min(row["mediansNs"]["v013Ordinary"], row["mediansNs"]["v013Pgo"])
+                      for row in main]
+    if not schema9_ratio_le(tuned_times, baseline_times,
+                            thresholds["heldOutGeomeanMaximumNum"],
+                            thresholds["heldOutGeomeanMaximumDen"]):
+        fail("schema-9 held-out geometric performance gate failed")
+    for row, baseline in zip(main, baseline_times, strict=True):
+        if not schema9_ratio_le([row["mediansNs"]["tuned"]], [baseline],
+                                thresholds["validationOrHeldOutMaximumNum"],
+                                thresholds["validationOrHeldOutMaximumDen"]):
+            fail(f"schema-9 {row['case']} held-out slowdown gate failed")
+        if decision_map[row["case"]]["selectionReason"] == "tuned" and not schema9_ratio_le(
+                [row["mediansNs"]["tuned"]], [baseline],
+                thresholds["selectedCaseMaximumNum"], thresholds["selectedCaseMaximumDen"]):
+            fail(f"schema-9 {row['case']} selected-case gain gate failed")
+    for row in validation_cases:
+        baseline = min(row["mediansNs"]["v013Ordinary"], row["mediansNs"]["v013Pgo"])
+        if not schema9_ratio_le([row["mediansNs"]["tuned"]], [baseline],
+                                thresholds["validationOrHeldOutMaximumNum"],
+                                thresholds["validationOrHeldOutMaximumDen"]):
+            fail(f"schema-9 {row['case']} validation slowdown gate failed")
+
+
+def schema9_paired_count(row, left, right, num, den):
+    return sum(
+        left_sample * den <= right_sample * num
+        for left_sample, right_sample in zip(
+            row["samplesNs"][left], row["samplesNs"][right], strict=True)
+    )
+
+
+def schema9_aggregate_paired_losses(rows, left, right):
+    return sum(
+        math.prod(row["samplesNs"][left][index] for row in rows)
+        > math.prod(row["samplesNs"][right][index] for row in rows)
+        for index in range(20)
+    )
+
+
+def schema9_same_artifact_content(left, right):
+    return (left["bytes"], left["sha256"]) == (right["bytes"], right["sha256"])
+
+
+def schema9_check_runtime_pair(rows, left, right, case_key, geomean_key, label,
+                               credible_geomean, thresholds):
+    case_num = thresholds[f"{case_key}Num"]
+    case_den = thresholds[f"{case_key}Den"]
+    for row in rows:
+        medians = row["mediansNs"]
+        credible_loss = schema9_paired_count(row, right, left, 100, 100) >= 16
+        if (not schema9_ratio_le([medians[left]], [medians[right]], case_num, case_den)
+                and credible_loss):
+            fail(
+                f"schema-9 revision-2 {row['case']} {label} runtime "
+                "credible regression exceeds 3%"
+            )
+    medians_left = [row["mediansNs"][left] for row in rows]
+    medians_right = [row["mediansNs"][right] for row in rows]
+    geomean_regressed = not schema9_ratio_le(
+        medians_left, medians_right, thresholds[f"{geomean_key}Num"],
+        thresholds[f"{geomean_key}Den"])
+    if geomean_regressed and (not credible_geomean
+                              or schema9_aggregate_paired_losses(rows, left, right) >= 16):
+        if credible_geomean:
+            fail(
+                f"schema-9 revision-2 {label} runtime has a credible "
+                "geometric-mean regression"
+            )
+        fail(f"schema-9 revision-2 {label} runtime geometric-mean parity gate failed")
+
+
+def schema9_check_runtime_gates_v2(main, validation_cases, decision_map, thresholds):
+    for rows in [main, validation_cases]:
+        schema9_check_runtime_pair(
+            rows, "v014Ordinary", "v013Ordinary", "ordinaryRuntimeCaseMaximum",
+            "ordinaryRuntimeGeomeanMaximum", "ordinary", True, thresholds)
+        schema9_check_runtime_pair(
+            rows, "tuned", "v014Ordinary", "tunedRuntimeCaseMaximum",
+            "tunedRuntimeGeomeanMaximum", "tuned", False, thresholds)
+
+    gain_num = thresholds["tunedHeldOutGainMaximumNum"]
+    gain_den = thresholds["tunedHeldOutGainMaximumDen"]
+    validation_by_case = {row["case"]: row for row in validation_cases}
+    for case, decision in decision_map.items():
+        if decision["selectionReason"] == "tuned":
+            row = validation_by_case[case]
+            medians = row["mediansNs"]
+            if (not schema9_ratio_le(
+                    [medians["tuned"]], [medians["v014Ordinary"]], gain_num, gain_den)
+                    or schema9_paired_count(
+                        row, "tuned", "v014Ordinary", gain_num, gain_den) < 16):
+                fail(
+                    f"schema-9 revision-2 {case} selected candidate lacks a credible "
+                    "validation gain"
+                )
+        else:
+            for row in [*main, *validation_cases]:
+                if row["case"] != case:
+                    continue
+                if not schema9_same_artifact_content(
+                        row["artifacts"]["tuned"], row["artifacts"]["v014Ordinary"]):
+                    fail(
+                        f"schema-9 revision-2 {case} fallback artifact differs from "
+                        "v0.14 ordinary"
+                    )
+
+    credible_gains = 0
+    for row in main:
+        if decision_map[row["case"]]["selectionReason"] != "tuned":
+            continue
+        medians = row["mediansNs"]
+        if (schema9_ratio_le(
+                [medians["tuned"]], [medians["v014Ordinary"]], gain_num, gain_den)
+                and schema9_paired_count(
+                    row, "tuned", "v014Ordinary", gain_num, gain_den) >= 16):
+            credible_gains += 1
+    if credible_gains < thresholds["tunedHeldOutGainCaseMinimum"]:
+        fail(
+            "schema-9 revision-2 held-out requires at least 2 credible tuned gains"
+        )
+
+
+def schema9_check_runtime_gates(main, validation_cases, decision_map, recipe_revision,
+                                thresholds):
+    if recipe_revision == 1:
+        schema9_check_runtime_gates_v1(main, validation_cases, decision_map, thresholds)
+        return
+    schema9_check_runtime_gates_v2(main, validation_cases, decision_map, thresholds)
 
 
 def schema9_check_profiles(workload, evidence_root, table, replay_compiler, target):
@@ -2606,7 +2787,7 @@ def schema9_check_toolchain(report, evidence_root):
 
 
 def check_schema9(report, path, *, schema_only=False):
-    contract_only, _, _ = check_schema9_schema_only(report, path)
+    contract_only, _, _, recipe_revision = check_schema9_schema_only(report, path)
     if schema_only:
         if not contract_only:
             fail("--schema-only accepts only the explicit non-accepting contract fixture")
@@ -2630,7 +2811,8 @@ def check_schema9(report, path, *, schema_only=False):
         fail("schema-9 correctness evidence is incomplete")
     exact_keys(report["resourceUse"], {"sessions", "cacheHardLimitBytes"},
                "schema-9 resourceUse")
-    if report["resourceUse"]["cacheHardLimitBytes"] != SCHEMA9_THRESHOLDS["cacheBytesMaximum"]:
+    thresholds = SCHEMA9_THRESHOLDS_V1 if recipe_revision == 1 else SCHEMA9_THRESHOLDS
+    if report["resourceUse"]["cacheHardLimitBytes"] != thresholds["cacheBytesMaximum"]:
         fail("schema-9 resourceUse cache hard limit mismatch")
     evidence_root = path.parent / report["evidenceDirectory"]
     table = schema9_case_table()
@@ -2649,12 +2831,16 @@ def check_schema9(report, path, *, schema_only=False):
     }
     release_expected = {row["case"]: row["digest"]
                         for row in report["workload"]["expectedResults"]}
+    validation_channels = (SCHEMA9_VALIDATION_CHANNELS_V1
+                           if recipe_revision == 1 else SCHEMA9_VALIDATION_CHANNELS)
+    validation_protocol = ("rotating-three-channel-v1" if recipe_revision == 1
+                           else "rotating-four-channel-v2")
     case_groups = [
         ("cases", SCHEMA9_MAIN_CASES, SCHEMA9_MAIN_CHANNELS,
          "rotating-six-channel-v1", "release-held-out", report["workload"]["releaseHeldOut"],
          True),
-        ("validationCases", SCHEMA9_CASES, SCHEMA9_VALIDATION_CHANNELS,
-         "rotating-three-channel-v1", "validation", report["workload"]["validation"], False),
+        ("validationCases", SCHEMA9_CASES, validation_channels,
+         validation_protocol, "validation", report["workload"]["validation"], False),
         ("domainCases", SCHEMA9_DOMAIN_CASES, SCHEMA9_DOMAIN_CHANNELS,
          "rotating-three-channel-v1", "domain-release-held-out",
          report["workload"]["releaseHeldOut"], False),
@@ -2746,27 +2932,8 @@ def check_schema9(report, path, *, schema_only=False):
     thresholds = report["recipe"]["thresholds"]
     main = report["cases"]
     tuned_times = [row["mediansNs"]["tuned"] for row in main]
-    baseline_times = [min(row["mediansNs"]["v013Ordinary"], row["mediansNs"]["v013Pgo"])
-                      for row in main]
-    if not schema9_ratio_le(tuned_times, baseline_times,
-                            thresholds["heldOutGeomeanMaximumNum"],
-                            thresholds["heldOutGeomeanMaximumDen"]):
-        fail("schema-9 held-out geometric performance gate failed")
-    for row, baseline in zip(main, baseline_times, strict=True):
-        if not schema9_ratio_le([row["mediansNs"]["tuned"]], [baseline],
-                                thresholds["validationOrHeldOutMaximumNum"],
-                                thresholds["validationOrHeldOutMaximumDen"]):
-            fail(f"schema-9 {row['case']} held-out slowdown gate failed")
-        if decision_map[row["case"]]["selectionReason"] == "tuned" and not schema9_ratio_le(
-                [row["mediansNs"]["tuned"]], [baseline],
-                thresholds["selectedCaseMaximumNum"], thresholds["selectedCaseMaximumDen"]):
-            fail(f"schema-9 {row['case']} selected-case gain gate failed")
-    for row in report["validationCases"]:
-        baseline = min(row["mediansNs"]["v013Ordinary"], row["mediansNs"]["v013Pgo"])
-        if not schema9_ratio_le([row["mediansNs"]["tuned"]], [baseline],
-                                thresholds["validationOrHeldOutMaximumNum"],
-                                thresholds["validationOrHeldOutMaximumDen"]):
-            fail(f"schema-9 {row['case']} validation slowdown gate failed")
+    schema9_check_runtime_gates(
+        main, report["validationCases"], decision_map, recipe_revision, thresholds)
     oracle_baselines = [min(row["mediansNs"]["cSimd"], row["mediansNs"]["rustSimd"])
                         for row in main]
     if not schema9_throughput_ge(

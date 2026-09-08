@@ -30,7 +30,7 @@ REPLAY_MANIFEST = REPO / "benches/baselines/v0_13_replay.toml"
 MAIN_CHANNELS = [
     "tuned", "v014Ordinary", "v013Ordinary", "v013Pgo", "cSimd", "rustSimd",
 ]
-VALIDATION_CHANNELS = ["tuned", "v013Ordinary", "v013Pgo"]
+VALIDATION_CHANNELS = ["tuned", "v014Ordinary", "v013Ordinary", "v013Pgo"]
 DOMAIN_CHANNELS = ["tuned", "genericC", "genericRust"]
 TOP_LEVEL_KEYS = {
     "schemaVersion", "candidateVersion", "candidateSha", "v013ReplayCommit",
@@ -45,17 +45,20 @@ THRESHOLDS = {
     "artifactMaximumDen": 100, "artifactMaximumNum": 110,
     "cacheBytesMaximum": 4_294_967_296,
     "domainThroughputMinimumDen": 100, "domainThroughputMinimumNum": 108,
-    "heldOutGeomeanMaximumDen": 100, "heldOutGeomeanMaximumNum": 95,
     "oracleCaseThroughputMinimumDen": 100, "oracleCaseThroughputMinimumNum": 92,
     "oracleGeomeanThroughputMinimumDen": 100, "oracleGeomeanThroughputMinimumNum": 98,
     "ordinaryCompileCaseMaximumDen": 100, "ordinaryCompileCaseMaximumNum": 108,
     "ordinaryCompileGeomeanMaximumDen": 100, "ordinaryCompileGeomeanMaximumNum": 103,
+    "ordinaryRuntimeCaseMaximumDen": 100, "ordinaryRuntimeCaseMaximumNum": 103,
+    "ordinaryRuntimeGeomeanMaximumDen": 100, "ordinaryRuntimeGeomeanMaximumNum": 100,
     "peakRssMaximumDen": 1, "peakRssMaximumNum": 2,
-    "selectedCaseMaximumDen": 100, "selectedCaseMaximumNum": 98,
     "standardWallMsMaximum": 1_800_000,
+    "tunedHeldOutGainCaseMinimum": 2,
+    "tunedHeldOutGainMaximumDen": 100, "tunedHeldOutGainMaximumNum": 97,
+    "tunedRuntimeCaseMaximumDen": 100, "tunedRuntimeCaseMaximumNum": 103,
+    "tunedRuntimeGeomeanMaximumDen": 100, "tunedRuntimeGeomeanMaximumNum": 100,
     "tuneUseCompileCaseMaximumDen": 100, "tuneUseCompileCaseMaximumNum": 120,
     "tuneUseCompileGeomeanMaximumDen": 100, "tuneUseCompileGeomeanMaximumNum": 110,
-    "validationOrHeldOutMaximumDen": 100, "validationOrHeldOutMaximumNum": 102,
 }
 ABI_BY_CASE = {
     "branch-layout": "slice-branch-u64",
@@ -158,10 +161,10 @@ def recipe(files: list[dict]) -> dict:
     threshold_values = [text(name) + value.to_bytes(8, "big")
                         for name, value in sorted(THRESHOLDS.items())]
     digest = p(
-        b"CK-V014-PERF-RECIPE\0", (1).to_bytes(4, "big"),
+        b"CK-V014-PERF-RECIPE\0", (2).to_bytes(4, "big"),
         list_value([file_value(item) for item in files]), list_value(threshold_values),
     )
-    return {"schema": 1, "files": files, "digest": digest, "thresholds": THRESHOLDS}
+    return {"schema": 2, "files": files, "digest": digest, "thresholds": THRESHOLDS}
 
 
 def git_sha() -> str:
@@ -1200,7 +1203,13 @@ def full_hardware(candidate_sha: str, target: str) -> dict:
         if needed.issubset(all_features):
             tiers.append(required)
     if not needed.issubset(all_features):
-        fail(f"required stable performance tier {required} is unavailable")
+        missing = ",".join(sorted(needed - all_features))
+        available = ",".join(sorted(tiers))
+        fail(
+            "schema-9 infrastructure failure: runner capability does not satisfy "
+            f"required tier={required}; missing features={missing}; "
+            f"available tiers={available}; cpu={cpu_model}"
+        )
     tiers = sorted(tiers)
     logical = os.cpu_count() or 1
     physical_pairs = set(re.findall(r"physical id\s*:\s*(\d+).*?core id\s*:\s*(\d+)",
@@ -1506,7 +1515,7 @@ def full_report(output: pathlib.Path) -> dict:
         validation_rows.append(measure_channels(
             candidate_sha, case, "validation", validation_input, handles, builds,
             case_record(case, "validation", partitions), VALIDATION_CHANNELS,
-            "rotating-three-channel-v1", "v013Ordinary",
+            "rotating-four-channel-v2", "v014Ordinary",
             evidence / retained["runner"]["path"],
         ))
         if case["partition"] == "eligible":
@@ -1602,7 +1611,7 @@ def full_report(output: pathlib.Path) -> dict:
         "tuningDecisions": decisions, "tuningArtifacts": artifacts,
         "sampling": {
             "mainProtocol": "rotating-six-channel-v1",
-            "validationProtocol": "rotating-three-channel-v1",
+            "validationProtocol": "rotating-four-channel-v2",
             "domainProtocol": "rotating-three-channel-v1", "mainChannels": MAIN_CHANNELS,
             "validationChannels": VALIDATION_CHANNELS, "domainChannels": DOMAIN_CHANNELS,
             "warmupRows": 3, "sampleRows": 20, "callsPerSample": 7,
@@ -1695,7 +1704,7 @@ def contract_report(output: pathlib.Path) -> dict:
         "tuningDecisions": [], "tuningArtifacts": [],
         "sampling": {
             "mainProtocol": "rotating-six-channel-v1",
-            "validationProtocol": "rotating-three-channel-v1",
+            "validationProtocol": "rotating-four-channel-v2",
             "domainProtocol": "rotating-three-channel-v1",
             "mainChannels": MAIN_CHANNELS, "validationChannels": VALIDATION_CHANNELS,
             "domainChannels": DOMAIN_CHANNELS, "warmupRows": 3, "sampleRows": 20,

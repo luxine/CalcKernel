@@ -80,7 +80,7 @@ class SchemaNineContractTests(unittest.TestCase):
     def test_recipe_threshold_identity_and_order_fail_closed(self):
         self.reject(
             lambda report: report["recipe"]["thresholds"].__setitem__(
-                "heldOutGeomeanMaximumNum", 96),
+                "ordinaryRuntimeCaseMaximumNum", 104),
             "thresholds",
         )
         self.reject(lambda report: report["recipe"]["files"].reverse(), "set/order")
@@ -90,6 +90,170 @@ class SchemaNineContractTests(unittest.TestCase):
             lambda report: report["recipe"]["files"][0].__setitem__("bytes", 1),
             "byte count",
         )
+
+    def test_checker_does_not_hard_compare_unprofiled_tuning_with_v013_pgo(self):
+        source = inspect.getsource(gate.schema9_check_runtime_gates_v2)
+        unequal_comparator = (
+            'min(row["mediansNs"]["v013Ordinary"], '
+            'row["mediansNs"]["v013Pgo"])'
+        )
+
+        self.assertNotIn(unequal_comparator, source)
+        self.assertIn('"tuned", "v014Ordinary"', source)
+        self.assertIn('"v014Ordinary", "v013Ordinary"', source)
+
+    @staticmethod
+    def runtime_fixture(
+            *, selected=("branch-layout", "call-constant-length"),
+            gains=("branch-layout", "call-constant-length")):
+        def identity(case, channel, same_as_ordinary):
+            discriminator = "ordinary" if same_as_ordinary else channel
+            digest = gate.hashlib.sha256(f"{case}:{discriminator}".encode()).hexdigest()
+            return {"path": f"{case}-{channel}.bin", "bytes": 4096, "sha256": digest}
+
+        def row(case):
+            tuned = 95 if case in gains else 100
+            is_fallback = case not in selected
+            return {
+                "case": case,
+                "mediansNs": {
+                    "tuned": tuned,
+                    "v014Ordinary": 100,
+                    "v013Ordinary": 100,
+                    "v013Pgo": 20,
+                },
+                "samplesNs": {
+                    "tuned": [tuned] * 20,
+                    "v014Ordinary": [100] * 20,
+                    "v013Ordinary": [100] * 20,
+                    "v013Pgo": [20] * 20,
+                },
+                "artifacts": {
+                    "tuned": identity(case, "tuned", is_fallback),
+                    "v014Ordinary": identity(case, "v014Ordinary", True),
+                },
+            }
+
+        decisions = {
+            case: {"selectionReason": "tuned" if case in selected else "no-candidate"}
+            for case in gate.SCHEMA9_CASES
+        }
+        main = [row(case) for case in sorted(gate.SCHEMA9_MAIN_CASES)]
+        validation = [row(case) for case in sorted(gate.SCHEMA9_CASES)]
+        return main, validation, decisions
+
+    def test_revision_two_is_like_for_like_and_pgo_is_observational(self):
+        main, validation, decisions = self.runtime_fixture()
+        gate.schema9_check_runtime_gates(
+            main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+        for row in [*main, *validation]:
+            row["mediansNs"]["v013Pgo"] = 1
+            row["samplesNs"]["v013Pgo"] = [1] * 20
+        gate.schema9_check_runtime_gates(
+            main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+        with self.assertRaisesRegex(ValueError, "held-out geometric performance"):
+            gate.schema9_check_runtime_gates_v1(
+                main, validation, decisions, gate.SCHEMA9_THRESHOLDS_V1)
+
+    def test_revision_two_requires_two_credible_held_out_gains(self):
+        main, validation, decisions = self.runtime_fixture(
+            selected=("branch-layout",), gains=("branch-layout",))
+        with self.assertRaisesRegex(ValueError, "at least 2 credible tuned gains"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+    def test_revision_two_rejects_credible_tuned_and_ordinary_regressions(self):
+        main, validation, decisions = self.runtime_fixture()
+        target = next(row for row in main if row["case"] == "compute-bound")
+        target["mediansNs"]["tuned"] = 104
+        target["samplesNs"]["tuned"] = [104] * 20
+        with self.assertRaisesRegex(ValueError, "tuned runtime credible regression exceeds 3%"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+    def test_revision_two_rejects_credible_geometric_mean_regressions(self):
+        main, validation, decisions = self.runtime_fixture()
+        for row in main:
+            row["mediansNs"]["v014Ordinary"] = 101
+            row["samplesNs"]["v014Ordinary"] = [101] * 20
+        with self.assertRaisesRegex(ValueError, "ordinary runtime.*geometric-mean regression"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+        main, validation, decisions = self.runtime_fixture(
+            selected=tuple(gate.SCHEMA9_CASES), gains=tuple(gate.SCHEMA9_CASES))
+        for index, row in enumerate(main):
+            tuned = 97 if index < 2 else 103
+            row["mediansNs"]["tuned"] = tuned
+            row["samplesNs"]["tuned"] = [tuned] * 20
+            if index >= 2:
+                row["samplesNs"]["tuned"] = [tuned] * 10 + [96] * 10
+        with self.assertRaisesRegex(ValueError, "tuned runtime geometric-mean parity"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+        main, validation, decisions = self.runtime_fixture()
+        target = next(row for row in validation if row["case"] == "contract-noalias")
+        target["mediansNs"]["v014Ordinary"] = 104
+        target["samplesNs"]["v014Ordinary"] = [104] * 20
+        with self.assertRaisesRegex(ValueError, "ordinary runtime credible regression exceeds 3%"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+    def test_revision_two_requires_reliable_validation_or_ordinary_fallback(self):
+        main, validation, decisions = self.runtime_fixture()
+        target = next(row for row in validation if row["case"] == "branch-layout")
+        target["mediansNs"]["tuned"] = 100
+        target["samplesNs"]["tuned"] = [100] * 20
+        with self.assertRaisesRegex(ValueError, "selected candidate lacks a credible validation gain"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+        main, validation, decisions = self.runtime_fixture()
+        target = next(row for row in main if row["case"] == "compute-bound")
+        target["artifacts"]["tuned"]["sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "fallback artifact differs"):
+            gate.schema9_check_runtime_gates(
+                main, validation, decisions, 2, gate.SCHEMA9_THRESHOLDS)
+
+    def test_current_contract_uses_recipe_revision_two_and_like_for_like_validation(self):
+        self.assertEqual(self.report["recipe"]["schema"], 2)
+        self.assertEqual(
+            self.report["sampling"]["validationProtocol"],
+            "rotating-four-channel-v2",
+        )
+        self.assertEqual(
+            self.report["sampling"]["validationChannels"],
+            ["tuned", "v014Ordinary", "v013Ordinary", "v013Pgo"],
+        )
+
+    def test_recipe_revision_one_contract_remains_readable(self):
+        report = copy.deepcopy(self.report)
+        thresholds = gate.SCHEMA9_THRESHOLDS_V1
+        threshold_values = [
+            measure.text(name) + value.to_bytes(8, "big")
+            for name, value in sorted(thresholds.items())
+        ]
+        report["recipe"].update({
+            "schema": 1,
+            "thresholds": thresholds,
+            "digest": measure.p(
+                b"CK-V014-PERF-RECIPE\0",
+                (1).to_bytes(4, "big"),
+                measure.list_value([
+                    measure.file_value(item) for item in report["recipe"]["files"]
+                ]),
+                measure.list_value(threshold_values),
+            ),
+        })
+        report["sampling"]["validationProtocol"] = "rotating-three-channel-v1"
+        report["sampling"]["validationChannels"] = [
+            "tuned", "v013Ordinary", "v013Pgo",
+        ]
+
+        self.check(report)
 
     def test_hardware_sampling_and_partition_contract_fail_closed(self):
         self.reject(lambda report: report["hardware"].__setitem__("logicalCpus", 0),
@@ -135,6 +299,21 @@ class SchemaNineContractTests(unittest.TestCase):
         seal(hardware)
         with self.assertRaisesRegex(ValueError, "required hardware features"):
             gate.check_schema9_hardware(hardware, False)
+
+    def test_missing_required_tier_is_an_actionable_runner_capability_failure(self):
+        cpuinfo = "model name : test v3 runner\nflags : avx2 fma bmi2\n"
+        with patch.object(measure.platform, "system", return_value="Linux"), \
+                patch.object(measure.platform, "machine", return_value="x86_64"), \
+                patch.object(measure.pathlib.Path, "read_text", return_value=cpuinfo), \
+                patch.object(measure.pathlib.Path, "glob", return_value=[]), \
+                patch.object(measure.os, "cpu_count", return_value=8):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"schema-9 infrastructure failure: runner capability.*"
+                r"required tier=x86-64-v4.*missing features=.*avx512f.*"
+                r"cpu=test v3 runner",
+            ):
+                measure.full_hardware("a" * 40, "x86_64-unknown-linux-gnu")
 
     def test_path_root_symlink_and_unretained_claims_fail_closed(self):
         self.reject(

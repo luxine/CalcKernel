@@ -310,7 +310,7 @@ jobs:
         run: python3 scripts/prepare-performance-replay.py --baseline 0.10 --out "$CKC_V010_RUNTIME_BUNDLE"
       - name: Prepare exact 0.13 compiler and historical schema-8 replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.13 --with-performance --out "$CKC_V013_RUNTIME_BUNDLE"
-      - name: Gate cumulative schema 7 and schema 8 on the same stable worker
+      - name: Gate cumulative schemas 7/8 and schema-9 recipe revision 2 like-for-like performance
         id: performance-gate
         run: |
           mkdir -p target/ckc-perf

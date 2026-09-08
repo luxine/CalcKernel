@@ -182,6 +182,65 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
 }
 
 #[test]
+fn schema_nine_revision_two_should_freeze_like_for_like_acceptance() {
+    let collector = read("scripts/measure-v014-performance.py");
+    let checker = read("scripts/check-native-performance.py");
+    for required in [
+        "rotating-four-channel-v2",
+        "ordinaryRuntimeCaseMaximum",
+        "ordinaryRuntimeGeomeanMaximum",
+        "tunedHeldOutGainCaseMinimum",
+        "tunedRuntimeCaseMaximum",
+        "tunedRuntimeGeomeanMaximum",
+    ] {
+        assert!(
+            collector.contains(required) && checker.contains(required),
+            "schema-9 revision 2 implementation omitted {required}"
+        );
+    }
+    for required in [
+        "SCHEMA9_THRESHOLDS_V1",
+        "SCHEMA9_VALIDATION_CHANNELS_V1",
+        "schema9_check_runtime_gates_v1",
+        "schema9_check_runtime_gates_v2",
+        "schema-9 infrastructure failure: runner capability",
+    ] {
+        assert!(
+            checker.contains(required) || collector.contains(required),
+            "schema-9 compatibility or infrastructure diagnosis omitted {required}"
+        );
+    }
+
+    for path in [
+        "specs/0.14/performance-schema-9.md",
+        "specs/0.14/offline-autotuning.md",
+        "specs/0.14/zh-CN/offline-autotuning.md",
+        "docs/guides/performance.md",
+        "docs/zh-CN/guides/performance.md",
+        "benches/summary-schema.md",
+        "specs/0.14/implementation/00-master-control.md",
+        "specs/0.14/implementation/10-performance-schema9-task.md",
+        "specs/0.14/implementation/10-performance-schema9-acceptance.md",
+        "specs/0.14/implementation/19-ci-total-acceptance-task.md",
+        "specs/0.14/implementation/19-ci-total-acceptance-acceptance.md",
+        "specs/0.14/implementation/99-final-acceptance.md",
+    ] {
+        let document = read(path);
+        for required in [
+            "recipe.schema = 2",
+            "v0.14 ordinary",
+            "v0.13 ordinary",
+            "v0.13 PGO",
+        ] {
+            assert!(
+                document.contains(required),
+                "{path} omitted revision-2 acceptance term {required:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn historical_schema_eight_failure_should_retain_report_before_running_checker() {
     let preparer = read("scripts/prepare-performance-replay.py");
     let report_copy = preparer

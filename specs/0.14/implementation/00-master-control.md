@@ -610,3 +610,23 @@ job `102058308829` 同样已通过 schema 8，随后因 AMD EPYC 7763 仅有 v3�
 要求保持 hard fail，由 replacement exact-SHA run 获取真实 v4 worker。语言/公开 ABI、
 strict-FP/安全语义、tuning decision、证据字段、schema 版本、target eligibility、性能/稳定性/
 size 门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+## 当前 Schema-9 验收修订（规范优先于以上历史执行记录）
+
+Schema-9 外层格式不变，当前 collector/checker 使用 `recipe.schema = 2`。Revision 1
+报告仍以原阈值、`rotating-three-channel-v1` 验证通道和原判定语义可识别、可读取；
+不得静默重解释。Revision 2 保持全部 timed work、warmup、20 samples、每样本 7 calls、
+corpus、两平台与十个 required jobs，并将 validation 扩为
+`rotating-four-channel-v2`。
+
+版本回归只比较 v0.14 ordinary 与 exact v0.13 ordinary；Auto-Tuning 只比较同 SHA、
+安全模式、目标和输入下的 v0.14 tuned 与 v0.14 ordinary。可信逐项退化不得超过 3%，
+ordinary 的可信 geometric aggregate 不得退化，tuned geometric aggregate 必须硬性至少持平。
+selected tuned 必须在 validation 同时达到 3%
+upper-median 和 16/20 paired-row 收益，否则发布 byte-identical ordinary fallback；
+至少两个 release-held-out workload 必须重复该收益。
+
+完整 v0.13 PGO channel/sample/profile/build/artifact 继续采集，但对无 PGO Auto-Tuning
+仅作诊断。未来 PGO + Auto-Tuning 组合模式必须增加“不弱于对应 PGO”的硬门槛。
+缺少 x86-64-v4/AVX-512 或 AArch64 SVE2 必须以带缺失 feature/CPU 的 runner
+capability/infrastructure failure 失败关闭，不得 skip，也不得误报 compiler regression。

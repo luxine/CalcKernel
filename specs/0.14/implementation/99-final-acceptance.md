@@ -68,15 +68,22 @@
 
 ## H. Schema 9 性能与证据
 
+- [ ] 当前 evidence 使用 `recipe.schema = 2`，Revision 1 仍按旧语义可读取；没有静默重解释。
 - [ ] exact 七 case、三 partitions、CK/C/Rust oracle、recipe/evidence identities 与 historical/fresh schema8 closure 完整；
   schema8 evidence 自包含累计 schema7 JSON 与其 `measurement-*` 目录，Linux schema7 每个 case 在 conditioning
   前固定到 inherited affinity 允许的一颗 CPU、在结束后恢复，并以 current-thread CPU time 计量不变的
   native kernel-call loop；historical schema8 report/evidence 在 checker 前已复制到可上传目录，且 detached
   checker 只接收不受 child cwd 影响的 absolute retained report path。
-- [ ] held-out 相对 faster v0.13 baseline geo >=5%，selected each >=2%，validation/held-out each slowdown <=2%。
+- [ ] v0.14 ordinary 对 exact v0.13 ordinary、v0.14 tuned 对 matching v0.14 ordinary；可信逐项退化
+  <=3%，ordinary 可信 geometric 不退化，tuned geometric 硬性至少持平。selected 在 validation 达到 3% + 16/20 paired gain，至少两个 held-out
+  workload 重复该收益，否则产物回退到 byte-identical ordinary。
+- [ ] v0.13 PGO channel/sample/profile/build/artifact 全部保留但仅作诊断；未来 PGO + Auto-Tuning
+  必须硬性不弱于对应 PGO。
 - [ ] 相对 faster hand SIMD geo >=98%、each >=92%；两个 domain case 相对 generic C/Rust geo >8%。
 - [ ] artifact <=110%；tune-use compile <=10% geo/20% each；ordinary <=3%/8%；archive <=110%。
 - [ ] standard <=30 min/bounds、RSS <=2x ordinary、cache <=4 GiB；wait4 receipts、cold/warm determinism 和 final dependency audit 完整。
+- [ ] 缺 x86-64-v4/AVX-512 或 AArch64 SVE2 明确为 runner capability/infrastructure failure，
+  给出缺失 feature/CPU，fail closed 且不误报 compiler regression。
 
 ## I. Predicated-Update Performance Contract 1
 

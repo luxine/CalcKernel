@@ -1530,6 +1530,11 @@ The sole field-by-field JSON authority is the shared normative attachment
 types, cardinalities, statistics, identities, and fail-closed checks; this section
 fixes the associated product policy and repository assets.
 
+The report envelope stays at schema 9. `recipe.schema = 2` is the current
+like-for-like acceptance revision. Revision 1 remains recognizable and readable
+under its original thresholds and protocol; its frozen meaning is never silently
+reinterpreted.
+
 Schema 9 extends, and never substitutes for, two distinct schema-8 gates. The
 historical accepted report named by `benches/baselines/v0_13_replay.toml` is checked
 with its retained checker in a detached exact v0.13 checkout. A fresh cumulative
@@ -1619,12 +1624,15 @@ and SHA-256 identity. Every evidence-root entry must be a regular
 file below the evidence directory, with no symlink, traversal, missing, duplicate,
 or unknown entry; repository-root identities resolve only in the clean candidate
 checkout. The stable Linux x86-64 worker requires x86-64-v4; the stable Linux AArch64 worker
-requires SVE2. A missing tier is a failed gate, never workflow discretion.
+requires SVE2. A missing tier is a fail-closed runner capability/infrastructure
+failure with the missing features and CPU model reported, not a compiler
+performance regression and never workflow discretion.
 
 Main-case timing uses `rotating-six-channel-v1` with channels in this exact order:
 `tuned`, `v014Ordinary`, `v013Ordinary`, `v013Pgo`, `cSimd`, and `rustSimd`.
-Validation timing uses `rotating-three-channel-v1` with `tuned`, `v013Ordinary`,
-and `v013Pgo`.
+Validation timing for `recipe.schema = 2` uses `rotating-four-channel-v2` with
+`tuned`, `v014Ordinary`, `v013Ordinary`, and `v013Pgo`. Retained revision-1 reports
+keep `rotating-three-channel-v1` and their original three channels.
 Domain timing uses `rotating-three-channel-v1` with `tuned`, `genericC`, and
 `genericRust`. All three protocols execute and retain receipts for three unscored warmup rows, retain twenty
 measured rows, call each channel seven equal batches per sample, store the minimum,
@@ -1655,10 +1663,10 @@ Each main case records all six raw seven-call streams and orders, their per-row
 minima, medians, per-channel correctness digests,
 source/input identities, selected or baseline decision, complete `.cktune` identity,
 all artifact identities, eligibility bit fixed true, and release-held-out result.
-Each of the seven validation cases records tuned, v0.13 ordinary, and v0.13 PGO raw
-seven-call streams and per-channel correctness digests on the manifest validation
-input; the checker chooses the faster v0.13
-median and applies the unchanged 102/100 ceiling.
+Each of the seven validation cases records v0.14 tuned, v0.14 ordinary, v0.13
+ordinary, and v0.13 PGO raw seven-call streams and per-channel correctness digests
+on the manifest validation input. v0.13 PGO remains complete diagnostic-only
+evidence; it is not the hard comparator for unprofiled Auto-Tuning.
 The two domain cases record the same facts for three streams plus their exact tuned
 decision, output set, and three build commands. All seven `.cktune` files and
 complete role-tagged published output sets are copied into evidence; their
@@ -1713,22 +1721,46 @@ decision mismatch, threshold failure, selective rerun, or unretained evidence.
 coverage and semantics. The two required stable-performance jobs run this complete
 contract on Linux enhanced x86-64 and AArch64 hosts at the same candidate SHA.
 
-### 19.2 Frozen thresholds
+### 19.2 Frozen revision-2 thresholds
 
 The corpus above is partitioned before measurement into search, validation, and
 sealed held-out cases. Cases eligible for tuning and exclusions are declared before
 results; post-measurement exclusion is forbidden.
 
-For tune-eligible cases, compare the selected tuned result with the faster
-identical-semantics v0.13 ordinary or PGO native baseline:
+Version regression compares v0.14 ordinary with exact replayed v0.13 ordinary.
+Auto-Tuning compares v0.14 tuned with v0.14 ordinary from the same commit, safety
+mode, target, input, and timing row. For both comparisons:
 
-- held-out geometric mean is at least 5% faster;
-- every selected case is at least 2% faster;
-- no validation or held-out case is more than 2% slower.
+- no workload may have a credible regression greater than 3%;
+- the v0.14 ordinary geometric mean may not have a statistically credible
+  regression against v0.13 ordinary; and
+- the tuned geometric mean must be at least at parity with v0.14 ordinary, without
+  conditioning that hard aggregate gate on paired-row credibility.
+
+A case regression is credible when its upper-median ratio exceeds 103/100 and at
+least 16 of 20 paired rows show the candidate no faster. An aggregate regression is
+credible when the product of upper medians is slower than parity and at least 16 of
+20 paired cross-case products are slower. Tuned aggregate parity uses the upper-
+median product directly. This reuses the existing paired evidence model rather than
+expanding noise tolerance.
+
+Every selected tuned decision must show at least a 3% validation gain both in the
+upper median and in at least 16 of 20 paired rows. Otherwise publication must select
+ordinary, and the published fallback must be byte-identical to v0.14 ordinary. The
+sealed release-held-out corpus must contain at least two selected workloads with the
+same repeatable 3% or greater gain. This is the evidence-backed lower end of the
+requested 3%..5% band; it is fixed because the existing tuner already uses a 3%
+aggregate threshold and a 16-of-20 paired test.
 
 Every corpus member declared tune-eligible before measurement participates,
 including one for which the tuner selects the baseline. A baseline selection
 therefore cannot be excluded after the fact to improve the release result.
+
+The full v0.13 PGO channel, sample stream, profile, build record, correctness result,
+and artifact identity remain mandatory and reported, but v0.13 PGO is observational
+and diagnostic-only for this unprofiled Auto-Tuning gate. A future PGO + Auto-Tuning
+revision must add a hard gate that the combined mode is not weaker than matching
+v0.13 PGO or its then-current PGO baseline.
 
 Against the faster audited hand-written C or Rust plus explicit SIMD reference with
 identical semantics and hardware:

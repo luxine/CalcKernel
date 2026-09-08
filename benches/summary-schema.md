@@ -174,3 +174,37 @@ The commands require the repository-pinned `CKC_LLVM_PREFIX`,
 `CKC_CLANG_ORACLE`, `CKC_CANDIDATE_COMPILER`, and corresponding replay bundle
 environment variables. A benchmark only writes raw evidence; only the
 independent checker may declare it accepted.
+
+## Offline Auto-Tuning release gate — schema 9, recipe revision 2
+
+The schema-9 envelope remains readable for historical reports, but current v0.14
+evidence uses `recipe.schema = 2`. Revision 1 keeps its original thresholds and
+three-channel validation meaning. Revision 2 adds `v014Ordinary` to validation and
+uses `rotating-four-channel-v2`; it does not reduce the three warmups, twenty
+samples, seven calls per sample, corpus, or two required performance hosts.
+
+Version regression compares v0.14 ordinary with exact replayed v0.13 ordinary.
+Auto-Tuning compares v0.14 tuned with same-SHA, same-safety-mode, same-target v0.14
+ordinary. A case fails when its upper-median slowdown exceeds 3% and at least 16 of
+20 paired rows corroborate the loss. The ordinary aggregate fails only on a
+16-of-20-corroborated regression; the tuned upper-median geometric aggregate has a
+hard parity gate independent of that paired count. Every
+selected candidate must prove at least 3% validation gain by both upper median and
+16/20 paired rows or fall back to byte-identical ordinary output. At least two
+release-held-out workloads must repeat that gain.
+
+Every v0.13 PGO profile, channel, raw sample, build record, result, and artifact is
+still collected and reported, but v0.13 PGO is diagnostic-only for the unprofiled
+v0.14 gate. A future PGO + Auto-Tuning mode must add a hard no-weaker-than-PGO gate.
+Unavailable x86-64-v4/AVX-512 or AArch64 SVE2 capabilities fail closed as an
+actionable runner infrastructure failure, never as a skipped platform or compiler
+performance regression.
+
+After cumulative schema 7/8 succeeds on a required stable worker, collect and check
+revision 2 without omitting the diagnostic PGO channel:
+
+```sh
+python3 scripts/prepare-performance-replay.py --baseline 0.13 --with-performance --out target/performance-runtime-replay-v013
+cargo bench --features native-toolchain --bench tune_perf -- --task collect --out target/ckc-perf/v0.14-results.json
+python3 scripts/check-native-performance.py --schema 9 target/ckc-perf/v0.14-results.json
+```

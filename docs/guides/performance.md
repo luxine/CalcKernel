@@ -3,7 +3,9 @@
 [简体中文](../zh-CN/guides/performance.md)
 
 CalcKernel 0.14 adds fail-closed performance report schema 9 while retaining the
-schema-8 cumulative compatibility gate. A formal release
+schema-8 cumulative compatibility gate. The current contract uses
+`recipe.schema = 2`; revision 1 reports remain readable with their original
+semantics. A formal release
 requires complete reports from fixed x86-64 and AArch64 workers; a local build
 or release-candidate identity does not sign those gates. Measurements bind the
 candidate SHA, exact 0.12 replay SHA, LLVM/Clang 22.1.8, Rust 1.90.0, hardware
@@ -38,10 +40,17 @@ per-row common-mode normalization; throughput still uses raw retained durations.
 
 ## Cumulative release gates
 
-- Every one of five release-held-out tuned cases is compared with the faster
-  exact v0.13 ordinary/PGO result: tuned time is at most 95% geometrically,
-  each selected tuned case is at most 98%, and no validation/release ratio
-  exceeds 102%. Baseline selections remain in every aggregate.
+- Version regression compares v0.14 ordinary with exact replayed v0.13 ordinary;
+  a credible per-workload slowdown may not exceed 3%, and its geometric aggregate
+  may not credibly regress. Auto-Tuning compares v0.14 tuned with matching v0.14
+  ordinary under the same SHA, safety mode, target, input, and timing rows, with
+  the same 3% credible per-workload limit and a hard upper-median geometric parity
+  requirement independent of paired-row significance.
+- Every selected tuned result proves at least 3% validation gain by upper median
+  and 16/20 paired rows, otherwise it falls back to byte-identical ordinary output.
+  At least two sealed release-held-out workloads must repeat that 3% gain. The full
+  v0.13 PGO channel remains mandatory diagnostic-only evidence; a future PGO +
+  Auto-Tuning mode must be gated as no weaker than matching PGO.
 - Tuned throughput reaches at least 98% of explicit hand-written C/Rust SIMD
   geometrically and 92% per case. The two declared domain kernels exceed the
   faster generic C/Rust oracle by more than 8% geometrically.
@@ -53,6 +62,9 @@ per-row common-mode normalization; throughput still uses raw retained durations.
 - Standard tuning stays within 30 minutes and its declared candidate/resource
   bounds, peak RSS stays within 2x, tuning cache stays within 4 GiB, and two
   empty-cache cold runs plus one locked warm reuse satisfy exact determinism.
+- A missing x86-64-v4/AVX-512 or AArch64 SVE2 capability fails closed as an
+  actionable runner infrastructure failure, not as a compiler performance
+  regression; required platforms are never skipped.
 - The independent predicated-update gate requires a single-choice non-baseline
   Loop SIMD decision whose fixed inputs execute the attested vector body. With one
   immutable PGO profile on both channels, sealed `N=1024`

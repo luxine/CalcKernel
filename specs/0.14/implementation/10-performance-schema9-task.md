@@ -1,6 +1,7 @@
 # 阶段 10 任务：schema 9 corpus、collector、checker 与 archive
 
-> **当前定位：已落地的累计基础。** Schema 9 保持冻结；它不包含、也不能代签
+> **当前定位：已落地的累计基础。** Schema-9 外层格式保持冻结，当前验收使用
+> `recipe.schema = 2`；它不包含、也不能代签
 > 阶段 17–18 的 Predicated-Update Performance Contract 1，阶段 19 必须回归两者。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans`; execute inline without subagents.
@@ -8,7 +9,7 @@
 ## 目标
 
 实现冻结的 schema 9 性能证据链：七个预声明 tune case、search/validation/sealed release partitions、CK/C/
-Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 replay + fresh schema8 compatibility、资源/
+Rust 等价 runner 与 oracle、六/四/三 channel raw sampling、历史 v0.13 replay + fresh schema8 compatibility、资源/
 确定性/归档证据，以及唯一 fail-closed checker。
 
 ## 仓库落点与接口
@@ -31,12 +32,14 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
    result bytes 重算；release file/digest 不得进入任何 tune manifest 或 tuning decision input。
 3. 写 schema top-level/identity RED：exact 25 keys、candidate/version/SHA、v013 replay commit、toolchains、hardware、
    recipe/binary/evidence-root file identity；missing/unknown/symlink/traversal/duplicate/wrong-root 全失败。
-4. 写 sampling RED：main fixed six-channel，validation/domain fixed three-channel；每 split doubling calibration+
+4. 写 sampling RED：main fixed six-channel，Revision-2 validation fixed four-channel，domain fixed three-channel；每 split doubling calibration+
    confirmation、3 warmup、20 measured、每 sample 7 equal batches/min/upper median/16 stable，rotation digest 重算。
 5. 写 provenance RED：每 channel 的 closed BuildCommand→artifact/decision/profile/source/input foreign-key 完整；
    CK 与 oracle 都显式 unchecked bounds/overflow 且 strict defined inputs，无 CLI default 混用。Oracle
    必须在空环境中显式绑定保留且现场等字节的 Clang linker driver 与 `/usr/bin/ld`，不得依赖 PATH。
-6. 写 threshold RED：相对 faster v0.13 ordinary/PGO 的 5% geo、2% selected、<=2% regression；相对 hand SIMD
+6. 写 threshold RED：v0.14 ordinary 对 v0.13 ordinary、v0.14 tuned 对同提交 v0.14 ordinary；可信逐项退化
+   <=3%、ordinary 可信 geometric 不退化、tuned geometric 硬性至少持平；每个 selected 在 validation 达到 3% 和 16/20 配对收益，至少两个 held-out
+   workload 重复该收益，否则回退到 byte-identical ordinary。v0.13 PGO 完整保留但仅作诊断。相对 hand SIMD
    98% geo/92% each；domain >8% geo；全部 eligible case 包含 baseline selection，禁止 post-result exclusion。
 7. 写 compile/size/resource RED：tune-use 10% geo/20% each，ordinary 3%/8%，artifact 110%，archive 110%，
    standard <=30 min/bounds、RSS <=2x、cache <=4 GiB；Linux direct-child wait4 receipt 两侧同协议。
@@ -62,4 +65,7 @@ Rust 等价 runner 与 oracle、六/三 channel raw sampling、历史 v0.13 repl
 
 - collector 只收集 raw evidence，`check-native-performance.py` 是唯一接受者。
 - internal `.cktune` 三 invocation measurement 与 external release 七 batch sample 绝不复用或混写。
-- 性能 host 仅稳定 Linux x86-64-v4 和 AArch64 SVE2；缺 tier 是 required gate failure。
+- 性能 host 仅稳定 Linux x86-64-v4 和 AArch64 SVE2；缺 tier 是带可操作诊断的 runner
+  capability/infrastructure failure，而不是 compiler regression，且仍是 required gate failure。
+- Revision 1 报告继续按原阈值与三通道协议可读取，不得用 `recipe.schema = 2` 静默重解释。
+- 未来 PGO + Auto-Tuning 组合模式必须新增“不弱于对应 v0.13 PGO 或现行 PGO”的硬门槛。

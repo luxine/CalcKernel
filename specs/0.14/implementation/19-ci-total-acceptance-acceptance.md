@@ -13,11 +13,18 @@
 
 ## CI topology 与 exact SHA
 
+- [ ] schema-9 collector 发出 `recipe.schema = 2`：v0.14 ordinary 对 exact v0.13 ordinary，
+  v0.14 tuned 对 matching v0.14 ordinary；完整 v0.13 PGO 仅作诊断且未删 channel/artifact。
+- [ ] 可信逐项 3%、ordinary 可信 geometric non-regression、tuned hard geometric parity、selected validation gain、两个 held-out gain 与
+  byte-identical ordinary fallback 均由 checker mutation tests fail-closed；未来 PGO + Auto-Tuning
+  的 no-weaker-than-PGO 门槛未被当前无 PGO 比较伪代签。
 - [ ] quality + native-integration + 六 native-host + 两 performance 恰好十 job。
 - [ ] 六 host 均运行非零 profile runtime、publication、artifact-path、void-call、
   dynamic/executable selector，无 required skip。
 - [ ] 两 stable Linux host 均按序通过 schema7/8/9 与 Contract 1 collector/checker，
   上传闭合证据。
+- [ ] 缺 x86-64-v4/AVX-512 或 AArch64 SVE2 时报告 runner capability/infrastructure failure
+  与缺失特性/CPU，不 skip、不归类为 compiler regression。
 - [ ] checkout、candidate compiler、两个 report、artifact 与 workflow head SHA
   完全相等；十 job 对同一最终 SHA 成功。
 

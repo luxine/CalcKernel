@@ -20,6 +20,13 @@
 
 ## 结构断言
 
+- [ ] 当前报告使用 `recipe.schema = 2`；Revision 1 仍按原阈值/协议可读取，未被静默重解释。
+- [ ] v0.14 ordinary 只对 exact v0.13 ordinary；v0.14 tuned 只对同 SHA/安全模式/目标的
+  v0.14 ordinary。可信逐项退化 <=3%，ordinary 可信 geometric 不退化，tuned geometric 硬性至少持平。
+- [ ] selected tuned 在 validation 通过 3% upper-median + 16/20 paired gain，至少两个 held-out
+  workload 重复该收益；其余选择回退到 byte-identical ordinary。
+- [ ] v0.13 PGO 的完整 channel/sample/profile/build/artifact 仍存在但仅作诊断；未来 PGO +
+  Auto-Tuning 必须增加不弱于 PGO 的硬门槛。
 - [ ] 七 case/manifest、三 partition、CK/C/Rust digest、recipe 与所有 evidence file identity 完整。
 - [ ] schema 9 exact keys/cardinality/order/statistics/foreign keys/thresholds 均由 mutation tests fail-closed。
 - [ ] v0.13 historical schema8 与 v0.14 cumulative schema8 分离且分别由正确 commit/checker 验证；每个
@@ -35,7 +42,8 @@
 - [ ] 每条 `Command.argv` 原样传给子进程；需要安装布局的 oracle 只以 checker 验证过的等字节原映像作为 executable，不改写 argv。
 - [ ] C/Rust oracle 在严格空环境中分别通过显式 `--ld-path` 与 `-C linker/-C link-arg` 使用固定
   Clang 和 `/usr/bin/ld`；二者身份进入 toolchain/Command.inputs 且由 checker 现场复核。
-- [ ] x86-64-v4 feature gate 精确包含 AVX-512CD，缺一项即 fail-closed。
+- [ ] x86-64-v4 feature gate 精确包含 AVX-512CD，缺一项即以 runner
+  capability/infrastructure failure 和缺失 feature/CPU 诊断 fail-closed，不误报 compiler regression。
 - [ ] 七个 v0.13 `.ckprof` 均以 CKPROF01 扁平 `compilerSource`、精确 target/mode 和完整 observation 内容独立 inspect。
 
 ## 完成证据

@@ -21,6 +21,8 @@ native-integration、六 host 和两 stable performance job；在同一最终 SH
     success/fault、host paths、void call、dynamic/executable；
   - 两 performance job 在 schema 9 通过后执行 Contract 1 collector/checker，
     并上传 report、完整 evidence tree和日志。
+  - schema 9 当前使用 `recipe.schema = 2`；CI 文案明确 v0.14 ordinary 对 v0.13 ordinary、
+    v0.14 tuned 对 v0.14 ordinary，v0.13 PGO 完整采集但仅作诊断。
 - 扩展 `tests/contracts/ci.rs`，断言十 job、六 matrix row、两 tier、exact SHA、
   非零 selector、顺序、artifact path、无 skip/continue-on-error/threshold bypass。
 - 更新 `specs/0.14/implementation/99-final-acceptance.md` 的动态执行记录只写
@@ -50,6 +52,10 @@ native-integration、六 host 和两 stable performance job；在同一最终 SH
 8. 十 job 对同一 SHA 全部成功后验证两个 Contract 1 report 的 candidate SHA、
    compiler、decision、artifact、receipt 和 evidence inventory；保持 worktree
    clean，不 merge main，不创建 tag/Release，等待用户审查。
+
+Revision-2 性能 job 对缺失 x86-64-v4/AVX-512 或 AArch64 SVE2 的 runner 必须以
+capability/infrastructure failure 失败关闭并给出缺失能力；不得静默 skip，也不得误报
+compiler regression。未来 PGO + Auto-Tuning 模式另行增加不弱于对应 PGO 的硬门槛。
 
 ## 最终本地命令
 

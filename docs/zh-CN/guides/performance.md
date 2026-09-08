@@ -3,7 +3,8 @@
 [English](../../guides/performance.md)
 
 CalcKernel 0.14 新增 fail-closed performance report schema 9，同时保留 schema-8 cumulative
-compatibility gate。正式 release 必须具有固定
+compatibility gate。当前契约使用 `recipe.schema = 2`；Revision 1 报告仍按原语义可读取。
+正式 release 必须具有固定
 x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
 Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
 hardware/capability manifest、compiler/oracle/source/recipe digest、training/held-out corpus、
@@ -31,9 +32,14 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 
 ## 累积 release gate
 
-- 五个 release-held-out tuned case 都与 exact v0.13 ordinary/PGO 中更快者比较：
-  tuned time geometric 不超过 95%，每个 selected tuned case 不超过 98%，validation/release
-  ratio 均不超过 102%；baseline selection 也必须进入 aggregate。
+- 版本回归比较 v0.14 ordinary 与精确重放的 v0.13 ordinary：可信逐 workload 退化
+  不超过 3%，几何平均不得可信退化。Auto-Tuning 在相同 SHA、安全模式、目标、输入
+  与计时行下比较 v0.14 tuned 和 v0.14 ordinary，采用相同的 3% 可信逐项退化限制，
+  且上中位数几何平均必须无条件硬性至少持平。
+- 每个获选 tuned 结果都必须通过上中位数和 16/20 配对行证明至少 3% 验证收益，
+  否则回退到字节一致的 ordinary 输出；至少两个封存 release-held-out workload 重复
+  达到 3% 收益。完整 v0.13 PGO 通道仍是必需但仅作诊断的证据；未来 PGO +
+  Auto-Tuning 组合模式必须硬性要求不弱于对应 PGO。
 - Tuned throughput 相对 hand-written C/Rust SIMD 达到 geometric 98%、逐 case 92%；两个
   declared domain kernel 相对更快 generic C/Rust oracle 的 geometric throughput 严格超过 8%。
 - `--tune-use` compile time 相对 0.14 ordinary build 的 geometric/逐 case slowdown 不超过
@@ -42,6 +48,8 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
   archive 均不超过 110%。
 - Standard tuning 不超过 30 分钟及声明的 candidate/resource bound，peak RSS 不超过 2x，
   tuning cache 不超过 4 GiB；两个 empty-cache cold run 与一个 locked warm reuse 满足 exact determinism。
+- 缺少 x86-64-v4/AVX-512 或 AArch64 SVE2 能力时，以可操作的 runner infrastructure
+  failure 失败关闭，而不是误报编译器性能回归；所需平台不得跳过。
 - 独立 predicated-update gate 要求获选仅含一个 choice 的非 baseline Loop SIMD decision，且固定
   输入实际执行经证明的 vector body。两个 channel 使用同一不可变 PGO profile；封存 `N=1024`
   strict-`f64` Floyd-Warshall 在每个稳定 Linux
