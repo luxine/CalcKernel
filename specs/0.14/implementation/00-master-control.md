@@ -44,6 +44,7 @@
 - `specs/0.14/review/implementation-blocker-49.md`
 - `specs/0.14/review/implementation-blocker-50.md`
 - `specs/0.14/review/implementation-blocker-51.md`
+- `specs/0.14/review/implementation-blocker-52.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -524,3 +525,13 @@ accepted-base 与 replay 重钉到同一 SHA，manifest SHA-256 为
 `9cb05a28b504e504ccd6dca50617241e11a29a8e8d9034b35f4d2b72d181dfe8`。语言/公开 ABI、
 strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性门槛、timed work、样本、corpus、平台
 与 required job 均未改变。
+
+Exact V0.14 run `34182332164` 的两个 performance jobs 已通过不变的累计 schema-7/8
+门禁。AArch64 job `101923906526` 随后证明，schema 9 在 detached V0.13 checkout 内运行
+保留 checker 时错误继承外层 V0.14 `GITHUB_SHA`，使正确的历史证据被身份校验拒绝；x86-64
+job `101923906271` 则被分配到仅支持 v3 的 AMD EPYC 7763，按冻结的 v4 要求正确 hard fail。
+复诊与代码闭环见 `specs/0.14/review/implementation-blocker-52.md`：历史 checker 子进程现将
+`GITHUB_SHA` 精确绑定到 `v013ReplayBundle.commit`，并由 focused regression 固定此边界；
+replacement run 仍必须取得真实 v4 worker。历史证据、语言/公开 ABI、strict-FP、安全语义、
+target ISA、schema 8/9、性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required
+job 均未改变。

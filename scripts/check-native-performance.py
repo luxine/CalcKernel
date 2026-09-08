@@ -2386,9 +2386,12 @@ def schema9_check_replay(report, evidence_root):
         )
         if checkout_result.returncode:
             fail(f"schema-9 v0.13 checker revision failed: {checkout_result.stdout[-2000:]}")
+        historical_environment = os.environ.copy()
+        historical_environment["GITHUB_SHA"] = replay["commit"]
         historical = subprocess.run(
             [sys.executable, "-B", checkout / "scripts/check-native-performance.py",
              evidence_root / replay["schemaEight"]["path"]], cwd=checkout,
+            env=historical_environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
         )
         if historical.returncode:

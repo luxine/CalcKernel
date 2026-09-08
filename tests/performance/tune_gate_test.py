@@ -185,9 +185,11 @@ class SchemaNineContractTests(unittest.TestCase):
         }
         report = {"v013ReplayBundle": replay, "v013ReplayCommit": commit}
         calls = []
+        environments = []
 
-        def run(command, **_kwargs):
+        def run(command, **kwargs):
             calls.append(command)
+            environments.append(kwargs.get("env"))
             if command[:2] == ["git", "show"]:
                 return Mock(returncode=0, stdout=checker.read_bytes(), stderr=b"")
             if command[:2] in (["git", "clone"], ["git", "checkout"]):
@@ -205,6 +207,11 @@ class SchemaNineContractTests(unittest.TestCase):
         self.assertTrue(
             pathlib.Path(historical_command[-1]).is_absolute(),
             "the detached historical checker must not resolve evidence relative to its checkout",
+        )
+        self.assertEqual(
+            environments[-1]["GITHUB_SHA"],
+            commit,
+            "the detached historical checker must receive the historical checkout identity",
         )
 
     @unittest.skipUnless(os.name == "posix", "POSIX cache mode contract")
