@@ -7,10 +7,7 @@
 #include <windows.h>
 
 #if defined(_M_ARM64)
-#ifdef InterlockedIncrement
-#undef InterlockedIncrement
-#endif
-__declspec(dllimport) long InterlockedIncrement(volatile long *value);
+#include "ckc_profile_atomic.h"
 #else
 #include <intrin.h>
 #pragma intrinsic(_InterlockedIncrement)
@@ -25,7 +22,11 @@ static void *__ck_profile_platform_allocate(uint64_t length) {
 }
 
 static int32_t __ck_profile_platform_random(uint8_t output[16]) {
+#if defined(_M_ARM64)
+  static ckc_profile_atomic_u32 serial = {0u};
+#else
   static volatile LONG serial;
+#endif
   FILETIME time;
   LARGE_INTEGER ticks;
   GetSystemTimeAsFileTime(&time);
@@ -38,7 +39,7 @@ static int32_t __ck_profile_platform_random(uint8_t output[16]) {
       ((uint64_t)GetCurrentProcessId() << 32u) |
           ((uint64_t)GetCurrentThreadId() << 1u) |
 #if defined(_M_ARM64)
-          (uint32_t)InterlockedIncrement(&serial)};
+          ckc_profile_atomic_fetch_add_relaxed_u32(&serial, 1u) + 1u};
 #else
           (uint32_t)_InterlockedIncrement(&serial)};
 #endif

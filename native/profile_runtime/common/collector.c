@@ -124,6 +124,10 @@ int32_t __ck_profile_initialize(
         __ck_profile_platform_allocate(bytes);
     if (ck_profile_state.counters == (void *)0) {
       status = CKC_PROFILE_RUNTIME_STATUS_MEMORY;
+    } else {
+      for (uint32_t index = 0; index < counter_count; ++index) {
+        ckc_profile_atomic_initialize_u64(&ck_profile_state.counters[index]);
+      }
     }
   }
   ckc_profile_atomic_store_release_u32(
