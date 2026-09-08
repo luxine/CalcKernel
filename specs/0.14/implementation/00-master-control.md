@@ -49,6 +49,7 @@
 - `specs/0.14/review/implementation-blocker-54.md`
 - `specs/0.14/review/implementation-blocker-55.md`
 - `specs/0.14/review/implementation-blocker-56.md`
+- `specs/0.14/review/implementation-blocker-57.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -585,3 +586,14 @@ schedule 的 compute-dense memory-map loop 授权八路 vector width；accepted-
 `1de279a1972fcad7a9447d8e7281dd86aa9faf49fd514c181ffa82936294fa20`。语言/公开 ABI、
 strict-FP/安全语义、target eligibility、schema、性能/稳定性/size 门槛、timed work、样本、
 corpus、平台与 required job matrix 均未改变；V0.13 仍须独立通过自己的十作业验收。
+
+Exact V0.14 run `34217917663` 随后在两个 performance job 暴露独立结果。AArch64 job
+`102034356856` 完成全部 schema-9 采集后，checker 以 `branch-layout disagrees with decoded
+decision` 失败；逐字段复诊证明唯一差异是 collector 把 inspector 的 textual `u64` byte count
+规范为 JSON integer，而 checker 保留为 string。x86-64 job `102034357269` 已通过 schema 8，
+随后因 AMD EPYC 7763 仅有 v3、没有 AVX-512 而按冻结规则拒绝 schema 9。复诊与闭环见
+`specs/0.14/review/implementation-blocker-57.md`：checker 现在将 inspected byte count 经
+既有 u64 range checker 规范为 JSON integer 后再比较；x86 v4 要求保持 hard fail，并由
+replacement exact-SHA run 获取真实 v4 worker。语言/公开 ABI、strict-FP/安全语义、tuning
+decision、证据字段、schema 版本、target eligibility、性能/稳定性/size 门槛、timed work、
+样本、corpus、平台与 required job matrix 均未改变。

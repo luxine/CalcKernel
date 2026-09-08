@@ -215,8 +215,10 @@ channel count from the fixed channel list. `split` is `release-held-out`,
 `file` is a `FileIdentity`; six digest fields are `Digest`, except
 `certificateDigest` is either a `Digest` for `tuned` or JSON null for a baseline
 reason. `outputRecords` is a role-sorted list with exact keys `role`, `logicalName`,
-`bytes`, and `sha256`. Every extracted scalar and output record must equal the
-decoded retained decision; none is trusted as an independent report assertion.
+`bytes`, and `sha256`. `bytes` is a JSON unsigned integer; the decision inspector's
+textual `u64` representation is range-checked and normalized to that numeric type
+before equality. Every extracted scalar and output record must equal the decoded
+retained decision; none is trusted as an independent report assertion.
 For a present certificate, `certificateDigest` is
 `P("CK-V014-TUNE-CERTIFICATE\0", plan DigestBytes, frontier DigestBytes,
 policy DigestBytes, roundOne DigestBytes, roundTwo DigestBytes, correctness

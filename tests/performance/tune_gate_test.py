@@ -162,6 +162,19 @@ class SchemaNineContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "closure mismatch"):
             gate.schema9_check_evidence_closure(self.report, evidence)
 
+    def test_decoded_decision_output_bytes_remain_json_u64_numbers(self):
+        inspection = (REPO / "tests/fixtures/tune/decision-schema1-inspection.json").read_text(
+            encoding="utf-8"
+        )
+        completed = Mock(returncode=0, stdout=inspection)
+        with patch.object(gate.subprocess, "run", return_value=completed):
+            summary, _ = gate.schema9_inspect_decision(
+                pathlib.Path("ckc"), pathlib.Path("decision.cktune"), "fixture"
+            )
+
+        self.assertTrue(summary["outputRecords"])
+        self.assertIs(type(summary["outputRecords"][0]["bytes"]), int)
+
     def test_historical_checker_receives_an_absolute_retained_report(self):
         evidence = pathlib.Path(self.temporary.name) / "relative-evidence"
         replay_root = evidence / "replay-v013"

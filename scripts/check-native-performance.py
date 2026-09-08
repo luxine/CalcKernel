@@ -1525,7 +1525,8 @@ def schema9_inspect_decision(candidate, decision, field):
             "role": schema9_tagged(node, 1, field),
             "logicalName": schema9_tagged(node, 2, field),
             "sha256": schema9_tagged(node, 3, field),
-            "bytes": schema9_tagged(node, 4, field),
+            "bytes": schema9_u64(int(schema9_tagged(node, 4, field)),
+                                 f"{field} output byte count"),
         })
     certificate_digest = None
     if certificate is not None:
