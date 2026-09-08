@@ -242,8 +242,9 @@ def audit_pgo(clang: str) -> None:
             measurement.command_output(rust_common)
             for split in splits.values():
                 for record in split.get(case["name"], []):
+                    workspace = measurement.KernelWorkspace(case, record)
                     results = {
-                        measurement.Kernel(library, case, record).result_digest()
+                        measurement.Kernel(library, case, workspace).result_digest()
                         for library in [c, ubsan, rust]
                     }
                     if len(results) != 1:

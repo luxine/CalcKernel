@@ -394,3 +394,11 @@ multiversion/ordinary 为 `1.04241 > 1.03`，但 multiversion/selected-direct �
 baseline result，raw public emitter 与所有 enhanced variant 仍 fail closed。语言/公开 ABI、
 strict-FP、安全语义、目标 ISA、multiversion frontier、growth/profitability/性能/稳定性/产物门槛、
 timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34178811720` 的 x86-64 与 AArch64 performance jobs 随后在 PGO oracle
+审计一致失败：schema-8 sampling 修复已把 `Kernel` 第三个参数改为 `KernelWorkspace`，但
+`audit_pgo()` 仍传入原始 record dict，因而在生成任何性能 artifact 前触发
+`AttributeError`。复诊与闭环见 `specs/0.13/review/implementation-blocker-42.md`：审计现在为每个
+record 创建唯一 workspace，并由 C、UBSan 与 Rust 三个 oracle 共享；差分范围、oracle、语言/公开
+ABI、strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性门槛、timed work、样本、corpus、平台
+与 required job matrix 均未改变。

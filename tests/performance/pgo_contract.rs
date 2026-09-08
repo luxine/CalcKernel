@@ -127,6 +127,7 @@ fn schema_eight_compile_time_should_measure_terminated_child_cpu_time() {
 #[test]
 fn schema_eight_runtime_channels_should_share_one_workspace() {
     let measurement = read("scripts/measure-v013-performance.py");
+    let audit = read("scripts/audit-performance-oracles.py");
 
     assert!(
         measurement.contains("class KernelWorkspace:"),
@@ -140,6 +141,11 @@ fn schema_eight_runtime_channels_should_share_one_workspace() {
     assert!(
         measurement.contains("rotating-eight-channel-shared-workspace-v2"),
         "the changed sampling protocol must have a new replay identity"
+    );
+    assert!(
+        audit.contains("workspace = measurement.KernelWorkspace(case, record)")
+            && audit.contains("measurement.Kernel(library, case, workspace)"),
+        "the PGO oracle audit must follow the shared-workspace Kernel constructor protocol"
     );
 }
 
