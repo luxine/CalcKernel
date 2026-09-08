@@ -484,6 +484,12 @@ variant 使用相同 public ABI 与 source safety mode。
 - AArch64 Darwin/Windows：schema 1 仅 baseline，因为 0.13 不拥有经审查的可移植 SVE
   feature/state query。
 
+对于显式包含 `+avx512f` 的 `x86-64-v4` member，只有当独立分析确认 scalar `f64`
+memory-map loop 同时具有 non-local load/store、至少八个 strict scalar `f64` 算术操作、没有
+既有 loop schedule 且没有 fast-math operation 时，最终 target-specific LLVM handoff 才可
+授权八路 vector width。这只是对已合法 v4 member 的宽度授权，不允许 reassociation，也不提供
+新的安全证明；其他 loop 继续使用 LLVM 普通 target cost 决策。
+
 SVE/SVE2 profile 仍只暴露 0.12/0.13 定义的 fixed-width vector KIR operation。LLVM 可以
 合法地把这些内部 fixed operation lower 为 SVE instruction，但 0.13 不增加 scalable KIR
 value 或公开 ABI。

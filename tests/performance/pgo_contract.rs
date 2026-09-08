@@ -400,6 +400,29 @@ fn aarch64_sve_loops_should_request_four_way_llvm_interleave() {
 }
 
 #[test]
+fn x86_v4_compute_loops_should_authorize_full_avx512_width() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let commands = read("src/cli/commands.rs");
+    for required in [
+        "constexpr uint32_t CKC_X86_V4_F64_VECTOR_WIDTH = 8;",
+        "attach_x86_v4_compute_loop_width",
+        "target.getTargetCPU() != \"x86-64-v4\"",
+        "is_compute_dense_strict_f64_map",
+        "CKC_X86_V4_COMPUTE_MIN_F64_OPS = 8",
+        "binary->getFastMathFlags().any()",
+        "llvm.loop.vectorize.width",
+        "llvm.loop.vectorize.enable",
+        "CKC_X86_V4_F64_VECTOR_WIDTH",
+        "x86-v4-compute-f64-width-8-v1",
+    ] {
+        assert!(
+            bridge.contains(required) || commands.contains(required),
+            "x86-64-v4 compute-loop width handoff is missing {required:?}"
+        );
+    }
+}
+
+#[test]
 fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");

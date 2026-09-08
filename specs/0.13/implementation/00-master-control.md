@@ -419,3 +419,13 @@ job 为 `2.3582653544`。复诊与闭环见 `specs/0.13/review/implementation-bl
 checked bundle 中的 variant 地址约束该快速 handoff。checker、最终 evidence validation、输出
 artifact、语言/公开 ABI、安全与 strict-FP 语义、target ISA、性能/稳定性/size 门槛、timed work、
 样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact run `34212249513` 随后在完整 `x86-64-v4` worker 重建 exact V0.13
+`6258089cf44ebc317247e3fc38e2c765e424132e`，compute-bound combined CK 为 34,832 ns，
+Rust PGO oracle 为 30,025 ns，仅达到约 86.2% throughput，未通过不变的 90% 门槛；同一
+V0.13 SHA 的独立 run 落在 v3-only worker 并通过。复诊与闭环见
+`specs/0.13/review/implementation-blocker-45.md`：只有完整 `x86-64-v4`、显式
+`+avx512f`、至少八个 strict scalar `f64` 运算且无 fast-math/既有 schedule 的 compute-dense
+memory-map loop 才获得八路 vector-width 授权；其他 loop 继续使用 LLVM cost model，并推进
+multiversion cache codegen identity。语言/公开 ABI、strict-FP/安全语义、target eligibility、
+profile schema、门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
