@@ -599,6 +599,14 @@ microarchitecture database:
 - AArch64 Darwin and Windows: ABI baseline only in schema 1 because 0.13 does
   not own a reviewed portable SVE feature/state query for those OS ABIs.
 
+For an `x86-64-v4` member with explicit `+avx512f`, the final target-specific
+LLVM handoff may authorize vector width eight for a scalar `f64` memory-map
+loop only when independent analysis finds both a non-local load and store, at
+least eight strict scalar `f64` arithmetic operations, no existing loop
+schedule, and no fast-math operation. This is a width authorization for the
+already legal v4 member, not reassociation or a new safety proof; every other
+loop keeps LLVM's ordinary target cost decision.
+
 SVE and SVE2 profiles still expose only the fixed-width vector KIR operations
 defined by 0.12/0.13. LLVM may legally lower those internal fixed operations
 with SVE instructions, but 0.13 adds no scalable KIR value or public ABI.

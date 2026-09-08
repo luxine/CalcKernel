@@ -1866,6 +1866,8 @@ constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
 constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
 constexpr uint32_t CKC_X86_CONSTANT_MAP_INTERLEAVE = 1;
 constexpr uint32_t CKC_X86_CONSTANT_MAP_UNROLL = 5;
+constexpr uint32_t CKC_X86_V4_F64_VECTOR_WIDTH = 8;
+constexpr uint32_t CKC_X86_V4_COMPUTE_MIN_F64_OPS = 8;
 constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
 constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = "neoverse-n2";
 
@@ -2041,6 +2043,38 @@ bool is_scalar_memory_map(const llvm::Loop &loop) {
     return saw_nonlocal_load && saw_nonlocal_store;
 }
 
+bool is_compute_dense_strict_f64_map(const llvm::Loop &loop) {
+    if (!is_scalar_memory_map(loop)) {
+        return false;
+    }
+    uint32_t operations = 0;
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            const auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(
+                &instruction);
+            if (binary == nullptr) {
+                continue;
+            }
+            switch (binary->getOpcode()) {
+            case llvm::Instruction::FAdd:
+            case llvm::Instruction::FSub:
+            case llvm::Instruction::FMul:
+            case llvm::Instruction::FDiv:
+            case llvm::Instruction::FRem:
+                if (!binary->getType()->isDoubleTy() ||
+                    binary->getFastMathFlags().any()) {
+                    return false;
+                }
+                ++operations;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    return operations >= CKC_X86_V4_COMPUTE_MIN_F64_OPS;
+}
+
 bool every_direct_call_has_constant_argument(
     llvm::Function &function, unsigned argument_index) {
     bool saw_call = false;
@@ -2074,6 +2108,75 @@ bool every_direct_call_has_constant_argument(
         saw_call = true;
     }
     return saw_call;
+}
+
+void attach_x86_v4_compute_loop_width(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64 ||
+        target.getTargetCPU() != "x86-64-v4" ||
+        !target.getTargetFeatureString().contains("+avx512f")) {
+        return;
+    }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
+    for (llvm::Function &function : module) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty() ||
+            !may_contain_nonlocal_load(*function)) {
+            continue;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *analysis = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*analysis);
+        llvm::DominatorTree analysis_dominators(*analysis);
+        llvm::LoopInfo analysis_loops(analysis_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *analysis_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *analysis_loop = analysis_header == nullptr
+                ? nullptr
+                : analysis_loops.getLoopFor(analysis_header);
+            if (analysis_loop == nullptr ||
+                analysis_loop->getHeader() != analysis_header ||
+                !is_compute_dense_strict_f64_map(*analysis_loop)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *width = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.vectorize.width"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_X86_V4_F64_VECTOR_WIDTH))});
+            auto *enable = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::getTrue(
+                     context))});
+            llvm::Metadata *operands[] = {nullptr, width, enable};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(
+                    llvm::LLVMContext::MD_loop, loop_id);
+            }
+        }
+        analysis->eraseFromParent();
+    }
 }
 
 void attach_x86_constant_call_map_schedule(
@@ -2423,6 +2526,8 @@ extern "C" int32_t ckc_llvm_module_optimize(
             attach_prevectorized_loop_unroll_disable(*module->value);
             attach_aarch64_sve_loop_interleave(*module->value,
                                                *target->value);
+            attach_x86_v4_compute_loop_width(*module->value,
+                                             *target->value);
             attach_x86_checked_loop_unroll(*module->value, *target->value);
             attach_x86_integer_reduction_interleave(*module->value,
                                                      *target->value);
