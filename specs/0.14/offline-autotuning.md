@@ -4,7 +4,7 @@
 
 Status: Proposed design for CK 0.14.0
 
-Accepted base revision: v0.13 repaired candidate 6258089cf44ebc317247e3fc38e2c765e424132e
+Accepted base revision: v0.13 repaired candidate e4f3fc6388a3ebd15cb1beb4ecd4dd9ca55b0dbe
 
 This document is normative for the CK 0.14 implementation. It defines a bounded,
 reproducible, cached, ahead-of-time auto-tuning system. It does not claim that the
@@ -13,7 +13,7 @@ implementation or release acceptance has completed.
 Implementation began from v0.13 candidate
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`. Before final acceptance, the complete
 delta through accepted v0.13 revision
-`6258089cf44ebc317247e3fc38e2c765e424132e` was reviewed file by file and integrated
+`e4f3fc6388a3ebd15cb1beb4ecd4dd9ca55b0dbe` was reviewed file by file and integrated
 with v0.14-equivalent fixes. Deliberate supersessions are recorded in implementation
 design correction 10; no semantic difference may be hidden by adapting tests.
 
@@ -26,6 +26,13 @@ coverage companion. Compile and runtime performance thresholds are unchanged.
 Checked emission may reuse an O0-shaped variant handoff only after proving pointer
 ownership by that opaque bundle; the final lowering evidence validation remains
 mandatory, while the redundant intermediate O0 evidence pass is omitted.
+
+The accepted v0.13 target handoff also authorizes vector width eight only for an
+explicit `x86-64-v4`/`+avx512f` compute-dense strict-`f64` memory map with at least
+eight scalar arithmetic operations, no fast-math operation, and no prior loop
+schedule. Other loops keep LLVM's normal target cost decision. This closes the
+v4-only 256-bit fallback without changing eligibility, strict-FP semantics, or any
+performance threshold.
 
 The accepted v0.13 repair also closes schema-8 aggregate multiversion artifact size:
 ELF shared products discard non-loader metadata while retaining the dynamic public

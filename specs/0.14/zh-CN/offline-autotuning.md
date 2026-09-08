@@ -4,14 +4,14 @@
 
 状态：CK 0.14.0 提议设计
 
-已接纳基线修订：v0.13 修复候选 6258089cf44ebc317247e3fc38e2c765e424132e
+已接纳基线修订：v0.13 修复候选 e4f3fc6388a3ebd15cb1beb4ecd4dd9ca55b0dbe
 
 本文档是 CK 0.14 实现的规范性依据，定义一个有界、可复现、可缓存的提前
 编译自动调优系统。本文档不表示实现或者版本验收已经完成。
 
 实现最初基于 v0.13 候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`。
 最终验收前，已逐文件审计并以 v0.14 等价修复吸收该候选到最终接纳修订
-`6258089cf44ebc317247e3fc38e2c765e424132e` 的累计提交差异。主动替代项记录在
+`e4f3fc6388a3ebd15cb1beb4ecd4dd9ca55b0dbe` 的累计提交差异。主动替代项记录在
 实施期设计复诊 10；任何语义差异都不得通过适配测试来掩盖。
 
 已接纳基线还会对 normalized target-neutral multiversion KIR body 使用结构相等性，并把一次
@@ -21,6 +21,11 @@ coverage-first retention 与 predicted-cost-first runtime dispatch 是两套独�
 与运行时性能门槛保持不变。
 checked emission 只有在证明 variant 由该 opaque bundle 指针持有后，才可复用 O0-shaped
 handoff；最终 lowering evidence validation 仍为强制步骤，只省略重复的中间 O0 evidence pass。
+
+已接纳的 v0.13 target handoff 还只对显式 `x86-64-v4`/`+avx512f`、至少包含八个 scalar
+算术操作、无 fast-math operation 且无既有 loop schedule 的 compute-dense strict-`f64`
+memory map 授权八路 vector width。其他 loop 保持 LLVM 普通 target cost 决策。该修复关闭
+仅发生在 v4 的 256-bit fallback，不改变 eligibility、strict-FP 语义或任何性能门槛。
 
 已接纳的 v0.13 修复同时关闭 schema 8 multiversion 产物总尺寸：ELF shared 产物移除
 loader 不需要的元数据，同时保留动态公开导出以及供精确 selected-direct 证据使用的私有、

@@ -48,12 +48,13 @@
 - `specs/0.14/review/implementation-blocker-53.md`
 - `specs/0.14/review/implementation-blocker-54.md`
 - `specs/0.14/review/implementation-blocker-55.md`
+- `specs/0.14/review/implementation-blocker-56.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`6258089cf44ebc317247e3fc38e2c765e424132e`。两者之间的累计提交已按
+`e4f3fc6388a3ebd15cb1beb4ecd4dd9ca55b0dbe`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -572,3 +573,15 @@ validation 保持不变；accepted-base 与 replay 重钉到该 SHA，manifest S
 `6a3f2768b56c737d6060d0f7ed03a103ed7570c4064c6cfe9532b2a91d23d230`。语言/公开 ABI、
 strict-FP、安全语义、target ISA、schema 8/9、性能/稳定性/产物门槛、timed work、样本、
 corpus、平台与 required job 均未改变。
+
+Exact V0.14 run `34212249513` 随后在完整 `x86-64-v4` worker 重建 accepted V0.13
+`6258089cf44ebc317247e3fc38e2c765e424132e`，compute-bound combined CK 为 34,832 ns，
+Rust PGO oracle 为 30,025 ns，仅达到约 86.2% throughput，未通过不变的 90% 门槛；保留
+v4 object 使用四条 256-bit YMM 链，而 oracle 使用四条 512-bit ZMM 链。复诊与继承闭环见
+`specs/0.14/review/implementation-blocker-56.md`：V0.14 精确吸收 V0.13 blocker 45，
+只对完整 v4、显式 `+avx512f`、至少八个 strict scalar `f64` 运算且无 fast-math/既有
+schedule 的 compute-dense memory-map loop 授权八路 vector width；accepted-base 与 replay
+重钉到 `e4f3fc6388a3ebd15cb1beb4ecd4dd9ca55b0dbe`，manifest SHA-256 为
+`1de279a1972fcad7a9447d8e7281dd86aa9faf49fd514c181ffa82936294fa20`。语言/公开 ABI、
+strict-FP/安全语义、target eligibility、schema、性能/稳定性/size 门槛、timed work、样本、
+corpus、平台与 required job matrix 均未改变；V0.13 仍须独立通过自己的十作业验收。
