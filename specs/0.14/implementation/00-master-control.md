@@ -42,12 +42,13 @@
 - `specs/0.14/review/implementation-blocker-47.md`
 - `specs/0.14/review/implementation-blocker-48.md`
 - `specs/0.14/review/implementation-blocker-49.md`
+- `specs/0.14/review/implementation-blocker-50.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`1aad5bdd964f3afa4b367434c1c3810fb63f8e8f`。两者之间的累计提交已按
+`21448738b90ccfd1ea9ab79e9355450ef325769c`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -497,5 +498,18 @@ Replacement V0.14 exact run `34169415571` 的 x86-64 performance job
 `e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3`，V0.13 replay
 manifest SHA-256 重钉为
 `578868dabbba1a10267c1500269fe75b1e953a3ef913ba71612257c196478fdb`。语言/公开 ABI、
+strict-FP、安全语义、target ISA、schema 9、优化策略、性能/稳定性/产物门槛、timed work、
+样本、corpus、平台与 required job 均未改变。
+
+Exact V0.14 run `34172973863` 随后在两个 performance jobs 的历史 schema-8 重放中
+暴露两个独立问题：x86-64 `memory-bound` multiversion/ordinary 为
+`1.04241 > 1.03`，但 multiversion/selected-direct 为 `0.99547`；AArch64
+multiversion source-to-object 几何均值为 `2.52084 > 2.5`。复诊与继承闭环见
+`specs/0.14/review/implementation-blocker-50.md`：V0.14 精确吸收 V0.13
+`21448738b90ccfd1ea9ab79e9355450ef325769c`，schema-8 八通道共享唯一工作区并更新 sampling
+identity 为 `rotating-eight-channel-shared-workspace-v2`；checked multiversion emission
+复用主管线已验证 baseline，raw public emitter 与 enhanced variants 仍 fail closed。V0.13
+replay manifest SHA-256 重钉为
+`8852346e6263c3dcf86a30ef2b0084e029865f9deb0545231f73169f0982b148`。语言/公开 ABI、
 strict-FP、安全语义、target ISA、schema 9、优化策略、性能/稳定性/产物门槛、timed work、
 样本、corpus、平台与 required job 均未改变。
