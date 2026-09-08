@@ -133,6 +133,8 @@ measurement key 使用 installation-local CSPRNG salt，并采用 owner-only fil
 write 与 hard 4 GiB deterministic LRU。完整 exact warm decision 可逐字节重新发布；
 `--no-tune-cache` 强制 fresh session。普通命令不会打开该 namespace 或运行 harness。
 No command uploads workload、source、decision、measurement、profile 或 artifact data。
+Windows 上的 private tuning publication file 会在安装 protected owner-only ACL 前显式取得
+DACL 写入权限；如果 ACL 无法安装，则 fail closed 并删除未受保护的 initializer。
 
 ## Backend 与 effect matrix
 

@@ -6,6 +6,16 @@ use std::{
 
 use super::PublicationError;
 
+#[cfg(any(windows, test))]
+const WINDOWS_GENERIC_READ: u32 = 0x8000_0000;
+#[cfg(any(windows, test))]
+const WINDOWS_GENERIC_WRITE: u32 = 0x4000_0000;
+#[cfg(any(windows, test))]
+const WINDOWS_WRITE_DAC: u32 = 0x0004_0000;
+#[cfg(any(windows, test))]
+const WINDOWS_PRIVATE_CREATION_ACCESS: u32 =
+    WINDOWS_GENERIC_READ | WINDOWS_GENERIC_WRITE | WINDOWS_WRITE_DAC;
+
 pub(crate) fn random_transaction_id() -> Result<[u8; 16], PublicationError> {
     let mut bytes = [0u8; 16];
     #[cfg(unix)]
@@ -59,6 +69,7 @@ pub(crate) fn create_private(path: &Path) -> Result<File, PublicationError> {
             .write(true)
             .read(true)
             .create_new(true)
+            .access_mode(WINDOWS_PRIVATE_CREATION_ACCESS)
             .custom_flags(0x0020_0000)
             .open(path)?;
         if let Err(error) = windows_security::protect_owner_only(&file) {
@@ -671,5 +682,19 @@ mod windows_security {
         fn GetCurrentProcess() -> Handle;
         fn CloseHandle(handle: Handle) -> i32;
         fn LocalFree(memory: *mut c_void) -> *mut c_void;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WINDOWS_PRIVATE_CREATION_ACCESS, WINDOWS_WRITE_DAC};
+
+    #[test]
+    fn windows_private_creation_handle_can_replace_its_dacl() {
+        assert_eq!(
+            WINDOWS_PRIVATE_CREATION_ACCESS & WINDOWS_WRITE_DAC,
+            WINDOWS_WRITE_DAC,
+            "SetSecurityInfo(DACL_SECURITY_INFORMATION) requires WRITE_DAC"
+        );
     }
 }

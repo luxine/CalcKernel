@@ -1868,6 +1868,7 @@ constexpr uint32_t CKC_X86_CONSTANT_MAP_INTERLEAVE = 1;
 constexpr uint32_t CKC_X86_CONSTANT_MAP_UNROLL = 5;
 constexpr uint32_t CKC_X86_V4_F64_VECTOR_WIDTH = 8;
 constexpr uint32_t CKC_X86_V4_COMPUTE_MIN_F64_OPS = 8;
+constexpr uint32_t CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH = 4;
 constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
 constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = "neoverse-n2";
 
@@ -1985,7 +1986,7 @@ std::optional<unsigned> scalar_memory_map_bound_argument(
     return std::nullopt;
 }
 
-bool argument_has_constant_equality_assume(
+std::optional<uint64_t> argument_constant_equality_assume_value(
     const llvm::Function &function, unsigned argument_index) {
     for (const llvm::BasicBlock &block : function) {
         for (const llvm::Instruction &instruction : block) {
@@ -2006,17 +2007,24 @@ bool argument_has_constant_equality_assume(
             for (unsigned operand = 0; operand < 2; ++operand) {
                 const auto *argument = llvm::dyn_cast<llvm::Argument>(
                     compare->getOperand(operand));
-                if (argument != nullptr &&
+                const auto *constant = llvm::dyn_cast<llvm::ConstantInt>(
+                    compare->getOperand(1 - operand));
+                if (argument != nullptr && constant != nullptr &&
                     argument->getParent() == &function &&
                     argument->getArgNo() == argument_index &&
-                    llvm::isa<llvm::ConstantInt>(
-                        compare->getOperand(1 - operand))) {
-                    return true;
+                    constant->getValue().getActiveBits() <= 64) {
+                    return constant->getZExtValue();
                 }
             }
         }
     }
-    return false;
+    return std::nullopt;
+}
+
+bool argument_has_constant_equality_assume(
+    const llvm::Function &function, unsigned argument_index) {
+    return argument_constant_equality_assume_value(function, argument_index)
+        .has_value();
 }
 
 bool is_scalar_memory_map(const llvm::Loop &loop) {
@@ -2041,6 +2049,31 @@ bool is_scalar_memory_map(const llvm::Loop &loop) {
         }
     }
     return saw_nonlocal_load && saw_nonlocal_store;
+}
+
+bool is_i32_scalar_memory_map(const llvm::Loop &loop) {
+    if (!is_scalar_memory_map(loop)) {
+        return false;
+    }
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+                load != nullptr &&
+                !llvm::isa<llvm::AllocaInst>(
+                    load->getPointerOperand()->stripPointerCasts()) &&
+                !load->getType()->isIntegerTy(32)) {
+                return false;
+            }
+            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+                store != nullptr &&
+                !llvm::isa<llvm::AllocaInst>(
+                    store->getPointerOperand()->stripPointerCasts()) &&
+                !store->getValueOperand()->getType()->isIntegerTy(32)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool is_compute_dense_strict_f64_map(const llvm::Loop &loop) {
@@ -2300,6 +2333,96 @@ void attach_prevectorized_loop_unroll_disable(llvm::Module &module) {
     }
 }
 
+void attach_aarch64_sve_fixed_bound_map_schedule(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::aarch64 ||
+        !target.getTargetFeatureString().contains("+sve")) {
+        return;
+    }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
+    for (llvm::Function &function : module) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty()) {
+            continue;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *analysis = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*analysis);
+        llvm::DominatorTree analysis_dominators(*analysis);
+        llvm::LoopInfo analysis_loops(analysis_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *analysis_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *analysis_loop = analysis_header == nullptr
+                ? nullptr
+                : analysis_loops.getLoopFor(analysis_header);
+            if (analysis_loop == nullptr ||
+                analysis_loop->getHeader() != analysis_header ||
+                contains_fixed_vector_operation(*analysis_loop) ||
+                !is_i32_scalar_memory_map(*analysis_loop)) {
+                continue;
+            }
+            const auto bound =
+                scalar_memory_map_bound_argument(*analysis_loop);
+            const auto bound_value = bound
+                ? argument_constant_equality_assume_value(*analysis, *bound)
+                : std::nullopt;
+            constexpr uint64_t chunk =
+                CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH *
+                CKC_AARCH64_SVE_LOOP_INTERLEAVE;
+            if (!bound_value || *bound_value < chunk ||
+                *bound_value % chunk != 0) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *width = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.vectorize.width"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH))});
+            auto *enable = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::getTrue(
+                     context))});
+            auto *interleave = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_AARCH64_SVE_LOOP_INTERLEAVE))});
+            auto *disable = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.unroll.disable")});
+            llvm::Metadata *operands[] = {
+                nullptr, width, enable, interleave, disable};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+        analysis->eraseFromParent();
+    }
+}
+
 void attach_aarch64_sve_loop_interleave(
     llvm::Module &module, const llvm::TargetMachine &target) {
     if (target.getTargetTriple().getArch() != llvm::Triple::aarch64 ||
@@ -2524,6 +2647,8 @@ extern "C" int32_t ckc_llvm_module_optimize(
         if (level == llvm::OptimizationLevel::O3) {
             attach_aarch64_sve_tuning(*module->value, *target->value);
             attach_prevectorized_loop_unroll_disable(*module->value);
+            attach_aarch64_sve_fixed_bound_map_schedule(*module->value,
+                                                        *target->value);
             attach_aarch64_sve_loop_interleave(*module->value,
                                                *target->value);
             attach_x86_v4_compute_loop_width(*module->value,

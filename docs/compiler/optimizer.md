@@ -101,6 +101,17 @@ the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
 C and WebAssembly profiles disable Vector KIR in 0.14.
 
+The Native LLVM handoff also preserves target-specific schedules that follow
+from verified loop shape. On AArch64 with SVE, a 32-bit integer scalar memory
+map whose bound has a proven constant equality is assigned a fixed four-lane vector width and
+four-way interleave when the trip count is at least 16 and exactly covers those
+chunks; scalar full unrolling is disabled for that loop. This prevents a short
+known-bound map from being expanded into scalar instructions before LLVM can
+vectorize it. Dynamic-bound SVE loops retain the scalable-vector handoff and
+its existing four-way interleave. These hints authorize no instruction or ISA
+feature beyond the selected target, and LLVM must still prove vectorization
+legality.
+
 Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
 the complete candidate module, proof/fact state, and audit-budget delta are
 prepared without mutating the accepted pre-state. A separate checker validates

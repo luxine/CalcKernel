@@ -386,4 +386,57 @@ mod tests {
         );
         fs::remove_dir_all(root).expect("remove schedule test directory");
     }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn fixed_bound_sve_map_should_reach_fixed_width_llvm_vector_ir() {
+        let host = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("host target");
+        let triple = host.triple().expect("host triple");
+        drop(host);
+        let target = NativeTarget::explicit_multiversion(
+            &triple,
+            "generic",
+            &["+sve".to_string(), "+sve2".to_string()],
+        )
+        .expect("generic SVE target");
+        let checked = check(&SourceFile::new(
+            "contract-fixed-length.ck",
+            include_str!("../../../benches/oracles/fixtures/contract_fixed_length.ck"),
+        ));
+        assert_eq!(checked.diagnostics, []);
+        let mir = lower_to_mir(&checked.checked_program).expect("fixed-map MIR");
+        let kir = build_kir_module_with_profile(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::NativeLibrary,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+            target
+                .kir_profile(KirConsumer::NativeLibrary)
+                .expect("SVE profile"),
+        )
+        .expect("fixed-map KIR");
+        let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
+            .expect("fixed-map contract facts");
+        let optimized = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+
+        let context = NativeContext::new().expect("native context");
+        let verified =
+            lower_native_kir_module(&context, &target, &optimized, &EmitLlvmOptions::default())
+                .expect("lower fixed SVE map")
+                .verify()
+                .expect("verify fixed SVE map")
+                .audit()
+                .expect("audit fixed SVE map")
+                .optimize(&target, NativeOptimizationLevel::O3)
+                .expect("optimize fixed SVE map");
+        let ir = verified.to_ir_string().expect("optimized fixed SVE IR");
+        assert!(
+            ir.contains("<4 x i32>"),
+            "fixed-bound SVE map was scalar-expanded before vectorization:\n{ir}"
+        );
+    }
 }

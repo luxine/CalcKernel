@@ -161,6 +161,9 @@ limit. An exact complete warm decision can be republished byte-for-byte;
 `--no-tune-cache` forces a fresh session. Ordinary commands neither open this
 namespace nor run the harness. No command uploads workload, source, decision,
 measurement, profile, or artifact data.
+On Windows, private tuning publication files are created with explicit DACL-write
+access before their protected owner-only ACL is installed; inability to install
+that ACL fails closed and removes the unprotected initializer.
 
 ## Backend and effect matrix
 

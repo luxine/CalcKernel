@@ -46,6 +46,10 @@ canonical destination-id order, and holds them through discovery, recovery,
 publication, and cleanup. It releases them in reverse order and never removes them,
 preventing inode replacement and overlapping-set races. Stranded private lock
 initializers have no authority and may be removed after their final lock is held.
+On Windows, every private initializer handle that is immediately hardened with
+`SetSecurityInfo(DACL_SECURITY_INFORMATION)` MUST be created with `WRITE_DAC` in
+addition to generic read/write access; failure to obtain that access fails closed
+and removes the unprotected initializer before returning.
 Journal and transaction files are owner-only regular files opened no-follow. A
 journal is at most 128 KiB and contains exactly one of these role layouts:
 `decision,primary`; `decision,header,primary`; or

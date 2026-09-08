@@ -53,6 +53,7 @@
 - `specs/0.14/review/implementation-blocker-58.md`
 - `specs/0.14/review/implementation-blocker-59.md`
 - `specs/0.14/review/implementation-blocker-60.md`
+- `specs/0.14/review/implementation-blocker-61.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -656,3 +657,28 @@ profile-runtime provenance digest。先红后绿的 branch-specific contract 与
 Darwin C11 直接编译均通过；语言/公开 ABI、profile/schema 8/9、优化与 tuning 策略、target
 eligibility、性能/稳定性/size 门槛、timed work、样本、corpus、平台与 required job matrix
 均未改变。
+
+Exact V0.14 run `34258812502` 的 AArch64 performance job `102171708973` 完成
+schema 8 和完整 schema-9 采集后，在不变的 domain throughput 门槛中暴露
+`contract-fixed-length` 的真实 codegen 回归：CK ordinary 与 tuned fallback 均为
+`89,046,408 ns`，generic C 为 `84,473,908 ns`；反汇编显示 CK 将已证明 `n == 16`
+的循环完整展开为 16 个标量 add，而 generic C 保留循环并形成 SVE vector loop。复诊与
+闭环见 `specs/0.14/review/implementation-blocker-61.md`：AArch64 SVE Native handoff
+现在只对具有常量等式 bound、trip count 至少 16 且能整除四 lane/四路 interleave chunk
+的 32-bit integer scalar memory map 设置 fixed-width vectorization、四路 interleave 与
+`unroll.disable`；动态 SVE loop 保持既有策略。ordinary 与 tuned cache identity 均绑定该
+object-affecting 修复。语言/公开 ABI、strict-FP/安全语义、target eligibility、schema 8/9、
+性能/稳定性/size 门槛、timed work、warmup、样本、corpus、平台与 required job matrix
+均未改变。
+
+同一 exact V0.14 run 的 Windows x64 native job `102171709543` 在六个 publication/
+recovery 测试首次建立 persistent lock 时均以 `protect Windows publication file: Access is
+denied (os error 5)` 失败。复诊与闭环见
+`specs/0.14/review/implementation-blocker-62.md`：`SetSecurityInfo` 写 DACL 要求 handle
+具有 `WRITE_DAC`，而旧 private initializer 只有 generic read/write；Windows 创建访问掩码
+现在显式包含 `WRITE_DAC`，并保留 ACL 失败即删除未保护 initializer 的 fail-closed 行为。
+同一 run 的 x86 performance job `102171709329` 仍因 AMD EPYC 7763 仅有 v3、缺少
+AVX-512 而正确报告 runner capability/infrastructure failure，replacement run 必须取得真实
+v4 worker。语言/公开 ABI、publication/schema 8/9、安全语义、优化与 tuning 策略、target
+eligibility、性能/稳定性/size 门槛、timed work、warmup、样本、corpus、平台与 required job
+matrix 均未改变。

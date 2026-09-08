@@ -400,6 +400,70 @@ fn aarch64_sve_loops_should_request_four_way_llvm_interleave() {
 }
 
 #[test]
+fn aarch64_sve_fixed_bound_maps_should_request_fixed_simd_before_unrolling() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let commands = read("src/cli/commands.rs");
+    let schedule = bridge
+        .split("void attach_aarch64_sve_fixed_bound_map_schedule")
+        .nth(1)
+        .expect("AArch64 SVE fixed-bound map schedule")
+        .split("void attach_aarch64_sve_loop_interleave")
+        .next()
+        .expect("AArch64 SVE fixed-bound schedule boundary");
+
+    for required in [
+        "target.getTargetTriple().getArch() != llvm::Triple::aarch64",
+        "target.getTargetFeatureString().contains(\"+sve\")",
+        "CloneFunction(function, clone_map)",
+        "promote_entry_allocas(*analysis)",
+        "scalar_memory_map_bound_argument(*analysis_loop)",
+        "argument_constant_equality_assume_value(*analysis, *bound)",
+        "contains_fixed_vector_operation(*analysis_loop)",
+        "is_i32_scalar_memory_map(*analysis_loop)",
+        "llvm.loop.vectorize.width",
+        "llvm.loop.vectorize.enable",
+        "llvm.loop.interleave.count",
+        "llvm.loop.unroll.disable",
+        "CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH",
+        "CKC_AARCH64_SVE_LOOP_INTERLEAVE",
+    ] {
+        assert!(
+            schedule.contains(required),
+            "AArch64 SVE fixed-bound map handoff is missing {required:?}"
+        );
+    }
+    assert!(
+        schedule
+            .split_whitespace()
+            .collect::<String>()
+            .contains("CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH*CKC_AARCH64_SVE_LOOP_INTERLEAVE"),
+        "the fixed-bound handoff must cover one complete vector/interleave chunk"
+    );
+    assert_eq!(
+        commands
+            .matches("aarch64-sve-i32-fixed-map-width-4-v1")
+            .count(),
+        2,
+        "ordinary and multiversion Native object caches must bind the fixed-map schedule"
+    );
+    assert!(
+        !schedule.contains("contract-fixed-length"),
+        "the schedule must be selected from IR semantics, not a fixture name"
+    );
+    let optimize = bridge
+        .split("extern \"C\" int32_t ckc_llvm_module_optimize")
+        .nth(1)
+        .expect("Native optimization entry");
+    assert!(
+        optimize
+            .find("attach_aarch64_sve_fixed_bound_map_schedule")
+            .zip(optimize.find("attach_aarch64_sve_loop_interleave"))
+            .is_some_and(|(fixed, general)| fixed < general),
+        "the fixed-bound schedule must claim its loop before the general SVE interleave handoff"
+    );
+}
+
+#[test]
 fn x86_v4_compute_loops_should_authorize_full_avx512_width() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");

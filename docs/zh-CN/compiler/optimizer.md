@@ -80,6 +80,14 @@ availability 和 fixed-width 精确 cost。缺失、零值、过期或 target �
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
 budget 都进入 object/cache identity。0.14 的 C/WebAssembly profile 禁用 Vector KIR。
 
+Native LLVM handoff 还会保留由已验证 loop shape 推导出的 target-specific schedule。在
+AArch64 SVE 上，如果 32-bit integer scalar memory map 的 bound 具有已证明的常量等式，且 trip count
+至少为 16 并能完整覆盖对应 chunk，则交接时使用固定四 lane vector width、四路
+interleave，并对该循环禁用 scalar full unrolling。这避免短小的已知边界 map 在 LLVM
+向量化前被完整展开为标量指令。动态边界 SVE 循环仍使用既有 scalable-vector handoff
+及四路 interleave。上述 hint 不授权超出已选 target 的指令或 ISA feature；LLVM 仍须独立
+证明向量化合法性。
+
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
 独立 checker 核验精确改写、语义、proof root、target legality、cost、growth 与 budget charge。
