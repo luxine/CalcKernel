@@ -430,3 +430,13 @@ V0.13 SHA 的独立 run 落在 v3-only worker 并通过。复诊与闭环见
 memory-map loop 才获得八路 vector-width 授权；其他 loop 继续使用 LLVM cost model，并推进
 multiversion cache codegen identity。语言/公开 ABI、strict-FP/安全语义、target eligibility、
 profile schema、门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34241617859` 随后在 Windows ARM64 Native job
+`102113212994` 编译 profile runtime 时失败：为 lock-free `std::atomic_ref` 选择的 C++20
+frontend 拒绝把 C 风格 `(void *)0` 隐式转换为 `CreateFileW` 的
+`LPSECURITY_ATTRIBUTES` 和 `WriteFile` 的 `LPOVERLAPPED`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-46.md`：三个安全属性参数与一个 overlapped
+参数改用 Win32 SDK 声明的精确空指针类型，profile-runtime provenance digest 同步更新，并由
+先红后绿的契约测试固定。Windows ARM64 仍使用相同 C++20 `/WX` frontend；语言/公开 ABI、
+profile schema、安全与 strict-FP 语义、优化策略、target eligibility、性能/稳定性/size 门槛、
+timed work、样本、corpus、平台与 required job matrix 均未改变。
