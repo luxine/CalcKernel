@@ -41,12 +41,13 @@
 - `specs/0.14/review/implementation-blocker-46.md`
 - `specs/0.14/review/implementation-blocker-47.md`
 - `specs/0.14/review/implementation-blocker-48.md`
+- `specs/0.14/review/implementation-blocker-49.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`aa757ca0f78664cbfa4f824d655d820c87368dd3`。两者之间的累计提交已按
+`1aad5bdd964f3afa4b367434c1c3810fb63f8e8f`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -484,3 +485,17 @@ direct call 或 `llvm.assume(n == constant)` 恢复固定边界；仅固定边�
 `d58fd2cbaaf35fb611bd666b0e027f4467291d06a27bb073ddfb54d431062898`。语言/公开 ABI、
 安全语义、target ISA、schema 9、性能/稳定性/产物门槛、timed work、样本、corpus、平台与
 required job 均不变。
+
+Replacement V0.14 exact run `34169415571` 的 x86-64 performance job
+`101886905457` 随后在历史 V0.13 schema-7 重放中，以 checked `strict_f64`
+`3,601,329 / 3,164,344 ns` 未通过不变的 90% 单项吞吐门槛。前一 run 对应结果为
+`3,194,955 / 3,191,369 ns`，而 candidate、Rust oracle 动态库与 candidate 反汇编均逐字节
+相同。复诊与闭环见 `specs/0.14/review/implementation-blocker-49.md`：V0.14 精确继承 V0.13
+`1aad5bdd964f3afa4b367434c1c3810fb63f8e8f` 的共享 `KernelWorkspace`，让三条已加载 entry
+复用同一输入输出地址，消除分配位置造成的持久通道偏差；sampling identity 更新为
+`interleaved-upper-median-three-channel-v3`，oracle manifest SHA-256 为
+`e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3`，V0.13 replay
+manifest SHA-256 重钉为
+`578868dabbba1a10267c1500269fe75b1e953a3ef913ba71612257c196478fdb`。语言/公开 ABI、
+strict-FP、安全语义、target ISA、schema 9、优化策略、性能/稳定性/产物门槛、timed work、
+样本、corpus、平台与 required job 均未改变。

@@ -171,8 +171,8 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         "--contract-only",
         "--schema-only",
         "--baseline\", choices=(\"0.13\"",
-        "aa757ca0f78664cbfa4f824d655d820c87368dd3",
-        "d58fd2cbaaf35fb611bd666b0e027f4467291d06a27bb073ddfb54d431062898",
+        "1aad5bdd964f3afa4b367434c1c3810fb63f8e8f",
+        "578868dabbba1a10267c1500269fe75b1e953a3ef913ba71612257c196478fdb",
     ] {
         assert!(
             combined.contains(required),
