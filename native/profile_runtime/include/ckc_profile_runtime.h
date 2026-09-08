@@ -18,6 +18,10 @@
 #define CKC_PROFILE_RUNTIME_STATUS_WRITE 44
 #define CKC_PROFILE_RUNTIME_STATUS_VALIDATE 45
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 CKC_PROFILE_HIDDEN int32_t __ck_profile_initialize(
     uint8_t *shard, uint64_t shard_length, const uint32_t *counter_offsets,
     uint32_t counter_count, const uint32_t *site_first_counters,
@@ -41,5 +45,9 @@ CKC_PROFILE_HIDDEN void __ck_profile_candidate_i64(uint32_t site_index,
                                                    int64_t value,
                                                    int64_t candidate);
 CKC_PROFILE_HIDDEN int32_t __ck_profile_flush(void);
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

@@ -206,6 +206,14 @@ fn validate_kir_module_with_previous(
                 None,
             ));
         }
+        if function.tune_noinline && function.exported {
+            errors.push(error(
+                "KIR tune noinline may name only a private helper",
+                Some(function.id),
+                None,
+                None,
+            ));
+        }
         let unchanged = previous.is_some_and(|previous| {
             previous
                 .functions
@@ -2387,6 +2395,7 @@ mod tests {
             id: FunctionId::from_index(0),
             name: "dominance".into(),
             exported: false,
+            tune_noinline: false,
             params: vec![],
             return_type: MirType::Void,
             regions: vec![],

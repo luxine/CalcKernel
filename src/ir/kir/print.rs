@@ -53,6 +53,11 @@ pub fn print_kir_module(module: &KirModule) -> String {
 
 pub(super) fn print_kir_function(function: &KirFunction) -> String {
     let exported = if function.exported { "export " } else { "" };
+    let tune_noinline = if function.tune_noinline {
+        "tune-noinline "
+    } else {
+        ""
+    };
     let params = function
         .params
         .iter()
@@ -67,7 +72,7 @@ pub(super) fn print_kir_function(function: &KirFunction) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut lines = vec![format!(
-        "{exported}fn f{} {}({params}) -> {} {{",
+        "{exported}{tune_noinline}fn f{} {}({params}) -> {} {{",
         function.id.index(),
         function.name,
         print_mir_type(&function.return_type)

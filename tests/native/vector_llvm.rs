@@ -341,6 +341,7 @@ pub(super) fn vector_module(target: &NativeTarget) -> KirModule {
             id: FunctionId::from_index(0),
             name: "vector_kernel".to_string(),
             exported: true,
+            tune_noinline: false,
             params: vec![
                 KirParam {
                     value: ValueId::from_index(0),

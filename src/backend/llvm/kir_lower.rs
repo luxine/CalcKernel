@@ -480,7 +480,7 @@ fn lower_native_kir_module_inner<'context>(
             if let Some((profile, cold)) = pgo_functions.get(&kir_function.id) {
                 handle.set_profile(profile.entries, profile.hot, *cold)?;
             }
-            if compact_noinline.contains(&kir_function.id) {
+            if kir_function.tune_noinline || compact_noinline.contains(&kir_function.id) {
                 handle.set_noinline()?;
             }
             for attribute in contract_attributes

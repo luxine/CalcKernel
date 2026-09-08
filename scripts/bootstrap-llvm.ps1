@@ -249,7 +249,12 @@ $profileRuntimeSource = Join-Path $repoRoot "native/profile_runtime/profile_runt
 $profileRuntimePath = Join-Path $runtimeDir $profileRuntimeObject
 $profileRuntimeInclude = Join-Path $repoRoot "native/profile_runtime/include"
 $profileRuntimeRoot = Join-Path $repoRoot "native/profile_runtime"
-& cl.exe /nologo /c /TC /O2 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
+$profileRuntimeLanguage = if ($Target.StartsWith("aarch64")) {
+    @("/TP", "/std:c++20", "/GR-")
+} else {
+    @("/TC")
+}
+& cl.exe /nologo /c @profileRuntimeLanguage /O2 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
 if ($LASTEXITCODE -ne 0) { throw "profile runtime compilation failed: $profileRuntimeSource" }
 $profileRuntimeHash = (Get-FileHash -LiteralPath $profileRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $dispatchRuntimeObject = "dispatch_runtime.obj"

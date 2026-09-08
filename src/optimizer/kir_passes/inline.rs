@@ -293,6 +293,9 @@ fn find_candidate(
                 else {
                     continue;
                 };
+                if callee.tune_noinline {
+                    continue;
+                }
                 if pgo.is_some_and(|profile| {
                     profile.block_is_profile_cold(module, caller.id, block.id)
                 }) {

@@ -100,6 +100,9 @@ pub struct KirFunction {
     pub id: FunctionId,
     pub name: String,
     pub exported: bool,
+    /// CK-owned tuning intent that keeps this private helper out of line.
+    /// Ordinary builds leave it false; Native lowering maps it to `noinline`.
+    pub tune_noinline: bool,
     pub params: Vec<KirParam>,
     pub return_type: MirType,
     pub regions: Vec<KirMemoryRegion>,

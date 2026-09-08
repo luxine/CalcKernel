@@ -150,6 +150,68 @@ fn tuning_space_materializes_a_checked_direct_call_inline_alternative() {
 }
 
 #[test]
+fn tuning_space_materializes_both_inline_and_keep_out_of_line_alternatives() {
+    let state = state(INLINE_SOURCE);
+    let space = enumerate_tuning_space(&state).expect("space");
+    let unit = space
+        .units
+        .iter()
+        .find(|unit| unit.class == TuneAlternativeClass::Inlining)
+        .expect("direct-call tuning unit");
+    let actions = unit
+        .variants
+        .iter()
+        .map(|variant| match &variant.site_alternatives[0].payload {
+            TuneAlternativePayload::Inlining { force_inline, .. } => *force_inline,
+            other => panic!("unexpected direct-call payload: {other:?}"),
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actions, BTreeSet::from([false, true]));
+
+    let variant_index = unit
+        .variants
+        .iter()
+        .position(|variant| {
+            matches!(
+                variant.site_alternatives[0].payload,
+                TuneAlternativePayload::Inlining {
+                    force_inline: false,
+                    ..
+                }
+            )
+        })
+        .expect("keep-out-of-line variant");
+    let unit_index = space
+        .units
+        .iter()
+        .position(|candidate| candidate.unit_id == unit.unit_id)
+        .expect("unit index");
+    let plan = space
+        .plan_for_variant(&state, unit_index, variant_index)
+        .expect("derive keep-out-of-line plan")
+        .expect("keep-out-of-line plan");
+    let replayed = apply_tuning_plan(&state, &space, &plan).expect("checked replay");
+    let callee = replayed
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.name == "add_one")
+        .expect("retained callee");
+    assert!(callee.tune_noinline);
+    assert!(replayed.module().functions.iter().any(|function| {
+        function.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    &instruction.kind,
+                    KirInstructionKind::Call { function_name, .. }
+                        if function_name == "add_one"
+                )
+            })
+        })
+    }));
+}
+
+#[test]
 fn early_tuning_replay_does_not_reenter_ordinary_tunable_phases() {
     let state = state(TWO_INLINE_SOURCE);
     let space = enumerate_tuning_space(&state).expect("space");

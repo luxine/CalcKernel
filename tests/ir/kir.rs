@@ -185,6 +185,7 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
             id: FunctionId::from_index(0),
             name: "answer".to_string(),
             exported: true,
+            tune_noinline: false,
             params: Vec::new(),
             return_type: i32_type.clone(),
             regions: Vec::new(),

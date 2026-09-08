@@ -159,7 +159,10 @@ pub struct TuneVariant {
 /// value from the immutable pre-tune state before looking up a variant id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TuneVariantAction {
-    Inlining(InlineTuningCandidate),
+    Inlining {
+        candidate: InlineTuningCandidate,
+        force_inline: bool,
+    },
     Specialization(SpecializationCandidate),
     Unrolling(UnrollCandidate),
     LoopSimd(VectorizationCandidate),
@@ -286,23 +289,34 @@ pub fn enumerate_tuning_space(
         let callee = function_names
             .get(&candidate.callee)
             .ok_or(TuningPlanError::PreStateMismatch)?;
-        seeds.push(VariantSeed::new(
-            TuneAlternativeClass::Inlining,
-            symbol.clone(),
-            TuneRootAnchor {
-                function_symbol: symbol,
-                kind: 6,
-                preorder_ordinal: instruction_kind_ordinal(
-                    state,
-                    candidate.caller,
-                    candidate.call,
-                    true,
-                )?,
-            },
-            1,
-            format!("callee={callee};action=force-inline"),
-            TuneVariantAction::Inlining(candidate),
-        ));
+        let root_anchor = TuneRootAnchor {
+            function_symbol: symbol.clone(),
+            kind: 6,
+            preorder_ordinal: instruction_kind_ordinal(
+                state,
+                candidate.caller,
+                candidate.call,
+                true,
+            )?,
+        };
+        for force_inline in [true, false] {
+            let action = if force_inline {
+                "force-inline"
+            } else {
+                "keep-out-of-line"
+            };
+            seeds.push(VariantSeed::new(
+                TuneAlternativeClass::Inlining,
+                symbol.clone(),
+                root_anchor.clone(),
+                if force_inline { 1 } else { 2 },
+                format!("callee={callee};action={action}"),
+                TuneVariantAction::Inlining {
+                    candidate,
+                    force_inline,
+                },
+            ));
+        }
     }
 
     for candidate in
@@ -1025,12 +1039,19 @@ fn apply_variant_action(
     action: &TuneVariantAction,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
     match action {
-        TuneVariantAction::Inlining(candidate) => {
-            let trial =
-                materialize_tuning_inline(state, *candidate).map_err(map_materialization_error)?;
-            check_tuning_inline_independently(state, &trial, *candidate)
-                .map_err(TuningPlanError::IllegalAlternative)?;
-            Ok(trial)
+        TuneVariantAction::Inlining {
+            candidate,
+            force_inline,
+        } => {
+            if *force_inline {
+                let trial = materialize_tuning_inline(state, *candidate)
+                    .map_err(map_materialization_error)?;
+                check_tuning_inline_independently(state, &trial, *candidate)
+                    .map_err(TuningPlanError::IllegalAlternative)?;
+                Ok(trial)
+            } else {
+                materialize_tuning_keep_out_of_line(state, *candidate)
+            }
         }
         TuneVariantAction::Specialization(candidate) => {
             let prepared = prepare_specialization_trial(state, candidate, 0)
@@ -1123,6 +1144,60 @@ fn apply_variant_action(
             Ok(trial)
         }
     }
+}
+
+fn materialize_tuning_keep_out_of_line(
+    state: &KirVerifiedProgramState,
+    requested: InlineTuningCandidate,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    if !discover_tuning_inline_candidates(
+        state.module(),
+        state.contract_facts(),
+        state.eliminated_guards(),
+    )
+    .contains(&requested)
+    {
+        return Err(TuningPlanError::IllegalAlternative(
+            "keep-out-of-line tuning candidate is stale or illegal".to_string(),
+        ));
+    }
+    let mut module = state.module().clone();
+    let callee = module
+        .functions
+        .iter_mut()
+        .find(|function| function.id == requested.callee)
+        .ok_or(TuningPlanError::PreStateMismatch)?;
+    if callee.exported || callee.tune_noinline {
+        return Err(TuningPlanError::IllegalAlternative(
+            "keep-out-of-line tuning requires one private unmarked callee".to_string(),
+        ));
+    }
+    callee.tune_noinline = true;
+    let trial = rebuild_preserving_entry_units(
+        state,
+        module,
+        state.contract_facts().cloned(),
+        state.proofs().clone(),
+        state.eliminated_guards().to_vec(),
+    )?;
+
+    let mut restored = trial.module().clone();
+    let restored_callee = restored
+        .functions
+        .iter_mut()
+        .find(|function| function.id == requested.callee)
+        .ok_or(TuningPlanError::PreStateMismatch)?;
+    restored_callee.tune_noinline = false;
+    if restored != *state.module()
+        || trial.contract_facts() != state.contract_facts()
+        || trial.proofs() != state.proofs()
+        || trial.eliminated_guards() != state.eliminated_guards()
+    {
+        return Err(TuningPlanError::IllegalAlternative(
+            "keep-out-of-line trial changed data outside its checked callee attribute".to_string(),
+        ));
+    }
+    Ok(trial)
 }
 
 fn map_transaction_check_error(error: TransactionCheckError) -> TuningPlanError {
@@ -1651,7 +1726,10 @@ fn payload_for_action(
     action: &TuneVariantAction,
 ) -> Result<Option<TuneAlternativePayload>, TuningPlanError> {
     match action {
-        TuneVariantAction::Inlining(candidate) => {
+        TuneVariantAction::Inlining {
+            candidate,
+            force_inline,
+        } => {
             let callee = state
                 .module()
                 .functions
@@ -1660,7 +1738,7 @@ fn payload_for_action(
                 .ok_or(TuningPlanError::PreStateMismatch)?;
             Ok(Some(TuneAlternativePayload::Inlining {
                 callee_symbol: callee.name.clone(),
-                force_inline: true,
+                force_inline: *force_inline,
             }))
         }
         TuneVariantAction::Specialization(candidate) => {

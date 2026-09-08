@@ -3,7 +3,95 @@
 
 #include <stdint.h>
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_M_ARM64)
+
+#if !defined(__cplusplus)
+#error Windows ARM64 profile atomics require the C++20 frontend
+#endif
+
+#include <atomic>
+#include <new>
+
+typedef struct alignas(std::atomic_ref<uint32_t>::required_alignment)
+    CkProfileAtomicU32 {
+  uint32_t value;
+} CkProfileAtomicU32;
+
+typedef struct alignas(std::atomic_ref<uint64_t>::required_alignment)
+    CkProfileAtomicU64 {
+  uint64_t value;
+} CkProfileAtomicU64;
+
+static_assert(std::atomic_ref<uint32_t>::is_always_lock_free,
+              "Windows ARM64 requires lock-free 32-bit profile atomics");
+static_assert(std::atomic_ref<uint64_t>::is_always_lock_free,
+              "Windows ARM64 requires lock-free 64-bit profile atomics");
+
+static uint32_t
+ck_profile_atomic_u32_load_acquire(const CkProfileAtomicU32 *atomic) {
+  return std::atomic_ref<uint32_t>(
+             const_cast<uint32_t &>(atomic->value))
+      .load(std::memory_order_acquire);
+}
+
+static uint32_t
+ck_profile_atomic_u32_load_relaxed(const CkProfileAtomicU32 *atomic) {
+  return std::atomic_ref<uint32_t>(
+             const_cast<uint32_t &>(atomic->value))
+      .load(std::memory_order_relaxed);
+}
+
+static void ck_profile_atomic_u32_store_release(CkProfileAtomicU32 *atomic,
+                                                 uint32_t value) {
+  std::atomic_ref<uint32_t>(atomic->value).store(value,
+                                                  std::memory_order_release);
+}
+
+static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
+                                                 uint32_t value) {
+  std::atomic_ref<uint32_t>(atomic->value).store(value,
+                                                  std::memory_order_relaxed);
+}
+
+static uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
+    CkProfileAtomicU32 *atomic, uint32_t value) {
+  return std::atomic_ref<uint32_t>(atomic->value).fetch_add(
+      value, std::memory_order_relaxed);
+}
+
+static int ck_profile_atomic_u32_compare_exchange_acq_rel(
+    CkProfileAtomicU32 *atomic, uint32_t *expected, uint32_t desired) {
+  return std::atomic_ref<uint32_t>(atomic->value)
+      .compare_exchange_strong(*expected, desired, std::memory_order_acq_rel,
+                               std::memory_order_acquire);
+}
+
+static void ck_profile_atomic_u64_initialize(CkProfileAtomicU64 *atomic) {
+  ::new ((void *)atomic) CkProfileAtomicU64{0u};
+}
+
+static uint64_t
+ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
+  return std::atomic_ref<uint64_t>(
+             const_cast<uint64_t &>(atomic->value))
+      .load(std::memory_order_relaxed);
+}
+
+static uint64_t ck_profile_atomic_u64_fetch_add_relaxed(
+    CkProfileAtomicU64 *atomic, uint64_t value) {
+  return std::atomic_ref<uint64_t>(atomic->value).fetch_add(
+      value, std::memory_order_relaxed);
+}
+
+static int ck_profile_atomic_u64_compare_exchange_relaxed(
+    CkProfileAtomicU64 *atomic, uint64_t *expected, uint64_t desired) {
+  return std::atomic_ref<uint64_t>(atomic->value)
+      .compare_exchange_weak(*expected, desired, std::memory_order_relaxed,
+                             std::memory_order_relaxed);
+}
+
+#elif defined(_MSC_VER)
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -12,36 +100,12 @@
 #endif
 #include <windows.h>
 
-#if defined(_M_ARM64)
-#ifdef InterlockedCompareExchange
-#undef InterlockedCompareExchange
-#endif
-#ifdef InterlockedCompareExchange64
-#undef InterlockedCompareExchange64
-#endif
-#ifdef InterlockedExchange
-#undef InterlockedExchange
-#endif
-#ifdef InterlockedExchangeAdd64
-#undef InterlockedExchangeAdd64
-#endif
-__declspec(dllimport) LONG InterlockedCompareExchange(volatile LONG *object,
-                                                      LONG exchange,
-                                                      LONG compare);
-__declspec(dllimport) LONG64
-InterlockedCompareExchange64(volatile LONG64 *object, LONG64 exchange,
-                             LONG64 compare);
-__declspec(dllimport) LONG InterlockedExchange(volatile LONG *object,
-                                               LONG value);
-__declspec(dllimport) LONG64 InterlockedExchangeAdd64(volatile LONG64 *object,
-                                                      LONG64 value);
-#else
 #include <intrin.h>
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedCompareExchange64)
 #pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedExchangeAdd)
 #pragma intrinsic(_InterlockedExchangeAdd64)
-#endif
 
 typedef struct CkProfileAtomicU32 {
   volatile LONG value;
@@ -53,13 +117,8 @@ typedef struct CkProfileAtomicU64 {
 
 static uint32_t
 ck_profile_atomic_u32_load_acquire(const CkProfileAtomicU32 *atomic) {
-#if defined(_M_ARM64)
-  return (uint32_t)InterlockedCompareExchange(
-      (volatile LONG *)&atomic->value, 0, 0);
-#else
   return (uint32_t)_InterlockedCompareExchange(
       (volatile LONG *)&atomic->value, 0, 0);
-#endif
 }
 
 static uint32_t
@@ -69,11 +128,7 @@ ck_profile_atomic_u32_load_relaxed(const CkProfileAtomicU32 *atomic) {
 
 static void ck_profile_atomic_u32_store_release(CkProfileAtomicU32 *atomic,
                                                  uint32_t value) {
-#if defined(_M_ARM64)
-  (void)InterlockedExchange(&atomic->value, (LONG)value);
-#else
   (void)_InterlockedExchange(&atomic->value, (LONG)value);
-#endif
 }
 
 static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
@@ -81,15 +136,15 @@ static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
   ck_profile_atomic_u32_store_release(atomic, value);
 }
 
+static uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
+    CkProfileAtomicU32 *atomic, uint32_t value) {
+  return (uint32_t)_InterlockedExchangeAdd(&atomic->value, (LONG)value);
+}
+
 static int ck_profile_atomic_u32_compare_exchange_acq_rel(
     CkProfileAtomicU32 *atomic, uint32_t *expected, uint32_t desired) {
-#if defined(_M_ARM64)
-  const LONG observed = InterlockedCompareExchange(
-      &atomic->value, (LONG)desired, (LONG)*expected);
-#else
   const LONG observed = _InterlockedCompareExchange(
       &atomic->value, (LONG)desired, (LONG)*expected);
-#endif
   if ((uint32_t)observed == *expected) {
     return 1;
   }
@@ -97,35 +152,25 @@ static int ck_profile_atomic_u32_compare_exchange_acq_rel(
   return 0;
 }
 
+static void ck_profile_atomic_u64_initialize(CkProfileAtomicU64 *atomic) {
+  atomic->value = 0;
+}
+
 static uint64_t
 ck_profile_atomic_u64_load_relaxed(const CkProfileAtomicU64 *atomic) {
-#if defined(_M_ARM64)
-  return (uint64_t)InterlockedCompareExchange64(
-      (volatile LONG64 *)&atomic->value, 0, 0);
-#else
   return (uint64_t)_InterlockedCompareExchange64(
       (volatile LONG64 *)&atomic->value, 0, 0);
-#endif
 }
 
 static uint64_t ck_profile_atomic_u64_fetch_add_relaxed(
     CkProfileAtomicU64 *atomic, uint64_t value) {
-#if defined(_M_ARM64)
-  return (uint64_t)InterlockedExchangeAdd64(&atomic->value, (LONG64)value);
-#else
   return (uint64_t)_InterlockedExchangeAdd64(&atomic->value, (LONG64)value);
-#endif
 }
 
 static int ck_profile_atomic_u64_compare_exchange_relaxed(
     CkProfileAtomicU64 *atomic, uint64_t *expected, uint64_t desired) {
-#if defined(_M_ARM64)
-  const LONG64 observed = InterlockedCompareExchange64(
-      &atomic->value, (LONG64)desired, (LONG64)*expected);
-#else
   const LONG64 observed = _InterlockedCompareExchange64(
       &atomic->value, (LONG64)desired, (LONG64)*expected);
-#endif
   if ((uint64_t)observed == *expected) {
     return 1;
   }
@@ -171,6 +216,23 @@ static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
                    : "memory");
 }
 
+static uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
+    CkProfileAtomicU32 *atomic, uint32_t value) {
+  uint32_t observed;
+  uint32_t next;
+  uint32_t status;
+  __asm__ volatile(
+      "0:\n"
+      "ldxr %w0, [%3]\n"
+      "add %w2, %w0, %w4\n"
+      "stxr %w1, %w2, [%3]\n"
+      "cbnz %w1, 0b\n"
+      : "=&r"(observed), "=&r"(status), "=&r"(next)
+      : "r"(&atomic->value), "r"(value)
+      : "memory");
+  return observed;
+}
+
 static int ck_profile_atomic_u32_compare_exchange_acq_rel(
     CkProfileAtomicU32 *atomic, uint32_t *expected, uint32_t desired) {
   const uint32_t expected_value = *expected;
@@ -197,6 +259,10 @@ static int ck_profile_atomic_u32_compare_exchange_acq_rel(
   }
   *expected = observed;
   return 0;
+}
+
+static void ck_profile_atomic_u64_initialize(CkProfileAtomicU64 *atomic) {
+  atomic->value = 0u;
 }
 
 static uint64_t
@@ -287,11 +353,21 @@ static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
   atomic_store_explicit(&atomic->value, value, memory_order_relaxed);
 }
 
+static uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
+    CkProfileAtomicU32 *atomic, uint32_t value) {
+  return atomic_fetch_add_explicit(&atomic->value, value,
+                                   memory_order_relaxed);
+}
+
 static int ck_profile_atomic_u32_compare_exchange_acq_rel(
     CkProfileAtomicU32 *atomic, uint32_t *expected, uint32_t desired) {
   return atomic_compare_exchange_strong_explicit(
       &atomic->value, expected, desired, memory_order_acq_rel,
       memory_order_acquire);
+}
+
+static void ck_profile_atomic_u64_initialize(CkProfileAtomicU64 *atomic) {
+  atomic_init(&atomic->value, 0u);
 }
 
 static uint64_t

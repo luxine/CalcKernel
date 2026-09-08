@@ -258,6 +258,7 @@ fn vector_module() -> KirModule {
             id: FunctionId::from_index(0),
             name: "vector_kernel".to_string(),
             exported: false,
+            tune_noinline: false,
             params: vec![
                 calckernel::KirParam {
                     value: ValueId::from_index(0),

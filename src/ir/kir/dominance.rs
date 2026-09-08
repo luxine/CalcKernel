@@ -259,6 +259,7 @@ mod tests {
             id: FunctionId::from_index(0),
             name: "cached".to_string(),
             exported: false,
+            tune_noinline: false,
             params: Vec::new(),
             return_type: crate::MirType::Void,
             regions: Vec::new(),

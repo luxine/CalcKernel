@@ -1032,9 +1032,8 @@ fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
     }
     for required in [
         "ATOMIC_LLONG_LOCK_FREE == 2",
-        "InterlockedCompareExchange",
-        "InterlockedExchange",
-        "InterlockedCompareExchange64",
+        "std::atomic_ref<uint32_t>",
+        "std::atomic_ref<uint64_t>",
         "#pragma intrinsic(_InterlockedCompareExchange)",
         "#pragma intrinsic(_InterlockedCompareExchange64)",
         "#pragma intrinsic(_InterlockedExchange)",
@@ -1924,6 +1923,16 @@ fn prevectorized_kir_loops_should_disable_redundant_llvm_unrolling() {
 }
 
 #[test]
+fn tuned_keep_out_of_line_should_reach_the_native_noinline_attribute() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    assert!(
+        lowering.contains("kir_function.tune_noinline")
+            && lowering.contains("handle.set_noinline()?"),
+        "a checked keep-out-of-line decision must survive KIR replay and reach LLVM"
+    );
+}
+
+#[test]
 fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
     let collector = read("native/profile_runtime/common/collector.c");
     let atomics = read("native/profile_runtime/include/ckc_profile_atomic.h");
@@ -1967,14 +1976,16 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
     }
     for required in [
         "defined(_M_ARM64)",
-        "InterlockedCompareExchange(\n      (volatile LONG *)&atomic->value, 0, 0)",
-        "InterlockedCompareExchange64(\n      (volatile LONG64 *)&atomic->value, 0, 0)",
-        "InterlockedExchange(&atomic->value, (LONG)value)",
-        "InterlockedExchangeAdd64(&atomic->value, (LONG64)value)",
+        "std::atomic_ref<uint32_t>",
+        "std::atomic_ref<uint64_t>",
+        "std::memory_order_acquire",
+        "std::memory_order_release",
+        "std::memory_order_relaxed",
+        "ck_profile_atomic_u64_initialize",
     ] {
         assert!(
             atomics.contains(required),
-            "Windows ARM64 profile atomics must use the existing kernel32 import closure: {required}"
+            "Windows ARM64 profile atomics must be compiler-inlined and lock-free: {required}"
         );
     }
     assert!(
@@ -1982,10 +1993,20 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
         "profile runtime provenance must bind the atomic portability layer"
     );
     assert!(
-        windows.contains("InterlockedIncrement(&serial)"),
-        "the Windows ARM64 run-id counter must use the existing kernel32 import"
+        windows.contains("ck_profile_atomic_u32_fetch_add_relaxed(&serial, 1u)"),
+        "the Windows ARM64 run-id counter must use the compiler-inlined atomic layer"
     );
-    for required in [
+    assert!(
+        collector.contains("ck_profile_atomic_u64_initialize(&ck_profile_state.counters[index])"),
+        "dynamically allocated C++20 atomic-ref storage must have an explicit object lifetime"
+    );
+    let profile_header = read("native/profile_runtime/include/ckc_profile_runtime.h");
+    assert!(
+        profile_header.contains("extern \"C\" {")
+            && profile_header.contains("defined(__cplusplus)"),
+        "the C++20 ARM64 profile runtime must preserve its private C ABI"
+    );
+    for forbidden in [
         "InterlockedCompareExchange",
         "InterlockedCompareExchange64",
         "InterlockedExchange",
@@ -1993,8 +2014,8 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
         "InterlockedIncrement",
     ] {
         assert!(
-            kernel32.lines().any(|line| line.trim() == required),
-            "kernel32 import definition is missing {required}"
+            !kernel32.lines().any(|line| line.trim() == forbidden),
+            "ARM64 kernel32.dll does not export the base interlocked entry point {forbidden}"
         );
     }
     let profile_compile = windows_bootstrap
@@ -2008,6 +2029,12 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
         profile_compile.contains("/Oi"),
         "the freestanding profile runtime must request intrinsic expansion explicitly"
     );
+    for required in ["/TP", "/std:c++20", "/GR-"] {
+        assert!(
+            profile_compile.contains(required),
+            "Windows ARM64 profile runtime must select the lock-free C++ atomic frontend: {required}"
+        );
+    }
     let dispatch_compile = windows_bootstrap
         .split_once("$dispatchRuntimeObject =")
         .expect("Windows dispatch runtime compile section")

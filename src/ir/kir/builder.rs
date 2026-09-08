@@ -348,6 +348,7 @@ fn build_function(
         id: function_id,
         name: function.name.clone(),
         exported: function.exported,
+        tune_noinline: false,
         params,
         return_type: function.return_type.clone(),
         regions,

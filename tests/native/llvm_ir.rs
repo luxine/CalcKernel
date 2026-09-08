@@ -2,9 +2,10 @@ use super::support::compiler::optimized_module;
 use calckernel::{
     BoundsMode, EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirFailureKind,
     KirInstructionKind, KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, NativeContext,
-    NativeOptimizationLevel, NativeStage, NativeTarget, OverflowMode, SourceFile, build_kir_module,
-    check, lower_native_kir_module, lower_to_mir, run_kir_pass_pipeline,
-    test_invalid_module_verification, test_named_void_call_module,
+    NativeOptimizationLevel, NativeStage, NativeTarget, OverflowMode, SourceFile,
+    TuneAlternativeClass, TuneAlternativePayload, apply_tuning_plan, build_kir_module, check,
+    enumerate_tuning_space, lower_native_kir_module, lower_to_mir, prepare_kir_pre_tune_state,
+    run_kir_pass_pipeline, test_invalid_module_verification, test_named_void_call_module,
 };
 
 fn structural_llvm(source_text: &str) -> String {
@@ -88,6 +89,84 @@ fn optimized_llvm(source_text: &str, level: NativeOptimizationLevel) -> String {
         .expect("PassBuilder and second verification")
         .to_ir_string()
         .expect("print optimized module")
+}
+
+#[test]
+fn tuned_keep_out_of_line_should_reach_llvm_noinline() {
+    let source = SourceFile::new(
+        "tune-noinline.ck",
+        "fn cold(value: u32) -> u32 { return value * 17; } export fn kernel(value: u32) -> u32 { return cold(value); }",
+    );
+    let checked = check(&source);
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let raw = build_kir_module(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::NativeLibrary,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+    )
+    .expect("KIR");
+    let state = prepare_kir_pre_tune_state(raw, None).expect("verified pre-tune state");
+    let space = enumerate_tuning_space(&state).expect("tuning space");
+    let (unit_index, variant_index) = space
+        .units
+        .iter()
+        .enumerate()
+        .find_map(|(unit_index, unit)| {
+            (unit.class == TuneAlternativeClass::Inlining)
+                .then(|| {
+                    unit.variants.iter().position(|variant| {
+                        matches!(
+                            variant.site_alternatives[0].payload,
+                            TuneAlternativePayload::Inlining {
+                                force_inline: false,
+                                ..
+                            }
+                        )
+                    })
+                })
+                .flatten()
+                .map(|variant_index| (unit_index, variant_index))
+        })
+        .expect("keep-out-of-line variant");
+    let plan = space
+        .plan_for_variant(&state, unit_index, variant_index)
+        .expect("derive plan")
+        .expect("non-baseline plan");
+    let replayed = apply_tuning_plan(&state, &space, &plan).expect("replay plan");
+    let replayed = run_kir_pass_pipeline(
+        replayed.module().clone(),
+        KirOptimizationLevel::O0,
+        replayed.contract_facts(),
+    );
+    assert!(replayed.errors.is_empty(), "{:?}", replayed.errors);
+    let context = NativeContext::new().expect("native context");
+    let target = NativeTarget::host().expect("host target");
+    let text = lower_native_kir_module(&context, &target, &replayed, &EmitLlvmOptions::default())
+        .expect("LLVM lowering")
+        .verify()
+        .expect("verify module")
+        .to_ir_string()
+        .expect("print module");
+
+    assert!(text.contains("call i32 @cold("), "{text}");
+    let cold_definition = text
+        .lines()
+        .find(|line| line.contains("define internal i32 @cold("))
+        .expect("cold definition");
+    let attributes = cold_definition
+        .split('#')
+        .nth(1)
+        .and_then(|suffix| suffix.split_whitespace().next())
+        .expect("cold attribute group");
+    assert!(
+        text.contains(&format!("attributes #{attributes} = {{ noinline")),
+        "{text}"
+    );
 }
 
 #[test]
