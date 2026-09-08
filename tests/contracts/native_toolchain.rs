@@ -1059,6 +1059,28 @@ fn profile_runtime_atomic_abstraction_should_compile_for_c11_and_msvc() {
 }
 
 #[test]
+fn unix_profile_runtime_should_inline_the_windows_only_u32_fetch_add_wrapper() {
+    let header = read("native/profile_runtime/include/ckc_profile_atomic.h");
+    let unix = header
+        .split_once("#elif defined(__aarch64__) && defined(__linux__)")
+        .expect("AArch64 Linux atomic branch")
+        .1;
+    let (aarch64_linux, generic_c11) = unix
+        .split_once("#else\n\n#include <stdatomic.h>")
+        .expect("generic C11 atomic branch");
+
+    for (name, branch) in [
+        ("AArch64 Linux", aarch64_linux),
+        ("generic C11", generic_c11),
+    ] {
+        assert!(
+            branch.contains("static inline uint32_t ck_profile_atomic_u32_fetch_add_relaxed"),
+            "the {name} branch must not emit an unused static function under -Werror"
+        );
+    }
+}
+
+#[test]
 fn profile_runtime_platforms_should_name_every_durable_failure_step() {
     let header = read("native/profile_runtime/include/ckc_profile_platform.h");
     let darwin = read("native/profile_runtime/platform/darwin.c");

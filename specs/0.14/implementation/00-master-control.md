@@ -52,6 +52,7 @@
 - `specs/0.14/review/implementation-blocker-57.md`
 - `specs/0.14/review/implementation-blocker-58.md`
 - `specs/0.14/review/implementation-blocker-59.md`
+- `specs/0.14/review/implementation-blocker-60.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -643,3 +644,15 @@ preparer 与当前验收文档重钉到独立修复提交
 旧身份作为证据；语言/公开 ABI、profile/schema 8/9、安全与 strict-FP 语义、优化与 tuning
 策略、target eligibility、性能/稳定性/size 门槛、timed work、样本、corpus、平台与
 required job matrix 均未改变。
+
+Superseded exact V0.14 run `34252240969` 随后在 AArch64 performance、native
+integration、Linux ARM64、Darwin ARM64 与 Linux x64 五个 required job 中一致于 prefix
+bootstrap 失败。完整日志均指向 `ck_profile_atomic_u32_fetch_add_relaxed`：该操作只供 Windows
+ARM64 run-id serial 使用，却在 AArch64 Linux 与 generic C11 分支生成未使用的 non-inline
+internal function，因而触发冻结的 `-Werror=unused-function`。复诊与闭环见
+`specs/0.14/review/implementation-blocker-60.md`：只把两个 Unix 分支的定义改为
+`static inline`，函数体、memory order、assembly、Windows 定义与全部门槛保持不变，并更新
+profile-runtime provenance digest。先红后绿的 branch-specific contract 与本机冻结 flags 的
+Darwin C11 直接编译均通过；语言/公开 ABI、profile/schema 8/9、优化与 tuning 策略、target
+eligibility、性能/稳定性/size 门槛、timed work、样本、corpus、平台与 required job matrix
+均未改变。

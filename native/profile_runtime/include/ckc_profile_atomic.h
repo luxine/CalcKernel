@@ -216,7 +216,7 @@ static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
                    : "memory");
 }
 
-static uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
+static inline uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
     CkProfileAtomicU32 *atomic, uint32_t value) {
   uint32_t observed;
   uint32_t next;
@@ -353,7 +353,7 @@ static void ck_profile_atomic_u32_store_relaxed(CkProfileAtomicU32 *atomic,
   atomic_store_explicit(&atomic->value, value, memory_order_relaxed);
 }
 
-static uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
+static inline uint32_t ck_profile_atomic_u32_fetch_add_relaxed(
     CkProfileAtomicU32 *atomic, uint32_t value) {
   return atomic_fetch_add_explicit(&atomic->value, value,
                                    memory_order_relaxed);
