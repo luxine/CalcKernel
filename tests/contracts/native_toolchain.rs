@@ -1238,6 +1238,28 @@ fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
 }
 
 #[test]
+fn windows_profile_runtime_should_not_treat_the_verbatim_root_as_a_component() {
+    let windows = read("native/profile_runtime/platform/windows.c");
+
+    for required in [
+        "static int ck_profile_root_characters(const wchar_t *path, int length)",
+        "const int root_characters = ck_profile_root_characters(path, length);",
+        "if (root_characters == 0) {\n    return 0;\n  }",
+        "if (index < root_characters)",
+        "path[2] == L'?'",
+        "ck_profile_is_separator(path[3])",
+        "path[4] == L'U'",
+        "path[5] == L'N'",
+        "path[6] == L'C'",
+    ] {
+        assert!(
+            windows.contains(required),
+            "Windows profile publication must preserve the canonical verbatim/UNC root while walking components: {required}"
+        );
+    }
+}
+
+#[test]
 fn unix_runtime_objects_should_omit_compiler_ident_sections() {
     let bootstrap = read("scripts/bootstrap-llvm.sh");
     let flags = bootstrap

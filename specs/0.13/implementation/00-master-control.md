@@ -402,3 +402,11 @@ Exact V0.13 run `34178811720` 的 x86-64 与 AArch64 performance jobs 随后在 
 record 创建唯一 workspace，并由 C、UBSan 与 Rust 三个 oracle 共享；差分范围、oracle、语言/公开
 ABI、strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性门槛、timed work、样本、corpus、平台
 与 required job matrix 均未改变。
+
+Exact V0.13 run `34182330156` 的 Windows x64 Native job `101923864121` 随后证明，Rust 在
+build 时嵌入的 `\\?\C:\...` canonical profile directory 被 Windows collector 错误地从 namespace
+separator 当作普通 component 遍历，四条真实 PGO CLI 路径因此都以固定 directory status 43 退出。
+复诊与闭环见 `specs/0.13/review/implementation-blocker-43.md`：runtime 现在先识别 drive、UNC、
+verbatim drive 与 verbatim UNC root，只从 root 后检查 component，全部后续 component/final directory
+的 no-follow、reparse 与 file identity 检查保持 fail closed。profile schema、语言/公开 ABI、安全语义、
+优化策略、性能/稳定性门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。

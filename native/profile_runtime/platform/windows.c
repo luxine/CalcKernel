@@ -79,13 +79,63 @@ static wchar_t *ck_profile_wide_path(const uint8_t *path, uint32_t length,
   return wide;
 }
 
+static int ck_profile_is_separator(wchar_t character) {
+  return character == L'/' || character == L'\\';
+}
+
+static int ck_profile_unc_root_characters(const wchar_t *path, int length,
+                                          int component_start) {
+  int completed_components = 0;
+  for (int index = component_start; index < length; ++index) {
+    if (!ck_profile_is_separator(path[index])) {
+      continue;
+    }
+    if (index == component_start) {
+      return 0;
+    }
+    ++completed_components;
+    component_start = index + 1;
+    if (completed_components == 2) {
+      return component_start;
+    }
+  }
+  return completed_components == 1 && component_start < length ? length : 0;
+}
+
+static int ck_profile_root_characters(const wchar_t *path, int length) {
+  if (length >= 7 && ck_profile_is_separator(path[0]) &&
+      ck_profile_is_separator(path[1]) && path[2] == L'?' &&
+      ck_profile_is_separator(path[3])) {
+    if (path[5] == L':' && ck_profile_is_separator(path[6])) {
+      return 7;
+    }
+    if (length >= 8 && path[4] == L'U' && path[5] == L'N' &&
+        path[6] == L'C' && ck_profile_is_separator(path[7])) {
+      return ck_profile_unc_root_characters(path, length, 8);
+    }
+    return 0;
+  }
+  if (length >= 3 && path[1] == L':' && ck_profile_is_separator(path[2])) {
+    return 3;
+  }
+  if (length >= 2 && ck_profile_is_separator(path[0]) &&
+      ck_profile_is_separator(path[1])) {
+    return ck_profile_unc_root_characters(path, length, 2);
+  }
+  return 0;
+}
+
 static int ck_profile_directory_identity(const wchar_t *path, int length,
                                          uint64_t first, uint64_t second) {
+  const int root_characters = ck_profile_root_characters(path, length);
+  if (root_characters == 0) {
+    return 0;
+  }
   for (int index = 0; index <= length; ++index) {
     if (index != length && path[index] != L'/' && path[index] != L'\\') {
       continue;
     }
-    if (index <= 2) {
+    if (index < root_characters) {
       continue;
     }
     wchar_t *mutable_path = (wchar_t *)path;
