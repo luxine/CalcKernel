@@ -135,6 +135,9 @@ write 与 hard 4 GiB deterministic LRU。完整 exact warm decision 可逐字节
 No command uploads workload、source、decision、measurement、profile 或 artifact data。
 Windows 上的 private tuning publication file 会在安装 protected owner-only ACL 前显式取得
 DACL 写入权限；如果 ACL 无法安装，则 fail closed 并删除未受保护的 initializer。
+Publication directory flush handle 按 `FlushFileBuffers` 要求请求读写权限。
+Directory open 或 flush 失败仍为 hard error；write-through rename 不能替代必需的
+durability barrier。
 
 ## Backend 与 effect matrix
 

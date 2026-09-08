@@ -24,6 +24,11 @@ native-toolchain --locked`。
 Distributed compiler archive 内嵌构建全部受支持 artifact 所需的 private generation/dispatch
 runtime object 与 notice；生成的 user artifact 仍保持 self-contained，不增加外部 runtime dependency。
 
+Windows ARM64 profile runtime 使用 `/forceInterlockedFunctions-` 编译，使 freestanding
+object 保留 baseline inline atomic，而不依赖 MSVC 默认生成的 CRT outline helper。
+Bootstrap 在接受 prefix 前检查已编译 object 的 undefined symbol，拒绝任何
+`_Interlocked*` import。此规则不提高受支持的 CPU baseline。
+
 macOS CI host 与 release artifact job 都必须在严格签名审计前，给实际 compiler 显式添加
 ad-hoc hardened-runtime 签名，且只使用仓库唯一 allow-JIT entitlement。打包的是这个已签名
 compiler，不能只验证带签名的临时副本。此步骤不是 Developer ID 签名或 notarization，

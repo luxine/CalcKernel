@@ -54,12 +54,15 @@
 - `specs/0.14/review/implementation-blocker-59.md`
 - `specs/0.14/review/implementation-blocker-60.md`
 - `specs/0.14/review/implementation-blocker-61.md`
+- `specs/0.14/review/implementation-blocker-62.md`
+- `specs/0.14/review/implementation-blocker-63.md`
+- `specs/0.14/review/implementation-blocker-64.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`8286b32174e33a4b874d71e8c17a5a605a382f0d`。两者之间的累计提交已按
+`f5dd9989245fd6d9e70babc95dcdf7af17ecb42f`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
@@ -682,3 +685,17 @@ AVX-512 而正确报告 runner capability/infrastructure failure，replacement r
 v4 worker。语言/公开 ABI、publication/schema 8/9、安全语义、优化与 tuning 策略、target
 eligibility、性能/稳定性/size 门槛、timed work、warmup、样本、corpus、平台与 required job
 matrix 均未改变。
+
+最新 exact V0.14 run `34281039339` 的 AArch64 replay 在不变的 `2.5` compile-time
+门槛失败；Windows PGO 的 verbatim-prefix 与 ARM64 outlined atomics 也需继承修复。
+当前 accepted V0.13 与 replay 已统一前移到
+`f5dd9989245fd6d9e70babc95dcdf7af17ecb42f`，manifest SHA-256 为
+`229fecf4dd95610ae67309b683142b53f014abf4db655611b188e8330aca11f3`。
+精确差异及完整 target/profile/digest 等价验证见 `implementation-blocker-63.md`；既有
+V0.14 tuning、publication、Unix runtime 修复保持不变，历史记录不改写。
+
+同一 run 的 Windows x64 publication 在 owner-only ACL 设置之后仍触发无上下文的
+AccessDenied。`implementation-blocker-64.md` 修复 directory flush handle 缺少
+`GENERIC_WRITE` 的 API 违约，并区分 open/flush error。两个 Windows job 在 LLVM
+bootstrap 前增加同一真实 publication selector，原 post-bootstrap native tests 全部保留。
+不忽略 directory barrier failure，不增加 CRT，不降低任何平台、硬件、性能或安全门槛。

@@ -601,6 +601,14 @@ struct TierSpec {
     fixture_cost_percent: u32,
 }
 
+#[cfg(feature = "native-toolchain")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KirMultiversionMaterializationSpec {
+    pub(crate) id: KirMultiversionTierId,
+    pub(crate) cpu: &'static str,
+    pub(crate) llvm_features: &'static [&'static str],
+}
+
 const X86_V3_FEATURES: &[&str] = &[
     "avx",
     "avx2",
@@ -718,6 +726,25 @@ fn expected_tiers(platform: KirMultiversionPlatform) -> Vec<KirMultiversionTierI
         }
         (KirTargetArchitecture::AArch64, _) => vec![Baseline],
     }
+}
+
+#[cfg(feature = "native-toolchain")]
+pub(crate) fn multiversion_materialization_specs(
+    platform: KirMultiversionPlatform,
+) -> Result<Vec<KirMultiversionMaterializationSpec>, String> {
+    expected_tiers(platform)
+        .into_iter()
+        .map(|id| {
+            let spec = tier_spec(platform, id).ok_or_else(|| {
+                "multiversion tier is outside the closed schema-1 table".to_string()
+            })?;
+            Ok(KirMultiversionMaterializationSpec {
+                id,
+                cpu: spec.cpu,
+                llvm_features: spec.llvm_features,
+            })
+        })
+        .collect()
 }
 
 fn fixture_profile(

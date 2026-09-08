@@ -164,6 +164,9 @@ measurement, profile, or artifact data.
 On Windows, private tuning publication files are created with explicit DACL-write
 access before their protected owner-only ACL is installed; inability to install
 that ACL fails closed and removes the unprotected initializer.
+Publication directory flush handles request read and write access, as required
+by `FlushFileBuffers`. A failed directory open or flush remains a hard error;
+write-through renames do not substitute for a required durability barrier.
 
 ## Backend and effect matrix
 

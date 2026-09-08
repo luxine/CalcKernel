@@ -81,6 +81,8 @@ class ReplayPreparation(unittest.TestCase):
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me")
 
     def test_exact_pins_are_accepted(self):
+        v013 = PREPARE.validate_pins(REPO, "0.13")
+        self.assertEqual(v013["commit"], PREPARE.V013_COMMIT)
         manifest = PREPARE.validate_pins(REPO)
         self.assertEqual(manifest["commit"], PREPARE.V012_COMMIT)
         self.assertEqual(manifest["llvm_version"], "22.1.8")

@@ -15,6 +15,8 @@ const WINDOWS_WRITE_DAC: u32 = 0x0004_0000;
 #[cfg(any(windows, test))]
 const WINDOWS_PRIVATE_CREATION_ACCESS: u32 =
     WINDOWS_GENERIC_READ | WINDOWS_GENERIC_WRITE | WINDOWS_WRITE_DAC;
+#[cfg(any(windows, test))]
+const WINDOWS_DIRECTORY_FLUSH_ACCESS: u32 = WINDOWS_GENERIC_READ | WINDOWS_GENERIC_WRITE;
 
 pub(crate) fn random_transaction_id() -> Result<[u8; 16], PublicationError> {
     let mut bytes = [0u8; 16];
@@ -288,9 +290,17 @@ pub(crate) fn sync_directory(path: &Path) -> Result<(), PublicationError> {
         use std::os::windows::fs::OpenOptionsExt;
         let directory = OpenOptions::new()
             .read(true)
+            .access_mode(WINDOWS_DIRECTORY_FLUSH_ACCESS)
             .custom_flags(0x0200_0000 | 0x0020_0000)
-            .open(path)?;
-        directory.sync_all()?;
+            .open(path)
+            .map_err(|error| {
+                PublicationError::Io(format!(
+                    "open Windows publication directory for flush: {error}"
+                ))
+            })?;
+        directory.sync_all().map_err(|error| {
+            PublicationError::Io(format!("flush Windows publication directory: {error}"))
+        })?;
         Ok(())
     }
     #[cfg(all(not(unix), not(windows)))]
@@ -687,7 +697,19 @@ mod windows_security {
 
 #[cfg(test)]
 mod tests {
-    use super::{WINDOWS_PRIVATE_CREATION_ACCESS, WINDOWS_WRITE_DAC};
+    use super::{
+        WINDOWS_DIRECTORY_FLUSH_ACCESS, WINDOWS_GENERIC_WRITE, WINDOWS_PRIVATE_CREATION_ACCESS,
+        WINDOWS_WRITE_DAC,
+    };
+
+    #[test]
+    fn windows_directory_flush_handle_has_write_access() {
+        assert_eq!(
+            WINDOWS_DIRECTORY_FLUSH_ACCESS & WINDOWS_GENERIC_WRITE,
+            WINDOWS_GENERIC_WRITE,
+            "FlushFileBuffers requires GENERIC_WRITE even for a directory handle"
+        );
+    }
 
     #[test]
     fn windows_private_creation_handle_can_replace_its_dacl() {

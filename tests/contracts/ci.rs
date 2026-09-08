@@ -903,3 +903,25 @@ fn ci_v014_predicated_update_should_gate_both_performance_hosts() {
         );
     }
 }
+
+#[test]
+fn ci_windows_publication_preflight_should_run_before_llvm_bootstrap() {
+    let workflow = read(".github/workflows/ci.yml");
+    let hosts = workflow
+        .split_once("  native-hosts:")
+        .expect("native host matrix")
+        .1
+        .split_once("  performance:")
+        .expect("native host boundary")
+        .0;
+    let bootstrap = hosts
+        .find("      - name: Bootstrap pinned host oracle")
+        .expect("bootstrap");
+    let preflight = hosts[..bootstrap]
+        .split_once("      - name: Verify Windows publication primitives before LLVM bootstrap")
+        .expect("Windows publication must be tested before the long LLVM build")
+        .1;
+    assert!(preflight.contains("if: runner.os == 'Windows'"));
+    assert!(preflight.contains("cargo test --locked --test tune publication_ -- --nocapture"));
+    assert!(!preflight.contains("continue-on-error"));
+}

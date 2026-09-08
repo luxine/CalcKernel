@@ -250,12 +250,19 @@ $profileRuntimePath = Join-Path $runtimeDir $profileRuntimeObject
 $profileRuntimeInclude = Join-Path $repoRoot "native/profile_runtime/include"
 $profileRuntimeRoot = Join-Path $repoRoot "native/profile_runtime"
 $profileRuntimeLanguage = if ($Target.StartsWith("aarch64")) {
-    @("/TP", "/std:c++20", "/GR-")
+    # MSVC 17.14 defaults Armv8.0 interlocked operations to CRT outline helpers.
+    # This freestanding runtime must retain baseline inline exclusive loops.
+    @("/TP", "/std:c++20", "/GR-", "/forceInterlockedFunctions-")
 } else {
     @("/TC")
 }
 & cl.exe /nologo /c @profileRuntimeLanguage /O2 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
 if ($LASTEXITCODE -ne 0) { throw "profile runtime compilation failed: $profileRuntimeSource" }
+$profileRuntimeUndefined = & (Join-Path $Prefix "bin/llvm-nm.exe") --undefined-only $profileRuntimePath
+if ($LASTEXITCODE -ne 0) { throw "profile runtime undefined-symbol audit failed" }
+if ($profileRuntimeUndefined -match '\b_Interlocked\w*\b') {
+    throw "freestanding profile runtime imports outlined interlocked helpers: $profileRuntimeUndefined"
+}
 $profileRuntimeHash = (Get-FileHash -LiteralPath $profileRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $dispatchRuntimeObject = "dispatch_runtime.obj"
 $dispatchRuntimeSource = Join-Path $repoRoot "native/dispatch_runtime/dispatch_runtime.c"

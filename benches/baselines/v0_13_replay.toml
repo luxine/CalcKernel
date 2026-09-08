@@ -1,7 +1,7 @@
 schema_version = 1
 version = "0.13.0"
-commit = "8286b32174e33a4b874d71e8c17a5a605a382f0d"
-compiler_identity = "calckernel 0.13.0 (8286b32174e33a4b874d71e8c17a5a605a382f0d)"
+commit = "f5dd9989245fd6d9e70babc95dcdf7af17ecb42f"
+compiler_identity = "calckernel 0.13.0 (f5dd9989245fd6d9e70babc95dcdf7af17ecb42f)"
 llvm_version = "22.1.8"
 rust_version = "1.90.0"
 cpu_policy = "native"
