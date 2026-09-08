@@ -259,7 +259,13 @@ fn reject_symlink_components(path: &Path) -> Result<(), CkProfileError> {
     let mut current = PathBuf::new();
     for component in absolute.components() {
         match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+            Component::Prefix(prefix) => {
+                // A verbatim drive prefix such as \\?\C: is not a complete
+                // filesystem path until the following RootDir is appended.
+                current.push(prefix.as_os_str());
+                continue;
+            }
+            Component::RootDir | Component::Normal(_) => {
                 current.push(component.as_os_str());
             }
             Component::CurDir => continue,

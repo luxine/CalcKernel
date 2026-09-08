@@ -30,10 +30,14 @@
   mutation/fuzz-style tests；full identity hex 是 canonical identity bytes 的完整 lowercase SHA-256。
 - [ ] merge 只接受 raw completed shards，拒绝 final/nested/symlink/duplicate/collision/mismatch；同 shard
   集顺序/路径不同 final bytes 相同，saturation/equation/unknown 规则正确。
+- [ ] merge/read/output 路径校验接受 Windows canonical verbatim drive path；不得把尚未附加
+  RootDir 的 Prefix 当作文件访问，完整 root 与普通组件仍逐项执行 no-follow 校验。
 - [ ] generate site/event exact；lock-free atomic64/overflow、directory no-follow+identity anchor、temp+
   fsync+validate+no-replace rename和 multi-process publication完整。
 - [ ] executable normal exit/automatic child failure事务正确；library 64-hex flush exactly-one/sticky/
   quiescence，unload/`DllMain` 无 I/O；ordinary/use artifact 不含 generation runtime/path/flush。
+- [ ] Windows ARM64 freestanding profile runtime 关闭 MSVC 默认 outlined interlocked helper；
+  bootstrap 对真实 object 执行 undefined-symbol audit，不引入 CRT 或提高 CPU baseline。
 
 ## D. Profile analysis 与 KIR 3
 
@@ -60,6 +64,8 @@
 
 - [ ] target set schema 1精确覆盖 x86 baseline/v3/v4、Linux AArch64 baseline/SVE/SVE2、Darwin/
   Windows AArch64 baseline-only；完整硬件+OS state predicate与 canonical digest。
+- [ ] Native target materialization 只读取 closed tier descriptor，不构造后丢弃 synthetic cost
+  profile；复用 baseline TargetMachine 后完整 target set/profile/digest 与显式重建结果相等。
 - [ ] eligible root benefit >=10%且>=2 units，每 root最多两个 enhanced，全部从同一 baseline pre-state；
   additional unique normalized KIR-body <= baseline units，仅 profile/tier hidden name 不同且规范化后逐字节
   一致的 member 共享 body charge，真实结构差异完整计费；独立 target module/object/audit 与 artifact gate

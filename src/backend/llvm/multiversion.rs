@@ -3,8 +3,8 @@ use crate::{
     KirConsumer, KirMultiversionBundle, KirMultiversionPlanningRequest, KirMultiversionPlatform,
     KirMultiversionTargetSet, KirMultiversionTargetTier, KirMultiversionTierId,
     KirOptimizationLevel, KirPassManagerResult, check_kir_multiversion_bundle,
-    checked_multiversion_variant_result, materialized_tier, project_pgo_plan_for_kir,
-    run_kir_pass_pipeline,
+    checked_multiversion_variant_result, materialized_tier, multiversion_materialization_specs,
+    project_pgo_plan_for_kir, run_kir_pass_pipeline,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -389,18 +389,24 @@ impl NativeMultiversionTargetSet {
         let baseline = NativeTarget::host_with_cpu(super::NativeCpu::Multiversion)?;
         let triple = baseline.triple()?;
         let platform = KirMultiversionPlatform::from_triple(&triple).map_err(error)?;
-        let fixture =
-            KirMultiversionTargetSet::schema1_for_triple(&triple, consumer).map_err(error)?;
-        drop(baseline);
+        let specs = multiversion_materialization_specs(platform).map_err(error)?;
+        let mut baseline = Some(baseline);
 
-        let mut targets = Vec::with_capacity(fixture.tiers.len());
-        let mut tiers = Vec::with_capacity(fixture.tiers.len());
-        for descriptor in fixture.tiers {
-            let target = NativeTarget::explicit_multiversion(
-                &triple,
-                &descriptor.cpu,
-                &descriptor.llvm_features,
-            )?;
+        let mut targets = Vec::with_capacity(specs.len());
+        let mut tiers = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let features = spec
+                .llvm_features
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let target = if spec.id == KirMultiversionTierId::Baseline {
+                baseline
+                    .take()
+                    .ok_or_else(|| error("multiversion baseline target is duplicated"))?
+            } else {
+                NativeTarget::explicit_multiversion(&triple, spec.cpu, &features)?
+            };
             if target.triple()? != triple {
                 return Err(error(
                     "explicit multiversion TargetMachine changed the host triple",
@@ -413,7 +419,7 @@ impl NativeMultiversionTargetSet {
             let bridge_identity = bridge_identity.unwrap_or_default().to_string();
             let tier = materialized_tier(
                 platform,
-                descriptor.id,
+                spec.id,
                 triple.clone(),
                 data_layout,
                 profile,
@@ -421,8 +427,11 @@ impl NativeMultiversionTargetSet {
                 bridge_identity,
             )
             .map_err(error)?;
-            targets.push((descriptor.id, target));
+            targets.push((spec.id, target));
             tiers.push(tier);
+        }
+        if baseline.is_some() {
+            return Err(error("multiversion target set has no baseline tier"));
         }
         let target_set = KirMultiversionTargetSet::from_materialized(platform, consumer, tiers)
             .map_err(error)?;
@@ -456,4 +465,88 @@ fn error(message: impl Into<String>) -> NativeError {
 
 fn object_error(message: impl Into<String>) -> NativeError {
     NativeError::new(NativeStage::Object, 1, message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn materialization_specs_should_match_every_closed_platform_fixture() {
+        for triple in [
+            "x86_64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "x86_64-pc-windows-msvc",
+            "aarch64-unknown-linux-gnu",
+            "aarch64-apple-darwin",
+            "aarch64-pc-windows-msvc",
+        ] {
+            let platform = KirMultiversionPlatform::from_triple(triple).expect("platform");
+            let specs = multiversion_materialization_specs(platform).expect("closed descriptors");
+            for consumer in [KirConsumer::NativeLibrary, KirConsumer::NativeExecutable] {
+                let fixture = KirMultiversionTargetSet::schema1_for_triple(triple, consumer)
+                    .expect("closed fixture");
+                let observed = specs
+                    .iter()
+                    .map(|spec| (spec.id, spec.cpu, spec.llvm_features.to_vec()))
+                    .collect::<Vec<_>>();
+                let expected = fixture
+                    .tiers
+                    .iter()
+                    .map(|tier| {
+                        (
+                            tier.id,
+                            tier.cpu.as_str(),
+                            tier.llvm_features
+                                .iter()
+                                .map(String::as_str)
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(observed, expected, "{triple} {consumer:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn reused_host_target_set_should_equal_explicit_target_materialization() {
+        for consumer in [KirConsumer::NativeLibrary, KirConsumer::NativeExecutable] {
+            let reused = NativeMultiversionTargetSet::host(consumer).expect("host target set");
+            let triple = &reused.target_set.tiers[0].triple;
+            let fixture = KirMultiversionTargetSet::schema1_for_triple(triple, consumer)
+                .expect("closed fixture");
+            let mut tiers = Vec::new();
+            for descriptor in fixture.tiers {
+                let target = NativeTarget::explicit_multiversion(
+                    triple,
+                    &descriptor.cpu,
+                    &descriptor.llvm_features,
+                )
+                .expect("explicit target");
+                let profile = target
+                    .kir_profile(consumer)
+                    .expect("explicit target profile");
+                let (llvm, bridge) = profile.producer_identity();
+                let llvm = llvm.expect("LLVM identity").to_string();
+                let bridge = bridge.expect("bridge identity").to_string();
+                tiers.push(
+                    materialized_tier(
+                        fixture.platform,
+                        descriptor.id,
+                        target.triple().expect("triple"),
+                        target.data_layout().expect("layout"),
+                        profile,
+                        llvm,
+                        bridge,
+                    )
+                    .expect("explicit tier"),
+                );
+            }
+            let expected =
+                KirMultiversionTargetSet::from_materialized(fixture.platform, consumer, tiers)
+                    .expect("explicit target set");
+            assert_eq!(reused.target_set, expected, "{triple} {consumer:?}");
+        }
+    }
 }

@@ -32,6 +32,12 @@ objects and their required notices so it can build every supported artifact,
 but generated user artifacts remain self-contained and gain no new external
 runtime dependency.
 
+The Windows ARM64 profile runtime is compiled with
+`/forceInterlockedFunctions-`: its freestanding object must use baseline inline
+atomics, not MSVC's default outlined CRT helpers. Bootstrap checks the compiled
+object's undefined symbols and rejects any `_Interlocked*` import before the
+prefix is accepted. This does not raise the supported CPU baseline.
+
 Both macOS CI hosts and release artifact jobs explicitly ad-hoc sign the actual
 compiler with hardened runtime and the repository's sole allow-JIT entitlement
 before strict signature audits. The signed compiler is the one packaged; testing

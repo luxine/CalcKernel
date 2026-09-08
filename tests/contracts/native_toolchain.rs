@@ -1278,6 +1278,38 @@ fn windows_profile_runtime_should_not_treat_the_verbatim_root_as_a_component() {
 }
 
 #[test]
+fn windows_profile_runtime_flags_should_disable_outlined_atomics_only_on_arm64() {
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let flags = bootstrap
+        .split_once("$profileRuntimeLanguage =")
+        .expect("profile runtime frontend flags")
+        .1
+        .split_once("& cl.exe")
+        .expect("profile runtime compiler invocation")
+        .0;
+    for (target, expected) in [
+        ("aarch64-pc-windows-msvc", true),
+        ("x86_64-pc-windows-msvc", false),
+    ] {
+        let script = format!(
+            "$Target = '{target}'; $profileRuntimeLanguage = {flags}; $profileRuntimeLanguage -join '|'"
+        );
+        let output = std::process::Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-Command", &script])
+            .output()
+            .expect("execute actual Windows profile runtime flags");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout)
+                .split('|')
+                .any(|flag| flag.trim() == "/forceInterlockedFunctions-"),
+            expected,
+            "{target}: freestanding ARM64 atomics must not import CRT outline helpers"
+        );
+    }
+}
+
+#[test]
 fn windows_arm64_profile_runtime_should_use_cpp_compatible_win32_nulls() {
     let windows = read("native/profile_runtime/platform/windows.c");
 

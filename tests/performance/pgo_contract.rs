@@ -180,6 +180,22 @@ fn multiversion_source_to_object_should_not_repeat_checked_frontend_work() {
 }
 
 #[test]
+fn multiversion_target_materialization_should_not_build_discarded_fixture_profiles() {
+    let native = read("src/backend/llvm/multiversion.rs");
+    let host = &native[native
+        .find("impl NativeMultiversionTargetSet")
+        .expect("native multiversion target implementation")
+        ..native
+            .find("fn error(message")
+            .expect("native multiversion error boundary")];
+
+    assert!(
+        !host.contains("schema1_for_triple"),
+        "Native target materialization must not build and discard complete synthetic cost profiles"
+    );
+}
+
+#[test]
 fn checked_multiversion_emission_should_not_repeat_variant_evidence_validation() {
     let pipeline = read("src/optimizer/kir_pipeline.rs");
     let native = read("src/backend/llvm/multiversion.rs");

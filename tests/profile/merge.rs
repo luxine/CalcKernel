@@ -3,10 +3,33 @@ use std::fs;
 use calckernel::{
     CkProfileCounter, CkProfileCounterRecord, CkProfileError, CkProfileSiteDescriptor,
     CkProfileSiteId, CkProfileSiteKind, merge_profile_inputs, profile_site_table_digest,
-    serialize_profile, serialize_profile_shard, validate_profile_output_path,
+    read_profile_input, serialize_profile, serialize_profile_shard, validate_profile_output_path,
 };
 
 use super::{fixture_identity, fixture_shard, test_root};
+
+#[test]
+fn profile_merge_and_read_should_accept_canonical_paths() {
+    let root = test_root("canonical");
+    fs::create_dir_all(&root).expect("create canonical profile fixture");
+    // Windows canonicalization adds a verbatim drive prefix, including for
+    // short paths. Exercise the same path form as the PGO build transaction.
+    let root = fs::canonicalize(root).expect("canonical profile root");
+    let shard = fixture_shard(1, 3);
+    fs::write(
+        root.join("run.ckprof-part"),
+        serialize_profile_shard(&shard).expect("serialize shard"),
+    )
+    .expect("write shard");
+    let merged = merge_profile_inputs(std::slice::from_ref(&root)).expect("merge canonical path");
+    let destination = root.join("result.ckprof");
+    validate_profile_output_path(&destination).expect("validate canonical output path");
+    fs::write(&destination, &merged.profile_bytes).expect("write terminal profile");
+    let (profile, bytes) = read_profile_input(&destination).expect("read canonical profile");
+    fs::remove_dir_all(root).expect("remove canonical profile fixture");
+
+    assert_eq!((profile, bytes), (merged.profile, merged.profile_bytes));
+}
 
 #[test]
 fn profile_merge_should_reject_duplicate_run_identity() {
