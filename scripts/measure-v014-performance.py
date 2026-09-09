@@ -1407,6 +1407,7 @@ def full_report(output: pathlib.Path) -> dict:
     evidence = output.parent / stamp
     evidence.mkdir(parents=True, exist_ok=False)
     retained = prepare_full_retained(evidence)
+    hardware_evidence = full_hardware(candidate_sha, retained["target"])
     candidate_path = evidence / retained["candidate"]["path"]
     replay_path = evidence / retained["replay"]["compiler"]["path"]
     cases = parse_cases()
@@ -1593,7 +1594,7 @@ def full_report(output: pathlib.Path) -> dict:
             "clangBinary": retained["clang"], "clangProfileRuntime": retained["clangRuntime"],
             "rustCompiler": retained["rustc"], "systemLinker": retained["systemLinker"],
         },
-        "hardware": full_hardware(candidate_sha, retained["target"]),
+        "hardware": hardware_evidence,
         "recipe": recipe(recipe_files), "candidateBinary": retained["candidate"],
         "v013ReplayBundle": retained["replay"],
         "cumulativeSchemaEight": retained["cumulative"],

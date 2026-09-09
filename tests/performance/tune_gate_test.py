@@ -315,6 +315,31 @@ class SchemaNineContractTests(unittest.TestCase):
             ):
                 measure.full_hardware("a" * 40, "x86_64-unknown-linux-gnu")
 
+    def test_full_collection_checks_hardware_before_tuning_setup(self):
+        events = []
+
+        def reject_hardware(*_arguments):
+            events.append("hardware")
+            raise ValueError("missing required hardware")
+
+        def stop_before_tuning():
+            events.append("tuning setup")
+            raise ValueError("unexpected tuning setup")
+
+        retained = {
+            "target": "x86_64-unknown-linux-gnu",
+            "candidate": {"path": "candidate"},
+            "replay": {"compiler": {"path": "replay"}},
+        }
+        with patch.object(measure.platform, "system", return_value="Linux"), \
+                patch.object(measure, "git_sha", return_value="a" * 40), \
+                patch.object(measure, "prepare_full_retained", return_value=retained), \
+                patch.object(measure, "full_hardware", side_effect=reject_hardware), \
+                patch.object(measure, "parse_cases", side_effect=stop_before_tuning):
+            with self.assertRaises(ValueError):
+                measure.full_report(pathlib.Path(self.temporary.name) / "full/results.json")
+        self.assertEqual(events, ["hardware"])
+
     def test_path_root_symlink_and_unretained_claims_fail_closed(self):
         self.reject(
             lambda report: report["candidateBinary"].__setitem__("path", "../candidate"),
