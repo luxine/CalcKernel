@@ -522,6 +522,25 @@ fn x86_v4_integer_maps_should_authorize_full_avx512_width() {
 }
 
 #[test]
+fn x86_v4_integer_maps_should_bound_scalar_tail_to_one_vector() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let handoff = bridge
+        .split("void attach_x86_v4_compute_loop_width")
+        .nth(1)
+        .expect("v4 schedule handoff")
+        .split("void attach_x86_constant_call_map_schedule")
+        .next()
+        .expect("v4 schedule body");
+    assert!(
+        handoff.contains("llvm.loop.interleave.count")
+            && handoff.contains("CKC_X86_V4_I32_INTERLEAVE"),
+        "full-width integer maps must not multiply their scalar epilogue bound by LLVM's default interleave"
+    );
+    assert!(bridge.contains("constexpr uint32_t CKC_X86_V4_I32_INTERLEAVE = 1;"));
+    assert!(read("src/cli/commands.rs").contains("x86-v4-i32-map-tail-width-16-v1"));
+}
+
+#[test]
 fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");

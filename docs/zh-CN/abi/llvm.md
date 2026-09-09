@@ -81,6 +81,8 @@ Generic AArch64 SVE/SVE2 member 只为 scheduling 使用固定 `neoverse-n2` LLV
 vectorization。该规则排除 call、checked overflow、volatile/atomic memory、已有 vector 与
 已有 loop schedule；LLVM 仍检查 vectorization legality。baseline 与 v3 member 保留各自的
 width policy。
+这些 full-width integer map 请求单路 interleave，避免第二层展开倍数将完整 vector
+留给扩大后的 scalar tail。strict-f64 schedule 与所有 scalar remainder 正确性检查不变。
 
 named-object bundle 可链接为 executable、dynamic library 或 static archive。multiversion object
 output 会拒绝，因为 0.14 不定义 partial-link bundle contract；baseline/native single-version

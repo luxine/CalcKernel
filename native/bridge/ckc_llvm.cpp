@@ -1868,6 +1868,7 @@ constexpr uint32_t CKC_X86_CONSTANT_MAP_INTERLEAVE = 1;
 constexpr uint32_t CKC_X86_CONSTANT_MAP_UNROLL = 5;
 constexpr uint32_t CKC_X86_V4_F64_VECTOR_WIDTH = 8;
 constexpr uint32_t CKC_X86_V4_I32_VECTOR_WIDTH = 16;
+constexpr uint32_t CKC_X86_V4_I32_INTERLEAVE = 1;
 constexpr uint32_t CKC_X86_V4_COMPUTE_MIN_F64_OPS = 8;
 constexpr uint32_t CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH = 4;
 constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
@@ -2237,7 +2238,19 @@ void attach_x86_v4_compute_loop_width(
                 {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
                  llvm::ConstantAsMetadata::get(llvm::ConstantInt::getTrue(
                      context))});
-            llvm::Metadata *operands[] = {nullptr, width, enable};
+            llvm::SmallVector<llvm::Metadata *, 4> operands{
+                nullptr, width, enable};
+            if (vector_width == CKC_X86_V4_I32_VECTOR_WIDTH) {
+                // A four-way interleave leaves up to 63 scalar iterations even
+                // when one complete 16-lane vector remains. Keep independent
+                // integer maps full-width without multiplying that tail bound.
+                operands.push_back(llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                     llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                         llvm::Type::getInt32Ty(context),
+                         CKC_X86_V4_I32_INTERLEAVE))}));
+            }
             auto *loop_id = llvm::MDNode::getDistinct(context, operands);
             loop_id->replaceOperandWith(0, loop_id);
             for (llvm::BasicBlock *latch : latches) {

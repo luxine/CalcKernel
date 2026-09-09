@@ -257,6 +257,13 @@ checked overflow/call/volatile/atomic/vector 的 scalar wrapping i32 map 请求�
 并推进 multiversion codegen cache identity。Native x86 实际发射与完整性能验收仍由新
 exact-SHA CI 判定；全部门槛、timed work、样本、corpus、平台与 required jobs 不变。
 
+`4add2257` 的独立 run `34305409171` 与 V0.14 run `34307207415` 中的 exact replay
+进一步定位到 full-width integer map 的 LLVM 默认四路 interleave：每轮 64 个元素，
+却将至多 63 个元素留给纯 scalar tail。见
+`specs/0.13/review/implementation-blocker-50.md`：只将该既有受限 v4 integer schedule
+的 interleave 固定为 1，仍保留十六路 vector、完整 legality 与 baseline/v3/f64 policy。
+新的 exact-SHA CI 仍须完成性能验收，未更改任何采样或门槛。
+
 同一 exact run 的 AArch64 performance job `101509032163` 随后通过 schema 7，却以
 `1.01545 < 1.08` 未通过 schema 8 的 dispatch geometric-improvement gate；V0.14 exact replay
 job `101510076457` 在准备阶段精确复现该失败。复诊与闭环见

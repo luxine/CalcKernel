@@ -317,66 +317,87 @@ mod tests {
 
         let host = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("host target");
         let triple = host.triple().expect("host triple");
-        for (cpu, features, width) in [
-            ("x86-64", vec![], 4),
+        for (fixture, source) in [
             (
-                "x86-64-v3",
-                vec!["+avx2".to_string(), "+fma".to_string()],
-                8,
-            ),
-            (
-                "x86-64-v4",
-                vec!["+avx512f".to_string(), "+avx512vl".to_string()],
-                16,
-            ),
-        ] {
-            let target = NativeTarget::explicit_multiversion(&triple, cpu, &features)
-                .expect("explicit x86 target");
-            let checked = check(&SourceFile::new(
                 "integer-map.ck",
                 include_str!("../../../benches/oracles/fixtures/map_u32.ck"),
-            ));
-            assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-            let mir = lower_to_mir(&checked.checked_program).expect("integer-map MIR");
-            let kir = build_kir_module_with_profile(
-                &mir,
-                KirBuildConfig {
-                    consumer: KirConsumer::NativeLibrary,
-                    overflow_mode: KirOverflowMode::Unchecked,
-                    bounds_mode: KirBoundsMode::Unchecked,
-                    sanitizer_mode: KirSanitizerMode::Disabled,
-                },
+            ),
+            (
+                "integer-zip.ck",
+                include_str!("../../../benches/oracles/fixtures/zip_u32.ck"),
+            ),
+        ] {
+            for (cpu, features, width) in [
+                ("x86-64", vec![], 4),
+                (
+                    "x86-64-v3",
+                    vec!["+avx2".to_string(), "+fma".to_string()],
+                    8,
+                ),
+                (
+                    "x86-64-v4",
+                    vec!["+avx512f".to_string(), "+avx512vl".to_string()],
+                    16,
+                ),
+            ] {
+                let target = NativeTarget::explicit_multiversion(&triple, cpu, &features)
+                    .expect("explicit x86 target");
+                let checked = check(&SourceFile::new(fixture, source));
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                let mir = lower_to_mir(&checked.checked_program).expect("integer-map MIR");
+                let kir = build_kir_module_with_profile(
+                    &mir,
+                    KirBuildConfig {
+                        consumer: KirConsumer::NativeLibrary,
+                        overflow_mode: KirOverflowMode::Unchecked,
+                        bounds_mode: KirBoundsMode::Unchecked,
+                        sanitizer_mode: KirSanitizerMode::Disabled,
+                    },
+                    target
+                        .kir_profile(KirConsumer::NativeLibrary)
+                        .expect("x86 profile"),
+                )
+                .expect("integer-map KIR");
+                let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
+                    .expect("integer-map contracts");
+                // O2 retains the scalar loop, as the multiversion KIR handoff does.
+                let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O2, Some(&contracts));
+                assert!(result.errors.is_empty(), "{:?}", result.errors);
+                let context = NativeContext::new().expect("native context");
+                let module = lower_native_kir_module(
+                    &context,
+                    &target,
+                    &result,
+                    &EmitLlvmOptions::default(),
+                )
+                .expect("lower integer map")
+                .verify()
+                .expect("verify integer map")
+                .audit()
+                .expect("audit integer map")
+                .optimize(&target, NativeOptimizationLevel::O3)
+                .expect("optimize integer map");
+                let ir = module.to_ir_string().expect("optimized integer-map IR");
+                assert!(ir.contains(&format!("<{width} x i32>")), "{cpu}:\n{ir}");
+                if width < 16 {
+                    assert!(
+                        !ir.contains("<16 x i32>"),
+                        "{cpu} must not acquire v4 width:\n{ir}"
+                    );
+                } else {
+                    assert!(
+                        ir.lines().any(|line| {
+                            line.contains(" = and ")
+                                && (line.trim_end().ends_with(", -16")
+                                    || line.trim_end().ends_with(", 4294967280"))
+                        }),
+                        "{fixture}: full-width v4 must round its vector trip count to 16, not 64:\n{ir}"
+                    );
+                }
                 target
-                    .kir_profile(KirConsumer::NativeLibrary)
-                    .expect("x86 profile"),
-            )
-            .expect("integer-map KIR");
-            let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
-                .expect("integer-map contracts");
-            // O2 retains the scalar loop, as the multiversion KIR handoff does.
-            let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O2, Some(&contracts));
-            assert!(result.errors.is_empty(), "{:?}", result.errors);
-            let context = NativeContext::new().expect("native context");
-            let module =
-                lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
-                    .expect("lower integer map")
-                    .verify()
-                    .expect("verify integer map")
-                    .audit()
-                    .expect("audit integer map")
-                    .optimize(&target, NativeOptimizationLevel::O3)
-                    .expect("optimize integer map");
-            let ir = module.to_ir_string().expect("optimized integer-map IR");
-            assert!(ir.contains(&format!("<{width} x i32>")), "{cpu}:\n{ir}");
-            if width < 16 {
-                assert!(
-                    !ir.contains("<16 x i32>"),
-                    "{cpu} must not acquire v4 width:\n{ir}"
-                );
+                    .emit_object(module)
+                    .expect("emit exact-tier integer map");
             }
-            target
-                .emit_object(module)
-                .expect("emit exact-tier integer map");
         }
     }
 
