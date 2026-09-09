@@ -327,6 +327,22 @@ fn compile_kir_with_vector_policy(
         ))
     .then(|| prepare_kir_pre_tune_state(kir.clone(), Some(&contracts)))
     .transpose()?;
+    #[cfg(feature = "native-toolchain")]
+    if args.tune_use.is_some()
+        && !defer_native_vectorization
+        && !args.print_facts
+        && !args.print_effect_summaries
+        && !args.explain_optimization
+        && let Some(state) = pre_tune.as_ref()
+    {
+        // Explicit replay needs the verified checkpoint and ABI surface, not
+        // an ordinary O3 suffix whose optimized module it would discard.
+        // Inspection requests retain their complete ordinary report below.
+        let result = pass_result_from_verified_tuning_state(state, None)?;
+        return Ok(CompiledKir { result, pre_tune });
+    }
+    #[cfg(all(test, feature = "native-toolchain"))]
+    replay_preparation_tests::ORDINARY_SUFFIXES.with(|count| count.set(count.get() + 1));
     let result = if defer_native_vectorization {
         run_kir_multiversion_pass_pipeline(kir, level, Some(&contracts))
     } else {
@@ -2524,4 +2540,104 @@ pub(super) fn validate_source_file_extension(input: &str) -> Result<(), String> 
     }
 
     Ok(())
+}
+
+#[cfg(all(test, feature = "native-toolchain"))]
+mod replay_preparation_tests {
+    use super::*;
+
+    thread_local! {
+        pub(super) static ORDINARY_SUFFIXES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn compile_fixture(tune_use: bool, inspection: Option<&str>) -> CompiledKir {
+        let checked = check(&SourceFile::new(
+            "replay-prepare.ck",
+            include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
+        ));
+        assert!(checked.diagnostics.is_empty());
+        let mut arguments = vec![
+            "replay-prepare.ck",
+            "--out",
+            "unused",
+            "--kind",
+            "dynamic",
+            "--cpu",
+            "native",
+            "-O3",
+        ];
+        if tune_use {
+            arguments.extend(["--tune-use", "retained.cktune"]);
+        }
+        if let Some(flag) = inspection {
+            arguments.push(flag);
+        }
+        let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let args = ParsedArgs::parse("build", &arguments).expect("args");
+        let target = NativeTarget::host_with_cpu(NativeCpu::Native).expect("target");
+        ORDINARY_SUFFIXES.with(|count| count.set(0));
+        compile_kir(
+            &checked.checked_program,
+            KirCompilationTarget {
+                consumer: KirConsumer::NativeLibrary,
+                profile: Some(
+                    target
+                        .kir_profile(KirConsumer::NativeLibrary)
+                        .expect("profile"),
+                ),
+            },
+            OverflowMode::Unchecked,
+            BoundsMode::Unchecked,
+            3,
+            false,
+            &args,
+        )
+        .expect("verified KIR")
+    }
+
+    #[test]
+    fn explicit_replay_should_prepare_without_an_unused_ordinary_kir_suffix() {
+        let prepared = compile_fixture(true, None);
+        assert_eq!(ORDINARY_SUFFIXES.with(std::cell::Cell::get), 0);
+        assert_eq!(
+            prepared.result.artifact.as_ref(),
+            prepared
+                .pre_tune
+                .as_ref()
+                .map(KirVerifiedProgramState::module)
+        );
+    }
+
+    #[test]
+    fn ordinary_compilation_should_keep_its_full_kir_pipeline() {
+        let compiled = compile_fixture(false, None);
+        assert_eq!(ORDINARY_SUFFIXES.with(std::cell::Cell::get), 1);
+        assert_ne!(
+            compiled.result.artifact.as_ref(),
+            compiled
+                .pre_tune
+                .as_ref()
+                .map(KirVerifiedProgramState::module)
+        );
+    }
+
+    #[test]
+    fn explicit_replay_inspection_should_keep_the_complete_ordinary_report() {
+        for flag in [
+            "--print-facts",
+            "--print-effect-summaries",
+            "--explain-optimization",
+        ] {
+            let compiled = compile_fixture(true, Some(flag));
+            assert_eq!(ORDINARY_SUFFIXES.with(std::cell::Cell::get), 1, "{flag}");
+            assert_ne!(
+                compiled.result.artifact.as_ref(),
+                compiled
+                    .pre_tune
+                    .as_ref()
+                    .map(KirVerifiedProgramState::module),
+                "{flag}"
+            );
+        }
+    }
 }

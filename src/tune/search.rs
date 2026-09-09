@@ -57,9 +57,22 @@ pub fn run_checked_tuning_search(
     checked: &CheckedTuningSpace<'_>,
     budget: TuneBudget,
 ) -> Result<SearchFrontier, TuningPlanError> {
-    let space = checked.space();
+    let mut replay = checked.search_replay();
+    search_with_replay(checked.space(), budget, |selections| {
+        replay.derive(selections)
+    })
+}
+
+type Selections = [([u8; 32], [u8; 32])];
+type ReplayResult = Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError>;
+
+fn search_with_replay(
+    space: &TuningSpace,
+    budget: TuneBudget,
+    mut replay: impl FnMut(&Selections) -> ReplayResult,
+) -> Result<SearchFrontier, TuningPlanError> {
     let contract = budget.contract();
-    let (baseline_plan, baseline_state) = checked.derive(&[])?;
+    let (baseline_plan, baseline_state) = replay(&[])?;
     let baseline = metrics_for(&baseline_state, baseline_plan)?;
     let mut beam = vec![baseline.clone()];
     let mut expansions = Vec::new();
@@ -77,7 +90,7 @@ pub fn run_checked_tuning_search(
                 }
                 let ordinal =
                     u32::try_from(expansions.len()).map_err(|_| TuningPlanError::ResourceLimit)?;
-                let derived = match extend_plan(checked, &parent, unit, variant.variant_id) {
+                let derived = match extend_plan(&mut replay, &parent, unit, variant.variant_id) {
                     Ok(derived) => derived,
                     Err(TuningPlanError::IllegalAlternative(_)) => {
                         expansions.push(ExpansionRecord {
@@ -153,7 +166,7 @@ pub fn run_checked_tuning_search(
 }
 
 fn extend_plan(
-    checked: &CheckedTuningSpace<'_>,
+    replay: &mut impl FnMut(&Selections) -> ReplayResult,
     parent: &TuningPlan,
     unit: &TuneUnit,
     variant_id: [u8; 32],
@@ -164,7 +177,7 @@ fn extend_plan(
         .map(|choice| (choice.unit_id, choice.variant_id))
         .collect::<Vec<_>>();
     selections.push((unit.unit_id, variant_id));
-    let (plan, replayed) = checked.derive(&selections)?;
+    let (plan, replayed) = replay(&selections)?;
     metrics_for(&replayed, plan)
 }
 
@@ -279,4 +292,106 @@ fn plan_rank(left: &TuningPlan, right: &TuningPlan) -> std::cmp::Ordering {
             right_pairs,
             right.digest,
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_state(source: &str) -> KirVerifiedProgramState {
+        let checked = crate::check(&crate::SourceFile::new("search-equivalence.ck", source));
+        assert!(checked.diagnostics.is_empty());
+        let mir = crate::lower_to_mir(&checked.checked_program).expect("MIR");
+        #[cfg(feature = "native-toolchain")]
+        let (consumer, profile) = {
+            let consumer = crate::KirConsumer::NativeLibrary;
+            let target =
+                crate::NativeTarget::host_with_cpu(crate::NativeCpu::Native).expect("target");
+            (
+                consumer,
+                Some(target.kir_profile(consumer).expect("profile")),
+            )
+        };
+        #[cfg(not(feature = "native-toolchain"))]
+        let (consumer, profile) = (crate::KirConsumer::C, None);
+        let config = crate::KirBuildConfig {
+            consumer,
+            overflow_mode: crate::KirOverflowMode::Unchecked,
+            bounds_mode: crate::KirBoundsMode::Unchecked,
+            sanitizer_mode: crate::KirSanitizerMode::Disabled,
+        };
+        let module = match profile {
+            Some(profile) => crate::build_kir_module_with_profile(&mir, config, profile),
+            None => crate::build_kir_module(&mir, config),
+        }
+        .expect("KIR");
+        let facts =
+            crate::import_contract_facts(&module, &checked.checked_program, 0).expect("facts");
+        crate::prepare_kir_pre_tune_state(module, Some(&facts)).expect("pre-tune")
+    }
+
+    #[test]
+    fn cached_search_should_preserve_the_complete_uncached_frontier_in_every_budget() {
+        for source in [
+            include_str!("../../benches/fixtures/pgo/branch_layout.ck"),
+            include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
+        ] {
+            let state = fixture_state(source);
+            let checked = CheckedTuningSpace::enumerate(&state).expect("space");
+            for budget in [
+                TuneBudget::Quick,
+                TuneBudget::Standard,
+                TuneBudget::Thorough,
+            ] {
+                let cached = run_checked_tuning_search(&checked, budget).expect("cached search");
+                let uncached = search_with_replay(checked.space(), budget, |selections| {
+                    checked.derive(selections)
+                })
+                .expect("independent uncached search");
+                assert_eq!(
+                    cached, uncached,
+                    "every expansion, metric, order and digest: {budget:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn extending_a_final_prefix_should_preserve_independent_pre_and_post_states() {
+        let state = fixture_state(include_str!(
+            "../../benches/fixtures/pgo/call_constant_length.ck"
+        ));
+        let checked = CheckedTuningSpace::enumerate(&state).expect("space");
+        let search = run_checked_tuning_search(&checked, TuneBudget::Thorough).expect("search");
+        let mut replay = checked.search_replay();
+        let mut saw_compound = false;
+        for plan in search.compile_selection {
+            let selections = plan
+                .choices
+                .iter()
+                .map(|choice| (choice.unit_id, choice.variant_id))
+                .collect::<Vec<_>>();
+            saw_compound |= selections.len() > 1;
+            for length in 0..=selections.len() {
+                let actual = replay
+                    .derive(&selections[..length])
+                    .expect("retained prefix");
+                let expected = checked
+                    .derive(&selections[..length])
+                    .expect("uncached prefix");
+                assert_eq!(
+                    actual, expected,
+                    "including complete evidence/allocator state, prefix {length}"
+                );
+            }
+            // Revisit shorter, previously final prefixes after their extension.
+            for length in (0..selections.len()).rev() {
+                assert_eq!(
+                    replay.derive(&selections[..length]),
+                    checked.derive(&selections[..length])
+                );
+            }
+        }
+        assert!(saw_compound, "exercise the last-choice suffix distinction");
+    }
 }

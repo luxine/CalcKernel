@@ -159,6 +159,14 @@ discovery validation across the unchanged frontier search, and an immutable
 checked-plan value retains the independently replayed state through artifact
 identity construction. Raw space and plan inputs still require full validation;
 no frontier, legality, pre/post-state, object-graph, or link-recipe check is skipped.
+Within one immutable source/space search, bounded retention reuses unfinished
+choice prefixes, verified O3 phase results, and canonical state identities.
+Digest buckets also require exact module or complete-state equality. A prefix
+is retained before its final-choice suffix, so extending it cannot reuse the
+wrong post-state. Admission exhaustion falls back to complete recomputation;
+it does not truncate the frontier. Raw plan application remains independently
+replayed. Replay without inspection flags also avoids an unused ordinary KIR
+O3 suffix; fact, effect, and optimization inspection retain the complete report.
 
 The private `tune-v1` namespace separates compile, measurement, and completed
 decision domains, uses an installation-local CSPRNG salt for measurement keys,

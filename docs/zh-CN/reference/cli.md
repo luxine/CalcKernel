@@ -132,6 +132,12 @@ opaque source-backed tuning-space value 在不变的 frontier search 中保留�
 validation；immutable checked-plan value 则将独立 replay 的 state 保留到 artifact identity
 构造。Raw space/plan input 仍须完整验证，不跳过 frontier、legality、pre/post-state、
 object-graph 或 link-recipe 检查。
+在同一 immutable source/space search 内，有界 retention 复用尚未执行 final-choice suffix
+的 choice prefix、已验证的 O3 phase result 与 canonical state identity。Digest bucket 命中后
+还须比较 exact module 或 complete state；扩展 prefix 不会复用原 final choice 的错误
+post-state。Admission 耗尽后回退到完整重算，不截断 frontier；raw plan application 仍独立
+replay。未请求 inspection 的 replay 同时避免执行随后被丢弃的 ordinary KIR O3 suffix；
+fact、effect 与 optimization inspection 保留完整报告。
 
 Private `tune-v1` namespace 将 compile、measurement、completed-decision domain 分离；
 measurement key 使用 installation-local CSPRNG salt，并采用 owner-only file、checksum、atomic

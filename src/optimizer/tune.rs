@@ -205,6 +205,154 @@ pub struct CheckedTuningSpace<'a> {
     space: Cow<'a, TuningSpace>,
 }
 
+type TuneSelection = ([u8; 32], [u8; 32]);
+
+/// Search-local snapshots never cross the immutable source/space boundary.
+/// A prefix is retained before the last-choice suffix: extending a plan must
+/// not reuse the different post-state of its previously final choice.
+#[derive(Debug, Clone)]
+struct ReplayPrefix {
+    state: KirVerifiedProgramState,
+    choices: Vec<TunePlanChoice>,
+    previous_key: Option<(u8, [u8; 32])>,
+    contains_selected_rewrite: bool,
+    entered_late_o3: bool,
+}
+
+#[derive(Debug, Default)]
+struct ReplayPrefixCache {
+    prefixes: BTreeMap<Vec<TuneSelection>, ReplayPrefix>,
+    identities: BTreeMap<String, (crate::KirModule, [u8; 32], usize)>,
+    analyses:
+        BTreeMap<(ReplayPhase, String, String), (KirVerifiedProgramState, KirVerifiedProgramState)>,
+    snapshots: usize,
+    canonical_bytes: usize,
+}
+
+impl ReplayPrefixCache {
+    fn admit(&mut self, snapshots: usize, kir_bytes: usize) -> bool {
+        // Admission limits bound retained work, never the normative search.
+        // Once full, every remaining expansion follows ordinary replay.
+        const MAX_SNAPSHOTS: usize = 256;
+        const MAX_CANONICAL_BYTES: usize = 4 * 1024 * 1024;
+        if snapshots <= MAX_SNAPSHOTS.saturating_sub(self.snapshots)
+            && kir_bytes <= MAX_CANONICAL_BYTES.saturating_sub(self.canonical_bytes)
+        {
+            self.snapshots += snapshots;
+            self.canonical_bytes += kir_bytes;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn retain(&mut self, selections: &[TuneSelection], prefix: ReplayPrefix, kir_bytes: usize) {
+        if !self.prefixes.contains_key(selections) && self.admit(1, kir_bytes) {
+            self.prefixes.insert(selections.to_vec(), prefix);
+        }
+    }
+
+    fn identity(
+        &mut self,
+        state: &KirVerifiedProgramState,
+    ) -> Result<([u8; 32], usize), TuningPlanError> {
+        let key = state.kir_digest();
+        if let Some((module, digest, bytes)) = self.identities.get(&key)
+            && module == state.module()
+        {
+            return Ok((*digest, *bytes));
+        }
+        let (digest, bytes) = tuning_kir_state_identity(state)?;
+        if !self.identities.contains_key(&key) && self.admit(1, bytes) {
+            self.identities
+                .insert(key, (state.module().clone(), digest, bytes));
+        }
+        Ok((digest, bytes))
+    }
+
+    fn analyze(
+        &mut self,
+        phase: ReplayPhase,
+        state: &KirVerifiedProgramState,
+    ) -> Result<KirVerifiedProgramState, TuningPlanError> {
+        let key = (
+            phase,
+            state.kir_digest(),
+            state.verification_cache().evidence_digest.clone(),
+        );
+        // Digests select a bucket, but never authorize reuse: compare the
+        // complete state, including evidence, allocators and growth accounting.
+        if let Some((input, output)) = self.analyses.get(&key)
+            && input == state
+        {
+            return Ok(output.clone());
+        }
+        let output = phase.run(state)?;
+        let (_, input_bytes) = self.identity(state)?;
+        let (_, output_bytes) = self.identity(&output)?;
+        if !self.analyses.contains_key(&key) && self.admit(2, input_bytes + output_bytes) {
+            self.analyses.insert(key, (state.clone(), output.clone()));
+        }
+        Ok(output)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ReplayPhase {
+    Ordinary,
+    Late,
+    Finish,
+}
+
+impl ReplayPhase {
+    fn run(
+        self,
+        state: &KirVerifiedProgramState,
+    ) -> Result<KirVerifiedProgramState, TuningPlanError> {
+        match self {
+            Self::Ordinary => finish_ordinary_o3(state),
+            Self::Late => advance_to_tunable_late_o3(state),
+            Self::Finish => finish_selected_o3(state),
+        }
+    }
+}
+
+fn replay_identity(
+    state: &KirVerifiedProgramState,
+    cache: &mut Option<&mut ReplayPrefixCache>,
+) -> Result<([u8; 32], usize), TuningPlanError> {
+    match cache {
+        Some(cache) => cache.identity(state),
+        None => tuning_kir_state_identity(state),
+    }
+}
+
+fn replay_phase(
+    phase: ReplayPhase,
+    state: &KirVerifiedProgramState,
+    cache: &mut Option<&mut ReplayPrefixCache>,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    match cache {
+        Some(cache) => cache.analyze(phase, state),
+        None => phase.run(state),
+    }
+}
+
+pub(crate) struct TuningSearchReplay<'a> {
+    state: &'a KirVerifiedProgramState,
+    space: &'a TuningSpace,
+    prefixes: ReplayPrefixCache,
+}
+
+impl TuningSearchReplay<'_> {
+    pub(crate) fn derive(
+        &mut self,
+        selections: &[TuneSelection],
+    ) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
+        replay_selections_with_cache(self.state, self.space, selections, Some(&mut self.prefixes))
+    }
+}
+
 /// One independently checked plan and its exact replayed state. The plan is
 /// immutably borrowed so its identity cannot change before trial construction.
 #[derive(Debug)]
@@ -258,6 +406,14 @@ impl<'a> CheckedTuningSpace<'a> {
         selections: &[([u8; 32], [u8; 32])],
     ) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
         replay_selections(self.state, self.space(), selections)
+    }
+
+    pub(crate) fn search_replay(&self) -> TuningSearchReplay<'_> {
+        TuningSearchReplay {
+            state: self.state,
+            space: self.space(),
+            prefixes: ReplayPrefixCache::default(),
+        }
     }
 }
 
@@ -1029,17 +1185,40 @@ fn replay_selections(
     space: &TuningSpace,
     selections: &[([u8; 32], [u8; 32])],
 ) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
+    replay_selections_with_cache(state, space, selections, None)
+}
+
+fn replay_selections_with_cache(
+    state: &KirVerifiedProgramState,
+    space: &TuningSpace,
+    selections: &[TuneSelection],
+    mut cache: Option<&mut ReplayPrefixCache>,
+) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
     #[cfg(test)]
     tests::PLAN_REPLAYS.with(|count| count.set(count.get() + 1));
-    if selections.len() > 64 || tuning_kir_state_digest(state)? != space.pre_state_digest {
+    if selections.len() > 64 || replay_identity(state, &mut cache)?.0 != space.pre_state_digest {
         return Err(TuningPlanError::PreStateMismatch);
     }
-    let mut current = state.clone();
-    let mut choices = Vec::with_capacity(selections.len());
-    let mut previous_key = None;
-    let mut contains_selected_rewrite = false;
-    let mut entered_late_o3 = false;
-    for (index, (unit_id, variant_id)) in selections.iter().enumerate() {
+    let cached = cache.as_ref().and_then(|cache| {
+        (1..=selections.len())
+            .rev()
+            .find_map(|length| cache.prefixes.get(&selections[..length]).cloned())
+    });
+    let ReplayPrefix {
+        state: mut current,
+        mut choices,
+        mut previous_key,
+        mut contains_selected_rewrite,
+        mut entered_late_o3,
+    } = cached.unwrap_or_else(|| ReplayPrefix {
+        state: state.clone(),
+        choices: Vec::with_capacity(selections.len()),
+        previous_key: None,
+        contains_selected_rewrite: false,
+        entered_late_o3: false,
+    });
+    let mut last_finished = false;
+    for (index, (unit_id, variant_id)) in selections.iter().enumerate().skip(choices.len()) {
         let unit = space
             .units
             .iter()
@@ -1063,31 +1242,38 @@ fn replay_selections(
                 | TuneAlternativeClass::Slp
         ) && !entered_late_o3
         {
-            current = advance_to_tunable_late_o3(&current)?;
+            current = replay_phase(ReplayPhase::Late, &current, &mut cache)?;
             entered_late_o3 = true;
         }
-        let pre_state_digest = tuning_kir_state_digest(&current)?;
-        let is_last = index + 1 == selections.len();
+        let pre_state_digest = replay_identity(&current, &mut cache)?.0;
         if let TuneVariantAction::Layout(layout) = &variant.action {
             current = if contains_selected_rewrite {
                 if !entered_late_o3 {
-                    current = advance_to_tunable_late_o3(&current)?;
+                    current = replay_phase(ReplayPhase::Late, &current, &mut cache)?;
                 }
-                apply_layout_after_selected_o3(state, &current, layout)?
+                apply_layout_after_selected_o3(state, &current, layout, &mut cache)?
             } else {
-                apply_layout_after_ordinary_o3(&current, layout)?
+                apply_layout_after_ordinary_o3(&current, layout, &mut cache)?
             };
         } else {
+            #[cfg(test)]
+            tests::REPLAY_ACTIONS.with(|counts| {
+                *counts
+                    .borrow_mut()
+                    .entry(selections[..=index].to_vec())
+                    .or_default() += 1;
+            });
             current = apply_variant_action(&current, &variant.action)?;
             contains_selected_rewrite = true;
-            if is_last {
+            if cache.is_none() && index + 1 == selections.len() {
                 if !entered_late_o3 {
                     current = advance_to_tunable_late_o3(&current)?;
                 }
                 current = finish_selected_o3(&current)?;
+                last_finished = true;
             }
         }
-        let post_state_digest = tuning_kir_state_digest(&current)?;
+        let (post_state_digest, kir_bytes) = replay_identity(&current, &mut cache)?;
         choices.push(TunePlanChoice {
             unit_id: *unit_id,
             variant_id: *variant_id,
@@ -1095,9 +1281,30 @@ fn replay_selections(
             pre_state_digest,
             post_state_digest,
         });
+        if let Some(cache) = cache.as_mut() {
+            cache.retain(
+                &selections[..=index],
+                ReplayPrefix {
+                    state: current.clone(),
+                    choices: choices.clone(),
+                    previous_key,
+                    contains_selected_rewrite,
+                    entered_late_o3,
+                },
+                kir_bytes,
+            );
+        }
     }
-    if selections.is_empty() {
-        current = finish_ordinary_o3(&current)?;
+    if let Some(last) = choices.last_mut() {
+        if last.class != TuneAlternativeClass::Layout && !last_finished {
+            if !entered_late_o3 {
+                current = replay_phase(ReplayPhase::Late, &current, &mut cache)?;
+            }
+            current = replay_phase(ReplayPhase::Finish, &current, &mut cache)?;
+            last.post_state_digest = replay_identity(&current, &mut cache)?.0;
+        }
+    } else {
+        current = replay_phase(ReplayPhase::Ordinary, &current, &mut cache)?;
     }
     let digest = plan_digest(&choices);
     Ok((
@@ -1341,6 +1548,8 @@ fn rebuild_preserving_entry_units(
 fn advance_to_tunable_late_o3(
     state: &KirVerifiedProgramState,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    #[cfg(test)]
+    tests::record_analysis("late", state);
     let mut module = state.module().clone();
     let contract_facts = state.contract_facts().cloned();
     let mut proofs = state.proofs().clone();
@@ -1399,6 +1608,8 @@ fn advance_to_tunable_late_o3(
 fn finish_selected_o3(
     state: &KirVerifiedProgramState,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    #[cfg(test)]
+    tests::record_analysis("finish", state);
     let mut module = state.module().clone();
     run_dead_code_elimination(&mut module, &state.proofs().instruction_dependencies());
     run_cleanup(&mut module);
@@ -1414,9 +1625,10 @@ fn finish_selected_o3(
 fn apply_layout_after_ordinary_o3(
     state: &KirVerifiedProgramState,
     requested: &TuneLayoutAction,
+    cache: &mut Option<&mut ReplayPrefixCache>,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
     check_layout_action(state, requested)?;
-    let ordinary = finish_ordinary_o3(state)?;
+    let ordinary = replay_phase(ReplayPhase::Ordinary, state, cache)?;
     let function = ordinary
         .module()
         .functions
@@ -1466,9 +1678,10 @@ fn apply_layout_after_selected_o3(
     original: &KirVerifiedProgramState,
     selected: &KirVerifiedProgramState,
     requested: &TuneLayoutAction,
+    cache: &mut Option<&mut ReplayPrefixCache>,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
     check_layout_action(original, requested)?;
-    let finished = finish_selected_o3(selected)?;
+    let finished = replay_phase(ReplayPhase::Finish, selected, cache)?;
     let Some(function) = finished
         .module()
         .functions
@@ -1535,6 +1748,14 @@ pub fn tuning_pre_kir_digest(state: &KirVerifiedProgramState) -> Result<[u8; 32]
 pub fn tuning_kir_state_digest(
     state: &KirVerifiedProgramState,
 ) -> Result<[u8; 32], TuningPlanError> {
+    tuning_kir_state_identity(state).map(|(digest, _)| digest)
+}
+
+fn tuning_kir_state_identity(
+    state: &KirVerifiedProgramState,
+) -> Result<([u8; 32], usize), TuningPlanError> {
+    #[cfg(test)]
+    tests::record_analysis("identity", state);
     let kir = print_kir_module(state.module());
     let length = u64::try_from(kir.len()).map_err(|_| TuningPlanError::ResourceLimit)?;
     if length > 32 * 1024 * 1024 {
@@ -1546,7 +1767,10 @@ pub fn tuning_kir_state_digest(
     let mut material = Vec::new();
     canonical_field(&mut material, 1, &1u32.to_be_bytes());
     canonical_field(&mut material, 2, &blob);
-    Ok(hash_canonical_record(b"CK-TUNE-KIR-STATE\0", &material))
+    Ok((
+        hash_canonical_record(b"CK-TUNE-KIR-STATE\0", &material),
+        kir.len(),
+    ))
 }
 
 pub(crate) fn canonical_root_anchor(anchor: &TuneRootAnchor) -> Vec<u8> {
@@ -2170,9 +2394,26 @@ fn hash_canonical_record(domain: &[u8], material: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    type ReplayActionCounts = BTreeMap<Vec<TuneSelection>, usize>;
+
     thread_local! {
         pub(super) static SPACE_ENUMERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         pub(super) static PLAN_REPLAYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static REPLAY_ACTIONS: std::cell::RefCell<ReplayActionCounts> = const { std::cell::RefCell::new(BTreeMap::new()) };
+        static REPLAY_ANALYSES: std::cell::RefCell<BTreeMap<(&'static str, String, String), usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+    }
+
+    pub(super) fn record_analysis(phase: &'static str, state: &KirVerifiedProgramState) {
+        REPLAY_ANALYSES.with(|counts| {
+            *counts
+                .borrow_mut()
+                .entry((
+                    phase,
+                    state.kir_digest(),
+                    state.verification_cache().evidence_digest.clone(),
+                ))
+                .or_default() += 1;
+        });
     }
 
     fn replay_test_state() -> KirVerifiedProgramState {
@@ -2207,12 +2448,129 @@ mod tests {
     }
 
     #[test]
+    fn tune_search_should_materialize_each_shared_prefix_only_once() {
+        let checked = crate::check(&crate::SourceFile::new(
+            "shared-prefix.ck",
+            include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
+        ));
+        assert!(checked.diagnostics.is_empty());
+        let mir = crate::lower_to_mir(&checked.checked_program).expect("MIR");
+        let module = crate::build_kir_module(
+            &mir,
+            crate::KirBuildConfig {
+                consumer: crate::KirConsumer::C,
+                overflow_mode: crate::KirOverflowMode::Unchecked,
+                bounds_mode: crate::KirBoundsMode::Unchecked,
+                sanitizer_mode: crate::KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("KIR");
+        let facts =
+            crate::import_contract_facts(&module, &checked.checked_program, 0).expect("facts");
+        let state = crate::prepare_kir_pre_tune_state(module, Some(&facts)).expect("pre-tune");
+        let space = CheckedTuningSpace::enumerate(&state).expect("space");
+        REPLAY_ACTIONS.with(|counts| counts.borrow_mut().clear());
+        REPLAY_ANALYSES.with(|counts| counts.borrow_mut().clear());
+
+        let search = crate::run_checked_tuning_search(&space, crate::TuneBudget::Standard)
+            .expect("complete search");
+
+        assert!(search.expansions.len() > 8, "exercise a branching search");
+        REPLAY_ACTIONS.with(|counts| {
+            let counts = counts.borrow();
+            assert!(!counts.is_empty());
+            assert_eq!(
+                counts.values().copied().max(),
+                Some(1),
+                "shared prefixes were replayed: {counts:?}"
+            );
+        });
+        REPLAY_ANALYSES.with(|counts| {
+            let counts = counts.borrow();
+            for phase in ["late", "finish", "identity"] {
+                let values = counts
+                    .iter()
+                    .filter(|((kind, _, _), _)| *kind == phase)
+                    .map(|(_, count)| *count)
+                    .collect::<Vec<_>>();
+                eprintln!(
+                    "phase={phase} calls={} unique={} max={:?}",
+                    values.iter().sum::<usize>(),
+                    values.len(),
+                    values.iter().max()
+                );
+            }
+            assert_eq!(
+                counts.values().copied().max(),
+                Some(1),
+                "the same immutable state was analyzed again"
+            );
+        });
+    }
+
+    #[test]
     fn tune_plan_application_should_retain_the_independently_checked_replay() {
         let state = replay_test_state();
         let space = enumerate_tuning_space(&state).expect("space");
         PLAN_REPLAYS.with(|count| count.set(0));
         apply_tuning_plan(&state, &space, &TuningPlan::baseline()).expect("baseline replay");
         assert_eq!(PLAN_REPLAYS.with(std::cell::Cell::get), 1);
+    }
+
+    #[test]
+    fn exhausted_replay_retention_should_fall_back_without_dropping_work() {
+        let state = replay_test_state();
+        let checked = CheckedTuningSpace::enumerate(&state).expect("space");
+        let search = crate::run_checked_tuning_search(&checked, crate::TuneBudget::Thorough)
+            .expect("search");
+        let mut replay = checked.search_replay();
+        replay.prefixes.snapshots = 256;
+        replay.prefixes.canonical_bytes = 4 * 1024 * 1024;
+        for plan in std::iter::once(TuningPlan::baseline()).chain(search.compile_selection) {
+            let selections = plan
+                .choices
+                .iter()
+                .map(|choice| (choice.unit_id, choice.variant_id))
+                .collect::<Vec<_>>();
+            assert_eq!(replay.derive(&selections), checked.derive(&selections));
+        }
+        assert!(replay.prefixes.prefixes.is_empty());
+        assert!(replay.prefixes.identities.is_empty());
+        assert!(replay.prefixes.analyses.is_empty());
+    }
+
+    #[test]
+    fn replay_identity_reuse_should_compare_the_module_not_just_its_digest_bucket() {
+        let state = replay_test_state();
+        let mut different = state.module().clone();
+        different.functions[0].name.push_str("_different");
+        let mut cache = ReplayPrefixCache::default();
+        cache
+            .identities
+            .insert(state.kir_digest(), (different, [0; 32], 0));
+        assert_eq!(cache.identity(&state), tuning_kir_state_identity(&state));
+    }
+
+    #[test]
+    fn replay_analysis_reuse_should_compare_the_complete_input_state() {
+        let state = replay_test_state();
+        let mut different = state.clone();
+        different.module_mut().functions[0]
+            .name
+            .push_str("_different");
+        let mut cache = ReplayPrefixCache::default();
+        cache.analyses.insert(
+            (
+                ReplayPhase::Late,
+                state.kir_digest(),
+                state.verification_cache().evidence_digest.clone(),
+            ),
+            (different.clone(), different),
+        );
+        assert_eq!(
+            cache.analyze(ReplayPhase::Late, &state),
+            advance_to_tunable_late_o3(&state)
+        );
     }
 
     #[test]
