@@ -59,8 +59,13 @@
 - `specs/0.14/review/implementation-blocker-64.md`
 - `specs/0.14/review/implementation-blocker-65.md`
 - `specs/0.14/review/implementation-blocker-66.md`
+- `specs/0.14/review/implementation-blocker-67.md`
 
-最新修复候选见 blocker 66：exact run `34295522872` 的 x86 historical replay 失败由
+最新修复候选见 blocker 67：继承 v0.13 `d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a`
+对 full-width integer map 的 scalar tail 限制；精确 replay 基线和 manifest hash 同步更新。
+v0.14 自身的 checked replay 复用、AArch64 schedule、全部门槛和完整 job matrix 保持不变。
+
+前轮修复见 blocker 66：exact run `34295522872` 的 x86 historical replay 失败由
 v0.13 `4add225778b867e33227236d178de33139a97d36` 的受限 v4 integer-map width 修复吸收。
 AArch64 schema-9 tune-use compile 失败则通过保留 source-backed space、independently
 checked plan replay 与 Native target/header，去除重复 discovery/materialization 和无用
@@ -71,7 +76,7 @@ ordinary artifact emission。完整 frontier 与全部 identity/legality/artifac
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
 `1f27df4b7992f1209f6762aeb11632509d888ae0`。v0.14 最初基于 v0.13 候选
 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05`；最终接纳的 v0.13 修订为
-`4add225778b867e33227236d178de33139a97d36`。两者之间的累计提交已按
+`d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a`。两者之间的累计提交已按
 `implementation-design-correction-10.md` 逐文件复核并以等价或更严格的 v0.14 实现吸收；
 历史 replay 也固定到该最终 SHA，移动分支、tag 或旧 CI 不得替代此身份。
 
