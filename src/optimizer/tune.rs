@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use sha2::{Digest, Sha256};
 
@@ -193,6 +196,82 @@ pub struct TuningSpace {
     pub digest: [u8; 32],
 }
 
+/// Source-backed authority for one immutable tuning space. Borrowed proposals
+/// are independently reconstructed once; freshly enumerated spaces retain the
+/// same authority without repeating discovery for every search expansion.
+#[derive(Debug)]
+pub struct CheckedTuningSpace<'a> {
+    state: &'a KirVerifiedProgramState,
+    space: Cow<'a, TuningSpace>,
+}
+
+/// One independently checked plan and its exact replayed state. The plan is
+/// immutably borrowed so its identity cannot change before trial construction.
+#[derive(Debug)]
+pub struct CheckedTuningPlan<'a> {
+    plan: &'a TuningPlan,
+    state: KirVerifiedProgramState,
+}
+
+impl<'a> CheckedTuningSpace<'a> {
+    /// Discovers and validates the complete source-backed finite space.
+    pub fn enumerate(state: &'a KirVerifiedProgramState) -> Result<Self, TuningPlanError> {
+        Ok(Self {
+            state,
+            space: Cow::Owned(enumerate_tuning_space(state)?),
+        })
+    }
+
+    /// Independently rejects every field of a stale or forged raw space.
+    pub fn check(
+        state: &'a KirVerifiedProgramState,
+        space: &'a TuningSpace,
+    ) -> Result<Self, TuningPlanError> {
+        if enumerate_tuning_space(state)? != *space {
+            return Err(TuningPlanError::PreStateMismatch);
+        }
+        Ok(Self {
+            state,
+            space: Cow::Borrowed(space),
+        })
+    }
+
+    #[must_use]
+    pub fn space(&self) -> &TuningSpace {
+        &self.space
+    }
+
+    /// Checks canonical choices, their identity, legality, and all pre/post
+    /// states, retaining the independent replay instead of materializing twice.
+    pub fn apply<'plan>(
+        &self,
+        plan: &'plan TuningPlan,
+    ) -> Result<CheckedTuningPlan<'plan>, TuningPlanError> {
+        Ok(CheckedTuningPlan {
+            plan,
+            state: check_plan_replay(self.state, self.space(), plan)?,
+        })
+    }
+
+    pub(crate) fn derive(
+        &self,
+        selections: &[([u8; 32], [u8; 32])],
+    ) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
+        replay_selections(self.state, self.space(), selections)
+    }
+}
+
+impl CheckedTuningPlan<'_> {
+    #[must_use]
+    pub const fn state(&self) -> &KirVerifiedProgramState {
+        &self.state
+    }
+
+    pub(crate) const fn plan(&self) -> &TuningPlan {
+        self.plan
+    }
+}
+
 /// Source-aware facts for the one Floyd predicated-update choice accepted by
 /// the v0.14 performance gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,6 +339,8 @@ pub enum TuningPlanError {
 pub fn enumerate_tuning_space(
     state: &KirVerifiedProgramState,
 ) -> Result<TuningSpace, TuningPlanError> {
+    #[cfg(test)]
+    tests::SPACE_ENUMERATIONS.with(|count| count.set(count.get() + 1));
     let pre_tune_kir_digest = tuning_pre_kir_digest(state)?;
     let pre_state_digest = tuning_kir_state_digest(state)?;
     let function_names = state
@@ -640,10 +721,16 @@ pub fn check_tuning_plan(
     space: &TuningSpace,
     plan: &TuningPlan,
 ) -> Result<(), TuningPlanError> {
-    let recomputed_space = enumerate_tuning_space(state)?;
-    if &recomputed_space != space {
-        return Err(TuningPlanError::PreStateMismatch);
-    }
+    CheckedTuningSpace::check(state, space)?
+        .apply(plan)
+        .map(|_| ())
+}
+
+fn check_plan_replay(
+    state: &KirVerifiedProgramState,
+    space: &TuningSpace,
+    plan: &TuningPlan,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
     if plan.choices.len() > 64 {
         return Err(TuningPlanError::ResourceLimit);
     }
@@ -671,7 +758,7 @@ pub fn check_tuning_plan(
     if plan.digest != plan_digest(&plan.choices) {
         return Err(TuningPlanError::DigestMismatch);
     }
-    let (expected, _) = replay_selections(
+    let (expected, replayed) = replay_selections(
         state,
         space,
         &plan
@@ -683,7 +770,7 @@ pub fn check_tuning_plan(
     if expected.choices != plan.choices || expected.digest != plan.digest {
         return Err(TuningPlanError::PreStateMismatch);
     }
-    Ok(())
+    Ok(replayed)
 }
 
 /// Replays a checked plan from a fresh immutable verified pre-state.
@@ -697,17 +784,9 @@ pub fn apply_tuning_plan(
     space: &TuningSpace,
     plan: &TuningPlan,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
-    check_tuning_plan(state, space, plan)?;
-    replay_selections(
-        state,
-        space,
-        &plan
-            .choices
-            .iter()
-            .map(|choice| (choice.unit_id, choice.variant_id))
-            .collect::<Vec<_>>(),
-    )
-    .map(|(_, replayed)| replayed)
+    CheckedTuningSpace::check(state, space)?
+        .apply(plan)
+        .map(|checked| checked.state)
 }
 
 /// Reconstructs and independently checks the exact single predicated Floyd
@@ -912,10 +991,7 @@ pub(crate) fn derive_tuning_plan(
     space: &TuningSpace,
     selections: &[([u8; 32], [u8; 32])],
 ) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
-    if enumerate_tuning_space(state)? != *space {
-        return Err(TuningPlanError::PreStateMismatch);
-    }
-    replay_selections(state, space, selections)
+    CheckedTuningSpace::check(state, space)?.derive(selections)
 }
 
 #[derive(Debug)]
@@ -953,6 +1029,8 @@ fn replay_selections(
     space: &TuningSpace,
     selections: &[([u8; 32], [u8; 32])],
 ) -> Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError> {
+    #[cfg(test)]
+    tests::PLAN_REPLAYS.with(|count| count.set(count.get() + 1));
     if selections.len() > 64 || tuning_kir_state_digest(state)? != space.pre_state_digest {
         return Err(TuningPlanError::PreStateMismatch);
     }
@@ -2091,6 +2169,109 @@ fn hash_canonical_record(domain: &[u8], material: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        pub(super) static SPACE_ENUMERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static PLAN_REPLAYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn replay_test_state() -> KirVerifiedProgramState {
+        let checked = crate::check(&crate::SourceFile::new(
+            "replay-work.ck",
+            "export fn kernel() -> u32 { let i: u32 = 0; let total: u32 = 0; while i < 12 { total = total + i; i = i + 1; } return total; }",
+        ));
+        assert!(checked.diagnostics.is_empty());
+        let mir = crate::lower_to_mir(&checked.checked_program).expect("MIR");
+        let module = crate::build_kir_module(
+            &mir,
+            crate::KirBuildConfig {
+                consumer: crate::KirConsumer::C,
+                overflow_mode: crate::KirOverflowMode::Unchecked,
+                bounds_mode: crate::KirBoundsMode::Unchecked,
+                sanitizer_mode: crate::KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("KIR");
+        crate::prepare_kir_pre_tune_state(module, None).expect("verified pre-tune state")
+    }
+
+    #[test]
+    fn tune_search_should_revalidate_the_immutable_space_only_once() {
+        let state = replay_test_state();
+        let space = enumerate_tuning_space(&state).expect("space");
+        SPACE_ENUMERATIONS.with(|count| count.set(0));
+        let search = crate::run_deterministic_search(&state, &space, crate::TuneBudget::Quick)
+            .expect("search");
+        assert!(!search.expansions.is_empty());
+        assert_eq!(SPACE_ENUMERATIONS.with(std::cell::Cell::get), 1);
+    }
+
+    #[test]
+    fn tune_plan_application_should_retain_the_independently_checked_replay() {
+        let state = replay_test_state();
+        let space = enumerate_tuning_space(&state).expect("space");
+        PLAN_REPLAYS.with(|count| count.set(0));
+        apply_tuning_plan(&state, &space, &TuningPlan::baseline()).expect("baseline replay");
+        assert_eq!(PLAN_REPLAYS.with(std::cell::Cell::get), 1);
+    }
+
+    #[test]
+    fn checked_tune_space_should_reject_mutated_discovery_before_search() {
+        let state = replay_test_state();
+        let space = enumerate_tuning_space(&state).expect("space");
+        let mut changed = space.clone();
+        changed.digest[0] ^= 1;
+        assert!(matches!(
+            CheckedTuningSpace::check(&state, &changed),
+            Err(TuningPlanError::PreStateMismatch)
+        ));
+        let mut changed = space;
+        changed.units[0].variants[0].isolated_kir_bytes += 1;
+        assert!(matches!(
+            CheckedTuningSpace::check(&state, &changed),
+            Err(TuningPlanError::PreStateMismatch)
+        ));
+    }
+
+    #[test]
+    fn checked_tune_replays_should_equal_independent_raw_derivation() {
+        let state = replay_test_state();
+        let checked = CheckedTuningSpace::enumerate(&state).expect("checked space");
+        for budget in [
+            crate::TuneBudget::Quick,
+            crate::TuneBudget::Standard,
+            crate::TuneBudget::Thorough,
+        ] {
+            let retained =
+                crate::run_checked_tuning_search(&checked, budget).expect("checked search");
+            let raw = crate::run_deterministic_search(&state, checked.space(), budget)
+                .expect("raw search");
+            assert_eq!(retained, raw);
+            for plan in std::iter::once(TuningPlan::baseline()).chain(retained.compile_selection) {
+                let selections = plan
+                    .choices
+                    .iter()
+                    .map(|choice| (choice.unit_id, choice.variant_id))
+                    .collect::<Vec<_>>();
+                let (independent, replayed) =
+                    derive_tuning_plan(&state, checked.space(), &selections)
+                        .expect("independent replay");
+                let applied = checked.apply(&plan).expect("retained checked replay");
+                assert_eq!(independent.choices, plan.choices);
+                assert_eq!(independent.digest, plan.digest);
+                assert_eq!(
+                    tuning_kir_state_digest(&replayed).expect("independent digest"),
+                    tuning_kir_state_digest(applied.state()).expect("checked digest")
+                );
+                let mut forged = plan;
+                forged.digest[0] ^= 1;
+                assert!(matches!(
+                    checked.apply(&forged),
+                    Err(TuningPlanError::DigestMismatch)
+                ));
+            }
+        }
+    }
 
     #[test]
     fn transaction_rejections_keep_growth_distinct_and_internal_failures_fatal() {

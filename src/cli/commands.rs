@@ -954,10 +954,12 @@ pub(super) fn run_emit_llvm(args: &ParsedArgs) -> Result<(), String> {
 }
 
 #[cfg(feature = "native-toolchain")]
-pub(super) struct NativeBuildProduct {
+pub(super) struct NativeBuildProduct<Build = VerifiedNativeBuild> {
     pub(super) paths: NativeArtifactPaths,
     pub(super) artifact_kind: NativeArtifactKind,
-    pub(super) build: VerifiedNativeBuild,
+    pub(super) build: Build,
+    target: NativeTarget,
+    header: Option<Vec<u8>>,
     pub(super) state: KirVerifiedProgramState,
     pub(super) source_digest: [u8; 32],
     pub(super) semantic_contract_digest: [u8; 32],
@@ -975,6 +977,87 @@ pub(super) struct NativeBuildProduct {
 pub(super) fn compile_verified_native_product(
     args: &ParsedArgs,
 ) -> Result<NativeBuildProduct, String> {
+    prepare_native_product(
+        args,
+        |target, compiled, application, level, kind, header, exports| {
+            let input = require_input(args, "build")?;
+            let context = NativeContext::new().map_err(|error| error.to_string())?;
+            let optimized = lower_native_kir_module(
+                &context,
+                target,
+                &compiled.result,
+                &EmitLlvmOptions {
+                    source_file_name: Some(input.to_string()),
+                    target_triple: args.target.clone(),
+                },
+            )
+            .map_err(|error| error.to_string())?
+            .verify()
+            .map_err(|error| error.to_string())?
+            .audit()
+            .map_err(|error| error.to_string())?
+            .optimize(target, level)
+            .map_err(|error| error.to_string())?;
+            let optimized = if level == NativeOptimizationLevel::O2 {
+                if let Some(application) = application {
+                    let plan =
+                        late_layout_plan_for_optimized_kir(compiled, application, &optimized)?;
+                    if plan.functions.is_empty() {
+                        let report = optimized
+                            .late_layout_snapshot(target)
+                            .map_err(|error| error.to_string())?;
+                        emit_late_layout_report(&report, "mapping-unavailable", args)?;
+                        optimized
+                    } else {
+                        let (optimized, report) = optimized
+                            .apply_late_profile_layout(target, &plan)
+                            .map_err(|error| error.to_string())?;
+                        emit_late_layout_report(&report, &report.reason, args)?;
+                        optimized
+                    }
+                } else {
+                    optimized
+                }
+            } else {
+                optimized
+            };
+            let object = target
+                .emit_object(optimized)
+                .map_err(|error| error.to_string())?;
+            build_verified_native_artifact(
+                kind,
+                &object,
+                exports,
+                header.map(str::as_bytes).map(<[u8]>::to_vec),
+            )
+            .map_err(|error| error.to_string())
+        },
+    )
+}
+
+/// Retains the verified frontend, target and header without emitting an
+/// ordinary object that explicit tune replay would immediately discard. The
+/// unit build state cannot be passed to ordinary artifact publication.
+#[cfg(feature = "native-toolchain")]
+pub(super) fn prepare_replay_native_product(
+    args: &ParsedArgs,
+) -> Result<NativeBuildProduct<()>, String> {
+    prepare_native_product(args, |_, _, _, _, _, _, _| Ok(()))
+}
+
+#[cfg(feature = "native-toolchain")]
+fn prepare_native_product<Build>(
+    args: &ParsedArgs,
+    build: impl FnOnce(
+        &NativeTarget,
+        &CompiledKir,
+        Option<&PreparedProfileApplication>,
+        NativeOptimizationLevel,
+        NativeArtifactKind,
+        Option<&str>,
+        &[String],
+    ) -> Result<Build, String>,
+) -> Result<NativeBuildProduct<Build>, String> {
     let input = require_input(args, "build")?;
     let out = require_out(args, "build")?;
     if args.pgo_generate.is_some() {
@@ -1053,50 +1136,7 @@ pub(super) fn compile_verified_native_product(
         emit_profile_analysis(&application.analysis, args)?;
     }
     emit_pgo_optimizer_report(&compiled.result, args)?;
-    let context = NativeContext::new().map_err(|error| error.to_string())?;
     let level = NativeOptimizationLevel::try_from(opt_level).map_err(|error| error.to_string())?;
-    let lowered = lower_native_kir_module(
-        &context,
-        &target,
-        &compiled.result,
-        &EmitLlvmOptions {
-            source_file_name: Some(input.to_string()),
-            target_triple: args.target.clone(),
-        },
-    );
-    let optimized = lowered
-        .map_err(|error| error.to_string())?
-        .verify()
-        .map_err(|error| error.to_string())?
-        .audit()
-        .map_err(|error| error.to_string())?
-        .optimize(&target, level)
-        .map_err(|error| error.to_string())?;
-    let optimized = if level == NativeOptimizationLevel::O2 {
-        if let Some(application) = &profile_application {
-            let plan = late_layout_plan_for_optimized_kir(&compiled, application, &optimized)?;
-            if plan.functions.is_empty() {
-                let report = optimized
-                    .late_layout_snapshot(&target)
-                    .map_err(|error| error.to_string())?;
-                emit_late_layout_report(&report, "mapping-unavailable", args)?;
-                optimized
-            } else {
-                let (optimized, report) = optimized
-                    .apply_late_profile_layout(&target, &plan)
-                    .map_err(|error| error.to_string())?;
-                emit_late_layout_report(&report, &report.reason, args)?;
-                optimized
-            }
-        } else {
-            optimized
-        }
-    } else {
-        optimized
-    };
-    let object = target
-        .emit_object(optimized)
-        .map_err(|error| error.to_string())?;
     let artifact_kind = match kind {
         ArtifactKind::Executable => NativeArtifactKind::Executable,
         ArtifactKind::Dynamic => NativeArtifactKind::Dynamic,
@@ -1131,13 +1171,15 @@ pub(super) fn compile_verified_native_product(
         .filter(|function| function.exported)
         .map(|function| function.name.clone())
         .collect::<Vec<_>>();
-    let verified_build = build_verified_native_artifact(
+    let verified_build = build(
+        &target,
+        &compiled,
+        profile_application.as_ref(),
+        level,
         artifact_kind,
-        &object,
+        header.as_deref(),
         &exports,
-        header.as_deref().map(str::as_bytes).map(<[u8]>::to_vec),
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let state = if let Some(pre_tune) = compiled.pre_tune.clone() {
         pre_tune
     } else {
@@ -1208,6 +1250,8 @@ pub(super) fn compile_verified_native_product(
         paths,
         artifact_kind,
         build: verified_build,
+        target,
+        header: header.map(String::into_bytes),
         state,
         source_digest,
         semantic_contract_digest,
@@ -1226,12 +1270,11 @@ pub(super) fn compile_verified_native_product(
 /// LLVM O3/object/embedded-linker path as the ordinary baseline.  It returns a
 /// frozen build value and performs no publication or production-cache write.
 #[cfg(feature = "native-toolchain")]
-pub(super) fn compile_replayed_native_build(
-    product: &NativeBuildProduct,
+pub(super) fn compile_replayed_native_build<Build>(
+    product: &NativeBuildProduct<Build>,
     state: &KirVerifiedProgramState,
 ) -> Result<VerifiedNativeBuild, String> {
-    let target =
-        NativeTarget::host_with_cpu(NativeCpu::Native).map_err(|error| error.to_string())?;
+    let target = &product.target;
     let pgo = product
         .pgo
         .as_ref()
@@ -1241,7 +1284,7 @@ pub(super) fn compile_replayed_native_build(
     let context = NativeContext::new().map_err(|error| error.to_string())?;
     let optimized = lower_native_kir_module(
         &context,
-        &target,
+        target,
         &result,
         &EmitLlvmOptions {
             source_file_name: Some(product.source_file_name.clone()),
@@ -1253,7 +1296,7 @@ pub(super) fn compile_replayed_native_build(
     .map_err(|error| error.to_string())?
     .audit()
     .map_err(|error| error.to_string())?
-    .optimize(&target, NativeOptimizationLevel::O3)
+    .optimize(target, NativeOptimizationLevel::O3)
     .map_err(|error| error.to_string())?;
     let optimized = if let Some(plan) =
         build_tune_layout_plan(state.module()).map_err(|error| error.to_string())?
@@ -1266,7 +1309,7 @@ pub(super) fn compile_replayed_native_build(
             optimized
         } else {
             optimized
-                .apply_late_profile_layout(&target, &reconciled)
+                .apply_late_profile_layout(target, &reconciled)
                 .map_err(|error| error.to_string())?
                 .0
         }
@@ -1287,7 +1330,7 @@ pub(super) fn compile_replayed_native_build(
         product.artifact_kind,
         &object,
         &exports,
-        product.build.header().map(<[u8]>::to_vec),
+        product.header.clone(),
     )
     .map_err(|error| error.to_string())
 }

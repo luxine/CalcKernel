@@ -12,18 +12,19 @@ use calckernel::{decode_tune_decision, inspect_tune_json, inspect_tune_text};
 
 #[cfg(feature = "native-toolchain")]
 use calckernel::{
-    CandidateOutcome, KirVerifiedProgramState, MeasurementChannel, MeasurementRun,
-    MeasurementScheduler, NativeArtifactKind, NativeArtifactPaths, NativeCpu, NativePlatform,
-    NativeTarget, NonPublishableTuneTrial, PublicationSet, RoundSummary, SelectionEntrant,
-    TuneArtifactKind, TuneArtifactRole, TuneBudget, TuneCache, TuneCacheDomain, TuneCase,
-    TuneDecisionBuildInput, TuneDecisionCandidate, TuneDecisionIdentity, TuneDecisionOutput,
-    TuneInvocation, TuneManifest, TunePublishArtifacts, TuneRecordedCacheOrigin, TuneRunner,
-    TuneTrialBuildRequest, TuneVariantAction, TuningPlan, TuningSpace, assemble_decision,
-    attest_selected_predicated_update, calibrate_cases, canonical_frontier_digest,
-    capture_workload, compile_tune_trial, derive_round_summary, derive_search_entrants,
-    derive_selection, derive_tune_session_digest, encode_completed_tune_decision,
-    enumerate_tuning_space, format_predicated_update_attestation, run_deterministic_search,
-    select_size_valid_finalists, verify_tune_trials_with_source,
+    CandidateOutcome, CheckedTuningSpace, KirVerifiedProgramState, MeasurementChannel,
+    MeasurementRun, MeasurementScheduler, NativeArtifactKind, NativeArtifactPaths, NativeCpu,
+    NativePlatform, NativeTarget, NonPublishableTuneTrial, PublicationSet, RoundSummary,
+    SelectionEntrant, TuneArtifactKind, TuneArtifactRole, TuneBudget, TuneCache, TuneCacheDomain,
+    TuneCase, TuneDecisionBuildInput, TuneDecisionCandidate, TuneDecisionIdentity,
+    TuneDecisionOutput, TuneInvocation, TuneManifest, TunePublishArtifacts,
+    TuneRecordedCacheOrigin, TuneRunner, TuneTrialBuildRequest, TuneVariantAction, TuningPlan,
+    TuningSpace, assemble_decision, attest_selected_predicated_update, calibrate_cases,
+    canonical_frontier_digest, capture_workload, compile_checked_tune_trial, compile_tune_trial,
+    derive_round_summary, derive_search_entrants, derive_selection, derive_tune_session_digest,
+    encode_completed_tune_decision, enumerate_tuning_space, format_predicated_update_attestation,
+    run_checked_tuning_search, run_deterministic_search, select_size_valid_finalists,
+    verify_tune_trials_with_source,
 };
 #[cfg(feature = "native-toolchain")]
 use sha2::{Digest, Sha256};
@@ -36,7 +37,7 @@ use super::{
     },
     commands::{
         NativeBuildProduct, compile_replayed_native_build, compile_verified_native_product,
-        compiler_source_identity, publish_verified_native_build,
+        compiler_source_identity, prepare_replay_native_product, publish_verified_native_build,
     },
 };
 
@@ -119,7 +120,7 @@ pub(super) fn run_replay(args: &ParsedArgs) -> Result<(), String> {
         return Err("Tune replay output must not overwrite its decision input".to_string());
     }
 
-    let product = compile_verified_native_product(args)?;
+    let product = prepare_replay_native_product(args)?;
     let actual_kind = match product.artifact_kind {
         NativeArtifactKind::Executable => TuneArtifactKind::Executable,
         NativeArtifactKind::Dynamic => TuneArtifactKind::Dynamic,
@@ -148,10 +149,12 @@ pub(super) fn run_replay(args: &ParsedArgs) -> Result<(), String> {
         );
     }
 
-    let space = enumerate_tuning_space(&product.state).map_err(|error| error.to_string())?;
-    let frontier = run_deterministic_search(&product.state, &space, required.budget)
+    let checked_space =
+        CheckedTuningSpace::enumerate(&product.state).map_err(|error| error.to_string())?;
+    let space = checked_space.space();
+    let frontier = run_checked_tuning_search(&checked_space, required.budget)
         .map_err(|error| error.to_string())?;
-    if canonical_frontier_digest(&space, &frontier) != required.frontier_digest {
+    if canonical_frontier_digest(space, &frontier) != required.frontier_digest {
         return Err(
             "tuning decision frontier does not match current compiler analysis".to_string(),
         );
@@ -169,10 +172,12 @@ pub(super) fn run_replay(args: &ParsedArgs) -> Result<(), String> {
                 "tuning decision selected plan is absent from the current frontier".to_string()
             })?
     };
-    let replayed = calckernel::apply_tuning_plan(&product.state, &space, &selected)
+    let checked_plan = checked_space
+        .apply(&selected)
         .map_err(|error| error.to_string())?;
+    let replayed = checked_plan.state();
     let post_state_digest =
-        calckernel::tuning_kir_state_digest(&replayed).map_err(|error| error.to_string())?;
+        calckernel::tuning_kir_state_digest(replayed).map_err(|error| error.to_string())?;
     let recorded_pre = selected
         .choices
         .first()
@@ -188,11 +193,9 @@ pub(super) fn run_replay(args: &ParsedArgs) -> Result<(), String> {
         return Err("tuning decision selected-plan state identity mismatch".to_string());
     }
 
-    let replay_build = compile_replayed_native_build(&product, &replayed)?;
-    let trial = compile_tune_trial(
-        &product.state,
-        &space,
-        &selected,
+    let replay_build = compile_replayed_native_build(&product, replayed)?;
+    let trial = compile_checked_tune_trial(
+        &checked_plan,
         TuneTrialBuildRequest::from_verified_native_build(&replay_build)?,
     )?;
     if trial.identity().object_graph_digest != required.object_graph_digest
@@ -218,7 +221,7 @@ pub(super) fn run_replay(args: &ParsedArgs) -> Result<(), String> {
     }
 
     let attestation =
-        maybe_predicated_attestation(&product.state, &space, &selected, args.explain_optimization)?;
+        maybe_predicated_attestation(&product.state, space, &selected, args.explain_optimization)?;
 
     publish_verified_native_build(&product.paths, product.artifact_kind, &replay_build)?;
     if let Some(line) = attestation {

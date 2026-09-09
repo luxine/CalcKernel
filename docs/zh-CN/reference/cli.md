@@ -127,6 +127,11 @@ decision 通过可崩溃恢复的 journal 一起发布。`--tune-use` 重建当�
 plan 并比较 object-graph/link-recipe identity；compiler、source、schema、CPU/features、profile、
 mode、kind、frontier、plan 或 artifact 任一 stale 都直接失败，不回退到 ordinary build。允许使用
 不同 destination。
+Replay 准备 verified source/KIR 与 header，但不发射随后会被丢弃的 ordinary artifact。
+opaque source-backed tuning-space value 在不变的 frontier search 中保留完整 discovery
+validation；immutable checked-plan value 则将独立 replay 的 state 保留到 artifact identity
+构造。Raw space/plan input 仍须完整验证，不跳过 frontier、legality、pre/post-state、
+object-graph 或 link-recipe 检查。
 
 Private `tune-v1` namespace 将 compile、measurement、completed-decision domain 分离；
 measurement key 使用 installation-local CSPRNG salt，并采用 owner-only file、checksum、atomic

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    KirVerifiedProgramState, TuneAlternativeClass, TuneBudget, TuneUnit, TuningPlan,
-    TuningPlanError, TuningSpace,
+    CheckedTuningSpace, KirVerifiedProgramState, TuneAlternativeClass, TuneBudget, TuneUnit,
+    TuningPlan, TuningPlanError, TuningSpace,
 };
 
 /// Closed result of one attempted plan expansion.
@@ -47,8 +47,19 @@ pub fn run_deterministic_search(
     space: &TuningSpace,
     budget: TuneBudget,
 ) -> Result<SearchFrontier, TuningPlanError> {
+    let checked = CheckedTuningSpace::check(state, space)?;
+    run_checked_tuning_search(&checked, budget)
+}
+
+/// Runs the unchanged bounded search while retaining source-backed space
+/// authority across every expansion. Raw spaces must use the checked entry.
+pub fn run_checked_tuning_search(
+    checked: &CheckedTuningSpace<'_>,
+    budget: TuneBudget,
+) -> Result<SearchFrontier, TuningPlanError> {
+    let space = checked.space();
     let contract = budget.contract();
-    let (baseline_plan, baseline_state) = crate::optimizer::derive_tuning_plan(state, space, &[])?;
+    let (baseline_plan, baseline_state) = checked.derive(&[])?;
     let baseline = metrics_for(&baseline_state, baseline_plan)?;
     let mut beam = vec![baseline.clone()];
     let mut expansions = Vec::new();
@@ -66,7 +77,7 @@ pub fn run_deterministic_search(
                 }
                 let ordinal =
                     u32::try_from(expansions.len()).map_err(|_| TuningPlanError::ResourceLimit)?;
-                let derived = match extend_plan(state, space, &parent, unit, variant.variant_id) {
+                let derived = match extend_plan(checked, &parent, unit, variant.variant_id) {
                     Ok(derived) => derived,
                     Err(TuningPlanError::IllegalAlternative(_)) => {
                         expansions.push(ExpansionRecord {
@@ -142,8 +153,7 @@ pub fn run_deterministic_search(
 }
 
 fn extend_plan(
-    state: &KirVerifiedProgramState,
-    space: &TuningSpace,
+    checked: &CheckedTuningSpace<'_>,
     parent: &TuningPlan,
     unit: &TuneUnit,
     variant_id: [u8; 32],
@@ -154,7 +164,7 @@ fn extend_plan(
         .map(|choice| (choice.unit_id, choice.variant_id))
         .collect::<Vec<_>>();
     selections.push((unit.unit_id, variant_id));
-    let (plan, replayed) = crate::optimizer::derive_tuning_plan(state, space, &selections)?;
+    let (plan, replayed) = checked.derive(&selections)?;
     metrics_for(&replayed, plan)
 }
 

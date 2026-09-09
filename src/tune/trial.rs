@@ -1,5 +1,5 @@
 use crate::{
-    KirVerifiedProgramState, TuningPlan, TuningSpace, apply_tuning_plan, check_tuning_plan,
+    CheckedTuningPlan, CheckedTuningSpace, KirVerifiedProgramState, TuningPlan, TuningSpace,
 };
 use std::{fs::OpenOptions, io::Write, path::Path};
 
@@ -146,8 +146,18 @@ pub fn compile_tune_trial(
     plan: &TuningPlan,
     request: TuneTrialBuildRequest,
 ) -> Result<NonPublishableTuneTrial, String> {
-    check_tuning_plan(state, space, plan).map_err(|error| error.to_string())?;
-    let replayed = apply_tuning_plan(state, space, plan).map_err(|error| error.to_string())?;
+    let space = CheckedTuningSpace::check(state, space).map_err(|error| error.to_string())?;
+    let checked = space.apply(plan).map_err(|error| error.to_string())?;
+    compile_checked_tune_trial(&checked, request)
+}
+
+/// Freezes actual artifact bytes using a retained independent plan replay.
+/// The opaque checked-plan constructor prevents raw or mutated plans from
+/// bypassing source, space, legality, or pre/post-state validation.
+pub fn compile_checked_tune_trial(
+    checked: &CheckedTuningPlan<'_>,
+    request: TuneTrialBuildRequest,
+) -> Result<NonPublishableTuneTrial, String> {
     let identity = derive_artifact_identity(
         request.kind,
         &request.bytes,
@@ -155,8 +165,8 @@ pub fn compile_tune_trial(
         &request.link_recipe,
     )?;
     Ok(NonPublishableTuneTrial {
-        plan: plan.clone(),
-        post_state_digest: crate::tuning_kir_state_digest(&replayed)
+        plan: checked.plan().clone(),
+        post_state_digest: crate::tuning_kir_state_digest(checked.state())
             .map_err(|error| error.to_string())?,
         identity,
         bytes: request.bytes,

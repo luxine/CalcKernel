@@ -171,8 +171,8 @@ fn tune_schema_nine_scripts_pin_collector_checker_and_archive_roles() {
         "--contract-only",
         "--schema-only",
         "--baseline\", choices=(\"0.13\"",
-        "f5dd9989245fd6d9e70babc95dcdf7af17ecb42f",
-        "229fecf4dd95610ae67309b683142b53f014abf4db655611b188e8330aca11f3",
+        "4add225778b867e33227236d178de33139a97d36",
+        "06ddc50ef42d3497599fa46a6207b1335d2b52306c4f73d4b566d93a474b1012",
     ] {
         assert!(
             combined.contains(required),
@@ -279,6 +279,23 @@ fn schema_nine_compile_comparison_should_measure_terminated_child_cpu_time() {
     assert!(
         !compile_runner.contains("time.perf_counter_ns()"),
         "compile comparison must not count hosted-runner descheduling"
+    );
+}
+
+#[test]
+fn tune_replay_should_not_build_an_unused_ordinary_artifact() {
+    let commands = read("src/cli/tune.rs");
+    let replay = commands
+        .split("pub(super) fn run_replay(")
+        .nth(1)
+        .expect("replay entry")
+        .split("fn run_build(")
+        .next()
+        .expect("replay body");
+    assert!(
+        replay.contains("prepare_replay_native_product(args)")
+            && !replay.contains("compile_verified_native_product(args)"),
+        "replay needs verified source/KIR/header identity, not an unused ordinary LLVM object and link"
     );
 }
 

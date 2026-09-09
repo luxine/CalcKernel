@@ -68,7 +68,10 @@ pub use schema::{
     TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA, TUNE_INSPECTION_SCHEMA, TUNE_MANIFEST_SCHEMA,
     TUNE_MEASUREMENT_SCHEMA, TUNE_PLAN_SCHEMA, TuneBudget, TuneContract,
 };
-pub use search::{ExpansionDisposition, ExpansionRecord, SearchFrontier, run_deterministic_search};
+pub use search::{
+    ExpansionDisposition, ExpansionRecord, SearchFrontier, run_checked_tuning_search,
+    run_deterministic_search,
+};
 pub use selection::{
     CandidateOutcome, CandidateRank, CaseMedian, RoundPlan, RoundSummary, SearchEntrant, Selection,
     SelectionEntrant, SelectionError, SelectionReason, StreamStatistics, derive_round_summary,
@@ -79,4 +82,6 @@ pub use snapshot::{
     CapturedWorkload, StagedInvocationInputs, TuneCapturedInputIdentity, TuneEnvironmentIdentity,
     TuneSnapshotError, capture_workload, stage_invocation_inputs,
 };
-pub use trial::{NonPublishableTuneTrial, TuneTrialBuildRequest, compile_tune_trial};
+pub use trial::{
+    NonPublishableTuneTrial, TuneTrialBuildRequest, compile_checked_tune_trial, compile_tune_trial,
+};

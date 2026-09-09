@@ -153,6 +153,12 @@ canonical `CKTUNE01` schema-1 decision through crash-recoverable journals.
 compares object-graph and link-recipe identity; any stale compiler, source,
 schema, CPU/features, profile, mode, kind, frontier, plan, or artifact is an
 error with no ordinary-build fallback. A different destination is allowed.
+Replay prepares verified source/KIR and the header without emitting an unused
+ordinary artifact. An opaque source-backed tuning-space value retains complete
+discovery validation across the unchanged frontier search, and an immutable
+checked-plan value retains the independently replayed state through artifact
+identity construction. Raw space and plan inputs still require full validation;
+no frontier, legality, pre/post-state, object-graph, or link-recipe check is skipped.
 
 The private `tune-v1` namespace separates compile, measurement, and completed
 decision domains, uses an installation-local CSPRNG salt for measurement keys,
