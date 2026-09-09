@@ -146,6 +146,13 @@ fn typescript_oracle_should_be_an_immutable_repository_fixture() {
         );
     }
 
+    let source_manifest = read("tests/oracles/typescript/SOURCE_MANIFEST.sha256");
+    assert_eq!(
+        source_manifest.lines().count(),
+        85,
+        "TypeScript oracle source manifest must fix exactly 85 source/configuration/fixture paths"
+    );
+
     for required in [
         "tests/oracles/typescript/src/cli.ts",
         "tests/oracles/typescript/examples/scalar.ck",

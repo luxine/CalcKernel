@@ -165,6 +165,24 @@ ramp 仍不可控制托管 Neoverse-N2 的双频带：unchecked `slp_quad` 三�
 work、20 个样本、七次计时、rotation、upper median、stability/performance threshold、
 corpus 与平台矩阵均不变。
 
+Exact v0.12 run `33833225186` 与 exact v0.13 run `33833224700` 证明
+`bounded-upper-band-v1` 的架构假设不成立：AArch64 的目标频带可能在 256 个 probe 内不再出现，
+单个命中也不能预测后续七次调用；同一批 x86 证据则证明 `4 * VF * UF` 把 `UF` 重复计入四个
+实际 vector operation 的摊销门槛，使 16 元素 domain fixtures 走昂贵 epilogue 或 scalar
+unroll。复诊与已批准修订见 `specs/0.12/review/implementation-blocker-18.md`。测量协议改为
+三通道 raw-call 级交错的 `interleaved-upper-median-three-channel-v2`；仅 `slp_quad` 的稳定性
+对每行三通道共同频率因子归一化后执行原 16/20、75%..125% 门槛。x86 门槛改为至少四个实际
+vector operation，即 `ceil(4 / UF) * VF * UF`；AArch64 两个完整 group 的规则不变。所有 timed
+work、样本数、七次计时、upper median、性能阈值、corpus 与平台矩阵均保持不变。
+
+Exact v0.12 run `33966418774` 的 x86-64 performance job `101307347417` 随后证明，通过准入的
+`VF4/UF2` noalias kernel 仍按每个 UF chunk 分别发射 load/compute/store，隐藏了契约已经证明的
+跨 chunk 内存级并行，导致 unchecked domain-fact 几何均值仅约 1.0057，未达到不变的 1.05
+门槛。复诊与闭环见 `specs/0.12/review/implementation-blocker-19.md`。x86-64 的 `UF > 1`
+vector body 现在按 SSA/MemorySSA 就绪关系执行确定性局部列表调度，优先暴露独立 load 并保持
+同分区依赖、reduction/recurrence 与有序 effect；非 x86、`UF == 1`、门槛、timed work、样本、
+统计、corpus 与平台矩阵均保持不变。
+
 本机当前未设置 `CKC_LLVM_PREFIX`。阶段 01–02 可以先完成 default-feature TDD；阶段 03 前
 必须按 README 使用固定 LLVM 22.1.8 release prefix，阶段 10 还需要 oracle profile 的 pinned
 Clang 22.1.8 与 Rust 1.90.0。

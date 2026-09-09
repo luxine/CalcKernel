@@ -35,6 +35,12 @@ rotations of candidate/C/Rust and stores each channel's upper median. For
 `slp_quad` only, the unchanged 16-of-20 stability band is evaluated after
 per-row common-mode normalization; throughput still uses raw retained durations.
 
+Hand-written oracles use architecture-specific baseline flags, disable fast
+math and contraction, and may not use a CPU feature absent from CK's baseline
+profile. They receive every equivalent source-language precondition and must
+pass differential and undefined-behavior auditing over the fixed declared valid
+domain. Missing, invalid, or post-measurement-excluded competitors fail the gate.
+
 ## Cumulative release gates
 
 - Ordinary no-PGO 0.13 baseline/native versus exact 0.12 replay: geometric-mean
@@ -61,8 +67,18 @@ per-row common-mode normalization; throughput still uses raw retained durations.
   time, excluding hosted-worker descheduling without removing compiler work.
 - All cumulative 0.12 gates remain: Native reaches at least 95% of pinned Clang
   geometric mean, no item is more than 10% slower, checked proof loops reach at
-  least 97% of unchecked throughput, vector/domain gates remain, and optimizer
+  least 97% of unchecked throughput, and optimizer
   latency retains the prior 2x suite/3x individual ceilings.
+- On each architecture and safety mode, vector kernels reach at least 95% of
+  the geometric mean of the faster valid C/Rust SIMD oracle for each kernel,
+  and every kernel reaches at least 90% of its oracle. The domain-fact suite
+  exceeds the faster generic Clang/Rust oracle geometric mean by at least 5%.
+- The unchanged scalar corpus is no more than 3% slower in geometric mean and
+  no individual case more than 8% slower than independently replayed 0.11.
+  Native object size is at most 35% larger in aggregate and no individual object
+  exceeds 2.5x its replay counterpart;
+  baseline O3 source-to-object compilation ratios are at most 1.5x in geometric
+  mean and 2x individually against that same fixed replay.
 
 Runtime throughput, generation overhead, source-to-object time, artifact size,
 compiler archive size, memory, cold/warm execution, and cache behavior are

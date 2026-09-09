@@ -28,6 +28,11 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
 各 channel 的 upper median。仅 `slp_quad` 在逐行 common-mode 归一化后执行未改变的 16/20
 稳定性门槛；throughput 仍只使用原始保留耗时。
 
+Hand-written oracle 使用 architecture-specific baseline flag，禁用 fast math/contraction，且
+不得使用 CK baseline profile 不具备的 CPU feature。它们获得 source language 可表达的全部
+等价 precondition，并须在固定 declared valid domain 上通过 differential 与 undefined-behavior
+audit。缺失、无效或测量后排除 competitor 都会使 gate 失败。
+
 ## 累积 release gate
 
 - 0.13 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
@@ -49,8 +54,15 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
   Source-to-object 样本使用已终止子进程的 user+system CPU time，排除托管 worker 被调度
   移出的时间，同时不移除任何编译器工作。
 - 保留全部 0.12 累积 gate：Native 至少达到 pinned Clang geometric mean 的 95%，单项最多
-  慢 10%，checked proof loop 至少达到 unchecked 的 97%，vector/domain gate 保持，optimizer
+  慢 10%，checked proof loop 至少达到 unchecked 的 97%，optimizer
   latency 保持既有 suite 2x、单项 3x 上限。
+- 每个架构与 safety mode 上，vector kernel 至少达到各 kernel 中较快有效 C/Rust SIMD oracle
+  geometric mean 的 95%，每个 kernel 至少达到自身 oracle 的 90%；domain-fact suite 至少
+  超过较快 generic Clang/Rust oracle geometric mean 的 5%。
+- Unchanged scalar corpus 相对 independently replayed 0.11 的 geometric mean 最多慢 3%，
+  单项最多慢 8%；Native object size 相对同一固定 replay 的 aggregate 增长不超过 35%，
+  单项不超过 2.5x；baseline O3 source-to-object compile ratio 的 geometric mean 不超过
+  1.5x，单项不超过 2x。
 
 Runtime throughput、generation overhead、source-to-object time、artifact/compiler archive size、
 memory、cold/warm execution 与 cache behavior 是分离指标。任何 threshold 都不能削弱 diagnostic、
