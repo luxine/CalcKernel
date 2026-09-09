@@ -93,7 +93,7 @@ fn instruction(
     }
 }
 
-fn vector_module() -> KirModule {
+pub(super) fn vector_module() -> KirModule {
     let region = VectorRegionId::from_index(0);
     let memory_region = MemoryRegionId::from_index(0);
     let memory0 = MemoryVersionId::from_index(0);

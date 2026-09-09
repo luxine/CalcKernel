@@ -1,6 +1,12 @@
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "ir/allocation_counter.rs"]
+mod allocation_counter;
+
+#[path = "ir/kir_print.rs"]
+mod kir_print;
+
 #[path = "ir/mir.rs"]
 mod mir;
 

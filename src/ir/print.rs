@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::model::value_type;
 use super::*;
 
@@ -306,12 +308,21 @@ fn print_mir_place(place: &MirPlace) -> String {
 
 #[must_use]
 pub fn print_mir_type(type_node: &MirType) -> String {
-    match type_node {
-        MirType::Primitive(name) => print_primitive_type(*name).to_string(),
-        MirType::Pointer(element_type) => format!("ptr<{}>", print_mir_type(element_type)),
-        MirType::Slice(element_type) => format!("slice<{}>", print_mir_type(element_type)),
-        MirType::Struct(name) => name.clone(),
-        MirType::Void => "void".to_string(),
+    MirTypeDisplay(type_node).to_string()
+}
+
+/// Shares canonical type spelling with KIR without allocating nested strings.
+pub(super) struct MirTypeDisplay<'a>(pub(super) &'a MirType);
+
+impl fmt::Display for MirTypeDisplay<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            MirType::Primitive(name) => formatter.write_str(print_primitive_type(*name)),
+            MirType::Pointer(element_type) => write!(formatter, "ptr<{}>", Self(element_type)),
+            MirType::Slice(element_type) => write!(formatter, "slice<{}>", Self(element_type)),
+            MirType::Struct(name) => formatter.write_str(name),
+            MirType::Void => formatter.write_str("void"),
+        }
     }
 }
 

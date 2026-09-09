@@ -1,4 +1,6 @@
-use crate::print_mir_type;
+use std::fmt::{self, Write};
+
+use crate::ir::print::MirTypeDisplay;
 
 use super::*;
 
@@ -7,8 +9,12 @@ pub const KIR_FORMAT_VERSION: u32 = 3;
 
 #[must_use]
 pub fn print_kir_module(module: &KirModule) -> String {
-    let mut output = format!(
-        "kir-v{} consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}\n",
+    let mut output = String::new();
+    // All writers use an infallible String sink and standard data formatters.
+    // Append directly: these same canonical bytes also identify optimizer states.
+    let _ = writeln!(
+        output,
+        "kir-v{} consumer={} overflow={} bounds={} sanitizer={} profile-schema={} profile-sha256={}",
         KIR_FORMAT_VERSION,
         print_consumer(module.config.consumer),
         print_overflow_mode(module.config.overflow_mode),
@@ -18,246 +24,277 @@ pub fn print_kir_module(module: &KirModule) -> String {
         module.profile.digest_hex(),
     );
     if let Some(entry) = &module.entry {
-        output.push_str(&format!(
-            "entry {} -> {:?}\n",
+        let _ = writeln!(
+            output,
+            "entry {} -> {:?}",
             entry.function_name, entry.result
-        ));
+        );
     }
     for struct_info in &module.structs {
-        output.push_str(&format!("struct {} {{", struct_info.name));
+        let _ = write!(output, "struct {} {{", struct_info.name);
         for field in &struct_info.fields {
-            output.push_str(&format!(
+            let _ = write!(
+                output,
                 " {}: {};",
                 field.name,
-                print_mir_type(&field.type_node)
-            ));
+                MirTypeDisplay(&field.type_node)
+            );
         }
         output.push_str(" }\n");
     }
     if let Some(layout) = &module.tune_layout {
         for function in &layout.functions {
-            output.push_str(&format!("tune-layout f{}", function.function.index()));
+            let _ = write!(output, "tune-layout f{}", function.function.index());
             for block in &function.blocks {
-                output.push_str(&format!(" b{}", block.index()));
+                let _ = write!(output, " b{}", block.index());
             }
             output.push('\n');
         }
     }
     for function in &module.functions {
         output.push('\n');
-        output.push_str(&print_kir_function(function));
+        write_kir_function(&mut output, function);
         output.push('\n');
     }
     output
 }
 
 pub(super) fn print_kir_function(function: &KirFunction) -> String {
+    let mut output = String::new();
+    write_kir_function(&mut output, function);
+    output
+}
+
+fn write_kir_function(output: &mut String, function: &KirFunction) {
     let exported = if function.exported { "export " } else { "" };
     let tune_noinline = if function.tune_noinline {
         "tune-noinline "
     } else {
         ""
     };
-    let params = function
-        .params
-        .iter()
-        .map(|param| {
-            format!(
-                "v{} {}: {}",
-                param.value.index(),
-                param.name,
-                print_mir_type(&param.type_node)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut lines = vec![format!(
-        "{exported}{tune_noinline}fn f{} {}({params}) -> {} {{",
+    let _ = write!(
+        output,
+        "{exported}{tune_noinline}fn f{} {}(",
         function.id.index(),
-        function.name,
-        print_mir_type(&function.return_type)
-    )];
+        function.name
+    );
+    for (index, param) in function.params.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        let _ = write!(
+            output,
+            "v{} {}: {}",
+            param.value.index(),
+            param.name,
+            MirTypeDisplay(&param.type_node)
+        );
+    }
+    let _ = write!(output, ") -> {} {{", MirTypeDisplay(&function.return_type));
     for region in &function.regions {
-        lines.push(print_region(region));
+        output.push('\n');
+        write_region(output, region);
     }
     for memory in &function.initial_memory {
-        lines.push(format!(
-            "initial_memory r{} = m{}",
+        let _ = write!(
+            output,
+            "\ninitial_memory r{} = m{}",
             memory.region.index(),
             memory.version.index()
-        ));
+        );
     }
     for block in &function.blocks {
-        lines.push(print_kir_block(block));
+        output.push('\n');
+        write_kir_block(output, block);
     }
-    lines.push("}".to_string());
-    lines.join("\n")
+    output.push_str("\n}");
 }
 
-fn print_kir_block(block: &KirBlock) -> String {
-    let params = block
-        .params
-        .iter()
-        .map(|param| {
-            format!(
-                "v{} {}: {}",
-                param.value.index(),
-                param.slot,
-                print_kir_value_type(&param.type_node)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let memory_params = block
-        .memory_params
-        .iter()
-        .map(|param| format!("m{}: r{}", param.version.index(), param.region.index()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let signature = if memory_params.is_empty() {
-        params
-    } else if params.is_empty() {
-        format!("memory {memory_params}")
-    } else {
-        format!("{params}; memory {memory_params}")
-    };
-    let mut lines = vec![format!(
-        "{} b{}({signature}):",
-        block.label,
-        block.id.index()
-    )];
+fn write_kir_block(output: &mut String, block: &KirBlock) {
+    let _ = write!(output, "{} b{}(", block.label, block.id.index());
+    for (index, param) in block.params.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        let _ = write!(output, "v{} {}: ", param.value.index(), param.slot);
+        write_kir_value_type(output, &param.type_node);
+    }
+    if !block.memory_params.is_empty() {
+        if !block.params.is_empty() {
+            output.push_str("; ");
+        }
+        output.push_str("memory ");
+        for (index, param) in block.memory_params.iter().enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            let _ = write!(
+                output,
+                "m{}: r{}",
+                param.version.index(),
+                param.region.index()
+            );
+        }
+    }
+    output.push_str("):");
     for instruction in &block.instructions {
-        lines.push(format!("  {}", print_kir_instruction(instruction)));
+        output.push_str("\n  ");
+        write_kir_instruction(output, instruction);
     }
-    lines.push(format!("  {}", print_kir_terminator(&block.terminator)));
-    lines.join("\n")
+    output.push_str("\n  ");
+    write_kir_terminator(output, &block.terminator);
 }
 
-fn print_region(region: &KirMemoryRegion) -> String {
-    let origin = match region.origin {
-        KirMemoryRegionOrigin::Conservative => "conservative".to_string(),
-        KirMemoryRegionOrigin::Parameter(value) => format!("parameter(v{})", value.index()),
-        KirMemoryRegionOrigin::RawSlice(value) => format!("raw_slice(v{})", value.index()),
-        KirMemoryRegionOrigin::Subslice(value) => format!("subslice(v{})", value.index()),
-    };
-    let parent = region
-        .parent
-        .map(|parent| format!(" parent=r{}", parent.index()))
-        .unwrap_or_default();
-    let interval = region
-        .byte_interval
-        .as_ref()
-        .map(|interval| {
-            format!(
-                " interval=[v{}*sizeof({}), v{}*sizeof({}))",
-                interval.start.index(),
-                print_mir_type(&interval.element_type),
-                interval.end.index(),
-                print_mir_type(&interval.element_type),
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "region r{} {origin} partition=r{}{}{interval}",
-        region.id.index(),
-        region.partition.index(),
-        parent
-    )
+fn write_region(output: &mut String, region: &KirMemoryRegion) {
+    let _ = write!(output, "region r{} ", region.id.index());
+    match region.origin {
+        KirMemoryRegionOrigin::Conservative => output.push_str("conservative"),
+        KirMemoryRegionOrigin::Parameter(value) => {
+            let _ = write!(output, "parameter(v{})", value.index());
+        }
+        KirMemoryRegionOrigin::RawSlice(value) => {
+            let _ = write!(output, "raw_slice(v{})", value.index());
+        }
+        KirMemoryRegionOrigin::Subslice(value) => {
+            let _ = write!(output, "subslice(v{})", value.index());
+        }
+    }
+    let _ = write!(output, " partition=r{}", region.partition.index());
+    if let Some(parent) = region.parent {
+        let _ = write!(output, " parent=r{}", parent.index());
+    }
+    if let Some(interval) = &region.byte_interval {
+        let _ = write!(
+            output,
+            " interval=[v{}*sizeof({}), v{}*sizeof({}))",
+            interval.start.index(),
+            MirTypeDisplay(&interval.element_type),
+            interval.end.index(),
+            MirTypeDisplay(&interval.element_type)
+        );
+    }
 }
 
-fn print_kir_instruction(instruction: &KirInstruction) -> String {
-    let results = instruction
-        .results
-        .iter()
-        .map(|result| {
-            format!(
-                "v{}: {}",
-                result.value.index(),
-                print_kir_value_type(&result.type_node)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let operation = match &instruction.kind {
-        KirInstructionKind::Undef { slot } => format!("undef {slot}"),
-        KirInstructionKind::ConstInt { value } => format!("const_int {value}"),
-        KirInstructionKind::ConstFloat { value } => format!("const_float {value}"),
-        KirInstructionKind::ConstBool { value } => format!("const_bool {value}"),
-        KirInstructionKind::Copy { value } => format!("copy v{}", value.index()),
+fn write_kir_instruction(output: &mut String, instruction: &KirInstruction) {
+    let _ = write!(output, "i{} ", instruction.id.index());
+    for (index, result) in instruction.results.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        let _ = write!(output, "v{}: ", result.value.index());
+        write_kir_value_type(output, &result.type_node);
+    }
+    if !instruction.results.is_empty() {
+        output.push_str(" = ");
+    }
+    match &instruction.kind {
+        KirInstructionKind::Undef { slot } => {
+            let _ = write!(output, "undef {slot}");
+        }
+        KirInstructionKind::ConstInt { value } => {
+            let _ = write!(output, "const_int {value}");
+        }
+        KirInstructionKind::ConstFloat { value } => {
+            let _ = write!(output, "const_float {value}");
+        }
+        KirInstructionKind::ConstBool { value } => {
+            let _ = write!(output, "const_bool {value}");
+        }
+        KirInstructionKind::Copy { value } => {
+            let _ = write!(output, "copy v{}", value.index());
+        }
         KirInstructionKind::Binary {
             op,
             left,
             right,
             semantics,
-        } => format!(
-            "{:?}.{} v{}, v{}",
-            op,
-            match semantics {
-                KirArithmeticSemantics::Modular => "modular",
-                KirArithmeticSemantics::Checked => "checked",
-                KirArithmeticSemantics::StrictFloat => "strict",
-            },
-            left.index(),
-            right.index()
-        ),
+        } => {
+            let _ = write!(
+                output,
+                "{op:?}.{} v{}, v{}",
+                print_arithmetic_semantics(*semantics),
+                left.index(),
+                right.index()
+            );
+        }
         KirInstructionKind::Unary {
             op,
             operand,
             semantics,
-        } => format!(
-            "{:?}.{} v{}",
-            op,
-            match semantics {
-                KirArithmeticSemantics::Modular => "modular",
-                KirArithmeticSemantics::Checked => "checked",
-                KirArithmeticSemantics::StrictFloat => "strict",
-            },
-            operand.index(),
-        ),
+        } => {
+            let _ = write!(
+                output,
+                "{op:?}.{} v{}",
+                print_arithmetic_semantics(*semantics),
+                operand.index()
+            );
+        }
         KirInstructionKind::Compare { op, left, right } => {
-            format!("{op:?} v{}, v{}", left.index(), right.index())
+            let _ = write!(output, "{op:?} v{}, v{}", left.index(), right.index());
         }
         KirInstructionKind::Cast { op, value } => {
-            format!("cast {op:?} v{}", value.index())
+            let _ = write!(output, "cast {op:?} v{}", value.index());
         }
         KirInstructionKind::CheckCondition { kind, args } => {
-            format!("check_condition {kind:?} {}", print_values(args))
+            let _ = write!(output, "check_condition {kind:?} ");
+            write_values(output, args);
         }
         KirInstructionKind::Guard { condition, failure } => {
-            format!("guard v{} else {failure:?}", condition.index())
+            let _ = write!(output, "guard v{} else {failure:?}", condition.index());
         }
-        KirInstructionKind::Address { place } => format!("address {}", print_place(place)),
-        KirInstructionKind::Load { place } => format!("load {}", print_place(place)),
+        KirInstructionKind::Address { place } => {
+            output.push_str("address ");
+            write_place(output, place);
+        }
+        KirInstructionKind::Load { place } => {
+            output.push_str("load ");
+            write_place(output, place);
+        }
         KirInstructionKind::Store { place, value } => {
-            format!("store {}, v{}", print_place(place), value.index())
+            output.push_str("store ");
+            write_place(output, place);
+            let _ = write!(output, ", v{}", value.index());
         }
         KirInstructionKind::MakeSlice { data, len } => {
-            format!("make_slice v{}, v{}", data.index(), len.index())
+            let _ = write!(output, "make_slice v{}, v{}", data.index(), len.index());
         }
-        KirInstructionKind::SliceData { slice } => format!("slice_data v{}", slice.index()),
-        KirInstructionKind::SliceLen { slice } => format!("slice_len v{}", slice.index()),
-        KirInstructionKind::Subslice { slice, start, end } => format!(
-            "subslice v{}, v{}, v{}",
-            slice.index(),
-            start.index(),
-            end.index()
-        ),
+        KirInstructionKind::SliceData { slice } => {
+            let _ = write!(output, "slice_data v{}", slice.index());
+        }
+        KirInstructionKind::SliceLen { slice } => {
+            let _ = write!(output, "slice_len v{}", slice.index());
+        }
+        KirInstructionKind::Subslice { slice, start, end } => {
+            let _ = write!(
+                output,
+                "subslice v{}, v{}, v{}",
+                slice.index(),
+                start.index(),
+                end.index()
+            );
+        }
         KirInstructionKind::Call {
             function_name,
             args,
-        } => format!("call {function_name}({})", print_values(args)),
-        KirInstructionKind::RuntimeCall { intrinsic, args } => {
-            format!("runtime_call {intrinsic:?}({})", print_values(args))
+        } => {
+            let _ = write!(output, "call {function_name}(");
+            write_values(output, args);
+            output.push(')');
         }
-        KirInstructionKind::VersionPredicate { predicate } => format!(
-            "version_predicate bits={} {}",
-            predicate.address_bits,
-            predicate
-                .conjuncts
-                .iter()
-                .map(|conjunct| match conjunct {
+        KirInstructionKind::RuntimeCall { intrinsic, args } => {
+            let _ = write!(output, "runtime_call {intrinsic:?}(");
+            write_values(output, args);
+            output.push(')');
+        }
+        KirInstructionKind::VersionPredicate { predicate } => {
+            let _ = write!(output, "version_predicate bits={} ", predicate.address_bits);
+            for (index, conjunct) in predicate.conjuncts.iter().enumerate() {
+                if index != 0 {
+                    output.push_str("&&");
+                }
+                match conjunct {
                     KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
-                        format!("trip(v{}>={minimum})", value.index())
+                        let _ = write!(output, "trip(v{}>={minimum})", value.index());
                     }
                     KirVersionPredicateConjunct::AddressIntervalsDisjoint {
                         left,
@@ -266,37 +303,43 @@ fn print_kir_instruction(instruction: &KirInstruction) -> String {
                         right,
                         right_count,
                         right_element_bytes,
-                    } => format!(
-                        "disjoint(v{}[v{}*{}],v{}[v{}*{}])",
-                        left.index(),
-                        left_count.index(),
-                        left_element_bytes,
-                        right.index(),
-                        right_count.index(),
-                        right_element_bytes
-                    ),
-                })
-                .collect::<Vec<_>>()
-                .join("&&")
-        ),
-        KirInstructionKind::VectorSplat { scalar, region } => {
-            format!("vector_splat v{} [vr{}]", scalar.index(), region.index())
+                    } => {
+                        let _ = write!(
+                            output,
+                            "disjoint(v{}[v{}*{}],v{}[v{}*{}])",
+                            left.index(),
+                            left_count.index(),
+                            left_element_bytes,
+                            right.index(),
+                            right_count.index(),
+                            right_element_bytes
+                        );
+                    }
+                }
+            }
         }
-        KirInstructionKind::VectorLoad { access, region } => format!(
-            "vector_load {} [vr{}]",
-            print_vector_access(access),
-            region.index()
-        ),
+        KirInstructionKind::VectorSplat { scalar, region } => {
+            let _ = write!(
+                output,
+                "vector_splat v{} [vr{}]",
+                scalar.index(),
+                region.index()
+            );
+        }
+        KirInstructionKind::VectorLoad { access, region } => {
+            output.push_str("vector_load ");
+            write_vector_access(output, access);
+            let _ = write!(output, " [vr{}]", region.index());
+        }
         KirInstructionKind::VectorStore {
             access,
             value,
             region,
-        } => format!(
-            "vector_store {}, v{} [vr{}]",
-            print_vector_access(access),
-            value.index(),
-            region.index()
-        ),
+        } => {
+            output.push_str("vector_store ");
+            write_vector_access(output, access);
+            let _ = write!(output, ", v{} [vr{}]", value.index(), region.index());
+        }
         KirInstructionKind::VectorBinary {
             op,
             left,
@@ -304,130 +347,167 @@ fn print_kir_instruction(instruction: &KirInstruction) -> String {
             semantics,
             no_failure_proof,
             region,
-        } => format!(
-            "vector_{:?}.{} v{}, v{} [proof={} vr{}]",
-            op,
-            print_arithmetic_semantics(*semantics),
-            left.index(),
-            right.index(),
-            no_failure_proof
-                .map_or_else(|| "none".to_string(), |proof| format!("p{}", proof.index())),
-            region.index()
-        )
-        .to_ascii_lowercase(),
+        } => {
+            write_lowercase(
+                output,
+                format_args!(
+                    "vector_{op:?}.{} v{}, v{} [proof=",
+                    print_arithmetic_semantics(*semantics),
+                    left.index(),
+                    right.index()
+                ),
+            );
+            write_optional_proof(output, *no_failure_proof);
+            let _ = write!(output, " vr{}]", region.index());
+        }
         KirInstructionKind::VectorUnary {
             op,
             operand,
             semantics,
             no_failure_proof,
             region,
-        } => format!(
-            "vector_{:?}.{} v{} [proof={} vr{}]",
-            op,
-            print_arithmetic_semantics(*semantics),
-            operand.index(),
-            no_failure_proof
-                .map_or_else(|| "none".to_string(), |proof| format!("p{}", proof.index())),
-            region.index()
-        )
-        .to_ascii_lowercase(),
+        } => {
+            write_lowercase(
+                output,
+                format_args!(
+                    "vector_{op:?}.{} v{} [proof=",
+                    print_arithmetic_semantics(*semantics),
+                    operand.index()
+                ),
+            );
+            write_optional_proof(output, *no_failure_proof);
+            let _ = write!(output, " vr{}]", region.index());
+        }
         KirInstructionKind::VectorCompare {
             op,
             left,
             right,
             region,
-        } => format!(
-            "vector_compare_{op:?} v{}, v{} [vr{}]",
-            left.index(),
-            right.index(),
-            region.index()
-        )
-        .to_ascii_lowercase(),
+        } => {
+            write_lowercase(
+                output,
+                format_args!(
+                    "vector_compare_{op:?} v{}, v{} [vr{}]",
+                    left.index(),
+                    right.index(),
+                    region.index()
+                ),
+            );
+        }
         KirInstructionKind::VectorSelect {
             mask,
             when_true,
             when_false,
             region,
-        } => format!(
-            "vector_select v{}, v{}, v{} [vr{}]",
-            mask.index(),
-            when_true.index(),
-            when_false.index(),
-            region.index()
-        ),
-        KirInstructionKind::VectorCast { op, value, region } => format!(
-            "vector_cast_{op:?} v{} [vr{}]",
-            value.index(),
-            region.index()
-        )
-        .to_ascii_lowercase(),
+        } => {
+            let _ = write!(
+                output,
+                "vector_select v{}, v{}, v{} [vr{}]",
+                mask.index(),
+                when_true.index(),
+                when_false.index(),
+                region.index()
+            );
+        }
+        KirInstructionKind::VectorCast { op, value, region } => {
+            write_lowercase(
+                output,
+                format_args!(
+                    "vector_cast_{op:?} v{} [vr{}]",
+                    value.index(),
+                    region.index()
+                ),
+            );
+        }
         KirInstructionKind::VectorInsert {
             vector,
             scalar,
             lane_index,
             region,
-        } => format!(
-            "vector_insert v{}, v{}, lane={} [vr{}]",
-            vector.index(),
-            scalar.index(),
-            lane_index,
-            region.index()
-        ),
+        } => {
+            let _ = write!(
+                output,
+                "vector_insert v{}, v{}, lane={} [vr{}]",
+                vector.index(),
+                scalar.index(),
+                lane_index,
+                region.index()
+            );
+        }
         KirInstructionKind::VectorExtract {
             vector,
             lane_index,
             region,
-        } => format!(
-            "vector_extract v{}, lane={} [vr{}]",
-            vector.index(),
-            lane_index,
-            region.index()
-        ),
+        } => {
+            let _ = write!(
+                output,
+                "vector_extract v{}, lane={} [vr{}]",
+                vector.index(),
+                lane_index,
+                region.index()
+            );
+        }
         KirInstructionKind::VectorReduce {
             op,
             vector,
             semantics,
             region,
-        } => format!(
-            "vector_reduce_{op:?}.{} v{} [vr{}]",
-            print_arithmetic_semantics(*semantics),
-            vector.index(),
-            region.index()
-        )
-        .to_ascii_lowercase(),
-    };
-    let mut suffix = String::new();
+        } => {
+            write_lowercase(
+                output,
+                format_args!(
+                    "vector_reduce_{op:?}.{} v{} [vr{}]",
+                    print_arithmetic_semantics(*semantics),
+                    vector.index(),
+                    region.index()
+                ),
+            );
+        }
+    }
     if let Some(memory) = &instruction.memory {
-        suffix.push_str(&format!(
-            " [memory r{} m{}{}]",
+        let _ = write!(
+            output,
+            " [memory r{} m{}",
             memory.region.index(),
-            memory.input.index(),
-            memory
-                .output
-                .map(|version| format!(" -> m{}", version.index()))
-                .unwrap_or_default()
-        ));
+            memory.input.index()
+        );
+        if let Some(version) = memory.output {
+            let _ = write!(output, " -> m{}", version.index());
+        }
+        output.push(']');
     }
     if let Some(effect) = &instruction.effect {
-        suffix.push_str(&format!(" [effect {} {:?}]", effect.order, effect.kind));
-    }
-    if results.is_empty() {
-        format!("i{} {operation}{suffix}", instruction.id.index())
-    } else {
-        format!(
-            "i{} {results} = {operation}{suffix}",
-            instruction.id.index()
-        )
+        let _ = write!(output, " [effect {} {:?}]", effect.order, effect.kind);
     }
 }
 
-fn print_kir_value_type(type_node: &KirValueType) -> String {
+fn write_lowercase(output: &mut String, arguments: fmt::Arguments<'_>) {
+    let start = output.len();
+    let _ = output.write_fmt(arguments);
+    // Only the newly formatted fragment changes case, never identifiers that
+    // already precede it. String's prior length is always a UTF-8 boundary.
+    output[start..].make_ascii_lowercase();
+}
+
+fn write_optional_proof(output: &mut String, proof: Option<ProofId>) {
+    if let Some(proof) = proof {
+        let _ = write!(output, "p{}", proof.index());
+    } else {
+        output.push_str("none");
+    }
+}
+
+fn write_kir_value_type(output: &mut String, type_node: &KirValueType) {
     match type_node {
-        KirValueType::Scalar(type_node) => print_mir_type(type_node),
-        KirValueType::FixedVector { lane, lanes } => {
-            format!("vector<{lane:?}, {lanes}>").to_ascii_lowercase()
+        KirValueType::Scalar(type_node) => {
+            let _ = write!(output, "{}", MirTypeDisplay(type_node));
         }
-        KirValueType::Mask { lanes } => format!("mask<{lanes}>"),
+        KirValueType::FixedVector { lane, lanes } => {
+            write_lowercase(output, format_args!("vector<{lane:?}, {lanes}>"));
+        }
+        KirValueType::Mask { lanes } => {
+            let _ = write!(output, "mask<{lanes}>");
+        }
     }
 }
 
@@ -439,108 +519,119 @@ fn print_arithmetic_semantics(semantics: KirArithmeticSemantics) -> &'static str
     }
 }
 
-fn print_vector_access(access: &KirVectorMemoryAccess) -> String {
-    format!(
-        "slice=v{} start=v{} end=v{} lane={:?} lanes={} bytes={} align={}/{}",
-        access.slice.index(),
-        access.start.index(),
-        access.end.index(),
-        access.lane,
-        access.lanes,
-        access.byte_footprint,
-        access.known_alignment,
-        access.required_alignment
-    )
-    .to_ascii_lowercase()
+fn write_vector_access(output: &mut String, access: &KirVectorMemoryAccess) {
+    write_lowercase(
+        output,
+        format_args!(
+            "slice=v{} start=v{} end=v{} lane={:?} lanes={} bytes={} align={}/{}",
+            access.slice.index(),
+            access.start.index(),
+            access.end.index(),
+            access.lane,
+            access.lanes,
+            access.byte_footprint,
+            access.known_alignment,
+            access.required_alignment
+        ),
+    );
 }
 
-fn print_values(values: &[ValueId]) -> String {
-    values
-        .iter()
-        .map(|value| format!("v{}", value.index()))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn print_place(place: &KirPlace) -> String {
-    match place {
-        KirPlace::Value { value, .. } => format!("value(v{})", value.index()),
-        KirPlace::Deref { pointer, .. } => format!("deref(v{})", pointer.index()),
-        KirPlace::Index { base, index, .. } => {
-            format!("index({}, v{})", print_place(base), index.index())
+fn write_values(output: &mut String, values: &[ValueId]) {
+    for (index, value) in values.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
         }
-        KirPlace::SliceIndex { slice, index, .. } => {
-            format!("slice_index(v{}, v{})", slice.index(), index.index())
-        }
-        KirPlace::Field {
-            base, field_name, ..
-        } => format!("field({}, {field_name})", print_place(base)),
+        let _ = write!(output, "v{}", value.index());
     }
 }
 
-fn print_kir_terminator(terminator: &KirTerminator) -> String {
+fn write_place(output: &mut String, place: &KirPlace) {
+    match place {
+        KirPlace::Value { value, .. } => {
+            let _ = write!(output, "value(v{})", value.index());
+        }
+        KirPlace::Deref { pointer, .. } => {
+            let _ = write!(output, "deref(v{})", pointer.index());
+        }
+        KirPlace::Index { base, index, .. } => {
+            output.push_str("index(");
+            write_place(output, base);
+            let _ = write!(output, ", v{})", index.index());
+        }
+        KirPlace::SliceIndex { slice, index, .. } => {
+            let _ = write!(
+                output,
+                "slice_index(v{}, v{})",
+                slice.index(),
+                index.index()
+            );
+        }
+        KirPlace::Field {
+            base, field_name, ..
+        } => {
+            output.push_str("field(");
+            write_place(output, base);
+            let _ = write!(output, ", {field_name})");
+        }
+    }
+}
+
+fn write_kir_terminator(output: &mut String, terminator: &KirTerminator) {
     match terminator {
         KirTerminator::Return {
             value,
             memory,
             effect_order,
         } => {
-            let memory = print_return_memory(memory);
-            value.map_or_else(
-                || format!("return [effect {effect_order}]"),
-                |value| format!("return v{} [effect {effect_order}]", value.index()),
-            ) + &memory
+            output.push_str("return");
+            if let Some(value) = value {
+                let _ = write!(output, " v{}", value.index());
+            }
+            let _ = write!(output, " [effect {effect_order}]");
+            write_return_memory(output, memory);
         }
-        KirTerminator::Jump { edge } => format!("jump {}", print_edge(edge)),
+        KirTerminator::Jump { edge } => {
+            output.push_str("jump ");
+            write_edge(output, edge);
+        }
         KirTerminator::Branch {
             condition,
             then_edge,
             else_edge,
-        } => format!(
-            "branch v{}, {}, {}",
-            condition.index(),
-            print_edge(then_edge),
-            print_edge(else_edge)
-        ),
+        } => {
+            let _ = write!(output, "branch v{}, ", condition.index());
+            write_edge(output, then_edge);
+            output.push_str(", ");
+            write_edge(output, else_edge);
+        }
     }
 }
 
-fn print_edge(edge: &KirEdge) -> String {
-    let memory = if edge.memory_args.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "; memory {}",
-            edge.memory_args
-                .iter()
-                .map(|version| format!("m{}", version.index()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    format!(
-        "b{}({}{memory})",
-        edge.target.index(),
-        edge.args
-            .iter()
-            .map(|value| format!("v{}", value.index()))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
+fn write_edge(output: &mut String, edge: &KirEdge) {
+    let _ = write!(output, "b{}(", edge.target.index());
+    write_values(output, &edge.args);
+    if !edge.memory_args.is_empty() {
+        output.push_str("; memory ");
+        for (index, version) in edge.memory_args.iter().enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            let _ = write!(output, "m{}", version.index());
+        }
+    }
+    output.push(')');
 }
 
-fn print_return_memory(memory: &[(MemoryRegionId, MemoryVersionId)]) -> String {
-    if memory.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " [memory {}]",
-            memory
-                .iter()
-                .map(|(region, version)| format!("r{}=m{}", region.index(), version.index()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+fn write_return_memory(output: &mut String, memory: &[(MemoryRegionId, MemoryVersionId)]) {
+    if !memory.is_empty() {
+        output.push_str(" [memory ");
+        for (index, (region, version)) in memory.iter().enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            let _ = write!(output, "r{}=m{}", region.index(), version.index());
+        }
+        output.push(']');
     }
 }
 
