@@ -168,7 +168,9 @@ jobs:
           toolchain: 1.90.0
       - name: Verify Windows publication primitives before LLVM bootstrap
         if: runner.os == 'Windows'
-        run: cargo test --locked --test tune publication_ -- --nocapture
+        run: |
+          cargo test --locked --lib publication_waiter_ -- --nocapture
+          cargo test --locked --test tune publication_ -- --nocapture
       - name: Bootstrap pinned host oracle
         uses: ./.github/actions/bootstrap-ckc-llvm
         with:

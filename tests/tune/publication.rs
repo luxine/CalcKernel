@@ -95,7 +95,7 @@ fn publication_locks_are_full_identity_owner_only_and_persistent() {
     };
     let output =
         TuneOutputSet::resolve(&paths, &root.join("kernel.cktune"), &[]).expect("output set");
-    {
+    let lock_files = {
         let _publication =
             PublicationSet::acquire_and_recover(output.clone()).expect("acquire locks");
         let lock_files = fs::read_dir(&root)
@@ -107,12 +107,25 @@ fn publication_locks_are_full_identity_owner_only_and_persistent() {
             })
             .collect::<Vec<_>>();
         assert_eq!(lock_files.len(), 2);
-        for (name, path) in lock_files {
+        for (name, _path) in &lock_files {
             assert!(name.starts_with(".ckc-tune-dest-") && name.len() == 15 + 64 + 5);
-            let bytes = fs::read(path).expect("lock bytes");
-            assert_eq!(&bytes[..8], b"CKTLCK01");
-            assert_eq!(bytes.len(), 40);
+            #[cfg(windows)]
+            assert_eq!(
+                fs::read(_path)
+                    .expect_err("a second handle must not read an exclusively locked region")
+                    .raw_os_error(),
+                Some(33),
+                "Windows must enforce the publication lock byte range"
+            );
         }
+        lock_files
+    };
+    // Windows LockFileEx excludes reads through a second handle, including in
+    // the owning process. Inspect the persistent bytes only after unlock.
+    for (_, path) in &lock_files {
+        let bytes = fs::read(path).expect("persistent lock bytes after unlock");
+        assert_eq!(&bytes[..8], b"CKTLCK01");
+        assert_eq!(bytes.len(), 40);
     }
     assert_eq!(
         fs::read_dir(&root)

@@ -138,6 +138,8 @@ DACL 写入权限；如果 ACL 无法安装，则 fail closed 并删除未受保
 Publication directory flush handle 按 `FlushFileBuffers` 要求请求读写权限。
 Directory open 或 flush 失败仍为 hard error；write-through rename 不能替代必需的
 durability barrier。
+Persistent lock bytes 只在取得独占锁后，通过同一 owning handle 校验。
+竞争 session 先等待拿锁再读取 identity；Windows 会禁止其他 handle 读取被独占锁定的区域。
 
 ## Backend 与 effect matrix
 

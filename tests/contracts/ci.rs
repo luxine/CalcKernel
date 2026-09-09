@@ -923,5 +923,6 @@ fn ci_windows_publication_preflight_should_run_before_llvm_bootstrap() {
         .1;
     assert!(preflight.contains("if: runner.os == 'Windows'"));
     assert!(preflight.contains("cargo test --locked --test tune publication_ -- --nocapture"));
+    assert!(preflight.contains("cargo test --locked --lib publication_waiter_ -- --nocapture"));
     assert!(!preflight.contains("continue-on-error"));
 }

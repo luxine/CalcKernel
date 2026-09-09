@@ -167,6 +167,9 @@ that ACL fails closed and removes the unprotected initializer.
 Publication directory flush handles request read and write access, as required
 by `FlushFileBuffers`. A failed directory open or flush remains a hard error;
 write-through renames do not substitute for a required durability barrier.
+Persistent lock bytes are validated only after acquiring exclusion, through the
+same owning handle. Competing sessions wait for the lock before reading its
+identity; on Windows, other handles cannot read the exclusively locked region.
 
 ## Backend and effect matrix
 

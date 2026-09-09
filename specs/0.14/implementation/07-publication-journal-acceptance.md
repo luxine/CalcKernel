@@ -11,6 +11,7 @@
 
 - [ ] destination canonicalization、alias/short-name、complete overlap closure 与 lock order 使用同一 full id。
 - [ ] persistent lock 初始化和 journal 更新只使用 flush 后 atomic no-replace/replace final names。
+- [ ] persistent lock identity 只在拿到独占锁后通过 owning handle 读取与校验；竞争 waiter 不读取锁内中间状态，Windows second-handle read 必须返回 lock violation，unlock 后保留完整 magic/40-byte identity 和 reopen 断言。
 - [ ] Windows private initializer 的创建 handle 显式包含 `WRITE_DAC`，同一 handle 的 owner-only protected DACL 设置与验证在 required Windows x64/ARM64 job 成功；ACL 设置失败必须删除未保护文件并 fail closed。
 - [ ] Windows directory flush handle 显式请求 `GENERIC_WRITE`，实际 directory open/flush 失败仍为 hard error；不得忽略失败或以 write-through rename 代替规范要求的 barrier。
 - [ ] exact journal bytes、generation、direction、phase、role layout 与 OutputSetMaterial 均独立重算。

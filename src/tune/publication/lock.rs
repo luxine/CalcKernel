@@ -57,7 +57,8 @@ fn acquire_one(output: &TuneOutputSet, id: [u8; 32]) -> Result<AdvisoryLock, Pub
     if !final_path.exists() {
         initialize_lock(output, id, &final_path, &hex)?;
     }
-    let mut file = open_private_nofollow(&final_path)?;
+    let mut lock = AdvisoryLock::acquire(open_private_nofollow(&final_path)?)?;
+    let file = lock.file_mut();
     let mut expected = Vec::with_capacity(40);
     expected.extend_from_slice(LOCK_MAGIC);
     expected.extend_from_slice(&id);
@@ -68,7 +69,7 @@ fn acquire_one(output: &TuneOutputSet, id: [u8; 32]) -> Result<AdvisoryLock, Pub
     if actual != expected {
         return Err(PublicationError::Identity("persistent lock identity"));
     }
-    AdvisoryLock::acquire(file)
+    Ok(lock)
 }
 
 fn initialize_lock(

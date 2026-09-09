@@ -57,6 +57,7 @@
 - `specs/0.14/review/implementation-blocker-62.md`
 - `specs/0.14/review/implementation-blocker-63.md`
 - `specs/0.14/review/implementation-blocker-64.md`
+- `specs/0.14/review/implementation-blocker-65.md`
 
 实施分支为 `design/v0.14-offline-autotuning`，独立 worktree 为
 `.worktrees/v0.14-offline-autotuning-design`，通过审查并固化证据的起点为
@@ -699,3 +700,11 @@ AccessDenied。`implementation-blocker-64.md` 修复 directory flush handle 缺�
 `GENERIC_WRITE` 的 API 违约，并区分 open/flush error。两个 Windows job 在 LLVM
 bootstrap 前增加同一真实 publication selector，原 post-bootstrap native tests 全部保留。
 不忽略 directory barrier failure，不增加 CRT，不降低任何平台、硬件、性能或安全门槛。
+
+Exact V0.14 run `34291739279` 的两个 Windows preflight 均已通过 publication、完整 crash
+matrix 和真实 killed-session recovery；仅 lock identity observer 仍在拿锁期间经第二 handle
+读取内容，触发符合 Win32 语义的 error 33。`implementation-blocker-65.md` 同时修复生产
+acquire 路径的 read-before-lock：身份校验改为持锁后在 owning handle 上执行，竞争 waiter
+先等待再校验；测试增加 Windows 锁内 second-handle 拒读断言，unlock 后保留全部持久字节
+断言。真实并发回归先在本机复现 early identity rejection，再验证 waiter 在 release 后成功。
+Windows preflight 显式执行该 unit regression 与原 publication selector，矩阵与门槛不变。

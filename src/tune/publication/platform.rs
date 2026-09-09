@@ -315,6 +315,10 @@ pub(crate) struct AdvisoryLock {
 }
 
 impl AdvisoryLock {
+    pub(crate) fn file_mut(&mut self) -> &mut File {
+        &mut self.file
+    }
+
     pub(crate) fn acquire(file: File) -> Result<Self, PublicationError> {
         #[cfg(unix)]
         {
@@ -697,6 +701,15 @@ mod windows_security {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        io::{Read, Seek, Write},
+        sync::mpsc,
+        time::Duration,
+    };
+
+    use crate::{PublicationSet, TuneArtifactPaths, TuneOutputSet};
+
     use super::{
         WINDOWS_DIRECTORY_FLUSH_ACCESS, WINDOWS_GENERIC_WRITE, WINDOWS_PRIVATE_CREATION_ACCESS,
         WINDOWS_WRITE_DAC,
@@ -718,5 +731,67 @@ mod tests {
             WINDOWS_WRITE_DAC,
             "SetSecurityInfo(DACL_SECURITY_INFORMATION) requires WRITE_DAC"
         );
+    }
+
+    #[test]
+    fn publication_waiter_should_validate_identity_only_after_acquiring_the_lock() {
+        let root = fs::canonicalize(std::env::temp_dir())
+            .expect("canonical temporary directory")
+            .join(format!(
+                "ckc-publication-lock-order-{}",
+                super::super::lock::hex(&super::random_transaction_id().expect("unique fixture"))
+            ));
+        fs::create_dir(&root).expect("create lock-order fixture");
+        let paths = TuneArtifactPaths {
+            primary: root.join("kernel.bin"),
+            header: None,
+            import_library: None,
+        };
+        let output =
+            TuneOutputSet::resolve(&paths, &root.join("kernel.cktune"), &[]).expect("output set");
+        let mut owner = PublicationSet::acquire_and_recover(output.clone()).expect("first owner");
+        let file = &mut owner.locks[0].file;
+        file.rewind().expect("rewind owned handle");
+        let mut identity = Vec::new();
+        file.read_to_end(&mut identity)
+            .expect("read through owned handle");
+        file.rewind().expect("rewind for intermediate identity");
+        file.write_all(b"PENDING!")
+            .expect("write intermediate identity");
+        file.sync_all().expect("flush intermediate identity");
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).expect("signal waiter start");
+            let result = PublicationSet::acquire_and_recover(output).map(drop);
+            result_tx.send(result).expect("send waiter result");
+        });
+        started_rx.recv().expect("waiter started");
+        let early = result_rx.recv_timeout(Duration::from_secs(1));
+        let returned_while_locked = early.is_ok();
+
+        // Restore through the owning handle before releasing exclusion. A
+        // waiter must never validate the intermediate bytes (or get Windows
+        // ERROR_LOCK_VIOLATION by reading them through a second handle).
+        file.rewind().expect("rewind for final identity");
+        file.write_all(&identity).expect("restore final identity");
+        file.sync_all().expect("flush final identity");
+        drop(owner);
+        let result = match early {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => result_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("waiter completes after release"),
+            Err(error) => panic!("waiter disconnected: {error}"),
+        };
+        waiter.join().expect("join waiter");
+        fs::remove_dir_all(root).expect("remove lock-order fixture");
+
+        assert!(
+            !returned_while_locked,
+            "waiter inspected lock bytes before acquiring exclusion: {result:?}"
+        );
+        result.expect("waiter validates the restored identity after acquiring exclusion");
     }
 }
