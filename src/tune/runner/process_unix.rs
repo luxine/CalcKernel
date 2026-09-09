@@ -17,6 +17,38 @@ pub(super) fn configure(command: &mut Command) {
 
 pub(super) struct Containment(i32);
 
+pub(super) struct ExitObserver(libc::id_t);
+
+impl ExitObserver {
+    pub(super) fn new(child: &std::process::Child) -> Result<Self, std::io::Error> {
+        Ok(Self(child.id()))
+    }
+
+    pub(super) fn wait(self) -> Result<(), std::io::Error> {
+        loop {
+            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+            // SAFETY: the parent retains the unreaped direct child until this
+            // observer joins. waitid writes only to the valid output buffer;
+            // WNOWAIT leaves status and PID ownership with std::process::Child.
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.0,
+                    info.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            if result == 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+}
+
 pub(super) fn establish(child: &std::process::Child) -> Result<Containment, std::io::Error> {
     let pid = i32::try_from(child.id()).map_err(|_| std::io::Error::other("child pid overflow"))?;
     Ok(Containment(pid))

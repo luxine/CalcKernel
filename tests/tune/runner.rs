@@ -10,6 +10,43 @@ use super::trial::state;
 const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
+fn runner_measurement_has_no_polling_quantum_or_output_join_time() {
+    let source = include_str!("../../src/tune/runner/mod.rs");
+    let invoke = source.split("pub fn invoke(").nth(1).unwrap();
+    let measured = invoke
+        .split("let stdout = stdout_reader.join()")
+        .next()
+        .unwrap();
+    assert!(
+        !measured.contains("thread::sleep"),
+        "runner completion must not be quantized by a fixed polling sleep"
+    );
+    let start = measured.find("MonotonicTimer::start()").unwrap();
+    assert!(start < measured.find("command.spawn()").unwrap());
+    assert!(
+        measured.contains("elapsed_ns"),
+        "the external completion timestamp must be frozen before output joins"
+    );
+    let after_output = invoke
+        .split("let stdout = stdout_reader.join()")
+        .nth(1)
+        .unwrap();
+    assert!(
+        !after_output
+            .split("\n    }\n}")
+            .next()
+            .unwrap()
+            .contains(".elapsed_ns("),
+        "output collection must not resample the invocation clock"
+    );
+    let completion = include_str!("../../src/tune/runner/completion.rs");
+    let completion = completion.split("#[cfg(test)]").next().unwrap();
+    for polling in ["thread::sleep", "try_wait("] {
+        assert!(!completion.contains(polling));
+    }
+}
+
+#[test]
 fn runner_protocol_process_uses_empty_environment_fresh_cwd_and_exact_echo() {
     let temp = tempfile_dir("runner");
     let source = temp.join("probe.c");

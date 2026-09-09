@@ -144,6 +144,12 @@ host-format runner, immutable declared inputs, an environment allowlist, and
 disjoint search/validation cases. Runner and input paths are captured without
 following symlinks. Every invocation receives only declared arguments,
 environment, case/seed/iteration variables, and a fresh `CKTIMAP1` input map.
+The parent measures each complete invocation with a monotonic clock, starting
+before process creation and stopping when an OS-backed exit observer wakes.
+Output-reader joins do not extend a successful sample. The observer never reaps
+the child: the parent retains termination and reaping authority through the full
+configured timeout and existing containment cleanup. No process-wide signal
+handler or runner-reported elapsed time is used.
 
 The compiler builds the ordinary baseline, enumerates a bounded deterministic
 frontier, validates correctness before timing, rotates candidate order, and

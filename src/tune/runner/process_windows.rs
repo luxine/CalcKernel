@@ -7,6 +7,31 @@ pub(super) fn configure(command: &mut Command) {
 
 pub(super) struct Containment(windows_sys::Win32::Foundation::HANDLE);
 
+pub(super) struct ExitObserver(std::os::windows::io::OwnedHandle);
+
+impl ExitObserver {
+    pub(super) fn new(child: &std::process::Child) -> Result<Self, std::io::Error> {
+        use std::os::windows::io::AsHandle;
+        child.as_handle().try_clone_to_owned().map(Self)
+    }
+
+    pub(super) fn wait(self) -> Result<(), std::io::Error> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Foundation::WAIT_OBJECT_0,
+            System::Threading::{INFINITE, WaitForSingleObject},
+        };
+        // SAFETY: this thread owns a live duplicate process handle through the
+        // wait. Only the parent terminates/reaps the child and owns containment.
+        if unsafe { WaitForSingleObject(self.0.as_raw_handle().cast(), INFINITE) } == WAIT_OBJECT_0
+        {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
 pub(super) fn establish(child: &std::process::Child) -> Result<Containment, std::io::Error> {
     use std::mem::size_of;
     use std::os::windows::io::AsRawHandle;

@@ -120,6 +120,10 @@ Optional `--pgo-use` 和 checked mode 进入完整 identity；profile generation
 immutable input、environment allowlist，以及互不混用的 search/validation case。Runner 与 input
 path 通过 no-follow snapshot 捕获。每次 invocation 只接收声明的 argv/env、case/seed/iteration
 变量与新建的 `CKTIMAP1` input map。
+父进程使用 monotonic clock 计量完整 invocation：创建进程前开始，在 OS-backed exit
+observer 唤醒时停止。输出读取线程的 join 不延长成功样本。Observer 不回收子进程；
+父进程在完整 configured timeout 与既有 containment cleanup 期间保留终止和回收权限。
+该等待不安装 process-wide signal handler，也不采用 runner 自报的 elapsed time。
 
 Compiler 构建 ordinary baseline，枚举受限 deterministic frontier，在 timing 前验证 correctness，
 轮换 candidate 顺序并执行两轮 validation。Native output set 与 canonical `CKTUNE01` schema-1

@@ -1,3 +1,4 @@
+mod completion;
 mod protocol;
 mod timer;
 
@@ -154,26 +155,15 @@ impl TuneRunner {
             .env("CK_TUNE_TEMP", &run.path)
             .env("CK_TUNE_INPUT_MAP", inputs.map_path());
         configure_process(&mut command);
+        let timer = timer::MonotonicTimer::start();
         let mut child = command.spawn()?;
         let containment = establish_containment(&child).map_err(|_| RunnerFailure::ProcessSetup)?;
         let stdout = child.stdout.take().ok_or(RunnerFailure::Staging)?;
         let stderr = child.stderr.take().ok_or(RunnerFailure::Staging)?;
         let stdout_reader = read_bounded(stdout, 4_096);
         let stderr_reader = read_bounded(stderr, 1_048_576);
-        let timer = timer::MonotonicTimer::start();
         let timeout = Duration::from_millis(u64::from(timeout_ms));
-        let status = loop {
-            if let Some(status) = child.try_wait()? {
-                break Some(status);
-            }
-            if timer.reached(timeout) {
-                containment.terminate();
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        };
+        let (status, elapsed_ns) = completion::wait(&mut child, &containment, timer, timeout)?;
         let stdout = stdout_reader.join().map_err(|_| RunnerFailure::Staging)??;
         let stderr = stderr_reader.join().map_err(|_| RunnerFailure::Staging)??;
         if stdout.1 {
@@ -184,9 +174,6 @@ impl TuneRunner {
         }
         let Some(status) = status else {
             if invocation.candidate {
-                let elapsed_ns = timer
-                    .elapsed_ns()
-                    .map_err(|_| RunnerFailure::TimerOverflow)?;
                 return Err(RunnerFailure::CandidateTimeout(CanonicalCandidateTimeout {
                     case_id: invocation.case_id.clone(),
                     iterations: invocation.iterations,
@@ -199,13 +186,7 @@ impl TuneRunner {
         if !status.success() {
             return Err(RunnerFailure::NonZero(status.code()));
         }
-        protocol::parse(
-            &stdout.0,
-            invocation,
-            timer
-                .elapsed_ns()
-                .map_err(|_| RunnerFailure::TimerOverflow)?,
-        )
+        protocol::parse(&stdout.0, invocation, elapsed_ns)
     }
 }
 

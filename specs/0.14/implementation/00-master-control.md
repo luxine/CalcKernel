@@ -61,8 +61,14 @@
 - `specs/0.14/review/implementation-blocker-66.md`
 - `specs/0.14/review/implementation-blocker-67.md`
 - `specs/0.14/review/implementation-blocker-68.md`
+- `specs/0.14/review/implementation-blocker-69.md`
 
-最新候选见 blocker 68：保留同一 source-checked search 内的 unfinished prefix、phase result
+最新候选见 blocker 69：x86 已具备 v4，但 cold tuning 被父进程 2 ms polling 量化。
+改用不回收子进程的 OS completion observer，在输出 join 前冻结外部时间戳；父进程保留
+完整 deadline、containment 与回收权限。所有选择规则、schema、样本及门槛保持不变。
+AArch64 同一 exact run 的编译 geomean 仍为 1.2522 > 1.10，不能宣称 blocker 68 已关闭。
+
+前轮候选见 blocker 68：保留同一 source-checked search 内的 unfinished prefix、phase result
 与 state identity，避免无用 ordinary KIR suffix，并将 schema-9 硬件检查提前到调优之前。
 完整 cached/uncached frontier 与 pre/post state 等价性受回归约束；本地完整 CLI 诊断仍显示
 编译开销超标，验收阻断未关闭。继续扩大 KIR/state 内部重构前需架构讨论；v4 runner 依赖仍在。
