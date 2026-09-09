@@ -503,6 +503,25 @@ fn x86_v4_compute_loops_should_authorize_full_avx512_width() {
 }
 
 #[test]
+fn x86_v4_integer_maps_should_authorize_full_avx512_width() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let commands = read("src/cli/commands.rs");
+    for required in [
+        "constexpr uint32_t CKC_X86_V4_I32_VECTOR_WIDTH = 16;",
+        "is_wrapping_i32_memory_map",
+        "load->isVolatile() || load->isAtomic()",
+        "store->isVolatile() || store->isAtomic()",
+        "CKC_X86_V4_I32_VECTOR_WIDTH",
+        "x86-v4-i32-map-width-16-v1",
+    ] {
+        assert!(
+            bridge.contains(required) || commands.contains(required),
+            "x86-64-v4 integer-map width handoff is missing {required:?}"
+        );
+    }
+}
+
+#[test]
 fn aarch64_sve_multiversion_should_use_a_fixed_schedule_without_expanding_isa() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let commands = read("src/cli/commands.rs");

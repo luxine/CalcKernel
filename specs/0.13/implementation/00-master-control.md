@@ -249,6 +249,14 @@ recurrence，vector body 直接使用支配它的 memory version，独立 checke
 完整 backedge。语言/ABI、安全语义、`UF <= 4` frontier、`2x` growth 上限、性能与稳定性门槛、
 timed work、样本、corpus、平台与 required job matrix 均未改变。
 
+V0.14 run `34295522872` 在 Xeon 8573C 上回放 exact V0.13 `f5dd9989` 时，
+`trip-unroll-simd` 的 dispatch/ordinary 为 `1.0471936877 > 1.03`；selected-direct
+与 dispatch 几乎相同，retained v4 body 仍为八路 AVX2。修复与验收边界见
+`specs/0.13/review/implementation-blocker-49.md`：只为 exact v4 的无现有 schedule、无
+checked overflow/call/volatile/atomic/vector 的 scalar wrapping i32 map 请求十六路宽度，
+并推进 multiversion codegen cache identity。Native x86 实际发射与完整性能验收仍由新
+exact-SHA CI 判定；全部门槛、timed work、样本、corpus、平台与 required jobs 不变。
+
 同一 exact run 的 AArch64 performance job `101509032163` 随后通过 schema 7，却以
 `1.01545 < 1.08` 未通过 schema 8 的 dispatch geometric-improvement gate；V0.14 exact replay
 job `101510076457` 在准备阶段精确复现该失败。复诊与闭环见

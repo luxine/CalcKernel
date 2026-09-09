@@ -1867,6 +1867,7 @@ constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
 constexpr uint32_t CKC_X86_CONSTANT_MAP_INTERLEAVE = 1;
 constexpr uint32_t CKC_X86_CONSTANT_MAP_UNROLL = 5;
 constexpr uint32_t CKC_X86_V4_F64_VECTOR_WIDTH = 8;
+constexpr uint32_t CKC_X86_V4_I32_VECTOR_WIDTH = 16;
 constexpr uint32_t CKC_X86_V4_COMPUTE_MIN_F64_OPS = 8;
 constexpr uint32_t CKC_AARCH64_FIXED_MAP_VECTOR_WIDTH = 4;
 constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
@@ -2108,6 +2109,34 @@ bool is_compute_dense_strict_f64_map(const llvm::Loop &loop) {
     return operations >= CKC_X86_V4_COMPUTE_MIN_F64_OPS;
 }
 
+bool is_wrapping_i32_memory_map(const llvm::Loop &loop) {
+    if (!is_scalar_memory_map(loop) ||
+        contains_checked_integer_overflow(loop)) {
+        return false;
+    }
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+                if (!load->getType()->isIntegerTy(32) ||
+                    load->isVolatile() || load->isAtomic()) {
+                    return false;
+                }
+            }
+            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+                if (!store->getValueOperand()->getType()->isIntegerTy(32) ||
+                    store->isVolatile() || store->isAtomic()) {
+                    return false;
+                }
+            }
+            if (llvm::isa<llvm::CallBase>(instruction) ||
+                instruction.getType()->isFloatingPointTy()) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool every_direct_call_has_constant_argument(
     llvm::Function &function, unsigned argument_index) {
     bool saw_call = false;
@@ -2173,8 +2202,16 @@ void attach_x86_v4_compute_loop_width(
                 ? nullptr
                 : analysis_loops.getLoopFor(analysis_header);
             if (analysis_loop == nullptr ||
-                analysis_loop->getHeader() != analysis_header ||
-                !is_compute_dense_strict_f64_map(*analysis_loop)) {
+                analysis_loop->getHeader() != analysis_header) {
+                continue;
+            }
+            const uint32_t vector_width =
+                is_compute_dense_strict_f64_map(*analysis_loop)
+                    ? CKC_X86_V4_F64_VECTOR_WIDTH
+                    : is_wrapping_i32_memory_map(*analysis_loop)
+                          ? CKC_X86_V4_I32_VECTOR_WIDTH
+                          : 0;
+            if (vector_width == 0) {
                 continue;
             }
             llvm::SmallVector<llvm::BasicBlock *, 4> latches;
@@ -2194,7 +2231,7 @@ void attach_x86_v4_compute_loop_width(
                 {llvm::MDString::get(context, "llvm.loop.vectorize.width"),
                  llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
                      llvm::Type::getInt32Ty(context),
-                     CKC_X86_V4_F64_VECTOR_WIDTH))});
+                     vector_width))});
             auto *enable = llvm::MDNode::get(
                 context,
                 {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),

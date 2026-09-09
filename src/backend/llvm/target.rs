@@ -305,6 +305,82 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn v4_integer_maps_should_use_sixteen_lanes_without_widening_v3() {
+        use super::{NativeCpu, NativeTarget};
+        use crate::{
+            EmitLlvmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOptimizationLevel,
+            KirOverflowMode, KirSanitizerMode, NativeContext, NativeOptimizationLevel, SourceFile,
+            build_kir_module_with_profile, check, import_contract_facts, lower_native_kir_module,
+            lower_to_mir, run_kir_pass_pipeline,
+        };
+
+        let host = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("host target");
+        let triple = host.triple().expect("host triple");
+        for (cpu, features, width) in [
+            ("x86-64", vec![], 4),
+            (
+                "x86-64-v3",
+                vec!["+avx2".to_string(), "+fma".to_string()],
+                8,
+            ),
+            (
+                "x86-64-v4",
+                vec!["+avx512f".to_string(), "+avx512vl".to_string()],
+                16,
+            ),
+        ] {
+            let target = NativeTarget::explicit_multiversion(&triple, cpu, &features)
+                .expect("explicit x86 target");
+            let checked = check(&SourceFile::new(
+                "integer-map.ck",
+                include_str!("../../../benches/oracles/fixtures/map_u32.ck"),
+            ));
+            assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+            let mir = lower_to_mir(&checked.checked_program).expect("integer-map MIR");
+            let kir = build_kir_module_with_profile(
+                &mir,
+                KirBuildConfig {
+                    consumer: KirConsumer::NativeLibrary,
+                    overflow_mode: KirOverflowMode::Unchecked,
+                    bounds_mode: KirBoundsMode::Unchecked,
+                    sanitizer_mode: KirSanitizerMode::Disabled,
+                },
+                target
+                    .kir_profile(KirConsumer::NativeLibrary)
+                    .expect("x86 profile"),
+            )
+            .expect("integer-map KIR");
+            let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
+                .expect("integer-map contracts");
+            // O2 retains the scalar loop, as the multiversion KIR handoff does.
+            let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O2, Some(&contracts));
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let context = NativeContext::new().expect("native context");
+            let module =
+                lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+                    .expect("lower integer map")
+                    .verify()
+                    .expect("verify integer map")
+                    .audit()
+                    .expect("audit integer map")
+                    .optimize(&target, NativeOptimizationLevel::O3)
+                    .expect("optimize integer map");
+            let ir = module.to_ir_string().expect("optimized integer-map IR");
+            assert!(ir.contains(&format!("<{width} x i32>")), "{cpu}:\n{ir}");
+            if width < 16 {
+                assert!(
+                    !ir.contains("<16 x i32>"),
+                    "{cpu} must not acquire v4 width:\n{ir}"
+                );
+            }
+            target
+                .emit_object(module)
+                .expect("emit exact-tier integer map");
+        }
+    }
+
+    #[test]
     #[cfg(target_arch = "aarch64")]
     fn generic_sve_tuning_should_reach_machine_scheduling_without_expanding_isa() {
         let host = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("host target");
