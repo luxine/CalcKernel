@@ -24,9 +24,9 @@ const ORACLE_BATCH_ITERATIONS: usize = 20_000_000;
 const QUICK_BATCH_ITERATIONS: usize = 200_000;
 const ORACLE_LENGTH: usize = 4_000;
 const COMPILE_SAMPLES: usize = 15;
-const ORACLE_SAMPLING_PROTOCOL: &str = "interleaved-upper-median-three-channel-v2";
+const ORACLE_SAMPLING_PROTOCOL: &str = "interleaved-upper-median-three-channel-v3";
 const ORACLE_MANIFEST_SHA256: &str =
-    "33158df7c8b40721b735f36e9066a9a3eb3b5895b53b04bd0554260b7a4eba32";
+    "e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
@@ -375,7 +375,7 @@ fn validate_oracle_manifest(repo_root: &Path) -> Result<(), String> {
         fs::read_to_string(&manifest).map_err(|error| format!("read oracle manifest: {error}"))?;
     if !text.contains(ORACLE_SAMPLING_PROTOCOL) {
         return Err(
-            "oracle manifest does not pin interleaved-upper-median-three-channel-v2".into(),
+            "oracle manifest does not pin interleaved-upper-median-three-channel-v3".into(),
         );
     }
     for (name, _) in VECTOR_CASES.into_iter().chain(DOMAIN_CASES) {
@@ -441,9 +441,9 @@ fn candidate_compiler(repo_root: &Path) -> Result<PathBuf, String> {
         .output()
         .map_err(|error| format!("execute candidate compiler {}: {error}", path.display()))?;
     if !output.status.success()
-        || !String::from_utf8_lossy(&output.stdout).starts_with("ckc 0.12.0")
+        || !String::from_utf8_lossy(&output.stdout).starts_with("ckc 0.13.0")
     {
-        return Err("CKC_CANDIDATE_COMPILER must identify ckc 0.12.0".into());
+        return Err("CKC_CANDIDATE_COMPILER must identify ckc 0.13.0".into());
     }
     Ok(path)
 }
@@ -485,7 +485,7 @@ fn validate_candidate_kir(
         import_contract_facts(&module, &checked_program, 0).map_err(|error| error.to_string())?;
     let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, Some(&contracts));
     let artifact = verified_artifact(&result)?;
-    let native_llvm_reduction = fixture
+    let native_llvm_handoff = (fixture
         .file_stem()
         .is_some_and(|name| name == "modular_reduction")
         && matches!(
@@ -494,10 +494,16 @@ fn validate_candidate_kir(
         )
         && result.analysis_fallbacks.iter().any(|fallback| {
             fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
-        });
+        }))
+        || (fixture
+            .file_stem()
+            .is_some_and(|name| name == "specialized_length")
+            && result.analysis_fallbacks.iter().any(|fallback| {
+                fallback.reason == "constant-call-loop-deferred-to-native-loop-vectorizer"
+            }));
     if require_vector
         && !checked
-        && !native_llvm_reduction
+        && !native_llvm_handoff
         && !print_kir_module(artifact).contains("vector_")
     {
         return Err(format!(
@@ -728,19 +734,21 @@ fn measure_case(
     config: &Config,
 ) -> Result<OracleCase, String> {
     let _affinity = LinuxCpuAffinityGuard::pin_current()?;
-    let mut runners = [
+    let runners = [
         KernelRunner::new(paths[0], "kernel", name, checked)?,
         KernelRunner::new(paths[1], "ck_oracle_kernel", name, checked)?,
         KernelRunner::new(paths[2], "ck_oracle_kernel", name, checked)?,
     ];
+    let entries = runners.each_ref().map(|runner| runner.entry);
+    let mut workspace = KernelWorkspace::new(name);
     let batch_iterations = if config.iterations <= 5 {
         QUICK_BATCH_ITERATIONS
     } else {
         ORACLE_BATCH_ITERATIONS
     };
-    let expected = runners[0].run_batch(batch_iterations)?;
-    for (channel, runner) in runners.iter_mut().enumerate().skip(1) {
-        let actual = runner.run_batch(batch_iterations)?;
+    let expected = workspace.run_batch(entries[0], batch_iterations)?;
+    for (channel, entry) in entries.iter().copied().enumerate().skip(1) {
+        let actual = workspace.run_batch(entry, batch_iterations)?;
         if actual != expected {
             return Err(format!(
                 "{name}/{} oracle channel {channel} is not equivalent",
@@ -751,7 +759,7 @@ fn measure_case(
     let sampled = runtime_replay::sample_three_channels_upper_median::<_, SAMPLE_REPETITIONS>(
         config.warmup,
         config.iterations,
-        |channel, _warmup| runners[channel].measure_once(&expected, batch_iterations),
+        |channel, _warmup| workspace.measure_once(entries[channel], &expected, batch_iterations),
     )?;
     let medians = std::array::from_fn(|channel| median(&sampled.channels[channel]));
     Ok(OracleCase {
@@ -843,6 +851,20 @@ impl KernelEntry {
 struct KernelRunner {
     _library: DynamicLibrary,
     entry: KernelEntry,
+}
+
+impl KernelRunner {
+    fn new(path: &Path, symbol: &'static str, name: &str, checked: bool) -> Result<Self, String> {
+        let library = DynamicLibrary::open(path)?;
+        let entry = unsafe { KernelEntry::load(&library, symbol, name, checked)? };
+        Ok(Self {
+            _library: library,
+            entry,
+        })
+    }
+}
+
+struct KernelWorkspace {
     name: String,
     a_u32: Vec<u32>,
     b_u32: Vec<u32>,
@@ -851,10 +873,8 @@ struct KernelRunner {
     out_f64: Vec<f64>,
 }
 
-impl KernelRunner {
-    fn new(path: &Path, symbol: &'static str, name: &str, checked: bool) -> Result<Self, String> {
-        let library = DynamicLibrary::open(path)?;
-        let entry = unsafe { KernelEntry::load(&library, symbol, name, checked)? };
+impl KernelWorkspace {
+    fn new(name: &str) -> Self {
         let a_u32 = (0..ORACLE_LENGTH)
             .map(|index| {
                 ((index as u32).wrapping_add(7)).wrapping_mul(2_654_435_761) % 1_000_002 + 1
@@ -868,21 +888,24 @@ impl KernelRunner {
         let a_f64 = (0..ORACLE_LENGTH)
             .map(|index| (index as f64 - 2_000.0) / 16.0 + 0.25)
             .collect();
-        Ok(Self {
-            _library: library,
-            entry,
+        Self {
             name: name.into(),
             a_u32,
             b_u32,
             out_u32: vec![0; ORACLE_LENGTH],
             a_f64,
             out_f64: vec![0.0; ORACLE_LENGTH],
-        })
+        }
     }
 
-    fn measure_once(&mut self, expected: &str, batch_iterations: usize) -> Result<u128, String> {
+    fn measure_once(
+        &mut self,
+        entry: KernelEntry,
+        expected: &str,
+        batch_iterations: usize,
+    ) -> Result<u128, String> {
         let timer = runtime_timer_start()?;
-        self.invoke_repeated(batch_iterations)?;
+        self.invoke_repeated(entry, batch_iterations)?;
         let elapsed = runtime_timer_elapsed(timer)?;
         let actual = self.result_digest();
         if actual != expected {
@@ -894,17 +917,21 @@ impl KernelRunner {
         Ok(elapsed)
     }
 
-    fn run_batch(&mut self, batch_iterations: usize) -> Result<String, String> {
-        self.invoke_repeated(batch_iterations)?;
+    fn run_batch(&mut self, entry: KernelEntry, batch_iterations: usize) -> Result<String, String> {
+        self.invoke_repeated(entry, batch_iterations)?;
         Ok(self.result_digest())
     }
 
-    fn invoke_repeated(&mut self, batch_iterations: usize) -> Result<(), String> {
+    fn invoke_repeated(
+        &mut self,
+        entry: KernelEntry,
+        batch_iterations: usize,
+    ) -> Result<(), String> {
         let work_items = work_items(&self.name);
         let calls = batch_iterations / work_items;
         debug_assert_eq!(calls * work_items, batch_iterations);
         let n = u32::try_from(work_items).map_err(|_| "oracle work size is not u32")?;
-        match self.entry {
+        match entry {
             KernelEntry::MapUnchecked(function) => {
                 for _ in 0..calls {
                     unsafe {

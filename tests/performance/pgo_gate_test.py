@@ -1,0 +1,397 @@
+"""Schema-8 acceptance tests; synthetic bytes are never performance evidence."""
+
+import contextlib
+import copy
+import hashlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import struct
+import tempfile
+import unittest
+from unittest.mock import patch
+
+REPO = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location(
+    "gate_v013", REPO / "scripts/check-native-performance.py"
+)
+gate = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(gate)
+
+COLLECTOR_SPEC = importlib.util.spec_from_file_location(
+    "collector_v013", REPO / "scripts/measure-v013-performance.py"
+)
+collector = importlib.util.module_from_spec(COLLECTOR_SPEC)
+COLLECTOR_SPEC.loader.exec_module(collector)
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def identity(relative):
+    data = (REPO / relative).read_bytes()
+    return {"path": relative, "bytes": len(data), "sha256": digest(data)}
+
+
+def order(width, rows):
+    return [[(row + offset) % width for offset in range(width)] for row in range(rows)]
+
+
+def stream(record, prefix, value, count=20):
+    record[prefix + "MedianNs"] = value
+    record[prefix + "SamplesNs"] = [value] * count
+
+
+def elf_with_symbols(symbols):
+    strings = bytearray(b"\0")
+    name_offsets = {}
+    for name in symbols:
+        name_offsets[name] = len(strings)
+        strings.extend(name.encode() + b"\0")
+    symbol_table = bytearray(24)
+    for name, value in symbols.items():
+        symbol_table.extend(struct.pack("<IBBHQQ", name_offsets[name], 0, 0, 1, value, 0))
+    string_offset = 64
+    symbol_offset = string_offset + len(strings)
+    section_offset = symbol_offset + len(symbol_table)
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF\x02\x01\x01" + b"\0" * 9,
+        3, 62, 1, 0, 0, section_offset, 0, 64, 0, 0, 64, 3, 0,
+    )
+    null_section = bytes(64)
+    string_section = struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, string_offset, len(strings), 0, 0, 1, 0)
+    symbol_section = struct.pack(
+        "<IIQQQQIIQQ", 0, 2, 0, 0, symbol_offset, len(symbol_table), 1, 1, 8, 24
+    )
+    return header + strings + symbol_table + null_section + string_section + symbol_section
+
+
+def stripped_elf_with_dispatch(public_symbol="kernel", public_value=0x1240,
+                                slot_value=0x3888, slot_size=8, slot_type=8):
+    dynamic_strings = b"\0" + public_symbol.encode() + b"\0"
+    dynamic_symbols = bytes(24) + struct.pack(
+        "<IBBHQQ", 1, 0x12, 0, 1, public_value, 0
+    )
+    section_names = b"\0.dynstr\0.dynsym\0.ck_dispatch_slot\0.shstrtab\0"
+    dynamic_string_offset = 64
+    dynamic_symbol_offset = dynamic_string_offset + len(dynamic_strings)
+    section_name_offset = dynamic_symbol_offset + len(dynamic_symbols)
+    section_offset = section_name_offset + len(section_names)
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF\x02\x01\x01" + b"\0" * 9,
+        3, 62, 1, 0, 0, section_offset, 0, 64, 0, 0, 64, 5, 4,
+    )
+    null_section = bytes(64)
+    dynamic_string_section = struct.pack(
+        "<IIQQQQIIQQ", 1, 3, 0, 0, dynamic_string_offset,
+        len(dynamic_strings), 0, 0, 1, 0
+    )
+    dynamic_symbol_section = struct.pack(
+        "<IIQQQQIIQQ", 9, 11, 0, 0, dynamic_symbol_offset,
+        len(dynamic_symbols), 1, 1, 8, 24
+    )
+    dispatch_slot_section = struct.pack(
+        "<IIQQQQIIQQ", 17, slot_type, 3, slot_value, 0, slot_size, 0, 0, 8, 0
+    )
+    section_name_section = struct.pack(
+        "<IIQQQQIIQQ", 35, 3, 0, 0, section_name_offset,
+        len(section_names), 0, 0, 1, 0
+    )
+    return (
+        header + dynamic_strings + dynamic_symbols + section_names + null_section
+        + dynamic_string_section + dynamic_symbol_section + dispatch_slot_section
+        + section_name_section
+    )
+
+
+class SchemaEightGateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="ckc-schema8-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.prefix = self.root / "prefix"
+        component = self.prefix / "share/ckc/llvm-build.toml"
+        component.parent.mkdir(parents=True)
+        component.write_bytes(b"pinned component\n")
+        self.evidence = self.root / "v013-measurement-1-2"
+        self.evidence.mkdir()
+
+        def artifact(case, role):
+            filename = f"{case}-{role}.bin"
+            data = f"{case}/{role}".encode()
+            (self.evidence / filename).write_bytes(data)
+            return {"case": case, "role": role, "file": filename,
+                    "bytes": len(data), "sha256": digest(data)}
+
+        cases = list(gate.PGO_CASES)
+        training = [artifact(case, role) for case in cases for role in ["baseline", "multiversion"]]
+        profiles = [artifact(case, role) for case in cases for role in ["baseline", "multiversion"]]
+        roles = ["ordinary", "pgo", "multiversion", "combined", "selected-direct", "clang-pgo", "rust-pgo"]
+        variants = [artifact(case, role) for case in cases for role in roles]
+
+        candidate = b"synthetic ckc v0.13"
+        (self.evidence / "ckc-v013").write_bytes(candidate)
+        cumulative = b"{}"
+        (self.evidence / "results-schema7.json").write_bytes(cumulative)
+        candidate_archive = b"candidate archive"
+        (self.evidence / "ckc-v013-distribution.tar.gz").write_bytes(candidate_archive)
+
+        bundle = self.root / "v012"
+        bundle.mkdir()
+        compiler = b"synthetic ckc v0.12"
+        archive = b"exact v0.12 distribution archive bytes"
+        (bundle / "ckc-v012").write_bytes(compiler)
+        (bundle / "ckc-v012-distribution.tar.gz").write_bytes(archive)
+        metadata = {
+            "commit": gate.V012_COMMIT,
+            "compilerIdentity": gate.V012_COMPILER,
+            "compilerSha256": digest(compiler),
+            "compilerBytes": str(len(compiler)),
+            "llvmVersion": gate.LLVM_VERSION,
+            "target": "linux-x86_64",
+            "cpuPolicy": "baseline",
+            "recipeSha256": gate.named_digest(gate.RECIPE_FILES),
+            "adapterSetSha256": digest(b""),
+            "sourceDiffSha256": digest(b""),
+            "baselineManifestSha256": gate.V012_MANIFEST_SHA256,
+            "llvmComponentSha256": digest(component.read_bytes()),
+        }
+        lines = ["ckc-v012-runtime-replay\t2"]
+        lines.extend(f"{key}\t{value}" for key, value in metadata.items())
+        lines.append(
+            f"distributionArchive\tckc-v012-distribution.tar.gz\t{len(archive)}\t{digest(archive)}"
+        )
+        manifest = "\n".join(lines) + "\n"
+        (bundle / "replay.tsv").write_text(manifest)
+
+        case_rows = []
+        for name, flags in gate.PGO_CASES.items():
+            row = {
+                "name": name, "pgoSensitive": flags[0], "multiversionEligible": flags[1],
+                "heldOutOnly": True, "referenceEquivalent": True, "batchCalls": 16,
+                "resultDigest": "a" * 64, "resolverCalls": 1 if flags[1] else 0,
+                "warmupOrder": order(8, 3), "sampleOrder": order(8, 20),
+                "generationMedianNs": 400, "generationSamplesNs": [400] * 20,
+            }
+            for prefix, value in {
+                "ordinary": 100, "replayV012": 100, "pgo": 90, "multiversion": 88,
+                "combined": 87, "selectedDirect": 87, "clangPgo": 90, "rustPgo": 92,
+            }.items():
+                stream(row, prefix, value)
+            case_rows.append(row)
+
+        compile_rows = []
+        size_rows = []
+        for name in cases:
+            row = {"case": name, "warmupOrder": order(4, 3), "sampleOrder": order(4, 15)}
+            for prefix, value in {"ordinary": 100, "pgo": 120, "multiversion": 200, "combined": 250}.items():
+                stream(row, prefix, value, 15)
+            compile_rows.append(row)
+            size_rows.append({"case": name, "ordinaryBytes": 100, "pgoBytes": 120,
+                              "multiversionBytes": 180, "combinedBytes": 190})
+
+        capability_material = {
+            "schema": 1, "targetSetSchema": 1, "requiredTier": "x86-64-v3",
+            "availableTiers": ["baseline", "x86-64-v3"], "features": ["avx2", "fma"],
+            "osState": ["xsave", "ymm"], "resolverPolicy": "resolve-once-before-timing",
+        }
+        capability = dict(capability_material, digest=gate.canonical_digest(capability_material))
+        recipe_files = [identity(name) for name in gate.SCHEMA8_RECIPE_FILES]
+        workload_sources = [identity(name) for name in [
+            "benches/fixtures/pgo/branch_layout.ck",
+            "benches/fixtures/pgo/call_constant_length.ck",
+            "benches/oracles/fixtures/map_u32.ck",
+            "benches/oracles/fixtures/zip_u32.ck",
+            "benches/fixtures/pgo/compute_bound.ck",
+        ]]
+        self.report = {
+            "schemaVersion": 8, "candidateVersion": "0.13.0", "candidateSha": "1" * 40,
+            "replayCommit": gate.V012_COMMIT, "evidenceDirectory": self.evidence.name,
+            "toolchain": {"llvmVersion": "22.1.8", "clangVersion": "22.1.8",
+                          "rustVersion": "1.90.0", "componentManifestSha256": digest(component.read_bytes()),
+                          "clangProfileRuntimeSha256": "c" * 64},
+            "hardware": {"target": "linux-x86_64", "arch": "x86_64", "os": "linux",
+                         "cpuModel": "synthetic-v3", "logicalCpus": 8},
+            "capabilityManifest": capability,
+            "recipe": {"schema": 1, "files": recipe_files,
+                       "digest": gate.named_digest(gate.SCHEMA8_RECIPE_FILES),
+                       "thresholds": gate.SCHEMA8_THRESHOLDS},
+            "workload": {
+                "manifest": identity("benches/cases/pgo-cases.tsv"), "sources": workload_sources,
+                "training": identity("benches/fixtures/pgo/training.tsv"),
+                "heldOut": identity("benches/fixtures/pgo/held-out.tsv"),
+                "adversarial": identity("benches/fixtures/pgo/adversarial.tsv"),
+            },
+            "candidateBinary": {"file": "ckc-v013", "bytes": len(candidate), "sha256": digest(candidate)},
+            "replayBundle": {
+                "metadata": metadata, "manifestSha256": digest(manifest.encode()),
+                "compiler": {"file": "ckc-v012", "bytes": len(compiler), "sha256": digest(compiler)},
+                "archive": {"file": "ckc-v012-distribution.tar.gz", "bytes": len(archive), "sha256": digest(archive)},
+            },
+            "cumulativeSchemaSeven": {"file": "results-schema7.json", "bytes": len(cumulative),
+                                      "sha256": digest(cumulative)},
+            "trainingShards": training, "finalProfiles": profiles,
+            "targetSets": [
+                {"case": case, "policy": policy, "schema": 1, "digest": "b" * 64,
+                 "tiers": ["baseline"] if policy == "baseline" else ["baseline", "x86-64-v3"]}
+                for case in cases for policy in ["baseline", "multiversion"]
+            ],
+            "variantObjects": variants,
+            "sampling": {
+                "protocol": "rotating-eight-channel-shared-workspace-v2", "warmupRows": 3, "sampleRows": 20,
+                "callsPerSample": 7, "channelNames": gate.PGO_CHANNELS,
+                "stabilityPolicy": "at-least-80-percent-within-25-percent-of-median",
+                "rerunPolicy": "unstable-evidence-is-invalid-no-selective-rerun",
+            },
+            "cases": case_rows, "compileTime": compile_rows, "artifactSize": size_rows,
+            "archiveSize": {
+                "candidateFile": "ckc-v013-distribution.tar.gz", "candidateBytes": len(candidate_archive),
+                "candidateSha256": digest(candidate_archive), "replayFile": "ckc-v012-distribution.tar.gz",
+                "replayBytes": len(archive), "replaySha256": digest(archive),
+            },
+            "correctness": {"training": True, "heldOut": True, "adversarial": True,
+                            "differential": True, "ubAudit": True, "featureAudit": True},
+        }
+        self.environment = patch.dict(os.environ, {
+            "CKC_V012_RUNTIME_BUNDLE": str(bundle), "CKC_LLVM_PREFIX": str(self.prefix)
+        })
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        for target, replacement in [
+            ("host_target_name", lambda: "linux-x86_64"),
+            ("current_candidate_sha", lambda: "1" * 40),
+            ("check_schema7", lambda *_: None),
+            ("clang_profile_runtime_digest", lambda: "c" * 64),
+        ]:
+            mocked = patch.object(gate, target, replacement)
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
+    def check(self, report=None):
+        path = self.root / "v0.13-results.json"
+        path.write_text(json.dumps(self.report if report is None else report))
+        gate.check(path, gate.DEFAULT_BASELINE_MANIFEST)
+
+    def reject(self, mutate, message):
+        report = copy.deepcopy(self.report)
+        mutate(report)
+        with self.assertRaisesRegex(ValueError, message):
+            self.check(report)
+
+    def test_complete_schema_eight_passes(self):
+        self.check()
+
+    def test_collector_retains_a_self_contained_schema_seven_bundle(self):
+        source_root = self.root / "schema-seven-source"
+        source_root.mkdir()
+        measurement = source_root / "measurement-123-456"
+        measurement.mkdir()
+        (measurement / "payload.bin").write_bytes(b"measured evidence")
+        source = source_root / "results.json"
+        source.write_text(json.dumps({"evidenceDirectory": measurement.name}))
+        destination = self.root / "schema-eight-evidence"
+        destination.mkdir()
+
+        retained = collector.retain_cumulative_schema_seven(source, destination)
+
+        self.assertEqual(retained, destination / "results-schema7.json")
+        self.assertEqual(retained.read_bytes(), source.read_bytes())
+        self.assertEqual(
+            (destination / measurement.name / "payload.bin").read_bytes(),
+            b"measured evidence",
+        )
+
+    def test_collector_rejects_redirected_or_escaping_schema_seven_evidence(self):
+        source_root = self.root / "schema-seven-invalid"
+        source_root.mkdir()
+        source = source_root / "results.json"
+        destination = self.root / "schema-eight-invalid"
+        destination.mkdir()
+
+        source.write_text(json.dumps({"evidenceDirectory": "../outside"}))
+        with self.assertRaisesRegex(ValueError, "evidenceDirectory"):
+            collector.retain_cumulative_schema_seven(source, destination)
+
+        real = source_root / "measurement-real"
+        real.mkdir()
+        redirected = source_root / "measurement-123-456"
+        redirected.symlink_to(real, target_is_directory=True)
+        source.write_text(json.dumps({"evidenceDirectory": redirected.name}))
+        with self.assertRaisesRegex(ValueError, "real directory"):
+            collector.retain_cumulative_schema_seven(source, destination)
+
+    def test_collector_reads_public_dynsym_and_dedicated_stripped_dispatch_slot(self):
+        library = self.root / "selected-direct.so"
+        library.write_bytes(stripped_elf_with_dispatch())
+
+        symbols = collector.dispatch_symbol_values(library, "kernel")
+
+        self.assertEqual(symbols, (0x1240, 0x3888))
+
+    def test_collector_accepts_lld_materialized_progbits_dispatch_slot(self):
+        library = self.root / "selected-direct-progbits.so"
+        library.write_bytes(stripped_elf_with_dispatch(slot_type=1))
+
+        symbols = collector.dispatch_symbol_values(library, "kernel")
+
+        self.assertEqual(symbols, (0x1240, 0x3888))
+
+    def test_collector_rejects_missing_or_ambiguous_dispatch_slots(self):
+        missing = self.root / "missing.so"
+        missing.write_bytes(elf_with_symbols({"kernel": 0x1240}))
+        with self.assertRaisesRegex(ValueError, "dispatch slot"):
+            collector.dispatch_symbol_values(missing, "kernel")
+
+        ambiguous = self.root / "ambiguous.so"
+        ambiguous.write_bytes(stripped_elf_with_dispatch(slot_size=16))
+        with self.assertRaisesRegex(ValueError, "dispatch slot"):
+            collector.dispatch_symbol_values(ambiguous, "kernel")
+
+    def test_identity_capability_profile_and_evidence_fail_closed(self):
+        self.reject(lambda r: r.__setitem__("candidateSha", "2" * 40), "candidateSha")
+        self.reject(lambda r: r["capabilityManifest"]["availableTiers"].pop(), "enhanced tier")
+        self.reject(lambda r: r["trainingShards"].pop(), "exact case/role")
+        self.reject(lambda r: r["finalProfiles"][0].__setitem__("sha256", "f" * 64), "finalProfiles")
+        self.reject(lambda r: r["variantObjects"].pop(), "exact case/role")
+        self.reject(lambda r: r["recipe"].__setitem__("thresholds", "changed"), "threshold")
+
+    def test_sampling_and_every_threshold_family_fail_closed(self):
+        self.reject(lambda r: r["cases"][0].__setitem__("sampleOrder", order(8, 19)), "order")
+        self.reject(lambda r: stream(r["cases"][0], "ordinary", 106), "1.05")
+        self.reject(lambda r: [stream(row, "pgo", 100) for row in r["cases"] if row["pgoSensitive"]], "1.05")
+        self.reject(
+            lambda r: [
+                (stream(row, "multiversion", 100), stream(row, "selectedDirect", 100))
+                for row in r["cases"] if row["multiversionEligible"]
+            ],
+            "1.08",
+        )
+        self.reject(lambda r: [stream(row, "selectedDirect", 86) for row in r["cases"] if row["multiversionEligible"]], "0.98")
+        self.reject(lambda r: [stream(row, "combined", 110) for row in r["cases"]], "5%")
+        self.reject(lambda r: [stream(row, "clangPgo", 70) for row in r["cases"]], "90%")
+        self.reject(lambda r: stream(r["compileTime"][0], "pgo", 201, 15), "2x")
+        self.reject(lambda r: r["artifactSize"][0].__setitem__("pgoBytes", 151), "1.5x")
+        self.reject(lambda r: r["archiveSize"].__setitem__("candidateBytes", 1000), "archive")
+
+    def test_unknown_duplicate_and_changed_workload_are_rejected(self):
+        report = copy.deepcopy(self.report)
+        report["unknown"] = True
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            self.check(report)
+        self.reject(lambda r: r["targetSets"].append(r["targetSets"][0]), "targetSets")
+        self.reject(lambda r: r["workload"]["training"].__setitem__("sha256", "f" * 64), "training")
+        path = self.root / "duplicate.json"
+        text = json.dumps(self.report).replace('"schemaVersion": 8', '"schemaVersion": 8, "schemaVersion": 8')
+        path.write_text(text)
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            gate.check(path, gate.DEFAULT_BASELINE_MANIFEST)
+
+
+if __name__ == "__main__":
+    with contextlib.redirect_stdout(io.StringIO()):
+        unittest.main()

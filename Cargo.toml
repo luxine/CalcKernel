@@ -1,6 +1,6 @@
 [package]
 name = "calckernel"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 license = "MIT"
 description = "Native compiler for the CK / CalcKernel computation language."
@@ -24,11 +24,19 @@ name = "ckc_perf"
 path = "benches/ckc_perf.rs"
 harness = false
 
+[[bench]]
+name = "pgo_perf"
+path = "benches/pgo_perf.rs"
+harness = false
+
 [dependencies]
 num-bigint = "0.4"
 sha2 = "0.10"
 thiserror = "2.0"
 wat = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 cc = "1.2"

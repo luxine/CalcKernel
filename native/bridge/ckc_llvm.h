@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CKC_LLVM_BRIDGE_ABI_VERSION 3u
+#define CKC_LLVM_BRIDGE_ABI_VERSION 4u
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,6 +65,17 @@ typedef struct CkcLlvmTargetProfileResult {
     uint32_t maximum_interleave_factor;
     CkcLlvmOwnedBytes legalized_type;
 } CkcLlvmTargetProfileResult;
+
+typedef struct CkcLlvmLateLayoutReport {
+    uint32_t accepted;
+    uint32_t changed;
+    uint32_t repair_mask;
+    uint8_t pre_layout_digest[32];
+    uint8_t post_layout_digest[32];
+    uint8_t pre_structural_digest[32];
+    uint8_t post_structural_digest[32];
+    CkcLlvmOwnedBytes reason;
+} CkcLlvmLateLayoutReport;
 
 #if defined(__cplusplus)
 static_assert(sizeof(uint32_t) == 4, "bridge requires 32-bit uint32_t");
@@ -210,6 +221,11 @@ int32_t ckc_llvm_module_print(CkcLlvmModule *module,
 int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
                                     CkcLlvmTarget **out,
                                     CkcLlvmError *error);
+int32_t ckc_llvm_target_create_explicit(CkcLlvmBytes triple,
+                                        CkcLlvmBytes cpu,
+                                        CkcLlvmBytes features,
+                                        CkcLlvmTarget **out,
+                                        CkcLlvmError *error);
 void ckc_llvm_target_dispose(CkcLlvmTarget *target);
 int32_t ckc_llvm_target_triple(CkcLlvmTarget *target,
                                CkcLlvmOwnedBytes *out,
@@ -234,6 +250,9 @@ int32_t ckc_llvm_module_optimize(CkcLlvmModule *module,
                                  CkcLlvmTarget *target,
                                  uint32_t opt_level,
                                  CkcLlvmError *error);
+int32_t ckc_llvm_module_apply_late_layout(
+    CkcLlvmModule *module, CkcLlvmTarget *target, CkcLlvmBytes plan,
+    CkcLlvmLateLayoutReport *out, CkcLlvmError *error);
 int32_t ckc_llvm_module_make_invalid_for_test(CkcLlvmModule *module,
                                                CkcLlvmError *error);
 int32_t ckc_llvm_module_test_inject_untracked_strengthening(
@@ -242,6 +261,15 @@ int32_t ckc_llvm_module_test_inject_untracked_flag(
     CkcLlvmModule *module, CkcLlvmError *error);
 int32_t ckc_llvm_module_fact_audit_counts(
     CkcLlvmModule *module, CkcLlvmFactAuditCounts *out,
+    CkcLlvmError *error);
+int32_t ckc_llvm_module_expose_hidden_function(
+    CkcLlvmModule *module, CkcLlvmBytes function_name,
+    CkcLlvmError *error);
+int32_t ckc_llvm_module_add_multiversion_dispatch(
+    CkcLlvmModule *module, CkcLlvmBytes public_name,
+    CkcLlvmBytes implementation_name, CkcLlvmBytes baseline_hidden_name,
+    CkcLlvmBytes dispatch_namespace, const CkcLlvmBytes *variant_names,
+    const uint32_t *required_capabilities, size_t variant_count,
     CkcLlvmError *error);
 
 int32_t ckc_llvm_type_void(CkcLlvmContext *context, CkcLlvmType **out,
@@ -278,6 +306,14 @@ int32_t ckc_llvm_module_add_function(CkcLlvmModule *module,
                                      uint32_t exported,
                                      CkcLlvmFunction **out,
                                      CkcLlvmError *error);
+int32_t ckc_llvm_module_add_global_bytes(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint8_t *bytes,
+    size_t byte_count, uint32_t mutable_storage, uint32_t alignment,
+    CkcLlvmValue **out, CkcLlvmError *error);
+int32_t ckc_llvm_module_add_global_u32_array(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint32_t *values,
+    size_t value_count, uint32_t alignment, CkcLlvmValue **out,
+    CkcLlvmError *error);
 int32_t ckc_llvm_module_preserve_function(CkcLlvmModule *module,
                                           CkcLlvmFunction *function,
                                           CkcLlvmError *error);
@@ -295,9 +331,16 @@ int32_t ckc_llvm_function_add_attribute(CkcLlvmFunction *function,
                                          CkcLlvmType *pointee_type,
                                          uint32_t alignment,
                                          CkcLlvmError *error);
+int32_t ckc_llvm_function_set_noinline(CkcLlvmFunction *function,
+                                        CkcLlvmError *error);
 int32_t ckc_llvm_function_set_memory_effects(CkcLlvmFunction *function,
                                               uint32_t effects,
                                               CkcLlvmError *error);
+int32_t ckc_llvm_function_set_profile(CkcLlvmFunction *function,
+                                      uint64_t entry_count,
+                                      uint32_t hot,
+                                      uint32_t cold,
+                                      CkcLlvmError *error);
 int32_t ckc_llvm_function_set_dll_export(CkcLlvmFunction *function,
                                          CkcLlvmError *error);
 
@@ -437,6 +480,10 @@ int32_t ckc_llvm_builder_cond_branch(CkcLlvmBuilder *builder,
                                      CkcLlvmBlock *then_block,
                                      CkcLlvmBlock *else_block,
                                      CkcLlvmError *error);
+int32_t ckc_llvm_builder_cond_branch_weighted(
+    CkcLlvmBuilder *builder, CkcLlvmValue *condition,
+    CkcLlvmBlock *then_block, CkcLlvmBlock *else_block,
+    uint64_t then_count, uint64_t else_count, CkcLlvmError *error);
 int32_t ckc_llvm_target_emit_object(CkcLlvmTarget *target,
                                     CkcLlvmModule *module,
                                     CkcLlvmObject **out,
@@ -448,8 +495,9 @@ int32_t ckc_llvm_target_parse_object(CkcLlvmTarget *target,
 size_t ckc_llvm_object_size(const CkcLlvmObject *object);
 const uint8_t *ckc_llvm_object_data(const CkcLlvmObject *object);
 void ckc_llvm_object_dispose(CkcLlvmObject *object);
-int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
-                                uint32_t kind,
+int32_t ckc_llvm_archive_create(const CkcLlvmObject *const *objects,
+                                const CkcLlvmBytes *member_names,
+                                size_t object_count, uint32_t kind,
                                 CkcLlvmArchive **out,
                                 CkcLlvmError *error);
 size_t ckc_llvm_archive_size(const CkcLlvmArchive *archive);
@@ -457,9 +505,11 @@ const uint8_t *ckc_llvm_archive_data(const CkcLlvmArchive *archive);
 size_t ckc_llvm_archive_member_count(const CkcLlvmArchive *archive);
 uint32_t ckc_llvm_archive_has_symbol_index(const CkcLlvmArchive *archive);
 void ckc_llvm_archive_dispose(CkcLlvmArchive *archive);
-int32_t ckc_lld_link_shared(CkcLlvmBytes object_path,
+int32_t ckc_lld_link_shared(const CkcLlvmBytes *object_paths,
+                            size_t object_count,
                             CkcLlvmBytes output_path,
                             CkcLlvmBytes import_library_path,
+                            CkcLlvmBytes platform_input_path,
                             const CkcLlvmBytes *exports,
                             size_t export_count,
                             CkcLlvmError *error);

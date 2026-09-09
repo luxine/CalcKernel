@@ -1,8 +1,8 @@
-# CalcKernel 0.12 Native LLVM 与 C ABI
+# CalcKernel 0.13 Native LLVM 与 C ABI
 
 [English](../../abi/llvm.md)
 
-CalcKernel 0.12 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
+CalcKernel 0.13 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
 optimization 前后验证，由 host TargetMachine 生成 object bytes，并在进程内用 LLD 链接。
 `emit-llvm` 输出该 verified module 供 inspection。
 
@@ -43,15 +43,53 @@ CK integer 映射为同宽 LLVM integer，`f64` 为 `double`，bool 为 `i1`，p
 compiler internal form，不是 public library ABI；0.9 的独立 textual LLVM export-shape promise
 已退出。
 
-KIR v2 fixed vector 结构化 lowering 为等宽 LLVM vector。只有 KIR 独立 checker 已闭合 lane
+KIR v3 fixed vector 结构化 lowering 为等宽 LLVM vector。只有 KIR 独立 checker 已闭合 lane
 mapping、operation equivalence、fallback identity、target legality 与 cost/budget proof 后，才
 输出 vector load/store、strict arithmetic、cast、compare/select 及 modular integer add/multiply
 reduction。LLVM optimization 可以继续改进合法 module，但不是 CK safety 或 alias claim 的来源。
 
-0.12 的 public Native C ABI 保持 version 1；private LLVM bridge ABI 3 替代 bridge ABI 2，
-contract-aware runtime ABI 保持 version 2，native cache/codegen identity 使用 KIR v2 与
-`CKCOBJ02` manifest schema 3。这会使 incompatible 0.11 及更早 object 失效，但不改变
+0.13 的 public Native C ABI 保持 version 1，Runtime ABI 保持 version 2。Private LLVM
+bridge ABI 4 替代 0.12 bridge ABI 3；native cache/codegen identity 使用 KIR v3、
+`CKCOBJ03` key schema 4 与 manifest schema 4。这会使 0.12 及更早 private object 失效，但不改变
 foreign-call signature。
+
+## Profile 与 multiversion object
+
+Profile-generation module 链接 compiler-private schema-1 collector；只有 library topology
+暴露生成的 full-identity flush control。最终 profile-use module 不包含 counter、writer、
+profile path 或 generation runtime。Profile annotation 由 CK 独立 optimizer 消费，不能变成
+LLVM safety metadata 或 proof。
+
+`--cpu multiversion` 将 verified baseline module、从 same KIR pre-state 生成的零个或多个独立
+verified target variant，以及 compiler-private dispatch runtime 作为不同 named-object member
+lowering。每个 object 在 assembly 前都通过 verifier 与 feature audit。baseline-safe detector
+只识别闭合的 x86-64 v3/v4 和 Linux AArch64 SVE/SVE2 tier；状态不完整时 fail closed，并把
+normalized result 返回给未解析 root。该 root 的 private acquire-release function-pointer slot
+是唯一 publication/cache layer；并发 first call 可以重复 detection，后续调用不会重复。
+Public Native C ABI thunk 的 name、
+address、signature、checked-status behavior 与 visibility 保持；baseline、variant、detector、
+runtime symbol 都隐藏。
+ELF shared product 删除 loader 不需要的 symbol，并把唯一 generated slot 保留在 private、
+pointer-width、pointer-aligned `.ck_dispatch_slot` section；LLD 可将这个 allocated writable
+section 表示为 `SHT_PROGBITS` 或 `SHT_NOBITS`。该 section 不 export，也不扩展 Native C ABI。
+Linux AArch64 executable 使用 startup-stack auxv snapshot；没有 CK entry point 的 dynamic
+library 通过 freestanding direct syscall 读取 `/proc/self/auxv`，fallback 不可用或不完整时
+fail closed 到 baseline，且不增加 libc 或 loader dependency。
+Generic AArch64 SVE/SVE2 member 只为 scheduling 使用固定 `neoverse-n2` LLVM tuning model；
+`target-cpu=generic`、显式 feature、runtime compatibility 与 feature audit 保持不变并继续作为权威。
+显式 x86-64-v4 member 可为 scalar wrapping `i32` memory-map loop 请求十六路 LLVM
+vectorization。该规则排除 call、checked overflow、volatile/atomic memory、已有 vector 与
+已有 loop schedule；LLVM 仍检查 vectorization legality。baseline 与 v3 member 保留各自的
+width policy。
+这些 full-width integer map 请求单路 interleave，避免第二层展开倍数将完整 vector
+留给扩大后的 scalar tail。strict-f64 schedule 与所有 scalar remainder 正确性检查不变。
+
+named-object bundle 可链接为 executable、dynamic library 或 static archive。multiversion object
+output 会拒绝，因为 0.13 不定义 partial-link bundle contract；baseline/native single-version
+object 继续支持。`CKCOBJ03` 只有在 ordered member name/role、target set、profile、dispatch
+runtime、physical artifact kind、每个 object digest、key schema 4 与 manifest schema 4 全部
+匹配时才接受 cache hit。最终 artifact 延续 self-contained system-runtime policy，不新增
+CK/LLVM/compiler shared dependency。
 
 Native object/static/dynamic 通过 generated header 暴露唯一 Native C ABI。每个 public source
 function 由 export thunk 包装 internal natural function；thunk 实现 target ABI classification、
@@ -101,4 +139,4 @@ protection 时使用 `MAP_JIT`，在线程级 writable/non-executable 与 readab
 再逐 segment 以页保护 finalization 为 RX 或 R/NX。后者不是 RWX fallback。Internal audit
 拒绝混合 capability tuple，并为两条路径验证 relocation、最终 code/data permission 与
 instruction-cache finalization。
-0.12 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。
+0.13 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。

@@ -47,6 +47,77 @@ fn fixture(source: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, path)
 }
 
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_pruning() {
+    let (_dir, source) = fixture(
+        "export unsafe fn map(a: slice<u32>, out: slice<u32>, n: u32) -> void contract { requires n <= a.len && n <= out.len; requires noalias(a, out); effects read(a), write(out); } { let i: u32 = 0; while i < n { out[i] = a[i] + 7; i = i + 1; } }",
+    );
+    let output = run([
+        os("emit-kir"),
+        os(&source),
+        os("--consumer"),
+        os("native-library"),
+        os("--cpu"),
+        os("multiversion"),
+        os("-O3"),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    for needle in [
+        "kir-multiversion-v1",
+        "target-tier baseline",
+        "verified-baseline",
+        "dispatch-plan",
+        "multiversion-root",
+    ] {
+        assert!(output.stdout.contains(needle), "{}", output.stdout);
+    }
+    assert!(
+        !output.stdout.contains("vector_"),
+        "multiversion inspection must preserve scalar loop KIR for per-tier LLVM optimization:\n{}",
+        output.stdout
+    );
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn multiversion_build_should_commit_the_verified_stage09_artifact_bundle() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture("export fn add(a: i32, b: i32) -> i32 { return a + b; }");
+    let requested = dir.join("libadd");
+    let artifact = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Dynamic,
+        &requested,
+    );
+    let output = run([
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&requested),
+        os("--kind"),
+        os("dynamic"),
+        os("--cpu"),
+        os("multiversion"),
+        os("-O3"),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(
+        output.stdout.contains("multiversion bundle"),
+        "{}",
+        output.stdout
+    );
+    assert!(artifact.primary.exists());
+    assert!(artifact.header.as_ref().is_some_and(|path| path.exists()));
+    assert!(
+        artifact
+            .import_library
+            .as_ref()
+            .is_none_or(|path| path.exists())
+    );
+}
+
 #[test]
 fn cli_should_report_version_and_embedded_licenses() {
     let version = run([os("--version")]);
@@ -147,6 +218,458 @@ fn cli_should_reject_unknown_and_command_irrelevant_options() {
         assert_eq!(output.code, Some(1));
         assert!(output.stderr.contains(expected), "{}", output.stderr);
     }
+}
+
+#[test]
+fn pgo_cli_should_merge_raw_shards_and_inspect_terminal_profile() {
+    use calckernel::{
+        CkCompilerProfileIdentity, CkModuleProfileIdentity, CkProfileContract, CkProfileCounter,
+        CkProfileCounterRecord, CkProfileCpuPolicy, CkProfileEndianness, CkProfileIdentity,
+        CkProfileModes, CkProfileObjectFormat, CkProfileOptimizationFamily,
+        CkProfileSchemaIdentity, CkProfileShard, CkProfileSiteDescriptor, CkProfileSiteId,
+        CkProfileSiteKind, CkProfileTargetIdentity, CkProfileTopology, profile_site_table_digest,
+        serialize_profile_shard,
+    };
+
+    let root = std::env::current_dir()
+        .expect("current directory")
+        .join("target")
+        .join("cli-profile-tests")
+        .join(unique_id().to_string());
+    fs::create_dir_all(&root).expect("create profile CLI root");
+    let site = CkProfileSiteDescriptor {
+        id: CkProfileSiteId([1; 16]),
+        function_digest: [2; 32],
+        location: 1,
+        kind: CkProfileSiteKind::FunctionEntry,
+    };
+    let shard = CkProfileShard {
+        identity: CkProfileIdentity {
+            compiler: CkCompilerProfileIdentity {
+                package_version: env!("CARGO_PKG_VERSION").to_string(),
+                source_identity: [3; 32],
+                profile_runtime_identity: [4; 32],
+            },
+            module: CkModuleProfileIdentity {
+                semantic_graph_digest: [5; 32],
+                pre_profile_kir_digest: [6; 32],
+                site_table_digest: profile_site_table_digest(std::slice::from_ref(&site))
+                    .expect("site table digest"),
+            },
+            schemas: CkProfileSchemaIdentity {
+                language: 1,
+                native_abi: 1,
+                runtime_abi: 2,
+                kir: 3,
+                proof: 3,
+                cost_model: 3,
+                target_profile: 1,
+                llvm_bridge: 4,
+                cache: 4,
+            },
+            target: CkProfileTargetIdentity {
+                triple: "x86_64-unknown-linux-gnu".to_string(),
+                pointer_width: 64,
+                endianness: CkProfileEndianness::Little,
+                object_format: CkProfileObjectFormat::Elf,
+                os_abi: "linux-gnu".to_string(),
+                target_set_digest: [7; 32],
+            },
+            modes: CkProfileModes {
+                overflow_checked: false,
+                bounds_checked: false,
+                strict_float: true,
+                sanitizer: false,
+                topology: CkProfileTopology::NativeExecutable,
+                optimization_family: CkProfileOptimizationFamily::O3,
+                cpu_policy: CkProfileCpuPolicy::Baseline,
+            },
+            contract: CkProfileContract::schema1(),
+        },
+        sites: vec![site.clone()],
+        counters: vec![CkProfileCounterRecord {
+            site_id: site.id,
+            counter: CkProfileCounter::Scalar(11),
+        }],
+        run_id: [8; 16],
+        overflowed: false,
+        incomplete_observations: false,
+    };
+    let shard_path = root.join("run.ckprof-part");
+    let profile_path = root.join("app.ckprof");
+    fs::write(
+        &shard_path,
+        serialize_profile_shard(&shard).expect("serialize CLI shard"),
+    )
+    .expect("write CLI shard");
+
+    let merge = run([
+        os("pgo"),
+        os("merge"),
+        os(&shard_path),
+        os("--out"),
+        os(&profile_path),
+    ]);
+    assert_eq!(merge.code, Some(0), "{}", merge.stderr);
+    let inspect = run([os("pgo"), os("inspect"), os(&profile_path), os("--json")]);
+    assert_eq!(inspect.code, Some(0), "{}", inspect.stderr);
+    assert!(inspect.stdout.contains("\"format\":\"CKPROF01\""));
+    assert!(inspect.stdout.contains("\"completedRuns\":1"));
+    fs::remove_dir_all(root).expect("remove profile CLI root");
+}
+
+#[test]
+fn pgo_cli_should_reject_terminal_profile_as_merge_input_without_output() {
+    let root = std::env::current_dir()
+        .expect("current directory")
+        .join("target")
+        .join("cli-profile-tests")
+        .join(unique_id().to_string());
+    fs::create_dir_all(&root).expect("create profile CLI root");
+    let final_input = root.join("input.ckprof");
+    let output = root.join("nested.ckprof");
+    fs::write(&final_input, b"CKPROF01").expect("write terminal marker");
+
+    let result = run([
+        os("pgo"),
+        os("merge"),
+        os(&final_input),
+        os("--out"),
+        os(&output),
+    ]);
+    assert_eq!(result.code, Some(1));
+    assert!(!output.exists());
+    fs::remove_dir_all(&root).expect("remove profile CLI root");
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_build_use_should_train_validate_and_commit_profile_and_artifact_together() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform, parse_profile};
+
+    let (dir, source) =
+        fixture("fn main() -> i32 { let i: u32 = 0; while i < 6 { i = i + 1; } return 0; }");
+    let dir = fs::canonicalize(dir).expect("canonical PGO output fixture");
+    let base = dir.join("trained");
+    let profile = dir.join("trained.ckprof");
+    let output = run_empty_path([
+        os("pgo"),
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&base),
+        os("--profile-out"),
+        os(&profile),
+    ]);
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    let artifact = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &base,
+    )
+    .primary;
+    assert!(artifact.is_file());
+    let parsed = parse_profile(&fs::read(&profile).expect("read final profile"))
+        .expect("parse final profile");
+    assert_eq!(parsed.completed_runs, 1);
+    let executed = Command::new(artifact)
+        .env("PATH", "")
+        .output()
+        .expect("run final pgo artifact");
+    assert_eq!(executed.status.code(), Some(0));
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_use_should_validate_real_profile_explain_analysis_and_preserve_off_bytes() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) =
+        fixture("fn main() -> i32 { let i: u32 = 0; while i < 8 { i = i + 1; } return 0; }");
+    let dir = fs::canonicalize(dir).expect("canonical PGO use fixture");
+    let trained = dir.join("trained");
+    let profile = dir.join("trained.ckprof");
+    let training = run_empty_path([
+        os("pgo"),
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&trained),
+        os("--profile-out"),
+        os(&profile),
+    ]);
+    assert_eq!(training.code, Some(0), "{}", training.stderr);
+
+    let ordinary_base = dir.join("ordinary");
+    let ordinary = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&ordinary_base),
+        os("-O3"),
+    ]);
+    assert_eq!(ordinary.code, Some(0), "{}", ordinary.stderr);
+    let use_base = dir.join("use");
+    let applied = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&use_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("--explain-optimization"),
+        os("-O3"),
+    ]);
+    assert_eq!(applied.code, Some(0), "{}", applied.stderr);
+    assert!(applied.stderr.contains("===== PROFILE ANALYSIS ====="));
+    assert!(applied.stderr.contains("proof-authority=false"));
+    let ordinary_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &ordinary_base,
+    )
+    .primary;
+    let use_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &use_base,
+    )
+    .primary;
+    assert!(ordinary_path.is_file());
+    assert_eq!(
+        Command::new(&use_path)
+            .env("PATH", "")
+            .status()
+            .expect("execute O3 profile-use artifact")
+            .code(),
+        Some(0)
+    );
+
+    let changed = dir.join("changed.ck");
+    fs::write(&changed, "fn main() -> i32 { return 1; }").expect("changed source");
+    let prior = fs::read(&use_path).expect("prior use artifact");
+    let rejected = run_empty_path([
+        os("build"),
+        os(&changed),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&use_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("-O3"),
+    ]);
+    assert_eq!(rejected.code, Some(1));
+    assert!(
+        rejected
+            .stderr
+            .contains("profile identity mismatch at module.semanticGraphDigest"),
+        "{}",
+        rejected.stderr
+    );
+    assert_eq!(fs::read(use_path).expect("preserved use artifact"), prior);
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_build_final_should_run_checked_o3_optimizer_before_committing_artifact() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture(
+        "fn classify(value: u32) -> u32 { if value == 7 { return 1; } return 0; } fn main() -> i32 { let i: u32 = 0; let sum: u32 = 0; while i < 256 { sum = sum + classify(i); i = i + 1; } return 0; }",
+    );
+    let dir = fs::canonicalize(dir).expect("canonical O3 PGO fixture");
+    let shards = dir.join("o3-shards");
+    fs::create_dir(&shards).expect("O3 shard directory");
+    let generation_base = dir.join("o3-generation");
+    let generation = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&generation_base),
+        os("--pgo-generate"),
+        os(&shards),
+        os("-O3"),
+    ]);
+    assert_eq!(generation.code, Some(0), "{}", generation.stderr);
+    let generation_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &generation_base,
+    )
+    .primary;
+    assert_eq!(
+        Command::new(generation_path)
+            .env("PATH", "")
+            .status()
+            .expect("run O3 generation")
+            .code(),
+        Some(0)
+    );
+    let profile = dir.join("o3.ckprof");
+    let merge = run_empty_path([
+        os("pgo"),
+        os("merge"),
+        os(&shards),
+        os("--out"),
+        os(&profile),
+    ]);
+    assert_eq!(merge.code, Some(0), "{}", merge.stderr);
+
+    let final_base = dir.join("o3-final");
+    let final_build = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&final_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("--explain-optimization"),
+        os("-O3"),
+    ]);
+    assert_eq!(final_build.code, Some(0), "{}", final_build.stderr);
+    assert!(
+        final_build.stderr.contains("===== O3 PGO OPTIMIZER ====="),
+        "{}",
+        final_build.stderr
+    );
+    assert!(final_build.stderr.contains("proof-authority=false"));
+    let final_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &final_base,
+    )
+    .primary;
+    assert_eq!(
+        Command::new(final_path)
+            .env("PATH", "")
+            .status()
+            .expect("run final O3 PGO artifact")
+            .code(),
+        Some(0)
+    );
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn pgo_o2_should_reach_real_late_layout_boundary_with_checked_fallback_or_plan() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) =
+        fixture("fn main() -> i32 { let i: u32 = 0; while i < 9 { i = i + 1; } return 0; }");
+    let dir = fs::canonicalize(dir).expect("canonical O2 PGO fixture");
+    let shards = dir.join("o2-shards");
+    fs::create_dir(&shards).expect("O2 shard directory");
+    let generation_base = dir.join("o2-generation");
+    let generation = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&generation_base),
+        os("--pgo-generate"),
+        os(&shards),
+        os("-O2"),
+    ]);
+    assert_eq!(generation.code, Some(0), "{}", generation.stderr);
+    let generation_path = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &generation_base,
+    )
+    .primary;
+    assert_eq!(
+        Command::new(generation_path)
+            .env("PATH", "")
+            .status()
+            .expect("run O2 generation")
+            .code(),
+        Some(0)
+    );
+    let profile = dir.join("o2.ckprof");
+    let merge = run_empty_path([
+        os("pgo"),
+        os("merge"),
+        os(&shards),
+        os("--out"),
+        os(&profile),
+    ]);
+    assert_eq!(merge.code, Some(0), "{}", merge.stderr);
+    let use_base = dir.join("o2-use");
+    let applied = run_empty_path([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--out"),
+        os(&use_base),
+        os("--pgo-use"),
+        os(&profile),
+        os("--explain-optimization"),
+        os("-O2"),
+    ]);
+    assert_eq!(applied.code, Some(0), "{}", applied.stderr);
+    assert!(
+        applied
+            .stderr
+            .contains("===== O2 LATE PROFILE LAYOUT ====="),
+        "{}",
+        applied.stderr
+    );
+    assert!(applied.stderr.contains("pre="), "{}", applied.stderr);
+    assert!(applied.stderr.contains("structural="), "{}", applied.stderr);
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
+fn build_transaction_should_preserve_prior_outputs_when_training_returns_nonzero() {
+    use calckernel::{NativeArtifactKind, NativeArtifactPaths, NativePlatform};
+
+    let (dir, source) = fixture("fn main() -> i32 { return 7; }");
+    let dir = fs::canonicalize(dir).expect("canonical PGO output fixture");
+    let base = dir.join("trained");
+    let artifact = NativeArtifactPaths::new(
+        NativePlatform::host(),
+        NativeArtifactKind::Executable,
+        &base,
+    )
+    .primary;
+    let profile = dir.join("trained.ckprof");
+    fs::write(&artifact, b"prior-artifact").expect("seed prior artifact");
+    fs::write(&profile, b"prior-profile").expect("seed prior profile");
+
+    let output = run_empty_path([
+        os("pgo"),
+        os("build"),
+        os(&source),
+        os("--out"),
+        os(&base),
+        os("--profile-out"),
+        os(&profile),
+    ]);
+    assert_eq!(output.code, Some(1));
+    assert!(
+        output.stderr.contains("exited with status 7"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(
+        fs::read(&artifact).expect("read prior artifact"),
+        b"prior-artifact"
+    );
+    assert_eq!(
+        fs::read(&profile).expect("read prior profile"),
+        b"prior-profile"
+    );
 }
 
 #[cfg(feature = "native-toolchain")]

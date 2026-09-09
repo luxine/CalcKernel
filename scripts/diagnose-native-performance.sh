@@ -3,6 +3,7 @@
 set -euo pipefail
 
 diagnostic_repo="$(git rev-parse --show-toplevel)"
+diagnostic_bundle_v012="${CKC_V012_RUNTIME_BUNDLE:?prepare the exact 0.12 replay bundle first}"
 diagnostic_bundle_v011="${CKC_V011_RUNTIME_BUNDLE:?prepare the pinned 0.11 replay bundle first}"
 diagnostic_bundle_v010="${CKC_V010_RUNTIME_BUNDLE:?prepare the pinned 0.10 replay bundle first}"
 diagnostic_out="$diagnostic_repo/target/performance-diagnostics"
@@ -13,6 +14,10 @@ fi
 uname -a > "$diagnostic_out/host.txt"
 rustc --version --verbose > "$diagnostic_out/rustc.txt"
 git rev-parse HEAD > "$diagnostic_out/candidate-commit.txt"
+test -s "$diagnostic_bundle_v012/preparation.log"
+test -s "$diagnostic_bundle_v012/replay.tsv"
+test -s "$diagnostic_bundle_v012/ckc-v012"
+test -s "$diagnostic_bundle_v012/ckc-v012-distribution.tar.gz"
 test -s "$diagnostic_bundle_v011/preparation.log"
 test -s "$diagnostic_bundle_v011/replay.tsv"
 test -s "$diagnostic_bundle_v010/preparation.log"
@@ -80,3 +85,45 @@ while IFS=$'\t' read -r diagnostic_label diagnostic_library diagnostic_expected;
   # Whole-library hashes are primary evidence; no section-only equality inference.
   "${diagnostic_objdump[@]}" -d "$diagnostic_library" > "$diagnostic_out/$diagnostic_label.disassembly.txt"
 done < "$diagnostic_out/measured-libraries.tsv"
+
+# Schema-8 diagnostics retain and hash only the files named by the actual report.
+# They never rebuild, remeasure, or substitute for the independent checker.
+if [[ -s "$diagnostic_repo/target/ckc-perf/v0.13-results.json" ]]; then
+  python3 -B - "$diagnostic_repo/target/ckc-perf/v0.13-results.json" \
+    > "$diagnostic_out/schema8-files.tsv" <<'PY'
+import hashlib, json, pathlib, re, sys
+report_path = pathlib.Path(sys.argv[1])
+report = json.loads(report_path.read_text())
+directory = report["evidenceDirectory"]
+if not isinstance(directory, str) or re.fullmatch(r"v013-measurement-[0-9]+-[0-9]+", directory) is None:
+    raise ValueError("unsafe schema-8 evidence directory")
+root = (report_path.parent / directory).resolve()
+records = [report["candidateBinary"], report["cumulativeSchemaSeven"]]
+for section in ["trainingShards", "finalProfiles", "variantObjects"]:
+    records.extend(report[section])
+records.append({
+    "file": report["archiveSize"]["candidateFile"],
+    "bytes": report["archiveSize"]["candidateBytes"],
+    "sha256": report["archiveSize"]["candidateSha256"],
+})
+seen = set()
+for record in records:
+    name = record["file"]
+    if not isinstance(name, str) or pathlib.PurePath(name).name != name or name in seen:
+        raise ValueError("unsafe or duplicate schema-8 evidence file")
+    seen.add(name)
+    path = root / name
+    if path.is_symlink() or not path.is_file() or path.resolve().parent != root:
+        raise ValueError("missing or redirected schema-8 evidence file")
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if len(data) != record["bytes"] or digest != record["sha256"]:
+        raise ValueError("schema-8 evidence identity mismatch")
+    print(f"{name}\t{len(data)}\t{digest}")
+PY
+  test -s "$diagnostic_out/schema8-files.tsv"
+fi
+
+"${diagnostic_hash[@]}" "$diagnostic_bundle_v012/ckc-v012" \
+  "$diagnostic_bundle_v012/ckc-v012-distribution.tar.gz" \
+  "$diagnostic_bundle_v012/replay.tsv" > "$diagnostic_out/v012-replay-sha256.txt"

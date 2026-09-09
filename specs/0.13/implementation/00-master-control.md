@@ -1,0 +1,457 @@
+# CK 0.13 PGO 与 CPU 多版本实施总控
+
+## 固定输入与交付边界
+
+本计划实现已经通过三轮对抗性审查的双语规范：
+
+- `specs/0.13/profile-guided-multiversioning.md`
+- `specs/0.13/zh-CN/profile-guided-multiversioning.md`
+- `specs/0.13/review/design-adversarial-review-01.md`
+- `specs/0.13/review/design-adversarial-review-02.md`
+- `specs/0.13/review/design-adversarial-review-03.md`
+
+实施分支是 `design/v0.13-pgo-multiversion`，独立 worktree 是
+`.worktrees/v0.13-pgo-multiversion-design`，设计审查通过的起点为
+`65f2b0fe25c130106e65d7cdd4c8156b8fac3b33`。性能 replay 固定使用 CK 0.12 候选
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`，不得用移动分支、tag 或本机现有二进制代替。
+
+目标是在该分支形成完整、可审查的 0.13.0 候选并提交。不得自动合并 `main`，不得创建或
+移动 tag，不得创建 GitHub Release。exact-SHA 远程验收可以推送该分支并显式触发 CI；长时间
+作业只做间隔查询，不在前台持续等待。
+
+## 不可变执行规则
+
+1. 计划提交后完全行内执行，不再使用子代理。
+2. 严格 TDD：每项行为先写最小测试并实际观察与缺失能力一致的 RED，再实现 GREEN，最后
+   重构。schema migration 的编译错误可以作为 RED，但必须确认错误来自新增契约。
+3. 阶段 01–11 必须顺序执行；本阶段 task 全部完成且 acceptance 全部通过后才能进入下一阶段。
+4. PGO 默认关闭；不改变 CK source syntax、semantic MIR、strict `f64`、checked first-error、
+   effect/print 顺序、slice ABI、Native ABI 1 或 Runtime ABI 2。
+5. profile 只能提供收益信息，不能提供安全证明。每个 PGO/variant proposal 必须由不调用
+   proposer 的 checker 从 pre-state、closed record、静态 proof、profile record 与 target cost
+   重新计算；未知、饱和、溢出、歧义或 mapping 丢失都回退 baseline。
+6. 任何 variant 均从同一 verified logical KIR pre-state 开始；跨 variant LTO 禁止。trial 拒绝、
+   reuse、非获胜 candidate 与预算耗尽不退款，且不能污染已验证 state。
+7. O2 的 profile 权限只限于已冻结 ordinary machine pipeline 后的 CK late layout；不得把
+   profile metadata/attribute 交给 LLVM，不得借修复名义改变非 terminator 指令或结构。
+8. 不为通过功能、性能、size、compile-time 或 CI 而降低门槛、删语料、忽略测试、扩大 repair
+   allowlist 或改变统计。只有真实规范反例可先复诊，再同步修改双语规范、总控、相关 task/
+   acceptance 与测试。
+9. 生成物只进入已忽略的 `target/`、`build/` 或显式临时目录；不得提交 LLVM prefix、profile
+   shard、benchmark 报告、CI artifact 或本地 agent 文件。
+10. 每阶段开始前确认 branch/worktree；完成时在 `target/acceptance/v0.13/stage-NN/` 记录 SHA、
+    RED 摘要、命令、测试计数、Rust/LLVM/Clang/host identity。旧日志不能代替当前 SHA。
+
+## 冻结实现架构
+
+```text
+CheckedProgram -> semantic MIR -> scalar KIR 3 + canonical site table
+  -> off | fixed generate instrumentation | validated profile sidecar
+  -> ordinary verified O1/O2 prefix
+  -> O2: ordinary machine snapshot -> CkLateProfileLayout -> emit
+  -> O3: PGO analysis -> checked specialization/loop/SIMD transactions
+  -> immutable verified baseline -> checked target variants
+  -> separate LLVM modules -> feature audits -> baseline-safe dispatcher
+  -> named-object assembler -> CKCOBJ03/cache manifest 4 -> final artifact
+```
+
+新公共编译器子系统位于 `src/profile/`，与现有 target profile
+`src/ir/kir/profile.rs` 分开：前者表示 CK workload profile，后者仍表示 LLVM/target cost profile。
+profile count sidecar 是 immutable non-proof analysis；安全事实仍只来自既有 fact/proof arena。
+
+generation runtime 与 dispatch runtime 是 compiler-private support，身份独立进入 cache/manifest，
+不提升 Native ABI 1 或 Runtime ABI 2。generation artifact 不进 object cache；use/multiversion bundle
+只有 dispatcher manifest 和全部 named variant objects 一致时才命中。
+
+## 阶段顺序
+
+| 阶段 | 交付物 | 主要仓库落点 | 前置 |
+| --- | --- | --- | --- |
+| 01 | canonical identity、CKPROF01/CKPART01、merge/inspect 与 CLI 闭集 | `src/profile`, `src/cli` | 无 |
+| 02 | KIR 3 site table、profile effect/instrumentation op、mapping verifier | `src/ir/kir`, `src/optimizer` | 01 |
+| 03 | generation pipeline、private collector、目录锚定、自动/显式 flush | `native/profile_runtime`, `build.rs`, `src/cli` | 02 |
+| 04 | profile application、confidence/work/cost、mapping transfer 与 explanation | `src/profile`, `src/optimizer` | 03 |
+| 05 | O2 CK late machine layout、bridge ABI 4 与 target repair allowlist | `native/bridge`, `src/backend/llvm` | 04 |
+| 06 | O3 PGO specialization/inlining/loop/SIMD 的 checker/transaction 集成 | `src/optimizer` | 05 |
+| 07 | multiversion target set、variant planner/checker、预算与 KIR bundle | `src/backend/llvm`, `src/optimizer`, `src/ir/kir` | 06 |
+| 08 | baseline-safe detector/dispatcher/thunk、并发缓存与 ABI/feature audit | `native/dispatch_runtime`, Native backend | 07 |
+| 09 | named-object artifact assembler、CKCOBJ03/key+manifest 4、CLI 原子输出 | artifact/cache/CLI | 08 |
+| 10 | 0.13.0 identity、兼容矩阵、current docs、release/audit contract | Cargo/docs/contracts | 09 |
+| 11 | schema 8 benchmark、0.12 replay、PGO/oracle/dispatch/size/time 与十作业 CI | benches/scripts/workflow | 10 |
+
+阶段 01–11 各有同号 `*-task.md` 与 `*-acceptance.md`。`99-final-acceptance.md` 是唯一总验收
+清单；阶段通过不能代签后续六主机、性能或 exact-SHA CI。
+
+## 提交与远程策略
+
+审查结论和全部计划先单独提交。实现阶段提交信息使用：
+
+    compiler(stage-NN): <imperative outcome>
+
+阶段内可保留小型 RED/GREEN 提交，但每阶段至少形成一个清晰检查点。动态证据只写 ignored
+acceptance bundle 与 CI artifact，不能把 run id/final SHA 回写进被测提交造成自引用。任何影响
+代码、规范、计划、fixture 或 checker 的新提交都会产生新 SHA，受影响门禁必须重跑。
+
+远程 CI 仅在本地所有可运行验收通过且 feature branch 已推送后触发。使用
+`gh workflow run ci.yml --ref design/v0.13-pgo-multiversion`，记录 run id 与 head SHA；每次查询
+间隔至少 30–60 秒，在等待期间继续不依赖结果的本地工作。最终 worktree 必须干净并停留在
+该分支，等待用户审查。
+
+## 阻断处理
+
+- 实现缺陷：保留最小 RED，修复实现，不改门槛。
+- 测试缺陷：只有测试违背冻结规范或不能观察指定行为时修改，并记录具体反例。
+- 环境缺陷：记录 host/Rust/LLVM/Clang identity 并修复环境；Native/CI gate 不得改成 skip。
+- 规范反例：先写 `specs/0.13/review/implementation-blocker-NN.md` 复诊；成立后同步修订双语
+  规范、总控、受影响阶段和测试，再继续执行。
+- 远程缺陷：区分产品失败、runner/capability 失败与暂态基础设施失败；不得把 required job
+  改为 optional 或用本地/旧 SHA 结果替代。
+
+阶段 11 的首个 exact-SHA run 因 GitHub 仓库从 `Rust_CalcKernel` 更名为 `CalcKernel`，与原
+TypeScript oracle 的旧仓库名发生碰撞，错误地在当前 Rust 仓库解析历史 commit。复诊记录见
+`specs/0.13/review/implementation-blocker-01.md`。闭环只把该固定提交的最小 oracle 源码与
+fixtures 固化到 `tests/oracles/typescript`，保留 lockfile、provenance 与 source manifest，并继续
+执行原有 live differential gate；语言/ABI、性能阈值、corpus 与十作业要求均不变。
+
+候选 `94aad2d6af8cea394ad2d2b311cf97fdb8bfbf05` 的十作业 CI 随后暴露三个真实阻断：Linux
+GCC `-Werror` 拒绝 profile-runtime 的 mixed-signedness 条件表达式；Darwin x86_64 profile
+runtime 引用 `_fstat$INODE64`，但 freestanding `libSystem.tbd` 未导出该符号；同时 v0.13 仍
+replay 已被 v0.12 后续 CI 证明有缺陷的旧候选。复诊与闭环见
+`specs/0.13/review/implementation-blocker-02.md`。v0.13 已继承 v0.12 blocker 04 的修复并将
+exact replay 重钉到 `ea822e343967baa2db113d3dd8f429d8dfdfa779`；语言/ABI、PGO 语义、
+schema 8 门槛、corpus、统计与 required job topology 均不变。
+
+Native 阶段使用仓库固定 LLVM/Clang 22.1.8 prefix 与 Rust 1.90.0。若本机缺失 prefix，先按
+README/bootstrap manifest 恢复；阶段 03 之后的 Native acceptance 不能因此跳过。
+
+Exact run `33795954634` 的双 performance 失败复诊见
+`specs/0.13/review/implementation-blocker-09.md`：Linux schema 7 case 现在从 conditioning 到计时
+固定在 inherited affinity 允许的一颗 CPU，schema 8 evidence 同时保留累计 schema 7 JSON 与其
+引用的 `measurement-*` 目录。该闭环未改变 timed work、样本、统计量、门槛、corpus 或平台矩阵。
+
+V0.14 run `33808562098` 在 exact V0.13 replay 中再次复现 same-core `slp_quad` 双频带，证明
+affinity 仍不能排除共享宿主未调度 vCPU 对 wall-clock 的污染。复诊与闭环见
+`specs/0.13/review/implementation-blocker-10.md`：继承的 Linux schema7 runtime sample 改用当前
+线程 CPU time；timed work、样本、统计量、门槛、corpus 与平台矩阵保持不变。
+
+Exact run `33811191360` 的 x86-64 performance job 随后证明 branch-layout generation execution
+超过 ordinary 5x。复诊与闭环见 `specs/0.13/review/implementation-blocker-11.md`：LLVM 把
+compiler-private initialization guard 内联到多个热插桩 site，重复展开完整 initialization 参数
+准备。Guard 现在带 Native `NoInline`；instrumentation site/counter、5x 门槛、timed work、样本、
+统计、corpus 与平台矩阵均不变。
+
+同轮 v0.12 exact CI 还暴露 x86/AArch64 不同的短循环 SIMD 摊销边界，以及 AArch64 四批
+SLP conditioning 不足以进入持续频率状态。v0.13 已逐差异继承
+`3bb6d97ced97aa04c22de8e22238c69a6e107eb7`，并把 exact v0.12 replay 重钉到该提交。复诊见
+`specs/0.13/review/implementation-blocker-12.md`；schema 7/8 门槛、timed work、样本、统计、
+corpus 与平台矩阵均未降低。
+
+Exact run `33820321093` 的 AArch64 performance job `100861409852` 随后证明继承的
+32-batch SLP conditioning 被放在 upper-median 的七次原始计时内，实际每个保留 sample
+执行了 224 个 conditioning batch，并触发 CK/C/Rust 共同的节流双频带。复诊与闭环见
+`specs/0.13/review/implementation-blocker-13.md`：v0.13 继承 exact v0.12
+`0de952ba5f17ad353ffb00f59b6349c96568b239`，每个保留 sample 只在七次 timed call 前执行
+一轮 32-batch ramp；timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
+
+本地 all-features 复验还证明当前 macOS SDK 会把 profile runtime 源码中的 `fstat` 调用降低为
+稳定的 `_fgetattrlist` 系统符号，而封闭 `libSystem.tbd` 尚未声明该导入，导致四个真实 PGO CLI
+链路在 embedded LLD 阶段失败。复诊与闭环见
+`specs/0.13/review/implementation-blocker-14.md`：仅把 macOS 10.6 起可用的 `_fgetattrlist`
+加入固定导入面，同时保留 `_fstat` 与 `_fstat$INODE64` 兼容拼写；没有开放任意系统库、外部
+linker 或新公共 ABI。
+
+Exact v0.12 run `33823603857` 的 AArch64 performance job `100871814907` 随后证明单轮
+32-batch ramp 仍让 Rust `slp_quad` 只有 15/20 个样本落在稳定带内。复诊与闭环见
+`specs/0.12/review/implementation-blocker-16.md`。v0.13 继承 exact v0.12
+`a49fa419669c400447dc13bcfa41ea464b3b040d`，使用每个保留 sample 前一次 64-batch ramp；
+timed work、样本、统计、门槛、corpus 与平台矩阵均不变。
+
+Exact v0.12 run `33833225186` 证明 `bounded-upper-band-v1` 的目标频带假设不成立，因此
+v0.13 使用 `interleaved-upper-median-three-channel-v3`，不再按绝对频带筛选三通道样本，
+并让 candidate/C/Rust 三通道复用同一数据工作区以消除分配位置偏差。
+Exact v0.12 run `33966418774` 又证明 x86 `VF4/UF2` noalias kernel 的逐 chunk
+load/compute/store 顺序隐藏了已证明的跨 chunk 并行。v0.13 继承 x86 `UF > 1` 的
+SSA/MemorySSA 就绪列表调度，并把 exact v0.12 replay 重钉到
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`；复诊见
+`specs/0.13/review/implementation-blocker-17.md`。timed work、样本、统计、性能与稳定性门槛、
+corpus 与平台矩阵均不变。
+
+V0.14 exact run `34014114894` 的 AArch64 performance job `101435039015` 在重建
+exact V0.13 replay 后证明，128-bit SVE 上 LLVM 默认的 scalable-vector interleave 与
+Advanced-SIMD baseline 每轮处理量和独立工作数基本相同，eligible suite 的 dispatch geo
+improvement 只有约 1.003。复诊与闭环见
+`specs/0.13/review/implementation-blocker-18.md`：仅对 exact feature string 含 `+sve` 的
+AArch64 scalar loop 请求四路 LLVM interleave；既有 loop metadata 与 fixed-vector KIR 不变。
+timed work、样本、统计、性能与稳定性门槛、corpus、target tiers 与 required job matrix 均不变。
+
+Exact V0.13 run `34017771182` 的 x86-64 performance job `101444674413` 随后证明
+`branch-layout` generation 仍为 ordinary 的约 5.68 倍；V0.14 exact replay run
+`34017772543` 的 AArch64 performance job `101444700041` 同时证明 compute-bound
+multiversion/selected-direct 为约 1.0552，越过 5% individual gate。复诊与闭环见
+`specs/0.13/review/implementation-blocker-19.md`：candidate hit/miss 改为 function-local
+saturated batching，而 generic SVE/SVE2 member 使用固定 `neoverse-n2` schedule-only tuning。
+Instrumentation site/counter/observation、target CPU/features、timed work、样本、统计、性能与稳定性
+门槛、corpus、target tiers 与 required job matrix 均不变。
+
+Exact V0.13 run `34021087906` 的 x86-64 performance job `101453829767` 随后证明
+`specialized_length` unchecked 仅达到更快 SIMD oracle 的约 88.9%；同 run 的 AArch64
+performance job `101453829694` 证明 `compute-bound` multiversion/selected-direct 约为
+1.0551。复诊与闭环见 `specs/0.13/review/implementation-blocker-20.md`：x86 常量调用边界的
+scalar memory-map handoff 使用固定 1×5 schedule；multiversion baseline/variant 则在独立 KIR
+复验与 LLVM lowering 中强制携带原 verified contract facts，缺失时 fail closed。source semantics、
+target CPU/features、timed work、样本、统计、性能与稳定性门槛、corpus、target tiers 与 required
+job matrix 均不变。
+
+Exact V0.13 run `34028252202` 的 AArch64 Linux native-host job `101473242935`
+证明，新启用的 contract-fact transfer 暴露了 dispatcher fact audit 的既有错误：dispatcher 只复制
+函数和参数属性，却把 root 函数体内的 assume/range/no-wrap/alias-scope 证据也重复登记，导致审计
+expected assume/range 各 6、实际各 4。复诊与闭环见
+`specs/0.13/review/implementation-blocker-21.md`：审计记录现在只复制 dispatcher 确实继承的
+alignment/noalias/readonly/writeonly/memory-effects 属性；函数体证据仍只归原 baseline body 所有。
+fact audit、语言/ABI、target、性能门槛、timed work、样本、corpus 与 required job matrix 均不变。
+
+V0.14 exact run `34031421321` 重建 exact V0.13
+`aa155825959e49d61fcea7a953935b179a7a238f` 后又暴露两项稳定性能缺口：x86-64
+`strict_f64`/`integer_cast` 缺少已经处于 KIR 封闭候选上限内的四路独立 vector chain，AArch64
+generic SVE member 的独立函数 subtarget 没有物化既有 CPU/features，导致单独的 `tune-cpu`
+没有进入机器调度。复诊与闭环见 `specs/0.13/review/implementation-blocker-22.md`：x86 profile
+只把最大 interleave 的下限提高到既有 hard cap 4；AArch64 则把原有
+`target-cpu=generic`、显式 features 与 `tune-cpu=neoverse-n2` 一起附着到函数。语言/ABI、目标
+ISA、性能与稳定性门槛、timed work、样本、corpus 与 required job matrix 均未改变。
+
+Exact V0.13 run `34034445336` 与 V0.14 exact replay run `34034844096` 随后证明三个独立问题：
+一个 full-root variant 的 budget 在 x86-64 上只保留 v4，导致 required v3 worker 正确退回
+baseline；`selectedDirect` 实际是 `--cpu native` 近似物而不是 resolver 选中的 hidden member；真实
+target cost 选择并通过性能门槛的 `VF2/UF2` 被过强的 exact `UF4` 结构断言拒绝。复诊与闭环见
+`specs/0.13/review/implementation-blocker-23.md`：profitable variant 改为 compatibility breadth
+优先保留，direct channel 从独立加载的同字节 multiversion artifact 读取 dispatch slot 并调用实际
+selected member，结构断言允许封闭 frontier 内的真实 cost winner。x86 Clippy 暴露的 AArch64-only
+test import 同时按 target cfg 隔离。语言/ABI、目标 ISA、profitability floor、性能与稳定性门槛、
+timed work、样本、corpus 与 required job matrix 均未改变。
+
+V0.14 exact replay run `34038295553` 继续证明两项真实选择缺口：x86 required v3 worker 的产物
+仍只有 v4 member，因为 coverage-first 排序发生在 isolated profitability filter 之后；Linux
+AArch64 dynamic library 没有 CK startup entry，因而从未取得 initial auxv，resolver 合法退回
+baseline。复诊与闭环见 `specs/0.13/review/implementation-blocker-24.md`：root eligibility 仍要求
+至少一个 tier 通过不变 profitability floor，但其 predicted non-regressing strict feature subset 可
+作为 compatibility companion 进入有界 retained-set；AArch64 dynamic library 用 freestanding direct
+syscall 读取 binary `/proc/self/auxv`，失败仍 baseline 且不引入 libc/loader dependency。语言/公开
+ABI、strict FP、安全规则、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required
+job matrix 均未改变。
+
+Exact V0.13 run `34041456107` 的 x86-64 performance job `101509032367` 随后证明
+`zip_u32` unchecked 只达到更快 Rust SIMD oracle 的约 89.9924%。稳定的 20 个样本与 object
+反汇编显示 CK 主循环只有两条 128-bit 独立链，而等价 Rust oracle 有四条；`VF4/UF4` 已通过
+target cost 与 legality，却因物化表示的冗余 chunk offset 和单前驱 MemorySSA block 参数越过
+既有 aggregate `2x` KIR growth 上限。复诊与闭环见
+`specs/0.13/review/implementation-blocker-25.md`：UF chunk 改用共享 vector-width stride
+recurrence，vector body 直接使用支配它的 memory version，独立 checker 重建全部 chunk start 与
+完整 backedge。语言/ABI、安全语义、`UF <= 4` frontier、`2x` growth 上限、性能与稳定性门槛、
+timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 run `34295522872` 在 Xeon 8573C 上回放 exact V0.13 `f5dd9989` 时，
+`trip-unroll-simd` 的 dispatch/ordinary 为 `1.0471936877 > 1.03`；selected-direct
+与 dispatch 几乎相同，retained v4 body 仍为八路 AVX2。修复与验收边界见
+`specs/0.13/review/implementation-blocker-49.md`：只为 exact v4 的无现有 schedule、无
+checked overflow/call/volatile/atomic/vector 的 scalar wrapping i32 map 请求十六路宽度，
+并推进 multiversion codegen cache identity。Native x86 实际发射与完整性能验收仍由新
+exact-SHA CI 判定；全部门槛、timed work、样本、corpus、平台与 required jobs 不变。
+
+`4add2257` 的独立 run `34305409171` 与 V0.14 run `34307207415` 中的 exact replay
+进一步定位到 full-width integer map 的 LLVM 默认四路 interleave：每轮 64 个元素，
+却将至多 63 个元素留给纯 scalar tail。见
+`specs/0.13/review/implementation-blocker-50.md`：只将该既有受限 v4 integer schedule
+的 interleave 固定为 1，仍保留十六路 vector、完整 legality 与 baseline/v3/f64 policy。
+新的 exact-SHA CI 仍须完成性能验收，未更改任何采样或门槛。
+
+同一 exact run 的 AArch64 performance job `101509032163` 随后通过 schema 7，却以
+`1.01545 < 1.08` 未通过 schema 8 的 dispatch geometric-improvement gate；V0.14 exact replay
+job `101510076457` 在准备阶段精确复现该失败。复诊与闭环见
+`specs/0.13/review/implementation-blocker-26.md`：普通 O3 保持 32-instruction pure-helper
+inline budget，无 profile multiversion 使用 8-instruction compact budget，并在 Native lowering
+为被保留的 9..32 instruction pure helper 加 `noinline`，防止 LLVM 撤销已检查的 clone policy；
+PGO-hot budget 仍为 48。语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、
+corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34049750799` 的 AArch64 performance job `101531090175` 随后通过
+累计 schema 7 与 schema 8 runtime gate，但 branch-layout multiversion 动态库以
+`4576 / 1808 = 2.53097 > 2.5` 未通过单项 artifact-size gate。复诊与闭环见
+`specs/0.13/review/implementation-blocker-27.md`：runtime object 已有 function/data
+sections，但 shared-library LLD 入口未启用回收；现按 Mach-O/COFF/ELF 分别使用
+`-dead_strip`、`/opt:ref`、`--gc-sections`，删除未引用的 compiler-private runtime section。
+语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required
+job matrix 均未改变。
+
+Exact V0.13 run `34051103711` 的同一 job 随后通过全部 runtime gate，但五个
+multiversion 动态库总计 `20584 / 9632 = 2.13704 > 2.0`，未通过 aggregate artifact-size
+gate；V0.14 replay job `101535896793` 精确复现。复诊与闭环见
+`specs/0.13/review/implementation-blocker-28.md`：ELF shared product 只保留 loader 所需
+dynamic export，LLD 使用 `--strip-all`，唯一 resolver slot 进入 private
+`.ck_dispatch_slot` section，并允许 LLD 的 `SHT_PROGBITS` 或 `SHT_NOBITS` allocated writable
+表示，使同字节 selected-direct evidence 不依赖完整 local symbol table；generated
+acquire/release slot 成为唯一 publication layer，one-shot detector
+改为 size-first 编译。以失败 job 的 exact AArch64 archives 重建为 `14792 / 8544 =
+1.73127`。语言/ABI、安全语义、目标 ISA、性能与稳定性门槛、timed work、样本、corpus、
+平台与 required job matrix 均未改变。
+
+V0.14 exact replay run `34090234424` 的 x86-64 performance job
+`101642274739` 重建 exact V0.13 后，`example-dijkstra` KIR optimizer median 以约
+`3.041x > 3x` 未通过累计 schema 7 单项门槛；此前 V0.13 自身只以约 2.951x 窄幅通过，不能靠
+重试闭环。复诊与闭环见 `specs/0.13/review/implementation-blocker-30.md`：phi pruning 中三个
+只作 key lookup 的短生命周期 ordered map 改为 function-local hash lookup，保留全部 block/edge/
+parameter 顺序、proof 与 malformed-CFG fail-closed 行为。语言/ABI、优化结果、安全语义、目标
+ISA、性能与稳定性门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact replay run `34095419897` 的 x86-64 performance job
+`101658156635` 重建 exact V0.13 后，unchecked `integer_cast` 以
+`4,247,259 / 3,703,185` 仅达到较快 Rust SIMD oracle 约 `87.19%`，未通过不变的 `90%`
+单项门槛。全部样本稳定；反汇编显示 CK 的 `VF2/UF4` 把多指令 `u32 -> f64` 展开复制为约
+98-byte 热循环，而较快 oracle 的同语义 `UF2` 热循环约 52 bytes。复诊与闭环见
+`specs/0.13/review/implementation-blocker-31.md`：x86 widening cast 的 target-specific
+frontend budget 限制为两条独立链，`UF4` 仍被发现、物化和独立检查后作为 non-winner，普通
+integer map 与三流 map 继续选择四链。ordinary/multiversion native object cache identity 同步
+加入 `x86-widening-cast-frontend-budget-2-v1`，禁止复用旧 `UF4` 产物。语言/ABI、安全语义、目标 ISA、`UF <= 4` frontier、
+legality/profitability/proof/growth gate、性能与稳定性门槛、timed work、样本、corpus、平台与
+required job matrix 均未改变。
+
+V0.14 exact replay run `34100659848` 的 x86-64 performance job
+`101674461128` 重建 exact v0.13 `002100719bdefdabb0fece50a363e1b797c464d2`
+后，`branch-layout` generation 以 `782,368 / 152,662 = 5.1248x` 未通过不变的 `5.0x`
+overhead 门槛。全部 20 个样本稳定；失败 artifact 的机器码显示 LLVM 内联两个 helper 算术后，
+每个 loop element 仍执行两次 internal function-entry atomic publication。复诊与闭环见
+`specs/0.13/review/implementation-blocker-32.md`：只有 non-exported、non-entry internal function
+的 entry observation 被精确迁移到各 static call site 的 caller-local saturating counter，并在
+caller 正常或 checked-failure return 时通过既有 bulk-add 原子发布；export 与 module entry
+保持直接发布。site/counter 意义、profile schema、语言/ABI、安全语义、目标 ISA、性能与稳定性
+门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34106156091` 的 x86-64 performance job `101691953958` 随后以
+`14,142 / 13,272 = 1.06555 > 1.05` 未通过 `trip-unroll-simd` 的 dispatch/direct 单项门槛。
+二十个样本稳定、batch 保持 16、resolver 恰好一次；保留 ELF 显示稳态 public thunk 仍在 atomic
+load 后执行 null test 与 conditional branch。复诊与闭环见
+`specs/0.13/review/implementation-blocker-33.md`：private slot 初始改为指向 cold、
+baseline-safe、ABI-preserving `resolve_entry`，首次调用由该入口解析并 acquire/release 发布，
+后续 public thunk 只执行 atomic load 与 indirect must-tail call。object cache identity 加入
+`dispatch-resolver-sentinel-v2`；语言/ABI、安全语义、目标 ISA、门槛、timed work、样本、corpus、
+平台与 required job matrix 均未改变。
+
+Replacement exact run `34116187720` 随后在 native integration、x86-64 Linux 与 AArch64
+Darwin 一致暴露 fact-audit 计数不闭合：新 resolver entry 正确继承 baseline 的 readonly/writeonly
+等 attribute，但 CK ledger 只为 steady dispatcher 登记一份 inherited lineage，导致实际 4、预期 3。
+复诊与闭环见 `specs/0.13/review/implementation-blocker-34.md`：closed inherited-attribute set
+现在为 resolver entry 与 steady dispatcher 各登记一次；body-owned assume/range/no-wrap/alias-scope
+仍不复制，fact audit 相等性不放宽。语言/ABI、profile、目标 ISA、性能与稳定性门槛、timed work、
+样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.14 replay run `34123758500` 的 AArch64 performance job `101747821716` 重建 exact
+V0.13 `0b2eaa52682d06300a009b2378a9ce00697f93f5` 后，multiversion source-to-object
+compile geometric ratio 以 `2.5245647 > 2.5` 未通过不变门槛；五个 case 中 branch-layout、
+call-constant-length 与 memory-bound 均超过 `2.5x`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-36.md`：normalized target-neutral KIR body 改用结构
+相等性，CLI 保留一次独立 checker 的 opaque authority 到 emission，raw public emitter 仍
+fail closed；coverage-first retained-set 与 predicted-cost-first runtime dispatch 排序分离。
+语言/ABI、安全语义、目标 ISA、growth/profitability/性能与稳定性门槛、timed work、样本、corpus、
+平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34133617442` 随后暴露四个独立闭环缺口：全 feature Clippy 中 checked
+emitter 残留未使用绑定；x86 checked `map_u32` 被全局强制二路展开后仅达到较快 oracle 的约
+85.4%；AArch64 五个 multiversion 产物因 private dispatch runtime 重复携带 GCC ident 而以
+`16,408 / 8,160 = 2.01078` 略超 aggregate `2x`；Windows 已剥离 PE 无私有 COFF symbols，且
+ARM64 MSVC `/Oi` 没有展开 profile runtime 的 `_Interlocked*`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-37.md`：checked streaming map 禁止有害 unroll，其他
+checked scalar loop 仍保留有界 schedule；ordinary/multiversion cache identity 同步更新；Unix
+private runtime 使用 `-fno-ident`；helper inline policy 改在 strip 前的 optimized IR 验证；ARM64
+profile atomics 使用既有 kernel32 import closure，x64 仍使用 intrinsic。语言/公开 ABI、安全语义、
+目标 ISA、性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Replacement exact V0.13 run `34155662442` 的 Linux/Darwin ARM64 Native jobs 随后证明新
+pre-strip helper regression 误走 ordinary O3，在 multiversion 规划前已按 ordinary budget 内联
+`cold_step`；同 run 的 x86-64 performance job 以 checked `specialized_length`
+`4,860,459 / 4,052,972 ns` 未通过不变的 90% throughput 门槛，反汇编显示 constant-bound map
+被 unknown-length streaming-map 的 `unroll.disable` 覆盖而只保留单路迭代。复诊与闭环见
+`specs/0.13/review/implementation-blocker-38.md`：Native test 改走真实 multiversion KIR 管线并
+先验证 helper KIR 保留状态；checked constant-call map 使用有界二路 schedule，unknown-length
+checked streaming map 继续禁止有害展开，cache identity 更新为
+`x86-checked-memory-map-schedule-v2`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
+性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact replay run `34165564989` 的 x86-64 performance job `101876627269` 随后重建
+exact V0.13 `e869763366283e46cd76ffbf3bb85c6c3959c25c`，checked domain suites 仅达到
+`1.0413x` 与 `1.0415x`，未通过不变的 `1.05x` 几何门槛。完整二十个样本稳定；保留机器码显示
+`contract_fixed_length` 仍为单元素 checked scalar loop，而历史有界二路 schedule 对同 case
+达到 `1.5461x`。复诊与闭环见 `specs/0.13/review/implementation-blocker-39.md`：checked-loop
+调度器现在在独立 analysis clone 上先做 mem2reg，再从 `llvm.assume(n == constant)` 或全 direct
+call 常量实参识别固定边界，并只对这些循环恢复既有有界二路 schedule；unknown-length checked
+streaming map 继续禁止有害展开，ordinary/multiversion cache identity 更新为
+`x86-checked-memory-map-schedule-v3`。语言/公开 ABI、安全语义、目标 ISA、inline/growth budget、
+性能/稳定性/产物门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Replacement V0.14 exact replay run `34169415571` 的 x86-64 performance job
+`101886905457` 随后以 checked `strict_f64` `3,601,329 / 3,164,344 ns` 未通过不变的 90%
+单项吞吐门槛。与上一 run 比较，candidate 与 Rust oracle 动态库分别逐字节相同，candidate
+反汇编亦相同；上一 run 的对应结果为 `3,194,955 / 3,191,369 ns`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-40.md`：旧 harness 为 candidate/C/Rust 分别分配
+数据缓冲区，使内存对齐、物理页和 cache-set 位置成为持久通道偏差。三条通道现在保留各自已加载
+entry，但复用唯一 `KernelWorkspace`；交错顺序、七次 upper median、二十样本、timed work、
+corpus 与门槛不变。sampling identity 更新为
+`interleaved-upper-median-three-channel-v3`，oracle manifest SHA-256 更新为
+`e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3`。语言/公开 ABI、
+strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性/产物门槛、平台与 required job matrix
+均未改变。
+
+V0.14 exact replay run `34172973863` 的 x86-64 与 AArch64 performance jobs 随后分别
+暴露 schema-8 通道地址偏差和重复 baseline 验证：x86 `memory-bound` 的
+multiversion/ordinary 为 `1.04241 > 1.03`，但 multiversion/selected-direct 为
+`0.99547`；AArch64 multiversion source-to-object 几何均值为 `2.52084 > 2.5`。
+复诊与闭环见 `specs/0.13/review/implementation-blocker-41.md`：八条代码通道现在共享唯一
+`KernelWorkspace`，sampling identity 更新为
+`rotating-eight-channel-shared-workspace-v2`；checked native emission 复用主 O3 管线已经验证的
+baseline result，raw public emitter 与所有 enhanced variant 仍 fail closed。语言/公开 ABI、
+strict-FP、安全语义、目标 ISA、multiversion frontier、growth/profitability/性能/稳定性/产物门槛、
+timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34178811720` 的 x86-64 与 AArch64 performance jobs 随后在 PGO oracle
+审计一致失败：schema-8 sampling 修复已把 `Kernel` 第三个参数改为 `KernelWorkspace`，但
+`audit_pgo()` 仍传入原始 record dict，因而在生成任何性能 artifact 前触发
+`AttributeError`。复诊与闭环见 `specs/0.13/review/implementation-blocker-42.md`：审计现在为每个
+record 创建唯一 workspace，并由 C、UBSan 与 Rust 三个 oracle 共享；差分范围、oracle、语言/公开
+ABI、strict-FP、安全语义、目标 ISA、优化策略、性能/稳定性门槛、timed work、样本、corpus、平台
+与 required job matrix 均未改变。
+
+Exact V0.13 run `34182330156` 的 Windows x64 Native job `101923864121` 随后证明，Rust 在
+build 时嵌入的 `\\?\C:\...` canonical profile directory 被 Windows collector 错误地从 namespace
+separator 当作普通 component 遍历，四条真实 PGO CLI 路径因此都以固定 directory status 43 退出。
+复诊与闭环见 `specs/0.13/review/implementation-blocker-43.md`：runtime 现在先识别 drive、UNC、
+verbatim drive 与 verbatim UNC root，只从 root 后检查 component，全部后续 component/final directory
+的 no-follow、reparse 与 file identity 检查保持 fail closed。profile schema、语言/公开 ABI、安全语义、
+优化策略、性能/稳定性门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact run `34198065606` 随后在 AArch64 worker 重建 accepted V0.13
+`528f0734a0c4525a2c84158c4d73067e468f292c`，完整 schema-8 multiversion compile
+geometric mean 为 `2.5000010576`，未通过不变的 `2.5` 门槛；同一 SHA 的独立 V0.13 AArch64
+job 为 `2.3582653544`。复诊与闭环见 `specs/0.13/review/implementation-blocker-44.md`：
+独立 bundle checker 已重建并验证每个 variant，LLVM lowering 还会在 IR 构造前 fail closed
+重验 evidence，因此 checked emission 只移除两者之间重复的完整 O0 evidence pass，并以 opaque
+checked bundle 中的 variant 地址约束该快速 handoff。checker、最终 evidence validation、输出
+artifact、语言/公开 ABI、安全与 strict-FP 语义、target ISA、性能/稳定性/size 门槛、timed work、
+样本、corpus、平台与 required job matrix 均未改变。
+
+V0.14 exact run `34212249513` 随后在完整 `x86-64-v4` worker 重建 exact V0.13
+`6258089cf44ebc317247e3fc38e2c765e424132e`，compute-bound combined CK 为 34,832 ns，
+Rust PGO oracle 为 30,025 ns，仅达到约 86.2% throughput，未通过不变的 90% 门槛；同一
+V0.13 SHA 的独立 run 落在 v3-only worker 并通过。复诊与闭环见
+`specs/0.13/review/implementation-blocker-45.md`：只有完整 `x86-64-v4`、显式
+`+avx512f`、至少八个 strict scalar `f64` 运算且无 fast-math/既有 schedule 的 compute-dense
+memory-map loop 才获得八路 vector-width 授权；其他 loop 继续使用 LLVM cost model，并推进
+multiversion cache codegen identity。语言/公开 ABI、strict-FP/安全语义、target eligibility、
+profile schema、门槛、timed work、样本、corpus、平台与 required job matrix 均未改变。
+
+Exact V0.13 run `34241617859` 随后在 Windows ARM64 Native job
+`102113212994` 编译 profile runtime 时失败：为 lock-free `std::atomic_ref` 选择的 C++20
+frontend 拒绝把 C 风格 `(void *)0` 隐式转换为 `CreateFileW` 的
+`LPSECURITY_ATTRIBUTES` 和 `WriteFile` 的 `LPOVERLAPPED`。复诊与闭环见
+`specs/0.13/review/implementation-blocker-46.md`：三个安全属性参数与一个 overlapped
+参数改用 Win32 SDK 声明的精确空指针类型，profile-runtime provenance digest 同步更新，并由
+先红后绿的契约测试固定。Windows ARM64 仍使用相同 C++20 `/WX` frontend；语言/公开 ABI、
+profile schema、安全与 strict-FP 语义、优化策略、target eligibility、性能/稳定性/size 门槛、
+timed work、样本、corpus、平台与 required job matrix 均未改变。

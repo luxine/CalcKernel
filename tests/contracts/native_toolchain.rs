@@ -199,6 +199,13 @@ fn native_toolchain_bootstrap_should_cover_unix_and_windows() {
         "Unix bootstrap must not expand an empty array under macOS Bash 3.2 set -u"
     );
     assert!(
+        unix.contains("ckc_cmake_args=(")
+            && unix.contains("ckc_cmake_args+=(")
+            && unix.contains("cmake \"${ckc_cmake_args[@]}\"")
+            && !unix.contains("ckc_runtime_args"),
+        "Unix bootstrap optional CMake flags must extend one non-empty array under macOS Bash 3.2 set -u"
+    );
+    assert!(
         unix.contains("ckc_static_libs=(\"${ckc_lld_libs[@]}\" LLVMDTLTO \"${ckc_llvm_libs[@]}\")"),
         "Unix bootstrap must add LLVM 22 DTLTO after LLD and before its LLVM dependencies"
     );
@@ -534,13 +541,17 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
     assert!(runtime.contains("CKC_RUNTIME_JIT_SUPPORT"));
     assert!(
         runtime.lines().any(|line| {
-            line.trim() == "let mut objects: Vec<&'static [u8]> = Vec::with_capacity(6);"
+            line.trim() == "let mut objects: Vec<&'static [u8]> = Vec::with_capacity(7);"
         }),
-        "the Windows x64 JIT anchor must enter an explicitly slice-typed object collection"
+        "the Windows x64 JIT anchor and dispatch runtime must enter an explicitly slice-typed object collection"
     );
     assert!(
         runtime.contains("embedded_runtime_objects"),
         "the five artifact runtime objects remain a separate closed set"
+    );
+    assert!(
+        runtime.contains("objects.push(embedded_dispatch_runtime_object())"),
+        "the JIT graph must define the dispatch stack-capture symbol referenced by the Linux entry object"
     );
 
     let bridge = read("native/bridge/ckc_llvm.cpp");
@@ -552,8 +563,12 @@ fn windows_native_execution_should_separate_coff_jit_support_from_artifact_runti
         "both COFF LLD entry points must use /out:<path>"
     );
     assert!(
+        bridge.contains("runtime_object_count != 7"),
+        "COFF x64 JIT must fail closed unless it receives anchor + five runtime objects + dispatch runtime"
+    );
+    assert!(
         bridge.contains("runtime_object_count != 6"),
-        "COFF x64 JIT must fail closed unless it receives anchor + five runtime objects"
+        "other JIT targets must fail closed unless they receive five runtime objects + dispatch runtime"
     );
     let execute = bridge
         .split_once("extern \"C\" int32_t ckc_llvm_jit_execute(")
@@ -881,6 +896,614 @@ fn native_runtime_should_be_source_owned_hashed_and_auditable() {
     }
 }
 
+#[test]
+fn linux_profile_runtime_hex_should_avoid_mixed_signedness_under_gcc_werror() {
+    let linux = read("native/profile_runtime/platform/linux.c");
+    let hex = linux
+        .split_once("static char ck_profile_hex(uint8_t nibble) {")
+        .expect("Linux profile hex helper")
+        .1
+        .split_once("\n}")
+        .expect("Linux profile hex helper end")
+        .0;
+
+    for required in [
+        "if (nibble < 10u)",
+        "return (char)('0' + (int)nibble);",
+        "return (char)('a' + (int)nibble - 10);",
+    ] {
+        assert!(
+            hex.contains(required),
+            "Linux GCC -Werror build requires warning-clean hex conversion {required:?}"
+        );
+    }
+    assert!(
+        !hex.contains('?'),
+        "mixed signed/unsigned conditional arms regress GCC -Werror on AArch64 Linux"
+    );
+}
+
+#[test]
+fn aarch64_linux_profile_runtime_should_use_the_arch_specific_open_flags() {
+    let linux = read("native/profile_runtime/platform/linux.c");
+    for required in [
+        "#elif defined(__aarch64__)",
+        "#define CK_LINUX_O_DIRECTORY 00040000",
+        "#define CK_LINUX_O_NOFOLLOW 00100000",
+    ] {
+        assert!(
+            linux.contains(required),
+            "AArch64 Linux profile publication omitted {required}"
+        );
+    }
+}
+
+#[test]
+fn multiversion_dispatch_should_never_name_a_void_call() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let resolve_entry = bridge
+        .split_once("auto *resolve_call = function_type->getReturnType()->isVoidTy()")
+        .expect("return-type-sensitive multiversion resolve-entry call")
+        .1;
+    assert!(
+        resolve_entry.contains("CreateCall(\n                                       function_type, fresh, resolve_arguments)"),
+        "void multiversion resolve-entry call must use the unnamed LLVM overload"
+    );
+    assert!(
+        resolve_entry.contains("CreateCall(\n                                       function_type, fresh, resolve_arguments,\n")
+            && resolve_entry.contains("\"ck.dispatch.call\""),
+        "non-void multiversion resolve-entry call should retain its stable name"
+    );
+
+    let dispatch = bridge
+        .split_once("auto *call = function_type->getReturnType()->isVoidTy()")
+        .expect("return-type-sensitive multiversion call")
+        .1;
+    assert!(
+        dispatch.contains("CreateCall(function_type, cached, arguments)"),
+        "void multiversion dispatch call must use the unnamed LLVM overload"
+    );
+    assert!(
+        dispatch.contains("CreateCall(function_type, cached, arguments,\n")
+            && dispatch.contains("\"ck.dispatch.call\""),
+        "non-void multiversion dispatch call should retain its stable name"
+    );
+}
+
+#[test]
+fn multiversion_dispatch_fact_ledger_should_cover_both_generated_call_layers() {
+    let module = read("src/backend/llvm/module.rs");
+    let dispatch = module
+        .split_once("fn add_multiversion_dispatch(")
+        .expect("multiversion dispatch module wrapper")
+        .1;
+    assert!(
+        dispatch.contains("self.fact_properties.extend(duplicated.iter().cloned());")
+            && dispatch.contains("self.fact_properties.extend(duplicated);"),
+        "the CK fact ledger must register inherited attributes for both the resolver entry and steady dispatcher"
+    );
+}
+
+#[test]
+fn darwin_profile_runtime_imports_should_cover_sdk_fstat_spellings() {
+    let darwin = read("native/profile_runtime/platform/darwin.c");
+    let libsystem = read("native/runtime/platform/libSystem.tbd");
+
+    assert!(
+        darwin.contains("fstat(directory_fd, &metadata)"),
+        "profile publication must validate the opened Darwin directory"
+    );
+    assert!(
+        libsystem.contains("_fstat$INODE64"),
+        "the freestanding Darwin import surface must resolve Clang's x86_64 inode64 spelling"
+    );
+    assert!(
+        libsystem.contains("_fgetattrlist"),
+        "the freestanding Darwin import surface must resolve the current SDK fstat lowering"
+    );
+}
+
+#[test]
+fn linux_runtime_entry_should_define_a_weak_dispatch_capture_fallback() {
+    let syscalls = read("native/runtime/linux/syscalls.S");
+    assert_eq!(
+        syscalls
+            .matches("\n__ck_dispatch_capture_initial_stack:\n")
+            .count(),
+        2,
+        "both Linux entry architectures need an in-object weak no-op fallback for ORC"
+    );
+    assert_eq!(
+        syscalls
+            .matches(".weak __ck_dispatch_capture_initial_stack")
+            .count(),
+        2,
+        "the fallback must remain replaceable by the strong dispatch runtime"
+    );
+}
+
+#[test]
+fn aarch64_linux_dynamic_dispatch_should_read_auxv_without_libc() {
+    let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
+    for required in [
+        "CK_LINUX_AT_FDCWD",
+        "CK_LINUX_SYS_OPENAT",
+        "CK_LINUX_SYS_READ",
+        "CK_LINUX_SYS_CLOSE",
+        "ck_dispatch_read_proc_auxv",
+        "\"/proc/self/auxv\"",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "AArch64 Linux dynamic-library dispatch must have a freestanding auxv fallback: {required}"
+        );
+    }
+    assert!(
+        runtime.contains("ck_initial_auxv_valid == 0u")
+            && runtime.contains("ck_dispatch_read_proc_auxv(&hwcap, &hwcap2)"),
+        "the fallback must run only when an executable entry point did not capture auxv"
+    );
+}
+
+#[test]
+fn aarch64_linux_private_runtimes_should_not_emit_outline_atomic_helpers() {
+    let bootstrap = read("scripts/bootstrap-llvm.sh");
+    assert!(
+        bootstrap.contains("ckc_target\" == \"aarch64-unknown-linux-gnu")
+            && bootstrap.contains("ckc_runtime_flags+=(-mno-outline-atomics)"),
+        "AArch64 Linux bootstrap must keep private runtime atomics self-contained"
+    );
+
+    let build = read("build.rs");
+    assert!(
+        build.contains("target == \"aarch64-unknown-linux-gnu\"")
+            && build.contains("build.flag(\"-mno-outline-atomics\")"),
+        "fallback dispatch-runtime compilation must match the bootstrap atomic policy"
+    );
+}
+
+#[test]
+fn dispatch_runtime_should_have_independent_provenance_bootstrap_and_private_abi() {
+    for path in [
+        "native/dispatch_runtime/include/ckc_dispatch_runtime.h",
+        "native/dispatch_runtime/dispatch_runtime.c",
+        "native/dispatch_runtime/provenance.toml",
+    ] {
+        assert!(repo_root().join(path).is_file(), "missing {path}");
+    }
+    let provenance = read("native/dispatch_runtime/provenance.toml");
+    assert!(provenance.contains("dispatch_runtime_schema = 1"));
+    assert!(provenance.contains("compiler_private = true"));
+    assert!(provenance.contains("failure_policy = \"baseline\""));
+
+    let build = read("build.rs");
+    for required in [
+        "CKC_DISPATCH_RUNTIME_OBJECT",
+        "CKC_DISPATCH_RUNTIME_SHA256",
+        "dispatch_runtime_object",
+        "compile_intermediates",
+    ] {
+        assert!(build.contains(required), "build.rs missing {required}");
+    }
+    for bootstrap in ["scripts/bootstrap-llvm.sh", "scripts/bootstrap-llvm.ps1"] {
+        let text = read(bootstrap);
+        for required in [
+            "dispatch_runtime_schema",
+            "dispatch_runtime_object",
+            "dispatch_runtime_sha256",
+        ] {
+            assert!(text.contains(required), "{bootstrap} missing {required}");
+        }
+    }
+
+    let runtime = read("native/dispatch_runtime/dispatch_runtime.c");
+    assert!(
+        !runtime.contains("_Interlocked") && !runtime.contains("<stdatomic.h>"),
+        "one-shot capability detection must not retain a second atomic publication layer"
+    );
+    for required in [
+        "__ck_dispatch_detect_capabilities",
+        "__ck_dispatch_select_ranked",
+        "return ck_detect_uncached();",
+        "CK_DISPATCH_BASELINE",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "dispatch runtime missing {required}"
+        );
+    }
+    for redundant_cache in [
+        "ck_capability_state",
+        "ck_dispatch_load_acquire",
+        "ck_dispatch_store_release",
+        "ck_dispatch_compare_exchange",
+    ] {
+        assert!(
+            !runtime.contains(redundant_cache),
+            "per-function dispatch publication must be the only capability cache: {redundant_cache}"
+        );
+    }
+    assert!(
+        !runtime.contains("__atomic_"),
+        "the freestanding dispatch runtime must not import compiler atomic helpers on baseline AArch64"
+    );
+    for forbidden in ["getenv(", "malloc(", "free(", "printf(", "getauxval("] {
+        assert!(
+            !runtime.contains(forbidden),
+            "dispatch runtime must not use {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn profile_runtime_atomics_should_be_freestanding_on_msvc_and_aarch64_linux() {
+    let collector = read("native/profile_runtime/common/collector.c");
+    let atomics = read("native/profile_runtime/include/ckc_profile_atomic.h");
+    let windows = read("native/profile_runtime/platform/windows.c");
+    let provenance = read("native/profile_runtime/provenance.toml");
+    let windows_bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let kernel32 = read("native/runtime/platform/kernel32.def");
+
+    assert!(collector.contains("ckc_profile_atomic_u64"));
+    assert!(!collector.contains("#include <stdatomic.h>"));
+    for required in [
+        "#pragma intrinsic(_InterlockedCompareExchange)",
+        "#pragma intrinsic(_InterlockedCompareExchange64)",
+        "#pragma intrinsic(_InterlockedExchange)",
+        "#pragma intrinsic(_InterlockedExchangeAdd64)",
+        "_InterlockedCompareExchange(&object->value, 0, 0)",
+        "_InterlockedCompareExchange64(&object->value, 0, 0)",
+        "_InterlockedExchangeAdd64(&object->value, (__int64)value)",
+        "defined(__aarch64__) && defined(__linux__)",
+        "ldxr",
+        "stxr",
+        "ATOMIC_LLONG_LOCK_FREE",
+    ] {
+        assert!(
+            atomics.contains(required),
+            "atomic portability layer missing {required}"
+        );
+    }
+    for required in [
+        "defined(_M_ARM64)",
+        "std::atomic_ref<uint32_t>",
+        "std::atomic_ref<uint64_t>",
+        "std::memory_order_acquire",
+        "std::memory_order_release",
+        "std::memory_order_relaxed",
+        "ckc_profile_atomic_initialize_u64",
+    ] {
+        assert!(
+            atomics.contains(required),
+            "Windows ARM64 profile atomics must be compiler-inlined and lock-free: {required}"
+        );
+    }
+    for forbidden in [
+        "_InterlockedCompareExchange_acq",
+        "_InterlockedCompareExchange_nf",
+        "_InterlockedCompareExchange64_nf",
+        "_InterlockedExchange_nf",
+        "_InterlockedExchange_rel",
+        "_InterlockedExchangeAdd64_nf",
+    ] {
+        assert!(
+            !atomics.contains(forbidden),
+            "MSVC profile atomics must not rely on an unexpanded ARM64 spelling: {forbidden}"
+        );
+    }
+    assert!(
+        provenance.contains("include/ckc_profile_atomic.h"),
+        "profile runtime provenance must bind the atomic portability layer"
+    );
+    assert!(
+        windows.contains("ckc_profile_atomic_fetch_add_relaxed_u32(&serial, 1u)"),
+        "the Windows ARM64 run-id counter must use the compiler-inlined atomic layer"
+    );
+    assert!(
+        collector.contains("ckc_profile_atomic_initialize_u64(&ck_profile_state.counters[index])"),
+        "dynamically allocated C++20 atomic-ref storage must have an explicit object lifetime"
+    );
+    let profile_header = read("native/profile_runtime/include/ckc_profile_runtime.h");
+    assert!(
+        profile_header.contains("extern \"C\" {")
+            && profile_header.contains("defined(__cplusplus)"),
+        "the C++20 ARM64 profile runtime must preserve its private C ABI"
+    );
+    for forbidden in [
+        "InterlockedCompareExchange",
+        "InterlockedCompareExchange64",
+        "InterlockedExchange",
+        "InterlockedExchangeAdd64",
+        "InterlockedIncrement",
+    ] {
+        assert!(
+            !kernel32.lines().any(|line| line.trim() == forbidden),
+            "ARM64 kernel32.dll does not export the base interlocked entry point {forbidden}"
+        );
+    }
+    let profile_compile = windows_bootstrap
+        .split_once("$profileRuntimeObject =")
+        .expect("Windows profile runtime compile section")
+        .1
+        .split_once("$profileRuntimeHash =")
+        .expect("Windows profile runtime compile boundary")
+        .0;
+    assert!(
+        !profile_compile.contains("/std:c11"),
+        "MSVC's C11 atomic header is unavailable for the freestanding profile runtime"
+    );
+    assert!(
+        profile_compile.contains("/Oi"),
+        "the freestanding profile runtime must request intrinsic expansion explicitly"
+    );
+    for required in ["/TP", "/std:c++20", "/GR-"] {
+        assert!(
+            profile_compile.contains(required),
+            "Windows ARM64 profile runtime must select the lock-free C++ atomic frontend: {required}"
+        );
+    }
+    let dispatch_compile = windows_bootstrap
+        .split_once("$dispatchRuntimeObject =")
+        .expect("Windows dispatch runtime compile section")
+        .1
+        .split_once("$dispatchRuntimeHash =")
+        .expect("Windows dispatch runtime compile boundary")
+        .0;
+    assert!(
+        dispatch_compile.contains("/Oi"),
+        "the freestanding dispatch runtime must request intrinsic expansion explicitly"
+    );
+}
+
+#[test]
+fn windows_profile_runtime_should_not_treat_the_verbatim_root_as_a_component() {
+    let windows = read("native/profile_runtime/platform/windows.c");
+
+    for required in [
+        "static int ck_profile_root_characters(const wchar_t *path, int length)",
+        "const int root_characters = ck_profile_root_characters(path, length);",
+        "if (root_characters == 0) {\n    return 0;\n  }",
+        "if (index < root_characters)",
+        "path[2] == L'?'",
+        "ck_profile_is_separator(path[3])",
+        "path[4] == L'U'",
+        "path[5] == L'N'",
+        "path[6] == L'C'",
+    ] {
+        assert!(
+            windows.contains(required),
+            "Windows profile publication must preserve the canonical verbatim/UNC root while walking components: {required}"
+        );
+    }
+}
+
+#[test]
+fn windows_profile_runtime_flags_should_disable_outlined_atomics_only_on_arm64() {
+    let bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let flags = bootstrap
+        .split_once("$profileRuntimeLanguage =")
+        .expect("profile runtime frontend flags")
+        .1
+        .split_once("& cl.exe")
+        .expect("profile runtime compiler invocation")
+        .0;
+    for (target, expected) in [
+        ("aarch64-pc-windows-msvc", true),
+        ("x86_64-pc-windows-msvc", false),
+    ] {
+        let script = format!(
+            "$Target = '{target}'; $profileRuntimeLanguage = {flags}; $profileRuntimeLanguage -join '|'"
+        );
+        let output = std::process::Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-Command", &script])
+            .output()
+            .expect("execute actual Windows profile runtime flags");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout)
+                .split('|')
+                .any(|flag| flag.trim() == "/forceInterlockedFunctions-"),
+            expected,
+            "{target}: freestanding ARM64 atomics must not import CRT outline helpers"
+        );
+    }
+}
+
+#[test]
+fn windows_arm64_profile_runtime_should_use_cpp_compatible_win32_nulls() {
+    let windows = read("native/profile_runtime/platform/windows.c");
+
+    assert_eq!(
+        windows.matches("(LPSECURITY_ATTRIBUTES)0").count(),
+        3,
+        "CreateFileW security attributes must remain valid when the Windows ARM64 profile runtime is compiled as C++20"
+    );
+    assert_eq!(
+        windows.matches("(LPOVERLAPPED)0").count(),
+        1,
+        "WriteFile's overlapped argument must remain valid when the Windows ARM64 profile runtime is compiled as C++20"
+    );
+}
+
+#[test]
+fn unix_runtime_objects_should_omit_compiler_ident_sections() {
+    let bootstrap = read("scripts/bootstrap-llvm.sh");
+    let flags = bootstrap
+        .split_once("ckc_runtime_flags=(")
+        .expect("Unix runtime flags")
+        .1
+        .split_once(')')
+        .expect("Unix runtime flags boundary")
+        .0;
+    assert!(
+        flags.contains("-fno-ident"),
+        "private runtime objects must not duplicate compiler identity strings in final artifacts"
+    );
+}
+
+#[test]
+fn coff_link_outputs_should_have_a_reproducible_timestamp() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    assert_eq!(
+        bridge
+            .matches("arguments.emplace_back(\"/timestamp:0\")")
+            .count(),
+        2,
+        "both embedded COFF LLD entry points must suppress wall-clock PE timestamps"
+    );
+}
+
+#[test]
+fn shared_link_outputs_should_discard_unreachable_private_sections() {
+    let bridge = read("native/bridge/ckc_llvm.cpp");
+    let shared = bridge
+        .split_once("extern \"C\" int32_t ckc_lld_link_shared(")
+        .expect("embedded shared-link entry point")
+        .1
+        .split_once("extern \"C\" int32_t ckc_lld_link_executable(")
+        .expect("embedded shared-link boundary")
+        .0;
+    for required in [
+        "arguments.emplace_back(\"-dead_strip\")",
+        "arguments.emplace_back(\"/opt:ref\")",
+        "arguments.emplace_back(\"--gc-sections\")",
+        "arguments.emplace_back(\"--strip-all\")",
+    ] {
+        assert!(
+            shared.contains(required),
+            "shared links must discard unreachable function/data sections via {required}"
+        );
+    }
+    assert!(
+        bridge.contains("slot->setSection(\".ck_dispatch_slot\")"),
+        "stripped ELF multiversion products need one dedicated private slot section for exact direct-call evidence"
+    );
+}
+
+#[test]
+fn dispatch_runtime_should_optimize_one_shot_detection_for_size() {
+    let bootstrap = read("scripts/bootstrap-llvm.sh");
+    let dispatch_compile = bootstrap
+        .split_once("native/dispatch_runtime/dispatch_runtime.c")
+        .expect("dispatch runtime bootstrap compile")
+        .0
+        .rsplit_once("$ckc_runtime_cc")
+        .expect("dispatch runtime compiler invocation")
+        .1;
+    assert!(
+        dispatch_compile.contains("-Oz"),
+        "the one-shot private detector must be optimized for final artifact size"
+    );
+
+    let windows_bootstrap = read("scripts/bootstrap-llvm.ps1");
+    let dispatch_compile = windows_bootstrap
+        .split_once("$dispatchRuntimeObject =")
+        .expect("Windows dispatch runtime compile section")
+        .1
+        .split_once("$dispatchRuntimeHash =")
+        .expect("Windows dispatch runtime compile boundary")
+        .0;
+    assert!(
+        dispatch_compile.contains("/O1"),
+        "the Windows one-shot private detector must optimize for final artifact size"
+    );
+
+    let build = read("build.rs");
+    let fallback = build
+        .split_once("fn configure_dispatch_runtime(")
+        .expect("dispatch runtime fallback")
+        .1;
+    assert!(
+        fallback.contains("build.opt_level(1)") && fallback.contains(".flag(\"-Oz\")"),
+        "fallback runtime compilation must match the size-first release recipe"
+    );
+}
+
+#[test]
+fn profile_generation_should_initialize_only_at_external_entries() {
+    let lowering = read("src/backend/llvm/kir_lower.rs");
+    let entry = lowering
+        .split("fn emit_profile_function_entry")
+        .nth(1)
+        .expect("profile function-entry lowering")
+        .split("fn emit_profile_instruction")
+        .next()
+        .expect("profile function-entry lowering boundary");
+    assert!(
+        entry.contains("if self.function.exported") && entry.contains("self.builder.call(ensure"),
+        "private CK helpers are dominated by an exported entry and must not repeat lazy runtime initialization"
+    );
+}
+
+#[test]
+fn profile_runtime_hot_counter_path_should_use_one_relaxed_fetch_add() {
+    let collector = read("native/profile_runtime/common/collector.c");
+    let atomics = read("native/profile_runtime/include/ckc_profile_atomic.h");
+    assert!(
+        collector.contains("ckc_profile_atomic_fetch_add_relaxed_u64"),
+        "the common counter path must avoid a redundant load plus compare-exchange"
+    );
+    for required in [
+        "ckc_profile_atomic_fetch_add_relaxed_u64",
+        "_InterlockedExchangeAdd64",
+        "atomic_fetch_add_explicit",
+    ] {
+        assert!(
+            atomics.contains(required),
+            "profile atomic portability layer omitted {required}"
+        );
+    }
+}
+
+#[test]
+fn native_cache_schema4_contract_should_bind_complete_bundle_and_atomic_outputs() {
+    let key = read("src/cli/cache/key.rs");
+    let entry = read("src/cli/cache/entry.rs");
+    let cache = read("src/cli/cache/mod.rs");
+    let output = read("src/cli/output.rs");
+    for required in [
+        "const KEY_SCHEMA: u32 = 4",
+        "profile_identity",
+        "artifact_identity",
+        "pgo_identity",
+        "multiversion_identity",
+        "dispatch_identity",
+        "budget_identity",
+    ] {
+        assert!(key.contains(required), "cache key missing {required}");
+    }
+    for required in [
+        "CKCOBJ03",
+        "const MANIFEST_SCHEMA: u32 = 4",
+        "CKCBND01",
+        "dispatch_runtime_digest",
+        "cache bundle variant order is invalid",
+        "cache bundle has trailing data",
+    ] {
+        assert!(entry.contains(required), "cache entry missing {required}");
+    }
+    for required in [
+        "load_multiversion_bundle",
+        "store_multiversion_bundle",
+        "object_manifest != expected_manifest",
+        "Sha256::digest(&object)",
+        "from_cached_objects",
+    ] {
+        assert!(cache.contains(required), "bundle cache missing {required}");
+    }
+    for required in [
+        "canonical_output_identity",
+        "existing_files_alias",
+        "output destination identity changed before commit",
+        "output transaction rolled back",
+    ] {
+        assert!(
+            output.contains(required),
+            "output transaction missing {required}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn windows_native_artifact_audit_should_use_only_the_pinned_coff_inspector() {
@@ -1067,20 +1690,25 @@ fn write_executable(path: &Path, source: &str) {
 fn native_pic_target_should_override_the_jit_large_code_model_for_shared_objects() {
     let bridge = read("native/bridge/ckc_llvm.cpp");
     let creation = bridge
-        .split("extern \"C\" int32_t ckc_llvm_target_create_host(")
+        .split("int32_t finish_target_machine(")
         .nth(1)
-        .expect("host target constructor")
-        .split("auto target_machine = builder->createTargetMachine();")
+        .expect("shared target-machine constructor")
+        .split("llvm::Type *llvm_type")
         .next()
-        .expect("target configuration precedes creation");
-    assert!(creation.contains("builder->setRelocationModel(llvm::Reloc::PIC_)"));
+        .expect("target configuration helper boundary");
+    assert!(creation.contains("builder.setRelocationModel(llvm::Reloc::PIC_)"));
     assert!(
-        creation.contains("builder->setCodeModel(llvm::CodeModel::Small)"),
+        creation.contains("builder.setCodeModel(llvm::CodeModel::Small)"),
         "native PIC products need an explicit small code model instead of JIT Large addressing"
     );
     assert!(
         !creation.contains("isOSBinFormatMachO"),
         "the small code model must also cover ELF and COFF performance artifacts"
+    );
+    assert_eq!(
+        bridge.matches("return finish_target_machine(").count(),
+        2,
+        "host and explicit feature targets must share the same relocation/code-model policy"
     );
 }
 

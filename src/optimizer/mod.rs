@@ -3,6 +3,10 @@ mod audit;
 mod facts;
 mod kir_passes;
 mod kir_pipeline;
+mod multiversion;
+mod pgo;
+mod profile_analysis;
+mod profile_mapping;
 mod proof;
 mod slp;
 mod slp_check;
@@ -22,6 +26,10 @@ pub use audit::*;
 pub use facts::*;
 pub use kir_passes::{LoopSimplifyResult, canonicalize_kir_loops};
 pub use kir_pipeline::*;
+pub use multiversion::*;
+pub use pgo::*;
+pub use profile_analysis::*;
+pub use profile_mapping::*;
 pub use proof::*;
 pub use slp::*;
 pub use slp_check::*;
@@ -40,6 +48,10 @@ pub use verify::*;
 pub const KIR_VECTOR_COST_MODEL_SCHEMA: u32 = 1;
 /// Schema of vector transformation proof records stored in Native cache keys.
 pub const KIR_VECTOR_PROOF_SCHEMA: u32 = 1;
+
+pub(crate) const KIR_INLINE_CALLEE_BUDGET: usize = 32;
+pub(crate) const KIR_MULTIVERSION_INLINE_CALLEE_BUDGET: usize = 8;
+pub(crate) const KIR_PGO_HOT_INLINE_CALLEE_BUDGET: usize = 48;
 
 /// Canonical identity of every fixed 0.12 optimizer budget currently capable
 /// of changing Native object bytes. New budgets must extend this string.

@@ -16,34 +16,55 @@ use crate::{MirFunction, MirInstruction, MirPlace, MirPrimitiveTypeName, MirType
 #[cfg(feature = "native-toolchain")]
 pub use artifact::{
     NativeArchive, NativeArtifactKind, NativeArtifactPaths, NativeDynamicLibrary, NativeExecutable,
-    NativePlatform, create_native_static_archive, link_native_dynamic_library,
-    link_native_executable,
+    NativePlatform, create_native_multiversion_static_archive,
+    create_native_profile_generation_static_archive, create_native_static_archive,
+    link_native_dynamic_library, link_native_executable, link_native_multiversion_dynamic_library,
+    link_native_multiversion_executable, link_native_profile_generation_dynamic_library,
+    link_native_profile_generation_executable,
 };
 pub use c::{
     BoundsMode, EmitCOptions, OverflowMode, emit_c_kir_header, emit_c_kir_module,
     emit_c_kir_module_with_contracts,
 };
-pub use header::{NativeHeaderMode, annotate_unsafe_contracts, emit_native_header};
+pub use header::{
+    NativeHeaderMode, annotate_unsafe_contracts, emit_native_header,
+    emit_native_profile_generation_header,
+};
 #[cfg(feature = "native-toolchain")]
 pub use llvm::{
-    AuditedNativeModule, LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo, NativeContext, NativeCpu,
-    NativeError, NativeFactAuditReport, NativeFactProperty, NativeFactSource, NativeJit,
-    NativeJitMemoryAudit, NativeModule, NativeObject, NativeOptimizationLevel, NativeStage,
-    NativeStrengtheningKind, NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer,
-    VerifiedNativeModule, bridge_info, lower_native_kir_module,
-    test_error as native_bridge_test_error,
+    Aarch64AuxvSnapshot, AuditedNativeModule, CkLateProfileFunctionLayout, CkLateProfileLayoutPlan,
+    CkLateProfileLayoutReport, CkLateProfileRepair, LLVM_BRIDGE_ABI_VERSION, NativeBridgeInfo,
+    NativeCapabilitySet, NativeContext, NativeCpu, NativeDispatchCandidate, NativeDispatchCell,
+    NativeDispatchTable, NativeDispatchThunkContract, NativeDispatchTier, NativeError,
+    NativeFactAuditReport, NativeFactProperty, NativeFactSource, NativeJit, NativeJitMemoryAudit,
+    NativeModule, NativeMultiversionObject, NativeMultiversionObjectBundle,
+    NativeMultiversionObjectRole, NativeMultiversionTargetSet, NativeObject,
+    NativeOptimizationLevel, NativeProfileGeneration, NativeStage, NativeStrengtheningKind,
+    NativeTarget, NativeToolchain, OptimizedNativeModule, OrcObjectLayer, VerifiedNativeModule,
+    X86CpuidSnapshot, bridge_info, build_late_profile_layout_plan, detect_aarch64_auxv,
+    detect_host_cpu_capabilities, detect_x86_cpuid, emit_native_multiversion_objects,
+    emit_native_multiversion_objects_checked, lower_native_kir_module,
+    lower_native_multiversion_baseline_module, lower_native_multiversion_variant_module,
+    lower_native_profile_generation_module, test_add_multiversion_dispatch,
+    test_apply_late_layout_bytes, test_error as native_bridge_test_error,
     test_inject_untracked_flag as native_fact_audit_test_inject_untracked_flag,
     test_inject_untracked_strengthening as native_fact_audit_test_inject_untracked,
     test_invalid_input as native_bridge_test_invalid_input, test_invalid_module_verification,
 };
 pub use llvm::{
-    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, RUNTIME_ABI_VERSION, embedded_notices,
+    EmbeddedNotice, EmitLlvmOptions, NATIVE_ABI_VERSION, NATIVE_CACHE_ENTRY_MAGIC,
+    NATIVE_CACHE_KEY_SCHEMA, NATIVE_CACHE_MANIFEST_SCHEMA, RUNTIME_ABI_VERSION, embedded_notices,
 };
 #[cfg(feature = "native-toolchain")]
 pub use native_abi::{
     NativeAbiArgument, NativeAbiArgumentRole, NativeAbiClassifier, NativeAbiError,
     NativeAbiExtension, NativeAbiFunction, NativeAbiHiddenResult, NativeAbiLayout,
     NativeAbiPassMode, NativeAbiRegister, NativeAbiRegisterClass, NativeAbiTarget, NativeAbiValue,
+};
+#[cfg(feature = "native-toolchain")]
+pub use native_runtime::{
+    NATIVE_DISPATCH_RUNTIME_SCHEMA, NATIVE_DISPATCH_RUNTIME_SHA256, NATIVE_PROFILE_RUNTIME_SCHEMA,
+    NATIVE_PROFILE_RUNTIME_SHA256, embedded_dispatch_runtime_object,
 };
 pub use wasm::{EmitWasmOptions, emit_wasm_kir_module, emit_wat_kir_module};
 

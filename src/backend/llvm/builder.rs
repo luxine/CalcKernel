@@ -214,11 +214,24 @@ impl<'module> NativeFunction<'module> {
         ffi::function_set_dll_export(self.handle)
     }
 
+    pub(super) fn set_noinline(self) -> Result<(), NativeError> {
+        ffi::function_set_noinline(self.handle)
+    }
+
     pub(super) fn set_memory_effects(
         self,
         effects: ffi::BridgeMemoryEffects,
     ) -> Result<(), NativeError> {
         ffi::function_set_memory_effects(self.handle, effects)
+    }
+
+    pub(super) fn set_profile(
+        self,
+        entry_count: u64,
+        hot: bool,
+        cold: bool,
+    ) -> Result<(), NativeError> {
+        ffi::function_set_profile(self.handle, entry_count, hot, cold)
     }
 }
 
@@ -287,6 +300,33 @@ impl NativeModule<'_> {
         function: NativeFunction<'_>,
     ) -> Result<(), NativeError> {
         ffi::module_preserve_function(self.shared_handle(), function.handle())
+    }
+
+    pub(super) fn add_global_bytes<'module>(
+        &'module self,
+        name: &str,
+        bytes: &[u8],
+        mutable_storage: bool,
+        alignment: u32,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::module_add_global_bytes(
+            self.shared_handle(),
+            name,
+            bytes,
+            mutable_storage,
+            alignment,
+        )
+        .map(NativeValue::from_handle)
+    }
+
+    pub(super) fn add_global_u32_array<'module>(
+        &'module self,
+        name: &str,
+        values: &[u32],
+        alignment: u32,
+    ) -> Result<NativeValue<'module>, NativeError> {
+        ffi::module_add_global_u32_array(self.shared_handle(), name, values, alignment)
+            .map(NativeValue::from_handle)
     }
 }
 
@@ -635,6 +675,24 @@ impl<'module, 'context> NativeBuilder<'module, 'context> {
             condition.handle,
             then_block.handle,
             else_block.handle,
+        )
+    }
+
+    pub(super) fn cond_branch_weighted(
+        &mut self,
+        condition: NativeValue<'module>,
+        then_block: NativeBlock<'module>,
+        else_block: NativeBlock<'module>,
+        then_count: u64,
+        else_count: u64,
+    ) -> Result<(), NativeError> {
+        ffi::builder_cond_branch_weighted(
+            self.handle,
+            condition.handle,
+            then_block.handle,
+            else_block.handle,
+            then_count,
+            else_count,
         )
     }
 }

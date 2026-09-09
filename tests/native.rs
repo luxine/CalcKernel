@@ -22,12 +22,24 @@ mod jit;
 mod libraries;
 #[path = "native/llvm_ir.rs"]
 mod llvm_ir;
+#[path = "native/multiversion.rs"]
+mod multiversion;
+#[path = "native/multiversion_artifacts.rs"]
+mod multiversion_artifacts;
+#[path = "native/multiversion_dispatch.rs"]
+mod multiversion_dispatch;
 #[path = "native/object.rs"]
 mod object;
 #[path = "native/ownership.rs"]
 mod ownership;
+#[path = "native/pgo_layout.rs"]
+mod pgo_layout;
+#[path = "native/pgo_o3.rs"]
+mod pgo_o3;
 #[path = "native/profile.rs"]
 mod profile;
+#[path = "native/profile_generation.rs"]
+mod profile_generation;
 #[path = "native/run.rs"]
 mod run;
 #[path = "native/runtime.rs"]

@@ -1,8 +1,8 @@
-# CalcKernel 0.12 Native LLVM and C ABI
+# CalcKernel 0.13 Native LLVM and C ABI
 
 [简体中文](../zh-CN/abi/llvm.md)
 
-CalcKernel 0.12 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
+CalcKernel 0.13 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
 checked C++ bridge, verified before and after optimization, emitted as object
 bytes by the host TargetMachine, and linked in process with LLD. `emit-llvm`
 prints this verified module for inspection.
@@ -53,7 +53,7 @@ pointers to opaque `ptr`, structs to declaration-order LLVM structs, and void
 returns to LLVM `void`. Signedness selects compare, divide, remainder, and
 integer-to-float operations. No fast-math flags are enabled.
 
-KIR v2 fixed vectors lower structurally to equal-width LLVM vectors. Vector
+KIR v3 fixed vectors lower structurally to equal-width LLVM vectors. Vector
 loads/stores, strict arithmetic, casts, compares/selects, and modular integer
 add/multiply reductions are emitted only after the KIR independent checker has
 closed lane mapping, operation equivalence, fallback identity, target legality,
@@ -71,11 +71,56 @@ explicit or natural completion uses `ret void`.
 These forms are compiler internals, not the public library ABI. The independent
 0.9 textual LLVM export-shape promise is retired.
 
-The public Native C ABI remains version 1 in 0.12. The private LLVM bridge ABI 3
-replaces bridge ABI 2, the contract-aware runtime ABI remains version 2, and native cache
-and code-generation identity use KIR v2 plus `CKCOBJ02` manifest schema 3.
-These private identities intentionally invalidate incompatible 0.11 and older
+The public Native C ABI remains version 1 in 0.13 and the Runtime ABI remains
+version 2. The private LLVM bridge ABI 4 replaces 0.12 bridge ABI 3; native cache
+and code-generation identity use KIR v3 plus `CKCOBJ03` key schema 4 and
+manifest schema 4. These private identities intentionally invalidate 0.12 and older
 objects without changing foreign-call signatures.
+
+## Profile and multiversion objects
+
+Profile-generation modules link the compiler-private schema-1 collection runtime
+and expose the generated full-identity flush control only for library topology.
+Final profile-use modules contain no counter, writer, profile path, or generation
+runtime. Profile annotations are consumed by CK's independent optimizer; they do
+not become LLVM safety metadata or proof.
+
+`--cpu multiversion` lowers one verified baseline module, zero or more independently
+verified target variants from the same KIR pre-state, and the compiler-private
+dispatch runtime as separate named-object members. Every object is verified and
+feature-audited before assembly. The baseline-safe detector recognizes only the
+closed x86-64 v3/v4 and Linux AArch64 SVE/SVE2 tiers, fails closed on incomplete
+state, and returns one normalized result to the unresolved root. That root's
+private acquire-release function-pointer slot is the sole publication/cache
+layer; concurrent first calls may repeat detection, while later calls never do.
+Linux AArch64 executables use the startup-stack auxv snapshot; dynamic libraries
+that have no CK entry point read `/proc/self/auxv` through freestanding direct
+system calls and fail closed to baseline if that fallback is unavailable or
+incomplete. This adds no libc or loader dependency.
+Generic AArch64 SVE/SVE2 members use a fixed `neoverse-n2` LLVM tuning model for
+scheduling only; `target-cpu=generic`, explicit features, runtime compatibility,
+and the feature audit remain unchanged and authoritative.
+Explicit x86-64-v4 members may request sixteen-lane LLVM vectorization for
+scalar wrapping `i32` memory-map loops. The rule excludes calls, checked overflow,
+volatile/atomic memory, existing vectors, and existing loop schedules; LLVM still
+checks vectorization legality. Baseline and v3 members keep their own width policy.
+These full-width integer maps request one-way interleaving so complete vectors
+are not left to a scalar tail expanded by a second unroll factor. The strict-f64
+schedule and all scalar remainder correctness checks remain unchanged.
+Public Native C ABI thunks keep their names, addresses, signatures, checked-status
+behavior, and visibility; baseline, variant, detector, and runtime symbols stay hidden.
+ELF shared products strip non-loader symbols and retain the one generated slot
+in a private pointer-width, pointer-aligned `.ck_dispatch_slot` section. LLD may
+materialize the allocated writable section as `SHT_PROGBITS` or `SHT_NOBITS`.
+The section is not exported and does not extend the Native C ABI.
+
+The named-object bundle links as an executable, dynamic library, or static archive.
+A multiversion object output is rejected because 0.13 has no partial-link bundle
+contract; baseline/native single-version objects remain supported. `CKCOBJ03`
+admits a cached bundle only when ordered member names/roles, target set, profile,
+dispatch runtime, physical artifact kind, every object digest, key schema 4, and
+manifest schema 4 all match. Final artifacts retain the existing self-contained
+system-runtime policy and add no CK/LLVM/compiler shared dependency.
 
 ## Native C ABI
 
@@ -154,5 +199,5 @@ not an RWX fallback. The internal audit rejects mixed capability tuples and
 proves relocation, final code/data permissions, and instruction-cache
 finalization for both paths.
 
-ORC is not a public embeddable API in 0.12. `emit-llvm` is host-only diagnostic
+ORC is not a public embeddable API in 0.13. `emit-llvm` is host-only diagnostic
 output and does not promise a stable external LLVM ABI.

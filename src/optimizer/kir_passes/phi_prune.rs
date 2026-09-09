@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     ContractFactAffineExpression, ContractFactAffineTerm, ContractFactPointer,
@@ -30,12 +30,12 @@ pub(super) fn remove_dead_block_parameters(
         .blocks
         .iter()
         .map(|block| (block.id, block))
-        .collect::<BTreeMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     if blocks.len() != function.blocks.len() {
         return false;
     }
     let mut live = protected.clone();
-    let mut incoming = BTreeMap::<ValueId, Vec<ValueId>>::new();
+    let mut incoming = HashMap::<ValueId, Vec<ValueId>>::new();
     for region in &function.regions {
         match region.origin {
             KirMemoryRegionOrigin::Conservative => {}
@@ -95,7 +95,7 @@ pub(super) fn remove_dead_block_parameters(
                 .collect::<Vec<_>>();
             keep.iter().any(|keep| !keep).then_some((block.id, keep))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     if masks.is_empty() {
         return false;
     }

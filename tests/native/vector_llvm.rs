@@ -432,6 +432,11 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
     let profile = target
         .kir_profile(KirConsumer::NativeLibrary)
         .expect("queried target profile");
+    #[cfg(target_arch = "x86_64")]
+    assert!(
+        profile.maximum_interleave_factor() >= 4,
+        "x86 target profile must expose the closed four-chain frontier"
+    );
     let checked = check(&SourceFile::new("loop-simd.ck", LOOP_SIMD_SOURCE));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("loop SIMD MIR");
@@ -455,6 +460,21 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         "{:?}",
         result.analysis_fallbacks
     );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let accepted = result
+            .vector_explanations
+            .iter()
+            .find(|explanation| {
+                explanation.disposition == calckernel::CandidateDisposition::Accepted
+            })
+            .expect("accepted x86 streaming-map vector plan");
+        assert_eq!(
+            (accepted.vf, accepted.uf),
+            (4, 4),
+            "x86 streaming map must retain four independent vector chains"
+        );
+    }
     let kir_text = print_kir_module(result.artifact.as_ref().expect("vector artifact"));
     for spelling in [
         "loop_simd_body",
@@ -610,6 +630,24 @@ fn vector_loop_simd_strict_f64_should_lower_without_fast_math_or_contraction() {
         "{:?}",
         result.analysis_fallbacks
     );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let accepted = result
+            .vector_explanations
+            .iter()
+            .find(|explanation| {
+                explanation.disposition == calckernel::CandidateDisposition::Accepted
+            })
+            .expect("accepted strict-f64 vector plan");
+        assert_eq!(
+            accepted.vf, 2,
+            "x86 strict-f64 lowering must use f64 vectors"
+        );
+        assert!(
+            accepted.uf >= 2 && accepted.uf <= 4,
+            "x86 strict-f64 lowering must select a profitable independent-chain plan"
+        );
+    }
     let context = NativeContext::new().expect("context");
     let llvm = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
         .expect("lower strict f64 vector loop")
@@ -799,6 +837,33 @@ fn vector_loop_simd_cast_and_pure_diamond_should_survive_into_pre_llvm_ir() {
         "{:?}",
         result.analysis_fallbacks
     );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let artifact = result.artifact.as_ref().expect("cast/diamond artifact");
+        let map_cast = artifact
+            .functions
+            .iter()
+            .find(|function| function.name == "map_cast")
+            .expect("map_cast function")
+            .id;
+        let accepted = result
+            .vector_explanations
+            .iter()
+            .find(|explanation| {
+                explanation.disposition == calckernel::CandidateDisposition::Accepted
+                    && matches!(
+                        explanation.candidate,
+                        calckernel::CandidateKey::LoopFrontier { function, .. }
+                            if function == map_cast
+                    )
+            })
+            .expect("accepted x86 integer-cast plan");
+        assert_eq!(accepted.vf, 2, "x86 integer cast must produce f64 vectors");
+        assert!(
+            accepted.uf >= 2 && accepted.uf <= 4,
+            "x86 integer cast must select a profitable independent-chain plan"
+        );
+    }
     let kir_text = print_kir_module(result.artifact.as_ref().expect("cast/diamond artifact"));
     for spelling in ["vector_cast", "vector_compare", "vector_select"] {
         assert!(
@@ -875,15 +940,20 @@ fn schema_seven_vector_corpus_should_materialize_vectors_for_both_safety_modes()
                     "{name}/checked must retain its scalar first-error safety boundary:\n{text}"
                 );
             } else {
-                let native_x86_reduction = name == "modular_reduction"
+                let native_llvm_handoff = (name == "modular_reduction"
                     && cfg!(target_arch = "x86_64")
                     && result.analysis_fallbacks.iter().any(|fallback| {
                         fallback.reason
                             == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
-                    });
+                    }))
+                    || (name == "specialized_length"
+                        && result.analysis_fallbacks.iter().any(|fallback| {
+                            fallback.reason
+                                == "constant-call-loop-deferred-to-native-loop-vectorizer"
+                        }));
                 assert!(
-                    native_x86_reduction || text.contains("vector_"),
-                    "{name}/unchecked remained scalar without the audited x86 reduction handoff:\n{text}"
+                    native_llvm_handoff || text.contains("vector_"),
+                    "{name}/unchecked remained scalar without an audited Native LLVM handoff:\n{text}"
                 );
                 let header = emit_native_header(
                     result.artifact.as_ref().expect("vector header artifact"),

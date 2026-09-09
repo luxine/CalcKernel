@@ -7,7 +7,8 @@ use calckernel::{
     KirTargetProfileBuilder, KirVerifiedProgramState, SourceFile, VectorEpilogue,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
     discover_vectorization_candidates, import_contract_facts, lower_to_mir,
-    prepare_vectorization_trial, print_kir_module, run_kir_pass_pipeline,
+    prepare_vectorization_trial, print_kir_module, run_kir_multiversion_pass_pipeline,
+    run_kir_pass_pipeline,
 };
 
 #[test]
@@ -47,16 +48,25 @@ fn native_profile_with_triple(
     maximum_interleave_factor: u8,
     triple: &str,
 ) -> KirTargetProfile {
-    let mut builder = KirTargetProfileBuilder::native(
+    native_profile_with_cpu_features(
         consumer,
+        maximum_interleave_factor,
         triple,
-        64,
-        true,
         KirNativeCpuPolicy::Baseline,
-        "generic",
         vec!["+neon".to_string()],
     )
-    .expect("native profile builder");
+}
+
+fn native_profile_with_cpu_features(
+    consumer: KirConsumer,
+    maximum_interleave_factor: u8,
+    triple: &str,
+    policy: KirNativeCpuPolicy,
+    features: Vec<String>,
+) -> KirTargetProfile {
+    let mut builder =
+        KirTargetProfileBuilder::native(consumer, triple, 64, true, policy, "generic", features)
+            .expect("native profile builder");
     for key in KirTargetProfile::fixed_query_universe()
         .into_iter()
         .filter(|key| {
@@ -191,6 +201,35 @@ contract { requires noalias(a, b); effects read(a), write(b); }
 {
   let i: u32 = 0;
   while i < n { b[i] = a[i] + 7; i = i + 1; }
+}
+"#;
+
+const INTERLEAVE_ZIP: &str = r#"
+export unsafe fn zip_u32(
+  a: slice<u32>, b: slice<u32>, out: slice<u32>, n: u32
+) -> void
+contract {
+  requires noalias(a, b) && noalias(a, out) && noalias(b, out);
+  effects read(a), read(b), write(out);
+}
+{
+  let i: u32 = 0;
+  while i < n { out[i] = a[i] + b[i]; i = i + 1; }
+}
+"#;
+
+const SPECIALIZED_LENGTH_MAP: &str = r#"
+unsafe fn fixed_map(a: slice<u32>, b: slice<u32>, n: u32) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] + 13; i = i + 1; }
+}
+
+export unsafe fn map(a: slice<u32>, b: slice<u32>) -> void
+contract { requires noalias(a, b); effects read(a), write(b); }
+{
+  unsafe { fixed_map(a, b, 4000); }
 }
 "#;
 
@@ -464,7 +503,7 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
             attempt.disposition == CandidateDisposition::Accepted
                 && matches!(
                     attempt.key,
-                    calckernel::CandidateKey::LoopFrontier { vf: 4, uf: 2, .. }
+                    calckernel::CandidateKey::LoopFrontier { vf: 4, uf: 4, .. }
                 )
         }),
         "frontier did not compare runtime-trip candidates at one common scope: {vector_attempts:#?}"
@@ -474,6 +513,158 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
             .iter()
             .any(|attempt| attempt.disposition == CandidateDisposition::NonWinner),
         "{vector_attempts:#?}"
+    );
+}
+
+#[test]
+fn x86_independent_three_stream_loop_should_select_four_vector_chains() {
+    let (pre, contracts) = map_state_with_profile(
+        INTERLEAVE_ZIP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let candidate = discover_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 4 && candidate.uf == 4)
+        .expect("x86 VF4/UF4 three-stream candidate");
+    let prepared =
+        prepare_vectorization_trial(&pre, &candidate).expect("compact x86 VF4/UF4 trial");
+    assert!(
+        prepared.plan.growth.module_after_units
+            <= prepared.plan.growth.module_before_units.saturating_mul(2),
+        "four-chain plan exceeded the unchanged aggregate growth ceiling: {:#?}",
+        prepared.plan.growth
+    );
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+    let mut forged_stride = prepared.trial.clone();
+    let stride = forged_stride.module_mut().functions[0]
+        .blocks
+        .iter_mut()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body")
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.kind {
+            calckernel::KirInstructionKind::ConstInt { value } if value == "4" => Some(value),
+            _ => None,
+        })
+        .expect("shared vector-width stride");
+    *stride = "5".to_string();
+    assert!(
+        check_vectorization_trial_independently(
+            &pre,
+            &forged_stride,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .is_err(),
+        "independent checker accepted a forged UF stride"
+    );
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted x86 three-stream vector plan");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        (4, 4),
+        "x86 independent three-stream loop must amortize control across four chains; explanations={:#?}; audit={:#?}",
+        result.vector_explanations,
+        result.audit.attempts()
+    );
+}
+
+#[test]
+fn x86_single_map_loop_should_select_four_vector_chains_without_padding_the_module() {
+    let (pre, contracts) = map_state_with_profile(
+        MAP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted x86 map vector plan");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        (4, 4),
+        "a standalone x86 streaming map must retain four independent chains under the unchanged module-growth ceiling; explanations={:#?}; audit={:#?}",
+        result.vector_explanations,
+        result.audit.attempts()
+    );
+    assert!(
+        accepted.growth.module_after_units <= accepted.growth.module_before_units.saturating_mul(2),
+        "standalone four-chain map exceeded the unchanged aggregate growth ceiling: {:#?}",
+        accepted.growth
+    );
+    let vector_body = result
+        .artifact
+        .as_ref()
+        .expect("vectorized artifact")
+        .functions
+        .iter()
+        .find(|function| function.name == "map")
+        .expect("vectorized function")
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body");
+    assert!(
+        vector_body.params.is_empty(),
+        "single-predecessor interleaved vector body retained redundant parameters"
+    );
+}
+
+#[test]
+fn x86_widening_integer_cast_should_respect_the_two_chain_frontend_budget() {
+    let source = r#"
+export unsafe fn map_cast(a: slice<u32>, out: slice<f64>, n: u32) -> void
+contract { requires n <= a.len && n <= out.len; requires noalias(a, out); effects read(a), write(out); }
+{
+  let i: u32 = 0;
+  while i < n { out[i] = u32_to_f64(a[i]); i = i + 1; }
+}
+"#;
+    let (pre, contracts) = map_state_with_profile(
+        source,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted x86 widening-cast vector plan");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        (2, 2),
+        "the x86 u32-to-f64 expansion must stay within the measured two-chain frontend budget; explanations={:#?}",
+        result.vector_explanations
     );
 }
 
@@ -611,6 +802,22 @@ fn loop_simd_strict_f64_elementwise_should_preserve_lane_rounding_without_fast_m
 }
 
 #[test]
+fn loop_simd_x86_strict_f64_should_admit_four_independent_vector_chains() {
+    let (pre, _) = map_state_with_profile(
+        STRICT_F64_MAP,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|candidate| candidate.vf == 2 && candidate.uf == 4),
+        "x86 strict-f64 map omitted its four-chain schedule: {discovery:#?}"
+    );
+}
+
+#[test]
 fn loop_simd_strict_f64_unary_and_divide_should_remain_ordered_lane_operations() {
     let (pre, _) = map_state(STRICT_F64_UNARY_DIVIDE_MAP);
     let discovery = discover_vectorization_candidates(&pre);
@@ -738,6 +945,95 @@ fn x86_loop_simd_should_defer_horizontal_reductions_to_the_native_loop_vectorize
     assert!(discovery.fallbacks.iter().any(|fallback| {
         fallback.reason == "x86-horizontal-reduction-deferred-to-native-loop-vectorizer"
     }));
+}
+
+#[test]
+fn aarch64_sve_tiers_should_defer_whole_loops_to_the_scalable_native_vectorizer() {
+    for feature in ["+sve", "+sve2"] {
+        let profile = native_profile_with_cpu_features(
+            KirConsumer::NativeLibrary,
+            1,
+            "aarch64-unknown-linux-gnu",
+            KirNativeCpuPolicy::Multiversion,
+            vec!["+neon".to_string(), feature.to_string()],
+        );
+        let (pre, _) = map_state_with_profile(INTERLEAVE_MAP, profile);
+        let discovery = discover_vectorization_candidates(&pre);
+        assert!(
+            discovery.candidates.is_empty(),
+            "fixed-width KIR vectors preempt the SVE whole-loop vectorizer: {discovery:#?}"
+        );
+        assert!(discovery.fallbacks.iter().any(|fallback| {
+            fallback.reason == "aarch64-sve-loop-deferred-to-native-loop-vectorizer"
+        }));
+    }
+
+    let baseline =
+        native_profile_with_triple(KirConsumer::NativeLibrary, 1, "aarch64-unknown-linux-gnu");
+    let (pre, _) = map_state_with_profile(INTERLEAVE_MAP, baseline);
+    assert!(
+        !discover_vectorization_candidates(&pre)
+            .candidates
+            .is_empty(),
+        "the AArch64 baseline tier must retain fixed-width KIR vectorization"
+    );
+}
+
+#[test]
+fn multiversion_baseline_should_defer_whole_loops_to_each_native_target_vectorizer() {
+    for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
+        let profile = native_profile_with_cpu_features(
+            KirConsumer::NativeLibrary,
+            4,
+            triple,
+            KirNativeCpuPolicy::Multiversion,
+            vec!["+neon".to_string()],
+        );
+        let (pre, contracts) = map_state_with_profile(INTERLEAVE_MAP, profile);
+        let ordinary = run_kir_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        let deferred = run_kir_multiversion_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        assert!(
+            ordinary.stats.vectorized_loops > 0,
+            "ordinary Native O3 should still use verified KIR vectors: {ordinary:#?}"
+        );
+        assert_eq!(deferred.stats.vectorized_loops, 0);
+        assert_eq!(
+            deferred.stats.full_unrolled_loops
+                + deferred.stats.partial_unrolled_loops_factor_2
+                + deferred.stats.partial_unrolled_loops_factor_4,
+            0,
+            "multiversion loop shape must remain available to each LLVM target: {deferred:#?}"
+        );
+        assert!(deferred.analysis_fallbacks.iter().any(|fallback| {
+            fallback.reason == "multiversion-loop-deferred-to-native-loop-vectorizer"
+        }));
+    }
+}
+
+#[test]
+fn constant_call_loop_should_defer_unroll_and_vector_width_to_native_llvm() {
+    let profile =
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu");
+    let (pre, _) = map_state_with_profile(SPECIALIZED_LENGTH_MAP, profile);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery.candidates.is_empty(),
+        "the constant-call loop must remain scalar for LLVM: {discovery:#?}"
+    );
+    assert!(
+        discovery.fallbacks.iter().any(|fallback| {
+            fallback.reason == "constant-call-loop-deferred-to-native-loop-vectorizer"
+        }),
+        "missing constant-call deferral: {discovery:#?}"
+    );
 }
 
 #[test]

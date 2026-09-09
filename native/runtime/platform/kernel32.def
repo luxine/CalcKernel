@@ -1,5 +1,18 @@
 LIBRARY kernel32.dll
 EXPORTS
+  CloseHandle
+  CreateFileW
+  DeleteFileW
   ExitProcess
+  FlushFileBuffers
+  GetCurrentProcessId
+  GetCurrentThreadId
+  GetFileInformationByHandle
+  GetLastError
   GetStdHandle
+  GetSystemTimeAsFileTime
+  MoveFileExW
+  MultiByteToWideChar
+  QueryPerformanceCounter
+  VirtualAlloc
   WriteFile

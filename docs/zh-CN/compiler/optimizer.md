@@ -1,4 +1,4 @@
-# CalcKernel 0.12 Fact-Driven Optimizer
+# CalcKernel 0.13 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -39,11 +39,46 @@ discovery-only loop descriptor。
   `induction-simplify`、post-loop range/check elimination、互斥的 Loop SIMD/unroll/
   loop-SLP frontier、residual straight-line SLP、DCE 与 cleanup。
 
+## Workload profile 权限
+
+CK workload profile 是 immutable non-proof input，只能排序 candidate 与估算 work，不能建立
+range、alias、alignment、effect、bounds、dominance 或 checked-failure safety。CFG rewrite 后
+的 profile mapping 只有在闭合 record 被不调用 proposer 的 checker 重新核验时才保留；unknown、
+saturated、inconsistent、overflowed 或 low-confidence observation 均回退 ordinary baseline。
+
+O2 先运行完整 ordinary machine pipeline。Profile-on/off 在 `CkLateProfileLayout` 前逐字节
+一致；该 late pass 只能改变 block/trace order，以及执行闭合 allowlist 中的 required target
+repair。它不提供 LLVM profile metadata，也不能改变 non-terminator instruction。
+
+O3 让 inline、value/length specialization、unroll、SLP、Loop SIMD 的每项 proposal 从 same
+immutable pre-state 开始。独立 checker 重算 legality、proof dependency、profile benefit、
+static cost、growth、profile mapping 与 shared budget。一个 transaction 同时发布 candidate
+module、proof/fact state、mapping 与 audit ledger，或全部回滚；被拒 proposal 与耗尽搜索不退款。
+
+Multiversion planning 同样让 baseline 与全部 enhanced variant 从 same pre-state 开始。
+Eligible exported root 至少要有一个 enhanced tier 达到闭合的 profile benefit 下限。若该 profitable
+tier 存在 required-feature strict subset，且 subset 的 target cost 不差于 baseline，planner 可将
+subset 保留为 compatibility companion，避免有界产物放弃能运行增强代码的低阶 host。每个 retained
+target variant 都重跑 normal verifier、fact audit、target-feature audit 与 object audit。
+Cross-variant LTO 禁止，因此 enhanced assumption 不能强化 baseline 或 sibling variant。
+baseline-safe dispatcher 只选择已验证的兼容 variant，不改变 public semantics。
+
+固定的 `2x` logical KIR-growth budget 对仅 target profile 与 tier-derived hidden name 不同、
+规范化后逐字节一致的 KIR body 只计费一次；instruction、CFG、ABI 或其他真实结构差异仍支付
+完整 charge。每个 target variant 仍有独立 verifier、feature audit、LLVM module、object、cache
+identity 与 artifact-size gate，共享 body 计费不能削弱 target 隔离或隐藏物理产物增长。
+
+Retained-set 继续 coverage-first，确保有界 bundle 保留低阶 companion；dispatch plan 则对已保留
+member 独立按 predicted cost、compatibility breadth 与 size 排序。因此 v4/SVE2 host 选择更快的
+受支持 member，v3/SVE host 跳过不兼容项并选择 companion。raw public emitter 仍检查任意 bundle；
+CLI 将 opaque independent-check authority 保留到 emission，source-to-object path 不再重复重建
+同一 proposal。
+
 每个 KIR module 都携带规范化 `KirTargetProfile`。Inspection、portable C、WebAssembly、
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.12 的 C/WebAssembly profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.13 的 C/WebAssembly profile 禁用 Vector KIR。
 
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
@@ -64,12 +99,23 @@ epilogue。Alias 未知时可生成一个 total、overflow-safe non-overlap pred
 reduction、scan、gather/scatter、vector call、masked memory、shuffle 及不支持的
 alignment/operation 都保持 scalar。
 
+独立 UF chunk 共用一个已验证的 vector-width stride recurrence；单前驱 vector body 直接使用
+支配它的 MemorySSA version。该紧凑表示让封闭的 x86 `UF <= 4` frontier 能选择四条独立链，
+同时不超过既有 aggregate `2x` KIR growth 上限；独立 checker 会重建每个 chunk start 与完整
+backedge advance。
+
 Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainder 语义。SLP 只按 source
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
 提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
-保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.12
+保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.13
 speculative transform，包括被拒绝的 alternative 与 clone。
+
+普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
+lowering 使用紧凑的 8-instruction inline budget，因为 helper body 否则会复制进每个 retained
+member；更大但原本可 inline 的 helper 保持 call，并在 Native optimization 中标记 `noinline`。
+profile 证明为 hot 的 inline 仍使用 48-instruction budget。这样既保留小型 hot-path helper，
+也避免 branch-heavy body 在每个 target variant 中重复并被 if-convert。
 
 整数常量传播也处理无 guard 的函数，实际改写 modular arithmetic、整数 Copy 和比较，
 包括所有输入边均为同一常量的 block parameter 的消费者。每次事务先针对不可变的改写前
@@ -167,5 +213,11 @@ Possible checked failure 和 runtime print 是 ordered effect，不能无证明�
 拒绝 injected 或 stale metadata。
 
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
-下比较 Clang、精确 0.10、checked/unchecked proof loop 与 optimizer latency。阈值不能成为
-弱化语义或使用 contract domain 外输入的理由。
+下使用 schema 8 比较 0.13 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
+hand-written SIMD oracle，并 replay exact 0.12 commit
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`。Correctness、optimization time、generation
+overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
+在 0.13 交付；Auto-Tuning remains 0.14，indirect calls、scalable KIR 与 adaptive JIT PGO
+仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。
+Dynamic library final link 还会按 object format 使用原生 dead-section 机制回收未引用的
+compiler-private section，同时保留 CK export 与全部实际引用的 dispatch/runtime section。

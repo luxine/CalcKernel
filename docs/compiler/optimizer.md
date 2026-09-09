@@ -1,4 +1,4 @@
-# CalcKernel 0.12 Fact-Driven Optimizer
+# CalcKernel 0.13 Fact-Driven Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -45,13 +45,61 @@ preserve induction structure and only when the cached function identity matches.
   exclusive Loop SIMD/unroll/loop-SLP frontier, residual straight-line SLP,
   DCE, and cleanup.
 
+## Workload-profile authority
+
+CK workload profile data is immutable non-proof input. It can rank candidates
+and estimate work, but cannot establish range, alias, alignment, effect, bounds,
+dominance, or checked-failure safety. A profile mapping survives a CFG rewrite only
+through a closed record rechecked without calling the proposer; unknown,
+saturated, inconsistent, overflowed, or low-confidence observations retain the
+ordinary baseline.
+
+O2 runs the full ordinary machine pipeline first. Profile-on and profile-off are
+byte-identical immediately before `CkLateProfileLayout`; that late pass may only
+change block/trace ordering and required target repairs from the closed allowlist.
+It supplies no LLVM profile metadata and cannot alter non-terminator instructions.
+
+O3 starts each inlining, value/length specialization, unroll, SLP, and Loop SIMD
+proposal from the same immutable pre-state. An independent checker recomputes
+legality, proof dependencies, profile benefit, static cost, growth, profile
+mapping, and shared budget. A transaction publishes the candidate module,
+proof/fact state, mapping, and audit ledger together or rolls them all back;
+rejected proposals and exhausted searches do not refund budget.
+
+Multiversion planning also starts baseline and every enhanced variant from the
+same pre-state. Eligible exported roots need at least one enhanced tier to meet
+the closed minimum profile benefit. If that profitable tier has a strict
+feature-subset tier whose target cost is no worse than baseline, the planner may
+retain the subset as its compatibility companion; this prevents a bounded image
+from abandoning a capable lower-tier host. Every retained target variant reruns
+the normal verifier, fact audit, target-feature audit, and object audit.
+Cross-variant LTO is forbidden, so an enhanced assumption cannot strengthen
+baseline or a sibling variant. The baseline-safe dispatcher selects a verified
+compatible variant without changing public semantics.
+
+The fixed `2x` logical KIR-growth budget charges an exact normalized KIR body
+once when target variants differ only in target profile and tier-derived hidden
+names. A real instruction, CFG, ABI, or structural difference pays the full
+charge. Each target variant still has an independent verifier, feature audit,
+LLVM module, object, cache identity, and artifact-size gate; body sharing cannot
+weaken target isolation or hide physical output growth.
+
+Retention remains coverage-first so a bounded bundle keeps its lower-tier
+companion. The dispatch plan separately ranks retained members by predicted
+cost before compatibility breadth and size. A v4/SVE2 host therefore selects
+the faster supported member, while a v3/SVE host skips it and selects the
+compatible companion. The raw public emitter still checks arbitrary bundles;
+the CLI retains the opaque independent-check authority through emission so it
+does not reconstruct the same proposal a second time on the source-to-object
+path.
+
 Every KIR module carries a canonical `KirTargetProfile`. Inspection, portable
 C, WebAssembly, Native library, and Native executable profiles identify their
 consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
-C and WebAssembly profiles disable Vector KIR in 0.12.
+C and WebAssembly profiles disable Vector KIR in 0.13.
 
 Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
 the complete candidate module, proof/fact state, and audit-budget delta are
@@ -77,6 +125,13 @@ predicates remain scalar. Checked or sanitizer modes, floating/checked reduction
 scans, gather/scatter, vector calls, masked memory, shuffles, and unsupported
 alignment/operations remain scalar.
 
+Independent UF chunks use one verified vector-width stride recurrence, and a
+single-predecessor vector body consumes the dominating MemorySSA versions
+directly. This compact representation lets the closed x86 `UF <= 4` frontier
+select four independent chains without exceeding the unchanged aggregate `2x`
+KIR growth ceiling; the independent checker reconstructs every chunk start and
+the full backedge advance.
+
 Unroll considers factors 2 and 4, preserving exact trip partition and scalar
 remainder semantics. SLP packs only isomorphic, independent, adjacent scalar
 operations in source order; it cannot invent shuffle or masked-memory support.
@@ -84,7 +139,15 @@ Loop SIMD, loop SLP, and unroll are priced over the same immutable loop scope an
 only one winner commits. A vector candidate must beat the scalar cost by at least
 20% at its conservative trip threshold; exact shorter trips stay scalar. The
 aggregate O3 growth ceiling and proposer/checker work budgets apply across all
-0.12 speculative transforms, including rejected alternatives and clones.
+0.13 speculative transforms, including rejected alternatives and clones.
+
+Ordinary static O3 may inline a pure helper of at most 32 KIR instructions.
+Unprofiled multiversion lowering uses a compact eight-instruction inline budget
+because the helper body would otherwise be duplicated into every retained
+member; larger otherwise-inlineable helpers remain calls and are marked
+`noinline` for Native optimization. Profile-proven hot inlining retains its
+48-instruction budget. This keeps small hot-path helpers inline while avoiding
+branch-heavy code duplication and if-conversion in every target variant.
 
 Integer constant propagation also runs in guard-free functions. It rewrites
 modular arithmetic, integer copies and comparisons, including consumers of
@@ -231,9 +294,14 @@ LLVM. C emits portable hints only when their complete preconditions hold. Native
 performs a pre-LLVM fact audit and rejects injected or stale metadata.
 
 Performance gates compare identical algorithms, safety modes, data, hardware,
-CPU policy, and strict semantics. Schema 7 compares 0.12 Native with pinned
-Clang and hand-written C/Rust SIMD oracles, and replays exact 0.11 at commit
-`80c0acf6bb5d65e4d9d40352b9501ea32b79f43d`. Canonical checked proof loops must
-approach unchecked throughput; optimization time, code size, memory, and cache
-behavior have separate gates. PGO remains 0.13. Auto-Tuning remains 0.14.
+CPU policy, training/evaluation split, and strict semantics. Schema 8 compares
+0.13 ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
+hand-written SIMD oracles, and replays exact 0.12 commit
+`e1bcea461492a5a2619cdb960ea00dd668847f0a`. Correctness, optimization time,
+generation overhead, artifact size, compiler archive size, and cache behavior
+have separate gates. PGO and bounded multiversioning ship in 0.13. Auto-Tuning
+remains 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.
+Dynamic-library final links also discard unreachable compiler-private sections
+using the native object-format mechanism while retaining CK exports and every
+referenced dispatch/runtime section.

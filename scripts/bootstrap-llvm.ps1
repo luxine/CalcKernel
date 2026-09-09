@@ -128,6 +128,18 @@ $configure = @(
     "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
 )
+if ($Profile -eq "oracle") {
+    $configure += @(
+        "-DLLVM_ENABLE_RUNTIMES=compiler-rt",
+        "-DCOMPILER_RT_BUILD_BUILTINS=OFF",
+        "-DCOMPILER_RT_BUILD_SANITIZERS=OFF",
+        "-DCOMPILER_RT_BUILD_XRAY=OFF",
+        "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF",
+        "-DCOMPILER_RT_BUILD_MEMPROF=OFF",
+        "-DCOMPILER_RT_BUILD_ORC=OFF",
+        "-DCOMPILER_RT_BUILD_PROFILE=ON"
+    )
+}
 & cmake @configure
 if ($LASTEXITCODE -ne 0) { throw "LLVM CMake configuration failed" }
 Assert-MsvcCompileCommands -Path (Join-Path $binaryDir "compile_commands.json")
@@ -175,6 +187,18 @@ if ($Profile -eq "release" -and (Test-Path -LiteralPath $clang)) {
 if ($Profile -eq "oracle" -and -not (Test-Path -LiteralPath $clang -PathType Leaf)) {
     throw "oracle prefix is missing Clang"
 }
+if ($Profile -eq "oracle") {
+    $profdata = Join-Path $Prefix "bin/llvm-profdata.exe"
+    if (-not (Test-Path -LiteralPath $profdata -PathType Leaf)) {
+        throw "oracle prefix is missing llvm-profdata"
+    }
+    $profileRuntime = Get-ChildItem -LiteralPath (Join-Path $Prefix "lib/clang") -Recurse -File |
+        Where-Object { $_.Name -like "clang_rt.profile*.lib" -or $_.Name -like "libclang_rt.profile*.a" } |
+        Select-Object -First 1
+    if ($null -eq $profileRuntime) {
+        throw "oracle prefix is missing the pinned compiler-rt profile runtime"
+    }
+}
 
 $components = @("core", "native", "orcjit", "nativecodegen", "lto")
 # LLVM 22 COFF also calls LibDriver and WindowsManifest outside the core/ORC/LTO closure.
@@ -220,6 +244,33 @@ foreach ($item in $runtimeSources) {
 $runtimeHashes = $runtimeObjects | ForEach-Object {
     (Get-FileHash -LiteralPath (Join-Path $runtimeDir $_) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
+$profileRuntimeObject = "profile_runtime.obj"
+$profileRuntimeSource = Join-Path $repoRoot "native/profile_runtime/profile_runtime.c"
+$profileRuntimePath = Join-Path $runtimeDir $profileRuntimeObject
+$profileRuntimeInclude = Join-Path $repoRoot "native/profile_runtime/include"
+$profileRuntimeRoot = Join-Path $repoRoot "native/profile_runtime"
+$profileRuntimeLanguage = if ($Target.StartsWith("aarch64")) {
+    # MSVC 17.14 defaults Armv8.0 interlocked operations to CRT outline helpers.
+    # This freestanding runtime must retain baseline inline exclusive loops.
+    @("/TP", "/std:c++20", "/GR-", "/forceInterlockedFunctions-")
+} else {
+    @("/TC")
+}
+& cl.exe /nologo /c @profileRuntimeLanguage /O2 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$profileRuntimeInclude" "/I$profileRuntimeRoot" "/Fo$profileRuntimePath" $profileRuntimeSource
+if ($LASTEXITCODE -ne 0) { throw "profile runtime compilation failed: $profileRuntimeSource" }
+$profileRuntimeUndefined = & (Join-Path $Prefix "bin/llvm-nm.exe") --undefined-only $profileRuntimePath
+if ($LASTEXITCODE -ne 0) { throw "profile runtime undefined-symbol audit failed" }
+if ($profileRuntimeUndefined -match '\b_Interlocked\w*\b') {
+    throw "freestanding profile runtime imports outlined interlocked helpers: $profileRuntimeUndefined"
+}
+$profileRuntimeHash = (Get-FileHash -LiteralPath $profileRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$dispatchRuntimeObject = "dispatch_runtime.obj"
+$dispatchRuntimeSource = Join-Path $repoRoot "native/dispatch_runtime/dispatch_runtime.c"
+$dispatchRuntimePath = Join-Path $runtimeDir $dispatchRuntimeObject
+$dispatchRuntimeInclude = Join-Path $repoRoot "native/dispatch_runtime/include"
+& cl.exe /nologo /c /TC /std:c11 /O1 /Oi /W3 /WX /GS- /Zl /Gy /Gw /DNDEBUG "/I$dispatchRuntimeInclude" "/Fo$dispatchRuntimePath" $dispatchRuntimeSource
+if ($LASTEXITCODE -ne 0) { throw "dispatch runtime compilation failed: $dispatchRuntimeSource" }
+$dispatchRuntimeHash = (Get-FileHash -LiteralPath $dispatchRuntimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runtimeJitSupport = $null
 $runtimeJitSupportHash = $null
 if ($Target -ceq "x86_64-pc-windows-msvc") {
@@ -262,6 +313,12 @@ $manifest = @(
     "system_libraries = $(Format-TomlArray $systemLibraries)",
     "runtime_objects = $(Format-TomlArray $runtimeObjects)",
     "runtime_sha256 = $(Format-TomlArray $runtimeHashes)",
+    "profile_runtime_schema = 1",
+    "profile_runtime_object = `"$profileRuntimeObject`"",
+    "profile_runtime_sha256 = `"$profileRuntimeHash`"",
+    "dispatch_runtime_schema = 1",
+    "dispatch_runtime_object = `"$dispatchRuntimeObject`"",
+    "dispatch_runtime_sha256 = `"$dispatchRuntimeHash`"",
     "runtime_platform_import = `"$runtimeImport`"",
     "runtime_platform_import_sha256 = `"$runtimeImportHash`""
 )

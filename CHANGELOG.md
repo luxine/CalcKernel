@@ -2,6 +2,29 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
+## 0.13.0 - Release candidate
+
+- Added deterministic CK-owned `CKPART01` shards and `CKPROF01` workload
+  profiles, with directory-safe collection, canonical merge/inspection, and the
+  transactional `ckc pgo build` convenience workflow.
+- Added non-proof profile analysis and independently checked O2 late machine
+  layout plus O3 guarded specialization, inlining, unrolling, SLP, and Loop SIMD
+  decisions. Profiles may affect profitability but never establish safety.
+- Added explicit `--cpu multiversion` Native builds with one portable baseline,
+  bounded verified feature variants, a baseline-safe process-local detector,
+  stable public thunks, and executable/dynamic/static named-object assembly.
+- Added real library-generation workflows with the full-identity
+  `ck_profile_flush_*` control symbol. Final profile-use artifacts contain no
+  counters, profile paths, writer, or generation runtime.
+- Advanced the private LLVM bridge to ABI 4, KIR to v3, and the Native object
+  cache to `CKCOBJ03` key/manifest schema 4. Public Native C ABI 1 and Runtime
+  ABI 2 remain unchanged; 0.12 source and observable semantics remain accepted.
+- Added closed profile/target/dispatch/cache identities, corruption and mutation
+  tests, transactional multi-file output, and release-candidate audits. Schema-8
+  performance and exact-SHA CI remain required before a formal release.
+- Auto-Tuning, indirect-call promotion, scalable KIR vectors, and adaptive JIT
+  PGO remain future work for 0.14 or later.
+
 ## 0.12.0 - Unreleased
 
 - Added KIR v2 fixed-vector and mask instructions plus deterministic Native

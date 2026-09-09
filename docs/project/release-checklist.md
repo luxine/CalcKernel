@@ -18,11 +18,15 @@ For a version `X.Y.Z`:
 - [ ] `ckc run` and `ckc build --kind executable` both pass with no external-tool `PATH`.
 - [ ] Generated artifact, release binary dependency, and JIT memory audits pass on every host; hardened macOS uses only the approved allow-JIT entitlement and selects a capability-consistent per-thread MAP_JIT or page-level W^X path, never RWX.
 - [ ] The actual packaged Darwin compiler is explicitly ad-hoc signed with hardened runtime and the sole allow-JIT entitlement before strict signature verification.
-- [ ] Strict schema 7 Clang, exact-0.11/0.10 replay, C/Rust SIMD, domain-fact,
-  proof-loop, optimizer-latency, object-size, and source-to-object gates pass on
-  controlled x86-64 and AArch64 workers under portable baseline CPU policy;
-  native-CPU measurements remain investigative.
-- [ ] Main-branch CI is green at the exact release commit.
+- [ ] Strict schema 8 exact-0.12 replay, CK PGO/multiversion/combined,
+  selected-direct dispatch, equivalent Clang/Rust PGO, C/Rust SIMD, domain-fact,
+  generation overhead, optimizer latency, artifact/archive size, and
+  source-to-object gates pass on controlled x86-64 and AArch64 workers under
+  portable baseline CPU policy plus the required enhanced tier.
+- [ ] Profile, target-set, variant-object, capability, hardware, recipe, sample,
+  source, oracle, and candidate identities/digests are complete and exact.
+- [ ] The exact candidate-SHA ten required CI jobs are green with no skipped or
+  continue-on-error gate; the required enhanced tier exists on both performance workers.
 - [ ] The manual six-platform release preview is green with publishing disabled.
 - [ ] The annotated tag `vX.Y.Z` points to that exact commit and has never existed before.
 - [ ] The workflow verifies that the tag equals `v` plus the `Cargo.toml` version before artifact builds.

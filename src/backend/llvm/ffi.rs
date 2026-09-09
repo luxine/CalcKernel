@@ -2,7 +2,7 @@ use std::{ptr, ptr::NonNull, slice};
 
 use super::error::{NativeError, NativeStage};
 
-pub const LLVM_BRIDGE_ABI_VERSION: u32 = 3;
+pub const LLVM_BRIDGE_ABI_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
@@ -155,6 +155,31 @@ struct CkcLlvmTargetProfileResult {
     legalization_parts: u32,
     maximum_interleave_factor: u32,
     legalized_type: CkcLlvmOwnedBytes,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+struct CkcLlvmLateLayoutReport {
+    accepted: u32,
+    changed: u32,
+    repair_mask: u32,
+    pre_layout_digest: [u8; 32],
+    post_layout_digest: [u8; 32],
+    pre_structural_digest: [u8; 32],
+    post_structural_digest: [u8; 32],
+    reason: CkcLlvmOwnedBytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BridgeLateLayoutReport {
+    pub accepted: bool,
+    pub changed: bool,
+    pub repair_mask: u32,
+    pub pre_layout_digest: [u8; 32],
+    pub post_layout_digest: [u8; 32],
+    pub pre_structural_digest: [u8; 32],
+    pub post_structural_digest: [u8; 32],
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,6 +335,13 @@ unsafe extern "C" {
         out: *mut *mut CkcLlvmTarget,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_target_create_explicit(
+        triple: CkcLlvmBytes,
+        cpu: CkcLlvmBytes,
+        features: CkcLlvmBytes,
+        out: *mut *mut CkcLlvmTarget,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_target_dispose(target: *mut CkcLlvmTarget);
     fn ckc_llvm_target_triple(
         target: *mut CkcLlvmTarget,
@@ -349,6 +381,13 @@ unsafe extern "C" {
         opt_level: u32,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_module_apply_late_layout(
+        module: *mut CkcLlvmModule,
+        target: *mut CkcLlvmTarget,
+        plan: CkcLlvmBytes,
+        out: *mut CkcLlvmLateLayoutReport,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_module_make_invalid_for_test(
         module: *mut CkcLlvmModule,
         error: *mut CkcLlvmError,
@@ -364,6 +403,22 @@ unsafe extern "C" {
     fn ckc_llvm_module_fact_audit_counts(
         module: *mut CkcLlvmModule,
         out: *mut CkcLlvmFactAuditCounts,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_expose_hidden_function(
+        module: *mut CkcLlvmModule,
+        function_name: CkcLlvmBytes,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_add_multiversion_dispatch(
+        module: *mut CkcLlvmModule,
+        public_name: CkcLlvmBytes,
+        implementation_name: CkcLlvmBytes,
+        baseline_hidden_name: CkcLlvmBytes,
+        dispatch_namespace: CkcLlvmBytes,
+        variant_names: *const CkcLlvmBytes,
+        required_capabilities: *const u32,
+        variant_count: usize,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_type_void(
@@ -438,6 +493,25 @@ unsafe extern "C" {
         function: *mut CkcLlvmFunction,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_module_add_global_bytes(
+        module: *mut CkcLlvmModule,
+        name: CkcLlvmBytes,
+        bytes: *const u8,
+        byte_count: usize,
+        mutable_storage: u32,
+        alignment: u32,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_module_add_global_u32_array(
+        module: *mut CkcLlvmModule,
+        name: CkcLlvmBytes,
+        values: *const u32,
+        value_count: usize,
+        alignment: u32,
+        out: *mut *mut CkcLlvmValue,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_function_param(
         function: *mut CkcLlvmFunction,
         index: usize,
@@ -460,9 +534,20 @@ unsafe extern "C" {
         alignment: u32,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_function_set_noinline(
+        function: *mut CkcLlvmFunction,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_function_set_memory_effects(
         function: *mut CkcLlvmFunction,
         effects: u32,
+        error: *mut CkcLlvmError,
+    ) -> i32;
+    fn ckc_llvm_function_set_profile(
+        function: *mut CkcLlvmFunction,
+        entry_count: u64,
+        hot: u32,
+        cold: u32,
         error: *mut CkcLlvmError,
     ) -> i32;
     fn ckc_llvm_function_set_dll_export(
@@ -709,6 +794,15 @@ unsafe extern "C" {
         else_block: *mut CkcLlvmBlock,
         error: *mut CkcLlvmError,
     ) -> i32;
+    fn ckc_llvm_builder_cond_branch_weighted(
+        builder: *mut CkcLlvmBuilder,
+        condition: *mut CkcLlvmValue,
+        then_block: *mut CkcLlvmBlock,
+        else_block: *mut CkcLlvmBlock,
+        then_count: u64,
+        else_count: u64,
+        error: *mut CkcLlvmError,
+    ) -> i32;
     fn ckc_llvm_target_emit_object(
         target: *mut CkcLlvmTarget,
         module: *mut CkcLlvmModule,
@@ -725,7 +819,9 @@ unsafe extern "C" {
     fn ckc_llvm_object_data(object: *const CkcLlvmObject) -> *const u8;
     fn ckc_llvm_object_dispose(object: *mut CkcLlvmObject);
     fn ckc_llvm_archive_create(
-        object: *const CkcLlvmObject,
+        objects: *const *const CkcLlvmObject,
+        member_names: *const CkcLlvmBytes,
+        object_count: usize,
         kind: u32,
         out: *mut *mut CkcLlvmArchive,
         error: *mut CkcLlvmError,
@@ -736,9 +832,11 @@ unsafe extern "C" {
     fn ckc_llvm_archive_has_symbol_index(archive: *const CkcLlvmArchive) -> u32;
     fn ckc_llvm_archive_dispose(archive: *mut CkcLlvmArchive);
     fn ckc_lld_link_shared(
-        object_path: CkcLlvmBytes,
+        object_paths: *const CkcLlvmBytes,
+        object_count: usize,
         output_path: CkcLlvmBytes,
         import_library_path: CkcLlvmBytes,
+        platform_input_path: CkcLlvmBytes,
         exports: *const CkcLlvmBytes,
         export_count: usize,
         error: *mut CkcLlvmError,
@@ -877,6 +975,50 @@ pub(super) fn module_print(module: NonNull<CkcLlvmModule>) -> Result<String, Nat
     })
 }
 
+pub(super) fn module_expose_hidden_function(
+    module: NonNull<CkcLlvmModule>,
+    function_name: &str,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_expose_hidden_function(
+            module.as_ptr(),
+            CkcLlvmBytes::new(function_name),
+            error,
+        )
+    })
+}
+
+pub(super) fn module_add_multiversion_dispatch(
+    module: NonNull<CkcLlvmModule>,
+    public_name: &str,
+    implementation_name: &str,
+    baseline_hidden_name: &str,
+    dispatch_namespace: &str,
+    variants: &[(&str, u32)],
+) -> Result<(), NativeError> {
+    let variant_names = variants
+        .iter()
+        .map(|(name, _)| CkcLlvmBytes::new(name))
+        .collect::<Vec<_>>();
+    let required_capabilities = variants
+        .iter()
+        .map(|(_, capabilities)| *capabilities)
+        .collect::<Vec<_>>();
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_module_add_multiversion_dispatch(
+            module.as_ptr(),
+            CkcLlvmBytes::new(public_name),
+            CkcLlvmBytes::new(implementation_name),
+            CkcLlvmBytes::new(baseline_hidden_name),
+            CkcLlvmBytes::new(dispatch_namespace),
+            variant_names.as_ptr(),
+            required_capabilities.as_ptr(),
+            variants.len(),
+            error,
+        )
+    })
+}
+
 pub(super) fn target_create_host(
     cpu_policy: BridgeCpuPolicy,
 ) -> Result<NonNull<CkcLlvmTarget>, NativeError> {
@@ -885,6 +1027,27 @@ pub(super) fn target_create_host(
     // SAFETY: Both out-pointers reference initialized writable storage and the
     // bridge either leaves the handle null or transfers one owned handle.
     let status = unsafe { ckc_llvm_target_create_host(cpu_policy as u32, &mut handle, &mut error) };
+    handle_result(NativeStage::Target, status, handle, &mut error)
+}
+
+pub(super) fn target_create_explicit(
+    triple: &str,
+    cpu: &str,
+    features: &str,
+) -> Result<NonNull<CkcLlvmTarget>, NativeError> {
+    let mut handle = ptr::null_mut();
+    let mut error = CkcLlvmError::empty();
+    // SAFETY: all byte views remain live for the call and both out-pointers
+    // reference initialized writable storage.
+    let status = unsafe {
+        ckc_llvm_target_create_explicit(
+            CkcLlvmBytes::new(triple),
+            CkcLlvmBytes::new(cpu),
+            CkcLlvmBytes::new(features),
+            &mut handle,
+            &mut error,
+        )
+    };
     handle_result(NativeStage::Target, status, handle, &mut error)
 }
 
@@ -971,6 +1134,49 @@ pub(super) fn module_optimize(
             u32::from(opt_level),
             error,
         )
+    })
+}
+
+pub(super) fn module_apply_late_layout(
+    module: NonNull<CkcLlvmModule>,
+    target: NonNull<CkcLlvmTarget>,
+    plan: &[u8],
+) -> Result<BridgeLateLayoutReport, NativeError> {
+    let mut out = CkcLlvmLateLayoutReport {
+        accepted: 0,
+        changed: 0,
+        repair_mask: 0,
+        pre_layout_digest: [0; 32],
+        post_layout_digest: [0; 32],
+        pre_structural_digest: [0; 32],
+        post_structural_digest: [0; 32],
+        reason: CkcLlvmOwnedBytes::empty(),
+    };
+    let mut error = CkcLlvmError::empty();
+    // SAFETY: Module and target owners remain live, plan is borrowed for the
+    // call, and the bridge initializes the complete C-layout report.
+    let status = unsafe {
+        ckc_llvm_module_apply_late_layout(
+            module.as_ptr(),
+            target.as_ptr(),
+            CkcLlvmBytes::from_bytes(plan),
+            &mut out,
+            &mut error,
+        )
+    };
+    let reason = take_vec(&mut out.reason);
+    if status != 0 {
+        return Err(take_error(NativeStage::Module, status, &mut error));
+    }
+    Ok(BridgeLateLayoutReport {
+        accepted: out.accepted != 0,
+        changed: out.changed != 0,
+        repair_mask: out.repair_mask,
+        pre_layout_digest: out.pre_layout_digest,
+        post_layout_digest: out.post_layout_digest,
+        pre_structural_digest: out.pre_structural_digest,
+        post_structural_digest: out.post_structural_digest,
+        reason: parse_utf8(reason)?,
     })
 }
 
@@ -1136,6 +1342,46 @@ pub(super) fn module_preserve_function(
     })
 }
 
+pub(super) fn module_add_global_bytes(
+    module: NonNull<CkcLlvmModule>,
+    name: &str,
+    bytes: &[u8],
+    mutable_storage: bool,
+    alignment: u32,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_module_add_global_bytes(
+            module.as_ptr(),
+            CkcLlvmBytes::new(name),
+            bytes.as_ptr(),
+            bytes.len(),
+            u32::from(mutable_storage),
+            alignment,
+            out,
+            error,
+        )
+    })
+}
+
+pub(super) fn module_add_global_u32_array(
+    module: NonNull<CkcLlvmModule>,
+    name: &str,
+    values: &[u32],
+    alignment: u32,
+) -> Result<NonNull<CkcLlvmValue>, NativeError> {
+    handle_call(NativeStage::Module, |out, error| unsafe {
+        ckc_llvm_module_add_global_u32_array(
+            module.as_ptr(),
+            CkcLlvmBytes::new(name),
+            values.as_ptr(),
+            values.len(),
+            alignment,
+            out,
+            error,
+        )
+    })
+}
+
 pub(super) fn function_param(
     function: NonNull<CkcLlvmFunction>,
     index: usize,
@@ -1182,12 +1428,35 @@ pub(super) fn function_add_attribute(
     })
 }
 
+pub(super) fn function_set_noinline(function: NonNull<CkcLlvmFunction>) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_set_noinline(function.as_ptr(), error)
+    })
+}
+
 pub(super) fn function_set_memory_effects(
     function: NonNull<CkcLlvmFunction>,
     effects: BridgeMemoryEffects,
 ) -> Result<(), NativeError> {
     status_call(NativeStage::Module, |error| unsafe {
         ckc_llvm_function_set_memory_effects(function.as_ptr(), effects as u32, error)
+    })
+}
+
+pub(super) fn function_set_profile(
+    function: NonNull<CkcLlvmFunction>,
+    entry_count: u64,
+    hot: bool,
+    cold: bool,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_function_set_profile(
+            function.as_ptr(),
+            entry_count,
+            u32::from(hot),
+            u32::from(cold),
+            error,
+        )
     })
 }
 
@@ -1710,6 +1979,27 @@ pub(super) fn builder_cond_branch(
     })
 }
 
+pub(super) fn builder_cond_branch_weighted(
+    builder: NonNull<CkcLlvmBuilder>,
+    condition: NonNull<CkcLlvmValue>,
+    then_block: NonNull<CkcLlvmBlock>,
+    else_block: NonNull<CkcLlvmBlock>,
+    then_count: u64,
+    else_count: u64,
+) -> Result<(), NativeError> {
+    status_call(NativeStage::Module, |error| unsafe {
+        ckc_llvm_builder_cond_branch_weighted(
+            builder.as_ptr(),
+            condition.as_ptr(),
+            then_block.as_ptr(),
+            else_block.as_ptr(),
+            then_count,
+            else_count,
+            error,
+        )
+    })
+}
+
 pub(super) fn target_emit_object(
     target: NonNull<CkcLlvmTarget>,
     module: NonNull<CkcLlvmModule>,
@@ -1756,15 +2046,39 @@ pub(in crate::backend) enum BridgeArchiveKind {
 }
 
 pub(in crate::backend) fn archive_create(
-    object: NonNull<CkcLlvmObject>,
+    objects: &[NonNull<CkcLlvmObject>],
+    member_names: &[String],
     kind: BridgeArchiveKind,
 ) -> Result<NonNull<CkcLlvmArchive>, NativeError> {
+    if objects.len() != member_names.len() {
+        return Err(NativeError::new(
+            NativeStage::Archive,
+            1,
+            "archive object/name count mismatch".to_string(),
+        ));
+    }
+    let objects = objects
+        .iter()
+        .map(|object| object.as_ptr().cast_const())
+        .collect::<Vec<_>>();
+    let member_names = member_names
+        .iter()
+        .map(|name| CkcLlvmBytes::new(name))
+        .collect::<Vec<_>>();
     let mut handle = ptr::null_mut();
     let mut error = CkcLlvmError::empty();
     // SAFETY: The object remains live, the kind is allowlisted, and both
     // out-pointers refer to initialized writable storage.
-    let status =
-        unsafe { ckc_llvm_archive_create(object.as_ptr(), kind as u32, &mut handle, &mut error) };
+    let status = unsafe {
+        ckc_llvm_archive_create(
+            objects.as_ptr(),
+            member_names.as_ptr(),
+            objects.len(),
+            kind as u32,
+            &mut handle,
+            &mut error,
+        )
+    };
     handle_result(NativeStage::Archive, status, handle, &mut error)
 }
 
@@ -1794,20 +2108,27 @@ pub(in crate::backend) unsafe fn archive_dispose(handle: NonNull<CkcLlvmArchive>
 }
 
 pub(in crate::backend) fn lld_link_shared(
-    object_path: &str,
+    object_paths: &[String],
     output_path: &str,
     import_library_path: &str,
+    platform_input_path: &str,
     exports: &[String],
 ) -> Result<(), NativeError> {
+    let object_paths = object_paths
+        .iter()
+        .map(|path| CkcLlvmBytes::new(path))
+        .collect::<Vec<_>>();
     let export_bytes = exports
         .iter()
         .map(|name| CkcLlvmBytes::new(name))
         .collect::<Vec<_>>();
     status_call(NativeStage::Link, |error| unsafe {
         ckc_lld_link_shared(
-            CkcLlvmBytes::new(object_path),
+            object_paths.as_ptr(),
+            object_paths.len(),
             CkcLlvmBytes::new(output_path),
             CkcLlvmBytes::new(import_library_path),
+            CkcLlvmBytes::new(platform_input_path),
             export_bytes.as_ptr(),
             export_bytes.len(),
             error,

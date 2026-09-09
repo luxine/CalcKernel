@@ -24,11 +24,16 @@ fn target_profile_should_be_complete_canonical_and_target_bound() {
     );
     assert!(first.vector_operations_enabled());
     assert!(first.maximum_interleave_factor() >= 1);
+    #[cfg(target_arch = "x86_64")]
+    assert!(
+        first.maximum_interleave_factor() >= 4,
+        "x86 target profile must expose the closed four-chain KIR frontier"
+    );
     assert_eq!(
         first.producer_identity(),
         (
             Some("LLVM 22.1.8 TCK_RecipThroughput"),
-            Some("ckc-llvm-bridge-abi-3")
+            Some("ckc-llvm-bridge-abi-4")
         )
     );
     assert_eq!(

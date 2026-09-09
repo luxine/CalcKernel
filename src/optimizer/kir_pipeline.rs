@@ -5,10 +5,10 @@ use crate::{
 use super::{
     CandidateBudgetCharge, CandidateDisposition, ContractFactSet, EvidenceValidationError,
     EvidenceValidationResult, FactArena, KirOptimizationAuditState, KirVerifiedProgramState,
-    ProofArena, ProofStep, TransactionOutcome, check_slp_plan_independently,
-    check_specialization_plan_independently, check_unroll_plan_independently,
-    check_vectorization_trial_independently, discover_slp_candidates,
-    discover_specialization_candidates, discover_unroll_candidates,
+    ProofArena, ProofStep, TransactionOutcome, analyze_canonical_loops_for_discovery,
+    check_slp_plan_independently, check_specialization_plan_independently,
+    check_unroll_plan_independently, check_vectorization_trial_independently,
+    discover_slp_candidates, discover_specialization_candidates, discover_unroll_candidates,
     discover_vectorization_candidates, execute_verified_transaction_with_disposition,
     is_specialization_clone, kir_function_units, kir_passes, verify_proof_arena,
 };
@@ -152,6 +152,8 @@ pub struct KirPassManagerResult {
     pub contract_facts: Option<ContractFactSet>,
     pub stats: KirOptimizationStats,
     pub audit: KirOptimizationAuditState,
+    /// Independently checked O3 workload guidance, absent for ordinary/O2 builds.
+    pub pgo: Option<super::CkPgoOptimizerPlan>,
     verification_cache: Option<VerifiedKirState>,
 }
 
@@ -165,9 +167,74 @@ struct VerifiedKirState {
 
 #[must_use]
 pub fn run_kir_pass_pipeline(
+    module: KirModule,
+    level: KirOptimizationLevel,
+    contracts: Option<&ContractFactSet>,
+) -> KirPassManagerResult {
+    run_kir_pass_pipeline_with_profile(module, level, contracts, None, false)
+}
+
+/// Runs O3 while preserving scalar loop shape for independently materialized
+/// multiversion TargetMachines. LLVM then selects each tier's vector width and
+/// unroll factor instead of inheriting the baseline tier's fixed-width KIR.
+#[must_use]
+pub fn run_kir_multiversion_pass_pipeline(
+    module: KirModule,
+    level: KirOptimizationLevel,
+    contracts: Option<&ContractFactSet>,
+) -> KirPassManagerResult {
+    run_kir_pass_pipeline_with_profile(module, level, contracts, None, true)
+}
+
+/// Builds the O0-shaped handoff for a variant owned by an independently
+/// checked multiversion bundle. Structural KIR validation is retained by the
+/// bundle checker and evidence is validated again immediately before LLVM
+/// lowering, so repeating the full O0 evidence pass here adds no authority.
+#[cfg(feature = "native-toolchain")]
+pub(crate) fn checked_multiversion_variant_result(
+    checked: &crate::CheckedKirMultiversionBundle<'_>,
+    variant: &crate::KirMultiversionVariant,
+    contracts: &ContractFactSet,
+) -> Result<KirPassManagerResult, String> {
+    let belongs_to_checked_bundle = checked
+        .bundle()
+        .roots
+        .iter()
+        .flat_map(|root| &root.variants)
+        .any(|candidate| std::ptr::eq(candidate, variant));
+    if !belongs_to_checked_bundle {
+        return Err("multiversion variant is not owned by the checked bundle".to_string());
+    }
+
+    let module = variant.module.clone();
+    Ok(KirPassManagerResult {
+        audit: KirOptimizationAuditState::for_module(&module),
+        artifact: Some(module.clone()),
+        module,
+        records: vec![KirPassRecord {
+            name: "reuse-checked-multiversion-variant".to_string(),
+            changed: false,
+            verified: true,
+        }],
+        errors: Vec::new(),
+        proofs: ProofArena::new(0),
+        eliminated_guards: Vec::new(),
+        explanations: Vec::new(),
+        vector_explanations: Vec::new(),
+        analysis_fallbacks: Vec::new(),
+        contract_facts: Some(contracts.clone()),
+        stats: KirOptimizationStats::default(),
+        pgo: None,
+        verification_cache: None,
+    })
+}
+
+pub(crate) fn run_kir_pass_pipeline_with_profile(
     mut module: KirModule,
     level: KirOptimizationLevel,
     contracts: Option<&ContractFactSet>,
+    pgo: Option<&super::CkPgoOptimizerPlan>,
+    defer_native_vectorization: bool,
 ) -> KirPassManagerResult {
     const GENERATION: u32 = 0;
     let input_audit = KirOptimizationAuditState::for_module(&module);
@@ -191,6 +258,7 @@ pub fn run_kir_pass_pipeline(
         contract_facts: contracts.cloned(),
         stats: KirOptimizationStats::default(),
         audit: input_audit,
+        pgo: None,
         verification_cache: None,
     };
     let mut o3_entry_module_units = None;
@@ -334,8 +402,22 @@ pub fn run_kir_pass_pipeline(
         // This is the original-function O3 entry fixed by the 0.12 budget
         // contract. No candidate work has executed before this point.
         result.audit = KirOptimizationAuditState::for_module(&module);
-        let specialization_discovery =
+        let mut specialization_discovery =
             discover_specialization_candidates(&module, result.contract_facts.as_ref());
+        if let Some(pgo) = pgo {
+            specialization_discovery.candidates.sort_by(|left, right| {
+                (
+                    !pgo.function_is_hot(left.caller),
+                    !pgo.function_is_hot(left.callee),
+                    &left.key,
+                )
+                    .cmp(&(
+                        !pgo.function_is_hot(right.caller),
+                        !pgo.function_is_hot(right.callee),
+                        &right.key,
+                    ))
+            });
+        }
         let specialization = if specialization_discovery.candidates.is_empty() {
             specialization_frontier_result(&specialization_discovery)
         } else {
@@ -398,6 +480,8 @@ pub fn run_kir_pass_pipeline(
                     &mut module,
                     &mut result.contract_facts,
                     &result.eliminated_guards,
+                    pgo,
+                    defer_native_vectorization,
                 )
             };
         if result.stats.inlined_calls != 0 {
@@ -780,7 +864,12 @@ pub fn run_kir_pass_pipeline(
                     return result;
                 }
             };
-            let vector = match run_native_vector_frontier(&mut state, &mut result.audit) {
+            let vector = match run_native_vector_frontier(
+                &mut state,
+                &mut result.audit,
+                pgo,
+                defer_native_vectorization,
+            ) {
                 Ok(vector) => vector,
                 Err(error) => {
                     result.errors.push(error);
@@ -1167,6 +1256,7 @@ fn loop_frontier_scalar_body_cost(
 fn loop_frontier_iterations(
     state: &KirVerifiedProgramState,
     candidate: &super::VectorizationCandidate,
+    pgo: Option<&super::CkPgoOptimizerPlan>,
 ) -> u32 {
     let minimum = candidate.minimum_trip;
     state
@@ -1186,6 +1276,10 @@ fn loop_frontier_iterations(
             _ => None,
         })
         .unwrap_or(minimum)
+        .max(
+            pgo.and_then(|profile| profile.loop_minimum_trip(candidate.function, candidate.header))
+                .unwrap_or(minimum),
+        )
         .max(minimum)
 }
 
@@ -1215,6 +1309,21 @@ fn vector_loop_scope_cost(
         .saturating_add(u64::from(epilogue_entry_cost) * u64::from(u8::from(tail != 0)))
 }
 
+fn exceeds_x86_widening_cast_frontend_budget(
+    profile: &crate::KirTargetProfile,
+    candidate: &super::VectorizationCandidate,
+) -> bool {
+    matches!(
+        profile.target_identity(),
+        crate::KirTargetIdentity::Native { triple } if triple.starts_with("x86_64-")
+    ) && candidate.uf > 2
+        && candidate.operations.iter().any(|operation| {
+            operation.operation == crate::KirProfileOperation::Cast
+                && operation.lane_type == crate::KirLaneType::U32
+                && operation.result_lane_type == crate::KirLaneType::F64
+        })
+}
+
 fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations: u32) -> u64 {
     let transformed_body = scalar_body_cost
         .saturating_sub(plan.cost.scalar)
@@ -1225,12 +1334,31 @@ fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations:
 fn run_native_vector_frontier(
     state: &mut KirVerifiedProgramState,
     audit: &mut KirOptimizationAuditState,
+    pgo: Option<&super::CkPgoOptimizerPlan>,
+    defer_to_llvm: bool,
 ) -> Result<VectorFrontierResult, String> {
     let mut result = VectorFrontierResult::default();
     if !matches!(
         state.module().config.consumer,
         crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
     ) {
+        return Ok(result);
+    }
+    if defer_to_llvm {
+        for function in &state.module().functions {
+            let loops = analyze_canonical_loops_for_discovery(function);
+            result.fallbacks.extend(
+                loops
+                    .loops
+                    .iter()
+                    .filter(|descriptor| descriptor.innermost)
+                    .map(|_descriptor| KirAnalysisFallback {
+                        function: function.id,
+                        pass: "loop-simd".to_string(),
+                        reason: "multiversion-loop-deferred-to-native-loop-vectorizer".to_string(),
+                    }),
+            );
+        }
         return Ok(result);
     }
     let mut processed = std::collections::BTreeSet::new();
@@ -1262,6 +1390,51 @@ fn run_native_vector_frontier(
             .into_iter()
             .filter(|candidate| (candidate.function, candidate.header) == loop_identity)
             .collect::<Vec<_>>();
+        let profile_scalar_reason = pgo.and_then(|profile| {
+            let below_every_vector_threshold = |maximum: u32| {
+                loop_candidates
+                    .iter()
+                    .all(|candidate| maximum < candidate.minimum_trip)
+            };
+            if profile
+                .loop_maximum_trip(loop_identity.0, loop_identity.1)
+                .is_some_and(below_every_vector_threshold)
+            {
+                return Some("profile-short-trip-retains-scalar");
+            }
+            loop_candidates.first().and_then(|candidate| {
+                profile
+                    .slice_length_maximum(state.module(), candidate.function, candidate.bound)
+                    .filter(|maximum| below_every_vector_threshold(*maximum))
+                    .map(|_| "profile-short-slice-retains-scalar")
+            })
+        });
+        if let Some(profile_scalar_reason) = profile_scalar_reason {
+            for candidate in loop_candidates {
+                let charge = CandidateBudgetCharge::single(
+                    candidate.function,
+                    candidate.predicted_cost.scalar.saturating_add(8),
+                    candidate
+                        .predicted_cost
+                        .scalar
+                        .saturating_mul(2)
+                        .saturating_add(16),
+                );
+                audit.record_noncommitting_attempt(
+                    candidate.key,
+                    charge,
+                    CandidateDisposition::NonWinner,
+                    profile_scalar_reason,
+                )?;
+            }
+            result.scalar_fallbacks = result.scalar_fallbacks.saturating_add(1);
+            result.fallbacks.push(KirAnalysisFallback {
+                function: loop_identity.0,
+                pass: "loop-simd".to_string(),
+                reason: profile_scalar_reason.to_string(),
+            });
+            continue;
+        }
         let mut vector_alternatives = Vec::new();
         for candidate in loop_candidates {
             let prepared = match kir_passes::materialize_vectorization_trial(state, &candidate) {
@@ -1299,7 +1472,7 @@ fn run_native_vector_frontier(
             ) {
                 Ok(()) => {
                     let scalar_body_cost = loop_frontier_scalar_body_cost(&candidate)?;
-                    let iterations = loop_frontier_iterations(state, &candidate);
+                    let iterations = loop_frontier_iterations(state, &candidate, pgo);
                     vector_alternatives.push((
                         0,
                         candidate,
@@ -1345,6 +1518,10 @@ fn run_native_vector_frontier(
             |(left_cost, left_candidate, left, _, _),
              (right_cost, right_candidate, right, _, _)| {
                 (
+                    exceeds_x86_widening_cast_frontend_budget(
+                        &state.module().profile,
+                        left_candidate,
+                    ),
                     *left_cost,
                     left.plan.growth.transformed_units,
                     left.plan.vf,
@@ -1352,6 +1529,10 @@ fn run_native_vector_frontier(
                     &left_candidate.key,
                 )
                     .cmp(&(
+                        exceeds_x86_widening_cast_frontend_budget(
+                            &state.module().profile,
+                            right_candidate,
+                        ),
                         *right_cost,
                         right.plan.growth.transformed_units,
                         right.plan.vf,

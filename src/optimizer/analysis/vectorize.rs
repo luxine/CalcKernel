@@ -4,8 +4,8 @@ use num_bigint::BigInt;
 
 use crate::{
     BlockId, CandidateKey, CanonicalLoopDescriptor, FunctionId, InstructionId, KirAlignmentClass,
-    KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirInstruction,
-    KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
+    KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirCpuIdentity,
+    KirInstruction, KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
     KirTargetIdentity, LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount, MirBinaryOp,
     MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
 };
@@ -157,6 +157,19 @@ fn discover_one(
 ) -> Result<Vec<VectorizationCandidate>, String> {
     let shape = simple_shape(function, descriptor)
         .ok_or_else(|| "unsupported-vector-loop-shape".to_string())?;
+    if matches!(
+        state.module().profile.target_identity(),
+        KirTargetIdentity::Native { triple } if triple.starts_with("aarch64-")
+    ) && matches!(
+        state.module().profile.cpu_identity(),
+        KirCpuIdentity::Native { features, .. }
+            if features.iter().any(|feature| matches!(feature.as_str(), "+sve" | "+sve2"))
+    ) {
+        return Err("aarch64-sve-loop-deferred-to-native-loop-vectorizer".to_string());
+    }
+    if has_constant_call_bound(state.module(), function, descriptor) {
+        return Err("constant-call-loop-deferred-to-native-loop-vectorizer".to_string());
+    }
     let preheader = shape.preheader;
     let body = shape.body;
     let exit = shape.exit;
@@ -531,6 +544,73 @@ fn discover_one(
             .unwrap_or_else(|| "vector-profitability-threshold-not-met".to_string()));
     }
     Ok(candidates)
+}
+
+fn has_constant_call_bound(
+    module: &crate::KirModule,
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+) -> bool {
+    let Some(induction) = descriptor.induction.as_ref() else {
+        return false;
+    };
+    let Some(parameter_index) = function
+        .params
+        .iter()
+        .position(|parameter| parameter.value == induction.bound)
+    else {
+        return false;
+    };
+    let mut saw_call = false;
+    for caller in &module.functions {
+        for instruction in caller.blocks.iter().flat_map(|block| &block.instructions) {
+            let KirInstructionKind::Call {
+                function_name,
+                args,
+            } = &instruction.kind
+            else {
+                continue;
+            };
+            if function_name != &function.name {
+                continue;
+            }
+            saw_call = true;
+            let Some(argument) = args.get(parameter_index) else {
+                return false;
+            };
+            if !is_constant_integer(caller, *argument, &mut BTreeSet::new()) {
+                return false;
+            }
+        }
+    }
+    saw_call
+}
+
+fn is_constant_integer(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+    active: &mut BTreeSet<crate::ValueId>,
+) -> bool {
+    if !active.insert(value) {
+        return false;
+    }
+    let result = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == value)
+        })
+        .is_some_and(|instruction| match &instruction.kind {
+            KirInstructionKind::ConstInt { .. } => true,
+            KirInstructionKind::Copy { value } => is_constant_integer(function, *value, active),
+            _ => false,
+        });
+    active.remove(&value);
+    result
 }
 
 fn candidate_cost_and_threshold(

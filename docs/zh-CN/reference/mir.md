@@ -1,4 +1,4 @@
-# CalcKernel 0.12 MIR 与 KIR 边界
+# CalcKernel 0.13 MIR 与 KIR 边界
 
 [English](../../reference/mir.md)
 
@@ -19,7 +19,7 @@ failure 的次数和顺序；consumer root validator 在 KIR 构造前拒绝 art
 Overflow/bounds 不改变 source typing 或 MIR。Library root 是 export，executable root 是
 `main`，`emit-kir` inspection root 是两者并集；mode-specific KIR 显式 materialize 所需 guard。
 
-Textual MIR 不含 path、time、address 或 hash-map order，并在 0.12 line 内保持 semantic/byte
+Textual MIR 不含 path、time、address 或 hash-map order，并在 0.13 line 内保持 semantic/byte
 compatibility；`-O` 不再创建另一份 MIR。KIR 包含 scalar SSA、block parameter、region Memory
 SSA、fact、effect summary 与 Proof certificate，在每个 pass 前后验证，是全部 backend 唯一的
 target-neutral optimized input。`emit-kir` 是 deterministic inspection，但 KIR text 不承诺跨

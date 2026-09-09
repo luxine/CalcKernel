@@ -1,6 +1,7 @@
 #include "ckc_llvm.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -69,6 +71,7 @@
 #include <llvm/Support/Process.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/SHA256.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
@@ -862,6 +865,40 @@ llvm::StringRef borrowed_string(CkcLlvmBytes bytes) {
     return {reinterpret_cast<const char *>(bytes.data), bytes.len};
 }
 
+int32_t finish_target_machine(llvm::orc::JITTargetMachineBuilder &builder,
+                              CkcLlvmTarget **out,
+                              CkcLlvmError *error) {
+    builder.setRelocationModel(llvm::Reloc::PIC_);
+    // The ORC builder may default to Large on x86-64. CK keeps every JIT
+    // dependency in the same object graph, while emitted PIC objects are
+    // linked as ordinary host libraries/executables. Small therefore
+    // preserves the required reachability on every host and avoids Large
+    // model address-materialization overhead in hot kernels.
+    builder.setCodeModel(llvm::CodeModel::Small);
+    auto target_machine = builder.createTargetMachine();
+    if (!target_machine) {
+        return set_llvm_error(error, target_machine.takeError());
+    }
+    auto target = std::make_unique<CkcLlvmTarget>();
+    target->value = std::move(*target_machine);
+    target->cpu = target->value->getTargetCPU().str();
+    target->features = target->value->getTargetFeatureString().str();
+    target->profile_context = std::make_unique<llvm::LLVMContext>();
+    target->profile_module = std::make_unique<llvm::Module>(
+        "ckc.target.profile", *target->profile_context);
+    target->profile_module->setTargetTriple(target->value->getTargetTriple());
+    target->profile_module->setDataLayout(target->value->createDataLayout());
+    auto *profile_function_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*target->profile_context), false);
+    target->profile_function = llvm::Function::Create(
+        profile_function_type, llvm::GlobalValue::InternalLinkage,
+        "__ck_target_profile_probe", *target->profile_module);
+    target->profile_function->addFnAttr("target-cpu", target->cpu);
+    target->profile_function->addFnAttr("target-features", target->features);
+    *out = target.release();
+    return CKC_LLVM_OK;
+}
+
 llvm::Type *llvm_type(CkcLlvmType *value) {
     return reinterpret_cast<llvm::Type *>(value);
 }
@@ -1318,6 +1355,118 @@ std::string profile_legalized_type(llvm::Type *value_type, uint32_t lanes,
     return text;
 }
 
+struct CkcLateLayoutDirective {
+    std::string function;
+    std::vector<std::string> blocks;
+};
+
+void sha256_text(std::string_view text, uint8_t output[32]) {
+    llvm::SHA256 digest;
+    digest.update(llvm::StringRef(text.data(), text.size()));
+    const auto bytes = digest.final();
+    std::copy(bytes.begin(), bytes.end(), output);
+}
+
+std::string instruction_text(const llvm::Instruction &instruction) {
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    instruction.print(stream);
+    stream.flush();
+    return text;
+}
+
+std::string late_layout_snapshot(const llvm::Module &module,
+                                 bool structural) {
+    std::vector<std::string> functions;
+    for (const llvm::Function &function : module) {
+        if (function.isDeclaration()) {
+            continue;
+        }
+        std::vector<std::string> blocks;
+        for (const llvm::BasicBlock &block : function) {
+            std::string block_text = "block\t" + block.getName().str() + "\n";
+            for (const llvm::Instruction &instruction : block) {
+                block_text += instruction_text(instruction);
+                block_text.push_back('\n');
+            }
+            blocks.push_back(std::move(block_text));
+        }
+        if (structural) {
+            std::sort(blocks.begin(), blocks.end());
+        }
+        std::string function_text = "function\t" + function.getName().str() + "\n";
+        for (const std::string &block : blocks) {
+            function_text += block;
+        }
+        functions.push_back(std::move(function_text));
+    }
+    if (structural) {
+        std::sort(functions.begin(), functions.end());
+    }
+    std::string snapshot = "CK-LATE-LAYOUT-SNAPSHOT-1\n";
+    for (const std::string &function : functions) {
+        snapshot += function;
+    }
+    return snapshot;
+}
+
+std::optional<std::vector<CkcLateLayoutDirective>>
+parse_late_layout_plan(CkcLlvmBytes plan, std::string &failure) {
+    if (plan.len != 0 && plan.data == nullptr) {
+        failure = "late layout plan data is null";
+        return std::nullopt;
+    }
+    std::string input(reinterpret_cast<const char *>(plan.data), plan.len);
+    if (input.find('\0') != std::string::npos) {
+        failure = "late layout plan contains NUL";
+        return std::nullopt;
+    }
+    std::istringstream stream(input);
+    std::string line;
+    if (!std::getline(stream, line) || line != "CKLAYOUT1") {
+        failure = "late layout plan has invalid schema";
+        return std::nullopt;
+    }
+    std::vector<CkcLateLayoutDirective> directives;
+    std::map<std::string, size_t> functions;
+    std::set<std::pair<std::string, std::string>> blocks;
+    while (std::getline(stream, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        if (line.rfind("B\t", 0) != 0) {
+            failure = "late layout plan has an unknown record";
+            return std::nullopt;
+        }
+        const size_t separator = line.find('\t', 2);
+        if (separator == std::string::npos || separator == 2 ||
+            separator + 1 == line.size()) {
+            failure = "late layout block record is malformed";
+            return std::nullopt;
+        }
+        const std::string function = line.substr(2, separator - 2);
+        const std::string block = line.substr(separator + 1);
+        if (!blocks.insert({function, block}).second) {
+            failure = "late layout block record is duplicated";
+            return std::nullopt;
+        }
+        auto [position, inserted] = functions.emplace(function, directives.size());
+        if (inserted) {
+            directives.push_back({function, {}});
+        }
+        directives[position->second].blocks.push_back(block);
+    }
+    return directives;
+}
+
+bool late_layout_target_supported(const llvm::Triple &triple) {
+    const bool architecture = triple.getArch() == llvm::Triple::x86_64 ||
+                              triple.getArch() == llvm::Triple::aarch64;
+    const bool format = triple.isOSBinFormatELF() || triple.isOSBinFormatMachO() ||
+                        triple.isOSBinFormatCOFF();
+    return architecture && format;
+}
+
 } // namespace
 
 extern "C" int32_t ckc_llvm_bridge_info(CkcLlvmBridgeInfo *out,
@@ -1536,43 +1685,58 @@ extern "C" int32_t ckc_llvm_target_create_host(uint32_t cpu_policy,
         } else if (cpu_policy != CKC_LLVM_CPU_NATIVE) {
             return invalid(error, "unknown LLVM CPU policy");
         }
-        builder->setRelocationModel(llvm::Reloc::PIC_);
-        // The ORC builder may default to Large on x86-64. CK keeps every JIT
-        // dependency in the same object graph, while emitted PIC objects are
-        // linked as ordinary host libraries/executables. Small therefore
-        // preserves the required reachability on every host and avoids Large
-        // model absolute/address-materialization overhead in hot kernels.
-        builder->setCodeModel(llvm::CodeModel::Small);
-        auto target_machine = builder->createTargetMachine();
-        if (!target_machine) {
-            return set_llvm_error(error, target_machine.takeError());
-        }
-        auto target = std::make_unique<CkcLlvmTarget>();
-        target->value = std::move(*target_machine);
-        target->cpu = target->value->getTargetCPU().str();
-        target->features = target->value->getTargetFeatureString().str();
-        target->profile_context = std::make_unique<llvm::LLVMContext>();
-        target->profile_module = std::make_unique<llvm::Module>(
-            "ckc.target.profile", *target->profile_context);
-        target->profile_module->setTargetTriple(
-            target->value->getTargetTriple());
-        target->profile_module->setDataLayout(
-            target->value->createDataLayout());
-        auto *profile_function_type = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(*target->profile_context), false);
-        target->profile_function = llvm::Function::Create(
-            profile_function_type, llvm::GlobalValue::InternalLinkage,
-            "__ck_target_profile_probe", *target->profile_module);
-        target->profile_function->addFnAttr("target-cpu", target->cpu);
-        target->profile_function->addFnAttr("target-features",
-                                            target->features);
-        *out = target.release();
-        return CKC_LLVM_OK;
+        return finish_target_machine(*builder, out, error);
     } catch (const std::exception &exception) {
         return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
     } catch (...) {
         return set_error(error, CKC_LLVM_INTERNAL_ERROR,
                          "unknown C++ exception creating LLVM target");
+    }
+}
+
+extern "C" int32_t ckc_llvm_target_create_explicit(
+    CkcLlvmBytes triple_bytes, CkcLlvmBytes cpu_bytes,
+    CkcLlvmBytes feature_bytes, CkcLlvmTarget **out,
+    CkcLlvmError *error) {
+    clear_error(error);
+    if (out == nullptr) {
+        return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                         "LLVM explicit target output is null");
+    }
+    *out = nullptr;
+    try {
+        if (auto init_error = initialize_host_target()) {
+            return set_llvm_error(error, std::move(init_error));
+        }
+        auto triple = llvm::Triple::normalize(borrowed_string(triple_bytes));
+        auto cpu = borrowed_string(cpu_bytes).str();
+        auto features = borrowed_string(feature_bytes).str();
+        if (triple.empty() || cpu.empty()) {
+            return invalid(error,
+                           "LLVM explicit target triple or CPU is empty");
+        }
+        auto detected_builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+        if (!detected_builder) {
+            return set_llvm_error(error, detected_builder.takeError());
+        }
+        auto requested = llvm::Triple(triple);
+        auto detected = detected_builder->getTargetTriple();
+        if (requested.getArch() != detected.getArch() ||
+            requested.getOS() != detected.getOS() ||
+            requested.getEnvironment() != detected.getEnvironment()) {
+            return invalid(
+                error,
+                "explicit LLVM feature target must match the build host ABI");
+        }
+        llvm::orc::JITTargetMachineBuilder builder(std::move(requested));
+        builder.setCPU(cpu);
+        builder.setFeatures(features);
+        return finish_target_machine(builder, out, error);
+    } catch (const std::exception &exception) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR, exception.what());
+    } catch (...) {
+        return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                         "unknown C++ exception creating explicit LLVM target");
     }
 }
 
@@ -1699,6 +1863,38 @@ extern "C" int32_t ckc_llvm_target_profile_query(
 namespace {
 
 constexpr uint32_t CKC_X86_REDUCTION_INTERLEAVE = 8;
+constexpr uint32_t CKC_X86_CHECKED_LOOP_UNROLL = 2;
+constexpr uint32_t CKC_X86_CONSTANT_MAP_INTERLEAVE = 1;
+constexpr uint32_t CKC_X86_CONSTANT_MAP_UNROLL = 5;
+constexpr uint32_t CKC_X86_V4_F64_VECTOR_WIDTH = 8;
+constexpr uint32_t CKC_X86_V4_I32_VECTOR_WIDTH = 16;
+constexpr uint32_t CKC_X86_V4_I32_INTERLEAVE = 1;
+constexpr uint32_t CKC_X86_V4_COMPUTE_MIN_F64_OPS = 8;
+constexpr uint32_t CKC_AARCH64_SVE_LOOP_INTERLEAVE = 4;
+constexpr llvm::StringLiteral CKC_AARCH64_SVE_TUNE_CPU = "neoverse-n2";
+
+void attach_aarch64_sve_tuning(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::aarch64 ||
+        target.getTargetCPU() != "generic" ||
+        !target.getTargetFeatureString().contains("+sve")) {
+        return;
+    }
+    for (llvm::Function &function : module) {
+        if (!function.isDeclaration()) {
+            // This changes only LLVM's scheduling model. The exact generic
+            // target CPU and explicit SVE/SVE2 feature string remain the ISA
+            // authority for the emitted multiversion member. Materialize both
+            // target attributes on the function as Clang does for -mtune;
+            // tune-cpu alone does not create a per-function subtarget and is
+            // consequently ignored by AArch64 machine scheduling.
+            function.addFnAttr("target-cpu", target.getTargetCPU());
+            function.addFnAttr("target-features",
+                               target.getTargetFeatureString());
+            function.addFnAttr("tune-cpu", CKC_AARCH64_SVE_TUNE_CPU);
+        }
+    }
+}
 
 bool is_integer_memory_reduction(const llvm::Loop &loop) {
     const auto *header = loop.getHeader();
@@ -1743,6 +1939,367 @@ bool may_contain_nonlocal_load(const llvm::Function &function) {
         }
     }
     return false;
+}
+
+bool contains_fixed_vector_operation(const llvm::Loop &loop);
+bool contains_checked_integer_overflow(const llvm::Loop &loop);
+bool is_scalar_memory_map(const llvm::Loop &loop);
+
+void promote_entry_allocas(llvm::Function &function) {
+    llvm::SmallVector<llvm::AllocaInst *, 16> promotable;
+    for (llvm::Instruction &instruction : function.getEntryBlock()) {
+        auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
+        if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
+            promotable.push_back(alloca);
+        }
+    }
+    if (promotable.empty()) {
+        return;
+    }
+    llvm::DominatorTree dominators(function);
+    llvm::PromoteMemToReg(promotable, dominators);
+}
+
+std::optional<unsigned> scalar_memory_map_bound_argument(
+    const llvm::Loop &loop) {
+    if (!is_scalar_memory_map(loop)) {
+        return std::nullopt;
+    }
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            const auto *compare = llvm::dyn_cast<llvm::ICmpInst>(&instruction);
+            if (compare == nullptr) {
+                continue;
+            }
+            for (unsigned operand = 0; operand < 2; ++operand) {
+                const auto *bound = llvm::dyn_cast<llvm::Argument>(
+                    compare->getOperand(operand));
+                const auto *induction = llvm::dyn_cast<llvm::PHINode>(
+                    compare->getOperand(1 - operand));
+                if (bound != nullptr && induction != nullptr &&
+                    induction->getParent() == loop.getHeader() &&
+                    bound->getType()->isIntegerTy()) {
+                    return bound->getArgNo();
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool argument_has_constant_equality_assume(
+    const llvm::Function &function, unsigned argument_index) {
+    for (const llvm::BasicBlock &block : function) {
+        for (const llvm::Instruction &instruction : block) {
+            const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            const llvm::Function *callee =
+                call == nullptr ? nullptr : call->getCalledFunction();
+            if (callee == nullptr || !callee->isIntrinsic() ||
+                callee->getIntrinsicID() != llvm::Intrinsic::assume ||
+                call->arg_empty()) {
+                continue;
+            }
+            const auto *compare = llvm::dyn_cast<llvm::ICmpInst>(
+                call->getArgOperand(0));
+            if (compare == nullptr ||
+                compare->getPredicate() != llvm::ICmpInst::ICMP_EQ) {
+                continue;
+            }
+            for (unsigned operand = 0; operand < 2; ++operand) {
+                const auto *argument = llvm::dyn_cast<llvm::Argument>(
+                    compare->getOperand(operand));
+                if (argument != nullptr &&
+                    argument->getParent() == &function &&
+                    argument->getArgNo() == argument_index &&
+                    llvm::isa<llvm::ConstantInt>(
+                        compare->getOperand(1 - operand))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool is_scalar_memory_map(const llvm::Loop &loop) {
+    if (contains_fixed_vector_operation(loop) ||
+        is_integer_memory_reduction(loop)) {
+        return false;
+    }
+    bool saw_nonlocal_load = false;
+    bool saw_nonlocal_store = false;
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+                saw_nonlocal_load = saw_nonlocal_load ||
+                    !llvm::isa<llvm::AllocaInst>(
+                        load->getPointerOperand()->stripPointerCasts());
+            }
+            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+                saw_nonlocal_store = saw_nonlocal_store ||
+                    !llvm::isa<llvm::AllocaInst>(
+                        store->getPointerOperand()->stripPointerCasts());
+            }
+        }
+    }
+    return saw_nonlocal_load && saw_nonlocal_store;
+}
+
+bool is_compute_dense_strict_f64_map(const llvm::Loop &loop) {
+    if (!is_scalar_memory_map(loop)) {
+        return false;
+    }
+    uint32_t operations = 0;
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            const auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(
+                &instruction);
+            if (binary == nullptr) {
+                continue;
+            }
+            switch (binary->getOpcode()) {
+            case llvm::Instruction::FAdd:
+            case llvm::Instruction::FSub:
+            case llvm::Instruction::FMul:
+            case llvm::Instruction::FDiv:
+            case llvm::Instruction::FRem:
+                if (!binary->getType()->isDoubleTy() ||
+                    binary->getFastMathFlags().any()) {
+                    return false;
+                }
+                ++operations;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    return operations >= CKC_X86_V4_COMPUTE_MIN_F64_OPS;
+}
+
+bool is_wrapping_i32_memory_map(const llvm::Loop &loop) {
+    if (!is_scalar_memory_map(loop) ||
+        contains_checked_integer_overflow(loop)) {
+        return false;
+    }
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+                if (!load->getType()->isIntegerTy(32) ||
+                    load->isVolatile() || load->isAtomic()) {
+                    return false;
+                }
+            }
+            if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+                if (!store->getValueOperand()->getType()->isIntegerTy(32) ||
+                    store->isVolatile() || store->isAtomic()) {
+                    return false;
+                }
+            }
+            if (llvm::isa<llvm::CallBase>(instruction) ||
+                instruction.getType()->isFloatingPointTy()) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool every_direct_call_has_constant_argument(
+    llvm::Function &function, unsigned argument_index) {
+    bool saw_call = false;
+    llvm::SmallVector<llvm::CallBase *, 8> calls;
+    for (llvm::User *user : function.users()) {
+        auto *call = llvm::dyn_cast<llvm::CallBase>(user);
+        if (call == nullptr ||
+            call->getCalledOperand()->stripPointerCasts() != &function ||
+            argument_index >= call->arg_size()) {
+            return false;
+        }
+        calls.push_back(call);
+    }
+    for (llvm::CallBase *call : calls) {
+        llvm::Function *caller = call->getFunction();
+        if (caller == nullptr || caller == &function) {
+            return false;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *clone = llvm::CloneFunction(caller, clone_map);
+        promote_entry_allocas(*clone);
+        auto *clone_call = llvm::dyn_cast_or_null<llvm::CallBase>(
+            clone_map.lookup(call));
+        const bool constant = clone_call != nullptr &&
+            llvm::isa<llvm::ConstantInt>(
+                clone_call->getArgOperand(argument_index));
+        clone->eraseFromParent();
+        if (!constant) {
+            return false;
+        }
+        saw_call = true;
+    }
+    return saw_call;
+}
+
+void attach_x86_v4_compute_loop_width(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64 ||
+        target.getTargetCPU() != "x86-64-v4" ||
+        !target.getTargetFeatureString().contains("+avx512f")) {
+        return;
+    }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
+    for (llvm::Function &function : module) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty() ||
+            !may_contain_nonlocal_load(*function)) {
+            continue;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *analysis = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*analysis);
+        llvm::DominatorTree analysis_dominators(*analysis);
+        llvm::LoopInfo analysis_loops(analysis_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *analysis_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *analysis_loop = analysis_header == nullptr
+                ? nullptr
+                : analysis_loops.getLoopFor(analysis_header);
+            if (analysis_loop == nullptr ||
+                analysis_loop->getHeader() != analysis_header) {
+                continue;
+            }
+            const uint32_t vector_width =
+                is_compute_dense_strict_f64_map(*analysis_loop)
+                    ? CKC_X86_V4_F64_VECTOR_WIDTH
+                    : is_wrapping_i32_memory_map(*analysis_loop)
+                          ? CKC_X86_V4_I32_VECTOR_WIDTH
+                          : 0;
+            if (vector_width == 0) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *width = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.vectorize.width"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     vector_width))});
+            auto *enable = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.vectorize.enable"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::getTrue(
+                     context))});
+            llvm::SmallVector<llvm::Metadata *, 4> operands{
+                nullptr, width, enable};
+            if (vector_width == CKC_X86_V4_I32_VECTOR_WIDTH) {
+                // A four-way interleave leaves up to 63 scalar iterations even
+                // when one complete 16-lane vector remains. Keep independent
+                // integer maps full-width without multiplying that tail bound.
+                operands.push_back(llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                     llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                         llvm::Type::getInt32Ty(context),
+                         CKC_X86_V4_I32_INTERLEAVE))}));
+            }
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(
+                    llvm::LLVMContext::MD_loop, loop_id);
+            }
+        }
+        analysis->eraseFromParent();
+    }
+}
+
+void attach_x86_constant_call_map_schedule(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
+        return;
+    }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
+    for (llvm::Function &function : module) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty() ||
+            !function->hasLocalLinkage() ||
+            !may_contain_nonlocal_load(*function)) {
+            continue;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *clone = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*clone);
+        llvm::DominatorTree clone_dominators(*clone);
+        llvm::LoopInfo clone_loops(clone_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *clone_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *clone_loop = clone_header == nullptr
+                ? nullptr
+                : clone_loops.getLoopFor(clone_header);
+            if (clone_loop == nullptr ||
+                clone_loop->getHeader() != clone_header) {
+                continue;
+            }
+            const auto bound = scalar_memory_map_bound_argument(*clone_loop);
+            if (!bound ||
+                !every_direct_call_has_constant_argument(*function, *bound)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto count_node = [&](llvm::StringRef name, uint32_t value) {
+                return llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context, name),
+                     llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                         llvm::Type::getInt32Ty(context), value))});
+            };
+            auto *interleave = count_node(
+                "llvm.loop.interleave.count",
+                CKC_X86_CONSTANT_MAP_INTERLEAVE);
+            auto *unroll = count_node(
+                "llvm.loop.unroll.count", CKC_X86_CONSTANT_MAP_UNROLL);
+            llvm::Metadata *operands[] = {nullptr, interleave, unroll};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+        clone->eraseFromParent();
+    }
 }
 
 bool contains_fixed_vector_operation(const llvm::Loop &loop) {
@@ -1793,6 +2350,153 @@ void attach_prevectorized_loop_unroll_disable(llvm::Module &module) {
     }
 }
 
+void attach_aarch64_sve_loop_interleave(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::aarch64 ||
+        !target.getTargetFeatureString().contains("+sve")) {
+        return;
+    }
+    for (llvm::Function &function : module) {
+        if (function.isDeclaration() || function.empty()) {
+            continue;
+        }
+        llvm::DominatorTree dominators(function);
+        llvm::LoopInfo loops(dominators);
+        for (llvm::Loop *loop : loops.getLoopsInPreorder()) {
+            if (contains_fixed_vector_operation(*loop)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            auto *count = llvm::MDNode::get(
+                context,
+                {llvm::MDString::get(context, "llvm.loop.interleave.count"),
+                 llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                     llvm::Type::getInt32Ty(context),
+                     CKC_AARCH64_SVE_LOOP_INTERLEAVE))});
+            llvm::Metadata *operands[] = {nullptr, count};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+    }
+}
+
+bool contains_checked_integer_overflow(const llvm::Loop &loop) {
+    for (const llvm::BasicBlock *block : loop.blocks()) {
+        for (const llvm::Instruction &instruction : *block) {
+            const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            const llvm::Function *callee =
+                call == nullptr ? nullptr : call->getCalledFunction();
+            if (callee == nullptr || !callee->isIntrinsic()) {
+                continue;
+            }
+            switch (callee->getIntrinsicID()) {
+            case llvm::Intrinsic::uadd_with_overflow:
+            case llvm::Intrinsic::usub_with_overflow:
+            case llvm::Intrinsic::umul_with_overflow:
+            case llvm::Intrinsic::sadd_with_overflow:
+            case llvm::Intrinsic::ssub_with_overflow:
+            case llvm::Intrinsic::smul_with_overflow:
+                return true;
+            default:
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+void attach_x86_checked_loop_unroll(
+    llvm::Module &module, const llvm::TargetMachine &target) {
+    if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
+        return;
+    }
+    llvm::SmallVector<llvm::Function *, 16> production_functions;
+    for (llvm::Function &function : module) {
+        production_functions.push_back(&function);
+    }
+    for (llvm::Function *function : production_functions) {
+        if (function->isDeclaration() || function->empty()) {
+            continue;
+        }
+        llvm::ValueToValueMapTy clone_map;
+        llvm::Function *analysis = llvm::CloneFunction(function, clone_map);
+        promote_entry_allocas(*analysis);
+        llvm::DominatorTree analysis_dominators(*analysis);
+        llvm::LoopInfo analysis_loops(analysis_dominators);
+        llvm::DominatorTree production_dominators(*function);
+        llvm::LoopInfo production_loops(production_dominators);
+        for (llvm::Loop *loop : production_loops.getLoopsInPreorder()) {
+            auto *analysis_header = llvm::dyn_cast_or_null<llvm::BasicBlock>(
+                clone_map.lookup(loop->getHeader()));
+            llvm::Loop *analysis_loop = analysis_header == nullptr
+                ? nullptr
+                : analysis_loops.getLoopFor(analysis_header);
+            if (analysis_loop == nullptr ||
+                analysis_loop->getHeader() != analysis_header ||
+                contains_fixed_vector_operation(*analysis_loop) ||
+                !contains_checked_integer_overflow(*analysis_loop)) {
+                continue;
+            }
+            llvm::SmallVector<llvm::BasicBlock *, 4> latches;
+            loop->getLoopLatches(latches);
+            if (latches.empty() ||
+                std::any_of(latches.begin(), latches.end(),
+                            [](const llvm::BasicBlock *latch) {
+                                return latch->getTerminator()->getMetadata(
+                                           llvm::LLVMContext::MD_loop) !=
+                                       nullptr;
+                            })) {
+                continue;
+            }
+            auto &context = module.getContext();
+            const auto bound =
+                scalar_memory_map_bound_argument(*analysis_loop);
+            const bool checked_constant_call_map = bound &&
+                every_direct_call_has_constant_argument(*function, *bound);
+            const bool checked_constant_bound_map = bound &&
+                argument_has_constant_equality_assume(*analysis, *bound);
+            llvm::Metadata *schedule = nullptr;
+            if (is_scalar_memory_map(*analysis_loop) &&
+                !checked_constant_call_map && !checked_constant_bound_map) {
+                schedule = llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context,
+                                         "llvm.loop.unroll.disable")});
+            } else {
+                schedule = llvm::MDNode::get(
+                    context,
+                    {llvm::MDString::get(context, "llvm.loop.unroll.count"),
+                     llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                         llvm::Type::getInt32Ty(context),
+                         CKC_X86_CHECKED_LOOP_UNROLL))});
+            }
+            llvm::Metadata *operands[] = {nullptr, schedule};
+            auto *loop_id = llvm::MDNode::getDistinct(context, operands);
+            loop_id->replaceOperandWith(0, loop_id);
+            for (llvm::BasicBlock *latch : latches) {
+                latch->getTerminator()->setMetadata(llvm::LLVMContext::MD_loop,
+                                                    loop_id);
+            }
+        }
+        analysis->eraseFromParent();
+    }
+}
+
 void attach_x86_integer_reduction_interleave(
     llvm::Module &module, const llvm::TargetMachine &target) {
     if (target.getTargetTriple().getArch() != llvm::Triple::x86_64) {
@@ -1810,18 +2514,8 @@ void attach_x86_integer_reduction_interleave(
         llvm::ValueToValueMapTy clone_map;
         llvm::Function *attached_clone =
             llvm::CloneFunction(function, clone_map);
-        llvm::SmallVector<llvm::AllocaInst *, 16> allocas;
-        for (llvm::Instruction &instruction :
-             attached_clone->getEntryBlock()) {
-            auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&instruction);
-            if (alloca != nullptr && llvm::isAllocaPromotable(alloca)) {
-                allocas.push_back(alloca);
-            }
-        }
+        promote_entry_allocas(*attached_clone);
         llvm::DominatorTree clone_dominators(*attached_clone);
-        if (!allocas.empty()) {
-            llvm::PromoteMemToReg(allocas, clone_dominators);
-        }
         llvm::LoopInfo clone_loops(clone_dominators);
         llvm::DominatorTree production_dominators(*function);
         llvm::LoopInfo production_loops(production_dominators);
@@ -1878,9 +2572,17 @@ extern "C" int32_t ckc_llvm_module_optimize(
         }
 
         if (level == llvm::OptimizationLevel::O3) {
+            attach_aarch64_sve_tuning(*module->value, *target->value);
             attach_prevectorized_loop_unroll_disable(*module->value);
+            attach_aarch64_sve_loop_interleave(*module->value,
+                                               *target->value);
+            attach_x86_v4_compute_loop_width(*module->value,
+                                             *target->value);
+            attach_x86_checked_loop_unroll(*module->value, *target->value);
             attach_x86_integer_reduction_interleave(*module->value,
                                                      *target->value);
+            attach_x86_constant_call_map_schedule(*module->value,
+                                                  *target->value);
         }
 
         llvm::LoopAnalysisManager loop_analyses;
@@ -1902,6 +2604,111 @@ extern "C" int32_t ckc_llvm_module_optimize(
         if (llvm::verifyModule(*module->value, &stream)) {
             stream.flush();
             return set_error(error, CKC_LLVM_INTERNAL_ERROR, message);
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_apply_late_layout(
+    CkcLlvmModule *module, CkcLlvmTarget *target, CkcLlvmBytes plan,
+    CkcLlvmLateLayoutReport *out, CkcLlvmError *error) {
+    clear_error(error);
+    if (out != nullptr) {
+        std::memset(out, 0, sizeof(*out));
+        clear_bytes(&out->reason);
+    }
+    return guarded(error, "applying CK late profile layout", [&] {
+        if (module == nullptr || module->value == nullptr || target == nullptr ||
+            target->value == nullptr || out == nullptr) {
+            return invalid(error, "late profile layout input is invalid");
+        }
+        const std::string pre_layout = late_layout_snapshot(*module->value, false);
+        const std::string pre_structural = late_layout_snapshot(*module->value, true);
+        sha256_text(pre_layout, out->pre_layout_digest);
+        sha256_text(pre_structural, out->pre_structural_digest);
+        std::copy(std::begin(out->pre_layout_digest),
+                  std::end(out->pre_layout_digest), out->post_layout_digest);
+        std::copy(std::begin(out->pre_structural_digest),
+                  std::end(out->pre_structural_digest),
+                  out->post_structural_digest);
+
+        std::string parse_failure;
+        auto parsed = parse_late_layout_plan(plan, parse_failure);
+        if (!parsed) {
+            return invalid(error, parse_failure);
+        }
+        const llvm::Triple &triple = target->value->getTargetTriple();
+        if (!late_layout_target_supported(triple)) {
+            if (!copy_bytes("unsupported-target-repair", &out->reason)) {
+                return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                                 "allocating late layout reason failed");
+            }
+            return CKC_LLVM_OK;
+        }
+        if (parsed->empty()) {
+            if (!copy_bytes("no-layout-authority", &out->reason)) {
+                return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                                 "allocating late layout reason failed");
+            }
+            return CKC_LLVM_OK;
+        }
+
+        std::vector<std::pair<llvm::Function *, std::vector<llvm::BasicBlock *>>>
+            resolved;
+        for (const CkcLateLayoutDirective &directive : *parsed) {
+            llvm::Function *function =
+                module->value->getFunction(directive.function);
+            if (function == nullptr || function->isDeclaration() ||
+                function->empty()) {
+                return invalid(error, "late layout names an unknown function");
+            }
+            std::vector<llvm::BasicBlock *> blocks;
+            for (const std::string &name : directive.blocks) {
+                llvm::BasicBlock *found = nullptr;
+                for (llvm::BasicBlock &block : *function) {
+                    if (block.getName() == name) {
+                        found = &block;
+                        break;
+                    }
+                }
+                if (found == nullptr) {
+                    return invalid(error, "late layout names an unknown block");
+                }
+                if (found == &function->getEntryBlock()) {
+                    return invalid(error,
+                                   "late layout cannot move the IR entry block");
+                }
+                blocks.push_back(found);
+            }
+            resolved.push_back({function, std::move(blocks)});
+        }
+
+        for (auto &[function, blocks] : resolved) {
+            llvm::BasicBlock *anchor = &function->getEntryBlock();
+            for (llvm::BasicBlock *block : blocks) {
+                block->moveAfter(anchor);
+                anchor = block;
+            }
+        }
+        const std::string post_layout = late_layout_snapshot(*module->value, false);
+        const std::string post_structural = late_layout_snapshot(*module->value, true);
+        sha256_text(post_layout, out->post_layout_digest);
+        sha256_text(post_structural, out->post_structural_digest);
+        if (pre_structural != post_structural) {
+            return set_error(error, CKC_LLVM_INTERNAL_ERROR,
+                             "late layout changed non-layout structure");
+        }
+        out->accepted = 1;
+        out->changed = pre_layout != post_layout;
+        // The target emission pipeline performs these closed repairs after the
+        // verified permutation; no additional optimizing pass is introduced.
+        out->repair_mask = 1u | 8u;
+        out->repair_mask |= triple.getArch() == llvm::Triple::aarch64 ? 2u : 4u;
+        const std::string_view reason =
+            out->changed != 0 ? "accepted" : "accepted-no-order-delta";
+        if (!copy_bytes(reason, &out->reason)) {
+            return set_error(error, CKC_LLVM_OUT_OF_MEMORY,
+                             "allocating late layout reason failed");
         }
         return CKC_LLVM_OK;
     });
@@ -2067,6 +2874,234 @@ extern "C" int32_t ckc_llvm_module_fact_audit_counts(
             }
         }
         out->alias_scope = alias_pairs.size();
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_expose_hidden_function(
+    CkcLlvmModule *module, CkcLlvmBytes function_name,
+    CkcLlvmError *error) {
+    return guarded(error, "exposing hidden multiversion function", [&] {
+        if (module == nullptr || module->value == nullptr) {
+            return invalid(error, "multiversion module is null");
+        }
+        const auto name = borrowed_string(function_name);
+        auto *function = module->value->getFunction(name);
+        if (name.empty() || function == nullptr || function->isDeclaration()) {
+            return invalid(error,
+                           "multiversion hidden function is missing or undefined");
+        }
+        function->setLinkage(llvm::GlobalValue::ExternalLinkage);
+        function->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        function->setDSOLocal(true);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_add_multiversion_dispatch(
+    CkcLlvmModule *module, CkcLlvmBytes public_name_bytes,
+    CkcLlvmBytes implementation_name_bytes,
+    CkcLlvmBytes baseline_hidden_name_bytes,
+    CkcLlvmBytes dispatch_namespace_bytes,
+    const CkcLlvmBytes *variant_name_bytes,
+    const uint32_t *required_capabilities, size_t variant_count,
+    CkcLlvmError *error) {
+    return guarded(error, "building LLVM multiversion dispatcher", [&] {
+        if (module == nullptr || module->value == nullptr ||
+            (variant_count != 0 &&
+             (variant_name_bytes == nullptr || required_capabilities == nullptr))) {
+            return invalid(error, "multiversion dispatch input is null");
+        }
+        auto &llvm_module = *module->value;
+        auto &context = llvm_module.getContext();
+        const auto public_name = borrowed_string(public_name_bytes);
+        const auto implementation_name =
+            borrowed_string(implementation_name_bytes);
+        const auto baseline_hidden_name =
+            borrowed_string(baseline_hidden_name_bytes);
+        const auto dispatch_namespace =
+            borrowed_string(dispatch_namespace_bytes);
+        if (public_name.empty() || implementation_name.empty() ||
+            baseline_hidden_name.empty() || dispatch_namespace.empty() ||
+            implementation_name == baseline_hidden_name ||
+            llvm_module.getNamedValue(baseline_hidden_name) != nullptr) {
+            return invalid(error, "multiversion dispatch names are invalid or collide");
+        }
+        auto *public_thunk = llvm_module.getFunction(public_name);
+        auto *baseline = llvm_module.getFunction(implementation_name);
+        if (public_thunk == nullptr || public_thunk->isDeclaration() ||
+            baseline == nullptr || baseline->isDeclaration()) {
+            return invalid(error,
+                           "multiversion public thunk or baseline implementation is missing");
+        }
+
+        auto *function_type = baseline->getFunctionType();
+        baseline->setName(baseline_hidden_name);
+        baseline->setLinkage(llvm::GlobalValue::ExternalLinkage);
+        baseline->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        baseline->setDSOLocal(true);
+
+        std::vector<llvm::Function *> variants;
+        variants.reserve(variant_count);
+        std::set<std::string> names;
+        for (size_t index = 0; index < variant_count; ++index) {
+            const auto name = borrowed_string(variant_name_bytes[index]);
+            if (name.empty() || name == baseline_hidden_name ||
+                !names.insert(name.str()).second ||
+                llvm_module.getNamedValue(name) != nullptr) {
+                return invalid(error,
+                               "multiversion variant name is empty, duplicated, or collides");
+            }
+            auto *variant = llvm::Function::Create(
+                function_type, llvm::GlobalValue::ExternalLinkage, name,
+                llvm_module);
+            variant->setVisibility(llvm::GlobalValue::HiddenVisibility);
+            variant->setDSOLocal(true);
+            variant->setCallingConv(baseline->getCallingConv());
+            variants.push_back(variant);
+        }
+
+        const std::string stem = "__ck_mv_" + dispatch_namespace.str() +
+                                 "_" + public_name.str();
+        auto *pointer_type = llvm::PointerType::get(context, 0);
+        auto *null_pointer = llvm::ConstantPointerNull::get(pointer_type);
+        auto *slot = new llvm::GlobalVariable(
+            llvm_module, pointer_type, false,
+            llvm::GlobalValue::InternalLinkage, null_pointer,
+            stem + "_slot");
+        slot->setAlignment(llvm::Align(8));
+#if defined(CKC_LLD_ELF)
+        slot->setSection(".ck_dispatch_slot");
+#endif
+
+        auto *i32_type = llvm::Type::getInt32Ty(context);
+        auto *detector_type = llvm::FunctionType::get(i32_type, false);
+        auto detector = llvm_module.getOrInsertFunction(
+            "__ck_dispatch_detect_capabilities", detector_type);
+        if (auto *detector_function =
+                llvm::dyn_cast<llvm::Function>(detector.getCallee())) {
+            detector_function->setVisibility(
+                llvm::GlobalValue::HiddenVisibility);
+        }
+
+        auto *resolver_type = llvm::FunctionType::get(pointer_type, false);
+        auto *resolver = llvm::Function::Create(
+            resolver_type, llvm::GlobalValue::InternalLinkage,
+            stem + "_resolve", llvm_module);
+        resolver->addFnAttr(llvm::Attribute::NoInline);
+        resolver->addFnAttr(llvm::Attribute::Cold);
+        auto *resolve_entry = llvm::Function::Create(
+            function_type, llvm::GlobalValue::InternalLinkage,
+            stem + "_resolve_entry", llvm_module);
+        resolve_entry->setCallingConv(baseline->getCallingConv());
+        resolve_entry->setAttributes(baseline->getAttributes());
+        resolve_entry->addFnAttr(llvm::Attribute::NoInline);
+        resolve_entry->addFnAttr(llvm::Attribute::Cold);
+        slot->setInitializer(resolve_entry);
+        auto *resolver_entry =
+            llvm::BasicBlock::Create(context, "entry", resolver);
+        llvm::IRBuilder<> resolver_builder(resolver_entry);
+        auto *capabilities = resolver_builder.CreateCall(
+            detector_type, detector.getCallee(), {}, "ck.capabilities");
+        llvm::Value *selected = baseline;
+        for (size_t reverse = variant_count; reverse > 0; --reverse) {
+            const size_t index = reverse - 1;
+            const uint32_t required = required_capabilities[index];
+            if (required == 0u || (required & ~0x0fu) != 0u) {
+                return invalid(error,
+                               "multiversion requirement is baseline or outside the closed set");
+            }
+            auto *required_value = llvm::ConstantInt::get(i32_type, required);
+            auto *masked = resolver_builder.CreateAnd(
+                capabilities, required_value, "ck.capability.mask");
+            auto *compatible = resolver_builder.CreateICmpEQ(
+                masked, required_value, "ck.capability.compatible");
+            selected = resolver_builder.CreateSelect(
+                compatible, variants[index], selected, "ck.selected");
+        }
+        auto *publication = resolver_builder.CreateAtomicCmpXchg(
+            slot, resolve_entry, selected, llvm::Align(8),
+            llvm::AtomicOrdering::AcquireRelease,
+            llvm::AtomicOrdering::Acquire);
+        publication->setWeak(false);
+        auto *winner = resolver_builder.CreateExtractValue(
+            publication, 0, "ck.published.pointer");
+        auto *published = resolver_builder.CreateExtractValue(
+            publication, 1, "ck.publication.won");
+        auto *resolved = resolver_builder.CreateSelect(
+            published, selected, winner, "ck.resolved.pointer");
+        resolver_builder.CreateRet(resolved);
+
+        auto *resolve_entry_block =
+            llvm::BasicBlock::Create(context, "entry", resolve_entry);
+        llvm::IRBuilder<> resolve_entry_builder(resolve_entry_block);
+        auto *fresh = resolve_entry_builder.CreateCall(
+            resolver, {}, "ck.dispatch.fresh");
+        std::vector<llvm::Value *> resolve_arguments;
+        resolve_arguments.reserve(resolve_entry->arg_size());
+        for (auto &argument : resolve_entry->args()) {
+            resolve_arguments.push_back(&argument);
+        }
+        auto *resolve_call = function_type->getReturnType()->isVoidTy()
+                                 ? resolve_entry_builder.CreateCall(
+                                       function_type, fresh, resolve_arguments)
+                                 : resolve_entry_builder.CreateCall(
+                                       function_type, fresh, resolve_arguments,
+                                       "ck.dispatch.call");
+        resolve_call->setCallingConv(baseline->getCallingConv());
+        resolve_call->setAttributes(baseline->getAttributes());
+        resolve_call->setTailCallKind(llvm::CallInst::TCK_MustTail);
+        if (function_type->getReturnType()->isVoidTy()) {
+            resolve_entry_builder.CreateRetVoid();
+        } else {
+            resolve_entry_builder.CreateRet(resolve_call);
+        }
+
+        auto *dispatcher = llvm::Function::Create(
+            function_type, llvm::GlobalValue::InternalLinkage,
+            implementation_name, llvm_module);
+        dispatcher->setCallingConv(baseline->getCallingConv());
+        dispatcher->setAttributes(baseline->getAttributes());
+        dispatcher->addFnAttr(llvm::Attribute::AlwaysInline);
+        auto *entry = llvm::BasicBlock::Create(context, "entry", dispatcher);
+        llvm::IRBuilder<> dispatch_builder(entry);
+        auto *cached = dispatch_builder.CreateLoad(pointer_type, slot,
+                                                   "ck.dispatch.pointer");
+        cached->setAtomic(llvm::AtomicOrdering::Acquire);
+        cached->setAlignment(llvm::Align(8));
+        std::vector<llvm::Value *> arguments;
+        arguments.reserve(dispatcher->arg_size());
+        for (auto &argument : dispatcher->args()) {
+            arguments.push_back(&argument);
+        }
+        auto *call = function_type->getReturnType()->isVoidTy()
+                         ? dispatch_builder.CreateCall(function_type, cached, arguments)
+                         : dispatch_builder.CreateCall(function_type, cached, arguments,
+                                                       "ck.dispatch.call");
+        call->setCallingConv(baseline->getCallingConv());
+        call->setAttributes(baseline->getAttributes());
+        call->setTailCallKind(llvm::CallInst::TCK_MustTail);
+        if (function_type->getReturnType()->isVoidTy()) {
+            dispatch_builder.CreateRetVoid();
+        } else {
+            dispatch_builder.CreateRet(call);
+        }
+
+        size_t rewritten = 0;
+        for (auto &block : *public_thunk) {
+            for (auto &instruction : block) {
+                auto *call_base = llvm::dyn_cast<llvm::CallBase>(&instruction);
+                if (call_base != nullptr &&
+                    call_base->getCalledOperand()->stripPointerCasts() == baseline) {
+                    call_base->setCalledFunction(dispatcher);
+                    ++rewritten;
+                }
+            }
+        }
+        if (rewritten != 1) {
+            return invalid(error,
+                           "multiversion public thunk must contain exactly one baseline call");
+        }
         return CKC_LLVM_OK;
     });
 }
@@ -2288,6 +3323,52 @@ extern "C" int32_t ckc_llvm_module_add_function(
     });
 }
 
+extern "C" int32_t ckc_llvm_module_add_global_bytes(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint8_t *bytes,
+    size_t byte_count, uint32_t mutable_storage, uint32_t alignment,
+    CkcLlvmValue **out, CkcLlvmError *error) {
+    return guarded(error, "adding LLVM byte global", [&] {
+        if (module == nullptr || module->value == nullptr || out == nullptr ||
+            byte_count == 0 || bytes == nullptr || alignment == 0 ||
+            !llvm::isPowerOf2_32(alignment)) {
+            return invalid(error, "LLVM byte global input or output is invalid");
+        }
+        auto initializer = llvm::ConstantDataArray::get(
+            module->value->getContext(), llvm::ArrayRef<uint8_t>(bytes, byte_count));
+        auto *global = new llvm::GlobalVariable(
+            *module->value, initializer->getType(), mutable_storage == 0,
+            llvm::GlobalValue::InternalLinkage, initializer, borrowed_string(name));
+        global->setAlignment(llvm::Align(alignment));
+        global->setUnnamedAddr(mutable_storage == 0
+                                   ? llvm::GlobalValue::UnnamedAddr::Global
+                                   : llvm::GlobalValue::UnnamedAddr::None);
+        *out = bridge_value(global);
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_module_add_global_u32_array(
+    CkcLlvmModule *module, CkcLlvmBytes name, const uint32_t *values,
+    size_t value_count, uint32_t alignment, CkcLlvmValue **out,
+    CkcLlvmError *error) {
+    return guarded(error, "adding LLVM u32 global", [&] {
+        if (module == nullptr || module->value == nullptr || out == nullptr ||
+            value_count == 0 || values == nullptr || alignment == 0 ||
+            !llvm::isPowerOf2_32(alignment)) {
+            return invalid(error, "LLVM u32 global input or output is invalid");
+        }
+        auto initializer = llvm::ConstantDataArray::get(
+            module->value->getContext(), llvm::ArrayRef<uint32_t>(values, value_count));
+        auto *global = new llvm::GlobalVariable(
+            *module->value, initializer->getType(), true,
+            llvm::GlobalValue::InternalLinkage, initializer, borrowed_string(name));
+        global->setAlignment(llvm::Align(alignment));
+        global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        *out = bridge_value(global);
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_module_preserve_function(
     CkcLlvmModule *module, CkcLlvmFunction *function,
     CkcLlvmError *error) {
@@ -2404,6 +3485,18 @@ extern "C" int32_t ckc_llvm_function_add_attribute(
     });
 }
 
+extern "C" int32_t ckc_llvm_function_set_noinline(
+    CkcLlvmFunction *function, CkcLlvmError *error) {
+    return guarded(error, "marking LLVM function noinline", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr) {
+            return invalid(error, "LLVM noinline function is null");
+        }
+        value->addFnAttr(llvm::Attribute::NoInline);
+        return CKC_LLVM_OK;
+    });
+}
+
 extern "C" int32_t ckc_llvm_function_set_memory_effects(
     CkcLlvmFunction *function, uint32_t effects, CkcLlvmError *error) {
     return guarded(error, "setting LLVM function memory effects", [&] {
@@ -2423,6 +3516,33 @@ extern "C" int32_t ckc_llvm_function_set_memory_effects(
             break;
         default:
             return invalid(error, "unknown LLVM function memory effects");
+        }
+        return CKC_LLVM_OK;
+    });
+}
+
+extern "C" int32_t ckc_llvm_function_set_profile(
+    CkcLlvmFunction *function, uint64_t entry_count, uint32_t hot,
+    uint32_t cold, CkcLlvmError *error) {
+    return guarded(error, "setting checked LLVM function profile", [&] {
+        auto *value = llvm_function(function);
+        if (value == nullptr) {
+            return invalid(error, "LLVM profile function is null");
+        }
+        if (hot > 1 || cold > 1 || (hot != 0 && cold != 0)) {
+            return invalid(error, "LLVM function profile classification is invalid");
+        }
+        value->setEntryCount(entry_count, llvm::Function::PCT_Real);
+        if (hot != 0) {
+            value->addFnAttr(llvm::Attribute::Hot);
+        }
+        if (cold != 0) {
+            value->addFnAttr(llvm::Attribute::Cold);
+            // CK has already rejected size-increasing inline materialization
+            // for a checked profile-cold call path. Preserve that verified
+            // decision across LLVM's independent inliner while retaining the
+            // complete generic function as the semantic fallback.
+            value->addFnAttr(llvm::Attribute::NoInline);
         }
         return CKC_LLVM_OK;
     });
@@ -3053,8 +4173,12 @@ extern "C" int32_t ckc_llvm_builder_call(
             }
             values.push_back(llvm_value(args[index]));
         }
-        *out = bridge_value(builder->value->CreateCall(
-            callee->getFunctionType(), callee, values, borrowed_string(name)));
+        auto *call = builder->value->CreateCall(callee->getFunctionType(), callee,
+                                                values);
+        if (!callee->getReturnType()->isVoidTy() && name.len != 0) {
+            call->setName(borrowed_string(name));
+        }
+        *out = bridge_value(call);
         return CKC_LLVM_OK;
     });
 }
@@ -3111,6 +4235,42 @@ extern "C" int32_t ckc_llvm_builder_cond_branch(
             branch->setMetadata(llvm::LLVMContext::MD_prof,
                                 metadata.createBranchWeights(1, 2000));
         }
+        return CKC_LLVM_OK;
+    });
+}
+
+static std::pair<uint32_t, uint32_t> ckc_branch_weights(uint64_t then_count,
+                                                        uint64_t else_count) {
+    uint64_t maximum = std::max(then_count, else_count);
+    while (maximum > std::numeric_limits<uint32_t>::max()) {
+        then_count >>= 1;
+        else_count >>= 1;
+        maximum >>= 1;
+    }
+    // A zero observation is not an unreachable proof. Keep both successors
+    // possible while preserving the checked profile ratio as closely as the
+    // LLVM metadata schema permits.
+    return {static_cast<uint32_t>(std::max<uint64_t>(then_count, 1)),
+            static_cast<uint32_t>(std::max<uint64_t>(else_count, 1))};
+}
+
+extern "C" int32_t ckc_llvm_builder_cond_branch_weighted(
+    CkcLlvmBuilder *builder, CkcLlvmValue *condition,
+    CkcLlvmBlock *then_block, CkcLlvmBlock *else_block,
+    uint64_t then_count, uint64_t else_count, CkcLlvmError *error) {
+    return guarded(error, "building checked LLVM weighted branch", [&] {
+        if (builder == nullptr || builder->value == nullptr ||
+            condition == nullptr || then_block == nullptr || else_block == nullptr) {
+            return invalid(error, "LLVM weighted branch input is null");
+        }
+        auto *branch = builder->value->CreateCondBr(
+            llvm_value(condition), llvm_block(then_block), llvm_block(else_block));
+        const auto [then_weight, else_weight] =
+            ckc_branch_weights(then_count, else_count);
+        llvm::MDBuilder metadata(branch->getContext());
+        branch->setMetadata(
+            llvm::LLVMContext::MD_prof,
+            metadata.createBranchWeights(then_weight, else_weight));
         return CKC_LLVM_OK;
     });
 }
@@ -3208,12 +4368,14 @@ extern "C" void ckc_llvm_object_dispose(CkcLlvmObject *object) {
     delete object;
 }
 
-extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
-                                             uint32_t kind,
+extern "C" int32_t ckc_llvm_archive_create(
+    const CkcLlvmObject *const *objects, const CkcLlvmBytes *member_names,
+    size_t object_count, uint32_t kind,
                                              CkcLlvmArchive **out,
                                              CkcLlvmError *error) {
     clear_error(error);
-    if (object == nullptr || object->bytes.empty() || out == nullptr) {
+    if (objects == nullptr || member_names == nullptr || object_count == 0 ||
+        out == nullptr) {
         return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                          "LLVM archive input or output is null");
     }
@@ -3235,14 +4397,37 @@ extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
                              "unknown LLVM archive kind");
         }
 
-        const llvm::StringRef object_bytes(
-            reinterpret_cast<const char *>(object->bytes.data()),
-            object->bytes.size());
-        auto object_buffer = llvm::MemoryBuffer::getMemBufferCopy(
-            object_bytes, "ck_module.o");
-        llvm::NewArchiveMember member(object_buffer->getMemBufferRef());
-        member.MemberName = "ck_module.o";
-        const llvm::NewArchiveMember members[] = {std::move(member)};
+        std::vector<std::unique_ptr<llvm::MemoryBuffer>> buffers;
+        std::vector<llvm::NewArchiveMember> members;
+        std::set<std::string> unique_names;
+        buffers.reserve(object_count);
+        members.reserve(object_count);
+        for (size_t index = 0; index < object_count; ++index) {
+            if (objects[index] == nullptr || objects[index]->bytes.empty()) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "LLVM archive contains an empty object");
+            }
+            const llvm::StringRef object_bytes(
+                reinterpret_cast<const char *>(objects[index]->bytes.data()),
+                objects[index]->bytes.size());
+            const std::string member_name = borrowed_string(member_names[index]).str();
+            if (member_name.empty() || member_name.size() > 255 ||
+                member_name.front() == '.' ||
+                !std::all_of(member_name.begin(), member_name.end(), [](char value) {
+                    const auto byte = static_cast<unsigned char>(value);
+                    return std::isalnum(byte) != 0 || value == '.' || value == '_' ||
+                           value == '-';
+                }) ||
+                !unique_names.insert(member_name).second) {
+                return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                                 "LLVM archive member name is invalid or duplicated");
+            }
+            buffers.push_back(
+                llvm::MemoryBuffer::getMemBufferCopy(object_bytes, member_name));
+            llvm::NewArchiveMember member(buffers.back()->getMemBufferRef());
+            member.MemberName = buffers.back()->getBufferIdentifier();
+            members.push_back(std::move(member));
+        }
         auto written = llvm::writeArchiveToBuffer(
             members, llvm::SymtabWritingMode::NormalSymtab, archive_kind,
             true, false, [](llvm::Error warning) { llvm::consumeError(std::move(warning)); });
@@ -3263,9 +4448,9 @@ extern "C" int32_t ckc_llvm_archive_create(const CkcLlvmObject *object,
         if (child_error) {
             return set_llvm_error(error, std::move(child_error));
         }
-        if (member_count != 1 || !(*parsed)->hasSymbolTable()) {
+        if (member_count != object_count || !(*parsed)->hasSymbolTable()) {
             return set_error(error, CKC_LLVM_INTERNAL_ERROR,
-                             "LLVM produced an invalid one-member indexed archive");
+                             "LLVM produced an invalid indexed archive");
         }
 
         auto archive = std::make_unique<CkcLlvmArchive>();
@@ -3307,14 +4492,15 @@ extern "C" void ckc_llvm_archive_dispose(CkcLlvmArchive *archive) {
 }
 
 extern "C" int32_t ckc_lld_link_shared(
-    CkcLlvmBytes object_path_bytes, CkcLlvmBytes output_path_bytes,
-    CkcLlvmBytes import_library_path_bytes, const CkcLlvmBytes *exports,
+    const CkcLlvmBytes *object_path_bytes, size_t object_count,
+    CkcLlvmBytes output_path_bytes, CkcLlvmBytes import_library_path_bytes,
+    CkcLlvmBytes platform_input_path_bytes, const CkcLlvmBytes *exports,
     size_t export_count, CkcLlvmError *error) {
     clear_error(error);
     try {
-        auto object_path = checked_path(object_path_bytes, "LLD object path");
-        if (!object_path) {
-            return set_llvm_error(error, object_path.takeError());
+        if (object_count == 0 || object_path_bytes == nullptr) {
+            return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
+                             "LLD shared object list is empty");
         }
         auto output_path = checked_path(output_path_bytes, "LLD output path");
         if (!output_path) {
@@ -3324,8 +4510,17 @@ extern "C" int32_t ckc_lld_link_shared(
             return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                              "LLD export list is null");
         }
-        if (auto validation = validate_link_input(*object_path)) {
-            return set_llvm_error(error, std::move(validation));
+        std::vector<std::string> object_paths;
+        object_paths.reserve(object_count);
+        for (size_t index = 0; index < object_count; ++index) {
+            auto object_path = checked_path(object_path_bytes[index], "LLD object path");
+            if (!object_path) {
+                return set_llvm_error(error, object_path.takeError());
+            }
+            if (auto validation = validate_link_input(*object_path)) {
+                return set_llvm_error(error, std::move(validation));
+            }
+            object_paths.push_back(std::move(*object_path));
         }
 
         std::vector<std::string> arguments;
@@ -3344,6 +4539,7 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("11.0");
         arguments.emplace_back("11.0");
         arguments.emplace_back("-adhoc_codesign");
+        arguments.emplace_back("-dead_strip");
         arguments.emplace_back("-install_name");
         arguments.emplace_back("@rpath/module.dylib");
         for (size_t index = 0; index < export_count; ++index) {
@@ -3360,6 +4556,8 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("/dll");
         arguments.emplace_back("/noentry");
         arguments.emplace_back("/nodefaultlib");
+        arguments.emplace_back("/timestamp:0");
+        arguments.emplace_back("/opt:ref");
         auto import_path = checked_path(import_library_path_bytes,
                                         "LLD import library path");
         if (!import_path) {
@@ -3379,6 +4577,8 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("ld.lld");
         arguments.emplace_back("-shared");
         arguments.emplace_back("--no-undefined");
+        arguments.emplace_back("--gc-sections");
+        arguments.emplace_back("--strip-all");
         for (size_t index = 0; index < export_count; ++index) {
             const llvm::StringRef name = borrowed_string(exports[index]);
             if (name.empty() || name.contains('\0') || name.contains(',')) {
@@ -3393,7 +4593,17 @@ extern "C" int32_t ckc_lld_link_shared(
         arguments.emplace_back("-o");
         arguments.emplace_back(*output_path);
 #endif
-        arguments.emplace_back(*object_path);
+        arguments.insert(arguments.end(), object_paths.begin(), object_paths.end());
+        if (object_count > 1) {
+#if defined(CKC_LLD_DARWIN) || defined(CKC_LLD_COFF)
+            auto platform_input = checked_path(platform_input_path_bytes,
+                                               "LLD shared platform input path");
+            if (!platform_input) {
+                return set_llvm_error(error, platform_input.takeError());
+            }
+            arguments.emplace_back(*platform_input);
+#endif
+        }
 
         std::vector<const char *> raw_arguments;
         raw_arguments.reserve(arguments.size());
@@ -3507,6 +4717,7 @@ extern "C" int32_t ckc_lld_link_executable(
         arguments.emplace_back("/subsystem:console");
         arguments.emplace_back("/entry:mainCRTStartup");
         arguments.emplace_back("/nodefaultlib");
+        arguments.emplace_back("/timestamp:0");
 #else
         arguments.emplace_back("ld.lld");
         arguments.emplace_back("-static");
@@ -3696,10 +4907,10 @@ extern "C" int32_t ckc_llvm_jit_execute(
 #if defined(CKC_LLD_COFF) && \
     (defined(_M_X64) || defined(__x86_64__))
     if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
-        runtime_objects == nullptr || runtime_object_count != 6) {
+        runtime_objects == nullptr || runtime_object_count != 7) {
 #else
     if (jit == nullptr || jit->value == nullptr || exit_status == nullptr ||
-        runtime_objects == nullptr || runtime_object_count != 5) {
+        runtime_objects == nullptr || runtime_object_count != 6) {
 #endif
         return set_error(error, CKC_LLVM_INVALID_ARGUMENT,
                          "LLVM JIT execution input is invalid");
@@ -3718,10 +4929,10 @@ extern "C" int32_t ckc_llvm_jit_execute(
         for (size_t index = 0; index < runtime_object_count; ++index) {
             auto buffer = validated_object_buffer(
                 runtime_objects[index],
-                index == 0 && runtime_object_count == 6
+                index == 0 && runtime_object_count == 7
                     ? "ckc-jit-image-base.o"
                     : "ckc-runtime-" +
-                          std::to_string(index - (runtime_object_count == 6)) +
+                          std::to_string(index - (runtime_object_count == 7)) +
                           ".o",
                 arch);
             if (!buffer) {

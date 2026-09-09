@@ -9,12 +9,26 @@ pub(crate) fn embedded_runtime_objects() -> [&'static [u8]; 5] {
 }
 
 pub(crate) fn embedded_jit_objects() -> Vec<&'static [u8]> {
-    let mut objects: Vec<&'static [u8]> = Vec::with_capacity(6);
+    let mut objects: Vec<&'static [u8]> = Vec::with_capacity(7);
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     objects.push(include_bytes!(env!("CKC_RUNTIME_JIT_SUPPORT")));
     objects.extend(embedded_runtime_objects());
+    objects.push(embedded_dispatch_runtime_object());
     objects
 }
+
+pub(crate) fn embedded_profile_runtime_object() -> &'static [u8] {
+    include_bytes!(env!("CKC_PROFILE_RUNTIME_OBJECT"))
+}
+
+pub fn embedded_dispatch_runtime_object() -> &'static [u8] {
+    include_bytes!(env!("CKC_DISPATCH_RUNTIME_OBJECT"))
+}
+
+pub const NATIVE_PROFILE_RUNTIME_SHA256: &str = env!("CKC_PROFILE_RUNTIME_SHA256");
+pub const NATIVE_DISPATCH_RUNTIME_SHA256: &str = env!("CKC_DISPATCH_RUNTIME_SHA256");
+pub const NATIVE_PROFILE_RUNTIME_SCHEMA: u32 = 1;
+pub const NATIVE_DISPATCH_RUNTIME_SCHEMA: u32 = 1;
 
 #[cfg(target_os = "windows")]
 pub(crate) fn embedded_windows_import_library() -> &'static [u8] {

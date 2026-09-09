@@ -33,6 +33,7 @@ pub enum KirProfileLayout {
 pub enum KirNativeCpuPolicy {
     Baseline,
     Native,
+    Multiversion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -916,6 +917,7 @@ fn encode_cpu(bytes: &mut Vec<u8>, cpu: &KirCpuIdentity) {
             bytes.push(match policy {
                 KirNativeCpuPolicy::Baseline => 1,
                 KirNativeCpuPolicy::Native => 2,
+                KirNativeCpuPolicy::Multiversion => 3,
             });
             put_string(bytes, name);
             put_u32(bytes, features.len() as u32);

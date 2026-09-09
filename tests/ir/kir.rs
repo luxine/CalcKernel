@@ -106,10 +106,10 @@ fn profile_portable_consumers_should_have_complete_deterministic_schema_one_iden
 }
 
 #[test]
-fn kir_v2_profile_binding_should_print_and_reject_a_consumer_mismatch() {
+fn profile_kir_v3_target_binding_should_print_and_reject_a_consumer_mismatch() {
     let module = build("export fn answer() -> i32 { return 42; }", config());
     let text = print_kir_module(&module);
-    assert!(text.starts_with("kir-v2 consumer=inspection "), "{text}");
+    assert!(text.starts_with("kir-v3 consumer=inspection "), "{text}");
     assert!(text.contains("profile-schema=1"), "{text}");
     assert!(
         text.contains(&format!("profile-sha256={}", module.profile.digest_hex())),
@@ -139,7 +139,7 @@ fn kir_model_and_printer_should_include_complete_module_identity() {
     assert_eq!(
         print_kir_module(&module),
         format!(
-            "kir-v2 consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled profile-schema=1 profile-sha256={}\n",
+            "kir-v3 consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled profile-schema=1 profile-sha256={}\n",
             module.profile.digest_hex()
         )
     );
@@ -217,7 +217,7 @@ fn kir_model_should_use_typed_ids_and_print_explicit_ssa_definitions() {
         print_kir_module(&module),
         format!(
             concat!(
-                "kir-v2 consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled profile-schema=1 profile-sha256={}\n",
+                "kir-v3 consumer=inspection overflow=checked bounds=unchecked sanitizer=disabled profile-schema=1 profile-sha256={}\n",
                 "\nexport fn f0 answer() -> i32 {{\n",
                 "bb0 b0():\n",
                 "  i0 v0: i32 = const_int 42\n",

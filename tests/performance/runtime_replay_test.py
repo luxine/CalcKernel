@@ -29,8 +29,10 @@ class ReplayPreparation(unittest.TestCase):
 
     def test_exact_pins_are_accepted(self):
         manifest = PREPARE.validate_pins(REPO)
-        self.assertEqual(manifest["commit"], PREPARE.BASELINE_COMMIT)
+        self.assertEqual(manifest["commit"], PREPARE.V012_COMMIT)
         self.assertEqual(manifest["llvm_version"], "22.1.8")
+        v011 = PREPARE.validate_pins(REPO, "0.11")
+        self.assertEqual(v011["commit"], PREPARE.BASELINE_COMMIT)
         legacy = PREPARE.validate_pins(REPO, "0.10")
         self.assertEqual(legacy["commit"], PREPARE.V010_COMMIT)
 
@@ -61,10 +63,10 @@ class ReplayPreparation(unittest.TestCase):
 
     def test_actual_verbose_compiler_identity_is_required(self):
         digest = "5" * 64
-        output = f"ckc 0.11.0\nNative ABI: 1\nRuntime ABI: 2\nLLVM: 22.1.8\nLLVM manifest SHA-256: {digest}\nTarget: aarch64-apple-darwin\nCode generator: AArch64\nORC object layer: JITLink\n"
+        output = f"ckc 0.12.0\nNative ABI: 1\nRuntime ABI: 2\nLLVM: 22.1.8\nLLVM manifest SHA-256: {digest}\nTarget: aarch64-apple-darwin\nCode generator: AArch64\nORC object layer: JITLink\nKIR: 2\n"
         PREPARE.validate_compiler_output(output, "aarch64-apple-darwin", digest)
         for old, new in [
-            ("ckc 0.11.0", "ckc 0.10.0"),
+            ("ckc 0.12.0", "ckc 0.11.0"),
             ("Native ABI: 1", "Native ABI: 2"),
             ("Runtime ABI: 2", "Runtime ABI: 1"),
             ("LLVM: 22.1.8", "LLVM: 22.1.7"),
@@ -75,7 +77,11 @@ class ReplayPreparation(unittest.TestCase):
             with self.subTest(new=new), self.assertRaises(ValueError):
                 PREPARE.validate_compiler_output(output.replace(old, new), "aarch64-apple-darwin", digest)
 
-        legacy = output.replace("ckc 0.11.0", "ckc 0.10.0").replace(
+        v011 = output.replace("ckc 0.12.0", "ckc 0.11.0").replace("KIR: 2\n", "")
+        PREPARE.validate_compiler_output(
+            v011, "aarch64-apple-darwin", digest, "0.11"
+        )
+        legacy = v011.replace("ckc 0.11.0", "ckc 0.10.0").replace(
             "Runtime ABI: 2", "Runtime ABI: 1"
         )
         PREPARE.validate_compiler_output(

@@ -17,6 +17,24 @@ const VECTOR_CASES: [&str; 8] = [
 const DOMAIN_CASES: [&str; 2] = ["contract_noalias", "contract_fixed_length"];
 
 #[test]
+fn vector_benchmark_should_accept_only_audited_native_llvm_handoffs() {
+    let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
+        .expect("read vector performance harness");
+    for required in [
+        "name == \"modular_reduction\"",
+        "x86-horizontal-reduction-deferred-to-native-loop-vectorizer",
+        "name == \"specialized_length\"",
+        "constant-call-loop-deferred-to-native-loop-vectorizer",
+        "!native_llvm_handoff",
+    ] {
+        assert!(
+            harness.contains(required),
+            "vector preflight must retain audited Native LLVM handoff `{required}`"
+        );
+    }
+}
+
+#[test]
 fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() {
     let root = repo_root();
     let manifest_path = root.join("benches/oracles/manifest.toml");
@@ -28,7 +46,7 @@ fn v012_oracle_manifest_should_pin_the_exact_corpus_sources_and_preconditions() 
         "fast_math = false",
         "contraction = false",
         "builtin_library_calls = false",
-        "sampling_protocol = \"interleaved-upper-median-three-channel-v2\"",
+        "sampling_protocol = \"interleaved-upper-median-three-channel-v3\"",
         "dispatch_protocol = \"cached-typed-entry-v1\"",
         "batch_iterations = 20000000",
         "sample_calls = 7",
@@ -175,8 +193,13 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         runner.contains("KernelEntry::load(&library, symbol, name, checked)"),
         "the dynamic symbol and signature must be resolved while constructing the runner"
     );
+    let workspace = harness
+        .split("impl KernelWorkspace {")
+        .nth(1)
+        .and_then(|source| source.split("fn work_items(").next())
+        .expect("KernelWorkspace implementation");
     assert!(
-        runner.contains("match self.entry"),
+        workspace.contains("match entry"),
         "the timed batch must dispatch once to a cached typed entry"
     );
     for forbidden in [
@@ -195,7 +218,7 @@ fn oracle_benchmark_should_cache_dispatch_before_the_timed_call_loop() {
         .and_then(|source| source.split("type MapUnchecked").next())
         .expect("measure_case implementation");
     assert!(
-        manifest.contains("interleaved-upper-median-three-channel-v2")
+        manifest.contains("interleaved-upper-median-three-channel-v3")
             && measure_case.contains("sample_three_channels_upper_median::<_, SAMPLE_REPETITIONS>")
             && !manifest.contains("bounded-upper-band-v1")
             && !harness.contains("SLP_CALIBRATION_PROBES")

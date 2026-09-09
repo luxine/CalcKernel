@@ -107,6 +107,59 @@ fn oracle_upper_median_rows_should_interleave_every_raw_channel_call() {
 }
 
 #[test]
+fn vector_oracle_channels_should_share_one_data_workspace() {
+    let source =
+        fs::read_to_string(super::support::oracle::repo_root().join("benches/vector_perf.rs"))
+            .expect("read vector performance harness");
+    let measure_case = source
+        .split("fn measure_case(")
+        .nth(1)
+        .expect("vector case measurement")
+        .split("type MapUnchecked")
+        .next()
+        .expect("vector case measurement boundary");
+    for required in [
+        "let entries = runners.each_ref().map(|runner| runner.entry);",
+        "let mut workspace = KernelWorkspace::new(name);",
+        "workspace.run_batch(entries[0], batch_iterations)",
+        "for (channel, entry) in entries.iter().copied().enumerate().skip(1)",
+        "workspace.run_batch(entry, batch_iterations)",
+        "workspace.measure_once(entries[channel], &expected, batch_iterations)",
+    ] {
+        assert!(
+            measure_case.contains(required),
+            "vector oracle sampling must use one data workspace: missing {required:?}"
+        );
+    }
+    assert!(source.contains("struct KernelWorkspace"));
+    assert!(
+        !measure_case.contains("runners[channel].measure_once"),
+        "separate per-channel buffers confound code performance with allocation placement"
+    );
+}
+
+#[test]
+fn shared_workspace_oracle_protocol_should_be_versioned() {
+    let root = super::support::oracle::repo_root();
+    let harness = fs::read_to_string(root.join("benches/vector_perf.rs"))
+        .expect("read vector performance harness");
+    let manifest = fs::read_to_string(root.join("benches/oracles/manifest.toml"))
+        .expect("read vector oracle manifest");
+    let summary = fs::read_to_string(root.join("benches/summary-schema.md"))
+        .expect("read benchmark summary schema");
+    let guide = fs::read_to_string(root.join("docs/guides/performance.md"))
+        .expect("read performance guide");
+    let translated_guide = fs::read_to_string(root.join("docs/zh-CN/guides/performance.md"))
+        .expect("read translated performance guide");
+    for content in [harness, manifest, summary, guide, translated_guide] {
+        assert!(
+            content.contains("interleaved-upper-median-three-channel-v3"),
+            "shared-workspace oracle protocol identity must advance to v3"
+        );
+    }
+}
+
+#[test]
 fn replay_preparation_should_validate_pinned_sources_and_actual_compiler_output() {
     let output = std::process::Command::new("python3")
         .arg(super::support::oracle::repo_root().join("tests/performance/runtime_replay_test.py"))

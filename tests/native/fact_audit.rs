@@ -43,7 +43,7 @@ fn audited_kir(source: &str) -> (String, NativeFactAuditReport) {
 
 #[test]
 fn fact_audit_typestate_should_run_between_verify_and_optimize() {
-    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 3);
+    assert_eq!(LLVM_BRIDGE_ABI_VERSION, 4);
     let context = NativeContext::new().expect("context");
     let target = NativeTarget::host().expect("target");
     let verified = NativeModule::empty(&context)
