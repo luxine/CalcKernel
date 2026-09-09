@@ -1415,7 +1415,7 @@ fn multiversion_cache_manifest(
         bundle.additional_kir_units,
         bundle.total_kir_units,
     );
-    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;dispatch-resolver-sentinel-v2;contract-facts-v1;coverage-first-variant-ranking-v1;performance-first-dispatch-ranking-v1;coverage-companion-profitability-v1;shared-target-neutral-variant-budget-v1;compact-multiversion-inline-v2;aarch64-sve-tune-neoverse-n2-v2;x86-loop-simd-min-interleave-4-v1;x86-widening-cast-frontend-budget-2-v1;x86-v4-compute-f64-width-8-v1;compact-vector-uf-stride-v1;compact-vector-body-state-v2;x86-constant-map-schedule-1x5-v1;x86-checked-memory-map-schedule-v3".to_string();
+    let codegen_contract = "kir-v3;strict-fp;entry-wrapper-v1;multiversion;separate-modules;dispatch-v1;dispatch-resolver-sentinel-v2;contract-facts-v1;coverage-first-variant-ranking-v1;performance-first-dispatch-ranking-v1;coverage-companion-profitability-v1;shared-target-neutral-variant-budget-v1;compact-multiversion-inline-v2;aarch64-sve-tune-neoverse-n2-v2;x86-loop-simd-min-interleave-4-v1;x86-widening-cast-frontend-budget-2-v1;x86-v4-compute-f64-width-8-v1;x86-v4-i32-map-width-16-v1;compact-vector-uf-stride-v1;compact-vector-body-state-v2;x86-constant-map-schedule-1x5-v1;x86-checked-memory-map-schedule-v3".to_string();
     let key_input = CacheKeyInput {
         source,
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),

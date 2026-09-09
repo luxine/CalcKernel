@@ -100,6 +100,10 @@ incomplete. This adds no libc or loader dependency.
 Generic AArch64 SVE/SVE2 members use a fixed `neoverse-n2` LLVM tuning model for
 scheduling only; `target-cpu=generic`, explicit features, runtime compatibility,
 and the feature audit remain unchanged and authoritative.
+Explicit x86-64-v4 members may request sixteen-lane LLVM vectorization for
+scalar wrapping `i32` memory-map loops. The rule excludes calls, checked overflow,
+volatile/atomic memory, existing vectors, and existing loop schedules; LLVM still
+checks vectorization legality. Baseline and v3 members keep their own width policy.
 Public Native C ABI thunks keep their names, addresses, signatures, checked-status
 behavior, and visibility; baseline, variant, detector, and runtime symbols stay hidden.
 ELF shared products strip non-loader symbols and retain the one generated slot

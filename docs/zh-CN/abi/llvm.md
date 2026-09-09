@@ -77,6 +77,10 @@ library 通过 freestanding direct syscall 读取 `/proc/self/auxv`，fallback �
 fail closed 到 baseline，且不增加 libc 或 loader dependency。
 Generic AArch64 SVE/SVE2 member 只为 scheduling 使用固定 `neoverse-n2` LLVM tuning model；
 `target-cpu=generic`、显式 feature、runtime compatibility 与 feature audit 保持不变并继续作为权威。
+显式 x86-64-v4 member 可为 scalar wrapping `i32` memory-map loop 请求十六路 LLVM
+vectorization。该规则排除 call、checked overflow、volatile/atomic memory、已有 vector 与
+已有 loop schedule；LLVM 仍检查 vectorization legality。baseline 与 v3 member 保留各自的
+width policy。
 
 named-object bundle 可链接为 executable、dynamic library 或 static archive。multiversion object
 output 会拒绝，因为 0.13 不定义 partial-link bundle contract；baseline/native single-version
