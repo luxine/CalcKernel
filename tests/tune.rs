@@ -6,6 +6,8 @@ mod cache;
 mod calibration;
 #[path = "tune/decision_format.rs"]
 mod decision_format;
+#[path = "tune/decision_policy.rs"]
+mod decision_policy;
 #[path = "tune/frontier.rs"]
 mod frontier;
 #[path = "tune/generate_fixtures.rs"]
@@ -32,11 +34,15 @@ mod runner;
 mod search;
 #[path = "tune/selection.rs"]
 mod selection;
+#[path = "tune/selection_groups.rs"]
+mod selection_groups;
 #[path = "tune/session.rs"]
 mod session;
 #[path = "tune/snapshot.rs"]
 mod snapshot;
 #[path = "tune/support.rs"]
 mod support;
+#[path = "support/temp.rs"]
+mod temp;
 #[path = "tune/trial.rs"]
 mod trial;

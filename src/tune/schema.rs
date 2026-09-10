@@ -2,6 +2,8 @@
 pub const TUNE_DECISION_MAGIC: &[u8; 8] = b"CKTUNE01";
 /// CKTUNE decision schema version.
 pub const TUNE_DECISION_SCHEMA: u32 = 1;
+/// Current tuning policy, including fastest-anchored score grouping.
+pub const TUNE_CONTRACT_SCHEMA: u32 = 2;
 /// Workload manifest schema version.
 pub const TUNE_MANIFEST_SCHEMA: u32 = 1;
 /// Measurement schema version.

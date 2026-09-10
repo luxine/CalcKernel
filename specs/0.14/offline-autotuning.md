@@ -978,16 +978,26 @@ Search ranks candidates with exact integer Q32 normalized time:
 
     ratio_q32 = ceil(candidate_ns * 2^32 / baseline_ns)
     score_q32 = ceil(sum(weight * ratio_q32) / sum(weight))
-    score_percent_ceiling = ceil(score_q32 * 100 / 2^32)
 
 No floating-point arithmetic participates in selection. Exact Q32 remains the
-recorded measurement and is used unchanged by every performance threshold. Timing
-only ranks at a frozen one-percentage-point resolution so that sub-resolution
-measurement noise cannot change plan identity. Entrants are totally ordered by
-lower `score_percent_ceiling`, smaller actual primary-artifact bytes, fewer
-non-baseline choices, then lower plan digest; the best bounded entrants advance to
-validation. All products and sums use checked u128 arithmetic, and both derived
-integer results must fit u64.
+recorded measurement and is used unchanged by every performance threshold.
+Contract 2 uses fastest-anchored groups at the same one-percentage-point resolution:
+
+1. Sort candidates by exact ascending `score_q32`.
+2. The fastest remaining score anchors the next group. Include exactly the
+   remaining scores satisfying `(score_q32 - anchor_q32) * 100 <= 2^32`.
+3. Within that group, sort by smaller actual primary-artifact bytes, fewer
+   non-baseline choices, then lower plan digest.
+4. Repeat with the next ungrouped score, concatenate the groups, and only then
+   take the bounded validation-entrant count.
+
+The anchor never advances within a group: adjacent near-ties cannot chain into a
+group wider than one percentage point of baseline. This replaces contract 1's
+absolute percentage-ceiling grid, not any profitability threshold. All products
+and sums use checked u128 arithmetic, and both derived Q32 results must fit u64.
+Grouping and qualification still have boundaries; arbitrary timing noise can
+change membership or selection. Two-round agreement and the full independent
+cold-run identity gate remain mandatory, with no retry-until-agreement exception.
 
 ### 11.2 Validation phase
 
@@ -1011,17 +1021,12 @@ matching calibration records and phase-5/7 raw streams: case medians, Q32 ratios
 weighted aggregate, stability, paired wins, entrant membership, threshold bit, and
 rank cannot be supplied independently.
 
-Within each round, qualifying plans are ranked by the same frozen resolution and
-deterministic keys:
-
-1. lower `score_percent_ceiling` derived from the validation score;
-2. smaller artifact;
-3. fewer non-baseline choices;
-4. lower plan digest.
-
-Exact Q32, not the ranking bucket, continues to decide all three qualification
-conditions above. The bucket therefore rejects unsupported sub-resolution ordering
-claims without weakening admission or validation.
+Within each round, only qualifying plans participate in the same fastest-anchored
+grouping and within-group artifact/choice/digest order. Exact Q32, not group
+membership, continues to decide all three qualification conditions above.
+The independent contract-2 decoder rederives the search order, validation
+summaries, qualifying order, and selection from retained raw streams; it does not
+call the producer's ranking or summary functions.
 
 Let `Q1` and `Q2` be the ordered qualifying-plan lists for rounds 1 and 2. Selection
 is the following disjoint and exhaustive table, evaluated in order:
@@ -1060,13 +1065,20 @@ The public decision file has:
 
 - magic CK TUNE 01 encoded as the eight bytes CKTUNE01;
 - format schema 1;
-- contract schema 1;
+- contract schema 2;
 - measurement schema 1;
 - inspection schema 1;
 - plan schema 1;
 - canonical big-endian lengths and counts;
 - canonical field and collection ordering;
 - a trailing domain-separated SHA-256 digest.
+
+Contract 1 remains a legacy, byte-preserving inspection input. Current builds emit
+contract 2; tune-use and warm reuse require it and reject legacy decisions with an
+explicit retuning diagnostic before source or Native output access. Changing the
+contract without its policy and session digests is invalid. The outer format,
+manifest, measurement, inspection, and plan schemas remain 1; legacy golden bytes
+are not rewritten or reinterpreted as contract 2.
 
 The outer encoding follows the repository's existing canonical profile framing:
 
@@ -1357,6 +1369,13 @@ tested per platform.
 
 Tuning data lives below the existing CK cache root in tune-v1. The default tuning
 cache hard limit is 4 GiB.
+
+All three physical cache domains use key schema 2, separating current entries from
+contract-1 keys. The namespace and `CKTCACH1` entry-frame schema remain unchanged;
+old files are clean misses, not migrated or deleted by this policy change. The
+logical origin hashes recorded inside decisions keep their schema-1 framing;
+they are distinct from physical cache lookup keys. The complete Contract record
+binds policy and session identity to the selected policy generation.
 
 The cache separates:
 

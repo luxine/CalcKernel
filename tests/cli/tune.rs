@@ -93,6 +93,39 @@ fn tune_inspect_is_read_only_and_supports_exact_json_switch() {
 
 #[cfg(feature = "native-toolchain")]
 #[test]
+fn tune_use_rejects_legacy_policy_before_source_or_output_access() {
+    let root = temp_dir(&format!("ckc-tune-legacy-policy-{}", unique_id()));
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/tune/decision-schema1-tuned.cktune");
+    let before = fs::read(&fixture).expect("legacy decision");
+    let source = root.join("missing.ck");
+    let output = root.join("must-not-exist");
+    let rejected = run([
+        os("build"),
+        os(&source),
+        os("--kind"),
+        os("executable"),
+        os("--cpu"),
+        os("native"),
+        os("-O3"),
+        os("--tune-use"),
+        os(&fixture),
+        os("--out"),
+        os(&output),
+    ]);
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("legacy tuning contract is inspection-only"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    assert_eq!(fs::read(&fixture).expect("retained decision"), before);
+    assert!(!root.exists(), "legacy replay accessed its destination");
+}
+
+#[cfg(feature = "native-toolchain")]
+#[test]
 fn tune_build_option_matrix_fails_before_creating_outputs() {
     let root = temp_dir(&format!("ckc-tune-cli-matrix-{}", unique_id()));
     fs::create_dir_all(&root).expect("root");

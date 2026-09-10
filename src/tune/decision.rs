@@ -5,11 +5,13 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::schema::{
     DECISION_DIGEST_DOMAIN, MAX_TUNE_DECISION_BYTES, PLAN_DIGEST_DOMAIN, POLICY_DIGEST_DOMAIN,
-    TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA, TuneBudget,
+    TUNE_CONTRACT_SCHEMA, TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA, TuneBudget,
 };
 
 const HEADER_BYTES: usize = 12;
 const DIGEST_BYTES: usize = 32;
+
+mod selection;
 
 /// One structurally validated CK 0.14 tuning decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +83,9 @@ impl TuneDecision {
         )?;
         let identity = parse_record_fields(top[0], 1..=22, "Identity")?;
         let contract = parse_record_fields(top[1], 1..=32, "Contract")?;
+        if parse_u32(contract[1], "Contract.contractSchema")? != TUNE_CONTRACT_SCHEMA {
+            return Err(TuneDecisionError::LegacyContract);
+        }
         let environment = parse_record_fields(top[3], 1..=19, "Environment")?;
         let target_record = parse_record_envelope(identity[20], "TargetIdentity")?;
         let target = parse_record_fields(target_record, 1..=4, "TargetIdentity")?;
@@ -226,6 +231,8 @@ pub enum TuneDecisionError {
     UnexpectedMagic,
     #[error("unsupported tuning-decision schema")]
     UnsupportedSchema,
+    #[error("legacy tuning contract is inspection-only; rerun 'ckc tune build' with this compiler")]
+    LegacyContract,
     #[error("tuning-decision digest mismatch")]
     DigestMismatch,
     #[error("non-canonical {0}")]
@@ -283,6 +290,10 @@ pub fn decode_tune_decision(bytes: &[u8]) -> Result<TuneDecision, TuneDecisionEr
     validate_selection(fields[6])?;
     validate_replay(fields[7])?;
     validate_cross_record_equalities(&fields)?;
+    let contract = parse_record_fields(fields[1], 1..=32, "Contract")?;
+    if parse_u32(contract[1], "Contract.contractSchema")? == TUNE_CONTRACT_SCHEMA {
+        selection::validate(&fields)?;
+    }
     Ok(TuneDecision {
         bytes: bytes.to_vec(),
     })
@@ -1164,7 +1175,13 @@ fn validate_replay(bytes: &[u8]) -> Result<(), TuneDecisionError> {
 fn validate_contract(bytes: &[u8]) -> Result<(), TuneDecisionError> {
     let fields = parse_record_fields(bytes, 1..=32, "Contract")?;
     for (index, field) in fields.iter().take(5).enumerate() {
-        if parse_u32(field, "Contract schema")? != 1 {
+        let schema = parse_u32(field, "Contract schema")?;
+        let supported = if index == 1 {
+            matches!(schema, 1 | TUNE_CONTRACT_SCHEMA)
+        } else {
+            schema == 1
+        };
+        if !supported {
             return Err(TuneDecisionError::InvalidValue(match index {
                 0 => "Contract.formatSchema",
                 1 => "Contract.contractSchema",

@@ -26,8 +26,8 @@ pub use artifact::{
     ArtifactIdentity, TuneArtifactKind, TuneArtifactRole, TuneArtifactRoleIdentity,
 };
 pub use cache::{
-    CachedTuneEntry, TUNE_CACHE_HARD_LIMIT, TUNE_CACHE_NAMESPACE, TuneCache, TuneCacheDomain,
-    TuneCacheKey, TuneCacheReceipt,
+    CachedTuneEntry, TUNE_CACHE_HARD_LIMIT, TUNE_CACHE_KEY_SCHEMA, TUNE_CACHE_NAMESPACE, TuneCache,
+    TuneCacheDomain, TuneCacheKey, TuneCacheReceipt,
 };
 pub use calibration::{
     CalibrationObservation, CalibrationRecord, calibrate_case_observations, calibrate_cases,
@@ -65,8 +65,8 @@ pub use runner::{
 };
 pub use schema::{
     DECISION_DIGEST_DOMAIN, MAX_TUNE_DECISION_BYTES, PLAN_DIGEST_DOMAIN, POLICY_DIGEST_DOMAIN,
-    TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA, TUNE_INSPECTION_SCHEMA, TUNE_MANIFEST_SCHEMA,
-    TUNE_MEASUREMENT_SCHEMA, TUNE_PLAN_SCHEMA, TuneBudget, TuneContract,
+    TUNE_CONTRACT_SCHEMA, TUNE_DECISION_MAGIC, TUNE_DECISION_SCHEMA, TUNE_INSPECTION_SCHEMA,
+    TUNE_MANIFEST_SCHEMA, TUNE_MEASUREMENT_SCHEMA, TUNE_PLAN_SCHEMA, TuneBudget, TuneContract,
 };
 pub use search::{
     ExpansionDisposition, ExpansionRecord, SearchFrontier, run_checked_tuning_search,

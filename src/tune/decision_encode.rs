@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
+use super::schema::TUNE_CONTRACT_SCHEMA;
 use super::{
     BaselineSessionSeed, CalibrationRecord, CandidateOutcome, CapturedWorkload, MeasurementStream,
     NonPublishableTuneTrial, RoundSummary, SearchFrontier, Selection, SessionDigestMaterial,
@@ -217,8 +218,8 @@ fn identity_record(identity: &TuneDecisionIdentity) -> Vec<u8> {
 
 fn contract_record(budget: TuneBudget) -> Vec<u8> {
     let mut out = Vec::new();
-    for tag in 1..=5 {
-        field(&mut out, tag, &1u32.to_be_bytes());
+    for (tag, schema) in (1..=5).zip([1, TUNE_CONTRACT_SCHEMA, 1, 1, 1]) {
+        field(&mut out, tag, &schema.to_be_bytes());
     }
     let preset = match budget {
         TuneBudget::Quick => 1,

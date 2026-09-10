@@ -9,6 +9,8 @@ pub use store::{CachedTuneEntry, TuneCache, TuneCacheReceipt};
 
 /// Fixed tuning-cache namespace below CK's platform cache root.
 pub const TUNE_CACHE_NAMESPACE: &str = "tune-v1";
+/// Physical cache-key generation for the current tuning contract.
+pub const TUNE_CACHE_KEY_SCHEMA: u32 = 2;
 /// Hard upper bound for all compile, measurement, and decision entries.
 pub const TUNE_CACHE_HARD_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 

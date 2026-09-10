@@ -83,6 +83,10 @@ per-row common-mode normalization; throughput still uses raw retained durations.
 - Standard tuning stays within 30 minutes and its declared candidate/resource
   bounds, peak RSS stays within 2x, tuning cache stays within 4 GiB, and two
   empty-cache cold runs plus one locked warm reuse satisfy exact determinism.
+  Acceptance requires selection contract 2, with fastest-anchored one-point
+  groups and stable artifact/choice/digest tie keys. This removes the legacy
+  absolute-grid boundary, not all possible noise-sensitive boundaries; the full
+  cold/warm identity checks and original timing thresholds remain mandatory.
 - A missing x86-64-v4/AVX-512 or AArch64 SVE2 capability fails closed as an
   actionable runner infrastructure failure, not as a compiler performance
   regression; required platforms are never skipped.

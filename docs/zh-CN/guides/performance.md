@@ -64,6 +64,9 @@ median，并执行闭合 stability rule。Stability failure 使 evidence 无效�
   archive 均不超过 110%。
 - Standard tuning 不超过 30 分钟及声明的 candidate/resource bound，peak RSS 不超过 2x，
   tuning cache 不超过 4 GiB；两个 empty-cache cold run 与一个 locked warm reuse 满足 exact determinism。
+  验收必须使用 Selection Contract 2：以最快项锚定一个百分点分组，组内使用稳定的
+  产物、选择数、摘要排序键。这移除了旧绝对网格边界，不代表消除所有噪声敏感边界；
+  完整冷暖身份检查和原始计时门槛仍须满足。
 - 缺少 x86-64-v4/AVX-512 或 AArch64 SVE2 能力时，以可操作的 runner infrastructure
   failure 失败关闭，而不是误报编译器性能回归；所需平台不得跳过。
 - 独立 predicated-update gate 要求获选仅含一个 choice 的非 baseline Loop SIMD decision，且固定

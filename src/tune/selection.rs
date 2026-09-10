@@ -208,21 +208,10 @@ pub fn derive_search_entrants(
             choice_count: candidate.choice_count,
         });
     }
-    let mut ranked = entrants
-        .into_iter()
-        .map(|entry| Ok((score_percent_ceiling(entry.score_q32)?, entry)))
-        .collect::<Result<Vec<_>, SelectionError>>()?;
-    ranked.sort_by_key(|(score_percent_ceiling, entry)| {
-        (
-            *score_percent_ceiling,
-            entry.primary_artifact_bytes,
-            entry.choice_count,
-            entry.plan_digest,
-        )
-    });
-    ranked.truncate(usize::try_from(limit).map_err(|_| SelectionError::Overflow)?);
+    rank_score_groups(&mut entrants)?;
+    entrants.truncate(usize::try_from(limit).map_err(|_| SelectionError::Overflow)?);
     let _ = ranks;
-    Ok(ranked.into_iter().map(|(_, entry)| entry).collect())
+    Ok(entrants)
 }
 
 /// Recomputes all fields and qualification ranking for one validation round.
@@ -297,19 +286,19 @@ pub fn derive_round_summary(
         .filter(|plan| plan.threshold_passed)
         .map(|plan| {
             let rank = ranks[&plan.plan_digest];
-            Ok((
-                score_percent_ceiling(plan.aggregate_ratio_q32)?,
-                rank.primary_artifact_bytes,
-                rank.choice_count,
-                plan.plan_digest,
-            ))
+            SearchEntrant {
+                score_q32: plan.aggregate_ratio_q32,
+                primary_artifact_bytes: rank.primary_artifact_bytes,
+                choice_count: rank.choice_count,
+                plan_digest: plan.plan_digest,
+            }
         })
-        .collect::<Result<Vec<_>, SelectionError>>()?;
-    passing.sort();
+        .collect::<Vec<_>>();
+    rank_score_groups(&mut passing)?;
     Ok(RoundSummary {
         round,
         plans,
-        ranked_plan_digests: passing.into_iter().map(|entry| entry.3).collect(),
+        ranked_plan_digests: passing.into_iter().map(|entry| entry.plan_digest).collect(),
     })
 }
 
@@ -447,11 +436,40 @@ fn rank_map(
 }
 
 /// Collapses timing evidence to the frozen one-percentage-point ranking resolution.
-fn score_percent_ceiling(score_q32: u64) -> Result<u64, SelectionError> {
-    let scaled = u128::from(score_q32)
-        .checked_mul(100)
-        .ok_or(SelectionError::Overflow)?;
-    u64::try_from(scaled.div_ceil(u128::from(Q32_ONE))).map_err(|_| SelectionError::Overflow)
+fn rank_score_groups(entries: &mut [SearchEntrant]) -> Result<(), SelectionError> {
+    entries.sort_by_key(|entry| {
+        (
+            entry.score_q32,
+            entry.primary_artifact_bytes,
+            entry.choice_count,
+            entry.plan_digest,
+        )
+    });
+    let mut start = 0;
+    while start < entries.len() {
+        let anchor = entries[start].score_q32;
+        let mut end = start + 1;
+        while end < entries.len() {
+            let span = u128::from(entries[end].score_q32)
+                .checked_sub(u128::from(anchor))
+                .and_then(|delta| delta.checked_mul(100))
+                .ok_or(SelectionError::Overflow)?;
+            if span > u128::from(Q32_ONE) {
+                break;
+            }
+            end += 1;
+        }
+        // The fastest score anchors the entire group; adjacent ties must not chain.
+        entries[start..end].sort_by_key(|entry| {
+            (
+                entry.primary_artifact_bytes,
+                entry.choice_count,
+                entry.plan_digest,
+            )
+        });
+        start = end;
+    }
+    Ok(())
 }
 
 fn index_streams<'a>(

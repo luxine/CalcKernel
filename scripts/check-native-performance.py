@@ -1572,6 +1572,9 @@ def schema9_inspect_decision(candidate, decision, field):
     records = inspection.get("records")
     if not isinstance(records, list) or len(records) != 8:
         fail(f"{field} decision inspection tree is incomplete")
+    contract = schema9_tagged(records, 2, field)
+    if schema9_tagged(contract, 2, field) != "2":
+        fail(f"{field} decision requires selection contract 2")
     selection = schema9_tagged(records, 7, field)
     replay = schema9_tagged(records, 8, field)
     candidates = schema9_tagged(records, 6, field)

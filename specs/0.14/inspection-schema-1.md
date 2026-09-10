@@ -4,7 +4,13 @@ Status: normative, language-neutral public inspection contract
 
 This attachment defines both outputs of `ckc tune inspect <decision.cktune>`.
 Inspection first validates framing, bounds, canonical order, the trailing digest,
-and every cross-record equality computable from the self-contained decision.
+and supported cross-record identities. For current selection contract 2 it also
+independently derives search/validation ranking, summaries, outcomes and the
+certificate from the self-contained raw evidence. Legacy contract 1 retains its
+original structural/identity validation and exact inspection bytes; it is
+inspection-only and cannot authorize current tune-use or performance acceptance.
+The `Contract.contractSchema` node exposes this distinction as `"1"` or `"2"`;
+inspection format schema remains 1 and no synthetic compatibility field is added.
 Source/KIR-dependent replay equalities are displayed but are rederived only by
 source-backed tune-use and acceptance checks. Structurally invalid input produces
 no inspection document.

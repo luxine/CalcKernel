@@ -2,8 +2,62 @@ use calckernel::{TuneCache, TuneCacheDomain};
 use sha2::{Digest, Sha256};
 use std::fs;
 
-#[path = "../support/temp.rs"]
-mod temp;
+use super::temp;
+
+fn assert_prior_policy_cache_is_not_reused(domain: TuneCacheDomain, domain_bytes: &[u8]) {
+    let base = temp::temp_dir("tune-cache-policy-generation");
+    let cache = TuneCache::open_at(&base).expect("cache");
+    let material = b"otherwise-identical-inputs";
+    let key_for_schema = |schema: u32| -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(domain_bytes);
+        hash.update(schema.to_be_bytes());
+        if domain == TuneCacheDomain::Measurement {
+            hash.update(32u32.to_be_bytes());
+            hash.update(cache.salt_digest());
+        }
+        hash.update(1u32.to_be_bytes());
+        hash.update((material.len() as u64).to_be_bytes());
+        hash.update(material);
+        hash.finalize().into()
+    };
+    let prior = key_for_schema(1).into();
+    cache
+        .write(domain, prior, b"prior policy")
+        .expect("retained entry");
+
+    let current = cache.derive_key(domain, &[material]);
+    assert_eq!(current.as_bytes(), &key_for_schema(2));
+    assert_eq!(
+        cache.read(domain, current).expect("current policy read"),
+        None
+    );
+    assert!(
+        cache.entry_path(domain, prior).is_file(),
+        "old evidence must not be deleted"
+    );
+}
+
+#[test]
+fn cache_compile_policy_generation_does_not_reuse_prior_keys() {
+    assert_prior_policy_cache_is_not_reused(TuneCacheDomain::Compile, b"CK-TUNE-COMPILE-KEY\0");
+}
+
+#[test]
+fn cache_measurement_policy_generation_does_not_reuse_prior_keys() {
+    assert_prior_policy_cache_is_not_reused(
+        TuneCacheDomain::Measurement,
+        b"CK-TUNE-MEASUREMENT-KEY\0",
+    );
+}
+
+#[test]
+fn cache_decision_policy_generation_does_not_reuse_prior_keys() {
+    assert_prior_policy_cache_is_not_reused(
+        TuneCacheDomain::Decision,
+        b"CK-TUNE-COMPLETED-DECISION-KEY\0",
+    );
+}
 
 #[test]
 fn cache_domains_and_installation_salt_are_part_of_keys() {

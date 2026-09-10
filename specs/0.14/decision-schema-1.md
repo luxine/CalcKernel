@@ -102,7 +102,9 @@ Features are unique and sorted by encoded UTF-8 bytes.
 
 | Tag | Field | Type / required value |
 | ---: | --- | --- |
-| 1..5 | `format/contract/measurement/inspection/planSchema` | five `U32(1)` fields |
+| 1 | `formatSchema` | `U32(1)` |
+| 2 | `contractSchema` | `U32(2)` for current selection; legacy `U32(1)` is inspection-only |
+| 3..5 | `measurement/inspection/planSchema` | three `U32(1)` fields |
 | 6 | `budget` | `U8 Budget` |
 | 7 | `beamWidth` | preset `U32` |
 | 8 | `expansionLimit` | preset `U32` |
@@ -129,6 +131,14 @@ Features are unique and sorted by encoded UTF-8 bytes.
 Preset tuples `(beam, expansion, compile, finalist, entrant, wall-ms)` are quick
 `(4,1024,8,4,2,600000)`, standard `(8,4096,16,8,3,1800000)`, and thorough
 `(16,16384,32,16,4,7200000)`.
+
+Current producers emit contract 2. A legacy contract-1 decision can be structurally
+decoded, inspected and re-encoded with its original bytes, but cannot authorize
+tune-use, warm reuse or current performance acceptance. Unknown contract versions
+are errors. Contract 2 binds the anchored selection algorithm below through the
+policy digest and the complete Contract in session identity; it does not change
+format, manifest, measurement, inspection, plan, or numeric threshold schemas.
+Legacy values are never silently interpreted using the current ranking algorithm.
 
 ## 5. Workload
 
@@ -421,17 +431,20 @@ from every validation case, computes each per-case ratio with the same ceiling,
 then the same weighted aggregate. `pairedWins` is exactly the count whose aggregate
 is strictly below `2^32`. `stable` is the conjunction of the attachment's 16-of-20
 rule for every referenced baseline and candidate stream. `thresholdPassed` and
-`rankedPlanDigests` are then rederived as above. Define
-`scorePercentCeiling = ceil(aggregateRatioQ32 * 100 / 2^32)` with checked `u128`
-and a `u64` result. Ranking uses lower `scorePercentCeiling`, candidate primary
-bytes, choice count, then plan digest. Exact Q32 continues to decide every
-qualification threshold; the one-percentage-point ranking resolution changes no
-threshold.
+`rankedPlanDigests` are then rederived as above. For contract 2, sort qualifying
+plans by exact ascending `aggregateRatioQ32`. The fastest remaining score anchors
+the next group; include exactly scores for which `(score - anchor) * 100 <= 2^32`,
+using checked `u128` arithmetic. Sort that complete group by candidate primary
+bytes, choice count, then plan digest, and repeat from the next ungrouped score.
+The anchor is fixed within a group, so adjacent near-ties never chain past one
+percentage point of baseline. Exact Q32 continues to decide every qualification
+threshold; this replaces the legacy absolute ceiling grid without changing any
+threshold. The decoder implements this derivation independently of the producer.
 
 The validation-entrant set is itself rederived from complete stable phase-3 search
-streams: compute their weighted Q32 score with the same formulas, derive the same
-`scorePercentCeiling`, rank by that ceiling, primary bytes, choice count, and plan
-digest, and take the preset bound. A
+streams: compute their weighted Q32 score with the same formulas, apply the same
+fastest-anchored grouping and within-group keys, and only then take the preset
+bound. A
 candidate absent from that set cannot have validation streams. A timeout at phase
 4..7 proves prior entry but is excluded from both ranked qualifier lists. These
 equalities connect calibration iterations, raw rows, candidates, rounds, and final
@@ -636,6 +649,13 @@ includes Replay, so the derivations are acyclic. All cache hits rehash and valid
 the entry before use; a mismatch is a miss followed by quarantine, never a partial
 hit.
 
+These decision-record origin materials are logical hashes, not physical cache
+lookup keys. All compile, measurement and completed-decision physical keys use
+generation `U32(2)` after their existing domain separator, with the same optional
+measurement salt, material count and length-prefixed materials. The `tune-v1`
+namespace and `CKTCACH1` frame schema remain 1. Prior physical keys are clean
+misses; no legacy decision or cache entry is upgraded in place.
+
 The policy digest remains `H("CK-TUNE-POLICY\0", Contract tags 1..31)`. The outer
 decision digest remains the framing rule in Section 1.
 
@@ -684,6 +704,12 @@ The repository must freeze these before the format implementation passes:
 The test source pins each fixture SHA-256. The same files drive encode, decode,
 inspect, re-encode byte equality, mutation, truncation, limit, and cross-endian
 tests. A golden vector change requires a future format schema.
+
+These frozen vectors retain contract 1 and remain inspection/re-encoding
+regressions, not current replay or performance evidence. Contract-2 tests construct
+complete decisions with independently checked raw search/validation streams,
+policy/session/certificate digests and adversarial summary mutations; real Native
+cold/warm and tune-use tests exercise the current producer.
 
 The exact public JSON and text inspection renderings are defined by
 [`inspection-schema-1.md`](inspection-schema-1.md). The inspection JSON fixture is

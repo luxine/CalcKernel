@@ -8,7 +8,7 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::{
-    TUNE_CACHE_HARD_LIMIT, TuneCacheDomain, TuneCacheKey,
+    TUNE_CACHE_HARD_LIMIT, TUNE_CACHE_KEY_SCHEMA, TuneCacheDomain, TuneCacheKey,
     entry::{decode, encode},
     evict,
     path::{create_private, open_private_read, prepare_root, resolve_default_cache_root},
@@ -102,7 +102,7 @@ impl TuneCache {
     pub fn derive_key(&self, domain: TuneCacheDomain, materials: &[&[u8]]) -> TuneCacheKey {
         let mut digest = Sha256::new();
         digest.update(domain.key_domain());
-        digest.update(1u32.to_be_bytes());
+        digest.update(TUNE_CACHE_KEY_SCHEMA.to_be_bytes());
         if domain == TuneCacheDomain::Measurement {
             digest.update(32u32.to_be_bytes());
             digest.update(self.salt_digest);

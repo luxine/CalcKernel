@@ -708,12 +708,15 @@ metadata excluded from cache identity. Hand-copying one result into multiple run
 fields cannot satisfy the distinct command, namespace, snapshot, and event-log
 equalities.
 
-Decision Schema 1 derives search and validation ordering at its frozen
-one-percentage-point `scorePercentCeiling` resolution before applying artifact
-bytes, choice count, and plan digest. Exact Q32 samples remain in each cold decision
-and continue to enforce all unchanged profitability and stability thresholds; they
-are not used to claim a reproducible order below the declared measurement
-resolution.
+Every decision inspection must contain current `Contract.contractSchema = 2`
+(the canonical JSON value is the string `"2"`); legacy inspection-only contract 1
+cannot count as acceptance evidence. Decision format schema remains 1. Contract 2
+derives search and validation ordering through fastest-anchored groups of at most
+one percentage point of baseline, with artifact bytes, choice count and plan
+digest as within-group keys. Groups never chain through adjacent near-ties.
+Exact Q32 samples and all profitability/stability thresholds remain unchanged.
+Grouping does not guarantee identical selections under arbitrary noise: the full
+two-cold identity comparison and exact warm-reuse requirements above still apply.
 
 `correctness` has exactly `search`, `validation`, `adversarial`,
 `validationDifferential`, `releaseHeldOutDifferential`, `domainDifferential`,

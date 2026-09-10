@@ -127,7 +127,12 @@ observer 唤醒时停止。输出读取线程的 join 不延长成功样本。Ob
 
 Compiler 构建 ordinary baseline，枚举受限 deterministic frontier，在 timing 前验证 correctness，
 轮换 candidate 顺序并执行两轮 validation。Native output set 与 canonical `CKTUNE01` schema-1
-decision 通过可崩溃恢复的 journal 一起发布。`--tune-use` 重建当前 source/KIR/frontier/selected
+decision 通过可崩溃恢复的 journal 一起发布。当前决策使用 Selection Contract 2：搜索计划和
+合格验证计划按每组最快得分锚定，在基线一个百分点跨度内分组，组内按产物字节数、选择数
+及计划摘要排序。分组不能通过相邻项串联；收益、样本和两轮一致要求不变。独立解码器根据
+保留的原始测量校验排名及摘要。旧 Contract-1 决策仍可保持原字节用于 `tune inspect`，但
+`--tune-use` 在访问源码或 Native 输出前以重新调优诊断拒绝旧决策。
+`--tune-use` 重建当前 source/KIR/frontier/selected
 plan 并比较 object-graph/link-recipe identity；compiler、source、schema、CPU/features、profile、
 mode、kind、frontier、plan 或 artifact 任一 stale 都直接失败，不回退到 ordinary build。允许使用
 不同 destination。
@@ -146,6 +151,8 @@ fact、effect 与 optimization inspection 保留完整报告。
 Private `tune-v1` namespace 将 compile、measurement、completed-decision domain 分离；
 measurement key 使用 installation-local CSPRNG salt，并采用 owner-only file、checksum、atomic
 write 与 hard 4 GiB deterministic LRU。完整 exact warm decision 可逐字节重新发布；
+Physical Key Schema 2 将三个 Domain 与旧策略键分离，不改写或删除旧文件。
+Decision Format 和 Cache Frame Schema 仍为 1。
 `--no-tune-cache` 强制 fresh session。普通命令不会打开该 namespace 或运行 harness。
 No command uploads workload、source、decision、measurement、profile 或 artifact data。
 Windows 上的 private tuning publication file 会在安装 protected owner-only ACL 前显式取得

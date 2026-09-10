@@ -155,6 +155,13 @@ The compiler builds the ordinary baseline, enumerates a bounded deterministic
 frontier, validates correctness before timing, rotates candidate order, and
 uses two validation rounds. It publishes the Native output set and one
 canonical `CKTUNE01` schema-1 decision through crash-recoverable journals.
+Current decisions use selection contract 2: search and qualified validation plans
+are grouped within one percentage point of each group's fastest score, then ordered
+by artifact bytes, choice count and plan digest. Groups do not chain; profitability,
+sample and two-round agreement requirements are unchanged. The independent decoder
+checks the ranking and summaries against retained raw measurements. Legacy
+contract-1 decisions remain byte-preserving `tune inspect` inputs, but `--tune-use`
+rejects them with a retuning diagnostic before accessing source or Native outputs.
 `--tune-use` reconstructs the current source/KIR/frontier/selected plan and
 compares object-graph and link-recipe identity; any stale compiler, source,
 schema, CPU/features, profile, mode, kind, frontier, plan, or artifact is an
@@ -178,6 +185,8 @@ The private `tune-v1` namespace separates compile, measurement, and completed
 decision domains, uses an installation-local CSPRNG salt for measurement keys,
 owner-only files, checksums, atomic writes, and a hard 4 GiB deterministic LRU
 limit. An exact complete warm decision can be republished byte-for-byte;
+physical key schema 2 separates all three domains from legacy policy keys without
+rewriting or deleting their files. Decision format and cache-frame schemas remain 1.
 `--no-tune-cache` forces a fresh session. Ordinary commands neither open this
 namespace nor run the harness. No command uploads workload, source, decision,
 measurement, profile, or artifact data.
