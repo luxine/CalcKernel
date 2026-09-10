@@ -145,6 +145,17 @@ report/artifacts and do not rebuild or remeasure a required gate. Changing a
 source, corpus, profile, target/capability, oracle precondition, threshold,
 statistic, exclusion, or checker is a reviewed contract change.
 
+CI runs same-worker diagnostics after either the exact 0.13 historical replay
+preparation fails or the current-candidate performance gate fails. The failed
+step selects the cohort explicitly: `bash scripts/diagnose-native-performance.sh
+historical-v013` reads the retained schema-8 report under
+`CKC_V013_RUNTIME_BUNDLE/schema8`, verifies the recorded schema-7 file's size and
+SHA-256, and inspects the historical replay copies. The default `candidate` mode
+uses the current reports and replay bundles. Historical diagnostics do not require
+a successful 0.13 `replay.tsv` and never fall back to a different cohort. Missing,
+corrupt or redirected evidence still fails diagnostics; original failures remain
+failed and their logs/artifacts are uploaded. Diagnostic success is not acceptance.
+
 PGO, bounded multiversioning, and explicit offline Auto-Tuning ship in 0.14 only
 after these gates pass. Indirect-call promotion, scalable KIR, and adaptive JIT
 PGO remain future work.

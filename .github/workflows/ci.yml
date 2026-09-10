@@ -314,6 +314,7 @@ jobs:
       - name: Prepare retained independently built pinned 0.10 compiler replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.10 --out "$CKC_V010_RUNTIME_BUNDLE"
       - name: Prepare exact 0.13 compiler and historical schema-8 replay
+        id: historical-replay
         run: python3 scripts/prepare-performance-replay.py --baseline 0.13 --with-performance --out "$CKC_V013_RUNTIME_BUNDLE"
       - name: Gate cumulative schemas 7/8 and schema-9 recipe revision 2 like-for-like performance
         id: performance-gate
@@ -328,9 +329,9 @@ jobs:
           cargo bench --features native-toolchain --bench tune_perf -- --task collect-predicated-update --out target/ckc-perf/v0.14-predicated-update-results.json 2>&1 | tee target/ckc-perf/benchmark-predicated-update.log
           python3 scripts/check-v014-predicated-update.py target/ckc-perf/v0.14-predicated-update-results.json --schema-nine target/ckc-perf/v0.14-results.json 2>&1 | tee target/ckc-perf/checker-predicated-update.log
       - name: Diagnose performance on the same worker without replacing the failed gate
-        if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
+        if: always() && (steps.historical-replay.outcome == 'failure' || steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
         timeout-minutes: 20
-        run: bash scripts/diagnose-native-performance.sh
+        run: bash scripts/diagnose-native-performance.sh "${{ steps.historical-replay.outcome == 'failure' && 'historical-v013' || 'candidate' }}"
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

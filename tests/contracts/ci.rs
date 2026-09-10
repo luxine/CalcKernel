@@ -655,7 +655,9 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
     assert!(performance.contains("id: performance-gate"));
     assert!(workflow.contains("performance_diagnostics:"));
     assert!(performance.contains("inputs.performance_diagnostics == true"));
-    assert!(performance.contains("if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)"));
+    assert!(performance.contains("id: historical-replay"));
+    assert!(performance.contains("if: always() && (steps.historical-replay.outcome == 'failure' || steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)"));
+    assert!(performance.contains("bash scripts/diagnose-native-performance.sh \"${{ steps.historical-replay.outcome == 'failure' && 'historical-v013' || 'candidate' }}\""));
     assert!(performance.contains("fetch-depth: 0"));
     assert!(performance.contains("CKC_V012_RUNTIME_BUNDLE:"));
     assert!(performance.contains("CKC_V011_RUNTIME_BUNDLE:"));
@@ -684,6 +686,7 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
         "lscpu --json",
         "sha256sum",
         "CKC_V012_RUNTIME_BUNDLE",
+        "CKC_V013_RUNTIME_BUNDLE",
         "CKC_V011_RUNTIME_BUNDLE",
         "CKC_V010_RUNTIME_BUNDLE",
         "measuredArtifacts",
@@ -696,6 +699,8 @@ fn performance_ci_failures_should_keep_same_worker_replay_diagnostics_without_by
         "v0.13-results.json",
         "schema8-files.tsv",
         "v012-replay-sha256.txt",
+        "resolve-performance-diagnostic-report.py",
+        "diagnostic-stage.txt",
     ] {
         assert!(
             script.contains(required),

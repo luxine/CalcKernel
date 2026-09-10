@@ -121,5 +121,14 @@ Report 在独立 checker 读取前 canonicalize 并 hash；benchmark 本身不�
 target/capability、oracle precondition、threshold、statistic、exclusion 或 checker 均属于需评审
 contract change。
 
+CI 在 exact 0.13 historical replay preparation 失败或 current-candidate performance gate
+失败后都运行同 worker 诊断，由失败步骤显式选择 cohort：
+`bash scripts/diagnose-native-performance.sh historical-v013` 读取
+`CKC_V013_RUNTIME_BUNDLE/schema8` 下保留的 schema-8 report，核对其中记录的 schema-7
+文件大小和 SHA-256，并检查 historical replay 副本。默认 `candidate` 模式使用当前 report
+和 replay bundle。Historical 诊断不要求已经成功发布 0.13 `replay.tsv`，也不会回退到其他
+cohort。证据缺失、损坏或被重定向时诊断仍然失败；原失败步骤保持失败，日志和 artifact
+仍会上传。诊断成功不代表验收通过。
+
 PGO、受限 multiversioning 与显式 offline Auto-Tuning 只有在这些 gate 通过后才随 0.14
 交付；indirect-call promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。

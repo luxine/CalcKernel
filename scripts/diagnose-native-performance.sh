@@ -3,9 +3,6 @@
 set -euo pipefail
 
 diagnostic_repo="$(git rev-parse --show-toplevel)"
-diagnostic_bundle_v012="${CKC_V012_RUNTIME_BUNDLE:?prepare the exact 0.12 replay bundle first}"
-diagnostic_bundle_v011="${CKC_V011_RUNTIME_BUNDLE:?prepare the pinned 0.11 replay bundle first}"
-diagnostic_bundle_v010="${CKC_V010_RUNTIME_BUNDLE:?prepare the pinned 0.10 replay bundle first}"
 diagnostic_out="$diagnostic_repo/target/performance-diagnostics"
 mkdir -p "$diagnostic_out"
 if command -v lscpu >/dev/null; then
@@ -14,6 +11,31 @@ fi
 uname -a > "$diagnostic_out/host.txt"
 rustc --version --verbose > "$diagnostic_out/rustc.txt"
 git rev-parse HEAD > "$diagnostic_out/candidate-commit.txt"
+diagnostic_stage="${1:-candidate}"
+printf '%s\n' "$diagnostic_stage" > "$diagnostic_out/diagnostic-stage.txt"
+case "$diagnostic_stage" in
+  candidate)
+    diagnostic_report="$diagnostic_repo/target/ckc-perf/results.json"
+    diagnostic_schema8_report="$diagnostic_repo/target/ckc-perf/v0.13-results.json"
+    diagnostic_bundle_v012="${CKC_V012_RUNTIME_BUNDLE:?prepare the exact 0.12 replay bundle first}"
+    diagnostic_bundle_v011="${CKC_V011_RUNTIME_BUNDLE:?prepare the pinned 0.11 replay bundle first}"
+    diagnostic_bundle_v010="${CKC_V010_RUNTIME_BUNDLE:?prepare the pinned 0.10 replay bundle first}"
+    ;;
+  historical-v013)
+    # A failed historical gate has no published v0.13 replay.tsv or current report.
+    diagnostic_historical="${CKC_V013_RUNTIME_BUNDLE:?prepare the exact 0.13 replay first}/schema8"
+    diagnostic_schema8_report="$diagnostic_historical/v0.13-results.json"
+    diagnostic_report="$(python3 -B "$diagnostic_repo/scripts/resolve-performance-diagnostic-report.py" "$diagnostic_schema8_report")"
+    diagnostic_bundle_v012="$diagnostic_historical/replay-v012"
+    diagnostic_bundle_v011="$diagnostic_historical/replay-v011"
+    diagnostic_bundle_v010="$diagnostic_historical/replay-v010"
+    ;;
+  *)
+    printf 'unknown diagnostic stage: %s\n' "$diagnostic_stage" >&2
+    exit 2
+    ;;
+esac
+printf '%s\n' "$diagnostic_report" "$diagnostic_schema8_report" > "$diagnostic_out/report-paths.txt"
 test -s "$diagnostic_bundle_v012/preparation.log"
 test -s "$diagnostic_bundle_v012/replay.tsv"
 test -s "$diagnostic_bundle_v012/ckc-v012"
@@ -24,7 +46,7 @@ test -s "$diagnostic_bundle_v010/preparation.log"
 test -s "$diagnostic_bundle_v010/replay.tsv"
 
 # Resolve only fixed report basenames. The report and bundle themselves are uploaded.
-python3 -B - "$diagnostic_repo/target/ckc-perf/results.json" \
+python3 -B - "$diagnostic_report" \
   "$diagnostic_bundle_v011" "$diagnostic_bundle_v010" \
   > "$diagnostic_out/measured-libraries.tsv" <<'PY'
 import json, pathlib, re, sys
@@ -88,8 +110,8 @@ done < "$diagnostic_out/measured-libraries.tsv"
 
 # Schema-8 diagnostics retain and hash only the files named by the actual report.
 # They never rebuild, remeasure, or substitute for the independent checker.
-if [[ -s "$diagnostic_repo/target/ckc-perf/v0.13-results.json" ]]; then
-  python3 -B - "$diagnostic_repo/target/ckc-perf/v0.13-results.json" \
+if [[ -s "$diagnostic_schema8_report" ]]; then
+  python3 -B - "$diagnostic_schema8_report" \
     > "$diagnostic_out/schema8-files.tsv" <<'PY'
 import hashlib, json, pathlib, re, sys
 report_path = pathlib.Path(sys.argv[1])
