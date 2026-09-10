@@ -170,9 +170,19 @@ evidence-root `FileIdentity`, and `evidenceFiles` is a path-sorted list containi
 them plus every regular file transitively referenced by `schemaEight`. The list is
 the complete contents of one dedicated replay prefix, so an omitted, extra,
 duplicate, or symlink entry is invalid. Its commit and all identities must equal
-`benches/baselines/v0_13_replay.toml`. In a detached clean checkout of that exact
-commit, the retained checker is byte-equal to `scripts/check-native-performance.py`
-there and the checkout copy accepts the retained historical report with its
+`benches/baselines/v0_13_replay.toml`. The compiler commit remains
+`d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a`; its compiler source and frozen replay
+manifest are unchanged. A detached clean checkout receives only
+`benches/baselines/v0_13_void_return_harness.patch`, whose SHA-256 is
+`aed54b72fc04ad94e953a6e30100a3a83f9727fba9c80708815d79dd08d9de99`.
+It changes only `scripts/measure-v013-performance.py` to explicitly bind void
+returns as `ctypes` `restype=None`, including selected-direct calls; the one
+`slice-branch-u64` result remains `c_uint64`. The adapted measurement file has
+SHA-256 `7adc34501fc14f6f7e1a53e9ef02bbfa3b6eba8a738f8ac0ebc2d21e116e1f2f`.
+No other changed or untracked source input is allowed, including staged compiler
+changes. The retained checker remains byte-equal to the original
+`scripts/check-native-performance.py` at the frozen commit, and the checkout
+copy accepts the retained historical report with its
 recorded `candidateVersion=0.13.0`, SHA equal to that checkout, and evidence root
 reconstructed at the report's recorded relative location. Before the checker
 crosses into that detached checkout, the schema-9 evidence root and retained
@@ -180,6 +190,23 @@ report argument are resolved to absolute paths owned by the outer evidence
 closure; the child working directory must never reinterpret them. Historical acceptance
 completes before the separate v0.14 compatibility run or any schema-9 threshold is
 evaluated.
+
+The complete replay prefix additionally retains the exact patch and `replay.tsv`.
+That receipt starts with `ckc-v013-performance-replay<TAB>3` and has exactly the
+twelve metadata fields `commit`, `compilerIdentity`, `compilerSha256`,
+`compilerBytes`, `llvmVersion`, `target`, `cpuPolicy`, `llvmComponentSha256`,
+`recipeSha256`, `adapterSetSha256`, `sourceDiffSha256`, and
+`baselineManifestSha256`. Its four file records are `distributionArchive`,
+`historicalReport`, `historicalChecker`, and `measurementAdapter`, each containing
+the fixed bundle-relative path, byte count and SHA-256. Missing, duplicate,
+unknown or redirected records fail closed. The original three file records must
+also equal the report's archive/report/checker identities. The independent checker
+verifies both retained and repository patch bytes, reconstructs the adapted
+checkout and checks the recorded source diff before and after historical checking.
+`sourceDiffSha256` hashes UTF-8 output of `git diff --binary --full-index
+--no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/
+--no-color --unified=3 HEAD`; recipe and adapter-set digests bind the actual
+measurement adapter rather than claiming an unmodified historical harness.
 
 ## 3. Workload and sampling
 
@@ -509,6 +536,12 @@ and unlisted flags are invalid. The explicit linker endpoints are live-byte
 checked against retained `clangBinary` and `systemLinker`; the latter is an input
 of every oracle command and the former is additionally an input of every Rust
 oracle command. Every oracle process starts with an exactly empty environment.
+
+The collector builds `cSimd` and `rustSimd` only for the five eligible main cases,
+and `genericC` and `genericRust` only for the two domain cases. It retains all
+seven cases, the four CK validation channels, the six main runtime channels, and
+the three domain runtime channels. Unused domain SIMD libraries are not generated;
+extra files are never exempted from the strict evidence closure check.
 
 A `BuildCommand` has exactly `command`, `decision`, and `outputs`. `command` is the
 closed `Command` above. `decision` is the consumed or generated tuning-decision

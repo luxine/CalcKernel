@@ -104,6 +104,33 @@ fn daily_ci_should_keep_fast_quality_independent_of_llvm() {
 }
 
 #[test]
+fn ci_quality_should_retain_history_for_pinned_measurement_replay_tests() {
+    let workflow = read(".github/workflows/ci.yml");
+    let quality = workflow
+        .split("  quality:")
+        .nth(1)
+        .expect("quality job")
+        .split("  native-integration:")
+        .next()
+        .expect("quality job body");
+    let checkout = quality
+        .split("- uses: actions/checkout@")
+        .nth(1)
+        .expect("quality checkout")
+        .split("      - name:")
+        .next()
+        .expect("checkout configuration");
+    assert!(
+        checkout.contains("fetch-depth: 0"),
+        "offline replay tests must be able to clone the exact frozen historical commit"
+    );
+    assert!(
+        !checkout.contains("ref:"),
+        "retaining history must not replace the exact candidate checkout"
+    );
+}
+
+#[test]
 fn typescript_oracle_should_be_an_immutable_repository_fixture() {
     let manifest = read("tests/oracles/typescript/package.json");
     for required in [

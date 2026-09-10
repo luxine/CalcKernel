@@ -33,6 +33,11 @@ RUST_VERSION = "1.90.0"
 ORACLE_MANIFEST_SHA256 = "e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3"
 DEFAULT_BASELINE_MANIFEST = REPO / "benches/baselines/v0_10_compiler.toml"
 V013_REPLAY_MANIFEST = REPO / "benches/baselines/v0_13_replay.toml"
+V013_COMMIT = "d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a"
+V013_MANIFEST_SHA256 = "fe5233fec2525726db8e46a864cca5fe179eef91988baf295fd070d9957d068c"
+V013_ADAPTER = "v0_13_void_return_harness.patch"
+V013_ADAPTER_SHA256 = "aed54b72fc04ad94e953a6e30100a3a83f9727fba9c80708815d79dd08d9de99"
+V013_MEASUREMENT_SHA256 = "7adc34501fc14f6f7e1a53e9ef02bbfa3b6eba8a738f8ac0ebc2d21e116e1f2f"
 RECIPE_FILES = [
     "scripts/prepare-performance-replay.py",
     "scripts/audit-performance-oracles.py",
@@ -161,6 +166,7 @@ SCHEMA9_RECIPE_FILES = [
     "scripts/measure-v014-performance.py", "scripts/check-native-performance.py",
     "scripts/audit-performance-oracles.py", "scripts/package-v014-performance-archive.py",
     "LICENSE", "THIRD_PARTY_NOTICES.md", "benches/baselines/v0_13_replay.toml",
+    "benches/baselines/v0_13_void_return_harness.patch",
     "specs/0.14/performance-schema-9.md",
 ]
 SCHEMA9_CASES = {
@@ -2535,6 +2541,124 @@ def schema9_check_evidence_closure(report, evidence_root):
         fail(f"schema-9 evidence closure mismatch: missing={missing}, unknown={unknown}")
 
 
+def schema9_check_v013_replay_receipt(report, evidence_root):
+    replay = report["v013ReplayBundle"]
+    prefix = schema9_relative(replay["manifest"]["path"], "v0.13 manifest").parts[0]
+    bundle = evidence_root / prefix
+    if not bundle.is_dir() or bundle.is_symlink():
+        fail("schema-9 v0.13 replay bundle must be a direct directory")
+    receipt_path = f"{prefix}/replay.tsv"
+    receipt_records = [record for record in replay["evidenceFiles"] if record["path"] == receipt_path]
+    if len(receipt_records) != 1:
+        fail("schema-9 v0.13 replay receipt must have one retained identity")
+    receipt = check_schema9_file(receipt_records[0], evidence_root,
+                                 "schema-9 v0.13 replay receipt", "evidence")
+    raw = receipt.read_bytes().decode("utf-8")
+    lines = raw.removesuffix("\n").split("\n")
+    if (not raw.endswith("\n") or "\r" in raw or "\0" in raw
+            or not lines or lines[0] != "ckc-v013-performance-replay\t3"):
+        fail("schema-9 v0.13 replay receipt schema mismatch")
+    expected = {
+        "commit": V013_COMMIT,
+        "compilerIdentity": f"calckernel 0.13.0 ({V013_COMMIT})",
+        "compilerSha256": replay["compiler"]["sha256"],
+        "compilerBytes": str(replay["compiler"]["bytes"]),
+        "llvmVersion": LLVM_VERSION,
+        "target": f"linux-{report['hardware']['arch']}",
+        "cpuPolicy": "native",
+        "llvmComponentSha256": report["toolchain"]["componentManifest"]["sha256"],
+        "recipeSha256": named_digest(RECIPE_FILES),
+        "adapterSetSha256": named_digest([f"benches/baselines/{V013_ADAPTER}"]),
+        "baselineManifestSha256": V013_MANIFEST_SHA256,
+    }
+    metadata_fields = set(expected) | {"sourceDiffSha256"}
+    record_paths = {
+        "distributionArchive": ("ckc-v013-distribution.tar.gz", "archive"),
+        "historicalReport": ("schema8/v0.13-results.json", "schemaEight"),
+        "historicalChecker": ("check-native-performance-v013.py", "checker"),
+        "measurementAdapter": (V013_ADAPTER, None),
+    }
+    metadata, records = {}, {}
+    for line in lines[1:]:
+        parts = line.split("\t")
+        key = parts[0]
+        if len(parts) == 2 and key in metadata_fields and parts[1]:
+            if key in metadata:
+                fail("schema-9 duplicate v0.13 replay metadata")
+            metadata[key] = parts[1]
+        elif len(parts) == 4 and key in record_paths:
+            if (key in records or re.fullmatch(r"[1-9][0-9]*", parts[2]) is None
+                    or re.fullmatch(r"[0-9a-f]{64}", parts[3]) is None):
+                fail("schema-9 invalid or duplicate v0.13 replay file record")
+            records[key] = parts[1], int(parts[2]), parts[3]
+        else:
+            fail("schema-9 unknown or malformed v0.13 replay receipt record")
+    if set(metadata) != metadata_fields or set(records) != set(record_paths):
+        fail("schema-9 incomplete v0.13 replay receipt")
+    for key, value in expected.items():
+        if metadata[key] != value:
+            fail(f"schema-9 v0.13 replay {key} differs from pinned identity")
+    if re.fullmatch(r"[0-9a-f]{64}", metadata["sourceDiffSha256"]) is None:
+        fail("schema-9 v0.13 source-diff digest is malformed")
+    for kind, (relative, foreign_key) in record_paths.items():
+        name, size, digest = records[kind]
+        if name != relative:
+            fail(f"schema-9 v0.13 {kind} path mismatch")
+        verify_file(bundle / name, size, digest, f"schema-9 v0.13 {kind}")
+        if foreign_key is not None and replay[foreign_key] != {
+            "root": "evidence", "path": f"{prefix}/{name}", "bytes": size, "sha256": digest,
+        }:
+            fail(f"schema-9 v0.13 {kind} differs from report identity")
+    adapter = bundle / V013_ADAPTER
+    repository_adapter = REPO / "benches/baselines" / V013_ADAPTER
+    for path in (adapter, repository_adapter):
+        if path.is_symlink() or not path.is_file() or file_digest(path) != V013_ADAPTER_SHA256:
+            fail("schema-9 historical measurement adapter differs from its pinned bytes")
+    if (replay["commit"] != V013_COMMIT or report["v013ReplayCommit"] != V013_COMMIT
+            or file_digest(V013_REPLAY_MANIFEST) != V013_MANIFEST_SHA256):
+        fail("schema-9 v0.13 frozen compiler identity changed")
+    return adapter, metadata["sourceDiffSha256"]
+
+
+def schema9_historical_git(checkout, *arguments):
+    result = subprocess.run(
+        ["git", *arguments], cwd=checkout, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, check=False,
+    )
+    if result.returncode:
+        fail(f"schema-9 historical Git verification failed: {result.stdout[-2000:]}")
+    return result.stdout
+
+
+def schema9_historical_measurement_source_diff(checkout):
+    if schema9_historical_git(checkout, "rev-parse", "HEAD").strip() != V013_COMMIT:
+        fail("schema-9 historical measurement source checkout moved")
+    if schema9_historical_git(checkout, "ls-files", "--others", "--exclude-standard").strip():
+        fail("schema-9 historical measurement source has unexpected untracked inputs")
+    names = schema9_historical_git(checkout, "diff", "--name-only", "HEAD").splitlines()
+    measurement = checkout / "scripts/measure-v013-performance.py"
+    if (names != ["scripts/measure-v013-performance.py"] or measurement.is_symlink()
+            or not measurement.is_file() or file_digest(measurement) != V013_MEASUREMENT_SHA256):
+        fail("schema-9 historical measurement source differs from the exact approved adapter")
+    diff = schema9_historical_git(
+        checkout, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+        "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "--unified=3", "HEAD",
+    )
+    return hashlib.sha256(diff.encode("utf-8")).hexdigest()
+
+
+def schema9_prepare_historical_measurement(checkout, adapter, source_diff):
+    if adapter.is_symlink() or not adapter.is_file() or file_digest(adapter) != V013_ADAPTER_SHA256:
+        fail("schema-9 historical measurement adapter differs from its pinned bytes")
+    if (schema9_historical_git(checkout, "rev-parse", "HEAD").strip() != V013_COMMIT
+            or schema9_historical_git(checkout, "status", "--porcelain", "--untracked-files=all").strip()):
+        fail("schema-9 historical measurement adapter requires a clean pinned checkout")
+    schema9_historical_git(checkout, "apply", "--check", str(adapter))
+    schema9_historical_git(checkout, "apply", str(adapter))
+    if schema9_historical_measurement_source_diff(checkout) != source_diff:
+        fail("schema-9 historical measurement source-diff differs from the replay receipt")
+
+
 def schema9_check_replay(report, evidence_root):
     evidence_root = evidence_root.resolve()
     replay = report["v013ReplayBundle"]
@@ -2553,6 +2677,7 @@ def schema9_check_replay(report, evidence_root):
     manifest = tomllib.loads(retained_manifest.read_text(encoding="utf-8"))
     if manifest.get("commit") != replay["commit"] or manifest.get("version") != "0.13.0":
         fail("schema-9 retained v0.13 manifest identity mismatch")
+    measurement_adapter, source_diff = schema9_check_v013_replay_receipt(report, evidence_root)
     source_checker = subprocess.run(
         ["git", "show", f"{replay['commit']}:scripts/check-native-performance.py"], cwd=REPO,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
@@ -2562,7 +2687,8 @@ def schema9_check_replay(report, evidence_root):
     with tempfile.TemporaryDirectory(prefix="ckc-v013-schema9-check-") as temporary:
         checkout = pathlib.Path(temporary) / "checkout"
         clone = subprocess.run(
-            ["git", "clone", "--quiet", "--shared", str(REPO), str(checkout)],
+            ["git", "clone", "--quiet", "--shared", "--no-checkout",
+             "--config", "core.autocrlf=false", str(REPO), str(checkout)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
         )
         if clone.returncode:
@@ -2573,6 +2699,7 @@ def schema9_check_replay(report, evidence_root):
         )
         if checkout_result.returncode:
             fail(f"schema-9 v0.13 checker revision failed: {checkout_result.stdout[-2000:]}")
+        schema9_prepare_historical_measurement(checkout, measurement_adapter, source_diff)
         historical_report_path = evidence_root / replay["schemaEight"]["path"]
         historical_environment = os.environ.copy()
         historical_environment["GITHUB_SHA"] = replay["commit"]
@@ -2592,6 +2719,8 @@ def schema9_check_replay(report, evidence_root):
         )
         if historical.returncode:
             fail(f"schema-9 retained v0.13 historical evidence failed: {historical.stdout[-3000:]}")
+        if schema9_historical_measurement_source_diff(checkout) != source_diff:
+            fail("schema-9 historical measurement source changed during independent checking")
     historical_report = json.loads(historical_report_path.read_text(encoding="utf-8"))
     if (historical_report.get("candidateVersion") != "0.13.0"
             or historical_report.get("candidateSha") != replay["commit"]):

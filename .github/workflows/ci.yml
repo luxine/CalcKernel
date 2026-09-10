@@ -36,6 +36,9 @@ jobs:
       CALCKERNEL_TS_ROOT: ${{ github.workspace }}/tests/oracles/typescript
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          # Offline measurement-adapter tests clone the exact historical commit.
+          fetch-depth: 0
       - name: Verify exact checkout SHA
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -347,6 +350,7 @@ jobs:
             target/performance-runtime-replay-v013/ckc-v013-distribution.tar.gz
             target/performance-runtime-replay-v013/replay.tsv
             target/performance-runtime-replay-v013/preparation.log
+            target/performance-runtime-replay-v013/v0_13_void_return_harness.patch
             target/performance-runtime-replay-v013/schema8/
             target/performance-runtime-replay-v013/check-native-performance-v013.py
             target/performance-runtime-replay-v011/ckc-v011

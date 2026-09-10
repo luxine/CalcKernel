@@ -1,0 +1,10 @@
+diff --git a/scripts/measure-v013-performance.py b/scripts/measure-v013-performance.py
+index ddbccc53d0f50ba59426509f4ae9a8646acb0457..d2c664a0225488279c8e3fdb1d82aebf1025e382 100644
+--- a/scripts/measure-v013-performance.py
++++ b/scripts/measure-v013-performance.py
+@@ -441,4 +441,5 @@
+     def _bind_signature(self):
+         abi = self.case["abi"]
++        self.function.restype = None
+         if abi == "slice-branch-u64":
+             self.function.argtypes = [

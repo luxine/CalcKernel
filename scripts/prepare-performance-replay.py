@@ -20,6 +20,9 @@ import tomllib
 
 V013_COMMIT = "d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a"
 V013_MANIFEST_SHA256 = "fe5233fec2525726db8e46a864cca5fe179eef91988baf295fd070d9957d068c"
+V013_ADAPTER = "v0_13_void_return_harness.patch"
+V013_ADAPTER_SHA256 = "aed54b72fc04ad94e953a6e30100a3a83f9727fba9c80708815d79dd08d9de99"
+V013_MEASUREMENT_SHA256 = "7adc34501fc14f6f7e1a53e9ef02bbfa3b6eba8a738f8ac0ebc2d21e116e1f2f"
 V012_COMMIT = "e1bcea461492a5a2619cdb960ea00dd668847f0a"
 V012_MANIFEST_SHA256 = "9e365c4cca49758dba1820d9cb63e468979bb016dcd14df165a06d316f70a2ea"
 BASELINE_COMMIT = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
@@ -80,7 +83,7 @@ def baseline_identity(version: str) -> dict:
             "compiler": "ckc-v013",
             "header": "ckc-v013-performance-replay",
             "runtimeAbi": "2",
-            "adapters": (),
+            "adapters": ((V013_ADAPTER, V013_ADAPTER_SHA256),),
         }
     if version == "0.12":
         return {
@@ -129,7 +132,8 @@ def validate_pins(repo: pathlib.Path, version: str = "0.12") -> dict:
     if manifest.get("commit") != identity["commit"]:
         raise ValueError(f"the frozen V{version} commit identity has changed")
     for name, digest in identity["adapters"]:
-        if sha256_file(baseline / name) != digest:
+        adapter = baseline / name
+        if adapter.is_symlink() or not adapter.is_file() or sha256_file(adapter) != digest:
             raise ValueError(f"pinned replay adapter has changed: {name}")
     source_digests = manifest.get("source_digests", manifest)
     if version in {"0.12", "0.13"}:
@@ -259,6 +263,31 @@ def host_identity() -> tuple[str, str, str]:
     return target, triple, ".so" if os_name == "linux" else ".dylib"
 
 
+def replay_source_state(source: pathlib.Path, identity: dict, run) -> tuple[str, str]:
+    if run(["git", "rev-parse", "HEAD"], source).strip() != identity["commit"]:
+        raise ValueError("baseline checkout moved during preparation")
+    if run(["git", "ls-files", "--others", "--exclude-standard"], source).strip():
+        raise ValueError("unexpected untracked baseline source input")
+    names = set(run(["git", "diff", "--name-only", "HEAD"], source).splitlines())
+    expected_names = {
+        "0.10": {"build.rs", "benches/ckc_perf.rs"},
+        "0.13": {"scripts/measure-v013-performance.py"},
+    }.get(identity["version"], set())
+    if names != expected_names:
+        raise ValueError("only the fixed version-specific adapters may modify baseline source")
+    if identity["version"] == "0.13":
+        measurement = source / "scripts/measure-v013-performance.py"
+        if (measurement.is_symlink() or not measurement.is_file()
+                or sha256_file(measurement) != V013_MEASUREMENT_SHA256):
+            raise ValueError("historical measurement postimage differs from the approved adapter")
+    diff = run([
+        "git", "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+        "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "--unified=3", "HEAD",
+    ], source)
+    status = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
+    return status, hashlib.sha256(diff.encode("utf-8")).hexdigest()
+
+
 def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
             with_performance: bool = False) -> None:
     repo = repo.resolve()
@@ -313,25 +342,20 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
             raise ValueError("baseline checkout is not the exact pinned commit")
         if run(["git", "status", "--porcelain", "--untracked-files=all"], source).strip():
             raise ValueError("baseline checkout must be clean before approved adapters")
+        measurement_adapters = []
         for name, digest in identity["adapters"]:
             patch = repo / "benches/baselines" / name
-            if sha256_file(patch) != digest:
+            if patch.is_symlink() or not patch.is_file() or sha256_file(patch) != digest:
                 raise ValueError(f"adapter changed during preparation: {name}")
             run(["git", "apply", "--check", patch], source)
             run(["git", "apply", patch], source)
+            if version == "0.13":
+                retained = out / name
+                shutil.copy2(patch, retained)
+                measurement_adapters.append((name, digest))
 
         def source_state() -> tuple[str, str]:
-            if run(["git", "rev-parse", "HEAD"], source).strip() != identity["commit"]:
-                raise ValueError("baseline checkout moved during preparation")
-            if run(["git", "ls-files", "--others", "--exclude-standard"], source).strip():
-                raise ValueError("unexpected untracked baseline source input")
-            names = set(run(["git", "diff", "--name-only"], source).splitlines())
-            expected_names = {"build.rs", "benches/ckc_perf.rs"} if version == "0.10" else set()
-            if names != expected_names:
-                raise ValueError("only the fixed version-specific adapters may modify baseline source")
-            diff = run(["git", "diff", "--binary", "--full-index", "--no-ext-diff"], source)
-            status = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
-            return status, hashlib.sha256(diff.encode("utf-8")).hexdigest()
+            return replay_source_state(source, identity, run)
 
         original_state = source_state()
         run(["rustc", "+1.90.0", "--version", "--verbose"], source)
@@ -492,6 +516,14 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12",
             retained = out / relative
             records.append(
                 f"{kind}\t{relative}\t{retained.stat().st_size}\t{sha256_file(retained)}"
+            )
+        for relative, expected_digest in measurement_adapters:
+            retained = out / relative
+            if (retained.is_symlink() or not retained.is_file()
+                    or sha256_file(retained) != expected_digest):
+                raise ValueError("retained historical measurement adapter changed before publication")
+            records.append(
+                f"measurementAdapter\t{relative}\t{retained.stat().st_size}\t{expected_digest}"
             )
         (out / "replay.tsv").write_text("\n".join(records) + "\n", encoding="utf-8", newline="\n")
     # The detached clone is owned build scratch, not replay evidence. Retaining it

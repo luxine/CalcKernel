@@ -16,6 +16,22 @@ training/evaluation split 和 source-level precondition，禁用 fast math/contr
 differential 与 undefined-behavior audit。Training data 不作为 held-out timing evidence；
 correctness 另含 adversarial corpus。
 
+Schema 9 另行重放 v0.13 commit
+`d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a`，其编译器源码与原始 checker 保持不变。
+SHA 固定的 `benches/baselines/v0_13_void_return_harness.patch` 仅修改历史 Python 测量器：
+四类 void 内核 ABI 显式使用 `restype=None`，包括 selected-direct 调用；
+`slice-branch-u64` 仍返回 `c_uint64`。当前 schema-8 collector 使用相同的正确原型。
+Replay 保留补丁及其 `measurementAdapter` receipt，同时绑定 adapter-set、recipe 与精确
+source-diff digest。Preparer 和独立 checker 分别验证唯一允许修改的文件及其固定 postimage；
+原始历史 checker 在经过验证、仅测量器发生变化的 checkout 中运行。
+这是显式的测量修正，不是更换历史编译器，也不豁免任何失败的性能门槛。详见
+[schema-9 replay 契约](../../../specs/0.14/performance-schema-9.md)。
+
+Schema-9 collector 仅为五个 eligible case 构建显式 C/Rust SIMD oracle，仅为两个 domain
+case 构建 generic C/Rust oracle。全部七个 case、四条 CK validation channel、六条 main
+runtime channel 与三条 domain runtime channel 仍然必需。不生成未使用的 domain SIMD
+library；checker 仍拒绝任何未被引用的 evidence 文件。
+
 ## Sampling protocol
 
 全部 timed channel 使用相同 source mode、input、batch、process 与 CPU policy。Dynamic load、

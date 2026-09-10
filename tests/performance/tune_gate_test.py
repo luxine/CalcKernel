@@ -429,6 +429,9 @@ class SchemaNineContractTests(unittest.TestCase):
         relative_evidence = pathlib.Path(os.path.relpath(evidence, REPO))
         with patch.object(gate, "check_schema9_file"), \
                 patch.object(gate, "schema9_check_tree"), \
+                patch.object(gate, "schema9_check_v013_replay_receipt",
+                             return_value=(replay_root / "adapter.patch", "a" * 64)), \
+                patch.object(gate, "schema9_prepare_historical_measurement"), \
                 patch.object(gate.subprocess, "run", side_effect=run):
             with self.assertRaisesRegex(ValueError, "historical sentinel"):
                 gate.schema9_check_replay(report, relative_evidence)

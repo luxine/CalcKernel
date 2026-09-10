@@ -102,6 +102,7 @@ RECIPE_FILES = [
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "benches/baselines/v0_13_replay.toml",
+    "benches/baselines/v0_13_void_return_harness.patch",
     "specs/0.14/performance-schema-9.md",
 ]
 
@@ -1077,6 +1078,19 @@ def build_oracle(kind: str, flavor: str, case: dict, evidence: pathlib.Path,
     return build_record(command, None, [{"role": "primary", "file": file}])
 
 
+def build_case_oracles(case: dict, evidence: pathlib.Path, retained: dict, manifest: dict) -> dict:
+    if case["partition"] == "eligible":
+        flavor, channels = "simd", ("cSimd", "rustSimd")
+    elif case["partition"] == "domain":
+        flavor, channels = "generic", ("genericC", "genericRust")
+    else:
+        fail("unsupported tune case partition")
+    return {
+        channel: build_oracle(kind, flavor, case, evidence, retained, manifest)
+        for kind, channel in zip(("c", "rust"), channels, strict=True)
+    }
+
+
 def measure_channels(candidate_sha: str, case: dict, split: str, input_identity: dict,
                      artifacts: dict[str, dict], builds: dict[str, dict],
                      record: dict, channels: list[str], protocol: str,
@@ -1504,12 +1518,10 @@ def full_report(output: pathlib.Path) -> dict:
             replay_path, retained["replay"]["compiler"], case, source, evidence, retained,
             "v013-pgo", evidence / f"cache/{name}/v013-pgo", profile=profiles[name],
         )
-        c_simd = build_oracle("c", "simd", case, evidence, retained, oracle_manifest)
-        rust_simd = build_oracle("rust", "simd", case, evidence, retained, oracle_manifest)
         builds = {
             "tuned": cold_one["build"], "v014Ordinary": v014,
             "v013Ordinary": v013, "v013Pgo": v013_pgo,
-            "cSimd": c_simd, "rustSimd": rust_simd,
+            **build_case_oracles(case, evidence, retained, oracle_manifest),
         }
         handles = {channel: artifact_handle(evidence, build) for channel, build in builds.items()}
 
@@ -1529,10 +1541,9 @@ def full_report(output: pathlib.Path) -> dict:
             row["eligible"] = True
             main_rows.append(row)
         else:
-            generic_c = build_oracle("c", "generic", case, evidence, retained, oracle_manifest)
-            generic_rust = build_oracle("rust", "generic", case, evidence, retained, oracle_manifest)
             domain_builds = {
-                "tuned": cold_one["build"], "genericC": generic_c, "genericRust": generic_rust,
+                "tuned": cold_one["build"],
+                "genericC": builds["genericC"], "genericRust": builds["genericRust"],
             }
             domain_handles = {
                 channel: artifact_handle(evidence, build)

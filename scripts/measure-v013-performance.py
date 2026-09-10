@@ -440,6 +440,7 @@ class Kernel:
 
     def _bind_signature(self):
         abi = self.case["abi"]
+        self.function.restype = None
         if abi == "slice-branch-u64":
             self.function.argtypes = [
                 ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32,

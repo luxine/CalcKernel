@@ -20,6 +20,27 @@ fast math/contraction, and pass differential plus undefined-behavior audits.
 Training data is never timed as held-out evidence. Correctness also includes a
 separate adversarial corpus.
 
+Schema 9 additionally replays v0.13 commit
+`d85e0c786aaeeaa4dbaab9bffa01fcbd5f7c9f5a` with its compiler source and original
+checker unchanged. The SHA-pinned
+`benches/baselines/v0_13_void_return_harness.patch` changes only the historical
+Python measurement harness: all four void kernel ABIs explicitly use
+`restype=None`, including selected-direct calls; `slice-branch-u64` still returns
+`c_uint64`. The current schema-8 collector uses those same prototypes.
+The replay retains the patch and its `measurementAdapter` receipt, binding the
+adapter-set, recipe and exact source-diff digests. Preparation and the independent
+checker each verify the only permitted changed file and its pinned postimage;
+the original historical checker runs in that verified measurement-only checkout.
+This is an explicit measurement correction, not a new historical compiler or a
+waiver of any failed performance gate. See the
+[schema-9 replay contract](../../specs/0.14/performance-schema-9.md).
+
+Schema-9 collection builds explicit C/Rust SIMD oracles only for its five eligible
+cases and generic C/Rust oracles only for its two domain cases. All seven cases,
+four CK validation channels, six main runtime channels and three domain runtime
+channels remain required. Unused domain SIMD libraries are not generated; the
+checker still rejects every unreferenced evidence file.
+
 ## Sampling protocol
 
 Every timed channel uses identical source mode, input, batch, process, and CPU
