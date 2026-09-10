@@ -132,6 +132,16 @@ decision 通过可崩溃恢复的 journal 一起发布。当前决策使用 Sele
 及计划摘要排序。分组不能通过相邻项串联；收益、样本和两轮一致要求不变。独立解码器根据
 保留的原始测量校验排名及摘要。旧 Contract-1 决策仍可保持原字节用于 `tune inspect`，但
 `--tune-use` 在访问源码或 Native 输出前以重新调优诊断拒绝旧决策。
+
+Contract-2 选择稳定性校验失败时，stderr 报告按解码顺序首个被拒绝的流：`phase`
+（3 为 search，5/7 为第 1/2 轮 validation）、`round`、`case`、`plan`、`iterations`、
+`inRange`、`required`、`upperMedianNs`、`minimaNs` 与 `callsNs`。计时单位为纳秒；
+全部 20 个 minimum 及各自三次原始调用计时保持记录中的行/调用顺序。Upper median
+和原 16-of-20、包含边界的 ±20% 规则不变。案例名先保留至多 64 个 Unicode 标量值，再转义输出；
+`caseBytes` 给出原 UTF-8 字节数，`caseTruncated` 明示截断。诊断为低于 4096 字节的
+有界单行，不包含环境变量值，stdout 不输出成功 inspection 文本或 JSON。该诊断
+不发布非法决策，也不改变有效决策字节、cache 版本、采样或验收规则。
+
 `--tune-use` 重建当前 source/KIR/frontier/selected
 plan 并比较 object-graph/link-recipe identity；compiler、source、schema、CPU/features、profile、
 mode、kind、frontier、plan 或 artifact 任一 stale 都直接失败，不回退到 ordinary build。允许使用

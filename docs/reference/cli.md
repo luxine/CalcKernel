@@ -162,6 +162,19 @@ sample and two-round agreement requirements are unchanged. The independent decod
 checks the ranking and summaries against retained raw measurements. Legacy
 contract-1 decisions remain byte-preserving `tune inspect` inputs, but `--tune-use`
 rejects them with a retuning diagnostic before accessing source or Native outputs.
+
+A contract-2 selection-stability rejection reports the first rejected stream in
+decoding order on stderr: `phase` (3 = search, 5/7 = validation rounds 1/2),
+`round`, `case`, `plan`, `iterations`, `inRange`, `required`, `upperMedianNs`,
+`minimaNs` and `callsNs`. Timings are nanoseconds; all 20 minima and their three
+raw calls remain in recorded row/call order. The upper median and required
+16-of-20 inclusive ±20% rule are unchanged. Case labels retain at most 64 Unicode
+scalar values before escaping; `caseBytes` gives the original UTF-8 length and
+`caseTruncated` makes shortening explicit. The diagnostic is one bounded line below 4096 bytes,
+does not include environment values, and does not emit successful inspection
+text or JSON on stdout. It does not publish an invalid decision or alter valid
+decision bytes, cache versions, sampling or acceptance rules.
+
 `--tune-use` reconstructs the current source/KIR/frontier/selected plan and
 compares object-graph and link-recipe identity; any stale compiler, source,
 schema, CPU/features, profile, mode, kind, frontier, plan, or artifact is an

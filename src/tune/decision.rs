@@ -243,6 +243,9 @@ pub enum TuneDecisionError {
     ResourceLimit(&'static str),
     #[error("invalid value for {0}")]
     InvalidValue(&'static str),
+    /// Bounded, escaped context allocated only for a rejected selection stream.
+    #[error("invalid value for MeasurementStream.selection stability: {0}")]
+    UnstableSelectionStream(Box<str>),
     #[error("invalid UTF-8")]
     InvalidUtf8,
 }

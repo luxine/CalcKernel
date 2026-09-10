@@ -258,16 +258,17 @@ fn candidate<'a>(bytes: &'a [u8], cases: &BTreeMap<&str, Case<'_>>) -> Check<Can
         let mut sorted = values;
         sorted.sort_unstable();
         let median = sorted[10];
-        let stable = values
+        let in_range = values
             .iter()
             .filter(|value| {
                 let scaled = u128::from(**value) * 5;
                 u128::from(median) * 4 <= scaled && scaled <= u128::from(median) * 6
             })
-            .count()
-            >= 16;
-        if !stable {
-            return Err(invalid("MeasurementStream.selection stability"));
+            .count();
+        if in_range < 16 {
+            return Err(stability_diagnostic(
+                &stream, id, &values, median, in_range,
+            )?);
         }
         if samples
             .insert((phase, id), Samples { values, median })
@@ -288,6 +289,45 @@ fn candidate<'a>(bytes: &'a [u8], cases: &BTreeMap<&str, Case<'_>>) -> Check<Can
         fields,
         samples,
     })
+}
+
+fn stability_diagnostic(
+    stream: &[&[u8]],
+    id: &str,
+    minima: &[u64; 20],
+    median: u64,
+    in_range: usize,
+) -> Check<TuneDecisionError> {
+    // Re-read the already validated calls only on the rejected path.
+    let calls = records(stream[5], 20, "MeasurementStream.rows")?
+        .into_iter()
+        .map(|row| {
+            let fields = parse_record_fields(row, 1..=4, "MeasurementRow")?;
+            parse_u64_list(fields[2], 3, "MeasurementRow.callsNs")
+        })
+        .collect::<Check<Vec<_>>>()?;
+    let case: String = id.chars().take(64).collect();
+    let case_truncated = case.len() != id.len();
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let plan: String = stream[3]
+        .iter()
+        .flat_map(|byte| {
+            [
+                char::from(HEX[usize::from(byte >> 4)]),
+                char::from(HEX[usize::from(byte & 15)]),
+            ]
+        })
+        .collect();
+    let phase = stream[0][0];
+    let round = stream[1][0];
+    let iterations = parse_u64(stream[4], "MeasurementStream.iterations")?;
+    Ok(TuneDecisionError::UnstableSelectionStream(
+        format!(
+            "phase={phase} round={round} case={case:?} caseBytes={} caseTruncated={case_truncated} plan={plan} iterations={iterations} inRange={in_range}/20 required=16 upperMedianNs={median} minimaNs={minima:?} callsNs={calls:?}",
+            id.len(),
+        )
+        .into_boxed_str(),
+    ))
 }
 
 fn sample<'a>(candidate: &'a Candidate<'_>, phase: u8, case: &'a str) -> Check<&'a Samples> {
