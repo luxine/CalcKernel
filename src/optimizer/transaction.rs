@@ -8,6 +8,12 @@ use super::{
     validate_kir_optimization_evidence,
 };
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static CONTRACT_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static CONTRACT_PREFIX_USES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Every append-only identity cursor that belongs to a rollback-capable KIR state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KirIdAllocators {
@@ -147,6 +153,48 @@ pub struct KirVerificationCacheIdentity {
     pub evidence_digest: String,
 }
 
+/// Search-local encoding work, not authority to skip evidence verification.
+/// Borrowing the source prevents its facts from changing while a prefix lives.
+#[derive(Debug)]
+pub(crate) struct KirContractHashPrefix<'a> {
+    generation: u32,
+    contracts: Option<&'a ContractFactSet>,
+    hash: Sha256,
+}
+
+impl<'a> KirContractHashPrefix<'a> {
+    pub(crate) fn new(state: &'a KirVerifiedProgramState) -> Self {
+        let generation = state.evidence_generation();
+        let contracts = state.contract_facts();
+        #[cfg(test)]
+        CONTRACT_ENCODINGS.with(|count| count.set(count.get() + 1));
+        let prefix = format!("generation={generation}\ncontracts={contracts:?}\n");
+        Self {
+            generation,
+            contracts,
+            hash: Sha256::new_with_prefix(prefix.as_bytes()),
+        }
+    }
+
+    fn evidence_digest(
+        &self,
+        contracts: Option<&ContractFactSet>,
+        proofs: &ProofArena,
+        eliminated_guards: &[KirGuardElimination],
+        generation: u32,
+    ) -> Option<String> {
+        if self.generation != generation || self.contracts != contracts {
+            return None;
+        }
+        #[cfg(test)]
+        CONTRACT_PREFIX_USES.with(|count| count.set(count.get() + 1));
+        let suffix = format!("{}guards={eliminated_guards:?}", print_proof_arena(proofs));
+        let mut hash = self.hash.clone();
+        hash.update(suffix.as_bytes());
+        Some(format!("{:x}", hash.finalize()))
+    }
+}
+
 /// The complete rollback domain for one optimizer transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KirVerifiedProgramState {
@@ -229,6 +277,41 @@ impl KirVerifiedProgramState {
         )
     }
 
+    pub(crate) fn from_checked_parts_with_contract_prefix(
+        module: KirModule,
+        contract_facts: Option<ContractFactSet>,
+        proofs: ProofArena,
+        eliminated_guards: Vec<KirGuardElimination>,
+        evidence_generation: u32,
+        optimization_entry_module_units: u32,
+        contract_prefix: &KirContractHashPrefix<'_>,
+    ) -> Result<Self, String> {
+        let validation = validate_kir_optimization_evidence(
+            &module,
+            contract_facts.as_ref(),
+            &proofs,
+            &eliminated_guards,
+            evidence_generation,
+        );
+        if !validation.errors.is_empty() {
+            return Err(validation
+                .errors
+                .into_iter()
+                .map(|error| error.message)
+                .collect::<Vec<_>>()
+                .join("; "));
+        }
+        Self::from_verified_parts_with_contract_prefix(
+            module,
+            contract_facts,
+            proofs,
+            eliminated_guards,
+            evidence_generation,
+            optimization_entry_module_units,
+            contract_prefix,
+        )
+    }
+
     pub(crate) fn from_verified_parts(
         module: KirModule,
         contract_facts: Option<ContractFactSet>,
@@ -244,6 +327,36 @@ impl KirVerifiedProgramState {
             &proofs,
             &eliminated_guards,
             evidence_generation,
+        );
+        Ok(Self {
+            module,
+            contract_facts,
+            proofs,
+            eliminated_guards,
+            evidence_generation,
+            optimization_entry_module_units,
+            ids,
+            verification_cache,
+        })
+    }
+
+    fn from_verified_parts_with_contract_prefix(
+        module: KirModule,
+        contract_facts: Option<ContractFactSet>,
+        proofs: ProofArena,
+        eliminated_guards: Vec<KirGuardElimination>,
+        evidence_generation: u32,
+        optimization_entry_module_units: u32,
+        contract_prefix: &KirContractHashPrefix<'_>,
+    ) -> Result<Self, String> {
+        let ids = KirIdAllocators::for_state(&module, &proofs)?;
+        let verification_cache = cache_identity_with_contract_prefix(
+            &module,
+            contract_facts.as_ref(),
+            &proofs,
+            &eliminated_guards,
+            evidence_generation,
+            contract_prefix,
         );
         Ok(Self {
             module,
@@ -564,6 +677,8 @@ fn cache_identity(
     generation: u32,
 ) -> KirVerificationCacheIdentity {
     let kir_text = print_kir_module(module);
+    #[cfg(test)]
+    CONTRACT_ENCODINGS.with(|count| count.set(count.get() + 1));
     let evidence = format!(
         "generation={generation}\ncontracts={contracts:?}\n{}guards={eliminated_guards:?}",
         print_proof_arena(proofs)
@@ -571,6 +686,25 @@ fn cache_identity(
     KirVerificationCacheIdentity {
         kir_digest: digest(kir_text.as_bytes()),
         evidence_digest: digest(evidence.as_bytes()),
+    }
+}
+
+fn cache_identity_with_contract_prefix(
+    module: &KirModule,
+    contracts: Option<&ContractFactSet>,
+    proofs: &ProofArena,
+    eliminated_guards: &[KirGuardElimination],
+    generation: u32,
+    prefix: &KirContractHashPrefix<'_>,
+) -> KirVerificationCacheIdentity {
+    let Some(evidence_digest) =
+        prefix.evidence_digest(contracts, proofs, eliminated_guards, generation)
+    else {
+        return cache_identity(module, contracts, proofs, eliminated_guards, generation);
+    };
+    KirVerificationCacheIdentity {
+        kir_digest: digest(print_kir_module(module).as_bytes()),
+        evidence_digest,
     }
 }
 
