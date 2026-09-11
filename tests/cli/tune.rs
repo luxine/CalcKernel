@@ -6,6 +6,14 @@ use std::fs;
 #[cfg(feature = "native-toolchain")]
 use super::support::temp::{temp_dir, unique_id};
 
+#[cfg(all(feature = "native-toolchain", unix))]
+#[path = "../support/tune_diagnostics.rs"]
+mod diagnostics;
+
+#[cfg(all(feature = "native-toolchain", unix))]
+#[path = "tune_diagnostics.rs"]
+mod diagnostic_tests;
+
 fn run(args: impl IntoIterator<Item = OsString>) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ckc"))
         .args(args)
@@ -446,10 +454,24 @@ fn tune_build_cold_then_warm_publishes_exact_decision_and_artifact() {
         .env("HOME", &home)
         .output()
         .expect("cold tune build");
+    #[cfg(target_os = "macos")]
+    diagnostics::after_failure(cold.status.success(), || {
+        diagnostics::collect_startup(
+            &root,
+            &source,
+            std::path::Path::new(env!("CARGO_BIN_EXE_ckc")),
+            &runner,
+        )
+        .map_err(|error| error.to_string())
+    });
     assert!(
         cold.status.success(),
         "{}",
         String::from_utf8_lossy(&cold.stderr)
+    );
+    assert!(
+        !root.join("post-failure-startup").exists(),
+        "successful cold build ran failure-only diagnostics"
     );
     assert!(String::from_utf8_lossy(&cold.stdout).contains("fresh session"));
     let artifact_path = calckernel::NativeArtifactPaths::new(

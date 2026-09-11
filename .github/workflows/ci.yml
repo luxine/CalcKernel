@@ -233,7 +233,16 @@ jobs:
           name: native-diagnostics-${{ matrix.name }}
           path: target/native-diagnostics
           if-no-files-found: error
-      - run: cargo test --all-features --locked --test cli
+      - name: Run required CLI suite
+        id: cli-suite
+        run: cargo test --all-features --locked --test cli
+      - name: Upload failed Darwin executable startup evidence
+        if: always() && runner.os == 'macOS' && steps.cli-suite.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-startup-${{ matrix.name }}
+          path: target/tune-cli-tests/cold-warm-*/post-failure-startup
+          if-no-files-found: warn
       - name: Build release compiler on Unix
         if: runner.os != 'Windows'
         run: cargo build --release --features native-toolchain --locked

@@ -333,6 +333,38 @@ fn native_host_ci_should_preserve_parallel_failures_before_darwin_diagnostics() 
 }
 
 #[test]
+fn failed_darwin_cli_should_retain_startup_evidence_without_weakening_the_suite() {
+    let workflow = read(".github/workflows/ci.yml");
+    let suite = workflow
+        .split("      - name: Run required CLI suite\n")
+        .nth(1)
+        .expect("the CLI result needs a stable failure-only upload identity")
+        .split("      - name:")
+        .next()
+        .unwrap();
+    assert!(suite.contains("id: cli-suite"));
+    assert!(suite.contains("run: cargo test --all-features --locked --test cli"));
+    assert!(!suite.contains("continue-on-error"));
+    assert!(!suite.contains("--test-threads"));
+    let upload = workflow
+        .split("      - name: Upload failed Darwin executable startup evidence\n")
+        .nth(1)
+        .expect("failure-only binary and phase evidence must be retained")
+        .split("      - name:")
+        .next()
+        .unwrap();
+    assert!(
+        upload.contains(
+            "if: always() && runner.os == 'macOS' && steps.cli-suite.outcome == 'failure'"
+        )
+    );
+    assert!(upload.contains("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"));
+    assert!(upload.contains("name: executable-startup-${{ matrix.name }}"));
+    assert!(upload.contains("path: target/tune-cli-tests/cold-warm-*/post-failure-startup"));
+    assert!(upload.contains("if-no-files-found: warn"));
+}
+
+#[test]
 fn darwin_crash_diagnostics_should_capture_serial_and_parallel_backtraces() {
     let script = read("scripts/diagnose-native-darwin.sh");
     for required in [
