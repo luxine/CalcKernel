@@ -86,6 +86,23 @@ separate quantities. No threshold authorizes weaker diagnostics, evaluation
 order, modular integer behavior, strict floating semantics, checked first-error
 order, print/effect order, semantic MIR, public ABI, or contract domain.
 
+## Bounded checked-kernel diagnostic
+
+After the original gates, Linux/AArch64 CI separately compares the hash-verified
+checked `specialized_length` CK/C/Rust instruction bodies at their original
+addresses and three fixed copied layouts. Copies are read-execute, never
+write-execute, and must preserve each original's normal and error-prefix behavior.
+One shared input/output workspace and the fixed full sampling schedule are used
+across all layouts. Raw rows, mapped addresses, CPU affinity, resource snapshots
+and available user-only hardware counters are retained under
+`target/performance-diagnostics/checked-aarch64-layout`.
+
+This is a code-placement intervention, not a remeasurement or replacement of
+release evidence. It does not recover historical mappings, change any gate, or
+automatically establish a root cause. Counter intervals include clock-boundary
+work; unavailable or multiplexed counters are not treated as zero. A different
+instruction body is explicitly reported as outside this bounded comparison.
+
 ## Commands and evidence
 
 Local schema/checker/correctness checks precede expensive stable-worker runs:
