@@ -23,6 +23,7 @@ fn phase_records(bytes: &[u8]) -> Vec<Vec<u64>> {
     std::str::from_utf8(bytes)
         .expect("phase UTF-8")
         .lines()
+        .filter(|line| !line.starts_with("CKTUNE-RESOURCES/1\t"))
         .map(|line| {
             let mut columns = line.split('\t');
             assert_eq!(columns.next(), Some("CKTUNE-CHILD/1"));
@@ -33,6 +34,236 @@ fn phase_records(bytes: &[u8]) -> Vec<Vec<u64>> {
             values
         })
         .collect()
+}
+
+fn resource_records(bytes: &[u8]) -> Vec<Vec<&str>> {
+    std::str::from_utf8(bytes)
+        .expect("resource UTF-8")
+        .lines()
+        .filter_map(|line| line.strip_prefix("CKTUNE-RESOURCES/1\t"))
+        .map(|line| line.split('\t').collect())
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn compiled_macho_uuid(path: &std::path::Path) -> String {
+    let bytes = fs::read(path).unwrap();
+    assert!(bytes.len() >= 32);
+    assert_eq!(&bytes[..4], &[0xcf, 0xfa, 0xed, 0xfe]);
+    let commands = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+    let mut offset = 32;
+    for _ in 0..commands {
+        assert!(offset + 8 <= bytes.len());
+        let kind = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        assert!(size >= 8 && size <= bytes.len() - offset);
+        if kind == 0x1b {
+            assert_eq!(size, 24);
+            return bytes[offset + 8..offset + 24]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+        }
+        offset += size;
+    }
+    panic!("the actual compiled child has no Mach-O UUID");
+}
+
+#[test]
+fn resource_probe_pairs_observations_with_every_real_child() {
+    let root = temp_dir(&format!("ckc-diagnostic-resources-{}", unique_id()));
+    let probe = phase_probe(&root);
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    let trace = root.join("trace");
+    let output = diagnostics::run_bounded(
+        Command::new(probe)
+            .arg(&artifact)
+            .arg("16")
+            .env("CK_FIXTURE_TRACE", &trace),
+        &root,
+        "resources",
+        Instant::now() + PHASE_PROBE_TIMEOUT,
+    )
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read(trace).unwrap(), vec![b'x'; 16]);
+    let children = phase_records(&output.stdout);
+    assert_eq!(children.len(), 16);
+    let resources = resource_records(&output.stdout);
+    assert_eq!(
+        resources.len(),
+        16,
+        "every exited child needs an explicit resource record"
+    );
+    for (child, fields) in children.iter().zip(resources) {
+        assert_eq!(fields.len(), 21);
+        let values = fields[..20]
+            .iter()
+            .map(|field| field.parse::<i128>().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(values[0], i128::from(child[0]));
+        assert_eq!(values[1], i128::from(child[1]));
+        assert!(values[2..].iter().all(|value| *value >= -1));
+        assert_eq!(fields[20].len(), 32);
+        assert!(
+            fields[20]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        );
+        if values[2] == 0 {
+            assert_eq!(values[3], 0);
+            assert!(i128::from(child[5]) <= values[4] && values[4] <= values[7]);
+            assert!(values[7] <= i128::from(child[6]));
+        } else {
+            assert_eq!(values[2], -1);
+            assert!(values[3] > 0);
+        }
+        if values[5] == 0 {
+            assert_eq!(values[6], 0);
+            assert!(values[8] > 0 && values[9] > 0);
+            assert!(values[18] > 0 && values[19] >= values[18]);
+            #[cfg(target_os = "macos")]
+            assert_eq!(fields[20], compiled_macho_uuid(&artifact));
+        } else {
+            assert_eq!(values[5], -1);
+            assert!(values[6] > 0);
+            assert!(values[10..20].iter().all(|value| *value == 0));
+            assert_eq!(fields[20], "00000000000000000000000000000000");
+        }
+    }
+}
+
+#[test]
+fn unavailable_resource_queries_do_not_replace_real_child_success() {
+    let root = temp_dir(&format!(
+        "ckc-diagnostic-resource-unavailable-{}",
+        unique_id()
+    ));
+    let mut compiler = Command::new("cc");
+    compiler.arg("-DCK_TUNE_DIAGNOSTIC_NO_RUSAGE=1");
+    let probe = compile_tune_c_fixture(
+        &root,
+        "unavailable-probe",
+        include_str!("../fixtures/tune/cli-executable-diagnostic.c"),
+        compiler,
+    );
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    let output = diagnostics::run_bounded(
+        Command::new(probe).arg(artifact).arg("1"),
+        &root,
+        "unavailable",
+        Instant::now() + PHASE_PROBE_TIMEOUT,
+    )
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty());
+    let children = phase_records(&output.stdout);
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0][10], 1);
+    let resources = resource_records(&output.stdout);
+    assert_eq!(
+        resources.len(),
+        1,
+        "unavailable is explicit, never fabricated zero usage"
+    );
+    let fields = &resources[0];
+    assert_eq!(fields.len(), 21);
+    assert_eq!(fields[2], "-1");
+    assert_eq!(fields[3].parse::<i32>().unwrap(), libc::ENOTSUP);
+    assert_eq!(fields[5], "-1");
+    assert_eq!(fields[6].parse::<i32>().unwrap(), libc::ENOTSUP);
+    assert!(fields[8..20].iter().all(|value| *value == "0"));
+    assert_eq!(fields[20], "00000000000000000000000000000000");
+}
+
+#[test]
+fn resource_records_do_not_make_failed_child_output_acceptable() {
+    let root = temp_dir(&format!("ckc-diagnostic-resource-invalid-{}", unique_id()));
+    let probe = phase_probe(&root);
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    for mode in ["exit", "signal", "empty-output", "wrong-output"] {
+        let output = diagnostics::run_bounded(
+            Command::new(&probe)
+                .arg(&artifact)
+                .arg("1")
+                .env("CK_FIXTURE_MODE", mode),
+            &root,
+            mode,
+            Instant::now() + PHASE_PROBE_TIMEOUT,
+        )
+        .unwrap();
+        assert!(!output.status.success(), "{mode}: {output:?}");
+        let children = phase_records(&output.stdout);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0][10], 0);
+        let resources = resource_records(&output.stdout);
+        assert_eq!(
+            resources.len(),
+            1,
+            "retain resource availability even for {mode}"
+        );
+        assert_eq!(resources[0][1].parse::<u64>().unwrap(), children[0][1]);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn failed_resource_query_retains_errno_without_changing_child_success() {
+    let root = temp_dir(&format!("ckc-diagnostic-resource-error-{}", unique_id()));
+    let mut compiler = Command::new("cc");
+    compiler.arg("-DCK_TUNE_DIAGNOSTIC_RUSAGE_FLAVOR=999");
+    let probe = compile_tune_c_fixture(
+        &root,
+        "invalid-flavor-probe",
+        include_str!("../fixtures/tune/cli-executable-diagnostic.c"),
+        compiler,
+    );
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    let output = diagnostics::run_bounded(
+        Command::new(probe).arg(artifact).arg("1"),
+        &root,
+        "query-error",
+        Instant::now() + PHASE_PROBE_TIMEOUT,
+    )
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty());
+    let children = phase_records(&output.stdout);
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0][10], 1);
+    let resources = resource_records(&output.stdout);
+    assert_eq!(resources.len(), 1);
+    let fields = &resources[0];
+    assert_eq!(fields.len(), 21);
+    assert_eq!(fields[2], "0");
+    assert_eq!(fields[3], "0");
+    assert_eq!(
+        fields[5], "-1",
+        "failed resource queries must remain distinguishable from zero work"
+    );
+    assert_eq!(fields[6].parse::<i32>().unwrap(), libc::EINVAL);
+    assert!(fields[10..20].iter().all(|value| *value == "0"));
+    assert_eq!(fields[20], "00000000000000000000000000000000");
 }
 
 #[test]

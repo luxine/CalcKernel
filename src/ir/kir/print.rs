@@ -4,6 +4,21 @@ use crate::ir::print::MirTypeDisplay;
 
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static KIR_FORMAT_DISPATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// Observe generic formatting only in unit tests; release expansion is exactly
+// the standard write macro. This protects the hot ID writers from regressions.
+macro_rules! write {
+    ($output:expr, $($arguments:tt)*) => {{
+        #[cfg(test)]
+        KIR_FORMAT_DISPATCHES.with(|counter| counter.set(counter.get() + 1));
+        std::write!($output, $($arguments)*)
+    }};
+}
+
 /// Stable textual and in-memory KIR contract version for the current compiler.
 pub const KIR_FORMAT_VERSION: u32 = 3;
 
@@ -44,9 +59,9 @@ pub fn print_kir_module(module: &KirModule) -> String {
     }
     if let Some(layout) = &module.tune_layout {
         for function in &layout.functions {
-            let _ = write!(output, "tune-layout f{}", function.function.index());
+            write_index(&mut output, "tune-layout f", function.function.index(), "");
             for block in &function.blocks {
-                let _ = write!(output, " b{}", block.index());
+                write_index(&mut output, " b", block.index(), "");
             }
             output.push('\n');
         }
@@ -72,20 +87,19 @@ fn write_kir_function(output: &mut String, function: &KirFunction) {
     } else {
         ""
     };
-    let _ = write!(
-        output,
-        "{exported}{tune_noinline}fn f{} {}(",
-        function.id.index(),
-        function.name
-    );
+    output.push_str(exported);
+    output.push_str(tune_noinline);
+    write_index(output, "fn f", function.id.index(), " ");
+    output.push_str(&function.name);
+    output.push('(');
     for (index, param) in function.params.iter().enumerate() {
         if index != 0 {
             output.push_str(", ");
         }
+        write_index(output, "v", param.value.index(), " ");
         let _ = write!(
             output,
-            "v{} {}: {}",
-            param.value.index(),
+            "{}: {}",
             param.name,
             MirTypeDisplay(&param.type_node)
         );
@@ -96,12 +110,8 @@ fn write_kir_function(output: &mut String, function: &KirFunction) {
         write_region(output, region);
     }
     for memory in &function.initial_memory {
-        let _ = write!(
-            output,
-            "\ninitial_memory r{} = m{}",
-            memory.region.index(),
-            memory.version.index()
-        );
+        write_index(output, "\ninitial_memory r", memory.region.index(), " = m");
+        write_index(output, "", memory.version.index(), "");
     }
     for block in &function.blocks {
         output.push('\n');
@@ -111,12 +121,15 @@ fn write_kir_function(output: &mut String, function: &KirFunction) {
 }
 
 fn write_kir_block(output: &mut String, block: &KirBlock) {
-    let _ = write!(output, "{} b{}(", block.label, block.id.index());
+    output.push_str(&block.label);
+    write_index(output, " b", block.id.index(), "(");
     for (index, param) in block.params.iter().enumerate() {
         if index != 0 {
             output.push_str(", ");
         }
-        let _ = write!(output, "v{} {}: ", param.value.index(), param.slot);
+        write_index(output, "v", param.value.index(), " ");
+        output.push_str(&param.slot);
+        output.push_str(": ");
         write_kir_value_type(output, &param.type_node);
     }
     if !block.memory_params.is_empty() {
@@ -128,12 +141,8 @@ fn write_kir_block(output: &mut String, block: &KirBlock) {
             if index != 0 {
                 output.push_str(", ");
             }
-            let _ = write!(
-                output,
-                "m{}: r{}",
-                param.version.index(),
-                param.region.index()
-            );
+            write_index(output, "m", param.version.index(), ": r");
+            write_index(output, "", param.region.index(), "");
         }
     }
     output.push_str("):");
@@ -146,22 +155,22 @@ fn write_kir_block(output: &mut String, block: &KirBlock) {
 }
 
 fn write_region(output: &mut String, region: &KirMemoryRegion) {
-    let _ = write!(output, "region r{} ", region.id.index());
+    write_index(output, "region r", region.id.index(), " ");
     match region.origin {
         KirMemoryRegionOrigin::Conservative => output.push_str("conservative"),
         KirMemoryRegionOrigin::Parameter(value) => {
-            let _ = write!(output, "parameter(v{})", value.index());
+            write_index(output, "parameter(v", value.index(), ")");
         }
         KirMemoryRegionOrigin::RawSlice(value) => {
-            let _ = write!(output, "raw_slice(v{})", value.index());
+            write_index(output, "raw_slice(v", value.index(), ")");
         }
         KirMemoryRegionOrigin::Subslice(value) => {
-            let _ = write!(output, "subslice(v{})", value.index());
+            write_index(output, "subslice(v", value.index(), ")");
         }
     }
-    let _ = write!(output, " partition=r{}", region.partition.index());
+    write_index(output, " partition=r", region.partition.index(), "");
     if let Some(parent) = region.parent {
-        let _ = write!(output, " parent=r{}", parent.index());
+        write_index(output, " parent=r", parent.index(), "");
     }
     if let Some(interval) = &region.byte_interval {
         let _ = write!(
@@ -176,12 +185,12 @@ fn write_region(output: &mut String, region: &KirMemoryRegion) {
 }
 
 fn write_kir_instruction(output: &mut String, instruction: &KirInstruction) {
-    let _ = write!(output, "i{} ", instruction.id.index());
+    write_index(output, "i", instruction.id.index(), " ");
     for (index, result) in instruction.results.iter().enumerate() {
         if index != 0 {
             output.push_str(", ");
         }
-        let _ = write!(output, "v{}: ", result.value.index());
+        write_index(output, "v", result.value.index(), ": ");
         write_kir_value_type(output, &result.type_node);
     }
     if !instruction.results.is_empty() {
@@ -201,7 +210,7 @@ fn write_kir_instruction(output: &mut String, instruction: &KirInstruction) {
             let _ = write!(output, "const_bool {value}");
         }
         KirInstructionKind::Copy { value } => {
-            let _ = write!(output, "copy v{}", value.index());
+            write_index(output, "copy v", value.index(), "");
         }
         KirInstructionKind::Binary {
             op,
@@ -209,38 +218,34 @@ fn write_kir_instruction(output: &mut String, instruction: &KirInstruction) {
             right,
             semantics,
         } => {
-            let _ = write!(
-                output,
-                "{op:?}.{} v{}, v{}",
-                print_arithmetic_semantics(*semantics),
-                left.index(),
-                right.index()
-            );
+            let _ = write!(output, "{op:?}.{} ", print_arithmetic_semantics(*semantics));
+            write_index(output, "v", left.index(), ", v");
+            write_index(output, "", right.index(), "");
         }
         KirInstructionKind::Unary {
             op,
             operand,
             semantics,
         } => {
-            let _ = write!(
-                output,
-                "{op:?}.{} v{}",
-                print_arithmetic_semantics(*semantics),
-                operand.index()
-            );
+            let _ = write!(output, "{op:?}.{} ", print_arithmetic_semantics(*semantics));
+            write_index(output, "v", operand.index(), "");
         }
         KirInstructionKind::Compare { op, left, right } => {
-            let _ = write!(output, "{op:?} v{}, v{}", left.index(), right.index());
+            let _ = write!(output, "{op:?} ");
+            write_index(output, "v", left.index(), ", v");
+            write_index(output, "", right.index(), "");
         }
         KirInstructionKind::Cast { op, value } => {
-            let _ = write!(output, "cast {op:?} v{}", value.index());
+            let _ = write!(output, "cast {op:?} ");
+            write_index(output, "v", value.index(), "");
         }
         KirInstructionKind::CheckCondition { kind, args } => {
             let _ = write!(output, "check_condition {kind:?} ");
             write_values(output, args);
         }
         KirInstructionKind::Guard { condition, failure } => {
-            let _ = write!(output, "guard v{} else {failure:?}", condition.index());
+            write_index(output, "guard v", condition.index(), " else ");
+            let _ = write!(output, "{failure:?}");
         }
         KirInstructionKind::Address { place } => {
             output.push_str("address ");
@@ -253,25 +258,22 @@ fn write_kir_instruction(output: &mut String, instruction: &KirInstruction) {
         KirInstructionKind::Store { place, value } => {
             output.push_str("store ");
             write_place(output, place);
-            let _ = write!(output, ", v{}", value.index());
+            write_index(output, ", v", value.index(), "");
         }
         KirInstructionKind::MakeSlice { data, len } => {
-            let _ = write!(output, "make_slice v{}, v{}", data.index(), len.index());
+            write_index(output, "make_slice v", data.index(), ", v");
+            write_index(output, "", len.index(), "");
         }
         KirInstructionKind::SliceData { slice } => {
-            let _ = write!(output, "slice_data v{}", slice.index());
+            write_index(output, "slice_data v", slice.index(), "");
         }
         KirInstructionKind::SliceLen { slice } => {
-            let _ = write!(output, "slice_len v{}", slice.index());
+            write_index(output, "slice_len v", slice.index(), "");
         }
         KirInstructionKind::Subslice { slice, start, end } => {
-            let _ = write!(
-                output,
-                "subslice v{}, v{}, v{}",
-                slice.index(),
-                start.index(),
-                end.index()
-            );
+            write_index(output, "subslice v", slice.index(), ", v");
+            write_index(output, "", start.index(), ", v");
+            write_index(output, "", end.index(), "");
         }
         KirInstructionKind::Call {
             function_name,
@@ -465,14 +467,10 @@ fn write_kir_instruction(output: &mut String, instruction: &KirInstruction) {
         }
     }
     if let Some(memory) = &instruction.memory {
-        let _ = write!(
-            output,
-            " [memory r{} m{}",
-            memory.region.index(),
-            memory.input.index()
-        );
+        write_index(output, " [memory r", memory.region.index(), " m");
+        write_index(output, "", memory.input.index(), "");
         if let Some(version) = memory.output {
-            let _ = write!(output, " -> m{}", version.index());
+            write_index(output, " -> m", version.index(), "");
         }
         output.push(']');
     }
@@ -491,7 +489,7 @@ fn write_lowercase(output: &mut String, arguments: fmt::Arguments<'_>) {
 
 fn write_optional_proof(output: &mut String, proof: Option<ProofId>) {
     if let Some(proof) = proof {
-        let _ = write!(output, "p{}", proof.index());
+        write_index(output, "p", proof.index(), "");
     } else {
         output.push_str("none");
     }
@@ -541,30 +539,26 @@ fn write_values(output: &mut String, values: &[ValueId]) {
         if index != 0 {
             output.push_str(", ");
         }
-        let _ = write!(output, "v{}", value.index());
+        write_index(output, "v", value.index(), "");
     }
 }
 
 fn write_place(output: &mut String, place: &KirPlace) {
     match place {
         KirPlace::Value { value, .. } => {
-            let _ = write!(output, "value(v{})", value.index());
+            write_index(output, "value(v", value.index(), ")");
         }
         KirPlace::Deref { pointer, .. } => {
-            let _ = write!(output, "deref(v{})", pointer.index());
+            write_index(output, "deref(v", pointer.index(), ")");
         }
         KirPlace::Index { base, index, .. } => {
             output.push_str("index(");
             write_place(output, base);
-            let _ = write!(output, ", v{})", index.index());
+            write_index(output, ", v", index.index(), ")");
         }
         KirPlace::SliceIndex { slice, index, .. } => {
-            let _ = write!(
-                output,
-                "slice_index(v{}, v{})",
-                slice.index(),
-                index.index()
-            );
+            write_index(output, "slice_index(v", slice.index(), ", v");
+            write_index(output, "", index.index(), ")");
         }
         KirPlace::Field {
             base, field_name, ..
@@ -585,7 +579,7 @@ fn write_kir_terminator(output: &mut String, terminator: &KirTerminator) {
         } => {
             output.push_str("return");
             if let Some(value) = value {
-                let _ = write!(output, " v{}", value.index());
+                write_index(output, " v", value.index(), "");
             }
             let _ = write!(output, " [effect {effect_order}]");
             write_return_memory(output, memory);
@@ -599,7 +593,7 @@ fn write_kir_terminator(output: &mut String, terminator: &KirTerminator) {
             then_edge,
             else_edge,
         } => {
-            let _ = write!(output, "branch v{}, ", condition.index());
+            write_index(output, "branch v", condition.index(), ", ");
             write_edge(output, then_edge);
             output.push_str(", ");
             write_edge(output, else_edge);
@@ -608,7 +602,7 @@ fn write_kir_terminator(output: &mut String, terminator: &KirTerminator) {
 }
 
 fn write_edge(output: &mut String, edge: &KirEdge) {
-    let _ = write!(output, "b{}(", edge.target.index());
+    write_index(output, "b", edge.target.index(), "(");
     write_values(output, &edge.args);
     if !edge.memory_args.is_empty() {
         output.push_str("; memory ");
@@ -616,7 +610,7 @@ fn write_edge(output: &mut String, edge: &KirEdge) {
             if index != 0 {
                 output.push_str(", ");
             }
-            let _ = write!(output, "m{}", version.index());
+            write_index(output, "m", version.index(), "");
         }
     }
     output.push(')');
@@ -629,10 +623,33 @@ fn write_return_memory(output: &mut String, memory: &[(MemoryRegionId, MemoryVer
             if index != 0 {
                 output.push_str(", ");
             }
-            let _ = write!(output, "r{}=m{}", region.index(), version.index());
+            write_index(output, "r", region.index(), "=m");
+            write_index(output, "", version.index(), "");
         }
         output.push(']');
     }
+}
+
+fn write_index(output: &mut String, prefix: &str, mut index: u32, suffix: &str) {
+    output.push_str(prefix);
+    if index < 10 {
+        output.push(char::from(b'0' + index as u8));
+    } else {
+        // An index has at most ten decimal digits, independent of its value.
+        // Keep canonical decimal output without general formatting dispatch.
+        let mut digits = [0_u8; 10];
+        let mut first = digits.len();
+        loop {
+            first -= 1;
+            digits[first] = b'0' + (index % 10) as u8;
+            index /= 10;
+            if index == 0 {
+                break;
+            }
+        }
+        output.push_str(std::str::from_utf8(&digits[first..]).expect("decimal digits are UTF-8"));
+    }
+    output.push_str(suffix);
 }
 
 const fn print_consumer(consumer: KirConsumer) -> &'static str {
@@ -665,3 +682,7 @@ const fn print_sanitizer_mode(mode: KirSanitizerMode) -> &'static str {
         KirSanitizerMode::Contracts => "contracts",
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/ir/kir_decimal.rs"]
+mod decimal_tests;
