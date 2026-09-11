@@ -886,25 +886,31 @@ fn successor_ids(terminator: &KirTerminator) -> Vec<BlockId> {
 }
 
 fn incoming_edges(function: &KirFunction, target: BlockId) -> Vec<(BlockId, &crate::KirEdge)> {
-    function
-        .blocks
-        .iter()
-        .flat_map(|block| {
-            let edges = match &block.terminator {
-                KirTerminator::Return { .. } => Vec::new(),
-                KirTerminator::Jump { edge } => vec![edge],
-                KirTerminator::Branch {
-                    then_edge,
-                    else_edge,
-                    ..
-                } => vec![then_edge, else_edge],
-            };
-            edges
-                .into_iter()
-                .filter(move |edge| edge.target == target)
-                .map(move |edge| (block.id, edge))
-        })
-        .collect()
+    // Retain the complete result in layout order without allocating an
+    // intermediate edge list for every unrelated block in each query.
+    let mut incoming = Vec::new();
+    for block in &function.blocks {
+        match &block.terminator {
+            KirTerminator::Return { .. } => {}
+            KirTerminator::Jump { edge } => {
+                if edge.target == target {
+                    incoming.push((block.id, edge));
+                }
+            }
+            KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } => {
+                for edge in [then_edge, else_edge] {
+                    if edge.target == target {
+                        incoming.push((block.id, edge));
+                    }
+                }
+            }
+        }
+    }
+    incoming
 }
 
 fn function_block(function: &KirFunction, id: BlockId) -> &crate::KirBlock {
@@ -1099,5 +1105,108 @@ fn visit_place_uses(place: &KirPlace, visit: &mut impl FnMut(ValueId)) {
             visit(*index);
         }
         KirPlace::Field { base, .. } => visit_place_uses(base, visit),
+    }
+}
+
+#[cfg(test)]
+mod incoming_edge_tests {
+    use super::*;
+
+    fn fixture() -> KirFunction {
+        let edge = |target, argument| crate::KirEdge {
+            target: BlockId::from_index(target),
+            args: vec![ValueId::from_index(argument)],
+            memory_args: Vec::new(),
+        };
+        let block = |id, terminator| crate::KirBlock {
+            id: BlockId::from_index(id),
+            label: format!("block-{id}"),
+            params: Vec::new(),
+            memory_params: Vec::new(),
+            instructions: Vec::new(),
+            terminator,
+        };
+        KirFunction {
+            id: FunctionId::from_index(0),
+            name: "edges".to_string(),
+            exported: false,
+            tune_noinline: false,
+            params: Vec::new(),
+            return_type: crate::MirType::Void,
+            regions: Vec::new(),
+            initial_memory: Vec::new(),
+            vector_regions: Vec::new(),
+            blocks: vec![
+                block(
+                    7,
+                    KirTerminator::Return {
+                        value: None,
+                        memory: Vec::new(),
+                        effect_order: 0,
+                    },
+                ),
+                block(2, KirTerminator::Jump { edge: edge(9, 11) }),
+                block(
+                    5,
+                    KirTerminator::Branch {
+                        condition: ValueId::from_index(0),
+                        then_edge: edge(9, 12),
+                        else_edge: edge(9, 13),
+                    },
+                ),
+                block(
+                    6,
+                    KirTerminator::Branch {
+                        condition: ValueId::from_index(0),
+                        then_edge: edge(8, 14),
+                        else_edge: edge(9, 15),
+                    },
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn incoming_edges_preserve_layout_order_and_duplicate_target_arms() {
+        let function = fixture();
+        let actual = incoming_edges(&function, BlockId::from_index(9))
+            .into_iter()
+            .map(|(block, edge)| (block, edge.args[0]))
+            .collect::<Vec<_>>();
+        let expected = [(2, 11), (5, 12), (5, 13), (6, 15)]
+            .map(|(block, value)| (BlockId::from_index(block), ValueId::from_index(value)));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn incoming_edges_preserve_empty_queries() {
+        let mut function = fixture();
+        assert!(incoming_edges(&function, BlockId::from_index(99)).is_empty());
+        function.blocks.clear();
+        assert!(incoming_edges(&function, BlockId::from_index(9)).is_empty());
+    }
+
+    #[test]
+    fn incoming_edges_allocate_only_for_matching_results() {
+        let mut function = fixture();
+        for index in 100..228 {
+            let mut unrelated = function.blocks[1].clone();
+            unrelated.id = BlockId::from_index(index);
+            let KirTerminator::Jump { edge } = &mut unrelated.terminator else {
+                unreachable!();
+            };
+            edge.target = BlockId::from_index(8);
+            function.blocks.push(unrelated);
+        }
+        for (target, count, maximum_allocations) in [(9, 4, 1), (99, 0, 0)] {
+            let (edges, allocations) = crate::test_allocation_counter::measure(|| {
+                incoming_edges(std::hint::black_box(&function), BlockId::from_index(target))
+            });
+            assert_eq!(edges.len(), count);
+            assert!(
+                allocations <= maximum_allocations,
+                "incoming-edge query allocated {allocations} buffers for {count} matching edges"
+            );
+        }
     }
 }
