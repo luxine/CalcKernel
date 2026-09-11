@@ -1718,6 +1718,7 @@ fn cargo_and_rust_provenance_should_be_complete_hashed_and_embedded() {
         "proc-macro2",
         "quote",
         "sha2",
+        "sha2-asm",
         "shlex",
         "syn",
         "thiserror",

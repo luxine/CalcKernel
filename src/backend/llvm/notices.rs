@@ -53,6 +53,14 @@ pub const fn embedded_notices() -> &'static [EmbeddedNotice] {
             bytes: include_bytes!("../../../third_party/licenses/memchr-MIT.txt"),
         },
         EmbeddedNotice {
+            name: "sha2-asm MIT license",
+            bytes: include_bytes!("../../../third_party/licenses/sha2-asm-MIT.txt"),
+        },
+        EmbeddedNotice {
+            name: "sha2-asm AArch64 source notices",
+            bytes: include_bytes!("../../../third_party/licenses/sha2-asm-AArch64-notices.txt"),
+        },
+        EmbeddedNotice {
             name: "Unicode License V3",
             bytes: include_bytes!("../../../third_party/licenses/LICENSE-UNICODE"),
         },

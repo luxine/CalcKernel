@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    borrow::Borrow,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use crate::{
     CheckedTuningSpace, KirVerifiedProgramState, TuneAlternativeClass, TuneBudget, TuneUnit,
@@ -64,16 +67,16 @@ pub fn run_checked_tuning_search(
 }
 
 type Selections = [([u8; 32], [u8; 32])];
-type ReplayResult = Result<(TuningPlan, KirVerifiedProgramState), TuningPlanError>;
+type ReplayResult<State> = Result<(TuningPlan, State), TuningPlanError>;
 
-fn search_with_replay(
+fn search_with_replay<State: Borrow<KirVerifiedProgramState>>(
     space: &TuningSpace,
     budget: TuneBudget,
-    mut replay: impl FnMut(&Selections) -> ReplayResult,
+    mut replay: impl FnMut(&Selections) -> ReplayResult<State>,
 ) -> Result<SearchFrontier, TuningPlanError> {
     let contract = budget.contract();
     let (baseline_plan, baseline_state) = replay(&[])?;
-    let baseline = metrics_for(&baseline_state, baseline_plan)?;
+    let baseline = metrics_for(baseline_state.borrow(), baseline_plan)?;
     let mut beam = vec![baseline.clone()];
     let mut expansions = Vec::new();
     'units: for unit in &space.units {
@@ -165,8 +168,8 @@ fn search_with_replay(
     })
 }
 
-fn extend_plan(
-    replay: &mut impl FnMut(&Selections) -> ReplayResult,
+fn extend_plan<State: Borrow<KirVerifiedProgramState>>(
+    replay: &mut impl FnMut(&Selections) -> ReplayResult<State>,
     parent: &TuningPlan,
     unit: &TuneUnit,
     variant_id: [u8; 32],
@@ -178,7 +181,7 @@ fn extend_plan(
         .collect::<Vec<_>>();
     selections.push((unit.unit_id, variant_id));
     let (plan, replayed) = replay(&selections)?;
-    metrics_for(&replayed, plan)
+    metrics_for(replayed.borrow(), plan)
 }
 
 fn metrics_for(
@@ -375,6 +378,7 @@ mod tests {
             for length in 0..=selections.len() {
                 let actual = replay
                     .derive(&selections[..length])
+                    .map(|(plan, state)| (plan, std::rc::Rc::unwrap_or_clone(state)))
                     .expect("retained prefix");
                 let expected = checked
                     .derive(&selections[..length])
@@ -387,7 +391,9 @@ mod tests {
             // Revisit shorter, previously final prefixes after their extension.
             for length in (0..selections.len()).rev() {
                 assert_eq!(
-                    replay.derive(&selections[..length]),
+                    replay
+                        .derive(&selections[..length])
+                        .map(|(plan, state)| (plan, std::rc::Rc::unwrap_or_clone(state))),
                     checked.derive(&selections[..length])
                 );
             }

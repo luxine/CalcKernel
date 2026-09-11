@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 const LLVM_VERSION: &str = "22.1.8";
 const LLVM_SOURCE_SHA256: &str = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888";
 const LLVM_COMPONENTS: [&str; 5] = ["core", "native", "orcjit", "nativecodegen", "lto"];
-const CARGO_PROVENANCE_COMPONENTS: [&str; 26] = [
+const CARGO_PROVENANCE_COMPONENTS: [&str; 27] = [
     "block-buffer",
     "bumpalo",
     "cc",
@@ -21,6 +21,7 @@ const CARGO_PROVENANCE_COMPONENTS: [&str; 26] = [
     "proc-macro2",
     "quote",
     "sha2",
+    "sha2-asm",
     "shlex",
     "syn",
     "thiserror",

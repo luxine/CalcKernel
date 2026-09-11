@@ -43,6 +43,11 @@ toml = "0.8"
 unicode-normalization = "0.1"
 wat = "1.0"
 
+[target.'cfg(all(target_arch = "aarch64", unix))'.dependencies]
+# SHA-256 identities stay identical; the crate runtime-checks ARM crypto support
+# and falls back to software. Its optional assembler does not support Windows.
+sha2 = { version = "0.10", features = ["asm"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
 

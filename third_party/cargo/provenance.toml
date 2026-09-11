@@ -130,6 +130,14 @@ license_files = ["native/runtime/vendor/ryu/LICENSE-Apache2"]
 license_sha256 = ["c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"]
 
 [[cargo]]
+name = "sha2-asm"
+version = "0.6.4"
+crate_sha256 = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+license_expression = "MIT"
+license_files = ["third_party/licenses/sha2-asm-MIT.txt", "third_party/licenses/sha2-asm-AArch64-notices.txt"]
+license_sha256 = ["85010e75aef5bdcd10b9ce39e8865dfab508f620f9ddb6ca6e54833fe97f36fa", "95dad6da8a0adbffbe0f7ab03b2acf466584b144957847b7c450bdd350a5dfe0"]
+
+[[cargo]]
 name = "shlex"
 version = "2.0.1"
 crate_sha256 = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"

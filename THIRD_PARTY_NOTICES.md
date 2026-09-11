@@ -4,7 +4,7 @@ This index is embedded byte-for-byte in every `ckc` executable. Source archive
 and crate hashes are immutable acquisition identities; repository license paths
 name the exact notice bytes emitted by `ckc licenses`. CalcKernel chooses the
 Apache-2.0 option where a Cargo dependency offers `MIT OR Apache-2.0`, except
-for the two explicitly named MIT copies below. Build-only crates are included
+for the explicitly recorded MIT notices below. Build-only crates are included
 because they participate in producing the distributed executable.
 
 ## Compiler and native runtime
@@ -33,6 +33,7 @@ because they participate in producing the distributed executable.
 - proc-macro2 1.0.106 — crates.io SHA-256 `8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - quote 1.0.46 — crates.io SHA-256 `dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - sha2 0.10.9 — crates.io SHA-256 `a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283` — `native/runtime/vendor/ryu/LICENSE-Apache2`
+- sha2-asm 0.6.4 (ARM Unix hashing backend dependency) — crates.io SHA-256 `b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab` — `third_party/licenses/sha2-asm-MIT.txt`, `third_party/licenses/sha2-asm-AArch64-notices.txt`
 - shlex 2.0.1 — crates.io SHA-256 `f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - syn 2.0.118 — crates.io SHA-256 `1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - thiserror 2.0.18 — crates.io SHA-256 `4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4` — `native/runtime/vendor/ryu/LICENSE-Apache2`

@@ -3,6 +3,8 @@ mod support;
 
 #[path = "performance/bench.rs"]
 mod bench;
+#[path = "performance/hashing.rs"]
+mod hashing;
 #[path = "performance/oracle_fixtures.rs"]
 mod oracle_fixtures;
 #[path = "performance/pgo_contract.rs"]
