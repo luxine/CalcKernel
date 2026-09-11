@@ -1,7 +1,8 @@
 use calckernel::{
-    CandidateOutcome, CandidateRank, MeasurementPhase, MeasurementRow, MeasurementStream,
-    RoundPlan, SelectionEntrant, SelectionReason, TuneCase, TuneCaseRole, derive_round_summary,
-    derive_search_entrants, derive_selection, stream_statistics,
+    CalibrationRecord, CandidateOutcome, CandidateRank, MeasurementPhase, MeasurementRow,
+    MeasurementStream, RoundPlan, SelectionEntrant, SelectionError, SelectionReason, TuneCase,
+    TuneCaseRole, derive_round_summary, derive_search_entrants, derive_selection,
+    stream_statistics,
 };
 
 fn case(id: &str, role: TuneCaseRole, weight: u32) -> TuneCase {
@@ -72,6 +73,109 @@ fn selection_stream_statistics_use_upper_median_and_inclusive_stability() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn selection_error_context_preserves_all_raw_calls_and_matching_calibration() {
+    let mut minima = [100_000_000; 20];
+    minima[..5].fill(70_000_000);
+    let mut rejected = stream(
+        MeasurementPhase::ValidationTwoMeasured,
+        2,
+        "case",
+        [9; 32],
+        minima,
+    );
+    rejected.iterations = 32;
+    let before = rejected.clone();
+    let calibration = CalibrationRecord {
+        case_id: "case".into(),
+        iterations: 32,
+        attempts: 6,
+        elapsed_ns: 631_114_667,
+        confirmation_elapsed_ns: 314_409_459,
+        overshoot: true,
+    };
+    let error = stream_statistics(&rejected).expect_err("fifteen in-range rows must fail");
+    assert_eq!(error, SelectionError::Unstable);
+    assert_eq!(error.to_string(), "unstable measurement stream");
+    let unrelated_calibration = CalibrationRecord {
+        case_id: "unrelated".into(),
+        iterations: 999,
+        ..calibration.clone()
+    };
+    let description = error.describe_with_measurements(
+        std::slice::from_ref(&rejected),
+        &[unrelated_calibration, calibration],
+    );
+    let calls = rejected
+        .rows
+        .iter()
+        .map(|row| row.calls_ns.clone())
+        .collect::<Vec<_>>();
+    for expected in [
+        "phase=7 round=2 case=\"case\" caseBytes=4 caseTruncated=false".to_string(),
+        format!("plan={} iterations=32", "09".repeat(32)),
+        "inRange=15/20 required=16 upperMedianNs=100000000".to_string(),
+        format!("minimaNs={minima:?} callsNs={calls:?}"),
+        "calibrationIterations=32 calibrationAttempts=6 calibrationElapsedNs=631114667 calibrationConfirmationNs=314409459 calibrationOvershoot=true".to_string(),
+    ] {
+        assert!(description.contains(&expected), "missing {expected:?} in {description}");
+    }
+    assert_eq!(
+        rejected, before,
+        "diagnostics must not change measurement evidence"
+    );
+}
+
+#[test]
+fn selection_error_context_is_bounded_escaped_and_exact_at_u64_limits() {
+    let mut values = [u64::MAX - 2; 20];
+    values[..5].fill(1);
+    let id = format!("{}PRIVATE_SUFFIX", "é\n".repeat(8192));
+    let rejected = stream(MeasurementPhase::SearchMeasured, 0, &id, [255; 32], values);
+    let error = stream_statistics(&rejected).expect_err("unstable, not overflowing");
+    assert_eq!(error, SelectionError::Unstable);
+    let description = error.describe_with_measurements(&[rejected], &[]);
+    assert!(description.contains(&format!("caseBytes={} caseTruncated=true", id.len())));
+    assert!(description.contains("\\n"));
+    assert!(!description.contains('\n'));
+    assert!(!description.contains("PRIVATE_SUFFIX"));
+    assert!(description.contains(&format!("upperMedianNs={}", u64::MAX - 2)));
+    assert!(description.contains(&u64::MAX.to_string()));
+    assert!(description.contains("calibration=unavailable"));
+    assert!(
+        description.len() < 4096,
+        "diagnostic unexpectedly unbounded"
+    );
+}
+
+#[test]
+fn selection_error_context_does_not_invent_rows_for_other_errors_or_invalid_streams() {
+    let stable = stream(
+        MeasurementPhase::SearchMeasured,
+        0,
+        "stable",
+        [1; 32],
+        [100; 20],
+    );
+    let mut invalid = stable.clone();
+    invalid.rows[0].calls_ns.pop();
+    for error in [
+        SelectionError::InvalidEvidence("row"),
+        SelectionError::Overflow,
+    ] {
+        assert_eq!(
+            error.describe_with_measurements(std::slice::from_ref(&stable), &[]),
+            error.to_string()
+        );
+    }
+    for streams in [vec![], vec![stable], vec![invalid]] {
+        assert_eq!(
+            SelectionError::Unstable.describe_with_measurements(&streams, &[]),
+            "unstable measurement stream"
+        );
+    }
 }
 
 #[test]

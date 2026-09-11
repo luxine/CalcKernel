@@ -555,7 +555,7 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
         &search_run.streams,
         budget.contract().validation_entrant_limit,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.describe_with_measurements(&search_run.streams, &calibrations))?;
     let mut entrant_digests = entrants
         .iter()
         .map(|entrant| entrant.plan_digest)
@@ -585,7 +585,7 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
             workload.case_identities(),
             &validation_one.streams,
         )
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.describe_with_measurements(&validation_one.streams, &calibrations))?
     };
     let round_two = if entrant_ranks.is_empty() {
         empty_round(2)
@@ -597,7 +597,7 @@ fn run_build(args: &ParsedArgs) -> Result<(), String> {
             workload.case_identities(),
             &validation_two.streams,
         )
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.describe_with_measurements(&validation_two.streams, &calibrations))?
     };
     let selection_entrants = entrant_digests
         .iter()

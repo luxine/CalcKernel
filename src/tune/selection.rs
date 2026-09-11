@@ -125,6 +125,77 @@ pub enum SelectionError {
     Overflow,
 }
 
+impl SelectionError {
+    /// Describes rejected live measurements without changing the error category.
+    /// Includes raw rows and matching calibration for the first validated
+    /// unstable stream in input order. Unrelated errors retain their ordinary
+    /// display text.
+    #[must_use]
+    pub fn describe_with_measurements(
+        &self,
+        streams: &[MeasurementStream],
+        calibrations: &[super::CalibrationRecord],
+    ) -> String {
+        if self != &Self::Unstable {
+            return self.to_string();
+        }
+        let Some(stream) = streams
+            .iter()
+            .find(|stream| stream_statistics(stream) == Err(Self::Unstable))
+        else {
+            return self.to_string();
+        };
+        // The unchanged validator above established the complete 20x3 shape.
+        // Retain original row/call order; sorting is only for the median copy.
+        let minima: [u64; 20] = std::array::from_fn(|row| stream.rows[row].stored_minimum_ns);
+        let calls: [[u64; 3]; 20] =
+            std::array::from_fn(|row| std::array::from_fn(|call| stream.rows[row].calls_ns[call]));
+        let mut ordered = minima;
+        ordered.sort_unstable();
+        let median = ordered[10];
+        let in_range = minima
+            .iter()
+            .filter(|sample| {
+                let scaled = u128::from(**sample) * 100;
+                u128::from(median) * 80 <= scaled && scaled <= u128::from(median) * 120
+            })
+            .count();
+        let case: String = stream.case_id.chars().take(64).collect();
+        let truncated = case.len() != stream.case_id.len();
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let plan: String = stream
+            .plan_digest
+            .iter()
+            .flat_map(|byte| {
+                [
+                    char::from(HEX[usize::from(byte >> 4)]),
+                    char::from(HEX[usize::from(byte & 15)]),
+                ]
+            })
+            .collect();
+        let calibration = calibrations
+            .iter()
+            .find(|record| record.case_id == stream.case_id)
+            .map_or_else(
+                || " calibration=unavailable".to_string(),
+                |record| {
+                    format!(
+                        " calibrationIterations={} calibrationAttempts={} calibrationElapsedNs={} calibrationConfirmationNs={} calibrationOvershoot={}",
+                        record.iterations, record.attempts, record.elapsed_ns,
+                        record.confirmation_elapsed_ns, record.overshoot,
+                    )
+                },
+            );
+        format!(
+            "{self}: phase={} round={} case={case:?} caseBytes={} caseTruncated={truncated} plan={plan} iterations={} inRange={in_range}/20 required=16 upperMedianNs={median} minimaNs={minima:?} callsNs={calls:?}{calibration}",
+            stream.phase as u8,
+            stream.round,
+            stream.case_id.len(),
+            stream.iterations,
+        )
+    }
+}
+
 /// Recomputes the upper median and frozen 16-of-20 inclusive stability rule.
 pub fn stream_statistics(stream: &MeasurementStream) -> Result<StreamStatistics, SelectionError> {
     if stream.rows.len() != 20 {
