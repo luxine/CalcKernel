@@ -283,6 +283,15 @@ jobs:
         if: always() && (steps.performance-gate.outcome == 'failure' || inputs.performance_diagnostics == true)
         timeout-minutes: 20
         run: bash scripts/diagnose-native-performance.sh
+      - name: Compare checked AArch64 code layouts separately
+        if: always() && matrix.arch == 'AArch64'
+        timeout-minutes: 5
+        run: |
+          comparison_report=target/ckc-perf/results-baseline.json
+          if [[ ! -f "$comparison_report" ]]; then
+            comparison_report=target/ckc-perf/results.json
+          fi
+          python3 -B scripts/diagnose-checked-aarch64.py --report "$comparison_report" --out target/performance-diagnostics/checked-aarch64-layout
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

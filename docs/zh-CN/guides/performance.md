@@ -69,6 +69,18 @@ memory、cold/warm execution 与 cache behavior 是分离指标。任何 thresho
 evaluation order、modular integer、strict float、checked first-error、print/effect order、semantic
 MIR、public ABI 或 contract domain。
 
+## 有界 checked kernel 诊断
+
+原有 gate 结束后，Linux/AArch64 CI 在独立对照中加载经 hash 验证的 checked
+`specialized_length` CK/C/Rust 指令体，比较原始地址与三个固定复制布局。复制区域只读可执行，
+不会同时可写可执行，并须保持各原始通道的正常结果和错误前缀行为。所有布局共享同一
+input/output 工作区并执行固定完整采样顺序。全部 raw row、映射地址、CPU affinity、资源快照
+和可用的仅用户态硬件计数保存于 `target/performance-diagnostics/checked-aarch64-layout`。
+
+这是代码放置位置的受控干预，不重新生成或替代 release evidence，不恢复历史映射，不改变
+任何 gate，也不自动认定根因。硬件计数区间包含时钟边界工作；不可用或复用的计数不能当作零。
+指令体发生变化时，明确报告为不适用于本次有界对照。
+
 ## 命令与证据
 
 昂贵的稳定 worker 测量前先运行本地 schema/checker/correctness check：
