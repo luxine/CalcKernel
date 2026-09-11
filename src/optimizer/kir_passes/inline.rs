@@ -194,6 +194,7 @@ pub(crate) fn discover_tuning_inline_candidates(
 pub(crate) fn materialize_tuning_inline(
     pre_state: &super::super::KirVerifiedProgramState,
     requested: InlineTuningCandidate,
+    contract_prefix: Option<&super::super::transaction::KirContractHashPrefix<'_>>,
 ) -> Result<super::super::KirVerifiedProgramState, String> {
     let enumerated = discover_tuning_inline_candidates(
         pre_state.module(),
@@ -243,12 +244,13 @@ pub(crate) fn materialize_tuning_inline(
         return Err("inline tuning candidate failed materialization".to_string());
     }
     super::run_cleanup(&mut module);
-    super::super::KirVerifiedProgramState::from_parts(
+    super::super::KirVerifiedProgramState::from_parts_with_contract_prefix(
         module,
         contracts,
         pre_state.proofs().clone(),
         pre_state.eliminated_guards().to_vec(),
         pre_state.evidence_generation(),
+        contract_prefix,
     )
 }
 
@@ -257,8 +259,9 @@ pub(crate) fn check_tuning_inline_independently(
     pre_state: &super::super::KirVerifiedProgramState,
     trial: &super::super::KirVerifiedProgramState,
     requested: InlineTuningCandidate,
+    contract_prefix: Option<&super::super::transaction::KirContractHashPrefix<'_>>,
 ) -> Result<(), String> {
-    let expected = materialize_tuning_inline(pre_state, requested)?;
+    let expected = materialize_tuning_inline(pre_state, requested, contract_prefix)?;
     if &expected != trial {
         return Err("inline tuning post-state is not the exact checked rewrite".to_string());
     }

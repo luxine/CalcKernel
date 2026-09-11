@@ -305,17 +305,9 @@ impl<'a> ReplayPrefixCache<'a> {
         }
         // Keep one fixed-size prefix, borrowing the immutable search root.
         // Ordinary-only or mismatched analyses do no speculative encoding.
-        let contract_prefix = self
-            .root_state
-            .filter(|root| {
-                phase != ReplayPhase::Ordinary
-                    && root.evidence_generation() == state.evidence_generation()
-                    && root.contract_facts() == state.contract_facts()
-            })
-            .map(|root| {
-                self.contract_prefix
-                    .get_or_init(|| KirContractHashPrefix::new(root))
-            });
+        let contract_prefix = (phase != ReplayPhase::Ordinary)
+            .then(|| self.contract_prefix_for(state))
+            .flatten();
         #[cfg(test)]
         tests::CONTRACT_PREFIX_PHASES.with(|counts| {
             *counts
@@ -331,6 +323,21 @@ impl<'a> ReplayPrefixCache<'a> {
                 .insert(key, (Rc::clone(state), Rc::clone(&output)));
         }
         Ok(output)
+    }
+
+    fn contract_prefix_for(
+        &self,
+        state: &KirVerifiedProgramState,
+    ) -> Option<&KirContractHashPrefix<'a>> {
+        self.root_state
+            .filter(|root| {
+                root.evidence_generation() == state.evidence_generation()
+                    && root.contract_facts() == state.contract_facts()
+            })
+            .map(|root| {
+                self.contract_prefix
+                    .get_or_init(|| KirContractHashPrefix::new(root))
+            })
     }
 }
 
@@ -374,6 +381,20 @@ fn replay_phase(
         Some(cache) => cache.analyze(phase, state),
         None => phase.run(state, None).map(Rc::new),
     }
+}
+
+fn replay_action(
+    state: &KirVerifiedProgramState,
+    action: &TuneVariantAction,
+    cache: &Option<&mut ReplayPrefixCache<'_>>,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    let contract_prefix = match action {
+        TuneVariantAction::Inlining { .. } | TuneVariantAction::Layout(_) => cache
+            .as_ref()
+            .and_then(|cache| cache.contract_prefix_for(state)),
+        _ => None,
+    };
+    apply_variant_action_with_prefix(state, action, contract_prefix)
 }
 
 pub(crate) struct TuningSearchReplay<'a> {
@@ -1309,7 +1330,7 @@ fn replay_selections_with_cache(
                     .entry(selections[..=index].to_vec())
                     .or_default() += 1;
             });
-            current = Rc::new(apply_variant_action(&current, &variant.action)?);
+            current = Rc::new(replay_action(&current, &variant.action, &cache)?);
             contains_selected_rewrite = true;
             if cache.is_none() && index + 1 == selections.len() {
                 if !entered_late_o3 {
@@ -1369,19 +1390,27 @@ fn apply_variant_action(
     state: &KirVerifiedProgramState,
     action: &TuneVariantAction,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
+    apply_variant_action_with_prefix(state, action, None)
+}
+
+fn apply_variant_action_with_prefix(
+    state: &KirVerifiedProgramState,
+    action: &TuneVariantAction,
+    contract_prefix: Option<&KirContractHashPrefix<'_>>,
+) -> Result<KirVerifiedProgramState, TuningPlanError> {
     match action {
         TuneVariantAction::Inlining {
             candidate,
             force_inline,
         } => {
             if *force_inline {
-                let trial = materialize_tuning_inline(state, *candidate)
+                let trial = materialize_tuning_inline(state, *candidate, contract_prefix)
                     .map_err(map_materialization_error)?;
-                check_tuning_inline_independently(state, &trial, *candidate)
+                check_tuning_inline_independently(state, &trial, *candidate, contract_prefix)
                     .map_err(TuningPlanError::IllegalAlternative)?;
                 Ok(trial)
             } else {
-                materialize_tuning_keep_out_of_line(state, *candidate)
+                materialize_tuning_keep_out_of_line(state, *candidate, contract_prefix)
             }
         }
         TuneVariantAction::Specialization(candidate) => {
@@ -1463,12 +1492,13 @@ fn apply_variant_action(
                     blocks: layout.blocks.clone(),
                 }],
             });
-            let trial = KirVerifiedProgramState::from_parts(
+            let trial = KirVerifiedProgramState::from_parts_with_contract_prefix(
                 module,
                 state.contract_facts().cloned(),
                 state.proofs().clone(),
                 state.eliminated_guards().to_vec(),
                 state.evidence_generation(),
+                contract_prefix,
             )
             .map_err(TuningPlanError::IllegalAlternative)?;
             check_layout_trial_independently(state, &trial, layout)?;
@@ -1480,6 +1510,7 @@ fn apply_variant_action(
 fn materialize_tuning_keep_out_of_line(
     state: &KirVerifiedProgramState,
     requested: InlineTuningCandidate,
+    contract_prefix: Option<&KirContractHashPrefix<'_>>,
 ) -> Result<KirVerifiedProgramState, TuningPlanError> {
     if !discover_tuning_inline_candidates(
         state.module(),
@@ -1504,12 +1535,13 @@ fn materialize_tuning_keep_out_of_line(
         ));
     }
     callee.tune_noinline = true;
-    let trial = rebuild_preserving_entry_units(
+    let trial = rebuild_preserving_entry_units_with_prefix(
         state,
         module,
         state.contract_facts().cloned(),
         state.proofs().clone(),
         state.eliminated_guards().to_vec(),
+        contract_prefix,
     )?;
 
     let mut restored = trial.module().clone();
@@ -1761,13 +1793,14 @@ fn apply_layout_after_ordinary_o3(
     {
         return Ok(ordinary);
     }
-    apply_variant_action(
+    replay_action(
         &ordinary,
         &TuneVariantAction::Layout(TuneLayoutAction {
             scope: requested.scope,
             function: requested.function,
             blocks,
         }),
+        cache,
     )
     .map(Rc::new)
 }
@@ -1817,13 +1850,14 @@ fn apply_layout_after_selected_o3(
     {
         return Ok(finished);
     }
-    apply_variant_action(
+    replay_action(
         &finished,
         &TuneVariantAction::Layout(TuneLayoutAction {
             scope: requested.scope,
             function: requested.function,
             blocks,
         }),
+        cache,
     )
     .map(Rc::new)
 }

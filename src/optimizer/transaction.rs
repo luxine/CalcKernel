@@ -244,6 +244,38 @@ impl KirVerifiedProgramState {
         )
     }
 
+    pub(crate) fn from_parts_with_contract_prefix(
+        module: KirModule,
+        contract_facts: Option<ContractFactSet>,
+        proofs: ProofArena,
+        eliminated_guards: Vec<KirGuardElimination>,
+        evidence_generation: u32,
+        contract_prefix: Option<&KirContractHashPrefix<'_>>,
+    ) -> Result<Self, String> {
+        let Some(contract_prefix) = contract_prefix else {
+            return Self::from_parts(
+                module,
+                contract_facts,
+                proofs,
+                eliminated_guards,
+                evidence_generation,
+            );
+        };
+        let optimization_entry_module_units =
+            module.functions.iter().fold(0_u32, |total, function| {
+                total.saturating_add(kir_function_units(function))
+            });
+        Self::from_checked_parts_with_contract_prefix(
+            module,
+            contract_facts,
+            proofs,
+            eliminated_guards,
+            evidence_generation,
+            optimization_entry_module_units,
+            contract_prefix,
+        )
+    }
+
     pub(crate) fn from_checked_parts_with_entry_units(
         module: KirModule,
         contract_facts: Option<ContractFactSet>,

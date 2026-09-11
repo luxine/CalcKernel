@@ -82,6 +82,176 @@ fn contract_prefix_is_encoded_once_across_distinct_verified_search_phases() {
 }
 
 #[test]
+fn contract_prefix_is_shared_by_every_supported_replay_action() {
+    for source in [
+        include_str!("../../benches/fixtures/pgo/branch_layout.ck"),
+        include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
+    ] {
+        let root = state(source, true);
+        let checked = CheckedTuningSpace::enumerate(&root).expect("checked space");
+        let expected = checked
+            .space()
+            .units
+            .iter()
+            .filter(|unit| {
+                matches!(
+                    unit.class,
+                    TuneAlternativeClass::Inlining | TuneAlternativeClass::Layout
+                )
+            })
+            .flat_map(|unit| {
+                unit.variants
+                    .iter()
+                    .map(move |variant| (unit.unit_id, variant.variant_id))
+            })
+            .map(|selection| {
+                (
+                    selection,
+                    checked
+                        .derive(&[selection])
+                        .expect("independent singleton replay"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            expected.len() >= 3,
+            "exercise inline, keep-out-of-line and layout alternatives"
+        );
+        let mut replay = checked.search_replay();
+        replay.derive(&[]).expect("ordinary baseline");
+        CONTRACT_ENCODINGS.with(|count| count.set(0));
+        for (selection, (expected_plan, expected_state)) in expected {
+            let (plan, actual) = replay
+                .derive(&[selection])
+                .expect("cached singleton replay");
+            assert_eq!(plan, expected_plan);
+            assert_eq!(actual.as_ref(), &expected_state);
+            assert_eq!(
+                actual.verification_cache().evidence_digest,
+                original_evidence_digest(&actual)
+            );
+        }
+        assert_eq!(
+            CONTRACT_ENCODINGS.with(std::cell::Cell::get),
+            1,
+            "unchanged root contracts were encoded by replay actions or their independent checkers"
+        );
+    }
+}
+
+#[test]
+fn replay_action_prefix_falls_back_for_different_output_contracts() {
+    let root = state(
+        include_str!("../../benches/fixtures/pgo/branch_layout.ck"),
+        true,
+    );
+    let different = state(
+        include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
+        true,
+    );
+    assert_ne!(root.contract_facts(), different.contract_facts());
+    let prefix = KirContractHashPrefix::new(&root);
+    let checked = CheckedTuningSpace::enumerate(&different).expect("space");
+    let mut actions = 0;
+    for variant in checked.space().units.iter().flat_map(|unit| &unit.variants) {
+        if !matches!(
+            variant.action,
+            TuneVariantAction::Inlining { .. } | TuneVariantAction::Layout(_)
+        ) {
+            continue;
+        }
+        let expected = apply_variant_action(&different, &variant.action).expect("ordinary action");
+        let actual = apply_variant_action_with_prefix(&different, &variant.action, Some(&prefix))
+            .expect("mismatched hint falls back");
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual.verification_cache().evidence_digest,
+            original_evidence_digest(&actual)
+        );
+        actions += 1;
+    }
+    assert!(actions >= 3);
+}
+
+#[test]
+fn replay_action_constructor_rechecks_generation_and_absent_contracts() {
+    let root = state("export fn answer(n: i32) -> i32 { return n; }", false);
+    let present = state("export fn answer(n: i32) -> i32 { return n; }", true);
+    let other_generation =
+        KirVerifiedProgramState::new(root.module().clone(), None, 7).expect("generation seven");
+    let prefix = KirContractHashPrefix::new(&root);
+    for prior in [present.as_ref(), &other_generation] {
+        let actual = KirVerifiedProgramState::from_parts_with_contract_prefix(
+            prior.module().clone(),
+            prior.contract_facts().cloned(),
+            prior.proofs().clone(),
+            prior.eliminated_guards().to_vec(),
+            prior.evidence_generation(),
+            Some(&prefix),
+        )
+        .expect("mismatched hint falls back");
+        assert_eq!(&actual, prior);
+        assert_eq!(
+            actual.verification_cache().evidence_digest,
+            original_evidence_digest(&actual)
+        );
+    }
+}
+
+#[test]
+fn replay_action_constructor_never_skips_structural_verification() {
+    let root = state("export fn answer(n: i32) -> i32 { return n; }", false);
+    let prefix = KirContractHashPrefix::new(&root);
+    let mut module = root.module().clone();
+    module.functions[0].blocks[0].terminator = crate::KirTerminator::Jump {
+        edge: crate::KirEdge {
+            target: BlockId::from_index(999),
+            args: Vec::new(),
+            memory_args: Vec::new(),
+        },
+    };
+    assert!(
+        KirVerifiedProgramState::from_parts_with_contract_prefix(
+            module,
+            None,
+            root.proofs().clone(),
+            Vec::new(),
+            0,
+            Some(&prefix),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn inline_checker_reconstructs_with_a_prefix_and_rejects_a_forged_trial() {
+    use super::super::transaction::CONTRACT_PREFIX_USES;
+    let root = state(
+        include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
+        true,
+    );
+    let candidate = discover_tuning_inline_candidates(
+        root.module(),
+        root.contract_facts(),
+        root.eliminated_guards(),
+    )[0];
+    let prefix = KirContractHashPrefix::new(&root);
+    let mut trial = materialize_tuning_inline(&root, candidate, Some(&prefix)).expect("inline");
+    CONTRACT_PREFIX_USES.with(|count| count.set(0));
+    check_tuning_inline_independently(&root, &trial, candidate, Some(&prefix))
+        .expect("independent check");
+    assert_eq!(
+        CONTRACT_PREFIX_USES.with(std::cell::Cell::get),
+        1,
+        "the checker must independently reconstruct, not trust the supplied trial"
+    );
+    trial.module_mut().functions[0].name.push_str("_forged");
+    CONTRACT_PREFIX_USES.with(|count| count.set(0));
+    assert!(check_tuning_inline_independently(&root, &trial, candidate, Some(&prefix)).is_err());
+    assert_eq!(CONTRACT_PREFIX_USES.with(std::cell::Cell::get), 1);
+}
+
+#[test]
 fn contract_prefix_does_not_authorize_a_different_contract_set() {
     let root = state(
         include_str!("../../benches/fixtures/pgo/call_constant_length.ck"),
@@ -277,6 +447,9 @@ fn contract_prefix_counts_complete_native_standard_search() {
         let root = prepare_kir_pre_tune_state(module, Some(&facts)).expect("pre-tune");
         let checked = CheckedTuningSpace::enumerate(&root).expect("space");
         CONTRACT_ENCODINGS.with(|count| count.set(0));
+        finish_ordinary_o3(&root).expect("ordinary baseline");
+        let ordinary_encodings = CONTRACT_ENCODINGS.with(std::cell::Cell::get);
+        CONTRACT_ENCODINGS.with(|count| count.set(0));
         CONTRACT_PREFIX_USES.with(|count| count.set(0));
         tests::CONTRACT_PREFIX_PHASES.with(|counts| counts.borrow_mut().clear());
         let frontier = crate::run_checked_tuning_search(&checked, crate::TuneBudget::Standard)
@@ -287,13 +460,17 @@ fn contract_prefix_counts_complete_native_standard_search() {
         assert!(!frontier.expansions.is_empty());
         assert!(encodings > 0 && uses > 0);
         assert_eq!(
-            uses,
-            phases
+            encodings,
+            ordinary_encodings + 1,
+            "only ordinary reconstruction and one search-local prefix encode root contracts"
+        );
+        assert!(
+            uses >= phases
                 .iter()
                 .filter(|((_, prefix), _)| *prefix)
                 .map(|(_, count)| count)
-                .sum(),
-            "every offered root prefix is rechecked and actually used"
+                .sum::<usize>(),
+            "phases and independent action reconstruction both use the exact checked prefix"
         );
         eprintln!(
             "case={name} expansions={} contract_encodings={encodings} prefix_uses={uses} phases={phases:?}",
