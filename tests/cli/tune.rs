@@ -228,6 +228,169 @@ fn tune_options_are_rejected_on_ordinary_commands_and_duplicates_fail_closed() {
 }
 
 #[cfg(all(feature = "native-toolchain", unix))]
+const TUNE_FIXTURE_DIGEST: &str =
+    "8e37bed9dff3949ffd23ae638260dff869f5cc26e551f2a9e5e289a8888949fa";
+
+#[cfg(all(feature = "native-toolchain", unix))]
+fn compile_tune_c_fixture(
+    root: &std::path::Path,
+    name: &str,
+    source: &str,
+    mut compiler: Command,
+) -> std::path::PathBuf {
+    fs::create_dir_all(root).expect("fixture root");
+    let source_path = root.join(format!("{name}.c"));
+    let output = root.join(name);
+    fs::write(&source_path, source).expect("C fixture source");
+    let compiled = compiler
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .expect("compile C fixture");
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    output
+}
+
+#[cfg(all(feature = "native-toolchain", unix))]
+fn compile_tune_fixture_runner(root: &std::path::Path, compiler: Command) -> std::path::PathBuf {
+    compile_tune_c_fixture(
+        root,
+        "runner",
+        include_str!("../fixtures/tune/cli-executable-runner.c"),
+        compiler,
+    )
+}
+
+#[cfg(all(feature = "native-toolchain", unix))]
+fn tune_fixture_command(runner: &std::path::Path, artifact: &std::path::Path) -> Command {
+    let mut command = Command::new(runner);
+    command
+        .env_clear()
+        .env("CK_TUNE_PROTOCOL", "1")
+        .env("CK_TUNE_ARTIFACT_KIND", "executable")
+        .env("CK_TUNE_ARTIFACT", artifact)
+        .env("CK_TUNE_CASE", "search")
+        .env("CK_TUNE_SEED", "7")
+        .env("CK_TUNE_ITERATIONS", "1");
+    command
+}
+
+#[cfg(all(feature = "native-toolchain", unix))]
+#[test]
+fn tune_fixture_runner_executes_each_claimed_iteration() {
+    use sha2::{Digest, Sha256};
+
+    assert_eq!(
+        TUNE_FIXTURE_DIGEST,
+        format!("{:x}", Sha256::digest(b"66\n"))
+    );
+    let root = temp_dir(&format!("ckc-tune-runner-iterations-{}", unique_id()));
+    let runner = compile_tune_fixture_runner(&root, Command::new("cc"));
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    for iterations in [1, 2, 5] {
+        let trace = root.join(format!("trace-{iterations}"));
+        let output = tune_fixture_command(&runner, &artifact)
+            .env("CK_TUNE_ITERATIONS", iterations.to_string())
+            .env("CK_FIXTURE_TRACE", &trace)
+            .output()
+            .expect("run fixture supervisor");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            fs::read(&trace).unwrap_or_default(),
+            vec![b'x'; iterations],
+            "runner claimed {iterations} iterations without executing the artifact that many times"
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).expect("protocol UTF-8"),
+            format!("CKTUNE/1 search 7 {iterations} {iterations} {TUNE_FIXTURE_DIGEST}\n")
+        );
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[cfg(all(feature = "native-toolchain", unix))]
+#[test]
+fn tune_fixture_runner_rejects_unexecuted_or_incorrect_artifacts() {
+    let root = temp_dir(&format!("ckc-tune-runner-reject-{}", unique_id()));
+    let runner = compile_tune_fixture_runner(&root, Command::new("cc"));
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    for mode in [
+        "missing",
+        "exit",
+        "signal",
+        "wrong-output",
+        "empty-output",
+        "extra-output",
+    ] {
+        let input = if mode == "missing" {
+            root.join("missing-artifact")
+        } else {
+            artifact.clone()
+        };
+        let output = tune_fixture_command(&runner, &input)
+            .env("CK_FIXTURE_MODE", mode)
+            .output()
+            .expect("run failing fixture artifact");
+        assert!(
+            !output.status.success(),
+            "runner accepted {mode} without verifying the artifact: {output:?}"
+        );
+        assert!(output.stdout.is_empty(), "failure claimed completed work");
+    }
+}
+
+#[cfg(all(feature = "native-toolchain", unix))]
+#[test]
+fn tune_fixture_runner_rejects_invalid_iteration_counts() {
+    let root = temp_dir(&format!("ckc-tune-runner-counts-{}", unique_id()));
+    let runner = compile_tune_fixture_runner(&root, Command::new("cc"));
+    let artifact = compile_tune_c_fixture(
+        &root,
+        "artifact",
+        include_str!("../fixtures/tune/cli-traced-artifact.c"),
+        Command::new("cc"),
+    );
+    for iterations in [
+        "",
+        "0",
+        "01",
+        "-1",
+        "+1",
+        " 1",
+        "1x",
+        "18446744073709551616",
+    ] {
+        let trace = root.join(format!("trace-{}", unique_id()));
+        let output = tune_fixture_command(&runner, &artifact)
+            .env("CK_TUNE_ITERATIONS", iterations)
+            .env("CK_FIXTURE_TRACE", &trace)
+            .output()
+            .expect("run invalid fixture iteration count");
+        assert!(
+            !output.status.success(),
+            "runner accepted invalid iteration count {iterations:?}: {output:?}"
+        );
+        assert!(output.stdout.is_empty());
+        assert!(!trace.exists(), "invalid count executed the artifact");
+    }
+}
+
+#[cfg(all(feature = "native-toolchain", unix))]
 #[test]
 fn tune_build_cold_then_warm_publishes_exact_decision_and_artifact() {
     // macOS exposes the system temporary directory through `/var`, which is a
@@ -238,27 +401,13 @@ fn tune_build_cold_then_warm_publishes_exact_decision_and_artifact() {
         .join("target/tune-cli-tests")
         .join(format!("cold-warm-{}", unique_id()));
     fs::create_dir_all(&root).expect("root");
-    let runner_source = root.join("runner.c");
-    let runner = root.join("runner");
-    let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    fs::write(
-        &runner_source,
-        format!(
-            "#include <stdio.h>\n#include <stdlib.h>\n#include <unistd.h>\nint main(void) {{ usleep(55000); const char *c=getenv(\"CK_TUNE_CASE\"),*s=getenv(\"CK_TUNE_SEED\"),*i=getenv(\"CK_TUNE_ITERATIONS\"); if(!c||!s||!i) return 2; printf(\"CKTUNE/1 %s %s %s %s {digest}\\n\",c,s,i,i); return 0; }}\n"
-        ),
-    )
-    .expect("runner source");
-    assert!(
-        Command::new("cc")
-            .args([runner_source.as_os_str(), "-o".as_ref(), runner.as_os_str()])
-            .status()
-            .expect("compile runner")
-            .success()
-    );
+    eprintln!("cold/warm fixture evidence: {}", root.display());
+    let runner = compile_tune_fixture_runner(&root, Command::new("cc"));
+    let digest = TUNE_FIXTURE_DIGEST;
     let source = root.join("main.ck");
     fs::write(
         &source,
-        "export fn kernel() -> u32 { let i: u32 = 0; let total: u32 = 0; while i < 12 { total = total + i; i = i + 1; } return total; } fn main() -> i32 { return 0; }",
+        "export fn kernel() -> u32 { let i: u32 = 0; let total: u32 = 0; while i < 12 { total = total + i; i = i + 1; } return total; } fn main() -> i32 { print_u32(kernel()); print_newline(); return 0; }",
     )
     .expect("source");
     let config = root.join("workload.cktune.toml");
