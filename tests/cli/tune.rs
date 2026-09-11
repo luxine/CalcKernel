@@ -14,6 +14,14 @@ mod diagnostics;
 #[path = "tune_diagnostics.rs"]
 mod diagnostic_tests;
 
+#[cfg(all(feature = "native-toolchain", target_os = "macos"))]
+#[path = "../support/tune_capture.rs"]
+mod capture;
+
+#[cfg(all(feature = "native-toolchain", target_os = "macos"))]
+#[path = "tune_capture.rs"]
+mod capture_tests;
+
 fn run(args: impl IntoIterator<Item = OsString>) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ckc"))
         .args(args)
@@ -461,6 +469,26 @@ fn tune_build_cold_then_warm_publishes_exact_decision_and_artifact() {
             &source,
             std::path::Path::new(env!("CARGO_BIN_EXE_ckc")),
             &runner,
+        )
+        .map_err(|error| error.to_string())
+    });
+    #[cfg(target_os = "macos")]
+    diagnostics::after_failure(cold.status.success(), || {
+        let context = capture::native_identity_context();
+        let compile_cache = home.join("Library/Caches/ckc/tune-v1/compile");
+        capture::capture(
+            capture::Request {
+                root: &root,
+                compiler: std::path::Path::new(env!("CARGO_BIN_EXE_ckc")),
+                source: &source,
+                manifest: &config,
+                runner: &runner,
+                compile_cache: &compile_cache,
+                arguments: &args,
+                original: &cold,
+                identity_context: context.as_deref().map_err(String::as_str),
+            },
+            capture::Limits::DEFAULT,
         )
         .map_err(|error| error.to_string())
     });
