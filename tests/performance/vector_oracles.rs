@@ -17,6 +17,31 @@ const VECTOR_CASES: [&str; 8] = [
 const DOMAIN_CASES: [&str; 2] = ["contract_noalias", "contract_fixed_length"];
 
 #[test]
+fn original_runtime_observation_should_wrap_samples_without_replacing_the_gate() {
+    let root = repo_root();
+    let harness = fs::read_to_string(root.join("benches/vector_perf.rs")).unwrap();
+    assert!(
+        root.join("benches/runtime_observation.rs").is_file(),
+        "original-process observer missing"
+    );
+    assert!(harness.contains("CKC_OBSERVE_CHECKED_RUNTIME"));
+    assert!(harness.contains("!cfg!(all(target_os = \"linux\", target_arch = \"aarch64\"))"));
+    assert!(harness.contains("observer.measure(channel, _warmup"));
+    let timed = harness
+        .split("    fn measure_once(")
+        .nth(1)
+        .unwrap()
+        .split("    fn run_batch(")
+        .next()
+        .unwrap();
+    assert!(!timed.contains("observation"));
+    assert!(timed.contains("let timer = runtime_timer_start()?;"));
+    assert!(timed.contains("self.invoke_repeated(entry, batch_iterations)?;"));
+    assert!(timed.contains("let elapsed = runtime_timer_elapsed(timer)?;"));
+    assert!(timed.contains("Ok(elapsed)"));
+}
+
+#[test]
 fn vector_benchmark_should_accept_only_audited_native_llvm_handoffs() {
     let harness = fs::read_to_string(repo_root().join("benches/vector_perf.rs"))
         .expect("read vector performance harness");

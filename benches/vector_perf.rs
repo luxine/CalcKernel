@@ -756,11 +756,34 @@ fn measure_case(
             ));
         }
     }
+    let mut observation = begin_runtime_observation(
+        name,
+        checked,
+        paths,
+        entries,
+        &workspace,
+        &expected,
+        config,
+        batch_iterations,
+    );
     let sampled = runtime_replay::sample_three_channels_upper_median::<_, SAMPLE_REPETITIONS>(
         config.warmup,
         config.iterations,
-        |channel, _warmup| workspace.measure_once(entries[channel], &expected, batch_iterations),
-    )?;
+        |channel, _warmup| {
+            if let Some(observer) = observation.as_mut() {
+                return observer.measure(channel, _warmup, || {
+                    workspace.measure_once(entries[channel], &expected, batch_iterations)
+                });
+            }
+            workspace.measure_once(entries[channel], &expected, batch_iterations)
+        },
+    );
+    if let Some(observer) = observation
+        && let Err(error) = observer.finish(sampled.is_ok())
+    {
+        eprintln!("optional original-process runtime observation unavailable: {error}");
+    }
+    let sampled = sampled?;
     let medians = std::array::from_fn(|channel| median(&sampled.channels[channel]));
     Ok(OracleCase {
         name: name.into(),
@@ -772,6 +795,103 @@ fn measure_case(
         result_digest: expected,
         batch_iterations,
     })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "diagnostic receives the existing case state without changing timed workspace ownership"
+)]
+fn begin_runtime_observation(
+    name: &str,
+    checked: bool,
+    paths: [&Path; 3],
+    entries: [KernelEntry; 3],
+    workspace: &KernelWorkspace,
+    expected: &str,
+    config: &Config,
+    batch_iterations: usize,
+) -> Option<runtime_observation::Collector> {
+    // Compile/type-check the integration on every native host, but activate it
+    // only for the explicitly selected Linux/AArch64 diagnostic case.
+    if !cfg!(all(target_os = "linux", target_arch = "aarch64"))
+        || name != "specialized_length"
+        || !checked
+        || env::var("CKC_OBSERVE_CHECKED_RUNTIME").as_deref() != Ok("1")
+    {
+        return None;
+    }
+    let begin = || -> Result<runtime_observation::Collector, String> {
+        let mut addresses = [0; 3];
+        let mut libraries = Vec::with_capacity(3);
+        for (channel, (entry, path)) in entries.into_iter().zip(paths).enumerate() {
+            let KernelEntry::SpecializedChecked(function) = entry else {
+                return Err("unexpected checked runtime signature".into());
+            };
+            addresses[channel] = function as usize;
+            let file = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("invalid observed library basename")?;
+            libraries.push(format!(
+                "{{\"file\":{},\"bytes\":{},\"sha256\":\"{}\"}}",
+                runtime_observation::json_string(file),
+                regular_size(path)?,
+                sha256_file(path)?
+            ));
+        }
+        let mut input_hash = Sha256::new();
+        for value in &workspace.a_u32 {
+            input_hash.update(value.to_le_bytes());
+        }
+        let optional_text = |path: &str| {
+            fs::read_to_string(path)
+                .map(|text| runtime_observation::json_string(&text))
+                .unwrap_or_else(|_| "null".into())
+        };
+        // Snapshots and metadata are outside measure_once. They can perturb the
+        // surrounding process state; their outer times also include result hashing.
+        let identity = format!(
+            concat!(
+                "{{\"type\":\"identity\",\"schemaVersion\":1,\"acceptance\":false,",
+                "\"case\":\"specialized_length\",\"mode\":\"checked\",\"pid\":{},",
+                "\"warmup\":{},\"iterations\":{},\"repetitions\":{},\"calls\":{},\"elements\":{},",
+                "\"inputAddress\":{},\"outputAddress\":{},\"entries\":[{},{},{}],",
+                "\"inputSha256\":\"{:x}\",\"resultDigest\":\"{}\",\"libraries\":[{}],",
+                "\"maps\":{},\"kernel\":{},\"cpuinfo\":{},",
+                "\"limitations\":\"Outer snapshots include result verification and boundary work; not atomic, not replacement timings, not causal proof. Null means unavailable.\"}}"
+            ),
+            process::id(),
+            config.warmup,
+            config.iterations,
+            SAMPLE_REPETITIONS,
+            batch_iterations / ORACLE_LENGTH,
+            batch_iterations,
+            workspace.a_u32.as_ptr() as usize,
+            workspace.out_u32.as_ptr() as usize,
+            addresses[0],
+            addresses[1],
+            addresses[2],
+            input_hash.finalize(),
+            expected,
+            libraries.join(","),
+            optional_text("/proc/self/maps"),
+            optional_text("/proc/sys/kernel/osrelease"),
+            optional_text("/proc/cpuinfo")
+        );
+        let directory = paths[0].parent().ok_or("observed library has no parent")?;
+        runtime_observation::Collector::new(
+            &directory.join("checked-runtime-observations.jsonl"),
+            &identity,
+        )
+        .map_err(|error| error.to_string())
+    };
+    match begin() {
+        Ok(observer) => Some(observer),
+        Err(error) => {
+            eprintln!("optional original-process runtime observation unavailable: {error}");
+            None
+        }
+    }
 }
 
 type MapUnchecked = unsafe extern "C" fn(*mut u32, u32, *mut u32, u32, u32);
