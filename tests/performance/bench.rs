@@ -5,6 +5,23 @@ use sha2::{Digest, Sha256};
 use super::support::oracle::repo_root;
 
 #[test]
+fn loop_incoming_edges_should_not_allocate_a_vector_for_each_terminator() {
+    let source = fs::read_to_string(repo_root().join("src/optimizer/analysis/loops.rs"))
+        .expect("read loop analysis");
+    let body = source
+        .split("fn incoming_edges(")
+        .nth(1)
+        .unwrap()
+        .split("fn function_block(")
+        .next()
+        .unwrap();
+    assert!(
+        !body.contains("vec![") && !body.contains("Vec::new()"),
+        "incoming-edge scans must not allocate a temporary vector for each terminator"
+    );
+}
+
+#[test]
 fn repository_should_define_native_cargo_benchmark_harness() {
     let cargo_toml = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
 
