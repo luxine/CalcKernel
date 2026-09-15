@@ -13,6 +13,8 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "native-toolchain")]
+mod runtime_observation;
+#[cfg(feature = "native-toolchain")]
 mod runtime_replay;
 #[cfg(feature = "native-toolchain")]
 mod vector_perf;

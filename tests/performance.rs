@@ -7,6 +7,8 @@ mod bench;
 mod oracle_fixtures;
 #[path = "performance/pgo_contract.rs"]
 mod pgo_contract;
+#[path = "performance/runtime_observation.rs"]
+mod runtime_observation;
 #[path = "performance/runtime_replay.rs"]
 mod runtime_replay;
 #[path = "performance/vector_oracles.rs"]

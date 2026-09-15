@@ -10,6 +10,10 @@ use crate::{
 
 use super::IntegerType;
 
+#[cfg(test)]
+#[path = "loops_tests.rs"]
+mod tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NaturalLoop {
     pub header: BlockId,
@@ -890,17 +894,20 @@ fn incoming_edges(function: &KirFunction, target: BlockId) -> Vec<(BlockId, &cra
         .blocks
         .iter()
         .flat_map(|block| {
+            // Scans are frequent during induction/forwarding queries. Keep both
+            // branch arms in order without allocating for each visited block.
             let edges = match &block.terminator {
-                KirTerminator::Return { .. } => Vec::new(),
-                KirTerminator::Jump { edge } => vec![edge],
+                KirTerminator::Return { .. } => [None, None],
+                KirTerminator::Jump { edge } => [Some(edge), None],
                 KirTerminator::Branch {
                     then_edge,
                     else_edge,
                     ..
-                } => vec![then_edge, else_edge],
+                } => [Some(then_edge), Some(else_edge)],
             };
             edges
                 .into_iter()
+                .flatten()
                 .filter(move |edge| edge.target == target)
                 .map(move |edge| (block.id, edge))
         })

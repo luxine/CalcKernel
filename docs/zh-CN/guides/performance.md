@@ -69,6 +69,33 @@ memory、cold/warm execution 与 cache behavior 是分离指标。任何 thresho
 evaluation order、modular integer、strict float、checked first-error、print/effect order、semantic
 MIR、public ABI 或 contract domain。
 
+## 有界 checked kernel 诊断
+
+Linux/AArch64 CI 启用 `CKC_OBSERVE_CHECKED_RUNTIME=1`，在**原始** checked
+`specialized_length` gate 调用外保留可选观测。原有 timer、kernel 调用循环、corpus 和
+sampler 保持不变，仍由它们决定报告。每个 measurement evidence 目录保存
+`checked-runtime-observations.jsonl`：library hash、实际 entry/input/output 地址、
+input/result digest、process map，以及全部 429 次原始调用（9 次 warmup 和
+20 × 7 × 3 次正式调用）。每次调用前后记录 wall/thread CPU clock、user/system CPU
+记账、page fault 和 context switch。记录空间预先分配，采样后才写出；观测失败不能
+替换原有结果。不可用指标是 null，不是零。
+
+`python3 scripts/check-runtime-observations.py target/ckc-perf/results-baseline.json`
+核对保留的 library byte，并从该报告的旁路记录逐项还原全部 sample 和 median。
+这仅验证证据一致性，不作 release acceptance。外层快照还包含结果 hash 与边界工作，
+不是原子快照，也可能扰动进程状态。不完整旁路记录属于无效证据；历史缺失观测无法恢复。
+
+仅在显式启用 workflow 的 `performance_diagnostics` input 时，原有 gate 结束后，
+Linux/AArch64 CI 在独立对照中加载经 hash 验证的 checked
+`specialized_length` CK/C/Rust 指令体，比较原始地址与三个固定复制布局。复制区域只读可执行，
+不会同时可写可执行，并须保持各原始通道的正常结果和错误前缀行为。所有布局共享同一
+input/output 工作区并执行固定完整采样顺序。全部 raw row、映射地址、CPU affinity、资源快照
+和可用的仅用户态硬件计数保存于 `target/performance-diagnostics/checked-aarch64-layout`。
+
+这是代码放置位置的受控干预，不重新生成或替代 release evidence，不恢复历史映射，不改变
+任何 gate，也不自动认定根因。硬件计数区间包含时钟边界工作；不可用或复用的计数不能当作零。
+指令体发生变化时，明确报告为不适用于本次有界对照。
+
 ## 命令与证据
 
 昂贵的稳定 worker 测量前先运行本地 schema/checker/correctness check：

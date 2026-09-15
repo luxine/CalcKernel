@@ -86,6 +86,42 @@ separate quantities. No threshold authorizes weaker diagnostics, evaluation
 order, modular integer behavior, strict floating semantics, checked first-error
 order, print/effect order, semantic MIR, public ABI, or contract domain.
 
+## Bounded checked-kernel diagnostic
+
+Linux/AArch64 CI enables `CKC_OBSERVE_CHECKED_RUNTIME=1` to retain optional
+observations around the **original** checked `specialized_length` gate calls.
+The unchanged timer, kernel invocation loop, corpus and sampler still determine
+the report. Each measurement evidence directory gets
+`checked-runtime-observations.jsonl`: library hashes, actual entry/input/output
+addresses, input/result digests, process maps, and all 429 original raw calls
+(9 warmups and 20 × 7 × 3 measured calls). Snapshots bracket each call with wall
+and thread CPU clocks, user/system CPU accounting, faults and context switches.
+Rows are preallocated and written only after sampling; observation failures do
+not replace the original result. Unsupported metrics are null, not zero.
+
+`python3 scripts/check-runtime-observations.py target/ckc-perf/results-baseline.json`
+verifies retained library bytes and reconstructs every stored sample and median
+from that report's sidecar. This checks evidence consistency, not release
+acceptance. Outer snapshots also include result hashing and boundary work, are
+not atomic, and can perturb the surrounding process state. An incomplete sidecar
+is invalid evidence; missing historical observations cannot be recovered.
+
+Only when the workflow's `performance_diagnostics` input is explicitly enabled,
+after the original gates Linux/AArch64 CI separately compares the hash-verified
+checked `specialized_length` CK/C/Rust instruction bodies at their original
+addresses and three fixed copied layouts. Copies are read-execute, never
+write-execute, and must preserve each original's normal and error-prefix behavior.
+One shared input/output workspace and the fixed full sampling schedule are used
+across all layouts. Raw rows, mapped addresses, CPU affinity, resource snapshots
+and available user-only hardware counters are retained under
+`target/performance-diagnostics/checked-aarch64-layout`.
+
+This is a code-placement intervention, not a remeasurement or replacement of
+release evidence. It does not recover historical mappings, change any gate, or
+automatically establish a root cause. Counter intervals include clock-boundary
+work; unavailable or multiplexed counters are not treated as zero. A different
+instruction body is explicitly reported as outside this bounded comparison.
+
 ## Commands and evidence
 
 Local schema/checker/correctness checks precede expensive stable-worker runs:

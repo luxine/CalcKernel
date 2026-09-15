@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ptr::NonNull, rc::Rc};
+use std::{cell::OnceCell, marker::PhantomData, ptr::NonNull, rc::Rc};
 
 use crate::{
     KirAlignmentClass, KirConsumer, KirCostSemantics, KirLaneType, KirLegalCost,
@@ -27,6 +27,8 @@ pub enum NativeCpu {
 pub struct NativeTarget {
     handle: NonNull<CkcLlvmTarget>,
     cpu_policy: NativeCpu,
+    library_profile: OnceCell<KirTargetProfile>,
+    executable_profile: OnceCell<KirTargetProfile>,
     not_send_or_sync: PhantomData<Rc<()>>,
 }
 
@@ -48,6 +50,8 @@ impl NativeTarget {
                 NativeCpu::Multiversion => BridgeCpuPolicy::Baseline,
             })?,
             cpu_policy: cpu,
+            library_profile: OnceCell::new(),
+            executable_profile: OnceCell::new(),
             not_send_or_sync: PhantomData,
         })
     }
@@ -78,17 +82,31 @@ impl NativeTarget {
 
     /// Constructs the canonical KIR target profile from this exact
     /// TargetMachine using the bridge's fixed TTI query universe.
+    /// Successful profiles are retained per consumer and returned as cheap
+    /// clones of the immutable snapshot owned by this target.
     pub fn kir_profile(&self, consumer: KirConsumer) -> Result<KirTargetProfile, NativeError> {
-        if !matches!(
-            consumer,
-            KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
-        ) {
-            return Err(NativeError::new(
-                super::error::NativeStage::Target,
-                1,
-                "native target profile requires a Native consumer".to_string(),
-            ));
+        let cache = match consumer {
+            KirConsumer::NativeLibrary => &self.library_profile,
+            KirConsumer::NativeExecutable => &self.executable_profile,
+            _ => {
+                return Err(NativeError::new(
+                    super::error::NativeStage::Target,
+                    1,
+                    "native target profile requires a Native consumer".to_string(),
+                ));
+            }
+        };
+        if let Some(profile) = cache.get() {
+            return Ok(profile.clone());
         }
+        // The bridge fixes this target's CPU, features, and layout at creation.
+        // Reuse its complete snapshot for lowering's unchanged identity check;
+        // a failed query must leave the slot empty so a later call can retry.
+        let profile = self.query_kir_profile(consumer)?;
+        Ok(cache.get_or_init(|| profile).clone())
+    }
+
+    fn query_kir_profile(&self, consumer: KirConsumer) -> Result<KirTargetProfile, NativeError> {
         let triple = self.triple()?;
         let cpu = self.cpu()?;
         let features = self
@@ -177,6 +195,8 @@ impl NativeTarget {
         Ok(Self {
             handle: ffi::target_create_explicit(triple, cpu, &features.join(","))?,
             cpu_policy: NativeCpu::Multiversion,
+            library_profile: OnceCell::new(),
+            executable_profile: OnceCell::new(),
             not_send_or_sync: PhantomData,
         })
     }
