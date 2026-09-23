@@ -218,7 +218,7 @@ class GateTests(unittest.TestCase):
                 compile_times.append(row)
 
         self.report = dict(
-            schemaVersion=7, candidateVersion="0.13.0", cpuPolicy="baseline",
+            schemaVersion=7, candidateVersion="0.14.0", cpuPolicy="baseline",
             fastMath=False, clangVersion="22.1.8", rustVersion="1.90.0", warmup=3,
             sampleRepetitions=7, samplingProtocol="rotating-twelve-channel-v1",
             channelNames=CHANNELS,
@@ -277,7 +277,9 @@ class GateTests(unittest.TestCase):
 
     def test_identity_samples_orders_and_artifacts_fail_closed(self):
         for field, value, message in [
-            ("schemaVersion", 6, "schemaVersion"), ("candidateVersion", "0.12.0", "candidate"),
+            ("schemaVersion", 6, "schemaVersion"),
+            ("candidateVersion", "0.13.0", "candidate"),
+            ("candidateVersion", "0.12.0", "candidate"),
             ("cpuPolicy", "native", "baseline"), ("fastMath", True, "fast-math"),
             ("clangVersion", "23", "Clang"), ("rustVersion", "1.89.0", "Rust"),
             ("samplingProtocol", "old", "protocol"), ("channelNames", CHANNELS[::-1], "channel"),

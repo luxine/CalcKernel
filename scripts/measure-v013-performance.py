@@ -697,8 +697,8 @@ def collect_compile_samples(candidate, case, profiles, evidence, warmup, samples
 def collect(output, quick):
     candidate = pathlib.Path(os.environ.get("CKC_CANDIDATE_COMPILER", REPO / "target/release/ckc"))
     candidate = candidate if candidate.is_absolute() else (REPO / candidate).resolve()
-    if not command_output([candidate, "--version"]).startswith("ckc 0.13.0"):
-        fail("CKC_CANDIDATE_COMPILER must identify ckc 0.13.0")
+    if command_output([candidate, "--version"]).strip() != "ckc 0.14.0":
+        fail("CKC_CANDIDATE_COMPILER must identify ckc 0.14.0")
     candidate_sha = command_output(["git", "rev-parse", "HEAD"]).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha):
         fail("candidate SHA is not exact")
@@ -849,7 +849,7 @@ def collect(output, quick):
     deterministic_archive(archive_path, candidate)
     replay_archive = replay_report["archive"]
     report = {
-        "schemaVersion": 8, "candidateVersion": "0.13.0", "candidateSha": candidate_sha,
+        "schemaVersion": 8, "candidateVersion": "0.14.0", "candidateSha": candidate_sha,
         "replayCommit": V012_COMMIT, "evidenceDirectory": evidence.name,
         "toolchain": {
             "llvmVersion": LLVM_VERSION, "clangVersion": LLVM_VERSION,
