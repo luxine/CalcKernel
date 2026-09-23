@@ -16,6 +16,15 @@ pub(crate) fn run(args: Vec<String>) -> i32 {
         return 2;
     };
 
+    let deferred_replay = command == "build"
+        && args[1..]
+            .iter()
+            .any(|arg| arg == "--tune-use" || arg.starts_with("--tune-use="));
+    if command == "tune" || deferred_replay {
+        print_error("Offline tuning is unavailable in this release.");
+        return 1;
+    }
+
     #[cfg(feature = "native-toolchain")]
     if command == "__ckc-run-child" {
         return run::run_private_child(&args[1..]);
