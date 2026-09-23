@@ -92,12 +92,12 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribution() {
+fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distribution() {
     let required_by_file = [
         (
             "docs/reference/language.md",
             &[
-                "CalcKernel 0.13",
+                "CalcKernel 0.14",
                 "fn main() -> void",
                 "fn main() -> i32",
                 "print_i32",
@@ -131,7 +131,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         (
             "docs/reference/mir.md",
             &[
-                "CalcKernel 0.13",
+                "CalcKernel 0.14",
                 "entry",
                 "runtime effect",
                 "print",
@@ -178,7 +178,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         (
             "docs/project/compatibility.md",
             &[
-                "0.13.x",
+                "0.14.x",
                 "0.12.0",
                 "0.11.0",
                 "0.10.0",
@@ -202,7 +202,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         ),
         (
             "docs/project/release.md",
-            &["0.13.0", "native-toolchain", "ckc licenses", "six archives"][..],
+            &["0.14.0", "native-toolchain", "ckc licenses", "six archives"][..],
         ),
     ];
     for (path, required) in required_by_file {
@@ -218,7 +218,9 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
         "docs/index.md",
         "docs/zh-CN/index.md",
     ] {
-        assert!(read(path).contains("0.13.0"), "{path} must identify 0.13.0");
+        let text = read(path);
+        assert!(text.contains("0.14.0"), "{path} must identify 0.14.0");
+        assert!(text.contains("0.13.0"), "{path} must retain 0.13.0 history");
     }
 
     let language = read("docs/reference/language.md");
@@ -253,7 +255,7 @@ fn docs_v0_13_should_freeze_language_cli_kir_optimizer_abi_runtime_and_distribut
 }
 
 #[test]
-fn docs_v0_13_should_describe_only_the_implemented_optimizer_boundary() {
+fn docs_v0_14_should_describe_only_the_implemented_optimizer_boundary() {
     for path in [
         "docs/compiler/architecture.md",
         "docs/zh-CN/compiler/architecture.md",
@@ -271,21 +273,21 @@ fn docs_v0_13_should_describe_only_the_implemented_optimizer_boundary() {
             assert!(text.contains(required), "{path} must contain {required:?}");
         }
     }
-    for path in [
-        "README.md",
-        "README.zh-CN.md",
-        "docs/guides/performance.md",
-        "docs/zh-CN/guides/performance.md",
+    for (path, deferred) in [
+        ("README.md", "deferred"),
+        ("README.zh-CN.md", "延期"),
+        ("docs/guides/performance.md", "deferred"),
+        ("docs/zh-CN/guides/performance.md", "延期"),
     ] {
         let text = read(path);
-        for required in ["PGO", "multiversion", "Auto-Tuning remains 0.14"] {
+        for required in ["PGO", "multiversion", "Auto-Tuning", deferred] {
             assert!(text.contains(required), "{path} must contain {required:?}");
         }
     }
 }
 
 #[test]
-fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
+fn docs_v0_14_should_retain_pgo_multiversion_security_and_future_boundaries() {
     for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
         let text = read(path);
         for required in [
@@ -368,7 +370,28 @@ fn docs_v0_13_should_close_pgo_multiversion_security_and_future_boundaries() {
 }
 
 #[test]
-fn docs_v0_13_should_define_canonical_slice_and_mode_contracts() {
+fn docs_v0_14_should_identify_the_real_pgo_fix_and_deferred_tuning() {
+    for path in [
+        "docs/abi/llvm.md",
+        "docs/zh-CN/abi/llvm.md",
+        "docs/project/compatibility.md",
+        "docs/zh-CN/project/compatibility.md",
+    ] {
+        let text = read(path);
+        for required in ["ck_profile_flush_", "status 43", "status 44"] {
+            assert!(text.contains(required), "{path} must contain {required:?}");
+        }
+    }
+    for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
+        let text = read(path);
+        for required in ["ckc tune", "--tune-use", "Auto-Tuning"] {
+            assert!(text.contains(required), "{path} must contain {required:?}");
+        }
+    }
+}
+
+#[test]
+fn docs_v0_14_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
         "C and Native support optional `--bounds checked` guards for slice indexing and"

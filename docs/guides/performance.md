@@ -1,8 +1,8 @@
-# CalcKernel 0.13 Performance Guide
+# CalcKernel 0.14 Performance Guide
 
 [简体中文](../zh-CN/guides/performance.md)
 
-CalcKernel 0.13 uses fail-closed performance report schema 8. A formal release
+CalcKernel 0.14 retains the fail-closed performance report schema 8. A formal release
 requires complete reports from fixed x86-64 and AArch64 workers; a local build
 or release-candidate identity does not sign those gates. Measurements bind the
 candidate SHA, exact 0.12 replay SHA, LLVM/Clang 22.1.8, Rust 1.90.0, hardware
@@ -43,9 +43,9 @@ domain. Missing, invalid, or post-measurement-excluded competitors fail the gate
 
 ## Cumulative release gates
 
-- Ordinary no-PGO 0.13 baseline/native versus exact 0.12 replay: geometric-mean
+- Ordinary no-PGO 0.14 baseline/native versus exact 0.12 replay: geometric-mean
   slowdown at most 2%, individual slowdown at most 5%.
-- PGO use versus matching 0.13 ordinary CPU policy: geometric-mean improvement
+- PGO use versus matching 0.14 ordinary CPU policy: geometric-mean improvement
   at least 5%, with held-out individual slowdown at most 3%. Generation
   execution is at most 5x ordinary on the fixed instrumentation corpus.
 - Eligible multiversion dispatch versus portable baseline: geometric-mean
@@ -160,6 +160,7 @@ report/artifacts and do not rebuild or remeasure a required gate. Changing a
 source, corpus, profile, target/capability, oracle precondition, threshold,
 statistic, exclusion, or checker is a reviewed contract change.
 
-PGO and bounded multiversioning ship in 0.13 only after these gates pass.
-Auto-Tuning remains 0.14; indirect-call promotion, scalable KIR, and adaptive
-JIT PGO remain future work.
+PGO and bounded multiversioning shipped in 0.13 and remain subject to these
+unchanged gates in 0.14. Offline Auto-Tuning is deferred; this compatibility
+release claims no new optimizer speedup. Indirect-call promotion, scalable
+KIR, and adaptive JIT PGO remain future work.

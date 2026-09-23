@@ -1,4 +1,4 @@
-# `ckc` 0.13 CLI Reference
+# `ckc` 0.14 CLI Reference
 
 [简体中文](../zh-CN/reference/cli.md)
 
@@ -26,6 +26,12 @@ requested textual output use stdout unless stated otherwise.
 | `ckc cache clean` | Remove only the resolved CK native cache. |
 | `ckc licenses` | Print embedded third-party notices. |
 | `ckc --version --verbose` | Print compiler, ABI, LLVM, target, codegen, and ORC identity. |
+
+Offline Auto-Tuning is not available in 0.14. `ckc tune ...` and
+`ckc build --tune-use ...` return a nonzero error before reading a workload,
+decision, or source and before creating or changing output. They do not fall
+back to ordinary compilation. The retained `ckc pgo` and `--pgo-*` commands
+are separate supported workflows.
 
 `build` accepts `--kind executable|dynamic|static|object`; omission means
 `dynamic`. Object, static, and dynamic outputs receive a sibling Native C ABI
@@ -93,7 +99,7 @@ ckc build kernels.ck --kind static --pgo-use kernels.ckprof \
 Profile use accepts O2/O3; specialization and `--cpu multiversion` require O3.
 Generation accepts executable, dynamic, and static outputs, but a generation object
 is rejected because it has no process/library flush owner. A
-multiversion object is also rejected because 0.13 defines a named-object bundle,
+multiversion object is also rejected because 0.14 retains a named-object bundle,
 not a partial-link format; baseline/native single-version profile-use objects
 remain supported. Dynamic, static, and object outputs use Native-library topology,
 while executables use Native-executable topology. `--pgo-use` and
@@ -143,11 +149,11 @@ unsafe ownership/permissions, a symlink replacement, or an unparseable object
 is a miss, never executable input. The same-user cache remains inside the
 user's trust boundary and is not a security sandbox.
 
-CalcKernel 0.13 uses KIR v3 and `CKCOBJ03` manifest schema 4. Contract
+CalcKernel 0.14 retains KIR v3 and `CKCOBJ03` manifest schema 4. Contract
 sanitization, consumer roots, checked modes, the canonical `KirTargetProfile`
 digest, cost/proof schema identities, target/CPU policy, and optimization
 budgets are part of the key. 0.12 and older private objects fail closed and cannot be
-reused under the 0.13 compiler.
+reused under the 0.14 compiler.
 
 Roots are `$XDG_CACHE_HOME/ckc` or `$HOME/.cache/ckc` on Linux,
 `$HOME/Library/Caches/ckc` on macOS, and

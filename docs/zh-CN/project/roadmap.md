@@ -2,13 +2,14 @@
 
 [English](../../project/roadmap.md)
 
-本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.13 兼容策略](compatibility.md)。
+本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.14 兼容策略](compatibility.md)。
 
-- Search-based offline Auto-Tuning 只通过独立评审的 0.14 contract 加入，不隐含在 0.13 PGO。
+- Search-based offline Auto-Tuning 只可通过未来独立评审的 contract 加入，
+  不隐含在保留的 0.13 PGO 或普通 0.14 编译中。
 - 评估 indirect calls 与 indirect-call promotion，且不能削弱闭合 effect、ABI 或
   profile-mapping contract。
-- scalable KIR vector 与 0.13 fixed-width target variant 分开评估。
-- adaptive JIT PGO 单独评估；0.13 profile 是 offline、immutable 的。
+- scalable KIR vector 与保留的 fixed-width target variant 分开评估。
+- adaptive JIT PGO 单独评估；保留的 CK profile 是 offline、immutable 的。
 - Source SIMD type 与更丰富的 target-specific vector facility 只通过独立评审的未来 contract 加入。
 - 强化 target-specific LLVM calling convention 与 data-layout reporting。
 - 只以未来明确 versioned ABI addition 的方式评估 WASM checked bounds/status。

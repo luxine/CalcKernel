@@ -1,4 +1,4 @@
-# CalcKernel 0.13 编译器架构
+# CalcKernel 0.14 编译器架构
 
 [English](../../compiler/architecture.md)
 
@@ -57,7 +57,7 @@ pre-state 不变。multiversion planning 让 baseline 与全部 enhanced variant
 开始，分别验证，并禁止 cross-variant LTO。
 
 `src/backend/` 只消费 verified KIR。C/Native 用显式 guard/status flow 支持四种
-overflow/bounds 组合，WASM 仅支持 unchecked。0.13 的 C 与 WebAssembly profile 明确禁用
+overflow/bounds 组合，WASM 仅支持 unchecked。0.14 的 C 与 WebAssembly profile 明确禁用
 Vector KIR，因此二者继续消费 verified scalar KIR，同时保留有收益的 scalar specialization
 与 cleanup。C 可输出 portable restrict/alignment hint；Native 结构化 lowering 已检查的
 Vector KIR，并在 bridge 前运行 fact audit，再把合法 scalar fact 映射到 LLVM

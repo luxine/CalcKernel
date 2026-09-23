@@ -2,9 +2,10 @@
 
 [English](README.md)
 
-CalcKernel 0.13.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
+CalcKernel 0.14.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
 语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
 仓库同时保留可检查的 C 与 WebAssembly emitter。
+正式发布的 0.13.0 仍是本次更新的兼容基线。
 
 ## 发布能力
 
@@ -74,6 +75,9 @@ ckc licenses
 与 `--cpu multiversion` 均为显式选择。`build-llvm` 是 deprecated alias，不提供 PGO 或
 multiversion behavior。
 
+0.14.0 保留 0.13 的 PGO 与 multiversion 工作流。离线 Auto-Tuning 延期：`ckc tune`
+与 `ckc build --tune-use` 会在读取输入或创建输出前明确失败，不会静默退回普通 build。
+
 ## 从源码构建
 
 Native feature 需要 `native/llvm/manifest.toml` 定义的精确 LLVM prefix；仓库脚本将其 bootstrap
@@ -118,13 +122,13 @@ cargo build --release --features native-toolchain --locked
 Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
 发布见 [release policy](docs/zh-CN/project/release.md)。
 
-CalcKernel 0.13.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
+CalcKernel 0.14.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
 LLVM bridge 为 ABI 4，KIR 使用 `kir-v3` identity，Native object cache 使用
 `CKCOBJ03` 及 key/manifest schema 4。旧 0.12/0.11 private cache entry 会 fail closed，
 不会与 0.13 artifact 混用。已接受的 0.12.0、0.11.0 与 0.10.0 source boundary 保留在
 [兼容性策略](docs/zh-CN/project/compatibility.md)中。
 
-PGO 与受限 runtime multiversioning 已在 0.13 实现。Auto-Tuning remains 0.14；
+PGO 与受限 runtime multiversioning 已在 0.13 实现并于 0.14 保留。Auto-Tuning 延期；
 indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍是未来工作。
 
 ## 内存边界

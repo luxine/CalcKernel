@@ -2,7 +2,17 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
-## 0.13.0 - Release candidate
+## 0.14.0
+
+- 修复 PGO-generation library 在 build 后收集目录变为不可写时的 flush 状态：现在返回
+  directory failure（43），不再把它当作十六次随机名称冲突后返回 write failure（44）。
+  成功发布的 shard 和真正的名称冲突重试保持不变；public Native C ABI 1、Runtime ABI 2
+  与 profile wire format 不变。
+- 保留 0.13.0 的普通编译、PGO、multiversion 与同一组六平台 Native 能力。离线
+  Auto-Tuning 延期：`ckc tune` 和 `ckc build --tune-use` 明确失败且不产生输出副作用。
+  本版本不声称新的 optimizer 加速或调优门禁通过。
+
+## 0.13.0
 
 - 新增确定性的 CK 自有 `CKPART01` shard 与 `CKPROF01` workload profile，提供安全的
   directory collection、canonical merge/inspect，以及 transactional `ckc pgo build` 工作流。
@@ -18,10 +28,9 @@
   `CKCOBJ03` key/manifest schema 4。Public Native C ABI 1 与 Runtime ABI 2 保持不变，
   0.12 source 与 observable semantics 继续兼容。
 - 新增闭合的 profile/target/dispatch/cache identity、corruption/mutation test、transactional
-  multi-file output 与 release-candidate audit。正式发布前仍必须通过 schema-8 performance
-  与 exact-SHA CI。
-- Auto-Tuning、indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍属于
-  0.14 或更晚的未来工作。
+  multi-file output，以及 schema-8 performance 与 exact-SHA release audit。
+- Auto-Tuning、indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 当时仍属
+  未来工作。
 
 ## 0.12.0 - 尚未发布
 

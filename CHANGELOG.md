@@ -2,7 +2,19 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
-## 0.13.0 - Release candidate
+## 0.14.0
+
+- Corrected the PGO-generation library flush status when its collection
+  directory becomes unwritable after build: it now reports directory failure
+  (43) instead of retrying sixteen false name collisions and reporting write
+  failure (44). Successful shards and genuine collision retries remain intact;
+  public Native C ABI 1, Runtime ABI 2, and profile wire formats do not change.
+- Retained 0.13.0 ordinary compilation, PGO, and multiversion behavior on the
+  same six native platforms. Offline Auto-Tuning is deferred: `ckc tune` and
+  `ckc build --tune-use` fail explicitly without output side effects. This
+  version does not claim a new optimizer speedup or passing tuning gates.
+
+## 0.13.0
 
 - Added deterministic CK-owned `CKPART01` shards and `CKPROF01` workload
   profiles, with directory-safe collection, canonical merge/inspection, and the
@@ -20,10 +32,10 @@ All notable user-visible changes to CalcKernel are recorded here.
   cache to `CKCOBJ03` key/manifest schema 4. Public Native C ABI 1 and Runtime
   ABI 2 remain unchanged; 0.12 source and observable semantics remain accepted.
 - Added closed profile/target/dispatch/cache identities, corruption and mutation
-  tests, transactional multi-file output, and release-candidate audits. Schema-8
-  performance and exact-SHA CI remain required before a formal release.
+  tests, transactional multi-file output, and schema-8 performance and exact-SHA
+  release audits.
 - Auto-Tuning, indirect-call promotion, scalable KIR vectors, and adaptive JIT
-  PGO remain future work for 0.14 or later.
+  PGO remained future work.
 
 ## 0.12.0 - Unreleased
 

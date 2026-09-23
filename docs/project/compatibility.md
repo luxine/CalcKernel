@@ -1,10 +1,10 @@
-# CalcKernel 0.13 Compatibility Policy
+# CalcKernel 0.14 Compatibility Policy
 
 [简体中文](../zh-CN/project/compatibility.md)
 
-This document is the normative compatibility authority for `0.13.x`.
+This document is the normative compatibility authority for `0.14.x`.
 
-Patch releases preserve accepted 0.13.0 source and observable semantics, stable
+Patch releases preserve accepted 0.14.0 source and observable semantics, stable
 diagnostic identifiers/categories, documented CLI names/flags/defaults,
 stdout/stderr classes, semantic textual MIR, public C/WASM/Native C ABI shapes,
 checked first-error order, runtime diagnostic bytes/statuses, and the six
@@ -16,6 +16,26 @@ boundary remains unchanged. Private Rust modules, KIR text and schema, profile
 wire formats, facts/proof encoding, pass algorithms, private LLVM bridge ABI,
 cache entries, dispatch/collection runtimes, measurements, and undocumented
 compiler interfaces are not public contracts.
+
+## 0.13.0 to 0.14.0 migration
+
+- Accepted 0.13 source, diagnostics, semantic MIR, checked first-error order,
+  strict-f64 behavior, ordinary build/run, and explicit PGO/multiversion
+  workflows remain supported. Native C ABI remains 1, Runtime ABI remains 2,
+  KIR remains v3, `CKPART01`/`CKPROF01` remain schema 1, and the private Native
+  cache remains `CKCOBJ03` key/manifest schema 4.
+- A generated PGO library's `ck_profile_flush_*() -> i32` now reports directory
+  failure status 43 when its collection directory becomes unwritable after
+  build. The 0.13 runtime mistook failed shard creation for repeated random
+  name collisions and eventually reported write status 44. Genuine
+  collisions continue to retry; successful shard bytes and flush identity
+  remain unchanged. The generated control symbol is not a new Native C ABI.
+- Offline Auto-Tuning is deferred. `ckc tune` and `ckc build --tune-use`
+  reject explicitly before reading the requested workload, decision, or
+  source and before changing an output. They do not silently perform an
+  ordinary build. No tuning decision/cache format is accepted in 0.14.
+- No new optimizer speedup or enhanced-ISA tuning benefit is claimed. The
+  existing 0.13 PGO and multiversion features are not deferred.
 
 ## 0.12.0 to 0.13.0 migration
 
@@ -40,8 +60,9 @@ compiler interfaces are not public contracts.
   fail closed without changing foreign-call signatures.
 - Generation and dispatch runtimes are compiler-private. The generation flush
   symbol and hidden variant symbols do not extend Native C ABI 1 or Runtime ABI 2.
-- Auto-Tuning remains 0.14. Indirect-call promotion, scalable KIR vectors, and
-  adaptive JIT PGO also remain outside 0.13.
+- Auto-Tuning was not shipped in 0.13 and is still deferred in 0.14.
+  Indirect-call promotion, scalable KIR vectors, and adaptive JIT PGO remain
+  outside these releases.
 
 Executable 0.12 compatibility history remains in
 `tests/fixtures/compatibility/v0_12/manifest.toml`; its accepted source is

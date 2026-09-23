@@ -1,14 +1,18 @@
-# Native `ckc` 0.13 Release Policy
+# Native `ckc` 0.14 Release Policy
 
 [简体中文](../zh-CN/project/release.md)
 
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
 
-The 0.13.0 version in a feature branch is a release candidate, not a published
-Release. No tag or GitHub Release may be created until schema-8 x86-64/AArch64
-performance and the exact candidate-SHA ten-job CI are complete. Re-recording
-evidence after a code or contract change requires rerunning the affected gates.
+The 0.14.0 version in a feature branch is a release candidate, not a published
+Release. This ordinary-version scope retains 0.13 PGO and multiversion but
+defers offline Auto-Tuning. No tag or GitHub Release may be created until the
+unchanged schema-7/8 x86-64/AArch64 performance gates, all six native hosts,
+and the exact candidate-SHA ten-job CI succeed. After PR merge, require a new
+exact-main-SHA ten-job CI and publishing-disabled six-platform release preview
+before creating the annotated tag. Re-recording evidence after any source or
+contract change requires rerunning the affected gates on the new exact SHA.
 
 Repository text checks out with LF endings on every host. Vendored provenance
 files retain their original bytes without Git newline conversion; hash checks
@@ -79,7 +83,7 @@ that final publish job.
 
 Release tags are annotated `vMAJOR.MINOR.PATCH` tags and are never moved. A
 published Release or asset is never overwritten. If a defect is discovered
-after `v0.13.0`, fix it in a new patch release such as `v0.13.1`. The 0.13.0
+after `v0.14.0`, fix it in a new patch release such as `v0.14.1`. The 0.14.0
 release consists of six archives and their six checksum sidecars; publication
 is all-or-nothing.
 

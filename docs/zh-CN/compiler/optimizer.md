@@ -1,4 +1,4 @@
-# CalcKernel 0.13 Fact-Driven Optimizer
+# CalcKernel 0.14 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -78,7 +78,7 @@ CLI 将 opaque independent-check authority 保留到 emission，source-to-object
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.13 的 C/WebAssembly profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.14 的 C/WebAssembly profile 禁用 Vector KIR。
 
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
@@ -108,7 +108,7 @@ Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainde
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
 提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
-保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.13
+保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.14
 speculative transform，包括被拒绝的 alternative 与 clone。
 
 普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
@@ -213,11 +213,12 @@ Possible checked failure 和 runtime print 是 ordered effect，不能无证明�
 拒绝 injected 或 stale metadata。
 
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
-下使用 schema 8 比较 0.13 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
+下使用 schema 8 比较 0.14 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
 hand-written SIMD oracle，并 replay exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`。Correctness、optimization time、generation
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
-在 0.13 交付；Auto-Tuning remains 0.14，indirect calls、scalable KIR 与 adaptive JIT PGO
-仍属未来。阈值不能成为弱化语义或使用 contract domain 外输入的理由。
+已在 0.13 交付且于 0.14 保留；离线 Auto-Tuning 延期，此兼容性版本不声称新的 optimizer
+收益。indirect calls、scalable KIR 与 adaptive JIT PGO 仍属未来。阈值不能成为弱化语义或
+使用 contract domain 外输入的理由。
 Dynamic library final link 还会按 object format 使用原生 dead-section 机制回收未引用的
 compiler-private section，同时保留 CK export 与全部实际引用的 dispatch/runtime section。

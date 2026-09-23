@@ -1,4 +1,4 @@
-# CalcKernel 0.13 Compiler Architecture
+# CalcKernel 0.14 Compiler Architecture
 
 [简体中文](../zh-CN/compiler/architecture.md)
 
@@ -71,7 +71,7 @@ the same pre-state, verifies them independently, and forbids cross-variant LTO.
 `src/backend/` consumes verified KIR only. C and Native support the four
 overflow/bounds combinations through explicit guards and status flow; WASM is
 unchecked-only. C and WebAssembly profiles deliberately disable Vector KIR in
-0.13, so both continue from verified scalar KIR while retaining profitable
+0.14, so both continue from verified scalar KIR while retaining profitable
 scalar specialization and cleanup. C contract facts may become portable
 restrict/alignment hints. Native structurally lowers checked Vector KIR and the
 same scalar facts to LLVM IR, validates metadata with a pre-LLVM fact audit,

@@ -2,10 +2,11 @@
 
 [简体中文](README.zh-CN.md)
 
-CalcKernel 0.13.0 ships `native ckc`, a self-contained Rust command-line
+CalcKernel 0.14.0 ships `native ckc`, a self-contained Rust command-line
 compiler for the CK computation-kernel language. Release binaries compile, link,
 and run native CK without an external compiler toolchain. The repository also
 retains inspectable C and WebAssembly source/binary emitters.
+The formally released 0.13.0 remains the compatibility baseline for this update.
 
 ## What ships
 
@@ -81,6 +82,10 @@ build defaults to the release target's portable CPU baseline; `--cpu native` and
 `--cpu multiversion` are explicit. `build-llvm` remains only as a deprecated
 alias and has no PGO/multiversion behavior.
 
+0.14.0 retains the 0.13 PGO and multiversion workflows. Offline Auto-Tuning is
+deferred: `ckc tune` and `ckc build --tune-use` fail explicitly before reading
+inputs or creating output; they never silently fall back to an ordinary build.
+
 ## Build from source
 
 The native feature requires the exact LLVM prefix described by
@@ -129,14 +134,15 @@ cargo build --release --features native-toolchain --locked
 Release policy, platform audits, performance gates, archive names, and immutable
 GitHub Release publication are defined in [docs/project/release.md](docs/project/release.md).
 
-CalcKernel 0.13.0 keeps the public Native C ABI at version 1 and Runtime ABI at
+CalcKernel 0.14.0 keeps the public Native C ABI at version 1 and Runtime ABI at
 version 2. The private LLVM bridge is ABI 4, KIR uses the `kir-v3` identity, and
 the Native object cache uses `CKCOBJ03` with key/manifest schema 4. Old 0.11
 and 0.12 private cache entries fail closed instead of aliasing a 0.13 artifact.
 The accepted 0.12.0, 0.11.0, and 0.10.0 source boundaries are retained in the
 [compatibility policy](docs/project/compatibility.md).
 
-PGO and bounded runtime multiversioning are implemented in 0.13. Auto-Tuning remains 0.14;
+PGO and bounded runtime multiversioning were implemented in 0.13 and remain in
+0.14. Auto-Tuning is deferred;
 indirect-call promotion, scalable KIR vectors, and adaptive JIT
 PGO also remain future work.
 
