@@ -131,6 +131,32 @@ fn release_v0_14_candidate_identity_should_match_cargo_and_cli() {
 }
 
 #[test]
+fn native_release_artifact_identity_should_follow_cargo_version() {
+    let workflow = fs::read_to_string(repo_root().join(".github/workflows/native-release.yml"))
+        .expect("read release workflow");
+    let identity_step = workflow
+        .split("- name: Record compiler identity and notices")
+        .nth(1)
+        .expect("release identity step")
+        .split("- name: Functional run and build smoke")
+        .next()
+        .expect("release identity step body");
+
+    assert!(
+        identity_step.contains("cargo_version=") && identity_step.contains("Cargo.toml"),
+        "each artifact host must read the checked-out Cargo version"
+    );
+    assert!(
+        identity_step.contains("grep -Fqx \"ckc ${cargo_version}\" <<<\"${verbose_identity}\""),
+        "release binary identity must match Cargo version exactly"
+    );
+    assert!(
+        !identity_step.contains("ckc 0.13.0"),
+        "release identity must not stay pinned to the prior version"
+    );
+}
+
+#[test]
 fn release_v0_13_notices_should_cover_private_profile_and_dispatch_runtimes() {
     let names = calckernel::embedded_notices()
         .iter()
