@@ -206,6 +206,48 @@ fn profile_generation_library_flush_should_be_exactly_once_concurrent_and_sticky
 
 #[cfg(unix)]
 #[test]
+fn profile_generation_read_only_directory_should_return_directory_status() {
+    use std::{ffi::CString, os::unix::fs::PermissionsExt};
+
+    let (root, input) = fixture("export fn answer() -> i32 { return 42; }");
+    let paths = build_library(&root, &input, true);
+    let header = fs::read_to_string(paths.header.expect("generation header"))
+        .expect("read generation header");
+    let flush_name = CString::new(flush_symbol(&header)).expect("flush symbol");
+    let collection = root.join("library-shards");
+    let original_permissions = fs::metadata(&collection)
+        .expect("collection metadata")
+        .permissions();
+    fs::set_permissions(&collection, fs::Permissions::from_mode(0o500))
+        .expect("make collection read-only after build but before library load");
+
+    let status = unsafe {
+        let path = CString::new(paths.primary.to_string_lossy().as_bytes())
+            .expect("generation library path");
+        let handle = dlopen(path.as_ptr(), 2);
+        assert!(!handle.is_null(), "dlopen generation library");
+        let answer_address = dlsym(handle, c"answer".as_ptr());
+        let flush_address = dlsym(handle, flush_name.as_ptr());
+        assert!(!answer_address.is_null(), "dlsym answer");
+        assert!(!flush_address.is_null(), "dlsym flush");
+        let answer: unsafe extern "C" fn() -> i32 = std::mem::transmute(answer_address);
+        let flush: unsafe extern "C" fn() -> i32 = std::mem::transmute(flush_address);
+
+        assert_eq!(answer(), 42);
+        let status = flush();
+        fs::set_permissions(&collection, original_permissions)
+            .expect("restore collection permissions before assertions");
+        assert_eq!(dlclose(handle), 0);
+        status
+    };
+
+    assert_eq!(status, 43, "an unwritable collection is a directory error");
+    assert!(completed_shards(&collection).is_empty());
+    fs::remove_dir_all(root).expect("remove generation fixture");
+}
+
+#[cfg(unix)]
+#[test]
 fn profile_generation_single_latch_loop_should_publish_exact_batched_edge_count() {
     use std::ffi::CString;
 

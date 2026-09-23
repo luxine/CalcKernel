@@ -117,8 +117,14 @@ static int32_t __ck_profile_platform_publish(
                           O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
                           0600);
   if (file < 0) {
+    const int existing = openat(directory_fd, temporary,
+                                O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (existing >= 0) {
+      (void)close(existing);
+    }
     close(directory_fd);
-    return CKC_PROFILE_PLATFORM_COLLISION;
+    return existing >= 0 ? CKC_PROFILE_PLATFORM_COLLISION
+                         : CKC_PROFILE_PLATFORM_ERROR;
   }
   uint64_t offset = 0;
   int failed = 0;
