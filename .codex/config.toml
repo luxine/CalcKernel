@@ -1,0 +1,145 @@
+# Main coordinator:
+# Understand the user's goal, classify the task,
+# decide whether stronger specialist agents are needed,
+# coordinate implementation and verification.
+model = "gpt-6-sol"
+model_reasoning_effort = "xhigh"
+
+[features]
+multi_agent = true
+fast_mode = true
+
+[agents]
+enabled = true
+
+# Ordinary spawned agents fall back to Luna.
+default_subagent_model = "gpt-6-luna"
+default_subagent_reasoning_effort = "xhigh"
+
+# Avoid spawning too many overlapping workers.
+max_concurrent_threads_per_session = 5
+
+
+[agents.architect]
+description = """
+Use this agent for architecture and high-risk design decisions.
+
+Delegate when a task involves:
+- architecture or module boundaries
+- cross-package contracts
+- payment/refund architecture
+- transaction or consistency design
+- concurrency
+- realtime synchronization
+- persistent state machines
+- migrations
+- idempotency/recovery/reconciliation
+- large refactors where the correct design is not already clear
+
+The architect should investigate the existing implementation before designing.
+It should identify invariants, risks, affected modules, failure modes,
+migration concerns, and a concrete implementation plan.
+
+Do not use this role for ordinary implementation work once the design is clear.
+"""
+config_file = "agents/architect.toml"
+
+
+[agents.investigator]
+description = """
+Use this agent when the root cause of a difficult problem is unknown.
+
+Especially use it for:
+- intermittent bugs
+- payment inconsistencies
+- race conditions
+- transactions
+- realtime state divergence
+- crashes
+- performance anomalies
+- cross-package failures
+- difficult regressions
+
+Investigate evidence first.
+Do not guess a fix.
+Establish a supported root-cause hypothesis and recommend a concrete fix
+before implementation begins.
+"""
+config_file = "agents/investigator.toml"
+
+
+[agents.implementer]
+description = """
+Use this agent for actual coding once the goal, root cause, and design
+are sufficiently clear.
+
+Suitable work includes:
+- feature implementation
+- Vue components
+- NestJS APIs
+- refactors
+- schemas and DTOs
+- adapters
+- migrations whose design is already approved
+- bug fixes with a known root cause
+- tests directly required by the implementation
+- repetitive or broad mechanical code changes
+
+Follow the architecture and constraints established by the coordinator
+or architect. Do not redesign the system unnecessarily.
+"""
+config_file = "agents/implementer.toml"
+
+[agents.tester]
+description = """
+Use this agent for independent verification after implementation,
+and for substantial test work.
+
+Suitable work includes:
+- regression tests
+- unit tests
+- integration tests
+- e2e tests
+- reproducing reported bugs
+- validating bug fixes
+- boundary and failure-path testing
+- payment/refund test matrices
+- concurrency and transaction verification
+- running focused and broader test suites
+- typecheck, lint, build, and other repository validation
+
+For bug fixes, reproduce the original failure before validating the fix
+when practical.
+
+Prefer testing externally observable behavior and important invariants
+rather than implementation details.
+
+Act independently from the implementer.
+Do not modify production code merely to make a failing test pass.
+Report failures and evidence back to the coordinator so the implementer
+can fix them.
+"""
+config_file = "agents/tester.toml"
+
+
+[agents.reviewer]
+description = """
+Use this agent to independently review non-trivial completed changes.
+
+Check:
+- correctness
+- regressions
+- unnecessary abstraction
+- architecture violations
+- edge cases
+- concurrency and transaction safety
+- payment/data consistency
+- tests
+- scope creep
+
+For payment, refunds, migrations, concurrency, persistent data,
+or other high-risk changes, review before declaring the task complete.
+
+Do not rewrite correct code merely for stylistic preference.
+"""
+config_file = "agents/reviewer.toml"
