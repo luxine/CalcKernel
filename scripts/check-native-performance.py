@@ -963,8 +963,8 @@ def check_schema8(report, path, baseline_manifest):
         "variantObjects", "sampling", "cases", "compileTime", "artifactSize", "archiveSize", "correctness",
     }
     exact_keys(report, top_keys, "schema-8 performance report")
-    if report["schemaVersion"] != 8 or report["candidateVersion"] != "0.13.0":
-        fail("schemaVersion: 8 and candidate 0.13.0 are required")
+    if report["schemaVersion"] != 8 or report["candidateVersion"] != "0.14.0":
+        fail("schemaVersion: 8 and candidate 0.14.0 are required")
     if report["candidateSha"] != current_candidate_sha() or report["replayCommit"] != V012_COMMIT:
         fail("candidateSha or exact v0.12 replay commit mismatch")
     directory = report["evidenceDirectory"]
@@ -1104,8 +1104,8 @@ def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
     exact_keys(report, top_keys, "performance report")
     if report["schemaVersion"] != 7:
         fail("performance report schemaVersion must be 7")
-    if report["candidateVersion"] != "0.13.0":
-        fail("candidateVersion must identify the 0.13.0 candidate")
+    if report["candidateVersion"] != "0.14.0":
+        fail("candidateVersion must identify the 0.14.0 candidate")
     if report["cpuPolicy"] != "baseline":
         fail("release performance requires baseline CPU policy")
     if report["fastMath"] is not False:

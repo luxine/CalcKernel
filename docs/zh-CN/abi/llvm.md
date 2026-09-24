@@ -1,8 +1,8 @@
-# CalcKernel 0.13 Native LLVM 与 C ABI
+# CalcKernel 0.14 Native LLVM 与 C ABI
 
 [English](../../abi/llvm.md)
 
-CalcKernel 0.13 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
+CalcKernel 0.14 固定 LLVM 22.1.8。Verified KIR 经 checked C++ bridge 结构化 lowering，在
 optimization 前后验证，由 host TargetMachine 生成 object bytes，并在进程内用 LLD 链接。
 `emit-llvm` 输出该 verified module 供 inspection。
 
@@ -48,7 +48,7 @@ mapping、operation equivalence、fallback identity、target legality 与 cost/b
 输出 vector load/store、strict arithmetic、cast、compare/select 及 modular integer add/multiply
 reduction。LLVM optimization 可以继续改进合法 module，但不是 CK safety 或 alias claim 的来源。
 
-0.13 的 public Native C ABI 保持 version 1，Runtime ABI 保持 version 2。Private LLVM
+0.14 的 public Native C ABI 保持 version 1，Runtime ABI 保持 version 2。Private LLVM
 bridge ABI 4 替代 0.12 bridge ABI 3；native cache/codegen identity 使用 KIR v3、
 `CKCOBJ03` key schema 4 与 manifest schema 4。这会使 0.12 及更早 private object 失效，但不改变
 foreign-call signature。
@@ -56,7 +56,9 @@ foreign-call signature。
 ## Profile 与 multiversion object
 
 Profile-generation module 链接 compiler-private schema-1 collector；只有 library topology
-暴露生成的 full-identity flush control。最终 profile-use module 不包含 counter、writer、
+暴露生成的 full-identity `ck_profile_flush_<digest>()` control。若收集目录在 build 后变为不可写，该 control 返回
+directory status 43，而不是 write status 44；真正的随机名称冲突仍会重试，生成的 C ABI
+与 profile wire schema 不变。最终 profile-use module 不包含 counter、writer、
 profile path 或 generation runtime。Profile annotation 由 CK 独立 optimizer 消费，不能变成
 LLVM safety metadata 或 proof。
 
@@ -85,7 +87,7 @@ width policy。
 留给扩大后的 scalar tail。strict-f64 schedule 与所有 scalar remainder 正确性检查不变。
 
 named-object bundle 可链接为 executable、dynamic library 或 static archive。multiversion object
-output 会拒绝，因为 0.13 不定义 partial-link bundle contract；baseline/native single-version
+output 会拒绝，因为 0.14 不定义 partial-link bundle contract；baseline/native single-version
 object 继续支持。`CKCOBJ03` 只有在 ordered member name/role、target set、profile、dispatch
 runtime、physical artifact kind、每个 object digest、key schema 4 与 manifest schema 4 全部
 匹配时才接受 cache hit。最终 artifact 延续 self-contained system-runtime policy，不新增
@@ -139,4 +141,4 @@ protection 时使用 `MAP_JIT`，在线程级 writable/non-executable 与 readab
 再逐 segment 以页保护 finalization 为 RX 或 R/NX。后者不是 RWX fallback。Internal audit
 拒绝混合 capability tuple，并为两条路径验证 relocation、最终 code/data permission 与
 instruction-cache finalization。
-0.13 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。
+0.14 不提供 public embeddable ORC API；`emit-llvm` 也不承诺 stable external LLVM ABI。

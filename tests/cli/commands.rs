@@ -47,6 +47,71 @@ fn fixture(source: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, path)
 }
 
+#[test]
+fn deferred_tune_command_should_reject_before_reading_workload() {
+    let missing = std::env::temp_dir().join(format!("missing-workload-{}", unique_id()));
+    let output = run([os("tune"), os("build"), os(&missing)]);
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output
+            .stderr
+            .contains("Offline tuning is unavailable in this release."),
+        "{}",
+        output.stderr
+    );
+    assert!(!missing.exists());
+}
+
+#[test]
+fn deferred_tune_use_should_reject_before_source_or_output_access() {
+    let dir = std::env::temp_dir().join(format!("ckc_deferred_tune_{}", unique_id()));
+    fs::create_dir(&dir).expect("create deferred tune fixture");
+    let missing_source = dir.join("missing.ck");
+    let missing_decision = dir.join("missing.cktune");
+    let output_path = dir.join("kept-output");
+    fs::write(&output_path, b"keep-me").expect("write output sentinel");
+    let output = run([
+        os("build"),
+        os(&missing_source),
+        os("--out"),
+        os(&output_path),
+        os("--tune-use"),
+        os(&missing_decision),
+    ]);
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output
+            .stderr
+            .contains("Offline tuning is unavailable in this release."),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(
+        fs::read(&output_path)
+            .expect("read output sentinel")
+            .as_slice(),
+        b"keep-me"
+    );
+    fs::remove_dir_all(dir).expect("remove deferred tune fixture");
+}
+
+#[test]
+fn deferred_tune_use_equals_spelling_should_reject() {
+    let output = run([
+        os("build"),
+        os("missing.ck"),
+        os("--tune-use=missing.cktune"),
+    ]);
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output
+            .stderr
+            .contains("Offline tuning is unavailable in this release."),
+        "{}",
+        output.stderr
+    );
+}
+
 #[cfg(feature = "native-toolchain")]
 #[test]
 fn multiversion_emit_kir_should_print_the_complete_verified_bundle_without_host_pruning() {

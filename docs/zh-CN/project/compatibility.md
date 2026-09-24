@@ -1,10 +1,10 @@
-# CalcKernel 0.13 兼容策略
+# CalcKernel 0.14 兼容策略
 
 [English](../../project/compatibility.md)
 
-本文是 `0.13.x` 的规范性兼容权威。
+本文是 `0.14.x` 的规范性兼容权威。
 
-Patch release 保持 0.13.0 已接受 source 与 observable semantics、稳定 diagnostic
+Patch release 保持 0.14.0 已接受 source 与 observable semantics、稳定 diagnostic
 identifier/category、已记录 CLI name/flag/default、stdout/stderr class、semantic textual MIR、
 public C/WASM/Native C ABI shape、checked first-error order、runtime diagnostic byte/status，以及
 六个 release archive name 与 checksum sidecar。
@@ -13,6 +13,22 @@ Patch release 可以拒绝非法输入、改善 diagnostic prose、增加 opt-in
 也可以在全部已承诺边界不变时优化。Private Rust module、KIR text/schema、profile wire
 format、fact/proof encoding、pass algorithm、private LLVM bridge ABI、cache entry、dispatch/
 collection runtime、measurement 与未记录 compiler interface 不是 public contract。
+
+## 从 0.13.0 迁移到 0.14.0
+
+- 已接受的 0.13 source、diagnostic、semantic MIR、checked first-error order、strict-f64、
+  普通 build/run，以及显式 PGO/multiversion 工作流继续支持。Native C ABI 保持 1、
+  Runtime ABI 保持 2、KIR 保持 v3，`CKPART01`/`CKPROF01` 保持 schema 1，private Native
+  cache 保持 `CKCOBJ03` key/manifest schema 4。
+- 生成的 PGO library 的 `ck_profile_flush_*() -> i32` 在 build 后收集目录变为不可写时，
+  现在返回 directory failure status 43。0.13 runtime 曾把 shard 创建失败误判为反复
+  随机名称冲突，最终返回 write status 44。真正的名称冲突仍会重试；成功 shard 的字节与
+  flush identity 不变。生成的 control symbol 不构成新的 Native C ABI。
+- 离线 Auto-Tuning 延期。`ckc tune` 与 `ckc build --tune-use` 在读取所请求的 workload、
+  decision、source 或改动输出前明确拒绝，不会静默执行普通 build。0.14 不接受调优
+  decision/cache format。
+- 不声称新的 optimizer 加速或 enhanced-ISA 调优收益；现有 0.13 PGO 与 multiversion
+  功能没有延期。
 
 ## 从 0.12.0 迁移到 0.13.0
 
@@ -35,8 +51,8 @@ collection runtime、measurement 与未记录 compiler interface 不是 public c
   旧 cache/bridge/KIR/profile client fail closed，不改变 foreign-call signature。
 - Generation 与 dispatch runtime 是 compiler-private；generation flush symbol 和隐藏 variant
   symbol 不扩展 Native C ABI 1 或 Runtime ABI 2。
-- Auto-Tuning remains 0.14；indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO
-  也不属于 0.13。
+- Auto-Tuning 未在 0.13 发布，并继续延期到 0.14 之后；indirect-call promotion、
+  scalable KIR vector 与 adaptive JIT PGO 仍不属于这些版本。
 
 0.12 可执行兼容历史保留在 `tests/fixtures/compatibility/v0_12/manifest.toml`，其已接受 source
 由当前 compatibility target 继续编译。

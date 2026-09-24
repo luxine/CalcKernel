@@ -210,7 +210,7 @@ class SchemaEightGateTests(unittest.TestCase):
             "benches/fixtures/pgo/compute_bound.ck",
         ]]
         self.report = {
-            "schemaVersion": 8, "candidateVersion": "0.13.0", "candidateSha": "1" * 40,
+            "schemaVersion": 8, "candidateVersion": "0.14.0", "candidateSha": "1" * 40,
             "replayCommit": gate.V012_COMMIT, "evidenceDirectory": self.evidence.name,
             "toolchain": {"llvmVersion": "22.1.8", "clangVersion": "22.1.8",
                           "rustVersion": "1.90.0", "componentManifestSha256": digest(component.read_bytes()),
@@ -353,6 +353,7 @@ class SchemaEightGateTests(unittest.TestCase):
             collector.dispatch_symbol_values(ambiguous, "kernel")
 
     def test_identity_capability_profile_and_evidence_fail_closed(self):
+        self.reject(lambda r: r.__setitem__("candidateVersion", "0.13.0"), "candidate")
         self.reject(lambda r: r.__setitem__("candidateSha", "2" * 40), "candidateSha")
         self.reject(lambda r: r["capabilityManifest"]["availableTiers"].pop(), "enhanced tier")
         self.reject(lambda r: r["trainingShards"].pop(), "exact case/role")

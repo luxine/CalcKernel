@@ -3,14 +3,14 @@
 [简体中文](../zh-CN/project/roadmap.md)
 
 This document is non-normative and lists only undelivered possibilities. It does
-not override the [0.13 compatibility policy](compatibility.md).
+not override the [0.14 compatibility policy](compatibility.md).
 
-- Add search-based offline Auto-Tuning only through a separately reviewed 0.14
-  contract. It is not implicit in 0.13 PGO.
+- Revisit search-based offline Auto-Tuning only through a separately reviewed
+  future contract. It is not implicit in retained 0.13 PGO or ordinary 0.14.
 - Evaluate indirect calls and indirect-call promotion without weakening the
   closed effect, ABI, or profile-mapping contracts.
-- Evaluate scalable KIR vectors separately from 0.13 fixed-width target variants.
-- Evaluate adaptive JIT PGO separately; 0.13 profiles are offline and immutable.
+- Evaluate scalable KIR vectors separately from retained fixed-width target variants.
+- Evaluate adaptive JIT PGO separately; retained CK profiles are offline and immutable.
 - Add source SIMD types and richer target-specific vector facilities only
   through separately reviewed future contracts.
 - Harden target-specific LLVM calling conventions and data-layout reporting.

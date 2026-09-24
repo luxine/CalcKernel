@@ -9,6 +9,7 @@
 #define CK_LINUX_PROT_READ 1
 #define CK_LINUX_PROT_WRITE 2
 #define CK_LINUX_RENAME_NOREPLACE 1
+#define CK_LINUX_EEXIST 17
 
 #if defined(__x86_64__)
 #define CK_LINUX_O_DIRECTORY 00200000
@@ -206,7 +207,8 @@ static int32_t __ck_profile_platform_publish(
       0600, 0, 0);
   if (file < 0) {
     (void)ck_linux_call3(CK_SYS_CLOSE, directory_fd, 0, 0);
-    return CKC_PROFILE_PLATFORM_COLLISION;
+    return file == -CK_LINUX_EEXIST ? CKC_PROFILE_PLATFORM_COLLISION
+                                    : CKC_PROFILE_PLATFORM_ERROR;
   }
   uint64_t offset = 0;
   int failed = 0;

@@ -1,4 +1,4 @@
-# CalcKernel 0.13 Fact-Driven Optimizer
+# CalcKernel 0.14 Fact-Driven Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -99,7 +99,7 @@ consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
-C and WebAssembly profiles disable Vector KIR in 0.13.
+C and WebAssembly profiles disable Vector KIR in 0.14.
 
 Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
 the complete candidate module, proof/fact state, and audit-budget delta are
@@ -139,7 +139,7 @@ Loop SIMD, loop SLP, and unroll are priced over the same immutable loop scope an
 only one winner commits. A vector candidate must beat the scalar cost by at least
 20% at its conservative trip threshold; exact shorter trips stay scalar. The
 aggregate O3 growth ceiling and proposer/checker work budgets apply across all
-0.13 speculative transforms, including rejected alternatives and clones.
+0.14 speculative transforms, including rejected alternatives and clones.
 
 Ordinary static O3 may inline a pure helper of at most 32 KIR instructions.
 Unprofiled multiversion lowering uses a compact eight-instruction inline budget
@@ -295,12 +295,14 @@ performs a pre-LLVM fact audit and rejects injected or stale metadata.
 
 Performance gates compare identical algorithms, safety modes, data, hardware,
 CPU policy, training/evaluation split, and strict semantics. Schema 8 compares
-0.13 ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
+0.14 ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
 hand-written SIMD oracles, and replays exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`. Correctness, optimization time,
 generation overhead, artifact size, compiler archive size, and cache behavior
-have separate gates. PGO and bounded multiversioning ship in 0.13. Auto-Tuning
-remains 0.14; indirect calls, scalable KIR, and adaptive JIT PGO remain future.
+have separate gates. PGO and bounded multiversioning shipped in 0.13 and remain
+supported in 0.14. Offline Auto-Tuning is deferred; no new optimizer benefit
+is claimed by this compatibility release. Indirect calls, scalable KIR, and
+adaptive JIT PGO remain future work.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.
 Dynamic-library final links also discard unreachable compiler-private sections
 using the native object-format mechanism while retaining CK exports and every

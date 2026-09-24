@@ -1,8 +1,8 @@
-# CalcKernel 0.13 性能指南
+# CalcKernel 0.14 性能指南
 
 [English](../../guides/performance.md)
 
-CalcKernel 0.13 使用 fail-closed performance report schema 8。正式 release 必须具有固定
+CalcKernel 0.14 保留 fail-closed performance report schema 8。正式 release 必须具有固定
 x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
 Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
 hardware/capability manifest、compiler/oracle/source/recipe digest、training/held-out corpus、
@@ -35,9 +35,9 @@ audit。缺失、无效或测量后排除 competitor 都会使 gate 失败。
 
 ## 累积 release gate
 
-- 0.13 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
+- 0.14 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
   2%，单项不超过 5%。
-- PGO use 相对相同 0.13 ordinary CPU policy：geometric-mean improvement 至少 5%，held-out
+- PGO use 相对相同 0.14 ordinary CPU policy：geometric-mean improvement 至少 5%，held-out
   单项 slowdown 不超过 3%；固定 instrumentation corpus 上 generation execution 不超过 ordinary 5x。
 - Eligible multiversion dispatch 相对 portable baseline：geometric-mean improvement 至少 8%，
   单项 slowdown 不超过 3%；dispatch 至少达到独立加载的同字节 artifact 中 resolver 实际选中
@@ -132,5 +132,6 @@ Report 在独立 checker 读取前 canonicalize 并 hash；benchmark 本身不�
 target/capability、oracle precondition、threshold、statistic、exclusion 或 checker 均属于需评审
 contract change。
 
-PGO 与受限 multiversioning 只有在这些 gate 通过后才随 0.13 交付。Auto-Tuning remains 0.14；
-indirect-call promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。
+PGO 与受限 multiversioning 已在 0.13 交付，0.14 仍需通过这些原样保留的 gate。离线
+Auto-Tuning 延期；这个兼容性版本不声称新的 optimizer 加速。indirect-call promotion、
+scalable KIR 与 adaptive JIT PGO 仍是未来工作。

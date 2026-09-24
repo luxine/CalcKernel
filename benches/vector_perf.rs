@@ -440,10 +440,8 @@ fn candidate_compiler(repo_root: &Path) -> Result<PathBuf, String> {
         .arg("--version")
         .output()
         .map_err(|error| format!("execute candidate compiler {}: {error}", path.display()))?;
-    if !output.status.success()
-        || !String::from_utf8_lossy(&output.stdout).starts_with("ckc 0.13.0")
-    {
-        return Err("CKC_CANDIDATE_COMPILER must identify ckc 0.13.0".into());
+    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != "ckc 0.14.0" {
+        return Err("CKC_CANDIDATE_COMPILER must identify ckc 0.14.0".into());
     }
     Ok(path)
 }
