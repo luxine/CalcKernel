@@ -47,7 +47,7 @@ because they participate in producing the distributed executable.
 - wasm-encoder 0.252.0 — crates.io SHA-256 `8185ae345fa5687c054626ff9a50e7089797a343d9904d1dc9820eb4c4d3196f` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - wast 252.0.0 — crates.io SHA-256 `942a3449d6a593fccc111a6241c8df52bda168af30e40bf9580d4394d7374c65` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - wat 1.252.0 — crates.io SHA-256 `c72a4ba7088f7bac94cf516e49882bdf97068904a563768cf249efc839ec42cb` — `native/runtime/vendor/ryu/LICENSE-Apache2`
-- zmij 1.0.23 — crates.io SHA-256 `29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b` — `third_party/licenses/generic-array-MIT.txt`
+- zmij 1.0.23 — crates.io SHA-256 `29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b` — `third_party/licenses/zmij-MIT.txt`
 
 The complete license texts follow the index in `ckc licenses`; duplicate
 Apache-2.0 text is emitted once. Development-only test dependencies are not

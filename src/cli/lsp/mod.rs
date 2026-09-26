@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
+const MAX_URI_BYTES: usize = 16 * 1024;
 
 pub(super) fn run() -> i32 {
     let stdin = io::stdin();
@@ -150,7 +151,7 @@ fn handle_message(
 fn opened_document(params: &Value) -> Option<(String, i64, &str)> {
     let document = params.get("textDocument")?;
     Some((
-        document.get("uri")?.as_str()?.to_string(),
+        document_uri_value(document)?,
         document.get("version")?.as_i64()?,
         document.get("text")?.as_str()?,
     ))
@@ -160,20 +161,19 @@ fn changed_document(params: &Value) -> Option<(String, i64, &str)> {
     let document = params.get("textDocument")?;
     let change = params.get("contentChanges")?.as_array()?.last()?;
     Some((
-        document.get("uri")?.as_str()?.to_string(),
+        document_uri_value(document)?,
         document.get("version")?.as_i64()?,
         change.get("text")?.as_str()?,
     ))
 }
 
 fn document_uri(params: &Value) -> Option<String> {
-    Some(
-        params
-            .get("textDocument")?
-            .get("uri")?
-            .as_str()?
-            .to_string(),
-    )
+    document_uri_value(params.get("textDocument")?)
+}
+
+fn document_uri_value(document: &Value) -> Option<String> {
+    let uri = document.get("uri")?.as_str()?;
+    (uri.len() <= MAX_URI_BYTES).then(|| uri.to_string())
 }
 
 fn analyze_and_publish(
@@ -212,19 +212,62 @@ fn publish_diagnostics(
     version: Option<i64>,
     diagnostics: &[Diagnostic],
 ) -> io::Result<()> {
-    let diagnostics = diagnostics.iter().map(diagnostic_json).collect::<Vec<_>>();
+    let empty_message = diagnostics_message(uri, version, &[]);
+    let base_size = serde_json::to_vec(&empty_message)
+        .map_err(io::Error::other)?
+        .len();
+    let mut diagnostics_json = Vec::new();
+    let mut diagnostics_bytes = 0usize;
+    let mut truncated = false;
+
+    for diagnostic in diagnostics {
+        let diagnostic = diagnostic_json(diagnostic);
+        let diagnostic_size = serde_json::to_vec(&diagnostic)
+            .map_err(io::Error::other)?
+            .len();
+        let added_size = diagnostic_size + usize::from(!diagnostics_json.is_empty());
+        if base_size
+            .saturating_add(diagnostics_bytes)
+            .saturating_add(added_size)
+            > MAX_FRAME_BYTES
+        {
+            truncated = true;
+            break;
+        }
+        diagnostics_bytes += added_size;
+        diagnostics_json.push(diagnostic);
+    }
+
+    if truncated {
+        write_message(
+            output,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "window/logMessage",
+                "params": {
+                    "type": 2,
+                    "message": "ckc lsp truncated diagnostics for a document because its publishDiagnostics response exceeded the 8 MiB limit."
+                }
+            }),
+        )?;
+    }
+
+    write_message(
+        output,
+        &diagnostics_message(uri, version, &diagnostics_json),
+    )
+}
+
+fn diagnostics_message(uri: &str, version: Option<i64>, diagnostics: &[Value]) -> Value {
     let mut params = json!({"uri": uri, "diagnostics": diagnostics});
     if let Some(version) = version {
         params["version"] = json!(version);
     }
-    write_message(
-        output,
-        &json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/publishDiagnostics",
-            "params": params
-        }),
-    )
+    json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": params
+    })
 }
 
 fn diagnostic_json(diagnostic: &Diagnostic) -> Value {

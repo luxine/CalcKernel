@@ -1893,11 +1893,14 @@ fn cargo_and_rust_provenance_should_be_complete_hashed_and_embedded() {
         "digest",
         "find-msvc-tools",
         "generic-array",
+        "itoa",
         "leb128fmt",
         "libc",
         "memchr",
         "proc-macro2",
         "quote",
+        "serde_core",
+        "serde_json",
         "sha2",
         "shlex",
         "syn",
@@ -1910,6 +1913,7 @@ fn cargo_and_rust_provenance_should_be_complete_hashed_and_embedded() {
         "wasm-encoder",
         "wast",
         "wat",
+        "zmij",
     ]
     .into_iter()
     .collect();
@@ -1977,6 +1981,7 @@ fn cargo_and_rust_provenance_should_be_complete_hashed_and_embedded() {
         "third_party/cargo/provenance.toml",
         "RUST-COPYRIGHT",
         "RUST-LICENSE-MIT",
+        "zmij-MIT.txt",
         "LICENSE-UNICODE",
     ] {
         assert!(
@@ -1996,6 +2001,14 @@ fn cargo_and_rust_provenance_should_be_complete_hashed_and_embedded() {
     assert!(
         stdout.contains(&notices),
         "ckc licenses must embed the exact third-party notice index"
+    );
+    assert!(
+        stdout.contains("===== zmij MIT license =====\n"),
+        "ckc licenses must name the zmij MIT license"
+    );
+    assert!(
+        stdout.contains(&read("third_party/licenses/zmij-MIT.txt")),
+        "ckc licenses must embed the exact zmij MIT license text"
     );
 }
 

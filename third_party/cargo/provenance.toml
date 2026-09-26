@@ -246,5 +246,5 @@ name = "zmij"
 version = "1.0.23"
 crate_sha256 = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 license_expression = "MIT"
-license_files = ["third_party/licenses/generic-array-MIT.txt"]
-license_sha256 = ["eb69613e00e596e13d2f58e820aee10e9d51754b91d7111bc997f1fc90791f66"]
+license_files = ["third_party/licenses/zmij-MIT.txt"]
+license_sha256 = ["23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"]

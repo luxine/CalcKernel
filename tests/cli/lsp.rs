@@ -438,3 +438,41 @@ fn lsp_should_reject_oversized_header_lines_without_waiting_for_a_newline() {
     assert!(!status.success(), "oversized LSP header should be rejected");
     process.assert_stdout_closed();
 }
+
+#[test]
+fn lsp_should_truncate_oversized_diagnostic_batches_and_continue_serving_documents() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let large_uri = uri();
+    did_open(&mut process, &large_uri, 1, &"@".repeat(60_000));
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    assert_eq!(warning["params"]["type"], 2);
+    let message = warning["params"]["message"]
+        .as_str()
+        .expect("truncation warning message");
+    assert!(message.contains("truncated"), "{message}");
+    assert!(message.contains("diagnostics"), "{message}");
+
+    let diagnostics = diagnostics_for(&process, &large_uri);
+    assert!(
+        diagnostics["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .len()
+            < 60_000
+    );
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
