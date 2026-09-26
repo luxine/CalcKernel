@@ -57,16 +57,7 @@ impl LspProcess {
     }
 
     fn initialize(&mut self) -> Value {
-        self.send(json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "processId": null,
-                "rootUri": null,
-                "capabilities": {}
-            }
-        }));
+        self.send_initialize();
         let response = self.receive_matching(|message| message["id"] == 1);
         assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["error"], Value::Null, "{response}");
@@ -89,6 +80,19 @@ impl LspProcess {
             "params": {}
         }));
         response
+    }
+
+    fn send_initialize(&mut self) {
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": null,
+                "capabilities": {}
+            }
+        }));
     }
 
     fn send(&mut self, message: Value) {
@@ -137,6 +141,10 @@ impl LspProcess {
                 return message;
             }
         }
+    }
+
+    fn receive_message(&self) -> Value {
+        self.receive_matching(|_| true)
     }
 
     fn send_shutdown_and_exit(&mut self) -> ExitStatus {
@@ -440,7 +448,7 @@ fn lsp_should_reject_oversized_header_lines_without_waiting_for_a_newline() {
 }
 
 #[test]
-fn lsp_should_truncate_oversized_diagnostic_batches_and_continue_serving_documents() {
+fn lsp_should_skip_lexical_error_floods_and_continue_serving_documents() {
     let mut process = LspProcess::start();
     process.initialize();
 
@@ -450,17 +458,247 @@ fn lsp_should_truncate_oversized_diagnostic_batches_and_continue_serving_documen
     assert_eq!(warning["params"]["type"], 2);
     let message = warning["params"]["message"]
         .as_str()
-        .expect("truncation warning message");
-    assert!(message.contains("truncated"), "{message}");
-    assert!(message.contains("diagnostics"), "{message}");
+        .expect("analysis limit warning message");
+    assert!(message.contains("lexical errors"), "{message}");
 
     let diagnostics = diagnostics_for(&process, &large_uri);
+    assert_eq!(diagnostics["diagnostics"], json!([]));
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_skip_unsafe_syntax_nesting_and_continue_serving_documents() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let deep_uri = uri();
+    let deeply_nested = format!(
+        "fn main() -> i32 {{ return {}1{}; }}",
+        "(".repeat(4_000),
+        ")".repeat(4_000)
+    );
+    did_open(&mut process, &deep_uri, 1, &deeply_nested);
+
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    assert_eq!(warning["params"]["type"], 2);
+    let warning = warning["params"]["message"]
+        .as_str()
+        .expect("syntax nesting warning");
+    assert!(warning.contains("nesting"), "{warning}");
+    assert!(warning.contains("256"), "{warning}");
+    assert_eq!(
+        diagnostics_for(&process, &deep_uri)["diagnostics"],
+        json!([])
+    );
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_bound_lexical_diagnostics_before_analysis_and_continue_serving() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let noisy_uri = format!("file:///{}.ck", "n".repeat(4_000));
+    did_open(&mut process, &noisy_uri, 1, &"@".repeat(5_000));
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    assert_eq!(warning["params"]["type"], 2);
+    let warning = warning["params"]["message"]
+        .as_str()
+        .expect("lexical complexity warning");
+    assert!(warning.contains("lexical"), "{warning}");
+    assert!(warning.contains("256"), "{warning}");
+    assert_eq!(
+        diagnostics_for(&process, &noisy_uri)["diagnostics"],
+        json!([])
+    );
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_warn_and_skip_documents_with_oversized_uris() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let long_uri = format!("file:///{}.ck", "u".repeat(4_100));
+    did_open(&mut process, &long_uri, 1, "@");
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    assert_eq!(warning["params"]["type"], 2);
+    let warning = warning["params"]["message"]
+        .as_str()
+        .expect("URI size warning");
+    assert!(warning.contains("URI"), "{warning}");
+    assert!(warning.contains("4 KiB"), "{warning}");
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_reject_preinitialization_requests_and_ignore_document_notifications() {
+    let mut process = LspProcess::start();
+    process.send(json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "textDocument/hover",
+        "params": {"textDocument": {"uri": "file:///early.ck"}, "position": {"line": 0, "character": 0}}
+    }));
+    let not_initialized = process.receive_message();
+    assert_eq!(not_initialized["id"], 7);
+    assert_eq!(not_initialized["error"]["code"], -32002);
+
+    let early_uri = uri();
+    did_open(&mut process, &early_uri, 1, "@");
+    process.send_initialize();
+    let initialize_response = process.receive_message();
+    assert_eq!(initialize_response["id"], 1, "{initialize_response}");
+    assert_eq!(initialize_response["error"], Value::Null);
+
+    did_open(&mut process, &early_uri, 2, "@");
+    process.send(json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+
+    let active_uri = uri();
+    did_open(&mut process, &active_uri, 1, "@");
     assert!(
-        diagnostics["diagnostics"]
+        !diagnostics_for(&process, &active_uri)["diagnostics"]
             .as_array()
             .expect("diagnostics array")
-            .len()
-            < 60_000
+            .is_empty()
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_skip_deep_binary_expression_trees_and_continue_serving() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let deep_uri = uri();
+    let expression = vec!["1"; 4_000].join(" + ");
+    let source = format!("fn main() -> i32 {{ return {expression}; }}");
+    did_open(&mut process, &deep_uri, 1, &source);
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    let warning = warning["params"]["message"]
+        .as_str()
+        .expect("expression complexity warning");
+    assert!(warning.contains("operator"), "{warning}");
+    assert_eq!(
+        diagnostics_for(&process, &deep_uri)["diagnostics"],
+        json!([])
+    );
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_skip_deep_postfix_expression_trees_and_continue_serving() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let deep_uri = uri();
+    let access_chain = "n.x".repeat(4_000);
+    let source = format!("fn main(n: i32) -> i32 {{ return {access_chain}; }}");
+    did_open(&mut process, &deep_uri, 1, &source);
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    let warning = warning["params"]["message"]
+        .as_str()
+        .expect("postfix complexity warning");
+    assert!(warning.contains("postfix"), "{warning}");
+    assert_eq!(
+        diagnostics_for(&process, &deep_uri)["diagnostics"],
+        json!([])
+    );
+
+    let small_uri = uri();
+    did_open(
+        &mut process,
+        &small_uri,
+        1,
+        "fn main() -> i32 { return 1; }",
+    );
+    assert_eq!(
+        diagnostics_for(&process, &small_uri)["diagnostics"],
+        json!([])
+    );
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_skip_deep_unary_expression_chains_and_continue_serving() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let deep_uri = uri();
+    let source = format!("fn main() -> i32 {{ return {}1; }}", "-".repeat(4_000));
+    did_open(&mut process, &deep_uri, 1, &source);
+    let warning = process.receive_matching(|message| message["method"] == "window/logMessage");
+    let warning = warning["params"]["message"]
+        .as_str()
+        .expect("unary complexity warning");
+    assert!(warning.contains("unary operator chain"), "{warning}");
+    assert_eq!(
+        diagnostics_for(&process, &deep_uri)["diagnostics"],
+        json!([])
     );
 
     let small_uri = uri();
