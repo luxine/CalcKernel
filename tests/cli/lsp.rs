@@ -1,5 +1,7 @@
 use std::{
+    fs,
     io::{self, BufRead, BufReader, Write},
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -57,7 +59,20 @@ impl LspProcess {
     }
 
     fn initialize(&mut self) -> Value {
-        self.send_initialize();
+        self.initialize_with_params(json!({
+            "processId": null,
+            "rootUri": null,
+            "capabilities": {}
+        }))
+    }
+
+    fn initialize_with_params(&mut self, params: Value) -> Value {
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": params
+        }));
         let response = self.receive_matching(|message| message["id"] == 1);
         assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["error"], Value::Null, "{response}");
@@ -254,6 +269,65 @@ fn uri() -> String {
     format!("file:///ck-lsp-test-{id}.ck")
 }
 
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new() -> Self {
+        static NEXT_TEMP_DIR: AtomicUsize = AtomicUsize::new(0);
+        let id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("ck-lsp-workspace-{}-{id}", std::process::id()));
+        fs::create_dir_all(&path).expect("create temporary workspace");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn write_ck(path: &Path, source: &str) {
+    fs::create_dir_all(path.parent().expect("CK file parent")).expect("create CK parent");
+    fs::write(path, source).expect("write CK fixture");
+}
+
+fn file_uri(path: &Path) -> String {
+    let absolute = fs::canonicalize(path).expect("canonicalize file URI path");
+    let path = absolute.to_string_lossy().replace('\\', "/");
+    let path = if cfg!(windows) && !path.starts_with('/') {
+        format!("/{path}")
+    } else {
+        path
+    };
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~:".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    format!("file://{encoded}")
+}
+
+fn workspace_folder(path: &Path, name: &str) -> Value {
+    json!({"uri": file_uri(path), "name": name})
+}
+
+fn did_change_workspace_folders(process: &mut LspProcess, added: Vec<Value>, removed: Vec<Value>) {
+    process.send(json!({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeWorkspaceFolders",
+        "params": {"event": {"added": added, "removed": removed}}
+    }));
+}
+
 fn did_open(process: &mut LspProcess, uri: &str, version: i64, text: &str) {
     process.send(json!({
         "jsonrpc": "2.0",
@@ -317,6 +391,10 @@ fn text_document_position(uri: &str, position: Value) -> Value {
     })
 }
 
+fn workspace_symbols(process: &mut LspProcess, id: u64, query: Value) -> Value {
+    request(process, id, "workspace/symbol", json!({"query": query}))
+}
+
 #[test]
 fn lsp_should_advertise_connected_editor_providers() {
     let mut process = LspProcess::start();
@@ -345,6 +423,14 @@ fn lsp_should_advertise_connected_editor_providers() {
     assert_eq!(capabilities["foldingRangeProvider"], true);
     assert_eq!(capabilities["selectionRangeProvider"], true);
     assert_eq!(capabilities["documentFormattingProvider"], true);
+    assert_eq!(
+        capabilities["workspace"]["workspaceFolders"]["supported"],
+        true
+    );
+    assert_eq!(
+        capabilities["workspace"]["workspaceFolders"]["changeNotifications"],
+        true
+    );
 
     assert!(process.send_shutdown_and_exit().success());
 }
@@ -687,6 +773,174 @@ fn lsp_should_return_symbols_tokens_folding_and_nested_selection_ranges() {
         json!({"line": 4, "character": 0})
     );
     assert!(selection["parent"]["parent"]["range"].is_object());
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_find_nested_workspace_files_from_root_uri_with_utf16_ranges() {
+    let directory = TempDir::new();
+    let root = directory.path().join("workspace");
+    let nested_file = root.join("nested").join("library.ck");
+    write_ck(
+        &nested_file,
+        "// 😀\nfn nested_result() -> i32 { return 1; }",
+    );
+
+    let mut process = LspProcess::start();
+    process.initialize_with_params(json!({
+        "processId": null,
+        "rootUri": file_uri(&root),
+        "capabilities": {}
+    }));
+    let response = workspace_symbols(&mut process, 60, json!("nested_result"));
+    let items = response["result"].as_array().expect("workspace symbols");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "nested_result");
+    assert_eq!(items[0]["location"]["uri"], file_uri(&nested_file));
+    assert_eq!(
+        items[0]["location"]["range"]["start"],
+        json!({"line": 1, "character": 0})
+    );
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_prefer_empty_workspace_folders_over_root_uri() {
+    let directory = TempDir::new();
+    let root = directory.path().join("workspace");
+    write_ck(
+        &root.join("root.ck"),
+        "fn root_only_symbol() -> i32 { return 1; }",
+    );
+
+    let mut process = LspProcess::start();
+    process.initialize_with_params(json!({
+        "processId": null,
+        "rootUri": file_uri(&root),
+        "workspaceFolders": [],
+        "capabilities": {}
+    }));
+    let response = workspace_symbols(&mut process, 61, json!("root_only_symbol"));
+    assert_eq!(response["result"], json!([]));
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_add_and_remove_roots_from_workspace_folder_notifications() {
+    let directory = TempDir::new();
+    let first_root = directory.path().join("first");
+    let second_root = directory.path().join("second");
+    write_ck(
+        &first_root.join("first.ck"),
+        "fn first_root_symbol() -> i32 { return 1; }",
+    );
+    write_ck(
+        &second_root.join("second.ck"),
+        "fn second_root_symbol() -> i32 { return 2; }",
+    );
+
+    let mut process = LspProcess::start();
+    process.initialize_with_params(json!({
+        "processId": null,
+        "rootUri": null,
+        "workspaceFolders": [],
+        "capabilities": {}
+    }));
+    assert_eq!(
+        workspace_symbols(&mut process, 62, json!("root_symbol"))["result"],
+        json!([])
+    );
+
+    let first_folder = workspace_folder(&first_root, "first");
+    did_change_workspace_folders(&mut process, vec![first_folder.clone()], vec![]);
+    let added = workspace_symbols(&mut process, 63, json!("first_root_symbol"));
+    assert_eq!(added["result"][0]["name"], "first_root_symbol");
+
+    did_change_workspace_folders(&mut process, vec![], vec![first_folder]);
+    assert_eq!(
+        workspace_symbols(&mut process, 64, json!("first_root_symbol"))["result"],
+        json!([])
+    );
+
+    did_change_workspace_folders(
+        &mut process,
+        vec![workspace_folder(&second_root, "second")],
+        vec![],
+    );
+    let second = workspace_symbols(&mut process, 65, json!("second_root_symbol"));
+    assert_eq!(second["result"][0]["name"], "second_root_symbol");
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_let_unsaved_workspace_documents_override_disk_and_restore_on_close() {
+    let directory = TempDir::new();
+    let root = directory.path().join("workspace");
+    let file = root.join("src").join("module.ck");
+    let disk_source = "fn disk_version() -> i32 { return 1; }";
+    write_ck(&file, disk_source);
+    let document_uri = file_uri(&file);
+
+    let mut process = LspProcess::start();
+    process.initialize_with_params(json!({
+        "processId": null,
+        "rootUri": file_uri(&root),
+        "capabilities": {}
+    }));
+    assert_eq!(
+        workspace_symbols(&mut process, 66, json!("disk_version"))["result"][0]["name"],
+        "disk_version"
+    );
+
+    let buffer_source = "fn buffer_version() -> i32 { return 2; }";
+    did_open(&mut process, &document_uri, 1, buffer_source);
+    let _ = diagnostics_for(&process, &document_uri);
+    assert_eq!(
+        workspace_symbols(&mut process, 67, json!("disk_version"))["result"],
+        json!([])
+    );
+    assert_eq!(
+        workspace_symbols(&mut process, 68, json!("buffer_version"))["result"][0]["name"],
+        "buffer_version"
+    );
+
+    process.send(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didClose",
+        "params": {"textDocument": {"uri": document_uri}}
+    }));
+    let _ = diagnostics_for(&process, &document_uri);
+    assert_eq!(
+        workspace_symbols(&mut process, 69, json!("buffer_version"))["result"],
+        json!([])
+    );
+    assert_eq!(
+        workspace_symbols(&mut process, 70, json!("disk_version"))["result"][0]["name"],
+        "disk_version"
+    );
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_reject_invalid_workspace_symbol_queries() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let missing = request(&mut process, 71, "workspace/symbol", json!({}));
+    assert_eq!(missing["error"]["code"], -32602);
+    let non_string = request(&mut process, 72, "workspace/symbol", json!({"query": 42}));
+    assert_eq!(non_string["error"]["code"], -32602);
+    let oversized = workspace_symbols(&mut process, 73, json!("x".repeat(257)));
+    assert_eq!(oversized["error"]["code"], -32602);
+    assert_eq!(
+        workspace_symbols(&mut process, 74, json!("valid"))["result"],
+        json!([])
+    );
 
     assert!(process.send_shutdown_and_exit().success());
 }
