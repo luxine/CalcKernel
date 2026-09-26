@@ -287,6 +287,343 @@ fn diagnostics_for(process: &LspProcess, uri: &str) -> Value {
     message["params"].clone()
 }
 
+fn request(process: &mut LspProcess, id: u64, method: &str, params: Value) -> Value {
+    process.send(json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params
+    }));
+    process.receive_matching(|message| message["id"] == id)
+}
+
+fn position_of(text: &str, needle: &str, last: bool) -> Value {
+    let byte = if last {
+        text.rfind(needle).expect("position needle exists")
+    } else {
+        text.find(needle).expect("position needle exists")
+    };
+    let prefix = &text[..byte];
+    json!({
+        "line": prefix.bytes().filter(|byte| *byte == b'\n').count(),
+        "character": prefix.rsplit('\n').next().expect("last line").encode_utf16().count()
+    })
+}
+
+fn text_document_position(uri: &str, position: Value) -> Value {
+    json!({
+        "textDocument": {"uri": uri},
+        "position": position
+    })
+}
+
+#[test]
+fn lsp_should_advertise_connected_editor_providers() {
+    let mut process = LspProcess::start();
+    let initialize = process.initialize();
+    let capabilities = &initialize["result"]["capabilities"];
+
+    assert_eq!(
+        capabilities["completionProvider"]["triggerCharacters"],
+        json!(["."])
+    );
+    assert_eq!(capabilities["hoverProvider"], true);
+    assert_eq!(
+        capabilities["signatureHelpProvider"]["triggerCharacters"],
+        json!(["(", ","])
+    );
+    assert_eq!(capabilities["definitionProvider"], true);
+    assert_eq!(capabilities["referencesProvider"], true);
+    assert_eq!(capabilities["renameProvider"]["prepareProvider"], true);
+    assert_eq!(capabilities["documentSymbolProvider"], true);
+    assert_eq!(capabilities["workspaceSymbolProvider"], true);
+    assert_eq!(capabilities["semanticTokensProvider"]["full"], true);
+    assert_eq!(
+        capabilities["semanticTokensProvider"]["legend"]["tokenTypes"][3],
+        "function"
+    );
+    assert_eq!(capabilities["foldingRangeProvider"], true);
+    assert_eq!(capabilities["selectionRangeProvider"], true);
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_resolve_definitions_references_and_utf16_rename_safely() {
+    let mut process = LspProcess::start();
+    process.initialize();
+    let document_uri = uri();
+    let source = "// 😀\nfn target(value: i32) -> i32 { return value; }\nfn main() -> i32 { return target(1); }";
+    did_open(&mut process, &document_uri, 1, source);
+    let _ = diagnostics_for(&process, &document_uri);
+
+    let definition = request(
+        &mut process,
+        10,
+        "textDocument/definition",
+        text_document_position(&document_uri, position_of(source, "target(1)", true)),
+    );
+    let location = &definition["result"];
+    assert_eq!(location["uri"], document_uri);
+    assert_eq!(
+        location["range"]["start"],
+        json!({"line": 1, "character": 3})
+    );
+    assert_eq!(location["range"]["end"], json!({"line": 1, "character": 9}));
+
+    let mut reference_params =
+        text_document_position(&document_uri, position_of(source, "target(1)", true));
+    reference_params["context"] = json!({"includeDeclaration": true});
+    let references = request(
+        &mut process,
+        11,
+        "textDocument/references",
+        reference_params,
+    );
+    let references = references["result"]
+        .as_array()
+        .expect("reference locations");
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0]["range"]["start"]["line"], 1);
+    assert_eq!(references[1]["range"]["start"]["line"], 2);
+
+    let prepare = request(
+        &mut process,
+        12,
+        "textDocument/prepareRename",
+        text_document_position(&document_uri, position_of(source, "value", false)),
+    );
+    assert_eq!(prepare["result"]["placeholder"], "value");
+    let rename = request(
+        &mut process,
+        13,
+        "textDocument/rename",
+        json!({
+            "textDocument": {"uri": document_uri},
+            "position": position_of(source, "value", false),
+            "newName": "amount"
+        }),
+    );
+    let edits = rename["result"]["changes"][&document_uri]
+        .as_array()
+        .expect("rename edits");
+    assert_eq!(edits.len(), 2);
+    let expected_value_position = position_of(source, "value", false);
+    assert_eq!(edits[0]["range"]["start"], expected_value_position);
+    assert_eq!(edits[0]["newText"], "amount");
+
+    let collision_source = "fn f(value: i32, other: i32) -> i32 { return value; }";
+    let collision_uri = uri();
+    did_open(&mut process, &collision_uri, 1, collision_source);
+    let _ = diagnostics_for(&process, &collision_uri);
+    let collision = request(
+        &mut process,
+        14,
+        "textDocument/rename",
+        json!({
+            "textDocument": {"uri": collision_uri},
+            "position": position_of(collision_source, "value", false),
+            "newName": "other"
+        }),
+    );
+    assert_eq!(collision["error"]["code"], -32602);
+
+    let builtin_source = "fn main() -> i32 { print_i32(1); return 0; }";
+    let builtin_uri = uri();
+    did_open(&mut process, &builtin_uri, 1, builtin_source);
+    let _ = diagnostics_for(&process, &builtin_uri);
+    let builtin = request(
+        &mut process,
+        15,
+        "textDocument/prepareRename",
+        text_document_position(
+            &builtin_uri,
+            position_of(builtin_source, "print_i32", false),
+        ),
+    );
+    assert_eq!(builtin["result"], Value::Null);
+    let builtin_rename = request(
+        &mut process,
+        16,
+        "textDocument/rename",
+        json!({
+            "textDocument": {"uri": builtin_uri},
+            "position": position_of(builtin_source, "print_i32", false),
+            "newName": "write_i32"
+        }),
+    );
+    assert_eq!(builtin_rename["result"], Value::Null);
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_provide_completion_hover_and_signature_help_for_open_documents() {
+    let mut process = LspProcess::start();
+    process.initialize();
+    let uri = uri();
+    let source = "fn add(left: i32, right: i32) -> i32 { return left + right; }\nfn main() -> i32 { let amount: i32 = 1; return add(amount, 2); }";
+    did_open(&mut process, &uri, 1, source);
+    let _ = diagnostics_for(&process, &uri);
+
+    let completion = request(
+        &mut process,
+        20,
+        "textDocument/completion",
+        text_document_position(&uri, position_of(source, "amount, 2", false)),
+    );
+    let items = completion["result"].as_array().expect("completion items");
+    assert!(items.iter().any(|item| item["label"] == "add"));
+    assert!(items.iter().any(|item| item["label"] == "amount"));
+
+    let hover = request(
+        &mut process,
+        21,
+        "textDocument/hover",
+        text_document_position(&uri, position_of(source, "left", false)),
+    );
+    assert!(
+        hover["result"]["contents"]["value"]
+            .as_str()
+            .expect("hover markdown")
+            .contains("parameter left")
+    );
+
+    let signature = request(
+        &mut process,
+        22,
+        "textDocument/signatureHelp",
+        text_document_position(&uri, position_of(source, "2)", false)),
+    );
+    assert_eq!(signature["result"]["activeParameter"], 1);
+    assert_eq!(
+        signature["result"]["signatures"][0]["label"],
+        "add(left: i32, right: i32) -> i32"
+    );
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_return_symbols_tokens_folding_and_nested_selection_ranges() {
+    let mut process = LspProcess::start();
+    process.initialize();
+    let uri = uri();
+    let source = "struct Item {\n    value: i32;\n}\nfn compute(item: Item) -> i32 {\n    let amount: i32 = item.value;\n    return amount;\n}";
+    did_open(&mut process, &uri, 1, source);
+    let _ = diagnostics_for(&process, &uri);
+
+    let symbols = request(
+        &mut process,
+        30,
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let symbols = symbols["result"].as_array().expect("document symbols");
+    assert_eq!(symbols.len(), 2);
+    assert_eq!(symbols[0]["name"], "Item");
+    assert_eq!(symbols[0]["children"][0]["name"], "value");
+    assert_eq!(symbols[1]["name"], "compute");
+    assert_eq!(symbols[1]["children"][0]["name"], "item");
+
+    let workspace = request(
+        &mut process,
+        31,
+        "workspace/symbol",
+        json!({"query": "comp"}),
+    );
+    assert_eq!(
+        workspace["result"]
+            .as_array()
+            .expect("workspace symbols")
+            .len(),
+        1
+    );
+    assert_eq!(workspace["result"][0]["name"], "compute");
+
+    let tokens = request(
+        &mut process,
+        32,
+        "textDocument/semanticTokens/full",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let token_data = tokens["result"]["data"]
+        .as_array()
+        .expect("semantic token data");
+    assert!(!token_data.is_empty());
+    assert_eq!(token_data.len() % 5, 0);
+
+    let folding = request(
+        &mut process,
+        33,
+        "textDocument/foldingRange",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let folding = folding["result"].as_array().expect("folding ranges");
+    assert!(
+        folding
+            .iter()
+            .any(|range| range["startLine"] == 0 && range["endLine"] == 2)
+    );
+    assert!(
+        folding
+            .iter()
+            .any(|range| range["startLine"] == 3 && range["endLine"] == 6)
+    );
+
+    let selection = request(
+        &mut process,
+        34,
+        "textDocument/selectionRange",
+        json!({
+            "textDocument": {"uri": uri},
+            "positions": [position_of(source, "amount", false)]
+        }),
+    );
+    let selection = &selection["result"][0];
+    assert_eq!(selection["range"]["start"]["line"], 4);
+    assert_eq!(selection["range"]["end"]["line"], 4);
+    assert_eq!(
+        selection["parent"]["range"]["start"],
+        json!({"line": 4, "character": 0})
+    );
+    assert!(selection["parent"]["parent"]["range"].is_object());
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_return_null_for_closed_or_unknown_document_requests() {
+    let mut process = LspProcess::start();
+    process.initialize();
+    let closed_uri = uri();
+    did_open(
+        &mut process,
+        &closed_uri,
+        1,
+        "fn main() -> i32 { return 0; }",
+    );
+    let _ = diagnostics_for(&process, &closed_uri);
+    process.send(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didClose",
+        "params": {"textDocument": {"uri": closed_uri}}
+    }));
+    let _ = diagnostics_for(&process, &closed_uri);
+
+    for (id, target_uri) in [(40, closed_uri), (41, "file:///unknown.ck".to_owned())] {
+        let response = request(
+            &mut process,
+            id,
+            "textDocument/hover",
+            text_document_position(&target_uri, json!({"line": 0, "character": 5})),
+        );
+        assert_eq!(response["result"], Value::Null);
+    }
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
 #[test]
 fn lsp_should_publish_unsaved_ck_diagnostics_clear_them_after_change_and_shutdown() {
     let mut process = LspProcess::start();
