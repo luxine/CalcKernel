@@ -344,6 +344,105 @@ fn lsp_should_advertise_connected_editor_providers() {
     );
     assert_eq!(capabilities["foldingRangeProvider"], true);
     assert_eq!(capabilities["selectionRangeProvider"], true);
+    assert_eq!(capabilities["documentFormattingProvider"], true);
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_format_valid_documents_with_idempotent_utf16_full_range_edits() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let valid_uri = uri();
+    let valid_source = "fn main()->i32{\nreturn 1;\n} // 😀";
+    did_open(&mut process, &valid_uri, 1, valid_source);
+    let _ = diagnostics_for(&process, &valid_uri);
+
+    let formatting = request(
+        &mut process,
+        50,
+        "textDocument/formatting",
+        json!({
+            "textDocument": {"uri": valid_uri},
+            "options": {"tabSize": 2, "insertSpaces": true}
+        }),
+    );
+    let edits = formatting["result"].as_array().expect("formatting edits");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+        edits[0]["range"],
+        json!({
+            "start": {"line": 0, "character": 0},
+            "end": {"line": 2, "character": 7}
+        })
+    );
+    let formatted = edits[0]["newText"].as_str().expect("formatted source");
+    assert_eq!(formatted, "fn main() -> i32 {\n  return 1;\n} // 😀\n");
+
+    did_change(&mut process, &valid_uri, 2, formatted);
+    assert_eq!(
+        diagnostics_for(&process, &valid_uri)["diagnostics"],
+        json!([])
+    );
+    let second_formatting = request(
+        &mut process,
+        51,
+        "textDocument/formatting",
+        json!({
+            "textDocument": {"uri": valid_uri},
+            "options": {"tabSize": 2, "insertSpaces": true}
+        }),
+    );
+    assert_eq!(second_formatting["result"], json!([]));
+
+    assert!(process.send_shutdown_and_exit().success());
+}
+
+#[test]
+fn lsp_should_skip_formatting_invalid_buffers_and_continue_serving() {
+    let mut process = LspProcess::start();
+    process.initialize();
+
+    let invalid_uri = uri();
+    did_open(
+        &mut process,
+        &invalid_uri,
+        1,
+        "fn broken( { // keep this\r\n",
+    );
+    assert!(
+        !diagnostics_for(&process, &invalid_uri)["diagnostics"]
+            .as_array()
+            .expect("invalid buffer diagnostics")
+            .is_empty()
+    );
+    let formatting = request(
+        &mut process,
+        52,
+        "textDocument/formatting",
+        json!({
+            "textDocument": {"uri": invalid_uri},
+            "options": {"tabSize": 2, "insertSpaces": true}
+        }),
+    );
+    assert_eq!(formatting["result"], json!([]));
+
+    let valid_uri = uri();
+    did_open(
+        &mut process,
+        &valid_uri,
+        1,
+        "fn main() -> i32 { return 0; }",
+    );
+    let _ = diagnostics_for(&process, &valid_uri);
+    let symbols = request(
+        &mut process,
+        53,
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": valid_uri}}),
+    );
+    assert_eq!(symbols["result"][0]["name"], "main");
 
     assert!(process.send_shutdown_and_exit().success());
 }
