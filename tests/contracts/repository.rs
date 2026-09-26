@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, process::Command};
 
 use calckernel::{SourceFile, check};
 
@@ -337,8 +337,18 @@ fn v0_10_compatibility_sources_should_parse_at_the_frozen_boundary() {
 
 #[test]
 fn repository_should_not_ship_historical_or_generated_trees() {
+    let tracked_plans = Command::new("git")
+        .args(["ls-files", "--", "Ai_repository"])
+        .current_dir(repo_root())
+        .output()
+        .expect("git must be available for repository contract tests");
+    assert!(tracked_plans.status.success(), "git ls-files failed");
+    assert!(
+        tracked_plans.stdout.is_empty(),
+        "Ai_repository is local planning and must not be tracked"
+    );
+
     for forbidden in [
-        "Ai_repository",
         "docs/superpowers",
         "docs/releases",
         "docs/bench",
