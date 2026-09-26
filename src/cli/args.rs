@@ -499,6 +499,7 @@ pub(super) fn require_short_flag_value<'args>(
 pub(super) fn usage() -> &'static str {
     concat!(
         "Usage:\n",
+        "  ckc lsp\n",
         "  ckc check <file>\n",
         "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",

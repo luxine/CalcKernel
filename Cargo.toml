@@ -30,7 +30,9 @@ path = "benches/pgo_perf.rs"
 harness = false
 
 [dependencies]
+libc = "0.2"
 num-bigint = "0.4"
+serde_json = "1"
 sha2 = "0.10"
 thiserror = "2.0"
 wat = "1.0"
@@ -44,5 +46,4 @@ sha2 = "0.10"
 
 [dev-dependencies]
 assert_cmd = "2.0"
-libc = "0.2"
 predicates = "3.1"

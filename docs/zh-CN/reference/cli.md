@@ -23,6 +23,7 @@ text output 写 stdout，另有说明时除外。
 | `ckc pgo merge <shard-or-directory>... --out <file.ckprof>` | Canonical merge 已完成的 `CKPART01` shard。 |
 | `ckc pgo inspect <file.ckprof> [--json]` | 验证并查看 terminal `CKPROF01` profile。 |
 | `ckc cache clean` | 仅删除解析出的 CK native cache。 |
+| `ckc lsp` | 通过标准输入和输出为编辑器客户端启动 CK language server。 |
 | `ckc licenses` | 输出内嵌 third-party notice。 |
 | `ckc --version --verbose` | 输出 compiler、ABI、LLVM、target、codegen 与 ORC identity。 |
 
@@ -38,6 +39,22 @@ dynamic 产物带 sibling Native C ABI header；Windows dynamic 还带 import li
 
 Compiler 在进程内使用 LLVM 22.1.8 与 LLD。产品命令不发现或启动外部 Clang、linker 或
 archiver，Native build 不留下 `.c` 或 `.ll` intermediate。`emit-c` 永不编译或链接输出。
+
+## Language server
+
+`ckc lsp` 使用 stdin/stdout 上的 Language Server Protocol framing 启动
+JSON-RPC language server，供编辑器客户端调用；stdout 专用于协议消息，服务端错误写入
+stderr。此命令不接受参数。VS Code 配置与编辑器功能见
+[Visual Studio Code 指南](../guides/vscode.md)。
+
+Language server 使用编辑器发送的完整文本（包括未保存修改）调用 CK frontend，不启动 LLVM，
+也不提供 Native Run/Build。除了 CK diagnostics，还提供补全、悬停、签名帮助、定义与引用导航、
+绑定安全的重命名、文档与工作区符号、语义 token、折叠范围、选择范围和整份文档格式化。
+工作区符号也包含工作区目录内未打开的 `.ck` 文件的顶层声明，未保存的文档内容优先于磁盘内容。
+源位置使用 LSP UTF-16 坐标。文档打开或更改时发布
+CK diagnostics，关闭时清除 diagnostics。服务端采用完整文档同步，并忽略过期文档版本，避免
+旧修改覆盖较新的诊断。输入过大或语法复杂度过高时，服务端可能跳过分析并报告原因；之后
+仍会继续处理其他文档。
 
 ## 选项与默认值
 

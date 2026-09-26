@@ -24,6 +24,7 @@ requested textual output use stdout unless stated otherwise.
 | `ckc pgo merge <shard-or-directory>... --out <file.ckprof>` | Canonically merge completed `CKPART01` shards. |
 | `ckc pgo inspect <file.ckprof> [--json]` | Validate and inspect one terminal `CKPROF01` profile. |
 | `ckc cache clean` | Remove only the resolved CK native cache. |
+| `ckc lsp` | Run the CK language server over standard input and output for editor clients. |
 | `ckc licenses` | Print embedded third-party notices. |
 | `ckc --version --verbose` | Print compiler, ABI, LLVM, target, codegen, and ORC identity. |
 
@@ -45,6 +46,29 @@ reports each path it could not recover.
 The compiler invokes LLVM 22.1.8 and LLD in process. Product commands do not
 discover or spawn external Clang, linkers, or archivers, and native builds leave
 no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
+
+## Language server
+
+`ckc lsp` starts a JSON-RPC language server using the Language Server Protocol
+framing over stdin/stdout. It is intended to be launched by an editor client;
+stdout is reserved for protocol messages and server errors are written to
+stderr. The command takes no arguments. The VS Code setup and editor features
+are described in the [Visual Studio Code guide](../guides/vscode.md).
+
+The language server analyzes the exact text sent by the editor, including
+unsaved edits, with the CK frontend. It does not invoke LLVM or provide Native
+Run/Build capability. In addition to CK diagnostics, it provides completion,
+hover, signature help, definition and reference navigation, binding-safe
+rename, document and workspace symbols, semantic tokens, folding ranges,
+selection ranges, and whole-document formatting. Workspace symbols include
+top-level declarations in unopened `.ck` files under the workspace folders;
+open unsaved documents take precedence over disk content. Source positions use LSP UTF-16
+coordinates. Open and change notifications publish CK diagnostics; closing a
+document clears its diagnostics. The server uses full-document sync and ignores
+stale document versions so an older edit cannot replace newer diagnostics.
+Document resource limits can cause analysis to be skipped for an oversized or
+excessively complex input; the server reports that condition and continues
+serving later documents.
 
 ## Options and defaults
 
