@@ -12,7 +12,7 @@ use std::{
 use serde_json::{Value, json};
 
 const FRAME_LIMIT: usize = 8 * 1024 * 1024;
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct LspProcess {
     child: Child,
