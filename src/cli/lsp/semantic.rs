@@ -69,7 +69,7 @@ mod tests {
         let edits = result["changes"][URI].as_array().expect("text edits");
         assert_eq!(edits.len(), 2);
         assert_eq!(edits[0]["range"]["start"]["line"], 1);
-        assert_eq!(edits[0]["range"]["start"]["character"], 7);
+        assert_eq!(edits[0]["range"]["start"]["character"], 5);
         assert_eq!(edits[0]["newText"], "amount");
     }
 
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn prepare_rename_returns_null_for_builtin_projection_and_main() {
         let text =
-            "fn main() -> i32 { let items: slice<i32> = slice(ptr<i32>(0), 1); return items.len; }";
+            "fn main() -> i32 { return 0; }\nfn f(items: slice<i32>) -> u32 { return items.len; }";
         let params = position_params(text, "main", false);
         assert_eq!(
             request("textDocument/prepareRename", params, text),
@@ -131,8 +131,9 @@ mod tests {
 use serde_json::{Value, json};
 
 use calckernel::{
-    EditorAnalysis, EditorOccurrenceKind, EditorRenameError, EditorSymbol, ScopeId, SourceFile,
-    SourceSpan, SymbolId, SymbolKind, analyze_editor, get_compiler_builtin,
+    EditorAnalysis, EditorOccurrence, EditorOccurrenceKind, EditorRenameError, EditorScope,
+    EditorSymbol, ScopeId, SourceFile, SourceSpan, SymbolId, SymbolKind, analyze_editor,
+    get_compiler_builtin,
 };
 
 pub(super) const SEMANTIC_TOKEN_TYPES: &[&str] = &[
@@ -166,7 +167,7 @@ const TOKEN_TYPE_PROPERTY: u32 = 6;
 const TOKEN_MODIFIER_DECLARATION: u32 = 1 << 0;
 const TOKEN_MODIFIER_DEFAULT_LIBRARY: u32 = 1 << 9;
 
-type ProviderResult = Result<Value, (i32, String)>;
+type ProviderResult = Result<Value, (i64, String)>;
 
 /// Handles semantic LSP methods for one immutable document snapshot.
 /// The transport owns URI selection, document versions, and lifecycle.
@@ -181,7 +182,10 @@ pub(super) fn handle(
         "textDocument/references" => references(params, uri, text),
         "textDocument/prepareRename" => prepare_rename(params, text),
         "textDocument/rename" => rename(params, uri, text),
-        "textDocument/documentSymbol" => Ok(Value::Array(document_symbols(&analyze(text), text))),
+        "textDocument/documentSymbol" => Ok(Value::Array(document_symbols(
+            &analyze(text),
+            &LineIndex::new(text),
+        ))),
         "workspace/symbol" => workspace_symbols(params, uri, text),
         "textDocument/semanticTokens/full" => {
             Ok(json!({"data": semantic_token_data(&analyze(text), text)}))
@@ -201,7 +205,7 @@ fn definition(params: &Value, uri: &str, text: &str) -> ProviderResult {
     let Some(symbol) = analysis.definition_at(offset) else {
         return Ok(Value::Null);
     };
-    location(uri, symbol.declaration, text).ok_or_else(invalid_position)
+    location(uri, symbol.declaration, &LineIndex::new(text)).ok_or_else(invalid_position)
 }
 
 fn references(params: &Value, uri: &str, text: &str) -> ProviderResult {
@@ -212,11 +216,12 @@ fn references(params: &Value, uri: &str, text: &str) -> ProviderResult {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let analysis = analyze(text);
+    let line_index = LineIndex::new(text);
     let locations = analysis
         .references_at(offset)
         .into_iter()
         .filter(|occurrence| include_declaration || !occurrence.is_declaration)
-        .filter_map(|occurrence| location(uri, occurrence.span, text))
+        .filter_map(|occurrence| location(uri, occurrence.span, &line_index))
         .collect();
     Ok(Value::Array(locations))
 }
@@ -243,7 +248,7 @@ fn prepare_rename(params: &Value, text: &str) -> ProviderResult {
     if !symbol.renameable || (symbol.kind == SymbolKind::Function && symbol.name == "main") {
         return Ok(Value::Null);
     }
-    let range = span_range(occurrence.span, text).ok_or_else(invalid_position)?;
+    let range = span_range(occurrence.span, &LineIndex::new(text)).ok_or_else(invalid_position)?;
     Ok(json!({"range": range, "placeholder": occurrence.name}))
 }
 
@@ -261,11 +266,12 @@ fn rename(params: &Value, uri: &str, text: &str) -> ProviderResult {
         return Ok(Value::Null);
     }
     let edits = analysis.rename(offset, new_name).map_err(rename_error)?;
+    let line_index = LineIndex::new(text);
     let text_edits: Option<Vec<_>> = edits
         .iter()
         .map(|edit| {
             Some(json!({
-                "range": span_range(edit.span, text)?,
+                "range": span_range(edit.span, &line_index)?,
                 "newText": edit.new_text
             }))
         })
@@ -274,7 +280,7 @@ fn rename(params: &Value, uri: &str, text: &str) -> ProviderResult {
     Ok(json!({"changes": {uri: text_edits}}))
 }
 
-fn document_symbols(analysis: &EditorAnalysis, text: &str) -> Vec<Value> {
+fn document_symbols(analysis: &EditorAnalysis, line_index: &LineIndex) -> Vec<Value> {
     let mut declarations: Vec<_> = analysis
         .symbols
         .iter()
@@ -283,23 +289,22 @@ fn document_symbols(analysis: &EditorAnalysis, text: &str) -> Vec<Value> {
     declarations.sort_by_key(|symbol| symbol.declaration.start.offset);
     declarations
         .into_iter()
-        .filter_map(|symbol| document_symbol(symbol, analysis, text))
+        .filter_map(|symbol| document_symbol(symbol, analysis, line_index))
         .collect()
 }
 
-fn document_symbol(symbol: &EditorSymbol, analysis: &EditorAnalysis, text: &str) -> Option<Value> {
+fn document_symbol(
+    symbol: &EditorSymbol,
+    analysis: &EditorAnalysis,
+    line_index: &LineIndex,
+) -> Option<Value> {
     let scope = match symbol.kind {
         SymbolKind::Struct => struct_scope_for_symbol(symbol, analysis),
         SymbolKind::Function => function_scope_for_symbol(symbol, analysis),
         _ => None,
     }?;
-    let range_start = if symbol.kind == SymbolKind::Struct {
-        scope.span.start.offset
-    } else {
-        symbol.declaration.start.offset
-    };
-    let range = offsets_range(range_start, scope.span.end.offset, text)?;
-    let selection_range = span_range(symbol.declaration, text)?;
+    let range = offsets_range(scope.span.start.offset, scope.span.end.offset, line_index)?;
+    let selection_range = span_range(symbol.declaration, line_index)?;
     let mut result = json!({
         "name": symbol.name,
         "kind": lsp_symbol_kind(symbol.kind),
@@ -341,8 +346,8 @@ fn document_symbol(symbol: &EditorSymbol, analysis: &EditorAnalysis, text: &str)
                 Some(json!({
                     "name": child.name,
                     "kind": lsp_symbol_kind(child.kind),
-                    "range": span_range(child.declaration, text)?,
-                    "selectionRange": span_range(child.declaration, text)?,
+                    "range": span_range(child.declaration, line_index)?,
+                    "selectionRange": span_range(child.declaration, line_index)?,
                     "detail": detail
                 }))
             })
@@ -355,7 +360,7 @@ fn document_symbol(symbol: &EditorSymbol, analysis: &EditorAnalysis, text: &str)
 fn struct_scope_for_symbol<'a>(
     symbol: &EditorSymbol,
     analysis: &'a EditorAnalysis,
-) -> Option<&'a crate::EditorScope> {
+) -> Option<&'a EditorScope> {
     analysis.scopes.iter().find(|scope| {
         scope.parent == Some(ScopeId(0))
             && scope.span.start.offset <= symbol.declaration.start.offset
@@ -372,14 +377,14 @@ fn struct_scope_for_symbol<'a>(
 fn function_scope_for_symbol<'a>(
     symbol: &EditorSymbol,
     analysis: &'a EditorAnalysis,
-) -> Option<&'a crate::EditorScope> {
+) -> Option<&'a EditorScope> {
     analysis
         .scopes
         .iter()
         .filter(|scope| {
             scope.parent == Some(ScopeId(0))
-                && scope.span.start.offset <= scope.span.end.offset
-                && symbol.declaration.start.offset < scope.span.start.offset
+                && scope.span.start.offset <= symbol.declaration.start.offset
+                && symbol.declaration.end.offset <= scope.span.end.offset
         })
         .filter(|scope| {
             function_for_scope(scope, analysis).is_some_and(|function| function.id == symbol.id)
@@ -394,7 +399,7 @@ fn function_scope_for_symbol<'a>(
 }
 
 fn function_for_scope<'a>(
-    scope: &crate::EditorScope,
+    scope: &EditorScope,
     analysis: &'a EditorAnalysis,
 ) -> Option<&'a EditorSymbol> {
     analysis
@@ -402,15 +407,13 @@ fn function_for_scope<'a>(
         .iter()
         .filter(|symbol| {
             symbol.kind == SymbolKind::Function
-                && symbol.declaration.start.offset < scope.span.start.offset
+                && scope.span.start.offset <= symbol.declaration.start.offset
+                && symbol.declaration.end.offset <= scope.span.end.offset
         })
-        .max_by_key(|symbol| symbol.declaration.start.offset)
+        .min_by_key(|symbol| symbol.declaration.start.offset)
 }
 
-fn function_root_scope(
-    scope_id: ScopeId,
-    analysis: &EditorAnalysis,
-) -> Option<&crate::EditorScope> {
+fn function_root_scope(scope_id: ScopeId, analysis: &EditorAnalysis) -> Option<&EditorScope> {
     let mut scope = analysis.scopes.iter().find(|scope| scope.id == scope_id)?;
     loop {
         match scope.parent {
@@ -425,6 +428,7 @@ fn workspace_symbols(params: &Value, uri: &str, text: &str) -> ProviderResult {
     let query = params.get("query").and_then(Value::as_str).unwrap_or("");
     let query = query.to_lowercase();
     let analysis = analyze(text);
+    let line_index = LineIndex::new(text);
     let symbols = analysis
         .symbols
         .iter()
@@ -434,7 +438,7 @@ fn workspace_symbols(params: &Value, uri: &str, text: &str) -> ProviderResult {
             Some(json!({
                 "name": symbol.name,
                 "kind": lsp_symbol_kind(symbol.kind),
-                "location": location(uri, symbol.declaration, text)?
+                "location": location(uri, symbol.declaration, &line_index)?
             }))
         })
         .collect();
@@ -442,6 +446,7 @@ fn workspace_symbols(params: &Value, uri: &str, text: &str) -> ProviderResult {
 }
 
 fn semantic_token_data(analysis: &EditorAnalysis, text: &str) -> Vec<u32> {
+    let line_index = LineIndex::new(text);
     let symbols: std::collections::HashMap<SymbolId, &EditorSymbol> = analysis
         .symbols
         .iter()
@@ -479,10 +484,10 @@ fn semantic_token_data(analysis: &EditorAnalysis, text: &str) -> Vec<u32> {
             };
             (token_type, modifiers)
         };
-        let Some(start) = offset_position(text, occurrence.span.start.offset) else {
+        let Some(start) = line_index.position(occurrence.span.start.offset) else {
             continue;
         };
-        let Some(end) = offset_position(text, occurrence.span.end.offset) else {
+        let Some(end) = line_index.position(occurrence.span.end.offset) else {
             continue;
         };
         if start.line != end.line || end.character <= start.character {
@@ -523,13 +528,13 @@ fn semantic_token_data(analysis: &EditorAnalysis, text: &str) -> Vec<u32> {
     data
 }
 
-fn occurrence_at(analysis: &EditorAnalysis, offset: usize) -> Option<&crate::EditorOccurrence> {
+fn occurrence_at(analysis: &EditorAnalysis, offset: usize) -> Option<&EditorOccurrence> {
     analysis.occurrences.iter().find(|occurrence| {
         occurrence.span.start.offset <= offset && offset < occurrence.span.end.offset
     })
 }
 
-fn position_offset(params: &Value, text: &str) -> Result<usize, (i32, String)> {
+fn position_offset(params: &Value, text: &str) -> Result<usize, (i64, String)> {
     let position = params
         .get("position")
         .ok_or_else(|| invalid_params("request requires a position"))?;
@@ -548,7 +553,7 @@ fn position_offset(params: &Value, text: &str) -> Result<usize, (i32, String)> {
 }
 
 fn lsp_position_to_offset(text: &str, wanted_line: usize, character: usize) -> Option<usize> {
-    let mut base = 0;
+    let mut base: usize = 0;
     for (line, raw_line) in text.split('\n').enumerate() {
         let contents = raw_line.strip_suffix('\r').unwrap_or(raw_line);
         if line == wanted_line {
@@ -564,34 +569,40 @@ fn lsp_position_to_offset(text: &str, wanted_line: usize, character: usize) -> O
     None
 }
 
-fn offset_position(text: &str, wanted_offset: usize) -> Option<Position> {
-    if wanted_offset > text.encode_utf16().count() {
-        return None;
+struct LineIndex {
+    starts: Vec<usize>,
+    text_len: usize,
+}
+
+impl LineIndex {
+    fn new(text: &str) -> Self {
+        let mut starts = vec![0];
+        let mut offset = 0;
+        for character in text.chars() {
+            offset += character.len_utf16();
+            if character == '\n' {
+                starts.push(offset);
+            }
+        }
+        Self {
+            starts,
+            text_len: offset,
+        }
     }
-    let mut position = Position {
-        line: 0,
-        character: 0,
-    };
-    let mut offset = 0;
-    for character in text.chars() {
-        if offset == wanted_offset {
-            return Some(position);
+
+    fn position(&self, offset: usize) -> Option<Position> {
+        if offset > self.text_len {
+            return None;
         }
-        if character == '\n' {
-            offset += 1;
-            position.line += 1;
-            position.character = 0;
-            continue;
-        }
-        let width = character.len_utf16();
-        if wanted_offset < offset + width {
-            position.character += wanted_offset - offset;
-            return Some(position);
-        }
-        offset += width;
-        position.character += width;
+        let line = self
+            .starts
+            .partition_point(|start| *start <= offset)
+            .checked_sub(1)?;
+        Some(Position {
+            line,
+            character: offset - self.starts[line],
+        })
     }
-    (offset == wanted_offset).then_some(position)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -600,17 +611,17 @@ struct Position {
     character: usize,
 }
 
-fn span_range(span: SourceSpan, text: &str) -> Option<Value> {
-    offsets_range(span.start.offset, span.end.offset, text)
+fn span_range(span: SourceSpan, line_index: &LineIndex) -> Option<Value> {
+    offsets_range(span.start.offset, span.end.offset, line_index)
 }
 
-fn offsets_range(start: usize, end: usize, text: &str) -> Option<Value> {
+fn offsets_range(start: usize, end: usize, line_index: &LineIndex) -> Option<Value> {
     if end < start {
         return None;
     }
     Some(json!({
-        "start": position_json(offset_position(text, start)?),
-        "end": position_json(offset_position(text, end)?)
+        "start": position_json(line_index.position(start)?),
+        "end": position_json(line_index.position(end)?)
     }))
 }
 
@@ -618,8 +629,8 @@ fn position_json(position: Position) -> Value {
     json!({"line": position.line, "character": position.character})
 }
 
-fn location(uri: &str, span: SourceSpan, text: &str) -> Option<Value> {
-    Some(json!({"uri": uri, "range": span_range(span, text)?}))
+fn location(uri: &str, span: SourceSpan, line_index: &LineIndex) -> Option<Value> {
+    Some(json!({"uri": uri, "range": span_range(span, line_index)?}))
 }
 
 fn lsp_symbol_kind(kind: SymbolKind) -> u32 {
@@ -631,15 +642,15 @@ fn lsp_symbol_kind(kind: SymbolKind) -> u32 {
     }
 }
 
-fn rename_error(error: EditorRenameError) -> (i32, String) {
+fn rename_error(error: EditorRenameError) -> (i64, String) {
     invalid_params(error.message())
 }
 
-fn invalid_position() -> (i32, String) {
+fn invalid_position() -> (i64, String) {
     invalid_params("source span is outside the document")
 }
 
-fn invalid_params(message: impl Into<String>) -> (i32, String) {
+fn invalid_params(message: impl Into<String>) -> (i64, String) {
     (-32602, message.into())
 }
 
