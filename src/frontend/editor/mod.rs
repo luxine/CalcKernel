@@ -473,7 +473,7 @@ impl EditorIndexBuilder {
                 self.index_expression_mode(&requirement.expression, &mut scopes, true);
             }
             if let Some(effects) = &contract.effects {
-                self.index_effects(effects, &mut scopes);
+                self.index_effects(effects, &scopes);
             }
         }
         self.index_statements(&declaration.body.statements, &mut scopes);
@@ -483,7 +483,7 @@ impl EditorIndexBuilder {
     fn index_effects(
         &mut self,
         effects: &ContractEffectClause,
-        scopes: &mut Vec<(ScopeId, HashMap<String, Binding>)>,
+        scopes: &[(ScopeId, HashMap<String, Binding>)],
     ) {
         for item in &effects.items {
             let binding = scopes

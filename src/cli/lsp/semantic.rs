@@ -103,7 +103,7 @@ mod tests {
         );
         let data = result["data"].as_array().expect("token data");
         assert_eq!(data.len() % 5, 0);
-        assert!(!SEMANTIC_TOKEN_TYPES.is_empty());
+        assert_eq!(SEMANTIC_TOKEN_TYPES[3], "function");
         assert_eq!(data[0], 1);
         assert_eq!(data[1], 3);
         assert_eq!(data[2], 1);

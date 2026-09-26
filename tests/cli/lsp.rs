@@ -232,15 +232,15 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
         }
         let line = std::str::from_utf8(&line)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if let Some((name, value)) = line.trim().split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                content_length = Some(
-                    value
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-                );
-            }
+        if let Some((name, value)) = line.trim().split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            content_length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            );
         }
     }
 
@@ -266,7 +266,7 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
 fn uri() -> String {
     static NEXT_URI: AtomicUsize = AtomicUsize::new(0);
     let id = NEXT_URI.fetch_add(1, Ordering::Relaxed);
-    format!("file:///ck-lsp-test-{id}.ck")
+    lexical_file_uri(&std::env::temp_dir().join(format!("ck-lsp-test-{id}.ck")))
 }
 
 struct TempDir(PathBuf);
@@ -304,6 +304,13 @@ fn file_uri(path: &Path) -> String {
 
 fn lexical_file_uri(path: &Path) -> String {
     let path = path.to_string_lossy().replace('\\', "/");
+    let path = if cfg!(windows) && path.to_ascii_lowercase().starts_with("//?/unc/") {
+        format!("//{}", &path[8..])
+    } else if cfg!(windows) && path.starts_with("//?/") {
+        path[4..].to_owned()
+    } else {
+        path
+    };
     let path = if cfg!(windows) && !path.starts_with('/') {
         format!("/{path}")
     } else {
@@ -317,7 +324,11 @@ fn lexical_file_uri(path: &Path) -> String {
             encoded.push_str(&format!("%{byte:02X}"));
         }
     }
-    format!("file://{encoded}")
+    if cfg!(windows) && path.starts_with("//") {
+        format!("file:{encoded}")
+    } else {
+        format!("file://{encoded}")
+    }
 }
 
 fn workspace_folder(path: &Path, name: &str) -> Value {

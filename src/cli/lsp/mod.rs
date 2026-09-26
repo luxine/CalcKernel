@@ -262,7 +262,7 @@ fn handle_request(
     };
     match result {
         Some(Ok(value)) => write_success(output, id, value),
-        Some(Err((code, message))) => write_response(output, id, i64::from(code), &message),
+        Some(Err((code, message))) => write_response(output, id, code, &message),
         None => write_response(output, id, -32601, &format!("Method not found: {method}")),
     }
 }
@@ -727,11 +727,7 @@ fn analysis_limit_warning(source: &str) -> Option<&'static str> {
             byte if is_supported_punctuation(byte) => {
                 let paired_equal = byte == b'=' && bytes.get(offset + 1) == Some(&b'=');
                 offset += usize::from(paired_equal) + 1;
-                if paired_equal {
-                    if increment_binary_operator_chain(&mut binary_operator_chain) {
-                        return Some("binary operator chain exceeds the safe limit of 128");
-                    }
-                } else if matches!(byte, b'+' | b'*' | b'/' | b'%') {
+                if paired_equal || matches!(byte, b'+' | b'*' | b'/' | b'%') {
                     if increment_binary_operator_chain(&mut binary_operator_chain) {
                         return Some("binary operator chain exceeds the safe limit of 128");
                     }
@@ -984,22 +980,6 @@ fn write_message(output: &mut impl Write, message: &Value) -> io::Result<()> {
     output.flush()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn oversized_provider_response_returns_an_error_frame() {
-        let mut output = Vec::new();
-        write_success(&mut output, json!(7), json!("x".repeat(MAX_FRAME_BYTES)))
-            .expect("server should keep serving after oversized provider result");
-        let serialized = String::from_utf8(output).expect("LSP output is UTF-8");
-        assert!(serialized.contains("\"id\":7"));
-        assert!(serialized.contains("\"code\":-32603"));
-        assert!(serialized.len() < 1024);
-    }
-}
-
 fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
     let mut header_bytes = 0;
     let mut content_length = None;
@@ -1019,21 +999,21 @@ fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
         }
         let line = std::str::from_utf8(&line)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if let Some((name, value)) = line.trim().split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                if content_length.is_some() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "duplicate Content-Length header",
-                    ));
-                }
-                content_length = Some(
-                    value
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-                );
+        if let Some((name, value)) = line.trim().split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            if content_length.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate Content-Length header",
+                ));
             }
+            content_length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            );
         }
     }
 
@@ -1080,5 +1060,21 @@ fn read_header_line(input: &mut impl BufRead, byte_limit: usize) -> io::Result<O
                 "LSP headers exceed size limit",
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_provider_response_returns_an_error_frame() {
+        let mut output = Vec::new();
+        write_success(&mut output, json!(7), json!("x".repeat(MAX_FRAME_BYTES)))
+            .expect("server should keep serving after oversized provider result");
+        let serialized = String::from_utf8(output).expect("LSP output is UTF-8");
+        assert!(serialized.contains("\"id\":7"));
+        assert!(serialized.contains("\"code\":-32603"));
+        assert!(serialized.len() < 1024);
     }
 }

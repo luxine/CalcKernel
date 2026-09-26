@@ -41,7 +41,7 @@ fn completion(params: &Value, text: &str) -> Value {
             let length = offset - next.start;
             next.text.get(..length).map(|prefix| (index, prefix))
         })
-        .last()
+        .next_back()
     {
         return field_completion(&source, &analysis, &tokens, index, prefix);
     }
@@ -248,10 +248,10 @@ fn local_declaration_type<'a>(
                 {
                     return Some(ty);
                 }
-                if let Some(other) = &branch.else_block {
-                    if let Some(ty) = local_declaration_type(&other.statements, span, program) {
-                        return Some(ty);
-                    }
+                if let Some(other) = &branch.else_block
+                    && let Some(ty) = local_declaration_type(&other.statements, span, program)
+                {
+                    return Some(ty);
                 }
             }
             Statement::While(loop_statement) => {
@@ -413,10 +413,10 @@ fn folding_ranges(text: &str) -> Value {
         match token.kind {
             TokenKind::LeftBrace => stack.push(token.line),
             TokenKind::RightBrace => {
-                if let Some(start) = stack.pop() {
-                    if token.line > start {
-                        ranges.push(json!({"startLine": start - 1, "endLine": token.line - 1}));
-                    }
+                if let Some(start) = stack.pop()
+                    && token.line > start
+                {
+                    ranges.push(json!({"startLine": start - 1, "endLine": token.line - 1}));
                 }
             }
             _ => {}

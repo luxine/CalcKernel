@@ -25,7 +25,7 @@ fn call_binding_uses_global_function_even_when_a_local_has_the_same_name() {
     let text = "fn target() -> i32 { return 1; }\nfn caller() -> i32 { let target: i32 = 2; return target(); }";
     let analysis = analyze(text);
     let function_decl = occurrence(&analysis, text, "target", true);
-    let call_offset = text.rfind("target()").expect("call") as usize;
+    let call_offset = text.rfind("target()").expect("call");
     let call_offset = text[..call_offset].encode_utf16().count();
     let call = analysis
         .occurrences
