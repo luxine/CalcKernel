@@ -26,6 +26,7 @@
 - [Optimizer](compiler/optimizer.md)
 - [快速开始](guides/getting-started.md)
 - [Backend 选择](guides/backend-selection.md)
+- [Visual Studio Code](guides/vscode.md) — 安装与配置 CK 语言扩展。
 - [WASM interop](guides/wasm-interop.md)
 - [Performance](guides/performance.md)
 

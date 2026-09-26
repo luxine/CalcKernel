@@ -27,6 +27,7 @@ The formal 0.13.0 release is the retained compatibility baseline.
 - [Optimizer](compiler/optimizer.md) — O0–O3 selection and preservation rules.
 - [Getting started](guides/getting-started.md)
 - [Backend selection](guides/backend-selection.md)
+- [Visual Studio Code](guides/vscode.md) — install and configure the CK language extension.
 - [WASM interop](guides/wasm-interop.md)
 - [Performance](guides/performance.md)
 
