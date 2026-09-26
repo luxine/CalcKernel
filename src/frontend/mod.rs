@@ -1,5 +1,6 @@
 mod ast;
 mod diagnostics;
+mod editor;
 mod effects;
 mod lexer;
 mod parser;
@@ -8,6 +9,7 @@ mod typeck;
 
 pub use ast::*;
 pub use diagnostics::*;
+pub use editor::*;
 pub use effects::*;
 pub use lexer::*;
 pub use parser::*;
