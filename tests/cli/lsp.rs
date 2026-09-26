@@ -299,7 +299,11 @@ fn write_ck(path: &Path, source: &str) {
 
 fn file_uri(path: &Path) -> String {
     let absolute = fs::canonicalize(path).expect("canonicalize file URI path");
-    let path = absolute.to_string_lossy().replace('\\', "/");
+    lexical_file_uri(&absolute)
+}
+
+fn lexical_file_uri(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
     let path = if cfg!(windows) && !path.starts_with('/') {
         format!("/{path}")
     } else {
@@ -804,6 +808,95 @@ fn lsp_should_find_nested_workspace_files_from_root_uri_with_utf16_ranges() {
     );
 
     assert!(process.send_shutdown_and_exit().success());
+}
+
+#[cfg(unix)]
+#[test]
+fn lsp_should_remove_symlinked_child_roots_by_original_uri_after_retargeting() {
+    use std::os::unix::fs::symlink;
+
+    let directory = TempDir::new();
+    let first_target = directory.path().join("target-a");
+    let second_target = directory.path().join("target-b");
+    write_ck(
+        &first_target.join("root.ck"),
+        "fn first_root_symbol() -> i32 { return 1; }",
+    );
+    write_ck(
+        &first_target.join("child").join("nested.ck"),
+        "fn first_child_symbol() -> i32 { return 2; }",
+    );
+    write_ck(
+        &second_target.join("root.ck"),
+        "fn second_root_symbol() -> i32 { return 3; }",
+    );
+    write_ck(
+        &second_target.join("child").join("nested.ck"),
+        "fn second_child_symbol() -> i32 { return 4; }",
+    );
+    let link = directory.path().join("workspace-link");
+    symlink(&first_target, &link).expect("create workspace symlink");
+
+    let original_child_root_uri = lexical_file_uri(&link.join("child"));
+    let mut child_root_process = LspProcess::start();
+    child_root_process.initialize_with_params(json!({
+        "processId": null,
+        "rootUri": original_child_root_uri,
+        "capabilities": {}
+    }));
+    let first_symbol = workspace_symbols(&mut child_root_process, 75, json!("first_child_symbol"));
+    assert_eq!(first_symbol["result"].as_array().unwrap().len(), 1);
+    assert_eq!(first_symbol["result"][0]["name"], "first_child_symbol");
+    assert_eq!(
+        workspace_symbols(&mut child_root_process, 76, json!("second_child_symbol"))["result"],
+        json!([])
+    );
+
+    fs::remove_file(&link).expect("remove old symlink");
+    symlink(&second_target, &link).expect("retarget workspace symlink");
+    let still_original_target =
+        workspace_symbols(&mut child_root_process, 81, json!("first_child_symbol"));
+    assert_eq!(still_original_target["result"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        workspace_symbols(&mut child_root_process, 82, json!("second_child_symbol"))["result"],
+        json!([])
+    );
+    did_change_workspace_folders(
+        &mut child_root_process,
+        vec![],
+        vec![json!({
+            "uri": lexical_file_uri(&link.join("child")),
+            "name": "workspace-link/child"
+        })],
+    );
+    assert_eq!(
+        workspace_symbols(&mut child_root_process, 77, json!("first_child_symbol"))["result"],
+        json!([])
+    );
+    assert_eq!(
+        workspace_symbols(&mut child_root_process, 78, json!("second_child_symbol"))["result"],
+        json!([])
+    );
+    assert!(child_root_process.send_shutdown_and_exit().success());
+
+    let mut symlink_root_process = LspProcess::start();
+    symlink_root_process.initialize_with_params(json!({
+        "processId": null,
+        "rootUri": lexical_file_uri(&link),
+        "capabilities": {}
+    }));
+    let second_root_symbol =
+        workspace_symbols(&mut symlink_root_process, 79, json!("second_root_symbol"));
+    assert_eq!(second_root_symbol["result"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        second_root_symbol["result"][0]["name"],
+        "second_root_symbol"
+    );
+    assert_eq!(
+        workspace_symbols(&mut symlink_root_process, 80, json!("first_root_symbol"))["result"],
+        json!([])
+    );
+    assert!(symlink_root_process.send_shutdown_and_exit().success());
 }
 
 #[test]
