@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     ContractEffectClause, Declaration, Diagnostic, Expression, FunctionDeclaration, IdentifierNode,
@@ -436,7 +436,11 @@ impl EditorIndexBuilder {
         if meta.declaration_start != declaration.name.span.start.offset {
             return;
         }
-        let function_scope = self.add_scope(Some(self.global_scope), declaration.body.span);
+        let function_scope_span = SourceSpan {
+            start: declaration.span.start,
+            end: declaration.body.span.end,
+        };
+        let function_scope = self.add_scope(Some(self.global_scope), function_scope_span);
         let mut scopes = vec![(function_scope, HashMap::<String, Binding>::new())];
         for param in &declaration.params {
             let binding_type = self.type_from_node(&param.type_node);
@@ -613,8 +617,13 @@ impl EditorIndexBuilder {
             Expression::IntegerLiteral { .. }
             | Expression::FloatLiteral { .. }
             | Expression::BoolLiteral { .. } => EditorType::Other,
-            Expression::Unary { operand, .. }
-            | Expression::Parenthesized {
+            Expression::Unary { operand, .. } => {
+                self.index_expression_mode(operand, scopes, in_contract);
+                // Unary operators produce scalar values; their operand's struct type does not
+                // flow through to a following field projection such as `(-value).field`.
+                EditorType::Other
+            }
+            Expression::Parenthesized {
                 expression: operand,
                 ..
             } => self.index_expression_mode(operand, scopes, in_contract),
@@ -884,29 +893,34 @@ fn same_namespace(left: SymbolKind, right: SymbolKind) -> bool {
     )
 }
 
-fn utf16_offset_to_byte(text: &str, utf16_offset: usize) -> Option<usize> {
-    let mut units = 0;
+fn utf16_offsets_to_bytes(text: &str, wanted: &HashSet<usize>) -> HashMap<usize, usize> {
+    let mut byte_offsets = HashMap::with_capacity(wanted.len());
+    let mut utf16_offset = 0;
     for (byte_offset, character) in text.char_indices() {
-        if units == utf16_offset {
-            return Some(byte_offset);
+        if wanted.contains(&utf16_offset) {
+            byte_offsets.insert(utf16_offset, byte_offset);
         }
-        let next = units + character.len_utf16();
-        if utf16_offset < next {
-            // Reject offsets in the middle of an astral character's surrogate pair.
-            return None;
-        }
-        units = next;
+        utf16_offset += character.len_utf16();
     }
-    (units == utf16_offset).then_some(text.len())
+    if wanted.contains(&utf16_offset) {
+        byte_offsets.insert(utf16_offset, text.len());
+    }
+    // Offsets inside a surrogate pair are deliberately absent from the map.
+    byte_offsets
 }
 
 fn apply_edits(source: &SourceFile, edits: &[EditorTextEdit]) -> Option<SourceFile> {
+    let wanted_offsets: HashSet<_> = edits
+        .iter()
+        .flat_map(|edit| [edit.span.start.offset, edit.span.end.offset])
+        .collect();
+    let byte_offsets = utf16_offsets_to_bytes(&source.text, &wanted_offsets);
     let mut converted = edits
         .iter()
         .map(|edit| {
             Some((
-                utf16_offset_to_byte(&source.text, edit.span.start.offset)?,
-                utf16_offset_to_byte(&source.text, edit.span.end.offset)?,
+                *byte_offsets.get(&edit.span.start.offset)?,
+                *byte_offsets.get(&edit.span.end.offset)?,
                 edit.new_text.as_str(),
             ))
         })
@@ -929,56 +943,65 @@ fn bindings_are_stable(
     new_name: &str,
     edits: &[EditorTextEdit],
 ) -> bool {
-    let Some(updated_symbol) = updated.symbols.iter().find(|symbol| symbol.id == renamed) else {
+    let updated_symbols: HashMap<_, _> = updated
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.id, symbol))
+        .collect();
+    let Some(updated_symbol) = updated_symbols.get(&renamed) else {
         return false;
     };
     if updated_symbol.name != new_name {
         return false;
     }
+    if original.occurrences.len() != updated.occurrences.len() {
+        return false;
+    }
+
+    let mut updated_by_span = HashMap::with_capacity(updated.occurrences.len());
+    for occurrence in &updated.occurrences {
+        let key = (occurrence.span.start.offset, occurrence.span.end.offset);
+        if updated_by_span.insert(key, occurrence).is_some() {
+            return false;
+        }
+    }
+    let edit_by_span: HashMap<_, _> = edits
+        .iter()
+        .map(|edit| {
+            (
+                (edit.span.start.offset, edit.span.end.offset),
+                edit.new_text.encode_utf16().count(),
+            )
+        })
+        .collect();
+    let mut prefix_shift = Vec::with_capacity(edits.len() + 1);
+    prefix_shift.push(0i128);
+    for edit in edits {
+        let old_length = edit.span.end.offset - edit.span.start.offset;
+        let new_length = edit.new_text.encode_utf16().count();
+        prefix_shift.push(
+            prefix_shift.last().copied().unwrap_or_default() + new_length as i128
+                - old_length as i128,
+        );
+    }
 
     original.occurrences.iter().all(|occurrence| {
-        let mut shift = 0isize;
-        let mut expected_span = occurrence.span;
-        let mut edited = false;
-        for edit in edits {
-            let old_start = edit.span.start.offset;
-            let old_end = edit.span.end.offset;
-            if old_start == occurrence.span.start.offset && old_end == occurrence.span.end.offset {
-                let shifted_start = old_start as isize + shift;
-                let Some(start) = usize::try_from(shifted_start).ok() else {
-                    return false;
-                };
-                expected_span = SourceSpan {
-                    start: position_with_offset(occurrence.span.start, start),
-                    end: position_with_offset(
-                        occurrence.span.end,
-                        start + edit.new_text.encode_utf16().count(),
-                    ),
-                };
-                edited = true;
-                break;
-            }
-            if old_end <= occurrence.span.start.offset {
-                shift +=
-                    edit.new_text.encode_utf16().count() as isize - (old_end - old_start) as isize;
-            }
-        }
-        if !edited {
-            let Some(start) = usize::try_from(occurrence.span.start.offset as isize + shift).ok()
-            else {
-                return false;
-            };
-            let Some(end) = usize::try_from(occurrence.span.end.offset as isize + shift).ok()
-            else {
-                return false;
-            };
-            expected_span.start.offset = start;
-            expected_span.end.offset = end;
-        }
-        let Some(candidate) = updated.occurrences.iter().find(|candidate| {
-            candidate.span.start.offset == expected_span.start.offset
-                && candidate.span.end.offset == expected_span.end.offset
-        }) else {
+        let old_start = occurrence.span.start.offset;
+        let old_end = occurrence.span.end.offset;
+        let preceding_edits = edits.partition_point(|edit| edit.span.end.offset <= old_start);
+        let shift = prefix_shift[preceding_edits];
+        let Some(start) = shift_offset(old_start, shift) else {
+            return false;
+        };
+        let end = if let Some(new_length) = edit_by_span.get(&(old_start, old_end)) {
+            start.checked_add(*new_length)
+        } else {
+            shift_offset(old_end, shift)
+        };
+        let Some(end) = end else {
+            return false;
+        };
+        let Some(candidate) = updated_by_span.get(&(start, end)) else {
             return false;
         };
         candidate.symbol_id == occurrence.symbol_id
@@ -990,10 +1013,10 @@ fn bindings_are_stable(
                 } else {
                     occurrence.name.as_str()
                 }
-    }) && original.occurrences.len() == updated.occurrences.len()
+    })
 }
 
-fn position_with_offset(mut position: SourcePosition, offset: usize) -> SourcePosition {
-    position.offset = offset;
-    position
+fn shift_offset(offset: usize, shift: i128) -> Option<usize> {
+    let shifted = offset as i128 + shift;
+    usize::try_from(shifted).ok()
 }

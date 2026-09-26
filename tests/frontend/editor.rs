@@ -120,6 +120,21 @@ fn same_named_fields_bind_to_the_receiver_struct_field() {
 }
 
 #[test]
+fn unary_operations_do_not_keep_a_struct_receiver_binding() {
+    let text = "struct Item { value: i32; } fn f(item: Item) -> i32 { return (-item).value; }";
+    let analysis = analyze(text);
+    let field_declaration = occurrence(&analysis, text, "value", true);
+    let access = text.rfind("value").expect("field access");
+    let access_offset = text[..access].encode_utf16().count();
+
+    assert_eq!(analysis.definition_at(access_offset), None);
+    let edits = analysis
+        .rename(field_declaration.span.start.offset, "renamed")
+        .expect("declaration rename remains safe");
+    assert_eq!(edits.len(), 1);
+}
+
+#[test]
 fn contract_requirements_and_effect_targets_reference_parameter_symbols() {
     let text = "unsafe fn bounded(items: slice<i32>, n: u32) -> i32 contract { requires n >= items.len; requires aligned(items.data, 4); effects read(items); } { return n; }";
     let analysis = analyze(text);
@@ -133,6 +148,11 @@ fn contract_requirements_and_effect_targets_reference_parameter_symbols() {
         .iter()
         .find(|symbol| symbol.name == "n" && symbol.kind == SymbolKind::Parameter)
         .expect("n parameter");
+    let function_scope = analysis
+        .scopes
+        .iter()
+        .find(|scope| scope.id == item_parameter.scope_id)
+        .expect("function scope");
     let effects = text.find("read(items)").expect("effect") + "read(".len();
     let effects_offset = text[..effects].encode_utf16().count();
     let requirement = text.find("requires n").expect("requirement") + "requires ".len();
@@ -143,6 +163,10 @@ fn contract_requirements_and_effect_targets_reference_parameter_symbols() {
     let slice_data_offset = text[..slice_data].encode_utf16().count();
     let contract_builtin = text.find("aligned(").expect("contract builtin");
     let contract_builtin_offset = text[..contract_builtin].encode_utf16().count();
+
+    assert!(function_scope.span.start.offset <= item_parameter.declaration.start.offset);
+    assert!(function_scope.span.start.offset <= requirement_offset);
+    assert!(function_scope.span.end.offset >= effects_offset);
 
     assert_eq!(
         analysis
