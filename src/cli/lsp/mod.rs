@@ -3,8 +3,11 @@ use std::{
     io::{self, BufRead, BufReader, BufWriter, Write},
 };
 
-use calckernel::{Diagnostic, SourceFile, check};
+use calckernel::{Diagnostic, SourceFile, check, format_source_with_options};
 use serde_json::{Value, json};
+
+mod assist;
+mod semantic;
 
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
@@ -63,7 +66,7 @@ pub(super) struct ServerState {
 
 pub(super) struct DocumentSnapshot {
     pub(super) version: i64,
-    pub(super) _text: Option<String>,
+    pub(super) text: Option<String>,
 }
 
 fn handle_message(
@@ -170,12 +173,108 @@ fn handle_message(
         },
         _ => {
             if let Some(id) = id {
-                write_response(output, id, -32601, &format!("Method not found: {method}"))?;
+                handle_request(method, params, id, state, output)?;
             }
         }
     }
 
     Ok(None)
+}
+
+fn handle_request(
+    method: &str,
+    params: &Value,
+    id: Value,
+    state: &ServerState,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    if method == "workspace/symbol" {
+        let mut symbols = Vec::new();
+        for (uri, document) in &state.documents {
+            if let Some(text) = &document.text {
+                if let Some(Ok(Value::Array(items))) = semantic::handle(method, params, uri, text) {
+                    symbols.extend(items);
+                }
+            }
+        }
+        return write_success(output, id, json!(symbols));
+    }
+    if !matches!(
+        method,
+        "textDocument/completion"
+            | "textDocument/hover"
+            | "textDocument/signatureHelp"
+            | "textDocument/foldingRange"
+            | "textDocument/selectionRange"
+            | "textDocument/definition"
+            | "textDocument/references"
+            | "textDocument/prepareRename"
+            | "textDocument/rename"
+            | "textDocument/documentSymbol"
+            | "textDocument/semanticTokens/full"
+            | "textDocument/formatting"
+    ) {
+        return write_response(output, id, -32601, &format!("Method not found: {method}"));
+    }
+    let uri = match document_uri(params) {
+        Ok(Some(uri)) => uri,
+        Ok(None) => return write_response(output, id, -32602, "Missing textDocument.uri"),
+        Err(_) => return write_response(output, id, -32602, "Document URI exceeds 4 KiB"),
+    };
+    let Some(text) = state
+        .documents
+        .get(&uri)
+        .and_then(|document| document.text.as_deref())
+    else {
+        return write_success(output, id, Value::Null);
+    };
+    let result = if method == "textDocument/formatting" {
+        Some(Ok(document_formatting(params, text)))
+    } else {
+        semantic::handle(method, params, &uri, text)
+            .or_else(|| assist::handle(method, params, text).map(Ok))
+    };
+    match result {
+        Some(Ok(value)) => write_success(output, id, value),
+        Some(Err((code, message))) => write_response(output, id, i64::from(code), &message),
+        None => write_response(output, id, -32601, &format!("Method not found: {method}")),
+    }
+}
+
+fn document_formatting(params: &Value, text: &str) -> Value {
+    let options = &params["options"];
+    let tab_size = options["tabSize"]
+        .as_u64()
+        .and_then(|size| usize::try_from(size).ok())
+        .unwrap_or(2);
+    let insert_spaces = options["insertSpaces"].as_bool().unwrap_or(true);
+    let formatted = format_source_with_options(text, tab_size, insert_spaces);
+    if formatted == text {
+        return json!([]);
+    }
+    let last_line = text.rsplit('\n').next().unwrap_or("");
+    json!([{
+        "range": {
+            "start": {"line": 0, "character": 0},
+            "end": {
+                "line": text.split('\n').count() - 1,
+                "character": last_line.encode_utf16().count()
+            }
+        },
+        "newText": formatted
+    }])
+}
+
+fn write_success(output: &mut impl Write, id: Value, value: Value) -> io::Result<()> {
+    let message = json!({"jsonrpc": "2.0", "id": id, "result": value});
+    if serde_json::to_vec(&message)
+        .map_err(io::Error::other)?
+        .len()
+        > MAX_FRAME_BYTES
+    {
+        return write_response(output, id, -32603, "LSP response exceeds the 8 MiB limit");
+    }
+    write_message(output, &message)
 }
 
 fn write_initialize_response(output: &mut impl Write, id: Value) -> io::Result<()> {
@@ -189,7 +288,25 @@ fn write_initialize_response(output: &mut impl Write, id: Value) -> io::Result<(
                     "textDocumentSync": {
                         "openClose": true,
                         "change": 1
-                    }
+                    },
+                    "completionProvider": {"triggerCharacters": ["."]},
+                    "hoverProvider": true,
+                    "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
+                    "definitionProvider": true,
+                    "referencesProvider": true,
+                    "renameProvider": {"prepareProvider": true},
+                    "documentSymbolProvider": true,
+                    "workspaceSymbolProvider": true,
+                    "semanticTokensProvider": {
+                        "legend": {
+                            "tokenTypes": semantic::SEMANTIC_TOKEN_TYPES,
+                            "tokenModifiers": semantic::SEMANTIC_TOKEN_MODIFIERS
+                        },
+                        "full": true
+                    },
+                    "foldingRangeProvider": true,
+                    "selectionRangeProvider": true,
+                    "documentFormattingProvider": true
                 },
                 "serverInfo": {
                     "name": "ckc",
@@ -287,7 +404,7 @@ fn analyze_and_publish(
         uri.to_string(),
         DocumentSnapshot {
             version,
-            _text: Some(source.text),
+            text: Some(source.text),
         },
     );
     publish_diagnostics(output, uri, Some(version), &diagnostics)
@@ -298,7 +415,7 @@ fn remember_unanalyzed_document(uri: &str, version: i64, state: &mut ServerState
         uri.to_string(),
         DocumentSnapshot {
             version,
-            _text: None,
+            text: None,
         },
     );
 }
@@ -838,6 +955,22 @@ fn write_message(output: &mut impl Write, message: &Value) -> io::Result<()> {
     write!(output, "Content-Length: {}\r\n\r\n", body.len())?;
     output.write_all(&body)?;
     output.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_provider_response_returns_an_error_frame() {
+        let mut output = Vec::new();
+        write_success(&mut output, json!(7), json!("x".repeat(MAX_FRAME_BYTES)))
+            .expect("server should keep serving after oversized provider result");
+        let serialized = String::from_utf8(output).expect("LSP output is UTF-8");
+        assert!(serialized.contains("\"id\":7"));
+        assert!(serialized.contains("\"code\":-32603"));
+        assert!(serialized.len() < 1024);
+    }
 }
 
 fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {

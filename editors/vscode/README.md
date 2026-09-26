@@ -4,6 +4,8 @@
 
 This extension recognizes CK / CalcKernel `.ck` files. It provides syntax highlighting, snippets, and live diagnostics from the current Rust `ckc` compiler. The language server works on unsaved edits.
 
+Language features include completion, hover, signature help, go to definition, references, safe rename, document and workspace symbols, semantic highlighting, folding, selection ranges, and document formatting. Navigation and rename follow bindings in one CK source file; CK has no imports. Formatting follows the editor's indentation settings, preserves line comments, and leaves incomplete source unchanged.
+
 ## Install
 
 Install a platform-specific VSIX for your operating system and CPU architecture. The package includes a frontend-only `ckc` language server, so highlighting and diagnostics work offline without LLVM. A manually configured server must be version 0.14.x.

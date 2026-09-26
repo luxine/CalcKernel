@@ -18,6 +18,11 @@ enum Event {
 /// Token spellings, token order, and line-comment contents are preserved. If
 /// parsing fails, the original source is returned unchanged.
 pub fn format_source(source: &str) -> String {
+    format_source_with_options(source, 2, true)
+}
+
+/// Formats CK source using the editor's indentation preferences.
+pub fn format_source_with_options(source: &str, tab_size: usize, insert_spaces: bool) -> String {
     let source_file = SourceFile::new("<format>.ck", source);
     if !parse(&source_file).diagnostics.is_empty() {
         return source.to_owned();
@@ -30,7 +35,7 @@ pub fn format_source(source: &str) -> String {
 
     let comments = scan_line_comments(source);
     let events = merge_events(source, lexed.tokens, comments);
-    let formatted = Formatter::new().format(&events);
+    let formatted = Formatter::new(tab_size, insert_spaces).format(&events);
 
     if token_signature(source) == token_signature(&formatted)
         && comment_signature(source) == comment_signature(&formatted)
@@ -151,10 +156,11 @@ struct Formatter {
     generic_depth: usize,
     previous: Option<TokenKind>,
     pending_top_level_gap: bool,
+    indent_unit: String,
 }
 
 impl Formatter {
-    fn new() -> Self {
+    fn new(tab_size: usize, insert_spaces: bool) -> Self {
         Self {
             output: String::new(),
             line: String::new(),
@@ -163,6 +169,11 @@ impl Formatter {
             generic_depth: 0,
             previous: None,
             pending_top_level_gap: false,
+            indent_unit: if insert_spaces {
+                " ".repeat(tab_size.clamp(1, 16))
+            } else {
+                "\t".to_owned()
+            },
         }
     }
 
@@ -374,8 +385,7 @@ impl Formatter {
             return;
         }
         self.line.clear();
-        self.line
-            .extend(std::iter::repeat_n(' ', self.indent.saturating_mul(2)));
+        self.line.push_str(&self.indent_unit.repeat(self.indent));
     }
 
     fn flush_line(&mut self) {
@@ -453,7 +463,7 @@ fn can_end_expression(kind: TokenKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::format_source;
+    use super::{format_source, format_source_with_options};
     use crate::frontend::{SourceFile, lex, parse};
 
     fn comment_signature(source: &str) -> Vec<String> {
@@ -545,5 +555,18 @@ mod tests {
     #[test]
     fn empty_source_stays_empty() {
         assert_eq!(format_source(""), "");
+    }
+
+    #[test]
+    fn respects_editor_indent_options() {
+        let text = "fn main()->i32{return 1;}";
+        assert_eq!(
+            format_source_with_options(text, 4, true),
+            "fn main() -> i32 {\n    return 1;\n}\n"
+        );
+        assert_eq!(
+            format_source_with_options(text, 4, false),
+            "fn main() -> i32 {\n\treturn 1;\n}\n"
+        );
     }
 }
