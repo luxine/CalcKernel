@@ -38,6 +38,15 @@ opened and provides:
 
 CK has no import or module system, so language navigation and rename follow the
 bindings in the CK source documents rather than resolving imports between files.
+Workspace symbol search also finds top-level functions and structs in unopened
+`.ck` files under the workspace folders. Unsaved text takes priority over the
+corresponding disk file. Each search scans at most 512 CK files and 16 MiB of
+source, returning at most 1,000 symbols. Generated directories such as
+`target`, `build`, and `node_modules`, version-control directories, and symbolic
+links inside the scanned directory tree are skipped. A workspace folder opened
+through a symbolic link is resolved once as a search root.
+On Windows network shares, files whose normalized path cannot be read by the
+operating system are omitted from workspace symbol results.
 
 ## Compiler paths
 

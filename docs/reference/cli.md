@@ -60,8 +60,9 @@ unsaved edits, with the CK frontend. It does not invoke LLVM or provide Native
 Run/Build capability. In addition to CK diagnostics, it provides completion,
 hover, signature help, definition and reference navigation, binding-safe
 rename, document and workspace symbols, semantic tokens, folding ranges,
-selection ranges, and whole-document formatting. Workspace symbols are drawn
-from documents currently open in the client. Source positions use LSP UTF-16
+selection ranges, and whole-document formatting. Workspace symbols include
+top-level declarations in unopened `.ck` files under the workspace folders;
+open unsaved documents take precedence over disk content. Source positions use LSP UTF-16
 coordinates. Open and change notifications publish CK diagnostics; closing a
 document clears its diagnostics. The server uses full-document sync and ignores
 stale document versions so an older edit cannot replace newer diagnostics.

@@ -23,14 +23,29 @@ function waitForDiagnostics(uri, predicate) {
   });
 }
 
+async function waitForWorkspaceSymbol(name, uri) {
+  let last = [];
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const symbols = await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', name);
+    last = symbols.map((symbol) => ({ name: symbol.name, uri: symbol.location.uri.toString() }));
+    if (symbols.some((symbol) => symbol.name === name &&
+      fs.realpathSync(symbol.location.uri.fsPath) === fs.realpathSync(uri.fsPath))) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('Timed out waiting for unopened CK workspace symbol: ' + name + '; got ' + JSON.stringify(last) + '; folders ' + JSON.stringify(vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString())));
+}
+
 exports.run = async function run() {
   const server = process.env.CK_VSCODE_TEST_CKC;
-  assert.ok(server, 'CK_VSCODE_TEST_CKC must point to a built ckc');
-  await vscode.workspace.getConfiguration('ck').update('server.path', server, vscode.ConfigurationTarget.Global);
-  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'ck-vscode-test-'));
+  if (server) {
+    await vscode.workspace.getConfiguration('ck').update('server.path', server, vscode.ConfigurationTarget.Global);
+  }
+  const folder = process.env.CK_VSCODE_TEST_WORKSPACE ?? fs.mkdtempSync(path.join(os.tmpdir(), 'ck-vscode-test-'));
   const file = path.join(folder, 'sample.ck');
+  const unopened = path.join(folder, 'unopened.ck');
   try {
     fs.writeFileSync(file, '@\n');
+    fs.writeFileSync(unopened, 'fn workspace_only() -> i32 { return 4; }\n');
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
     await vscode.window.showTextDocument(document);
     const extension = vscode.extensions.getExtension('luxine.calckernel-vscode');
@@ -76,8 +91,15 @@ exports.run = async function run() {
       tabSize: 2, insertSpaces: true
     });
     assert.ok(formatting.length > 0, 'formatting returns a CK text edit');
+    const tabFormatting = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', document.uri, {
+      tabSize: 4, insertSpaces: false
+    });
+    assert.ok(tabFormatting.some((item) => item.newText.includes('\t')),
+      'formatting follows VS Code tab indentation settings');
+    await vscode.commands.executeCommand('ck.check');
+    await waitForWorkspaceSymbol('workspace_only', vscode.Uri.file(unopened));
     await vscode.commands.executeCommand('ck.showOutput');
   } finally {
-    fs.rmSync(folder, { recursive: true, force: true });
+    if (!process.env.CK_VSCODE_TEST_WORKSPACE) fs.rmSync(folder, { recursive: true, force: true });
   }
 };

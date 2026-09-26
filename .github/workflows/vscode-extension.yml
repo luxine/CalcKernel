@@ -75,6 +75,9 @@ jobs:
         env:
           RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
 
+      - name: Test workspace paths and symbols on this platform
+        run: cargo test --locked --bin ckc cli::lsp::workspace::tests
+
       - name: Test extension and type-check
         run: |
           pnpm test
@@ -91,6 +94,11 @@ jobs:
         working-directory: editors/vscode
         env:
           CK_VSCODE_TEST_CKC: ${{ github.workspace }}/target/release/ckc
+
+      - name: Smoke-test the packaged VSIX in VS Code
+        if: matrix.target == 'linux-x64'
+        run: xvfb-run -a pnpm test:vsix
+        working-directory: editors/vscode
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

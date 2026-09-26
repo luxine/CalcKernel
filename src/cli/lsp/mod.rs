@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 mod assist;
 mod semantic;
+mod workspace;
 
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
@@ -59,6 +60,7 @@ fn serve(mut input: impl BufRead, mut output: impl Write) -> io::Result<i32> {
 #[derive(Default)]
 pub(super) struct ServerState {
     pub(super) documents: HashMap<String, DocumentSnapshot>,
+    workspace_roots: Vec<workspace::WorkspaceRoot>,
     shutdown_requested: bool,
     initialize_received: bool,
     initialized: bool,
@@ -100,6 +102,8 @@ fn handle_message(
             return Ok(None);
         }
         state.initialize_received = true;
+        state.workspace_roots =
+            workspace::roots_from_initialize(object.get("params").unwrap_or(&Value::Null));
         write_initialize_response(output, id)?;
         return Ok(None);
     }
@@ -171,6 +175,9 @@ fn handle_message(
             }
             Ok(None) => {}
         },
+        "workspace/didChangeWorkspaceFolders" => {
+            workspace::update_roots(&mut state.workspace_roots, params);
+        }
         _ => {
             if let Some(id) = id {
                 handle_request(method, params, id, state, output)?;
@@ -189,15 +196,34 @@ fn handle_request(
     output: &mut impl Write,
 ) -> io::Result<()> {
     if method == "workspace/symbol" {
-        let mut symbols = Vec::new();
-        for (uri, document) in &state.documents {
-            if let Some(text) = &document.text {
-                if let Some(Ok(Value::Array(items))) = semantic::handle(method, params, uri, text) {
-                    symbols.extend(items);
-                }
-            }
+        let Some(query) = params.get("query").and_then(Value::as_str) else {
+            return write_response(
+                output,
+                id,
+                -32602,
+                "workspace symbol query must be a string",
+            );
+        };
+        if query.len() > 256 {
+            return write_response(
+                output,
+                id,
+                -32602,
+                "workspace symbol query exceeds 256 bytes",
+            );
         }
-        return write_success(output, id, json!(symbols));
+        let result = workspace::symbols(&state.workspace_roots, &state.documents, query);
+        if result.truncated {
+            write_message(
+                output,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "method": "window/logMessage",
+                    "params": {"type": 2, "message": "ckc lsp workspace symbols truncated by scan limits"}
+                }),
+            )?;
+        }
+        return write_success(output, id, json!(result.items));
     }
     if !matches!(
         method,
@@ -306,7 +332,8 @@ fn write_initialize_response(output: &mut impl Write, id: Value) -> io::Result<(
                     },
                     "foldingRangeProvider": true,
                     "selectionRangeProvider": true,
-                    "documentFormattingProvider": true
+                    "documentFormattingProvider": true,
+                    "workspace": {"workspaceFolders": {"supported": true, "changeNotifications": true}}
                 },
                 "serverInfo": {
                     "name": "ckc",
