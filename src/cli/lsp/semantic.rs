@@ -130,7 +130,7 @@ mod tests {
 }
 use serde_json::{Value, json};
 
-use crate::{
+use calckernel::{
     EditorAnalysis, EditorOccurrenceKind, EditorRenameError, EditorSymbol, ScopeId, SourceFile,
     SourceSpan, SymbolId, SymbolKind, analyze_editor, get_compiler_builtin,
 };
