@@ -1,12 +1,19 @@
 mod binary;
+mod control;
 mod emit;
+mod features;
+mod ir;
 mod kir;
 mod layout;
+mod lower;
+mod memory;
+mod placement;
 mod plan;
 
-pub(crate) use binary::emit_wasm_module_with_options;
 pub(crate) use emit::emit_wat_module_with_options;
-pub use kir::{emit_wasm_kir_module, emit_wat_kir_module};
+pub use kir::{
+    emit_wasm_kir_module, emit_wasm_kir_result, emit_wat_kir_module, emit_wat_kir_result,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EmitWasmOptions {

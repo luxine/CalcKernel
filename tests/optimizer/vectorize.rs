@@ -4,7 +4,7 @@ use calckernel::{
     CandidateDisposition, ContractFactSet, KirAlignmentClass, KirBoundsMode, KirBuildConfig,
     KirConsumer, KirCostKey, KirLegalCost, KirNativeCpuPolicy, KirOperationAvailability,
     KirOptimizationLevel, KirOverflowMode, KirProfileOperation, KirSanitizerMode, KirTargetProfile,
-    KirTargetProfileBuilder, KirVerifiedProgramState, SourceFile, VectorEpilogue,
+    KirTargetProfileBuilder, KirVerifiedProgramState, KirWasmFeatures, SourceFile, VectorEpilogue,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
     discover_vectorization_candidates, import_contract_facts, lower_to_mir,
     prepare_vectorization_trial, print_kir_module, run_kir_multiversion_pass_pipeline,
@@ -158,10 +158,11 @@ fn map_state_with_profile(
     let checked = check(&SourceFile::new("vectorize.ck", source));
     assert_eq!(checked.diagnostics, []);
     let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let consumer = profile.consumer();
     let module = build_kir_module_with_profile(
         &mir,
         KirBuildConfig {
-            consumer: KirConsumer::NativeLibrary,
+            consumer,
             overflow_mode: KirOverflowMode::Unchecked,
             bounds_mode: KirBoundsMode::Unchecked,
             sanitizer_mode: KirSanitizerMode::Disabled,
@@ -182,6 +183,35 @@ fn map_state_with_profile(
     )
     .expect("verified O2 state");
     (state, optimized.contract_facts)
+}
+
+fn wasm_map_state(
+    source: &str,
+    features: KirWasmFeatures,
+) -> (KirVerifiedProgramState, Option<ContractFactSet>) {
+    map_state_with_profile(
+        source,
+        KirTargetProfile::webassembly_with_features(features),
+    )
+}
+
+fn wasm_pure_diamond_source(lane: &str, comparison: &str) -> String {
+    format!(
+        r#"
+export unsafe fn map(a: slice<{lane}>, b: slice<{lane}>, n: u32, pivot: {lane}, delta: {lane}) -> void
+contract {{ requires n <= a.len && n <= b.len; requires noalias(a, b); effects read(a), write(b); }}
+{{
+  let i: u32 = 0;
+  while i < n {{
+    let x: {lane} = a[i];
+    let selected: {lane} = delta;
+    if x {comparison} pivot {{ selected = x + delta; }} else {{ selected = x - delta; }}
+    b[i] = selected;
+    i = i + 1;
+  }}
+}}
+"#
+    )
 }
 
 const MAP: &str = r#"
@@ -257,6 +287,15 @@ contract { requires noalias(a, b); effects read(a), write(b); }
 {
   let i: u32 = 0;
   while i < n { b[i] = u32_to_f64(a[i]); i = i + 1; }
+}
+"#;
+
+const WASM_I32_CAST_MAP: &str = r#"
+export unsafe fn map(a: slice<i32>, b: slice<f64>, n: u32) -> void
+contract { requires n <= a.len && n <= b.len; requires noalias(a, b); effects read(a), write(b); }
+{
+  let i: u32 = 0;
+  while i < n { b[i] = i32_to_f64(a[i]); i = i + 1; }
 }
 "#;
 
@@ -1259,6 +1298,10 @@ export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
         .version_predicate
         .as_ref()
         .expect("unknown alias needs versioning");
+    assert_eq!(
+        predicate.address_bits, 64,
+        "native target retains native width"
+    );
     assert_eq!(predicate.conjuncts.len(), 1);
     let prepared = prepare_vectorization_trial(&pre, &candidate).expect("versioned vector trial");
     let text = print_kir_module(prepared.trial.module());
@@ -1338,6 +1381,51 @@ fn vector_differential_total_predicate_and_lane_partition_cover_edges() {
 
     let overflowing = BTreeMap::from([(trip, 8), (left, u64::MAX - 8), (right, 0x8000)]);
     assert!(!predicate.evaluate(&overflowing));
+}
+
+#[test]
+fn wasm32_alias_predicate_should_fail_closed_at_address_space_edges() {
+    let count = calckernel::ValueId::from_index(0);
+    let left = calckernel::ValueId::from_index(1);
+    let right = calckernel::ValueId::from_index(2);
+    let predicate = calckernel::TotalVersionPredicate {
+        address_bits: 32,
+        conjuncts: vec![
+            calckernel::VersionPredicateConjunct::AddressIntervalsDisjoint {
+                left,
+                left_count: count,
+                left_element_bytes: 4,
+                right,
+                right_count: count,
+                right_element_bytes: 4,
+            },
+        ],
+    };
+
+    // A valid pair close to the top of the 32-bit address space remains disjoint.
+    assert!(predicate.evaluate(&BTreeMap::from([
+        (count, 3),
+        (left, 0xffff_ff00),
+        (right, 0x1000),
+    ])));
+    // End-address addition must not wrap and turn an invalid interval into a
+    // seemingly disjoint low-address range.
+    assert!(!predicate.evaluate(&BTreeMap::from([
+        (count, 4),
+        (left, 0xffff_fff8),
+        (right, 0x1000),
+    ])));
+    // Inputs outside the Wasm32 pointer/count domain also fail closed.
+    assert!(!predicate.evaluate(&BTreeMap::from([
+        (count, 1_u64 << 32),
+        (left, 0x1000),
+        (right, 0x2000),
+    ])));
+    assert!(!predicate.evaluate(&BTreeMap::from([
+        (count, 1),
+        (left, 1_u64 << 32),
+        (right, 0x2000),
+    ])));
 }
 
 #[test]
@@ -1512,5 +1600,524 @@ fn loop_simd_profile_must_make_every_emitted_operation_legal() {
             }),
             Some(KirOperationAvailability::Legal(_))
         ));
+    }
+}
+
+const WASM_F64_MAP: &str = r#"
+export unsafe fn map_f64(a: slice<f64>, b: slice<f64>, n: u32, factor: f64, bias: f64) -> void
+contract {
+  requires n <= a.len && n <= b.len;
+  requires noalias(a, b);
+  effects read(a), write(b);
+}
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] * factor + bias; i = i + 1; }
+}
+"#;
+
+const WASM_I32_MAP: &str = r#"
+export unsafe fn map_i32(a: slice<i32>, b: slice<i32>, n: u32, factor: i32, bias: i32) -> void
+contract {
+  requires n <= a.len && n <= b.len;
+  requires noalias(a, b);
+  effects read(a), write(b);
+}
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] * factor + bias; i = i + 1; }
+}
+"#;
+
+const WASM_RUNTIME_ALIAS_MAP: &str = include_str!("../../examples/wasm/alias_map.ck");
+const WASM_MODULAR_REDUCTIONS: &str = include_str!("../../examples/wasm/reduction.ck");
+
+#[test]
+fn wasm_simd128_should_discover_independently_check_and_accept_f64x2_and_i32x4_maps() {
+    for (source, expected_vf, expected_lane, vector_op) in [
+        (WASM_F64_MAP, 2, "vector<f64, 2>", "vector_add.strict"),
+        (WASM_I32_MAP, 4, "vector<i32, 4>", "vector_add.modular"),
+    ] {
+        let (pre, contracts) = wasm_map_state(source, KirWasmFeatures::Simd128);
+        let discovery = discover_vectorization_candidates(&pre);
+        let candidate = discovery
+            .candidates
+            .iter()
+            .find(|candidate| candidate.vf == expected_vf)
+            .unwrap_or_else(|| {
+                panic!(
+                    "SIMD128 should discover the {expected_lane} map: {discovery:#?}\n{}",
+                    print_kir_module(pre.module())
+                )
+            });
+
+        let prepared = prepare_vectorization_trial(&pre, candidate)
+            .expect("SIMD128 loop candidate should prepare a trial");
+        assert_eq!(
+            check_vectorization_trial_independently(
+                &pre,
+                &prepared.trial,
+                &prepared.plan,
+                &prepared.charge,
+            ),
+            Ok(()),
+            "the independent checker must accept the {expected_lane} map"
+        );
+        assert!(matches!(
+            prepared.plan.epilogue,
+            VectorEpilogue::Scalar { .. }
+        ));
+        let trial_text = print_kir_module(prepared.trial.module());
+        assert!(trial_text.contains(expected_lane), "{trial_text}");
+        assert!(trial_text.contains("vector_load"), "{trial_text}");
+        assert!(trial_text.contains("vector_store"), "{trial_text}");
+        assert!(trial_text.contains(vector_op), "{trial_text}");
+        assert!(
+            prepared.trial.module().functions[0]
+                .blocks
+                .iter()
+                .any(|block| block.id == candidate.header),
+            "the original scalar loop must remain as the tail path"
+        );
+
+        let result = run_kir_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(result.stats.vectorized_loops >= 1, "{:#?}", result.stats);
+        assert!(
+            result.vector_explanations.iter().any(|explanation| {
+                explanation.disposition == CandidateDisposition::Accepted
+                    && explanation.vf == expected_vf
+            }),
+            "{:#?}",
+            result.vector_explanations
+        );
+        let optimized_text =
+            print_kir_module(result.artifact.as_ref().expect("SIMD128 O3 artifact"));
+        assert!(optimized_text.contains("vector_load"), "{optimized_text}");
+        assert!(optimized_text.contains("vector_store"), "{optimized_text}");
+    }
+}
+
+#[test]
+fn wasm_baseline_should_keep_contiguous_maps_scalar() {
+    for source in [WASM_F64_MAP, WASM_I32_MAP] {
+        let (pre, contracts) = wasm_map_state(source, KirWasmFeatures::Baseline);
+        assert!(
+            discover_vectorization_candidates(&pre)
+                .candidates
+                .is_empty()
+        );
+        let result = run_kir_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.stats.vectorized_loops, 0);
+        assert_eq!(result.stats.slp_packs, 0);
+        let text = print_kir_module(result.artifact.as_ref().expect("baseline O3 artifact"));
+        assert!(!text.contains("vector_"), "{text}");
+    }
+}
+
+#[test]
+fn wasm_simd128_should_leave_unsupported_loop_shapes_scalar() {
+    const STRICT_F64_REDUCTION: &str = r#"
+export fn strict_sum(a: slice<f64>, n: u32, initial: f64) -> f64 {
+  let i: u32 = 0;
+  let total: f64 = initial;
+  while i < n { total = total + a[i]; i = i + 1; }
+  return total;
+}
+"#;
+    const MINIMUM_REDUCTION: &str = r#"
+export fn minimum(a: slice<u32>, n: u32, initial: u32) -> u32 {
+  let i: u32 = 0;
+  let total: u32 = initial;
+  while i < n {
+    let value: u32 = a[i];
+    if value < total { total = value; }
+    i = i + 1;
+  }
+  return total;
+}
+"#;
+    for source in [STRICT_F64_REDUCTION, MINIMUM_REDUCTION] {
+        let (pre, contracts) = wasm_map_state(source, KirWasmFeatures::Simd128);
+        let discovery = discover_vectorization_candidates(&pre);
+        assert!(
+            discovery.candidates.is_empty(),
+            "unsupported strict-f64/min reductions must stay scalar: {discovery:#?}\n{}",
+            print_kir_module(pre.module())
+        );
+        let result = run_kir_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O3,
+            contracts.as_ref(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.stats.vectorized_loops, 0);
+        let text = print_kir_module(result.artifact.as_ref().expect("scalar O3 artifact"));
+        assert!(!text.contains("vector_"), "{text}");
+    }
+}
+
+#[test]
+fn wasm_simd128_should_not_create_slp_only_vector_packs() {
+    let source = r#"
+export fn lanes(a0: i32, a1: i32, a2: i32, a3: i32,
+                b0: i32, b1: i32, b2: i32, b3: i32) -> i32 {
+  let p0: i32 = a0 * b0;
+  let p1: i32 = a1 * b1;
+  let p2: i32 = a2 * b2;
+  let p3: i32 = a3 * b3;
+  return p0 + p1 + p2 + p3;
+}
+"#;
+    let (pre, contracts) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.stats.slp_packs, 0);
+    let text = print_kir_module(result.artifact.as_ref().expect("scalar SLP-only artifact"));
+    assert!(!text.contains("vector_"), "{text}");
+}
+
+#[test]
+fn wasm_simd128_should_discover_and_independently_check_all_full_width_diamond_comparisons() {
+    const COMPARISONS: [(&str, calckernel::MirCompareOp); 6] = [
+        ("==", calckernel::MirCompareOp::Eq),
+        ("!=", calckernel::MirCompareOp::Ne),
+        ("<", calckernel::MirCompareOp::Lt),
+        ("<=", calckernel::MirCompareOp::Le),
+        (">", calckernel::MirCompareOp::Gt),
+        (">=", calckernel::MirCompareOp::Ge),
+    ];
+
+    for (lane, lanes) in [("f64", 2), ("i32", 4), ("u32", 4)] {
+        for (comparison, compare_op) in COMPARISONS {
+            let source = wasm_pure_diamond_source(lane, comparison);
+            let (pre, _) = wasm_map_state(&source, KirWasmFeatures::Simd128);
+            let discovery = discover_vectorization_candidates(&pre);
+            let candidate = discovery
+                .candidates
+                .iter()
+                .find(|candidate| candidate.vf == lanes)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "SIMD128 should discover {lane}x{lanes} comparison `{comparison}`: {discovery:#?}\n{}",
+                        print_kir_module(pre.module())
+                    )
+                });
+            let prepared = prepare_vectorization_trial(&pre, candidate)
+                .expect("pure compare/select diamond should prepare a vector trial");
+            assert_eq!(
+                check_vectorization_trial_independently(
+                    &pre,
+                    &prepared.trial,
+                    &prepared.plan,
+                    &prepared.charge,
+                ),
+                Ok(()),
+                "independent checker rejected {lane} `{comparison}`"
+            );
+            assert!(matches!(
+                prepared.plan.epilogue,
+                VectorEpilogue::Scalar { .. }
+            ));
+
+            let instructions = prepared.trial.module().functions[0]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .collect::<Vec<_>>();
+            assert!(
+                instructions.iter().any(|instruction| matches!(
+                    instruction.kind,
+                    calckernel::KirInstructionKind::VectorCompare { op, .. }
+                        if op == compare_op
+                )),
+                "trial must preserve {lane} comparison `{comparison}`:\n{}",
+                print_kir_module(prepared.trial.module())
+            );
+            assert!(instructions.iter().any(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorSelect { .. }
+            )));
+            assert!(
+                instructions.iter().any(|instruction| {
+                    instruction.results.iter().any(|result| {
+                        matches!(
+                            result.type_node,
+                            calckernel::KirValueType::Mask { lanes: mask_lanes }
+                                if mask_lanes == lanes
+                        )
+                    })
+                }),
+                "comparison must produce a full-width {lanes}-lane mask"
+            );
+        }
+    }
+}
+
+#[test]
+fn wasm_simd128_should_discover_and_independently_check_exact_i32x2_cast_maps() {
+    for (source, source_lane, cast_name) in [
+        (
+            WASM_I32_CAST_MAP,
+            calckernel::KirLaneType::I32,
+            "i32_to_f64",
+        ),
+        (CAST_MAP, calckernel::KirLaneType::U32, "u32_to_f64"),
+    ] {
+        let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+        let discovery = discover_vectorization_candidates(&pre);
+        let candidate = discovery
+            .candidates
+            .iter()
+            .find(|candidate| candidate.vf == 2)
+            .unwrap_or_else(|| {
+                panic!(
+                    "SIMD128 should discover exact {cast_name} I32x2 cast: {discovery:#?}\n{}",
+                    print_kir_module(pre.module())
+                )
+            });
+        let prepared = prepare_vectorization_trial(&pre, candidate)
+            .expect("two-lane integer-to-f64 cast should prepare");
+        assert_eq!(
+            check_vectorization_trial_independently(
+                &pre,
+                &prepared.trial,
+                &prepared.plan,
+                &prepared.charge,
+            ),
+            Ok(())
+        );
+        assert!(candidate.accesses.iter().any(|access| {
+            access.kind == calckernel::LoopMemoryAccessKind::Read
+                && access.element_bytes == 4
+                && access.base_alignment == 4
+                && access.known_alignment >= 4
+        }));
+        assert!(candidate.operations.iter().any(|operation| {
+            operation.operation == KirProfileOperation::Cast
+                && operation.lane_type == source_lane
+                && operation.result_lane_type == calckernel::KirLaneType::F64
+        }));
+        let trial_instructions = prepared.trial.module().functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .collect::<Vec<_>>();
+        let source_load = trial_instructions
+            .iter()
+            .find_map(|instruction| match &instruction.kind {
+                calckernel::KirInstructionKind::VectorLoad { access, .. }
+                    if access.lane == source_lane =>
+                {
+                    Some(access)
+                }
+                _ => None,
+            })
+            .expect("exact two-lane integer source load");
+        assert_eq!(source_load.lanes, 2);
+        assert_eq!(source_load.byte_footprint, 8);
+        let destination_store = trial_instructions
+            .iter()
+            .find_map(|instruction| match &instruction.kind {
+                calckernel::KirInstructionKind::VectorStore { access, .. }
+                    if access.lane == calckernel::KirLaneType::F64 =>
+                {
+                    Some(access)
+                }
+                _ => None,
+            })
+            .expect("two-lane f64 destination store");
+        assert_eq!(destination_store.lanes, 2);
+        assert_eq!(destination_store.byte_footprint, 16);
+        assert!(matches!(
+            prepared.plan.epilogue,
+            VectorEpilogue::Scalar { .. }
+        ));
+        let text = print_kir_module(prepared.trial.module());
+        assert!(text.contains("vector_load"), "{text}");
+        let vector_cast_name = if source_lane == calckernel::KirLaneType::I32 {
+            "vector_cast_i32tof64"
+        } else {
+            "vector_cast_u32tof64"
+        };
+        assert!(text.contains(vector_cast_name), "{text}");
+        assert!(text.contains("vector_store"), "{text}");
+        assert!(text.contains("vector<f64, 2>"), "{text}");
+    }
+}
+
+#[test]
+fn wasm_simd128_unknown_alias_map_should_get_one_checked_total_predicate_and_scalar_fallback() {
+    let (pre, contracts) = wasm_map_state(WASM_RUNTIME_ALIAS_MAP, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    let candidate = discovery
+        .candidates
+        .iter()
+        .find(|candidate| candidate.vf == 4 && candidate.version_predicate.is_some())
+        .unwrap_or_else(|| {
+            panic!(
+                "Wasm SIMD128 should version one unknown-alias map: {discovery:#?}\n{}",
+                print_kir_module(pre.module())
+            )
+        });
+    let predicate = candidate
+        .version_predicate
+        .as_ref()
+        .expect("unknown Wasm alias requires a runtime predicate");
+    assert_eq!(predicate.address_bits, 32);
+    assert_eq!(predicate.conjuncts.len(), 1);
+    assert!(predicate.conjuncts.iter().any(|conjunct| matches!(
+        conjunct,
+        calckernel::VersionPredicateConjunct::AddressIntervalsDisjoint {
+            left_element_bytes: 4,
+            right_element_bytes: 4,
+            ..
+        }
+    )));
+
+    let prepared = prepare_vectorization_trial(&pre, candidate)
+        .expect("unknown-alias Wasm map should prepare a versioned trial");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(()),
+        "{}",
+        print_kir_module(prepared.trial.module())
+    );
+    assert!(matches!(
+        prepared.plan.epilogue,
+        VectorEpilogue::Scalar { .. }
+    ));
+    assert!(prepared.plan.predicates.iter().any(|predicate| matches!(
+        predicate,
+        calckernel::VectorPredicate::AddressNonOverlap { .. }
+    )));
+    let trial = print_kir_module(prepared.trial.module());
+    assert!(trial.contains("version_predicate"), "{trial}");
+
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result.stats.vectorized_loops, 1,
+        "{:#?}",
+        result.vector_explanations
+    );
+    assert!(result.vector_explanations.iter().any(|explanation| {
+        explanation.disposition == CandidateDisposition::Accepted && explanation.vf == 4
+    }));
+    let optimized = print_kir_module(result.artifact.as_ref().expect("versioned O3 artifact"));
+    assert!(optimized.contains("version_predicate"), "{optimized}");
+}
+
+#[test]
+fn wasm_simd128_should_discover_and_independently_check_modular_reductions() {
+    let (pre, _) = wasm_map_state(WASM_MODULAR_REDUCTIONS, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        !discovery.candidates.is_empty(),
+        "Wasm SIMD128 should discover modular reduction candidates: {discovery:#?}\n{}",
+        print_kir_module(pre.module())
+    );
+
+    let mut covered = BTreeMap::new();
+    for candidate in &discovery.candidates {
+        let function = &pre.module().functions[candidate.function.index() as usize];
+        let (expected_operation, expected_lane) = match function.name.as_str() {
+            "sum_u32" | "sum_i32" => (
+                KirProfileOperation::ReduceAdd,
+                if function.name.ends_with("u32") {
+                    calckernel::KirLaneType::U32
+                } else {
+                    calckernel::KirLaneType::I32
+                },
+            ),
+            "product_u32" | "product_i32" => (
+                KirProfileOperation::ReduceMultiply,
+                if function.name.ends_with("u32") {
+                    calckernel::KirLaneType::U32
+                } else {
+                    calckernel::KirLaneType::I32
+                },
+            ),
+            other => panic!("unexpected reduction function {other}"),
+        };
+        let reduction = candidate
+            .reduction
+            .as_ref()
+            .expect("reduction candidate metadata");
+        assert_eq!(reduction.operation, expected_operation, "{function:?}");
+        assert_eq!(reduction.lane_type, expected_lane, "{function:?}");
+
+        let prepared = prepare_vectorization_trial(&pre, candidate)
+            .expect("Wasm modular reduction trial should prepare");
+        assert_eq!(
+            check_vectorization_trial_independently(
+                &pre,
+                &prepared.trial,
+                &prepared.plan,
+                &prepared.charge,
+            ),
+            Ok(()),
+            "{}",
+            print_kir_module(prepared.trial.module())
+        );
+        let text = print_kir_module(prepared.trial.module());
+        assert!(
+            text.contains("vector_reduce_modularadd")
+                || text.contains("vector_reduce_modularmultiply"),
+            "{text}"
+        );
+        covered.insert(function.name.as_str(), true);
+    }
+    assert_eq!(
+        covered.len(),
+        4,
+        "discovery should include add/multiply for i32/u32"
+    );
+}
+
+#[test]
+fn wasm_unknown_alias_maps_should_stay_scalar_in_baseline_and_o0() {
+    for features in [KirWasmFeatures::Baseline, KirWasmFeatures::Simd128] {
+        let (pre, contracts) = wasm_map_state(WASM_RUNTIME_ALIAS_MAP, features);
+        if features == KirWasmFeatures::Baseline {
+            assert!(
+                discover_vectorization_candidates(&pre)
+                    .candidates
+                    .is_empty()
+            );
+        }
+        let result = run_kir_pass_pipeline(
+            pre.module().clone(),
+            KirOptimizationLevel::O0,
+            contracts.as_ref(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.stats.vectorized_loops, 0);
+        let text = print_kir_module(result.artifact.as_ref().expect("scalar O0 artifact"));
+        assert!(!text.contains("version_predicate"), "{text}");
+        assert!(!text.contains("vector_load"), "{text}");
+        assert!(!text.contains("vector_store"), "{text}");
     }
 }

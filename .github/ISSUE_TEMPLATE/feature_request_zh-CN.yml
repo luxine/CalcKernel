@@ -1,0 +1,23 @@
+name: 功能建议（简体中文）
+description: 为 CK、ckc 或编译器文档提出改进建议。
+title: "功能建议："
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题或使用场景
+      description: 你想完成什么？目前遇到了什么困难？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议的改动
+      description: 描述你希望实现的行为。欢迎提供示例；请使用 `.ck` 和 `ckc` 规范名称。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑的替代方案
+      description: 你尝试过哪些变通方式或其他做法？

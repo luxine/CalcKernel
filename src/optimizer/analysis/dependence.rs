@@ -131,6 +131,15 @@ pub fn analyze_loop_dependences(
     descriptor: &CanonicalLoopDescriptor,
     facts: Option<&FactArena>,
 ) -> Result<LoopDependenceAnalysis, String> {
+    analyze_loop_dependences_for_address_bits(function, descriptor, facts, Some(usize::BITS as u8))
+}
+
+fn analyze_loop_dependences_for_address_bits(
+    function: &KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    facts: Option<&FactArena>,
+    address_bits: Option<u8>,
+) -> Result<LoopDependenceAnalysis, String> {
     let accesses = analyze_affine_loop_accesses(function, descriptor, facts)?;
     let regions = analyze_regions(function, facts).map_err(|error| error.message)?;
     let mut pairs = Vec::new();
@@ -146,7 +155,7 @@ pub fn analyze_loop_dependences(
                 match query_alias(&regions, left.region, right.region).kind {
                     AliasKind::NoAlias => (LoopDependenceKind::Independent, None, None),
                     AliasKind::MustAlias => same_region_dependence(left, right),
-                    AliasKind::MayAlias => runtime_disambiguation(left, right)
+                    AliasKind::MayAlias => runtime_disambiguation(left, right, address_bits)
                         .map_or((LoopDependenceKind::Unknown, None, None), |predicate| {
                             (LoopDependenceKind::RuntimeGuarded, None, Some(predicate))
                         }),
@@ -193,7 +202,34 @@ pub fn analyze_loop_legality(
     descriptor: &CanonicalLoopDescriptor,
     facts: Option<&FactArena>,
 ) -> Result<LoopLegalityAnalysis, String> {
-    let dependences = analyze_loop_dependences(function, descriptor, facts)?;
+    analyze_loop_legality_for_address_bits(function, descriptor, facts, Some(usize::BITS as u8))
+}
+
+pub(crate) fn analyze_loop_legality_for_profile(
+    function: &KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    facts: Option<&FactArena>,
+    profile: &crate::KirTargetProfile,
+) -> Result<LoopLegalityAnalysis, String> {
+    let address_bits = match profile.layout() {
+        crate::KirProfileLayout::Known {
+            pointer_width_bits, ..
+        } => u8::try_from(pointer_width_bits)
+            .ok()
+            .filter(|bits| matches!(bits, 32 | 64)),
+        crate::KirProfileLayout::PortableUnknown => None,
+    };
+    analyze_loop_legality_for_address_bits(function, descriptor, facts, address_bits)
+}
+
+fn analyze_loop_legality_for_address_bits(
+    function: &KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    facts: Option<&FactArena>,
+    address_bits: Option<u8>,
+) -> Result<LoopLegalityAnalysis, String> {
+    let dependences =
+        analyze_loop_dependences_for_address_bits(function, descriptor, facts, address_bits)?;
     let loop_blocks = descriptor.blocks.iter().copied().collect::<BTreeSet<_>>();
     let has_ordered_effect = function
         .blocks
@@ -463,6 +499,7 @@ fn same_region_dependence(
 fn runtime_disambiguation(
     left: &AffineMemoryAccess,
     right: &AffineMemoryAccess,
+    address_bits: Option<u8>,
 ) -> Option<TotalVersionPredicate> {
     if !left.unit_stride
         || !right.unit_stride
@@ -479,8 +516,9 @@ fn runtime_disambiguation(
     {
         return None;
     }
+    let address_bits = address_bits.filter(|bits| matches!(bits, 32 | 64))?;
     let predicate = TotalVersionPredicate {
-        address_bits: usize::BITS as u8,
+        address_bits,
         conjuncts: vec![VersionPredicateConjunct::AddressIntervalsDisjoint {
             left: left.base,
             left_count: loop_bound_value(left)?,

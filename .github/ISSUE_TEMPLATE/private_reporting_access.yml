@@ -1,0 +1,17 @@
+name: Private reporting access request / 私密报告渠道申请
+description: Request a private contact route without disclosing security details. / 申请私密联系渠道，请勿披露安全问题细节。
+title: "Private reporting access request / 私密报告渠道申请"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue is public. Do not include any vulnerability description, affected component, exploit code, logs, secrets, or other technical details. Maintainers will provide a private contact route.
+
+        此 Issue 是公开的。请勿填写漏洞描述、受影响组件、利用代码、日志、密钥或其他技术细节。维护者会提供私下联系渠道。
+  - type: checkboxes
+    id: public_notice
+    attributes:
+      label: Public issue notice / 公开 Issue 提醒
+      options:
+        - label: I will share vulnerability details only through a private channel. / 我只会通过私密渠道提供漏洞细节。
+          required: true

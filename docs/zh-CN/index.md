@@ -1,10 +1,9 @@
-# CalcKernel 0.14.0 文档
+# CalcKernel 文档
 
 [English](../index.md)
 
-这些文档描述当前 0.14.0 产品契约。设计和实施历史由 Git history 保留，不在 release tree 中
-保留 planning document。
-正式发布的 0.13.0 是保留的兼容基线。
+这些页面描述稳定版 0.14.0 的产品契约。当前默认分支版本为 `0.15.0-dev.0`；公开产品的新语言
+与编译器契约在确定后记录在此。正式发布的 0.13.0 是保留的兼容基线。
 
 ## 语言与命令
 
@@ -26,6 +25,7 @@
 - [Optimizer](compiler/optimizer.md)
 - [快速开始](guides/getting-started.md)
 - [Backend 选择](guides/backend-selection.md)
+- [Visual Studio Code](guides/vscode.md) — 安装与配置 CK 语言扩展。
 - [WASM interop](guides/wasm-interop.md)
 - [Performance](guides/performance.md)
 

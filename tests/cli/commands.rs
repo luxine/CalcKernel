@@ -263,6 +263,132 @@ fn cli_should_check_and_emit_portable_outputs() {
 }
 
 #[test]
+fn wasm_feature_selection_should_apply_to_wat_and_wasm_outputs() {
+    let (dir, source) = fixture("export fn answer() -> i32 { return 42; }");
+
+    let default_wat = run([os("emit-wat"), os(&source)]);
+    let baseline_wat = run([
+        os("emit-wat"),
+        os(&source),
+        os("--wasm-features"),
+        os("baseline"),
+    ]);
+    let simd128_wat = run([
+        os("emit-wat"),
+        os(&source),
+        os("--wasm-features"),
+        os("simd128"),
+    ]);
+    for output in [&default_wat, &baseline_wat, &simd128_wat] {
+        assert_eq!(output.code, Some(0), "{}", output.stderr);
+    }
+    assert_eq!(default_wat.stdout, baseline_wat.stdout);
+    assert_ne!(default_wat.stdout, simd128_wat.stdout);
+
+    let default_wasm = dir.join("default.wasm");
+    let baseline_wasm = dir.join("baseline.wasm");
+    let simd128_wasm = dir.join("simd128.wasm");
+    for (path, feature) in [
+        (&default_wasm, None),
+        (&baseline_wasm, Some("baseline")),
+        (&simd128_wasm, Some("simd128")),
+    ] {
+        let mut args = vec![os("emit-wasm"), os(&source), os("--out"), os(path)];
+        if let Some(feature) = feature {
+            args.extend([os("--wasm-features"), os(feature)]);
+        }
+        let output = run(args);
+        assert_eq!(output.code, Some(0), "{}", output.stderr);
+    }
+    assert_eq!(
+        fs::read(&default_wasm).expect("default wasm"),
+        fs::read(&baseline_wasm).expect("baseline wasm")
+    );
+    assert_ne!(
+        fs::read(&default_wasm).expect("default wasm"),
+        fs::read(&simd128_wasm).expect("simd128 wasm")
+    );
+}
+
+#[test]
+fn wasm_features_should_reject_wrong_command_duplicates_and_invalid_combinations_before_io() {
+    let dir = std::env::temp_dir().join(format!("ckc_wasm_features_{}", unique_id()));
+    fs::create_dir_all(&dir).expect("fixture dir");
+    let missing_source = dir.join("missing.ck");
+    let output_sentinel = dir.join("preserve.wasm");
+    fs::write(&output_sentinel, b"keep-me").expect("write sentinel");
+
+    let non_wasm_consumer = run([
+        os("emit-kir"),
+        os(&missing_source),
+        os("--consumer"),
+        os("inspection"),
+        os("--wasm-features"),
+        os("simd128"),
+    ]);
+    assert_eq!(
+        non_wasm_consumer.code,
+        Some(1),
+        "{}",
+        non_wasm_consumer.stderr
+    );
+    assert!(
+        non_wasm_consumer
+            .stderr
+            .contains("--wasm-features requires --consumer wasm")
+    );
+
+    let duplicate = run([
+        os("emit-wat"),
+        os(&missing_source),
+        os("--wasm-features"),
+        os("baseline"),
+        os("--wasm-features"),
+        os("simd128"),
+    ]);
+    assert_eq!(duplicate.code, Some(1), "{}", duplicate.stderr);
+    assert!(
+        duplicate
+            .stderr
+            .contains("Option --wasm-features was provided more than once.")
+    );
+
+    let wrong_command = run([
+        os("emit-c"),
+        os(&missing_source),
+        os("--wasm-features"),
+        os("baseline"),
+    ]);
+    assert_eq!(wrong_command.code, Some(1), "{}", wrong_command.stderr);
+    assert!(
+        wrong_command
+            .stderr
+            .contains("Option --wasm-features is not valid for 'emit-c'.")
+    );
+
+    let unknown_feature = run([
+        os("emit-wasm"),
+        os(&missing_source),
+        os("--out"),
+        os(&output_sentinel),
+        os("--wasm-features"),
+        os("threads"),
+    ]);
+    assert_eq!(unknown_feature.code, Some(1), "{}", unknown_feature.stderr);
+    assert!(
+        unknown_feature
+            .stderr
+            .contains("Expected 'baseline' or 'simd128'")
+    );
+    assert_eq!(
+        fs::read(&output_sentinel).expect("read sentinel"),
+        b"keep-me"
+    );
+
+    fs::remove_dir_all(dir).expect("remove fixture dir");
+}
+
+#[test]
 fn cli_should_reject_unknown_and_command_irrelevant_options() {
     let (_, source) = fixture("export fn answer() -> i32 { return 42; }");
     for (args, expected) in [

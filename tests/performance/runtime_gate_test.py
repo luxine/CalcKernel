@@ -218,7 +218,7 @@ class GateTests(unittest.TestCase):
                 compile_times.append(row)
 
         self.report = dict(
-            schemaVersion=7, candidateVersion="0.14.0", cpuPolicy="baseline",
+            schemaVersion=7, candidateVersion="0.15.0-dev.0", cpuPolicy="baseline",
             fastMath=False, clangVersion="22.1.8", rustVersion="1.90.0", warmup=3,
             sampleRepetitions=7, samplingProtocol="rotating-twelve-channel-v1",
             channelNames=CHANNELS,

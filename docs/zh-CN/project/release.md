@@ -5,12 +5,16 @@
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
 
-Feature branch 中的 0.14.0 identity 是 release candidate，不是已发布 Release。此普通版
-范围保留 0.13 PGO 与 multiversion，离线 Auto-Tuning 延期。只有原样保留的 x86-64/AArch64
-schema-7/8 performance、六平台 Native 与 exact candidate-SHA 十作业 CI 全部成功后才可
-进入合并。PR 合并后，还需在精确 main SHA 上重新完成十作业 CI 与关闭发布的六平台
-release preview，才能创建 annotated tag。代码或 contract 变化后必须在新 SHA 上重跑
-受影响 gate，不沿用旧证据。
+公开 `v0.14.0` tag 标识稳定版 compiler 源码快照。默认分支当前报告版本为
+`0.15.0-dev.0`；开发期间继续保留 0.14 language 与 ABI contract。官方 compiler archive
+仅从带有匹配 `Cargo.toml` tag 的公开 compiler commit 构建，tag workflow 直接使用该
+checkout 的源码，不会从其他仓库 checkout source。0.14 performance gate 与六平台 Native
+仍是发布基线；离线 Auto-Tuning 延期。
+
+新版本发布前，必须通过 schema-7/8 x86-64/AArch64 performance gate、全部六个平台 Native
+以及精确 candidate-SHA 十作业 CI。PR 合并后，还需在精确 main SHA 上重新完成十作业 CI 与
+关闭发布的六平台 release preview，才能创建 annotated tag。代码或 contract 变化后必须在新
+SHA 上重跑受影响 gate，不沿用旧证据。
 
 仓库文本在所有 host 上都以 LF 换行 checkout。Vendor provenance 文件保留上游原始字节，
 不经 Git 换行转换；hash 校验始终比较精确字节，不通过规范化输入来接受不匹配。

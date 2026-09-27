@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately / 私下报告安全漏洞
+    url: https://github.com/luxine/CalcKernel/security/advisories/new
+    about: Do not report vulnerabilities in public issues. 请勿在公开 Issue 中报告安全漏洞。

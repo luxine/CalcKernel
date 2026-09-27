@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 const LLVM_VERSION: &str = "22.1.8";
 const LLVM_SOURCE_SHA256: &str = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888";
 const LLVM_COMPONENTS: [&str; 5] = ["core", "native", "orcjit", "nativecodegen", "lto"];
-const CARGO_PROVENANCE_COMPONENTS: [&str; 26] = [
+const CARGO_PROVENANCE_COMPONENTS: [&str; 30] = [
     "block-buffer",
     "bumpalo",
     "cc",
@@ -15,11 +15,14 @@ const CARGO_PROVENANCE_COMPONENTS: [&str; 26] = [
     "digest",
     "find-msvc-tools",
     "generic-array",
+    "itoa",
     "leb128fmt",
     "libc",
     "memchr",
     "proc-macro2",
     "quote",
+    "serde_core",
+    "serde_json",
     "sha2",
     "shlex",
     "syn",
@@ -32,6 +35,7 @@ const CARGO_PROVENANCE_COMPONENTS: [&str; 26] = [
     "wasm-encoder",
     "wast",
     "wat",
+    "zmij",
 ];
 
 fn main() {

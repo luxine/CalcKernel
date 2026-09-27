@@ -1,6 +1,8 @@
 use calckernel::{
-    BoundsMode, EmitWasmOptions, KirConsumer, OverflowMode, emit_wasm_kir_module,
-    emit_wat_kir_module,
+    BlockId, BoundsMode, EmitWasmOptions, FunctionId, KirBoundsMode, KirBuildConfig, KirConsumer,
+    KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, KirTargetProfile, KirWasmFeatures,
+    OverflowMode, SourceFile, build_kir_module_with_profile, check, emit_wasm_kir_module,
+    emit_wat_kir_module, import_contract_facts, lower_to_mir, run_kir_pass_pipeline,
 };
 
 use super::support::command::node_available;
@@ -11,8 +13,11 @@ use std::{
     collections::BTreeSet,
     fs,
     process::Command,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+static NEXT_CFG_WASM_ID: AtomicU64 = AtomicU64::new(0);
 
 fn emit_wat(source_text: &str, opt_level: u8) -> String {
     let optimized = optimized_module(
@@ -36,6 +41,240 @@ fn emit_wasm(source_text: &str, opt_level: u8) -> Vec<u8> {
     );
     emit_wasm_kir_module(verified_artifact(&optimized), EmitWasmOptions { opt_level })
         .expect("WAT should compile to WASM")
+}
+
+fn target_metadata_sections(bytes: &[u8]) -> Vec<Vec<u8>> {
+    wasmparser::Parser::new(0)
+        .parse_all(bytes)
+        .map(|payload| payload.expect("valid wasm payload"))
+        .filter_map(|payload| match payload {
+            wasmparser::Payload::CustomSection(section) if section.name() == "ck.wasm.target" => {
+                Some(section.data().to_vec())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn wasm_kir_emits_profile_identity_once_and_keeps_wat_and_binary_metadata_identical() {
+    let mut module = optimized_module(
+        r#"
+        export fn scalar(a: i32, b: i32) -> i32 { return a + b; }
+        fn slice_identity(items: slice<i32>) -> slice<i32> { return items; }
+    "#,
+        0,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )
+    .artifact
+    .expect("verified KIR artifact");
+    for features in [KirWasmFeatures::Baseline, KirWasmFeatures::Simd128] {
+        module.profile = KirTargetProfile::webassembly_with_features(features);
+        for opt_level in [0, 3] {
+            let options = EmitWasmOptions { opt_level };
+            let wat = emit_wat_kir_module(&module, options).expect("profiled KIR WAT");
+            let wasm = emit_wasm_kir_module(&module, options).expect("profiled KIR WASM");
+            let sections = target_metadata_sections(&wasm);
+            let digest = module.profile.digest_hex();
+            let expected = format!(
+                r#"{{"schema":1,"target":"wasm32","features":"{}","profile_sha256":"{}"}}"#,
+                features.as_str(),
+                digest,
+            );
+            assert_eq!(sections, [expected.as_bytes().to_vec()]);
+            let escaped_metadata = expected.replace('"', "\\22");
+            assert!(
+                wat.contains(&format!(
+                    "(@custom \"ck.wasm.target\" \"{escaped_metadata}\")"
+                )),
+                "{wat}"
+            );
+            assert_eq!(wat.matches("ck.wasm.target").count(), 1, "{wat}");
+            wasmparser::Validator::new_with_features(wasm_features(features))
+                .validate_all(&wasm)
+                .expect("emitted module must meet its profile feature allowlist");
+        }
+    }
+}
+
+fn wasm_features(features: KirWasmFeatures) -> wasmparser::WasmFeatures {
+    let mut allowed = wasmparser::WasmFeatures::MVP | wasmparser::WasmFeatures::MULTI_VALUE;
+    if features == KirWasmFeatures::Simd128 {
+        allowed |= wasmparser::WasmFeatures::SIMD;
+    }
+    allowed
+}
+
+fn optimized_simd_map(source_text: &str) -> calckernel::KirPassManagerResult {
+    let checked = check(&SourceFile::new("wasm-simd-map.ck", source_text));
+    assert_eq!(checked.diagnostics, []);
+    let mir = lower_to_mir(&checked.checked_program).expect("MIR");
+    let module = build_kir_module_with_profile(
+        &mir,
+        KirBuildConfig {
+            consumer: KirConsumer::WebAssembly,
+            overflow_mode: KirOverflowMode::Unchecked,
+            bounds_mode: KirBoundsMode::Unchecked,
+            sanitizer_mode: KirSanitizerMode::Disabled,
+        },
+        KirTargetProfile::webassembly_with_features(KirWasmFeatures::Simd128),
+    )
+    .expect("profiled Wasm KIR");
+    let contracts =
+        import_contract_facts(&module, &checked.checked_program, 0).expect("map contract facts");
+    let optimized = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, Some(&contracts));
+    assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    optimized
+}
+
+#[test]
+fn wasm_simd128_checked_maps_should_emit_vector_body_and_scalar_remainder() {
+    const F64_MAP: &str = r#"
+        export unsafe fn map(a: slice<f64>, b: slice<f64>, n: u32, factor: f64, bias: f64) -> void
+        contract { requires n <= a.len && n <= b.len; requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i] * factor + bias; i = i + 1; }
+        }
+    "#;
+    const I32_MAP: &str = r#"
+        export unsafe fn map(a: slice<i32>, b: slice<i32>, n: u32, factor: i32, bias: i32) -> void
+        contract { requires n <= a.len && n <= b.len; requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i] * factor + bias; i = i + 1; }
+        }
+    "#;
+    for (source, vector_mul, vector_add, scalar_load) in [
+        (F64_MAP, "f64x2.mul", "f64x2.add", "f64.load"),
+        (I32_MAP, "i32x4.mul", "i32x4.add", "i32.load"),
+    ] {
+        let optimized = optimized_simd_map(source);
+        assert_eq!(
+            optimized.stats.vectorized_loops, 1,
+            "checked Loop SIMD did not commit: {:?}",
+            optimized.analysis_fallbacks
+        );
+        let module = verified_artifact(&optimized);
+        assert_eq!(calckernel::validate_kir_module(module).errors, []);
+        let wat = emit_wat_kir_module(module, EmitWasmOptions { opt_level: 3 })
+            .expect("checked vector KIR WAT");
+        for opcode in [
+            "v128.load",
+            "v128.store",
+            vector_mul,
+            vector_add,
+            scalar_load,
+        ] {
+            assert!(wat.contains(opcode), "missing {opcode} in {wat}");
+        }
+        let wasm = emit_wasm_kir_module(module, EmitWasmOptions { opt_level: 3 })
+            .expect("checked vector KIR Wasm");
+        wasmparser::Validator::new_with_features(wasm_features(KirWasmFeatures::Simd128))
+            .validate_all(&wasm)
+            .expect("SIMD128 module validates");
+
+        let baseline = optimized_module(
+            source,
+            3,
+            KirConsumer::WebAssembly,
+            OverflowMode::Unchecked,
+            BoundsMode::Unchecked,
+        );
+        assert_eq!(baseline.stats.vectorized_loops, 0);
+        let baseline_wat = emit_wat_kir_module(
+            verified_artifact(&baseline),
+            EmitWasmOptions { opt_level: 3 },
+        )
+        .expect("baseline WAT");
+        assert!(!baseline_wat.contains("v128"), "{baseline_wat}");
+    }
+}
+
+#[test]
+fn wasm_kir_entry_points_reject_wrong_consumer_profile_and_checked_modes() {
+    let mut module = optimized_module(
+        "export fn add(a: i32, b: i32) -> i32 { return a + b; }",
+        0,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )
+    .artifact
+    .expect("verified KIR artifact");
+    let options = EmitWasmOptions { opt_level: 0 };
+    module.config.consumer = KirConsumer::C;
+    for error in [
+        emit_wat_kir_module(&module, options).expect_err("WAT rejects non-Wasm consumer"),
+        emit_wasm_kir_module(&module, options).expect_err("WASM rejects non-Wasm consumer"),
+    ] {
+        assert!(error.contains("WebAssembly"), "{error}");
+    }
+
+    module.config.consumer = KirConsumer::WebAssembly;
+    module.config.overflow_mode = calckernel::KirOverflowMode::Checked;
+    assert!(emit_wat_kir_module(&module, options).is_err());
+    assert!(emit_wasm_kir_module(&module, options).is_err());
+    module.config.overflow_mode = calckernel::KirOverflowMode::Unchecked;
+    module.profile = KirTargetProfile::portable_c();
+    assert!(emit_wat_kir_module(&module, options).is_err());
+    assert!(emit_wasm_kir_module(&module, options).is_err());
+}
+
+#[test]
+fn wasm_kir_binary_keeps_non_executable_artifact_pruning() {
+    let mut optimized = optimized_module(
+        r#"
+        fn used_helper(value: i32) -> i32 { return value + 1; }
+        fn dead_helper(value: i32) -> i32 { return value - 1; }
+        export fn live(value: i32) -> i32 { return used_helper(value); }
+    "#,
+        0,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    );
+    let module = optimized.artifact.as_mut().expect("verified KIR artifact");
+    let mut dead_helper = optimized_module(
+        "export fn dead_helper() -> void { return; }",
+        0,
+        KirConsumer::WebAssembly,
+        OverflowMode::Unchecked,
+        BoundsMode::Unchecked,
+    )
+    .artifact
+    .expect("dead helper KIR")
+    .functions
+    .into_iter()
+    .next()
+    .expect("dead helper function");
+    dead_helper.id = FunctionId::from_index(9000);
+    dead_helper.exported = false;
+    dead_helper.regions.clear();
+    dead_helper.initial_memory.clear();
+    for (index, block) in dead_helper.blocks.iter_mut().enumerate() {
+        block.id = BlockId::from_index(9000 + index as u32);
+        block.memory_params.clear();
+        if let calckernel::KirTerminator::Return { memory, .. } = &mut block.terminator {
+            memory.clear();
+        }
+    }
+    module.functions.push(dead_helper);
+    assert_eq!(calckernel::validate_kir_module(module).errors, []);
+    assert_eq!(module.functions.len(), 3);
+    let bytes = emit_wasm_kir_module(module, EmitWasmOptions { opt_level: 0 })
+        .expect("WASM with reachable functions");
+    let code_count = wasmparser::Parser::new(0)
+        .parse_all(&bytes)
+        .map(|payload| payload.expect("valid wasm"))
+        .find_map(|payload| match payload {
+            wasmparser::Payload::CodeSectionStart { count, .. } => Some(count),
+            _ => None,
+        })
+        .expect("code section");
+    assert_eq!(code_count, 2, "unused helper should be pruned from binary");
 }
 
 fn wat_export_names(wat: &str) -> BTreeSet<String> {
@@ -123,7 +362,7 @@ fn wasm_backend_should_reject_reachable_print_before_binary_emission() {
 }
 
 #[test]
-fn wat_backend_should_emit_valid_o3_loop_dispatch() {
+fn wat_backend_should_keep_o1_loop_dispatch() {
     let wat = emit_wat(
         r#"
       export fn sum_to_n(n: i64) -> i64 {
@@ -136,7 +375,7 @@ fn wat_backend_should_emit_valid_o3_loop_dispatch() {
         return sum;
       }
     "#,
-        3,
+        1,
     );
 
     assert!(wat.contains("block $ik_exit"));
@@ -144,6 +383,346 @@ fn wat_backend_should_emit_valid_o3_loop_dispatch() {
     assert!(wat.contains("loop $ik_dispatch"));
     assert!(wat.contains("br $ik_dispatch"));
     assert!(wat.contains("br_table"));
+}
+
+#[test]
+fn wasm_o3_should_structure_ordinary_loop_while_o1_remains_semantically_valid() {
+    let source = include_str!("../../examples/wasm/f64_sum.ck");
+    let o3_wat = emit_wat(source, 3);
+    assert!(
+        o3_wat.contains("loop $"),
+        "O3 should contain a native Wasm loop:\n{o3_wat}"
+    );
+    assert!(
+        o3_wat.contains("br_if "),
+        "O3 should contain a conditional backedge:\n{o3_wat}"
+    );
+    assert!(
+        !o3_wat.contains("ik_dispatch"),
+        "O3 should not dispatch basic blocks:\n{o3_wat}"
+    );
+    assert!(
+        !o3_wat.contains("br_table"),
+        "O3 should not use a branch table:\n{o3_wat}"
+    );
+
+    if !node_available() {
+        return;
+    }
+
+    let runner = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const values = new Float64Array(instance.exports.memory.buffer);
+    values.set([1.25, -2.5, 4.75], 256 / 8);
+    if (instance.exports.sum_f64(256, 3) !== 3.5) process.exit(1);
+    if (instance.exports.sum_f64(256, 0) !== 0) process.exit(2);
+  })
+  .catch((error) => { console.error(error); process.exit(3); });
+"#;
+
+    for opt_level in [1, 3] {
+        let wasm_path = std::env::temp_dir().join(format!(
+            "calckernel_f64_sum_o{opt_level}_{}.wasm",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        fs::write(&wasm_path, emit_wasm(source, opt_level)).expect("write WASM");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(runner)
+            .arg(&wasm_path)
+            .output()
+            .expect("run Wasm loop harness");
+        let _ = fs::remove_file(&wasm_path);
+        assert!(
+            output.status.success(),
+            "O{opt_level} Node runtime failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn wasm_o3_should_preserve_loop_effects_around_trapping_division() {
+    if !node_available() {
+        return;
+    }
+
+    let source = r#"
+      export fn effect_trap(out: ptr<i32>, n: i32, d: i32) -> i32 {
+        let i: i32 = 0;
+        let total: i32 = 0;
+        while i < n {
+          out[0] = i + 1;
+          total = total + 12 / d;
+          out[1] = total;
+          i = i + 1;
+        }
+        return total;
+      }
+    "#;
+    let wasm = emit_wasm(source, 3);
+    let runner = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const api = instance.exports;
+    const view = new DataView(api.memory.buffer);
+    const out = 64;
+
+    view.setInt32(out, 101, true);
+    view.setInt32(out + 4, 202, true);
+    if (api.effect_trap(out, 0, 0) !== 0) process.exit(1);
+    if (view.getInt32(out, true) !== 101 || view.getInt32(out + 4, true) !== 202) process.exit(2);
+
+    view.setInt32(out, 303, true);
+    view.setInt32(out + 4, 404, true);
+    let trapped = false;
+    try { api.effect_trap(out, 1, 0); } catch { trapped = true; }
+    if (!trapped) process.exit(3);
+    if (view.getInt32(out, true) !== 1 || view.getInt32(out + 4, true) !== 404) process.exit(4);
+
+    view.setInt32(out, 505, true);
+    view.setInt32(out + 4, 606, true);
+    if (api.effect_trap(out, 2, 3) !== 8) process.exit(5);
+    if (view.getInt32(out, true) !== 2 || view.getInt32(out + 4, true) !== 8) process.exit(6);
+  })
+  .catch((error) => { console.error(error); process.exit(7); });
+"#;
+
+    let wasm_path = std::env::temp_dir().join(format!(
+        "calckernel_effect_trap_{}.wasm",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    ));
+    fs::write(&wasm_path, wasm).expect("write WASM");
+    let output = Command::new("node")
+        .arg("-e")
+        .arg(runner)
+        .arg(&wasm_path)
+        .output()
+        .expect("run effect/trap harness");
+    let _ = fs::remove_file(&wasm_path);
+    assert!(
+        output.status.success(),
+        "O3 Node runtime failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn wasm_o3_should_structure_diamond_join_and_match_o0_results() {
+    let source = r#"
+      export fn diamond(a: i32, b: i32, choose_b: bool) -> i32 {
+        let selected: i32 = a;
+        if choose_b { selected = b; }
+        return selected * 3 + 1;
+      }
+    "#;
+    run_wasm_at_o0_and_o3(
+        source,
+        r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({ instance }) => {
+  const { diamond } = instance.exports;
+  if (diamond(4, 9, 0) !== 13 || diamond(4, 9, 1) !== 28) process.exit(1);
+}).catch((error) => { console.error(error); process.exit(2); });
+"#,
+    );
+    assert_wasm_o3_structured(source);
+}
+
+#[test]
+fn wasm_physical_value_placement_should_preserve_scalar_edge_copies_at_all_levels() {
+    const SOURCE: &str = r#"
+      export fn choose_i64(a: i64, b: i64, choose_b: bool) -> i64 {
+        let selected: i64 = a;
+        if choose_b { selected = b; }
+        return selected * selected;
+      }
+      export fn choose_f64(a: f64, b: f64, choose_b: bool) -> f64 {
+        let selected: f64 = a;
+        if choose_b { selected = b; }
+        return selected * selected;
+      }
+    "#;
+    let runner = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({ instance }) => {
+  if (instance.exports.choose_i64(3n, 8n, 0) !== 9n) process.exit(1);
+  if (instance.exports.choose_i64(3n, 8n, 1) !== 64n) process.exit(2);
+  if (instance.exports.choose_f64(1.5, 4, 0) !== 2.25) process.exit(3);
+  if (instance.exports.choose_f64(1.5, 4, 1) !== 16) process.exit(4);
+}).catch((error) => { console.error(error); process.exit(5); });
+"#;
+    for opt_level in [0, 2, 3] {
+        let wasm_path = std::env::temp_dir().join(format!(
+            "calckernel_physical_edges_o{opt_level}_{}.wasm",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        fs::write(&wasm_path, emit_wasm(SOURCE, opt_level)).expect("write WASM");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(runner)
+            .arg(&wasm_path)
+            .output()
+            .expect("run scalar edge copy harness");
+        let _ = fs::remove_file(&wasm_path);
+        assert!(
+            output.status.success(),
+            "O{opt_level} scalar edge copy runtime failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn wasm_o3_should_structure_nested_break_continue_loops() {
+    let source = r#"
+      export fn nested(n: u32) -> u32 {
+        let outer: u32 = 0;
+        let hits: u32 = 0;
+        while outer < n {
+          let inner: u32 = 0;
+          while inner < n {
+            inner = inner + 1;
+            if inner == 2 { continue; }
+            hits = hits + 1;
+            if inner == 4 { break; }
+          }
+          outer = outer + 1;
+        }
+        return hits;
+      }
+    "#;
+    run_wasm_at_o0_and_o3(
+        source,
+        r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({ instance }) => {
+  const { nested } = instance.exports;
+  if (nested(0) !== 0 || nested(1) !== 1 || nested(4) !== 12) process.exit(1);
+}).catch((error) => { console.error(error); process.exit(2); });
+"#,
+    );
+    assert_wasm_o3_structured(source);
+}
+
+#[test]
+fn wasm_o3_should_structure_loop_early_return_without_reordering_effects_or_traps() {
+    let source = r#"
+      export fn early_return(out: ptr<i32>, n: i32, divisor: i32) -> i32 {
+        let i: i32 = 0;
+        let total: i32 = 0;
+        while i < n {
+          out[0] = i + 1;
+          if i == 1 { return 77; }
+          total = total + 12 / divisor;
+          out[1] = total;
+          i = i + 1;
+        }
+        return total;
+      }
+    "#;
+    run_wasm_at_o0_and_o3(
+        source,
+        r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({ instance }) => {
+  const { early_return, memory } = instance.exports;
+  const view = new DataView(memory.buffer);
+  view.setInt32(64, 101, true); view.setInt32(68, 202, true);
+  if (early_return(64, 0, 0) !== 0 || view.getInt32(64, true) !== 101 || view.getInt32(68, true) !== 202) process.exit(1);
+  view.setInt32(64, 303, true); view.setInt32(68, 404, true);
+  let trapped = false;
+  try { early_return(64, 1, 0); } catch { trapped = true; }
+  if (!trapped || view.getInt32(64, true) !== 1 || view.getInt32(68, true) !== 404) process.exit(2);
+  view.setInt32(64, 505, true); view.setInt32(68, 606, true);
+  if (early_return(64, 3, 3) !== 77 || view.getInt32(64, true) !== 2 || view.getInt32(68, true) !== 4) process.exit(3);
+}).catch((error) => { console.error(error); process.exit(4); });
+"#,
+    );
+    assert_wasm_o3_structured(source);
+}
+
+#[test]
+fn wasm_o3_should_structure_same_target_slice_edges_with_two_values() {
+    let source = r#"
+      fn choose(items: slice<i32>, other: slice<i32>, use_other: bool) -> slice<i32> {
+        let selected: slice<i32> = items;
+        if use_other { selected = other; }
+        return selected;
+      }
+
+      export fn selected_value(items: slice<i32>, other: slice<i32>, use_other: bool) -> i32 {
+        let selected: slice<i32> = choose(items, other, use_other);
+        if selected.len > 1 { return selected[1]; }
+        return selected[0];
+      }
+    "#;
+    run_wasm_at_o0_and_o3(
+        source,
+        r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1])).then(({ instance }) => {
+  const { selected_value, memory } = instance.exports;
+  const view = new DataView(memory.buffer);
+  view.setInt32(128, 10, true); view.setInt32(132, 11, true);
+  view.setInt32(192, 30, true); view.setInt32(196, 31, true);
+  if (selected_value(128, 2, 192, 2, 0) !== 11) process.exit(1);
+  if (selected_value(128, 2, 192, 2, 1) !== 31) process.exit(2);
+}).catch((error) => { console.error(error); process.exit(3); });
+"#,
+    );
+    assert_wasm_o3_structured(source);
+}
+
+fn assert_wasm_o3_structured(source: &str) {
+    let wat = emit_wat(source, 3);
+    assert!(
+        !wat.contains("ik_dispatch"),
+        "O3 should not dispatch basic blocks:\n{wat}"
+    );
+    assert!(
+        !wat.contains("br_table"),
+        "O3 should not use a branch table:\n{wat}"
+    );
+}
+
+fn run_wasm_at_o0_and_o3(source: &str, runner: &str) {
+    if !node_available() {
+        return;
+    }
+    for opt_level in [0, 3] {
+        let unique = NEXT_CFG_WASM_ID.fetch_add(1, Ordering::Relaxed);
+        let wasm_path = std::env::temp_dir().join(format!(
+            "calckernel_cfg_{}_{}_o{opt_level}.wasm",
+            std::process::id(),
+            unique,
+        ));
+        fs::write(&wasm_path, emit_wasm(source, opt_level)).expect("write WASM");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(runner)
+            .arg(&wasm_path)
+            .output()
+            .expect("run Node Wasm harness");
+        let _ = fs::remove_file(&wasm_path);
+        assert!(
+            output.status.success(),
+            "O{opt_level} Node runtime failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
@@ -553,7 +1132,7 @@ fn wasm_cli_should_match_typescript_oracle_for_perf_fixture_runtime_behavior() {
 }
 
 #[test]
-fn wasm_backend_should_run_break_continue_dispatcher_fallback_at_all_opt_levels() {
+fn wasm_backend_should_run_structured_break_continue_at_o3_and_all_levels() {
     if !node_available() {
         return;
     }
@@ -617,7 +1196,17 @@ fn wasm_backend_should_run_break_continue_dispatcher_fallback_at_all_opt_levels(
       }
     "#;
     let wat = emit_wat(source, 3);
-    assert!(wat.contains("loop $ik_dispatch"), "{wat}");
+    assert!(
+        !wat.contains("ik_dispatch") && !wat.contains("br_table"),
+        "O3 break/continue flow should be structured:\n{wat}"
+    );
+    for opt_level in [0, 1] {
+        let fallback_wat = emit_wat(source, opt_level);
+        assert!(
+            fallback_wat.contains("ik_dispatch") && fallback_wat.contains("br_table"),
+            "O{opt_level} should retain the dispatcher path:\n{fallback_wat}"
+        );
+    }
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -688,7 +1277,10 @@ fn wasm_backend_should_emit_and_run_void_functions_without_results() {
     );
     assert!(wat.contains("call $set_one"), "{wat}");
     assert!(!wat.contains("(result"), "{wat}");
-    assert!(wat.contains("loop $ik_dispatch"), "{wat}");
+    assert!(
+        !wat.contains("ik_dispatch") && !wat.contains("br_table"),
+        "O3 void control flow should be structured:\n{wat}"
+    );
 
     let runner = r#"
 const fs = require("node:fs");
@@ -847,8 +1439,8 @@ fn wasm_backend_should_return_internal_slices_as_two_values() {
         + 1;
     assert!(set_len < set_data, "{after_call}");
     assert!(
-        wat.contains("loop $ik_dispatch"),
-        "dispatched return path missing:\n{wat}"
+        !wat.contains("ik_dispatch") && !wat.contains("br_table"),
+        "slice-return paths should be structured:\n{wat}"
     );
 }
 

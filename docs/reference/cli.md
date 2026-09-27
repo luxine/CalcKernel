@@ -24,6 +24,7 @@ requested textual output use stdout unless stated otherwise.
 | `ckc pgo merge <shard-or-directory>... --out <file.ckprof>` | Canonically merge completed `CKPART01` shards. |
 | `ckc pgo inspect <file.ckprof> [--json]` | Validate and inspect one terminal `CKPROF01` profile. |
 | `ckc cache clean` | Remove only the resolved CK native cache. |
+| `ckc lsp` | Run the CK language server over standard input and output for editor clients. |
 | `ckc licenses` | Print embedded third-party notices. |
 | `ckc --version --verbose` | Print compiler, ABI, LLVM, target, codegen, and ORC identity. |
 
@@ -46,6 +47,29 @@ The compiler invokes LLVM 22.1.8 and LLD in process. Product commands do not
 discover or spawn external Clang, linkers, or archivers, and native builds leave
 no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
 
+## Language server
+
+`ckc lsp` starts a JSON-RPC language server using the Language Server Protocol
+framing over stdin/stdout. It is intended to be launched by an editor client;
+stdout is reserved for protocol messages and server errors are written to
+stderr. The command takes no arguments. The VS Code setup and editor features
+are described in the [Visual Studio Code guide](../guides/vscode.md).
+
+The language server analyzes the exact text sent by the editor, including
+unsaved edits, with the CK frontend. It does not invoke LLVM or provide Native
+Run/Build capability. In addition to CK diagnostics, it provides completion,
+hover, signature help, definition and reference navigation, binding-safe
+rename, document and workspace symbols, semantic tokens, folding ranges,
+selection ranges, and whole-document formatting. Workspace symbols include
+top-level declarations in unopened `.ck` files under the workspace folders;
+open unsaved documents take precedence over disk content. Source positions use LSP UTF-16
+coordinates. Open and change notifications publish CK diagnostics; closing a
+document clears its diagnostics. The server uses full-document sync and ignores
+stale document versions so an older edit cannot replace newer diagnostics.
+Document resource limits can cause analysis to be skipped for an oversized or
+excessively complex input; the server reports that condition and continues
+serving later documents.
+
 ## Options and defaults
 
 - `--out <file>` and `-o <file>` select output; `--header` selects a C header.
@@ -56,6 +80,16 @@ no `.c` or `.ll` intermediate. `emit-c` never compiles or links its output.
 - `--consumer inspection|c|wasm|native-library|native-executable` selects the
   exact `emit-kir` target profile; inspection is the scalar target-independent
   default.
+- `--wasm-features baseline|simd128` is accepted only by `emit-wat`,
+  `emit-wasm`, and `emit-kir --consumer wasm`; it defaults to `baseline`.
+  The selection is part of the canonical WebAssembly KIR target profile and
+  its digest. At O3, `simd128` enables independently verified SIMD128 lowering
+  for supported contiguous `f64` and `i32`/`u32` slice maps, integer-to-`f64`
+  casts, and modular integer reductions, including guarded unknown-alias loops;
+  `baseline` and O0–O2 remain scalar.
+  At O3, either profile may also use checked scalar address cursors and
+  proof-backed struct-field memarg offsets. Invalid values or command/consumer
+  combinations fail before source input or output changes.
 - `--cpu baseline|native|multiversion` applies to `build` and Native `emit-kir`; baseline is
   the portable build default. `run` uses the host CPU. Native `emit-kir`
   requires an explicit Native consumer before `--cpu` is accepted.

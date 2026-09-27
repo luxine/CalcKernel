@@ -40,6 +40,9 @@ mod slp;
 #[path = "optimizer/vectorize.rs"]
 mod vectorize;
 
+#[path = "optimizer/vector_alias_predicate.rs"]
+mod vector_alias_predicate;
+
 #[path = "optimizer/profile_mapping.rs"]
 mod profile_mapping;
 

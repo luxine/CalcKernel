@@ -25,6 +25,7 @@ struct CheckedVectorAccess {
     kind: CheckedMemoryAccessKind,
     region: MemoryRegionId,
     base: ValueId,
+    element_bytes: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,12 +36,18 @@ enum CheckedMemoryAccessKind {
 
 #[derive(Debug, Clone)]
 struct CheckedVersionPredicate {
+    address_bits: u8,
     conjuncts: Vec<CheckedVersionConjunct>,
 }
 
 #[derive(Debug, Clone)]
 enum CheckedVersionConjunct {
-    AddressIntervalsDisjoint { left: ValueId, right: ValueId },
+    AddressIntervalsDisjoint {
+        left: ValueId,
+        left_element_bytes: u32,
+        right: ValueId,
+        right_element_bytes: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -178,9 +185,9 @@ pub fn check_vectorization_trial_independently(
         return compiler("vector original preheader is not a jump");
     };
     let KirTerminator::Branch {
+        condition: entry_condition,
         then_edge: vector_entry,
         else_edge: scalar_entry,
-        ..
     } = &preheader_after.terminator
     else {
         return compiler("vector preheader does not version the scalar loop");
@@ -819,63 +826,15 @@ pub fn check_vectorization_trial_independently(
             if start == candidate.induction && end == candidate.bound => {}
         _ => return compiler("vector scalar epilogue partition is false"),
     }
-    let expected_predicates = 1_usize.saturating_add(
-        candidate
-            .version_predicate
-            .as_ref()
-            .map_or(0, |predicate| predicate.conjuncts.len()),
-    );
-    if plan.predicates.len() != expected_predicates
-        || !matches!(
-            plan.predicates[0],
-            crate::VectorPredicate::TripThreshold {
-                trip_count,
-                minimum,
-                ..
-            } if trip_count == candidate.bound && minimum == candidate.minimum_trip
-        )
-    {
-        return compiler("vector trip threshold predicate is incomplete");
-    }
-    let emitted_version_predicates = preheader_after
-        .instructions
-        .iter()
-        .filter(|instruction| {
-            matches!(
-                instruction.kind,
-                KirInstructionKind::VersionPredicate { .. }
-            )
-        })
-        .count();
-    if emitted_version_predicates != usize::from(candidate.version_predicate.is_some()) {
-        return compiler("vector runtime version predicate presence is false");
-    }
-    if let Some(predicate) = &candidate.version_predicate {
-        for conjunct in &predicate.conjuncts {
-            let CheckedVersionConjunct::AddressIntervalsDisjoint { left, right } = conjunct;
-            let left_region = candidate
-                .accesses
-                .iter()
-                .find(|access| access.base == *left)
-                .map(|access| access.region);
-            let right_region = candidate
-                .accesses
-                .iter()
-                .find(|access| access.base == *right)
-                .map(|access| access.region);
-            if !plan.predicates.iter().any(|planned| {
-                matches!(
-                    planned,
-                    crate::VectorPredicate::AddressNonOverlap { left, right, bytes, .. }
-                        if Some(*left) == left_region
-                            && Some(*right) == right_region
-                            && *bytes == candidate.bound
-                )
-            }) {
-                return compiler("vector runtime noalias predicate is incomplete");
-            }
-        }
-    }
+    validate_preheader_entry_predicate(
+        &pre_state.module().profile,
+        transformed,
+        preheader_after,
+        *entry_condition,
+        limit_bound,
+        &candidate,
+        plan,
+    )?;
     let roots = [
         plan.proofs.canonical_loop,
         plan.proofs.trip_partition,
@@ -932,6 +891,219 @@ pub fn check_vectorization_trial_independently(
         )));
     }
     Ok(())
+}
+
+fn validate_preheader_entry_predicate(
+    profile: &crate::KirTargetProfile,
+    function: &crate::KirFunction,
+    preheader: &crate::KirBlock,
+    branch_condition: ValueId,
+    entry_bound: ValueId,
+    candidate: &CheckedVectorSource,
+    plan: &VectorizationPlan,
+) -> Result<(), TransactionCheckError> {
+    let compiler = |message: &str| Err(TransactionCheckError::compiler(message));
+    let expected_address_count = candidate
+        .version_predicate
+        .as_ref()
+        .map_or(0, |predicate| predicate.conjuncts.len());
+    let trip_thresholds = plan
+        .predicates
+        .iter()
+        .filter_map(|predicate| match predicate {
+            crate::VectorPredicate::TripThreshold {
+                trip_count,
+                minimum,
+                ..
+            } => Some((*trip_count, *minimum)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let address_predicate_count = plan
+        .predicates
+        .iter()
+        .filter(|predicate| matches!(predicate, crate::VectorPredicate::AddressNonOverlap { .. }))
+        .count();
+    if plan.predicates.len() != 1 + expected_address_count
+        || trip_thresholds.as_slice() != [(candidate.bound, candidate.minimum_trip)]
+        || address_predicate_count != expected_address_count
+        || plan.predicates.iter().any(|predicate| {
+            matches!(
+                predicate,
+                crate::VectorPredicate::AddressNonOverlap { bytes, .. }
+                    if *bytes != candidate.bound
+            )
+        })
+    {
+        return compiler("vector plan predicates do not exactly describe threshold and aliases");
+    }
+
+    let emitted_version_predicates = preheader
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                KirInstructionKind::VersionPredicate { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    let bool_type = MirType::Primitive(MirPrimitiveTypeName::Bool);
+    match &candidate.version_predicate {
+        None => {
+            if !emitted_version_predicates.is_empty() {
+                return compiler("scalar-only vector candidate emitted a runtime predicate");
+            }
+            let Some(condition) = preheader.instructions.iter().find(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == branch_condition)
+            }) else {
+                return compiler("vector preheader branch condition has no local definition");
+            };
+            let exact_bool_result = matches!(
+                condition.results.as_slice(),
+                [result]
+                    if result.value == branch_condition
+                        && result.type_node.as_scalar() == Some(&bool_type)
+            );
+            let correct_threshold = matches!(
+                condition.kind,
+                KirInstructionKind::Compare {
+                    op: crate::MirCompareOp::Ge,
+                    left,
+                    right,
+                } if left == entry_bound
+                    && value_type(function, right)
+                        == Some(&MirType::Primitive(MirPrimitiveTypeName::U32))
+                    && integer_constant(function, right)
+                        == Some(i128::from(candidate.minimum_trip))
+            );
+            if !exact_bool_result
+                || condition.memory.is_some()
+                || condition.effect.is_some()
+                || !correct_threshold
+            {
+                return compiler(
+                    "vector preheader branch does not use the exact scalar trip threshold",
+                );
+            }
+        }
+        Some(expected) => {
+            let target_address_bits = match profile.layout() {
+                crate::KirProfileLayout::Known {
+                    pointer_width_bits: bits,
+                    ..
+                } if matches!(bits, 32 | 64) => bits as u8,
+                _ => {
+                    return compiler(
+                        "vector runtime predicate requires a known 32- or 64-bit target layout",
+                    );
+                }
+            };
+            let [instruction] = emitted_version_predicates.as_slice() else {
+                return compiler("vector preheader must emit exactly one runtime predicate");
+            };
+            let exact_bool_result = matches!(
+                instruction.results.as_slice(),
+                [result]
+                    if result.value == branch_condition
+                        && result.type_node.as_scalar() == Some(&bool_type)
+            );
+            if !exact_bool_result || instruction.memory.is_some() || instruction.effect.is_some() {
+                return compiler(
+                    "vector preheader branch does not use the pure runtime predicate result",
+                );
+            }
+            let KirInstructionKind::VersionPredicate { predicate } = &instruction.kind else {
+                unreachable!("filtered preheader instruction must be a version predicate");
+            };
+            if expected.address_bits != target_address_bits
+                || predicate.address_bits != target_address_bits
+            {
+                return compiler("vector runtime predicate address width disagrees with target");
+            }
+            if predicate.conjuncts.len() != expected.conjuncts.len() + 1 {
+                return compiler("vector runtime predicate conjunct count is false");
+            }
+            let mut threshold_count = 0_usize;
+            let mut actual_intervals = Vec::new();
+            for conjunct in &predicate.conjuncts {
+                match conjunct {
+                    crate::KirVersionPredicateConjunct::TripThreshold { value, minimum }
+                        if *value == entry_bound && *minimum == candidate.minimum_trip =>
+                    {
+                        threshold_count = threshold_count.saturating_add(1);
+                    }
+                    crate::KirVersionPredicateConjunct::TripThreshold { .. } => {
+                        return compiler("vector runtime trip threshold differs from its plan");
+                    }
+                    crate::KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                        left,
+                        left_count,
+                        left_element_bytes,
+                        right,
+                        right_count,
+                        right_element_bytes,
+                    } => {
+                        if *left_count != entry_bound || *right_count != entry_bound {
+                            return compiler(
+                                "vector runtime alias interval count differs from its trip bound",
+                            );
+                        }
+                        actual_intervals.push(canonical_interval_key(
+                            *left,
+                            *left_element_bytes,
+                            *right,
+                            *right_element_bytes,
+                        ));
+                    }
+                }
+            }
+            if threshold_count != 1 {
+                return compiler("vector runtime predicate must contain one exact trip threshold");
+            }
+            let mut expected_intervals = expected
+                .conjuncts
+                .iter()
+                .map(|conjunct| match conjunct {
+                    CheckedVersionConjunct::AddressIntervalsDisjoint {
+                        left,
+                        left_element_bytes,
+                        right,
+                        right_element_bytes,
+                    } => canonical_interval_key(
+                        *left,
+                        *left_element_bytes,
+                        *right,
+                        *right_element_bytes,
+                    ),
+                })
+                .collect::<Vec<_>>();
+            actual_intervals.sort_unstable();
+            expected_intervals.sort_unstable();
+            if actual_intervals != expected_intervals {
+                return compiler(
+                    "vector runtime alias intervals do not exactly match dependence legality",
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn canonical_interval_key(
+    left: ValueId,
+    left_element_bytes: u32,
+    right: ValueId,
+    right_element_bytes: u32,
+) -> (ValueId, u32, ValueId, u32) {
+    if (left, left_element_bytes) <= (right, right_element_bytes) {
+        (left, left_element_bytes, right, right_element_bytes)
+    } else {
+        (right, right_element_bytes, left, left_element_bytes)
+    }
 }
 
 fn reconstruct_vector_source_independently(
@@ -1120,36 +1292,60 @@ fn reconstruct_vector_source_independently(
             "vector runtime noalias predicates do not exactly close dependence legality",
         ));
     }
-    let minimum_trip = plan
+    let threshold_predicates = plan
         .predicates
         .iter()
-        .find_map(|predicate| match predicate {
+        .filter_map(|predicate| match predicate {
             crate::VectorPredicate::TripThreshold {
                 trip_count,
                 minimum,
                 ..
-            } if *trip_count == bound => Some(*minimum),
+            } => Some((*trip_count, *minimum)),
             _ => None,
         })
-        .ok_or_else(|| malformed("vector trip threshold predicate is missing"))?;
-    let version_predicate = (!required_pairs.is_empty()).then(|| CheckedVersionPredicate {
-        conjuncts: required_pairs
-            .iter()
-            .map(|(left, right)| {
-                let left = accesses
-                    .iter()
-                    .find(|access| access.region == *left)
-                    .map(|access| access.base)
-                    .expect("required region has an access");
-                let right = accesses
-                    .iter()
-                    .find(|access| access.region == *right)
-                    .map(|access| access.base)
-                    .expect("required region has an access");
-                CheckedVersionConjunct::AddressIntervalsDisjoint { left, right }
-            })
-            .collect(),
-    });
+        .collect::<Vec<_>>();
+    if threshold_predicates.len() != 1 || threshold_predicates[0].0 != bound {
+        return Err(malformed(
+            "vector plan must contain exactly one threshold for the loop bound",
+        ));
+    }
+    let minimum_trip = threshold_predicates[0].1;
+    let version_predicate = if required_pairs.is_empty() {
+        None
+    } else {
+        let address_bits = match pre_state.module().profile.layout() {
+            crate::KirProfileLayout::Known {
+                pointer_width_bits: bits,
+                ..
+            } if matches!(bits, 32 | 64) => bits as u8,
+            _ => {
+                return Err(malformed(
+                    "vector runtime predicate requires a known 32- or 64-bit target layout",
+                ));
+            }
+        };
+        let mut conjuncts = Vec::with_capacity(required_pairs.len());
+        for (left_region, right_region) in &required_pairs {
+            let left = accesses
+                .iter()
+                .find(|access| access.region == *left_region)
+                .ok_or_else(|| malformed("required left region has no scalar access"))?;
+            let right = accesses
+                .iter()
+                .find(|access| access.region == *right_region)
+                .ok_or_else(|| malformed("required right region has no scalar access"))?;
+            conjuncts.push(CheckedVersionConjunct::AddressIntervalsDisjoint {
+                left: left.base,
+                left_element_bytes: left.element_bytes,
+                right: right.base,
+                right_element_bytes: right.element_bytes,
+            });
+        }
+        Some(CheckedVersionPredicate {
+            address_bits,
+            conjuncts,
+        })
+    };
     let (predicted_cost, expected_minimum) = independently_price_vector_plan(
         pre_state,
         original,
@@ -1511,6 +1707,9 @@ fn independently_collect_accesses(
             kind,
             region: *region,
             base: invariant_root_value(function, *slice).unwrap_or(*slice),
+            element_bytes: memory_lane_and_bytes(instruction)
+                .map(|(_, bytes)| bytes)
+                .ok_or_else(|| malformed("vector memory element width is unsupported"))?,
         });
     }
     accesses.sort_by_key(|access| access.instruction);

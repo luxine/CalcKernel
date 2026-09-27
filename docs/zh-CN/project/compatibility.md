@@ -14,6 +14,11 @@ Patch release 可以拒绝非法输入、改善 diagnostic prose、增加 opt-in
 format、fact/proof encoding、pass algorithm、private LLVM bridge ABI、cache entry、dispatch/
 collection runtime、measurement 与未记录 compiler interface 不是 public contract。
 
+显式选择 `--wasm-features simd128` 后，符合条件的 O3 slice map 可生成 SIMD128 指令。
+该优化保持 CK 可观察语义和 public WASM ABI；`baseline` 仍是默认标量 profile。选择
+`simd128` 的 host 必须支持该声明的 feature。Target-profile digest 与生成的模块字节属于
+编译器内部 identity，不承诺逐字节稳定。
+
 ## 从 0.13.0 迁移到 0.14.0
 
 - 已接受的 0.13 source、diagnostic、semantic MIR、checked first-error order、strict-f64、

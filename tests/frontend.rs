@@ -2,6 +2,8 @@
 mod checker;
 #[path = "frontend/contracts.rs"]
 mod contracts;
+#[path = "frontend/editor.rs"]
+mod editor;
 #[path = "frontend/lexer.rs"]
 mod lexer;
 #[path = "frontend/parser.rs"]

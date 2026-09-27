@@ -1,0 +1,45 @@
+name: Bug report (English)
+description: Report a reproducible problem in CK or ckc.
+title: "Bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, do not use this public form. Use the private process in [SECURITY.md](https://github.com/luxine/CalcKernel/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: CK / CalcKernel version
+      description: Include the output of `ckc --version` when applicable.
+      placeholder: e.g. version and commit
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system, CPU architecture, and relevant runtime/toolchain.
+      placeholder: e.g. macOS arm64
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest `.ck` program, command, and inputs that reproduce the problem. Remove secrets and private data.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste concise compiler output or a sanitized log. Do not include credentials or private data.
+      render: text

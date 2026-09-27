@@ -78,7 +78,19 @@ CLI 将 opaque independent-check authority 保留到 emission，source-to-object
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.14 的 C/WebAssembly profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.14 的 C 与 WebAssembly `baseline` profile 禁用 Vector KIR。
+WebAssembly 提供 `baseline` 和 `simd128` 两种 feature profile；`emit-wat`、`emit-wasm` 或
+`emit-kir --consumer wasm` 可通过 `--wasm-features baseline|simd128` 选择，默认 `baseline`。
+所选 feature 与规范化 profile digest 会写入 module metadata。O3 的 `simd128` 为连续的
+`slice<f64>`、`slice<i32>`、`slice<u32>` map，以及模 2^32 的 `i32`/`u32` 求和、求积归约
+开放经过独立验证的 Loop SIMD。完整向量使用 `f64x2` 或 `i32x4`；两 lane 的 `i32`/`u32`
+输入可通过精确的 8 字节 load 转为 `f64x2`。map 支持 splat、load/store、加、减、乘、
+取负、`f64x2` 除法及纯逐 lane 比较/选择。简单的同一归纳变量 slice 循环可用经过检查的
+Wasm32 运行时别名谓词；发生重叠或地址范围不安全时执行原有标量循环。归约将四个整数 lane
+按模 2^32 折叠后再与标量累加器合并。候选仍需单位步长归纳、独立合法性与成本检查，以及
+原有标量余数循环；unroll factor 为一。WebAssembly SLP、浮点归约、checked arithmetic、
+masked memory 和其他向量形状仍不可用。不支持的源码候选保持标量；不支持的手工 Vector KIR
+由 backend 拒绝。`baseline` 与 O0–O2 保持标量。
 
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。
@@ -211,6 +223,9 @@ conservative `readwrite all`。
 Possible checked failure 和 runtime print 是 ordered effect，不能无证明跨越重排。只有经过
 验证的 no-alias/alignment/range/effect fact 才能进入 C/LLVM；Native pre-LLVM fact audit 会
 拒绝 injected 或 stale metadata。
+WebAssembly O3 也会依据独立检查的循环结构生成字节地址游标。已验证的最终 KIR 结果可为
+字段偏移 lowering 提供对齐事实；单独的 KIR module 不提供此类事实。不能证明偏移折叠
+保留 32 位地址回绕语义时，backend 保留源码的地址运算。
 
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
 下使用 schema 8 比较 0.14 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、

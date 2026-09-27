@@ -165,6 +165,30 @@ struct VerifiedKirState {
     contract_facts: Option<ContractFactSet>,
 }
 
+impl KirPassManagerResult {
+    /// Returns the final artifact and its optimizer-proven contracts only
+    /// while all public result fields still match the private verified snapshot.
+    pub(crate) fn verified_artifact_and_contracts(
+        &self,
+    ) -> Option<(&KirModule, Option<&ContractFactSet>)> {
+        if !self.errors.is_empty() {
+            return None;
+        }
+        let artifact = self.artifact.as_ref()?;
+        let verified = self.verification_cache.as_ref()?;
+        if artifact != &self.module
+            || artifact != &verified.module
+            || self.module != verified.module
+            || self.proofs != verified.proofs
+            || self.eliminated_guards != verified.eliminated_guards
+            || self.contract_facts.as_ref() != verified.contract_facts.as_ref()
+        {
+            return None;
+        }
+        Some((artifact, self.contract_facts.as_ref()))
+    }
+}
+
 #[must_use]
 pub fn run_kir_pass_pipeline(
     module: KirModule,
@@ -674,10 +698,11 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
             {
                 result.stats.loop_legality_candidates =
                     result.stats.loop_legality_candidates.saturating_add(1);
-                match super::analyze_loop_legality(
+                match super::analyze_loop_legality_for_profile(
                     function,
                     descriptor,
                     result.contract_facts.as_ref().map(ContractFactSet::facts),
+                    &module.profile,
                 ) {
                     Ok(legality) => {
                         for reason in legality.fallback_reasons {
@@ -864,7 +889,7 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     return result;
                 }
             };
-            let vector = match run_native_vector_frontier(
+            let vector = match run_loop_simd_frontier(
                 &mut state,
                 &mut result.audit,
                 pgo,
@@ -1331,20 +1356,24 @@ fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations:
     u64::from(transformed_body).saturating_mul(u64::from(iterations))
 }
 
-fn run_native_vector_frontier(
+fn run_loop_simd_frontier(
     state: &mut KirVerifiedProgramState,
     audit: &mut KirOptimizationAuditState,
     pgo: Option<&super::CkPgoOptimizerPlan>,
     defer_to_llvm: bool,
 ) -> Result<VectorFrontierResult, String> {
     let mut result = VectorFrontierResult::default();
-    if !matches!(
+    let native_consumer = matches!(
         state.module().config.consumer,
         crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
-    ) {
+    );
+    let wasm_simd128_consumer = state.module().config.consumer == crate::KirConsumer::WebAssembly
+        && state.module().profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+        && state.module().profile.vector_operations_enabled();
+    if !native_consumer && !wasm_simd128_consumer {
         return Ok(result);
     }
-    if defer_to_llvm {
+    if defer_to_llvm && native_consumer {
         for function in &state.module().functions {
             let loops = analyze_canonical_loops_for_discovery(function);
             result.fallbacks.extend(
@@ -1546,16 +1575,20 @@ fn run_native_vector_frontier(
         else {
             continue;
         };
-        let protected = state.proofs().instruction_dependencies();
-        let loop_slp = state
-            .module()
-            .functions
-            .iter()
-            .find(|function| function.id == representative.function)
-            .into_iter()
-            .flat_map(|function| discover_slp_candidates(function, &protected).candidates)
-            .filter(|slp| slp.block == representative.body)
-            .collect::<Vec<_>>();
+        let loop_slp = if native_consumer {
+            let protected = state.proofs().instruction_dependencies();
+            state
+                .module()
+                .functions
+                .iter()
+                .find(|function| function.id == representative.function)
+                .into_iter()
+                .flat_map(|function| discover_slp_candidates(function, &protected).candidates)
+                .filter(|slp| slp.block == representative.body)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let mut slp_alternatives = Vec::new();
         for slp_candidate in loop_slp {
             let slp = match kir_passes::materialize_slp_trial(state, &slp_candidate) {
@@ -1772,6 +1805,10 @@ fn run_unroll_frontier(
     audit: &mut KirOptimizationAuditState,
 ) -> Result<UnrollFrontierResult, String> {
     let mut result = UnrollFrontierResult::default();
+    let native_consumer = matches!(
+        state.module().config.consumer,
+        crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
+    );
     let mut processed = std::collections::BTreeSet::new();
     loop {
         let mut candidates = Vec::new();
@@ -1906,7 +1943,11 @@ fn run_unroll_frontier(
                 .iter()
                 .find(|function| function.id == candidate.function)
                 .ok_or_else(|| "unroll trial function disappeared before SLP".to_string())?;
-            let mut slp_candidates = discover_slp_candidates(function, &protected).candidates;
+            let mut slp_candidates = if native_consumer {
+                discover_slp_candidates(function, &protected).candidates
+            } else {
+                Vec::new()
+            };
             slp_candidates.sort_by(|left, right| left.key.cmp(&right.key));
             let mut seen_lanes = std::collections::BTreeSet::new();
             for slp_candidate in slp_candidates
@@ -2109,11 +2150,15 @@ fn no_op_native_frontiers(
         module.config.consumer,
         crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
     );
-    let vector_and_slp_are_noops = !native
-        || (module.config.sanitizer_mode == crate::KirSanitizerMode::Disabled
-            && module.config.overflow_mode == crate::KirOverflowMode::Unchecked
-            && module.config.bounds_mode == crate::KirBoundsMode::Unchecked
-            && !module.profile.vector_operations_enabled());
+    let wasm_simd128_frontier_enabled = module.config.consumer == crate::KirConsumer::WebAssembly
+        && module.profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+        && module.profile.vector_operations_enabled();
+    let vector_and_slp_are_noops = !wasm_simd128_frontier_enabled
+        && (!native
+            || (module.config.sanitizer_mode == crate::KirSanitizerMode::Disabled
+                && module.config.overflow_mode == crate::KirOverflowMode::Unchecked
+                && module.config.bounds_mode == crate::KirBoundsMode::Unchecked
+                && !module.profile.vector_operations_enabled()));
     if !vector_and_slp_are_noops {
         return None;
     }
@@ -2679,9 +2724,10 @@ fn rewrite_error(message: &str, proof: Option<ProofId>) -> EvidenceValidationErr
 mod tests {
     use super::*;
     use crate::{
-        FactId, KirBoundsMode, KirBuildConfig, KirConsumer, KirInstructionKind, KirOverflowMode,
-        KirSanitizerMode, SourceFile, ValueId, build_kir_module, check, import_contract_facts,
-        lower_to_mir,
+        FactId, KirBoundsMode, KirBuildConfig, KirConsumer, KirInstructionKind,
+        KirOptimizationLevel, KirOverflowMode, KirSanitizerMode, KirTargetProfile, KirWasmFeatures,
+        SourceFile, ValueId, build_kir_module, build_kir_module_with_profile, check,
+        import_contract_facts, lower_to_mir,
     };
 
     fn verified_result() -> KirPassManagerResult {
@@ -2781,6 +2827,82 @@ mod tests {
     }
 
     #[test]
+    fn trusted_artifact_accessor_should_return_matching_snapshot() {
+        let result = verified_result();
+        let (artifact, Some(contracts)) = result
+            .verified_artifact_and_contracts()
+            .expect("untampered verified result")
+        else {
+            panic!("verified contract facts should be returned");
+        };
+
+        assert_eq!(artifact, &result.module);
+        assert_eq!(Some(contracts), result.contract_facts.as_ref());
+    }
+
+    #[test]
+    fn trusted_artifact_accessor_should_reject_mutated_artifact() {
+        let mut result = verified_result();
+        result.artifact.as_mut().expect("artifact").functions[0]
+            .name
+            .push_str("_tampered");
+
+        assert!(result.verified_artifact_and_contracts().is_none());
+    }
+
+    #[test]
+    fn trusted_artifact_accessor_should_reject_mutated_module() {
+        let mut result = verified_result();
+        result.module.functions[0].name.push_str("_tampered");
+
+        assert!(result.verified_artifact_and_contracts().is_none());
+    }
+
+    #[test]
+    fn trusted_artifact_accessor_should_reject_matching_but_unverified_public_modules() {
+        let mut result = verified_result();
+        result.module.functions[0].name.push_str("_tampered");
+        result.artifact = Some(result.module.clone());
+
+        assert!(result.verified_artifact_and_contracts().is_none());
+    }
+
+    #[test]
+    fn trusted_artifact_accessor_should_reject_mutated_contract_facts() {
+        let mut result = verified_result();
+        result
+            .contract_facts
+            .as_mut()
+            .expect("contracts")
+            .facts_mut()
+            .get_mut(FactId::from_index(0))
+            .expect("fact")
+            .generation = 1;
+
+        assert!(result.verified_artifact_and_contracts().is_none());
+    }
+
+    #[test]
+    fn trusted_artifact_accessor_should_reject_mutated_proofs() {
+        let mut result = verified_result();
+        result
+            .proofs
+            .get_mut(ProofId::from_index(0))
+            .expect("proof")
+            .generation = 1;
+
+        assert!(result.verified_artifact_and_contracts().is_none());
+    }
+
+    #[test]
+    fn trusted_artifact_accessor_should_reject_result_with_errors() {
+        let mut result = verified_result();
+        result.errors.push("synthetic error".to_string());
+
+        assert!(result.verified_artifact_and_contracts().is_none());
+    }
+
+    #[test]
     fn incremental_module_validation_should_preserve_cross_function_identity_checks() {
         let result = verified_result();
         let previous = result.module.clone();
@@ -2847,5 +2969,43 @@ mod tests {
             no_op_native_frontiers(&module, Some(&analyses)),
             "reusing a matching pre-frontier loop analysis must preserve discovery output"
         );
+    }
+
+    #[test]
+    fn simd128_profile_should_enter_only_the_loop_vector_frontier() {
+        let checked = check(&SourceFile::new(
+            "wasm-simd-frontier.ck",
+            "export fn map(n: u32) -> u32 { let i: u32 = 0; let total: u32 = 0; while i < n { total = total + i; i = i + 1; } return total; }",
+        ));
+        assert!(checked.diagnostics.is_empty());
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let module = build_kir_module_with_profile(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+            KirTargetProfile::webassembly_with_features(KirWasmFeatures::Simd128),
+        )
+        .expect("valid Wasm SIMD128 KIR");
+
+        assert!(
+            no_op_native_frontiers(&module, None).is_none(),
+            "an enabled Wasm SIMD128 profile must enter Loop SIMD discovery"
+        );
+        assert!(
+            module.config.consumer == KirConsumer::WebAssembly,
+            "the fixture should use the Wasm-only Loop SIMD pipeline"
+        );
+        let result = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, None);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.stats.vectorized_loops, 0);
+        assert_eq!(result.stats.full_unrolled_loops, 0);
+        assert_eq!(result.stats.partial_unrolled_loops_factor_2, 0);
+        assert_eq!(result.stats.partial_unrolled_loops_factor_4, 0);
+        assert_eq!(result.stats.slp_packs, 0);
+        assert_eq!(result.stats.staged_native_slp_candidates, 0);
     }
 }

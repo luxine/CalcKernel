@@ -57,11 +57,20 @@ pre-state 不变。multiversion planning 让 baseline 与全部 enhanced variant
 开始，分别验证，并禁止 cross-variant LTO。
 
 `src/backend/` 只消费 verified KIR。C/Native 用显式 guard/status flow 支持四种
-overflow/bounds 组合，WASM 仅支持 unchecked。0.14 的 C 与 WebAssembly profile 明确禁用
-Vector KIR，因此二者继续消费 verified scalar KIR，同时保留有收益的 scalar specialization
-与 cleanup。C 可输出 portable restrict/alignment hint；Native 结构化 lowering 已检查的
+overflow/bounds 组合，WASM 仅支持 unchecked。C 与 WebAssembly `baseline` 禁用
+Vector KIR；WebAssembly `simd128` 可 lowering 经过独立验证的有限 Loop SIMD 操作集合。
+这些目标仍保留有收益的 scalar specialization 与 cleanup。C 可输出 portable restrict/alignment hint；Native 结构化 lowering 已检查的
 Vector KIR，并在 bridge 前运行 fact audit，再把合法 scalar fact 映射到 LLVM
 attribute/metadata，验证 IR，最后由 host TargetMachine 输出 object。
+
+`src/backend/wasm/` 从 verified KIR 借用一个 backend 私有的 typed view，保留源码值类型、
+块与边的身份、边参数、memory/effect 顺序及 target profile，同时复用现有 scalar 和 slice
+指令发射器。对受支持的 Vector KIR，使用真正的 `v128` local，按 KIR 顺序发射 SIMD load、
+逐 lane 运算和 store；标量 ABI 值与指令沿用原表示。O3 使用封闭的控制流计划，把可约的 diamond 与嵌套自然循环（含 break、
+continue 和提前返回）转换成 WebAssembly 的 `block`、`loop`、`if`。Planner 在发射前
+验证全部分支作用域；不支持或不可约的 CFG 仍走保留向量指令的整函数 deterministic dispatcher，已有的
+紧凑 canonical-while 路径也保留。该 lowering 不产生新的安全事实或证明权限。WAT 与
+WASM 选择同一控制流计划；二进制输出仍解析 WAT 并移除 name section。
 
 `src/backend/llvm/`、`native/bridge/` 负责 Rust/C++ typed ownership；
 `native/runtime/` 负责 entry、checked/sanitizer diagnostic 和 print effect；LLD/ORC 均进程内

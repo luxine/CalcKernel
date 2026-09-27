@@ -8,6 +8,16 @@ use super::support::fixtures;
 use super::support::oracle::{configured_typescript_root, repo_root};
 
 #[test]
+fn local_examples_should_have_registry_entries_without_typescript_oracle() {
+    let failures = audit_local_example_registry().expect("audit local CK example registry");
+    assert!(
+        failures.is_empty(),
+        "local CK example registry audit failed:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn typescript_oracle_fixtures_should_be_covered_by_rust_backend_tests() {
     let Some(ts_root) = configured_typescript_root() else {
         return;
@@ -106,26 +116,7 @@ fn audit_typescript_oracle_fixture_coverage(
         }
     }
 
-    let expected_local = fixtures::ORACLE_EXAMPLES
-        .iter()
-        .map(|fixture| fixture.local.to_owned())
-        .chain(
-            fixtures::LOCAL_ONLY_EXAMPLES
-                .iter()
-                .map(|path| (*path).to_owned()),
-        )
-        .collect::<BTreeSet<_>>();
-    let discovered_local = list_ck_files(repo_root(), &repo_root().join("examples"))?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    for missing in expected_local.difference(&discovered_local) {
-        failures.push(format!("registered local example is missing: {missing}"));
-    }
-    for unregistered in discovered_local.difference(&expected_local) {
-        failures.push(format!(
-            "local example has no registry entry: {unregistered}"
-        ));
-    }
+    failures.extend(audit_local_example_registry()?);
 
     for (label, path) in backend_coverage {
         let absolute = repo_root().join(path);
@@ -147,6 +138,32 @@ fn audit_typescript_oracle_fixture_coverage(
         generated_output_fixtures: fixtures,
         failures,
     })
+}
+
+fn audit_local_example_registry() -> Result<Vec<String>, String> {
+    let expected_local = fixtures::ORACLE_EXAMPLES
+        .iter()
+        .map(|fixture| fixture.local.to_owned())
+        .chain(
+            fixtures::LOCAL_ONLY_EXAMPLES
+                .iter()
+                .map(|path| (*path).to_owned()),
+        )
+        .collect::<BTreeSet<_>>();
+    let discovered_local = list_ck_files(repo_root(), &repo_root().join("examples"))?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut failures = Vec::new();
+    for missing in expected_local.difference(&discovered_local) {
+        failures.push(format!("registered local example is missing: {missing}"));
+    }
+    for unregistered in discovered_local.difference(&expected_local) {
+        failures.push(format!(
+            "local example has no registry entry: {unregistered}"
+        ));
+    }
+
+    Ok(failures)
 }
 
 fn list_ck_files(base: &Path, dir: &Path) -> Result<Vec<String>, String> {

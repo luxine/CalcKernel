@@ -2,6 +2,7 @@ mod args;
 #[cfg(feature = "native-toolchain")]
 mod cache;
 mod commands;
+mod lsp;
 mod output;
 mod pgo;
 #[cfg(feature = "native-toolchain")]
@@ -58,6 +59,14 @@ pub(crate) fn run(args: Vec<String>) -> i32 {
                 1
             }
         };
+    }
+
+    if command == "lsp" {
+        if args.len() != 1 {
+            eprintln!("Usage: ckc lsp");
+            return 2;
+        }
+        return lsp::run();
     }
 
     let Some(result) = dispatch(command, &args[1..]) else {

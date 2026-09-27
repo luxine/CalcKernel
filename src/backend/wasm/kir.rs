@@ -2,19 +2,131 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::*;
 
-use super::{EmitWasmOptions, emit_wasm_module_with_options, emit_wat_module_with_options};
+use super::{
+    EmitWasmOptions, emit_wat_module_with_options,
+    features::{append_target_metadata, target_metadata},
+};
 
 pub fn emit_wat_kir_module(module: &KirModule, options: EmitWasmOptions) -> Result<String, String> {
+    emit_wat_kir_module_with_contracts(module, None, options)
+}
+
+/// Emits WAT from an optimizer result only when its KIR and evidence are still verified.
+pub fn emit_wat_kir_result(
+    result: &KirPassManagerResult,
+    options: EmitWasmOptions,
+) -> Result<String, String> {
+    let (module, contracts) = result.verified_artifact_and_contracts().ok_or_else(|| {
+        "WebAssembly emission requires an unchanged verified KIR result".to_string()
+    })?;
+    emit_wat_kir_module_with_contracts(module, contracts, options)
+}
+
+fn emit_wat_kir_module_with_contracts(
+    module: &KirModule,
+    contracts: Option<&ContractFactSet>,
+    options: EmitWasmOptions,
+) -> Result<String, String> {
+    let features = validate_wasm_kir_module(module)?;
+    let wat = emit_wat_kir_module_validated(module, contracts, options, features)?;
+    let metadata = target_metadata(features, &module.profile.digest_hex());
+    super::binary::validate_profile_wat(&wat, features, metadata.as_bytes())?;
+    Ok(wat)
+}
+
+fn emit_wat_kir_module_validated(
+    module: &KirModule,
+    contracts: Option<&ContractFactSet>,
+    options: EmitWasmOptions,
+    features: KirWasmFeatures,
+) -> Result<String, String> {
     let mir = adapt_unchecked_kir(module)?;
-    Ok(emit_wat_module_with_options(&mir, options))
+    emit_wat_for_mir(module, &mir, contracts, options, features)
+}
+
+fn emit_wat_for_mir(
+    module: &KirModule,
+    mir: &MirModule,
+    contracts: Option<&ContractFactSet>,
+    options: EmitWasmOptions,
+    features: KirWasmFeatures,
+) -> Result<String, String> {
+    let has_vector = module_has_vector_instructions(module);
+    let has_version_predicate = module_has_version_predicates(module);
+    let needs_typed_lowering = has_vector || has_version_predicate;
+    let wat = if needs_typed_lowering {
+        let lowered = super::lower::lower_wasm_module(module, contracts, mir)?;
+        super::emit::emit_wat_module_with_lowering(mir, &lowered, options)?
+    } else if options.opt_level >= 3
+        && let Ok(lowered) = super::lower::lower_wasm_module(module, contracts, mir)
+    {
+        super::emit::emit_wat_module_with_lowering(mir, &lowered, options)?
+    } else {
+        emit_wat_module_with_options(mir, options)
+    };
+    append_target_metadata(wat, features, &module.profile.digest_hex())
 }
 
 pub fn emit_wasm_kir_module(
     module: &KirModule,
     options: EmitWasmOptions,
 ) -> Result<Vec<u8>, String> {
+    emit_wasm_kir_module_with_contracts(module, None, options)
+}
+
+/// Emits a Wasm binary from an optimizer result only when its KIR and evidence are still verified.
+pub fn emit_wasm_kir_result(
+    result: &KirPassManagerResult,
+    options: EmitWasmOptions,
+) -> Result<Vec<u8>, String> {
+    let (module, contracts) = result.verified_artifact_and_contracts().ok_or_else(|| {
+        "WebAssembly emission requires an unchanged verified KIR result".to_string()
+    })?;
+    emit_wasm_kir_module_with_contracts(module, contracts, options)
+}
+
+fn emit_wasm_kir_module_with_contracts(
+    module: &KirModule,
+    contracts: Option<&ContractFactSet>,
+    options: EmitWasmOptions,
+) -> Result<Vec<u8>, String> {
+    let features = validate_wasm_kir_module(module)?;
     let mir = adapt_unchecked_kir(module)?;
-    emit_wasm_module_with_options(&mir, options)
+    let artifact = prepare_non_executable_artifact(&mir, MirArtifactConsumer::WebAssembly)
+        .map_err(|error| error.to_string())?;
+    let wat = emit_wat_for_mir(module, &artifact, contracts, options, features)?;
+    let metadata = target_metadata(features, &module.profile.digest_hex());
+    super::binary::emit_wasm_module_from_profile_wat(&wat, features, metadata.as_bytes())
+}
+
+fn validate_wasm_kir_module(module: &KirModule) -> Result<KirWasmFeatures, String> {
+    if module.profile.wasm_features().is_none() {
+        reject_vector_values(module)?;
+        reject_vector_instructions(module)?;
+    }
+    if module.config.overflow_mode != KirOverflowMode::Unchecked
+        || module.config.bounds_mode != KirBoundsMode::Unchecked
+    {
+        return Err("WebAssembly KIR backend accepts only unchecked KIR".to_string());
+    }
+    if module.config.consumer != KirConsumer::WebAssembly
+        || module.profile.consumer() != KirConsumer::WebAssembly
+    {
+        return Err("WebAssembly KIR backend requires a WebAssembly consumer and profile".into());
+    }
+    if module.config.sanitizer_mode != KirSanitizerMode::Disabled {
+        return Err("WebAssembly KIR backend does not support KIR sanitizers".to_string());
+    }
+    let features = module.profile.wasm_features().ok_or_else(|| {
+        "WebAssembly KIR backend requires a WebAssembly target profile".to_string()
+    })?;
+    module.profile.validate()?;
+    validate_vector_kir(module, features)?;
+    let validation = validate_kir_module(module);
+    if let Some(error) = validation.errors.first() {
+        return Err(error.message.clone());
+    }
+    Ok(features)
 }
 
 fn adapt_unchecked_kir(module: &KirModule) -> Result<MirModule, String> {
@@ -23,7 +135,6 @@ fn adapt_unchecked_kir(module: &KirModule) -> Result<MirModule, String> {
     {
         return Err("WebAssembly KIR backend accepts only unchecked KIR".to_string());
     }
-    reject_vector_values(module)?;
     Ok(MirModule {
         entry: module.entry.clone(),
         structs: module.structs.clone(),
@@ -56,20 +167,68 @@ fn adapt_function(function: &KirFunction) -> Result<MirFunction, String> {
         .collect::<BTreeSet<_>>();
     let locals = local_values
         .iter()
-        .map(|value| MirLocal {
-            name: local_name(*value),
-            type_node: types[value].clone(),
+        .filter_map(|value| {
+            types.get(value).map(|type_node| MirLocal {
+                name: local_name(*value),
+                type_node: type_node.clone(),
+            })
         })
         .collect();
+    let incoming_edges = incoming_edge_counts(function);
+    let entry_block = function.blocks.first().map(|block| block.id);
+    let force_synthetic_edges = function.blocks.len() == 1
+        && !matches!(&function.blocks[0].terminator, KirTerminator::Return { .. });
+    let adapt_context = KirAdaptContext {
+        function,
+        incoming_edges: &incoming_edges,
+        force_synthetic_edges,
+        types: &types,
+        params: &function_params,
+    };
+    let mut branch_prefixes = BTreeMap::<BlockId, Vec<MirInstruction>>::new();
+    for source in &function.blocks {
+        let KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &source.terminator
+        else {
+            continue;
+        };
+        for (arm, edge) in [(0, then_edge), (1, else_edge)] {
+            let target = function
+                .blocks
+                .iter()
+                .find(|block| block.id == edge.target)
+                .expect("validated target");
+            if !force_synthetic_edges
+                && !target.params.is_empty()
+                && Some(edge.target) != entry_block
+                && incoming_edges.get(&edge.target) == Some(&1)
+            {
+                let label = edge_label(source.id, edge.target, arm);
+                branch_prefixes
+                    .entry(edge.target)
+                    .or_default()
+                    .extend(edge_copy_instructions(
+                        &label,
+                        target,
+                        edge,
+                        &types,
+                        &function_params,
+                    ));
+            }
+        }
+    }
     let mut blocks = Vec::new();
     let mut edge_blocks = Vec::new();
     for block in &function.blocks {
-        let mut instructions = Vec::new();
+        let mut instructions = branch_prefixes.get(&block.id).cloned().unwrap_or_default();
         for instruction in &block.instructions {
             instructions.extend(adapt_instruction(instruction, &types, &function_params)?);
         }
         let terminator =
-            adapt_terminator(function, block, &types, &function_params, &mut edge_blocks);
+            adapt_terminator(&adapt_context, block, &mut instructions, &mut edge_blocks);
         blocks.push(MirBlock {
             label: block_label(block.id),
             instructions,
@@ -94,7 +253,7 @@ fn adapt_function(function: &KirFunction) -> Result<MirFunction, String> {
     })
 }
 
-fn adapt_instruction(
+pub(super) fn adapt_instruction(
     instruction: &KirInstruction,
     types: &BTreeMap<ValueId, MirType>,
     params: &BTreeMap<ValueId, (String, MirType)>,
@@ -191,9 +350,7 @@ fn adapt_instruction(
         KirInstructionKind::RuntimeCall { .. } => {
             return Err("WebAssembly KIR cannot lower native runtime calls".to_string());
         }
-        KirInstructionKind::VersionPredicate { .. } => {
-            return Err("WebAssembly KIR cannot lower Native version predicates".to_string());
-        }
+        KirInstructionKind::VersionPredicate { .. } => Vec::new(),
         KirInstructionKind::VectorSplat { .. }
         | KirInstructionKind::VectorLoad { .. }
         | KirInstructionKind::VectorStore { .. }
@@ -202,71 +359,133 @@ fn adapt_instruction(
         | KirInstructionKind::VectorCompare { .. }
         | KirInstructionKind::VectorSelect { .. }
         | KirInstructionKind::VectorCast { .. }
-        | KirInstructionKind::VectorInsert { .. }
-        | KirInstructionKind::VectorExtract { .. }
-        | KirInstructionKind::VectorReduce { .. } => {
-            unreachable!("vector KIR must be rejected before WebAssembly adaptation")
+        | KirInstructionKind::VectorReduce { .. } => Vec::new(),
+        KirInstructionKind::VectorInsert { .. } | KirInstructionKind::VectorExtract { .. } => {
+            return Err("WebAssembly KIR backend cannot lower vector instructions".to_string());
         }
     })
 }
 
+struct KirAdaptContext<'a> {
+    function: &'a KirFunction,
+    incoming_edges: &'a BTreeMap<BlockId, usize>,
+    force_synthetic_edges: bool,
+    types: &'a BTreeMap<ValueId, MirType>,
+    params: &'a BTreeMap<ValueId, (String, MirType)>,
+}
+
 fn adapt_terminator(
-    function: &KirFunction,
+    context: &KirAdaptContext<'_>,
     block: &KirBlock,
-    types: &BTreeMap<ValueId, MirType>,
-    params: &BTreeMap<ValueId, (String, MirType)>,
+    instructions: &mut Vec<MirInstruction>,
     edge_blocks: &mut Vec<MirBlock>,
 ) -> MirTerminator {
     match &block.terminator {
         KirTerminator::Return { value, .. } => MirTerminator::Return {
-            value: value.map(|value| mir_value(value, types, params)),
+            value: value.map(|value| mir_value(value, context.types, context.params)),
         },
-        KirTerminator::Jump { edge } => MirTerminator::Jump {
-            label: append_edge_block(function, block.id, 0, edge, types, params, edge_blocks),
-        },
+        KirTerminator::Jump { edge } => {
+            let target = context
+                .function
+                .blocks
+                .iter()
+                .find(|candidate| candidate.id == edge.target)
+                .expect("validated target");
+            if context.force_synthetic_edges {
+                let label = edge_label(block.id, edge.target, 0);
+                MirTerminator::Jump {
+                    label: append_edge_block(
+                        label,
+                        target,
+                        edge,
+                        context.types,
+                        context.params,
+                        edge_blocks,
+                    ),
+                }
+            } else {
+                if !target.params.is_empty() {
+                    let label = edge_label(block.id, edge.target, 0);
+                    instructions.extend(edge_copy_instructions(
+                        &label,
+                        target,
+                        edge,
+                        context.types,
+                        context.params,
+                    ));
+                }
+                MirTerminator::Jump {
+                    label: block_label(edge.target),
+                }
+            }
+        }
         KirTerminator::Branch {
             condition,
             then_edge,
             else_edge,
         } => MirTerminator::Branch {
-            condition: mir_value(*condition, types, params),
-            then_label: append_edge_block(
-                function,
-                block.id,
-                0,
-                then_edge,
-                types,
-                params,
-                edge_blocks,
-            ),
-            else_label: append_edge_block(
-                function,
-                block.id,
-                1,
-                else_edge,
-                types,
-                params,
-                edge_blocks,
-            ),
+            condition: mir_value(*condition, context.types, context.params),
+            then_label: adapt_branch_edge(context, block.id, 0, then_edge, edge_blocks),
+            else_label: adapt_branch_edge(context, block.id, 1, else_edge, edge_blocks),
         },
     }
 }
 
-fn append_edge_block(
-    function: &KirFunction,
+fn adapt_branch_edge(
+    context: &KirAdaptContext<'_>,
     source: BlockId,
     arm: u32,
+    edge: &KirEdge,
+    blocks: &mut Vec<MirBlock>,
+) -> String {
+    let target = context
+        .function
+        .blocks
+        .iter()
+        .find(|block| block.id == edge.target)
+        .expect("validated target");
+    if context.force_synthetic_edges {
+        let label = edge_label(source, edge.target, arm);
+        return append_edge_block(label, target, edge, context.types, context.params, blocks);
+    }
+    if target.params.is_empty() {
+        return block_label(edge.target);
+    }
+    if Some(edge.target) != context.function.blocks.first().map(|block| block.id)
+        && context.incoming_edges.get(&edge.target) == Some(&1)
+    {
+        return block_label(edge.target);
+    }
+    let label = edge_label(source, edge.target, arm);
+    append_edge_block(label, target, edge, context.types, context.params, blocks)
+}
+
+fn append_edge_block(
+    label: String,
+    target: &KirBlock,
     edge: &KirEdge,
     types: &BTreeMap<ValueId, MirType>,
     params: &BTreeMap<ValueId, (String, MirType)>,
     blocks: &mut Vec<MirBlock>,
 ) -> String {
-    let label = format!("edge_{}_{}_{}", source.index(), edge.target.index(), arm);
-    let target = function
-        .blocks
-        .iter()
-        .find(|block| block.id == edge.target)
-        .expect("validated target");
+    let instructions = edge_copy_instructions(&label, target, edge, types, params);
+    blocks.push(MirBlock {
+        label: label.clone(),
+        instructions,
+        terminator: MirTerminator::Jump {
+            label: block_label(edge.target),
+        },
+    });
+    label
+}
+
+pub(super) fn edge_copy_instructions(
+    label: &str,
+    target: &KirBlock,
+    edge: &KirEdge,
+    types: &BTreeMap<ValueId, MirType>,
+    params: &BTreeMap<ValueId, (String, MirType)>,
+) -> Vec<MirInstruction> {
     let mut instructions = Vec::new();
     for (index, (target, argument)) in target.params.iter().zip(&edge.args).enumerate() {
         instructions.push(MirInstruction::Move {
@@ -286,14 +505,30 @@ fn append_edge_block(
             },
         });
     }
-    blocks.push(MirBlock {
-        label: label.clone(),
-        instructions,
-        terminator: MirTerminator::Jump {
-            label: block_label(edge.target),
-        },
-    });
-    label
+    instructions
+}
+
+fn incoming_edge_counts(function: &KirFunction) -> BTreeMap<BlockId, usize> {
+    let mut incoming = BTreeMap::new();
+    for block in &function.blocks {
+        match &block.terminator {
+            KirTerminator::Return { .. } => {}
+            KirTerminator::Jump { edge } => *incoming.entry(edge.target).or_insert(0) += 1,
+            KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } => {
+                *incoming.entry(then_edge.target).or_insert(0) += 1;
+                *incoming.entry(else_edge.target).or_insert(0) += 1;
+            }
+        }
+    }
+    incoming
+}
+
+pub(super) fn edge_label(source: BlockId, target: BlockId, arm: u32) -> String {
+    format!("edge_{}_{}_{}", source.index(), target.index(), arm)
 }
 
 fn adapt_place(
@@ -353,7 +588,7 @@ fn adapt_place(
     }
 }
 
-fn mir_value(
+pub(super) fn mir_value(
     value: ValueId,
     types: &BTreeMap<ValueId, MirType>,
     params: &BTreeMap<ValueId, (String, MirType)>,
@@ -370,7 +605,7 @@ fn mir_value(
     )
 }
 
-fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
+pub(super) fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
     function
         .params
         .iter()
@@ -379,24 +614,525 @@ fn value_types(function: &KirFunction) -> BTreeMap<ValueId, MirType> {
             block
                 .params
                 .iter()
-                .map(|param| (param.value, scalar_type(&param.type_node).clone()))
+                .filter_map(|param| {
+                    param
+                        .type_node
+                        .as_scalar()
+                        .map(|type_node| (param.value, type_node.clone()))
+                })
                 .chain(block.instructions.iter().flat_map(|instruction| {
-                    instruction
-                        .results
-                        .iter()
-                        .map(|result| (result.value, scalar_type(&result.type_node).clone()))
+                    instruction.results.iter().filter_map(|result| {
+                        result
+                            .type_node
+                            .as_scalar()
+                            .map(|type_node| (result.value, type_node.clone()))
+                    })
                 }))
         }))
         .collect()
 }
 
-fn scalar_type(type_node: &KirValueType) -> &MirType {
+pub(super) fn value_kir_types(function: &KirFunction) -> BTreeMap<ValueId, KirValueType> {
+    function
+        .params
+        .iter()
+        .map(|param| (param.value, KirValueType::Scalar(param.type_node.clone())))
+        .chain(function.blocks.iter().flat_map(|block| {
+            block
+                .params
+                .iter()
+                .map(|param| (param.value, param.type_node.clone()))
+                .chain(block.instructions.iter().flat_map(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .map(|result| (result.value, result.type_node.clone()))
+                }))
+        }))
+        .collect()
+}
+
+pub(super) fn scalar_type(type_node: &KirValueType) -> &MirType {
     type_node
         .as_scalar()
         .expect("vector KIR must be rejected before WebAssembly adaptation")
 }
 
-fn reject_vector_values(module: &KirModule) -> Result<(), String> {
+fn supported_vector_shape(lane: KirLaneType, lanes: u16) -> bool {
+    matches!(
+        (lane, lanes),
+        (KirLaneType::F64, 2) | (KirLaneType::I32 | KirLaneType::U32, 4)
+    )
+}
+
+fn supported_narrow_load_shape(lane: KirLaneType, lanes: u16) -> bool {
+    matches!((lane, lanes), (KirLaneType::I32 | KirLaneType::U32, 2))
+}
+
+fn validate_vector_access(access: &KirVectorMemoryAccess, store: bool) -> Result<(), String> {
+    let (footprint, alignment) = match (access.lane, access.lanes, store) {
+        (KirLaneType::F64, 2, _) => (16, 8),
+        (KirLaneType::I32 | KirLaneType::U32, 4, _) => (16, 4),
+        (KirLaneType::I32 | KirLaneType::U32, 2, false) => (8, 4),
+        _ => return Err("WebAssembly SIMD128 cannot lower this vector memory shape".into()),
+    };
+    if access.byte_footprint != footprint
+        || access.known_alignment != alignment
+        || access.required_alignment != alignment
+    {
+        return Err(
+            "WebAssembly SIMD128 vector access footprint or natural lane alignment is invalid"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn validate_vector_kir(
+    module: &KirModule,
+    features: KirWasmFeatures,
+) -> Result<(), String> {
+    if features == KirWasmFeatures::Baseline {
+        reject_vector_values(module)?;
+        reject_vector_instructions(module)?;
+        if module_has_version_predicates(module) {
+            return Err("WebAssembly baseline cannot lower runtime version predicates".into());
+        }
+        return Ok(());
+    }
+
+    for function in &module.functions {
+        let types = value_kir_types(function);
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            if let KirInstructionKind::VersionPredicate { predicate } = &instruction.kind {
+                validate_wasm_version_predicate(
+                    function,
+                    instruction,
+                    predicate,
+                    &types,
+                    module.profile.layout(),
+                )?;
+            }
+        }
+        let has_vector = function.blocks.iter().any(|block| {
+            block
+                .params
+                .iter()
+                .any(|param| param.type_node.as_scalar().is_none())
+                || block.instructions.iter().any(|instruction| {
+                    is_vector_instruction(&instruction.kind)
+                        || instruction
+                            .results
+                            .iter()
+                            .any(|result| result.type_node.as_scalar().is_none())
+                })
+        });
+        if !has_vector {
+            continue;
+        }
+        for block in &function.blocks {
+            if block
+                .params
+                .iter()
+                .any(|param| param.type_node.as_scalar().is_none())
+            {
+                return Err("WebAssembly SIMD128 cannot lower vector block parameters".into());
+            }
+            let edges = match &block.terminator {
+                KirTerminator::Return { .. } => [None, None],
+                KirTerminator::Jump { edge } => [Some(edge), None],
+                KirTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                } => [Some(then_edge), Some(else_edge)],
+            };
+            if edges
+                .into_iter()
+                .flatten()
+                .flat_map(|edge| &edge.args)
+                .any(|value| {
+                    types
+                        .get(value)
+                        .is_some_and(|type_node| type_node.as_scalar().is_none())
+                })
+            {
+                return Err("WebAssembly SIMD128 cannot lower vector edge arguments".into());
+            }
+            for instruction in &block.instructions {
+                for result in &instruction.results {
+                    match (&instruction.kind, &result.type_node) {
+                        (_, KirValueType::Scalar(_)) => {}
+                        (_, KirValueType::FixedVector { lane, lanes })
+                            if supported_vector_shape(*lane, *lanes) => {}
+                        (
+                            KirInstructionKind::VectorLoad { .. }
+                            | KirInstructionKind::VectorSplat { .. },
+                            KirValueType::FixedVector { lane, lanes },
+                        ) if supported_narrow_load_shape(*lane, *lanes) => {}
+                        (
+                            KirInstructionKind::VectorCompare { .. },
+                            KirValueType::Mask { lanes: 2 | 4 },
+                        ) => {}
+                        (_, KirValueType::FixedVector { .. } | KirValueType::Mask { .. }) => {
+                            return Err("WebAssembly SIMD128 cannot lower this vector value".into());
+                        }
+                    }
+                }
+                let supported = match &instruction.kind {
+                    KirInstructionKind::VectorSplat { .. } => true,
+                    KirInstructionKind::VectorLoad { access, .. } => {
+                        let [result] = instruction.results.as_slice() else {
+                            return Err(
+                                "WebAssembly SIMD128 vector load result is malformed".into()
+                            );
+                        };
+                        let result_matches = result.type_node
+                            == KirValueType::FixedVector {
+                                lane: access.lane,
+                                lanes: access.lanes,
+                            };
+                        if result_matches {
+                            validate_vector_access(access, false)?;
+                        }
+                        result_matches
+                    }
+                    KirInstructionKind::VectorStore { access, value, .. } => {
+                        let value_matches = types.get(value)
+                            == Some(&KirValueType::FixedVector {
+                                lane: access.lane,
+                                lanes: access.lanes,
+                            });
+                        let supported = instruction.results.is_empty() && value_matches;
+                        if supported {
+                            validate_vector_access(access, true)?;
+                        }
+                        supported
+                    }
+                    KirInstructionKind::VectorBinary {
+                        op,
+                        semantics,
+                        no_failure_proof,
+                        ..
+                    } => {
+                        let Some(KirResult {
+                            type_node: KirValueType::FixedVector { lane, lanes },
+                            ..
+                        }) = instruction.results.first()
+                        else {
+                            return Err(
+                                "WebAssembly SIMD128 vector binary result is missing".into()
+                            );
+                        };
+                        supported_vector_shape(*lane, *lanes)
+                            && no_failure_proof.is_none()
+                            && match lane {
+                                KirLaneType::F64 => {
+                                    *semantics == KirArithmeticSemantics::StrictFloat
+                                        && matches!(
+                                            *op,
+                                            KirVectorBinaryOp::Add
+                                                | KirVectorBinaryOp::Subtract
+                                                | KirVectorBinaryOp::Multiply
+                                                | KirVectorBinaryOp::Divide
+                                        )
+                                }
+                                KirLaneType::I32 | KirLaneType::U32 => {
+                                    *semantics == KirArithmeticSemantics::Modular
+                                        && matches!(
+                                            *op,
+                                            KirVectorBinaryOp::Add
+                                                | KirVectorBinaryOp::Subtract
+                                                | KirVectorBinaryOp::Multiply
+                                        )
+                                }
+                                KirLaneType::I64 | KirLaneType::U64 => false,
+                            }
+                    }
+                    KirInstructionKind::VectorUnary {
+                        op,
+                        semantics,
+                        no_failure_proof,
+                        ..
+                    } => {
+                        let Some(KirResult {
+                            type_node: KirValueType::FixedVector { lane, lanes },
+                            ..
+                        }) = instruction.results.first()
+                        else {
+                            return Err("WebAssembly SIMD128 vector unary result is missing".into());
+                        };
+                        supported_vector_shape(*lane, *lanes)
+                            && *op == KirVectorUnaryOp::Negate
+                            && no_failure_proof.is_none()
+                            && match lane {
+                                KirLaneType::F64 => {
+                                    *semantics == KirArithmeticSemantics::StrictFloat
+                                }
+                                KirLaneType::I32 | KirLaneType::U32 => {
+                                    *semantics == KirArithmeticSemantics::Modular
+                                }
+                                KirLaneType::I64 | KirLaneType::U64 => false,
+                            }
+                    }
+                    KirInstructionKind::VectorCompare { left, right, .. } => {
+                        let [result] = instruction.results.as_slice() else {
+                            return Err(
+                                "WebAssembly SIMD128 vector compare result is malformed".into()
+                            );
+                        };
+                        let KirValueType::Mask { lanes } = &result.type_node else {
+                            return Err(
+                                "WebAssembly SIMD128 vector compare must produce a mask".into()
+                            );
+                        };
+                        match (types.get(left), types.get(right)) {
+                            (
+                                Some(KirValueType::FixedVector {
+                                    lane,
+                                    lanes: left_lanes,
+                                }),
+                                Some(right_type),
+                            ) => {
+                                supported_vector_shape(*lane, *left_lanes)
+                                    && left_lanes == lanes
+                                    && right_type
+                                        == &KirValueType::FixedVector {
+                                            lane: *lane,
+                                            lanes: *left_lanes,
+                                        }
+                            }
+                            _ => false,
+                        }
+                    }
+                    KirInstructionKind::VectorSelect {
+                        mask,
+                        when_true,
+                        when_false,
+                        ..
+                    } => {
+                        let [result] = instruction.results.as_slice() else {
+                            return Err(
+                                "WebAssembly SIMD128 vector select result is malformed".into()
+                            );
+                        };
+                        let KirValueType::FixedVector { lane, lanes } = &result.type_node else {
+                            return Err(
+                                "WebAssembly SIMD128 vector select result is malformed".into()
+                            );
+                        };
+                        let expected = KirValueType::FixedVector {
+                            lane: *lane,
+                            lanes: *lanes,
+                        };
+                        supported_vector_shape(*lane, *lanes)
+                            && types.get(mask) == Some(&KirValueType::Mask { lanes: *lanes })
+                            && types.get(when_true) == Some(&expected)
+                            && types.get(when_false) == Some(&expected)
+                    }
+                    KirInstructionKind::VectorCast { op, value, .. } => {
+                        let [result] = instruction.results.as_slice() else {
+                            return Err(
+                                "WebAssembly SIMD128 vector cast result is malformed".into()
+                            );
+                        };
+                        let source_lane = match op {
+                            KirVectorCastOp::I32ToF64 => KirLaneType::I32,
+                            KirVectorCastOp::U32ToF64 => KirLaneType::U32,
+                        };
+                        result.type_node
+                            == KirValueType::FixedVector {
+                                lane: KirLaneType::F64,
+                                lanes: 2,
+                            }
+                            && types.get(value)
+                                == Some(&KirValueType::FixedVector {
+                                    lane: source_lane,
+                                    lanes: 2,
+                                })
+                    }
+                    KirInstructionKind::VectorReduce {
+                        op,
+                        vector,
+                        semantics,
+                        ..
+                    } => {
+                        let [result] = instruction.results.as_slice() else {
+                            return Err(
+                                "WebAssembly SIMD128 vector reduction result is malformed".into()
+                            );
+                        };
+                        let expected_result = match (op, types.get(vector)) {
+                            (
+                                KirVectorReductionOp::ModularAdd
+                                | KirVectorReductionOp::ModularMultiply,
+                                Some(KirValueType::FixedVector {
+                                    lane: KirLaneType::I32,
+                                    lanes: 4,
+                                }),
+                            ) => Some(MirType::Primitive(MirPrimitiveTypeName::I32)),
+                            (
+                                KirVectorReductionOp::ModularAdd
+                                | KirVectorReductionOp::ModularMultiply,
+                                Some(KirValueType::FixedVector {
+                                    lane: KirLaneType::U32,
+                                    lanes: 4,
+                                }),
+                            ) => Some(MirType::Primitive(MirPrimitiveTypeName::U32)),
+                            _ => None,
+                        };
+                        expected_result.is_some_and(|result_type| {
+                            *semantics == KirArithmeticSemantics::Modular
+                                && result.type_node == KirValueType::Scalar(result_type)
+                        })
+                    }
+                    _ if is_vector_instruction(&instruction.kind) => false,
+                    _ => instruction
+                        .results
+                        .iter()
+                        .all(|result| result.type_node.as_scalar().is_some()),
+                };
+                if !supported {
+                    return Err("WebAssembly SIMD128 cannot lower this vector instruction".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_wasm_version_predicate(
+    function: &KirFunction,
+    instruction: &KirInstruction,
+    predicate: &KirVersionPredicate,
+    types: &BTreeMap<ValueId, KirValueType>,
+    layout: KirProfileLayout,
+) -> Result<(), String> {
+    let bool_type = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::Bool));
+    let u32_type = MirType::Primitive(MirPrimitiveTypeName::U32);
+    let (thresholds, intervals) =
+        predicate
+            .conjuncts
+            .iter()
+            .fold((0, 0), |counts, item| match item {
+                KirVersionPredicateConjunct::TripThreshold { .. } => (counts.0 + 1, counts.1),
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. } => {
+                    (counts.0, counts.1 + 1)
+                }
+            });
+    if predicate.address_bits != 32
+        || !matches!(
+            layout,
+            KirProfileLayout::Known {
+                pointer_width_bits: 32,
+                ..
+            }
+        )
+        || instruction.results.len() != 1
+        || instruction.results[0].type_node != bool_type
+        || instruction.memory.is_some()
+        || instruction.effect.is_some()
+        || predicate.conjuncts.is_empty()
+        || predicate.conjuncts.len() > 4
+        || thresholds > 1
+        || intervals > 3
+    {
+        return Err(format!(
+            "WebAssembly SIMD128 cannot lower this version predicate in {}",
+            function.name
+        ));
+    }
+
+    for conjunct in &predicate.conjuncts {
+        let valid = match conjunct {
+            KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
+                *minimum > 0
+                    && types.get(value).and_then(KirValueType::as_scalar) == Some(&u32_type)
+            }
+            KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+                left,
+                left_count,
+                left_element_bytes,
+                right,
+                right_count,
+                right_element_bytes,
+            } => {
+                let slice_element_bytes = |value: &ValueId| {
+                    types
+                        .get(value)
+                        .and_then(KirValueType::as_scalar)
+                        .and_then(|type_node| match type_node {
+                            MirType::Slice(element) => match element.as_ref() {
+                                MirType::Primitive(
+                                    MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32,
+                                ) => Some(4),
+                                MirType::Primitive(
+                                    MirPrimitiveTypeName::I64
+                                    | MirPrimitiveTypeName::U64
+                                    | MirPrimitiveTypeName::F64,
+                                ) => Some(8),
+                                _ => None,
+                            },
+                            _ => None,
+                        })
+                };
+                left != right
+                    && slice_element_bytes(left) == Some(*left_element_bytes)
+                    && slice_element_bytes(right) == Some(*right_element_bytes)
+                    && types.get(left_count).and_then(KirValueType::as_scalar) == Some(&u32_type)
+                    && types.get(right_count).and_then(KirValueType::as_scalar) == Some(&u32_type)
+            }
+        };
+        if !valid {
+            return Err(format!(
+                "WebAssembly SIMD128 cannot lower an unsupported version-predicate conjunct in {}",
+                function.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_vector_instruction(kind: &KirInstructionKind) -> bool {
+    matches!(
+        kind,
+        KirInstructionKind::VectorSplat { .. }
+            | KirInstructionKind::VectorLoad { .. }
+            | KirInstructionKind::VectorStore { .. }
+            | KirInstructionKind::VectorBinary { .. }
+            | KirInstructionKind::VectorUnary { .. }
+            | KirInstructionKind::VectorCompare { .. }
+            | KirInstructionKind::VectorSelect { .. }
+            | KirInstructionKind::VectorCast { .. }
+            | KirInstructionKind::VectorInsert { .. }
+            | KirInstructionKind::VectorExtract { .. }
+            | KirInstructionKind::VectorReduce { .. }
+    )
+}
+
+fn module_has_vector_instructions(module: &KirModule) -> bool {
+    module
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .any(|instruction| is_vector_instruction(&instruction.kind))
+}
+
+pub(super) fn module_has_version_predicates(module: &KirModule) -> bool {
+    module.functions.iter().any(|function| {
+        function.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    KirInstructionKind::VersionPredicate { .. }
+                )
+            })
+        })
+    })
+}
+
+pub(super) fn reject_vector_values(module: &KirModule) -> Result<(), String> {
     if module
         .functions
         .iter()
@@ -415,10 +1151,17 @@ fn reject_vector_values(module: &KirModule) -> Result<(), String> {
     Ok(())
 }
 
-fn local_name(value: ValueId) -> String {
+fn reject_vector_instructions(module: &KirModule) -> Result<(), String> {
+    if module_has_vector_instructions(module) {
+        return Err("WebAssembly KIR backend cannot lower vector instructions".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn local_name(value: ValueId) -> String {
     format!("v{}", value.index())
 }
 
-fn block_label(block: BlockId) -> String {
+pub(super) fn block_label(block: BlockId) -> String {
     format!("b{}", block.index())
 }

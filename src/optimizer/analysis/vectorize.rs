@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     AffineMemoryAccess, IntegerType, analyze_affine_loop_accesses,
-    analyze_canonical_loops_for_discovery, analyze_loop_legality,
+    analyze_canonical_loops_for_discovery, analyze_loop_legality_for_profile,
 };
 use crate::optimizer::KirVerifiedProgramState;
 
@@ -90,10 +90,13 @@ pub fn discover_vectorization_candidates(
 ) -> VectorizationDiscovery {
     let mut discovery = VectorizationDiscovery::default();
     let module = state.module();
-    if !matches!(
+    let native_consumer = matches!(
         module.config.consumer,
         crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
-    ) {
+    );
+    let wasm_simd128_consumer = module.config.consumer == crate::KirConsumer::WebAssembly
+        && module.profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128);
+    if !native_consumer && !wasm_simd128_consumer {
         return discovery;
     }
     if module.config.sanitizer_mode == crate::KirSanitizerMode::Contracts {
@@ -167,7 +170,11 @@ fn discover_one(
     ) {
         return Err("aarch64-sve-loop-deferred-to-native-loop-vectorizer".to_string());
     }
-    if has_constant_call_bound(state.module(), function, descriptor) {
+    if matches!(
+        state.module().config.consumer,
+        crate::KirConsumer::NativeLibrary | crate::KirConsumer::NativeExecutable
+    ) && has_constant_call_bound(state.module(), function, descriptor)
+    {
         return Err("constant-call-loop-deferred-to-native-loop-vectorizer".to_string());
     }
     let preheader = shape.preheader;
@@ -190,10 +197,11 @@ fn discover_one(
     ) {
         return Err("vector-loop-trip-is-not-countable".to_string());
     }
-    let legality = analyze_loop_legality(
+    let legality = analyze_loop_legality_for_profile(
         function,
         descriptor,
         state.contract_facts().map(crate::ContractFactSet::facts),
+        &state.module().profile,
     )?;
     if !legality.eligible {
         return Err(legality

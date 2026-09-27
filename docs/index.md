@@ -1,11 +1,11 @@
-# CalcKernel 0.14.0 Documentation
+# CalcKernel Documentation
 
 [简体中文](zh-CN/index.md)
 
-These documents describe the current 0.14.0 product contract. Git history,
-rather than release-tree planning documents, records design and implementation
-history.
-The formal 0.13.0 release is the retained compatibility baseline.
+These pages describe the stable 0.14.0 product contract. The current default
+branch is `0.15.0-dev.0`; updated language and compiler contracts are recorded
+here as they become part of the public product. The formal 0.13.0 release is the
+retained compatibility baseline.
 
 ## Language and commands
 
@@ -27,6 +27,7 @@ The formal 0.13.0 release is the retained compatibility baseline.
 - [Optimizer](compiler/optimizer.md) — O0–O3 selection and preservation rules.
 - [Getting started](guides/getting-started.md)
 - [Backend selection](guides/backend-selection.md)
+- [Visual Studio Code](guides/vscode.md) — install and configure the CK language extension.
 - [WASM interop](guides/wasm-interop.md)
 - [Performance](guides/performance.md)
 

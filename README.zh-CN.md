@@ -1,138 +1,65 @@
 # CalcKernel
 
-[English](README.md)
+[English](README.md) · [官网](https://calckernel.org/zh-CN/) · [快速开始](https://calckernel.org/zh-CN/docs/getting-started/) · [文档](https://calckernel.org/zh-CN/docs/) · [下载](https://github.com/luxine/CalcKernel/releases/latest) · [VS Code 扩展](https://marketplace.visualstudio.com/items?itemName=Luxine.calckernel-vscode-plugin) · [性能实测](https://calckernel.org/zh-CN/#performance) · [MIT 许可](LICENSE)
 
-CalcKernel 0.14.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
-语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
-仓库同时保留可检查的 C 与 WebAssembly emitter。
-正式发布的 0.13.0 仍是本次更新的兼容基线。
+CalcKernel（简称 CK）是一门面向数值计算内核的静态类型语言，适合编写可由较大应用调用的专注计算函数。程序以 `.ck` 为扩展名，使用 `ckc` 检查、运行和构建。CK 可以生成本机程序和库，也可以输出 C 源码或 WebAssembly，接入现有系统。
 
-## 发布能力
+CK 负责计算部分；界面、输入输出和数据存储等周边工作仍由宿主应用处理。类型明确的函数接口和由调用方管理的数据切片，让两者之间的数据边界清楚可见。
 
-- Rust lexer、parser、type checker、deterministic semantic MIR，以及所有 backend 共用的
-  单一 verified fact-driven KIR optimizer。
-- `unsafe fn` entry contract，覆盖 affine range、alignment、no-alias 与 memory-effect
-  ceiling，并提供 opt-in contract sanitizer。
-- `break`/`continue`、return-only `void`、caller-owned `slice<T>`、可选 overflow/bounds
-  checked mode 与无参数 `main` entry。
-- `ckc run` 隔离 child、确定性 numeric/boolean print 与安全 persistent object cache。
-- 内嵌 LLVM 22.1.8 codegen 和进程内 LLD 的
-  `ckc build --kind executable|dynamic|static|object`。
-- Object/static/dynamic library 共用 generated-header Native C ABI。
-- 基于 target profile、由独立 checker 验证的 O3 optimizer，支持 transactional
-  specialization、受控 unroll、SLP、Loop SIMD、runtime alias versioning、strict-f64
-  vector 与精确 modular integer reduction。
-- CK 自有 `CKPART01`/`CKPROF01` profile generation、merge、inspection，以及通过显式
-  `ckc pgo` / `--pgo-*` workflow 进行的 non-proof PGO application。
-- 显式 Native `--cpu multiversion` build，包含 portable baseline、已验证的受限 variant、
-  baseline-safe one-time dispatch 与 executable/dynamic/static artifact 中的稳定 ABI thunk。
-- Source-only C 与 portable WAT/WASM 输出。
-- 面向 macOS、Linux、Windows 的 AArch64/x86-64 六个零工具链 release archive。
+最新稳定版为 0.14.0；当前默认分支的开发版本为 `0.15.0-dev.0`。
 
-Native checked mode 支持 overflow/bounds 四种组合；C emission 使用相同 status semantics；
-WebAssembly 仅支持 unchecked。Native runtime print 可用于 `run`/executable，library、C、
-WebAssembly root 可达的 print 会被拒绝。
+## CalcKernel 的特点
 
-## Pipeline
+- **专注数值计算。** 使用带类型的函数、结构体、整数与浮点数、条件和循环表达计算过程。
+- **生成本机程序。** 将 CK 程序和库编译为本机机器码；对符合条件的计算，编译器会应用优化。
+- **便于接入现有系统。** 可以构建带 C ABI 的本机库，也可以生成 C 源码或 WebAssembly 模块。
+- **数据所有权明确。** 应用提供传给 CK 的内存并继续负责管理；Native 与 C 构建还可启用整数溢出和切片边界检查。
 
-```text
-.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR v3
-                                 -> optional CK workload profile (non-proof)
-                                 -> target-profiled transactional optimizer
-                                 -> optional verified CPU variants + dispatcher
-                                      +-> C source/header
-                                      +-> WAT/WASM
-                                      +-> structural LLVM -> object
-                                                               +-> ORC run
-                                                               +-> in-process LLD -> executable/library
-```
+## 开始使用
 
-产品路径不调用 Clang、system linker 或 archiver。固定 Clang 22.1.8 只作为仓库的 differential
-与 ABI test oracle。
+1. 下载适用于你系统的[编译器](https://github.com/luxine/CalcKernel/releases/latest)。
+2. 跟随[第一个程序教程](https://calckernel.org/zh-CN/docs/getting-started/)创建并运行 CK 程序。
+3. 使用任意文本编辑器，或安装可选的 [Visual Studio Code 扩展](https://marketplace.visualstudio.com/items?itemName=Luxine.calckernel-vscode-plugin)。
 
-## 使用 release binary
+扩展提供 CK 语法支持、实时错误提示、代码导航，以及检查、运行和构建当前文件的命令。安装说明见 [VS Code 指南](https://calckernel.org/zh-CN/docs/vscode/)。
 
-```sh
-ckc --version --verbose
-ckc check examples/core/scalar.ck
-ckc emit-kir examples/core/scalar.ck --print-facts
-ckc emit-kir examples/core/scalar.ck --consumer native-library \
-  --cpu baseline --explain-optimization
-ckc run examples/native/hello.ck
-ckc build examples/native/hello.ck --kind executable --out /tmp/hello
-ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
-ckc pgo build examples/native/hello.ck --out /tmp/hello-pgo \
-  --profile-out /tmp/hello.ckprof
-ckc build examples/core/scalar.ck --kind static --cpu multiversion \
-  --pgo-use /tmp/scalar.ckprof --out /tmp/libscalar.a
-ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
-ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
-ckc licenses
-```
+## 继续了解
 
-`run` 与 `build` 默认 O3。只有显式使用 `pgo` command 或 `--pgo-*` option 才启用 PGO；
-普通开发不会训练或读取 profile。Native build 默认 portable CPU baseline，`--cpu native`
-与 `--cpu multiversion` 均为显式选择。`build-llvm` 是 deprecated alias，不提供 PGO 或
-multiversion behavior。
+- [语言介绍](https://calckernel.org/zh-CN/docs/language/)
+- [完整文档](https://calckernel.org/zh-CN/docs/)
+- [性能指南与测试结果](https://calckernel.org/zh-CN/docs/performance/)
+- [首页性能图表](https://calckernel.org/zh-CN/#performance)
+- [项目源码](https://github.com/luxine/CalcKernel)
 
-0.14.0 保留 0.13 的 PGO 与 multiversion 工作流。离线 Auto-Tuning 延期：`ckc tune`
-与 `ckc build --tune-use` 会在读取输入或创建输出前明确失败，不会静默退回普通 build。
+实际性能取决于算法、具体实现、所用库和目标机器。链接中的数据对应特定计算任务，不代表对各种语言的普遍排名。
 
 ## 从源码构建
 
-Native feature 需要 `native/llvm/manifest.toml` 定义的精确 LLVM prefix；仓库脚本将其 bootstrap
-到 `build/llvm`。该 prefix 是 build input，不是 end-user runtime dependency。
-
-```sh
-rustc_host="$(rustc -vV | sed -n 's/^host: //p')"
-llvm_archive=/path/to/llvm-project-22.1.8.src.tar.xz
-./scripts/bootstrap-llvm.sh --archive "$llvm_archive" \
-  --prefix "$PWD/build/llvm/prefix-$rustc_host-release" \
-  --target "$rustc_host" --profile release
-export CKC_LLVM_PREFIX="$PWD/build/llvm/prefix-$rustc_host-release"
-cargo build --release --features native-toolchain --locked
-cargo test --all-features --locked
-```
-
-Default feature 可构建 frontend/C/WASM-only developer 版本：
+默认功能集无需 LLVM，即可构建和测试前端、C 与 WebAssembly 组件：
 
 ```sh
 cargo test --locked
 cargo build --release --locked
 ```
 
-## 文档与验证
-
-入口见 [文档索引](docs/zh-CN/index.md)、[语言参考](docs/zh-CN/reference/language.md)、
-[CLI 参考](docs/zh-CN/reference/cli.md) 与 [Native ABI](docs/zh-CN/abi/llvm.md)。
-语言示例包含 [control flow](examples/core/control_flow.ck)、[void procedure](examples/core/void.ck)
-与 [slice](examples/core/slices.ck)。英文 [release policy](docs/project/release.md) 与中文版本保持镜像。
-
-严格 Native local gate：
+构建 Native 功能需要准备 [`native/llvm/manifest.toml`](native/llvm/manifest.toml) 指定的固定静态 LLVM 前缀。bootstrap 脚本会在构建前校验 LLVM 源码压缩包的 SHA-256：
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --all-features --locked
-cargo build --release --features native-toolchain --locked
-./target/release/ckc --version --verbose
-./target/release/ckc licenses
+rustc_host="$(rustc -vV | sed -n 's/^host: //p')"
+llvm_archive="$PWD/llvm-project-22.1.8.src.tar.xz"
+curl -fL 'https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz' -o "$llvm_archive"
+llvm_prefix="$PWD/build/llvm/prefix-$rustc_host-release"
+./scripts/bootstrap-llvm.sh --archive "$llvm_archive" \
+  --prefix "$llvm_prefix" --target "$rustc_host" --profile release
+CKC_LLVM_PREFIX="$llvm_prefix" cargo build --release --features native-toolchain --locked
 ```
 
-Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
-发布见 [release policy](docs/zh-CN/project/release.md)。
+该前缀用于构建 CalcKernel 的 Native 功能；运行发行版程序时不需要 LLVM。Windows MSVC 构建要求见[入门指南](docs/zh-CN/guides/getting-started.md)。
 
-CalcKernel 0.14.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
-LLVM bridge 为 ABI 4，KIR 使用 `kir-v3` identity，Native object cache 使用
-`CKCOBJ03` 及 key/manifest schema 4。旧 0.12/0.11 private cache entry 会 fail closed，
-不会与 0.13 artifact 混用。已接受的 0.12.0、0.11.0 与 0.10.0 source boundary 保留在
-[兼容性策略](docs/zh-CN/project/compatibility.md)中。
+## 社区
 
-PGO 与受限 runtime multiversioning 已在 0.13 实现并于 0.14 保留。Auto-Tuning 延期；
-indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍是未来工作。
+欢迎参与项目。提交改动前，请阅读[贡献指南](CONTRIBUTING.zh-CN.md)、[安全策略](SECURITY.zh-CN.md)和[行为准则](CODE_OF_CONDUCT.zh-CN.md)。
 
-## 内存边界
+## 许可
 
-`slice(data, len)` 与 `items[start..end]` 创建 non-owning `slice<T>` descriptor。Raw pointer validity、
-allocation extent、alignment、lifetime 与声明 length 仍由 caller 负责。`--bounds checked` 只验证
-slice index/range relation，不会让任意 pointer use 变为 memory-safe。
+CalcKernel 使用 [MIT 许可](LICENSE)发布。

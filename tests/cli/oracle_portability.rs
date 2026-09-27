@@ -12,8 +12,12 @@ fn rust_oracle_tests_should_not_hardcode_local_typescript_fixture_paths() {
         let text = fs::read_to_string(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
 
         assert!(
-            !text.contains("CALCKERNEL_TS_ROOT="),
-            "{path} must not configure the optional oracle root inline"
+            !text.contains("PathBuf::from(\"/"),
+            "{path} must use CALCKERNEL_TS_ROOT-aware fixture paths instead of embedding absolute fixture paths"
+        );
+        assert!(
+            !text.contains("const tsIndexPath = \"/"),
+            "{path} must use CALCKERNEL_TS_ROOT-aware package oracle paths instead of embedding absolute fixture paths"
         );
     }
 }
@@ -23,6 +27,10 @@ fn oracle_test_support_should_require_explicit_root_configuration() {
     let support =
         fs::read_to_string("tests/support/oracle.rs").expect("read TypeScript oracle test support");
 
+    assert!(
+        !support.contains("/Users/") && !support.contains("/home/"),
+        "shared oracle support must not fall back to a developer-specific home path"
+    );
     assert!(
         support.contains("configured_typescript_root"),
         "shared oracle support must expose explicit root configuration"

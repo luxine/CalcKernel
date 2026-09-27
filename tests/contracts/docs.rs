@@ -212,15 +212,25 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         }
     }
 
+    for path in ["CHANGELOG.md", "CHANGELOG.zh-CN.md"] {
+        let text = read(path);
+        assert!(text.contains("## 0.14.0"), "{path} must identify 0.14.0");
+        assert!(
+            text.contains("## 0.13.0"),
+            "{path} must retain 0.13.0 history"
+        );
+    }
     for path in [
-        "README.md",
-        "README.zh-CN.md",
-        "docs/index.md",
-        "docs/zh-CN/index.md",
+        "docs/project/compatibility.md",
+        "docs/zh-CN/project/compatibility.md",
     ] {
         let text = read(path);
-        assert!(text.contains("0.14.0"), "{path} must identify 0.14.0");
-        assert!(text.contains("0.13.0"), "{path} must retain 0.13.0 history");
+        for required in ["0.14.x", "0.13.0", "0.12.0", "0.11.0", "0.10.0"] {
+            assert!(
+                text.contains(required),
+                "{path} must retain {required} compatibility history"
+            );
+        }
     }
 
     let language = read("docs/reference/language.md");
@@ -274,8 +284,8 @@ fn docs_v0_14_should_describe_only_the_implemented_optimizer_boundary() {
         }
     }
     for (path, deferred) in [
-        ("README.md", "deferred"),
-        ("README.zh-CN.md", "延期"),
+        ("docs/compiler/optimizer.md", "deferred"),
+        ("docs/zh-CN/compiler/optimizer.md", "延期"),
         ("docs/guides/performance.md", "deferred"),
         ("docs/zh-CN/guides/performance.md", "延期"),
     ] {
@@ -464,29 +474,38 @@ fn diagnostic_reference_should_cover_every_display_code() {
 }
 
 #[test]
-fn readmes_should_describe_native_rust_ckc_release_surface() {
-    for path in ["README.md", "README.zh-CN.md"] {
+fn source_and_release_docs_should_describe_native_ckc_surface() {
+    for path in [
+        "docs/guides/getting-started.md",
+        "docs/zh-CN/guides/getting-started.md",
+        "docs/project/release.md",
+        "docs/zh-CN/project/release.md",
+    ] {
+        let text = read(path);
+        for required in ["ckc", "native-toolchain"] {
+            assert!(text.contains(required), "{path} must mention {required:?}");
+        }
+    }
+
+    for path in [
+        "docs/guides/getting-started.md",
+        "docs/zh-CN/guides/getting-started.md",
+    ] {
         let text = read(path);
         for required in [
-            "native ckc",
-            "docs/project/release.md",
             "cargo test --all-features --locked",
             "cargo build --release --features native-toolchain --locked",
         ] {
             assert!(text.contains(required), "{path} must mention {required:?}");
         }
+    }
 
-        for forbidden in [
-            "docs/npm-release.md",
-            "npm run",
-            "npm artifact",
-            "npm package surface",
-            "root JavaScript",
-            "TypeScript package migration",
-        ] {
+    for path in ["docs/project/release.md", "docs/zh-CN/project/release.md"] {
+        let text = read(path);
+        for required in ["ckc", "github", ".sha256"] {
             assert!(
-                !text.contains(forbidden),
-                "{path} must not mention {forbidden:?}"
+                text.to_ascii_lowercase().contains(required),
+                "{path} must describe the native compiler release and checksums"
             );
         }
     }
@@ -716,13 +735,13 @@ fn control_flow_docs_should_cover_break_continue_and_unreachable_rules() {
         }
     }
 
-    for path in ["README.md", "README.zh-CN.md"] {
-        assert!(
-            read(path).contains("examples/core/control_flow.ck"),
-            "{path} must link the control-flow example"
-        );
-    }
-    assert!(repo_root().join("examples/core/control_flow.ck").is_file());
+    let example = fs::read_to_string(repo_root().join("examples/core/control_flow.ck"))
+        .expect("read control-flow example");
+    assert!(
+        example.contains("continue;"),
+        "example must exercise continue"
+    );
+    assert!(example.contains("break;"), "example must exercise break");
 }
 
 #[test]
@@ -784,13 +803,16 @@ fn void_docs_should_cover_return_only_type_and_backend_abis() {
         assert!(read(path).contains("`void`"), "{path} must cover void");
     }
 
-    for path in ["README.md", "README.zh-CN.md"] {
-        assert!(
-            read(path).contains("examples/core/void.ck"),
-            "{path} must link the void example"
-        );
-    }
-    assert!(repo_root().join("examples/core/void.ck").is_file());
+    let example =
+        fs::read_to_string(repo_root().join("examples/core/void.ck")).expect("read void example");
+    assert!(
+        example.contains("-> void"),
+        "example must define a void function"
+    );
+    assert!(
+        example.contains("return;"),
+        "example must exercise void return"
+    );
 }
 
 #[test]
@@ -832,8 +854,6 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
     }
 
     for path in [
-        "README.md",
-        "README.zh-CN.md",
         "docs/abi/c.md",
         "docs/zh-CN/abi/c.md",
         "docs/abi/modes.md",
@@ -852,10 +872,12 @@ fn slice_docs_should_define_ownership_bounds_and_backend_matrix() {
         assert!(text.contains("--bounds"), "{path} must cover bounds mode");
     }
 
-    for path in ["README.md", "README.zh-CN.md"] {
+    let example = fs::read_to_string(repo_root().join("examples/core/slices.ck"))
+        .expect("read slice example");
+    for required in ["slice<Item>", "slice(data, len)", "items[start..end]"] {
         assert!(
-            read(path).contains("examples/core/slices.ck"),
-            "{path} must link the slice example"
+            example.contains(required),
+            "slice example must contain {required:?}"
         );
     }
 }

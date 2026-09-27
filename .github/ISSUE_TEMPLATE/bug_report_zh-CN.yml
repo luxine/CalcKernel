@@ -1,0 +1,45 @@
+name: 问题报告（简体中文）
+description: 报告 CK 或 ckc 中可复现的问题。
+title: "问题："
+body:
+  - type: markdown
+    attributes:
+      value: |
+        安全漏洞请勿使用此公开表单。请按 [SECURITY.md](https://github.com/luxine/CalcKernel/blob/main/SECURITY.zh-CN.md) 中的私密流程报告。
+  - type: input
+    id: version
+    attributes:
+      label: CK / CalcKernel 版本
+      description: 如适用，请附上 `ckc --version` 的输出。
+      placeholder: 例如版本号和提交号
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: 平台信息
+      description: 操作系统、CPU 架构，以及相关运行时或工具链。
+      placeholder: 例如 macOS arm64
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 提供能复现问题的最小 `.ck` 程序、命令和输入。请删除密钥和个人数据。
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为与实际结果
+      description: 你期望发生什么？实际发生了什么？
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关输出
+      description: 粘贴简短的编译器输出或已清理的日志。请勿包含凭据或个人数据。
+      render: text

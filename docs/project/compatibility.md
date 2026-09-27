@@ -17,6 +17,12 @@ wire formats, facts/proof encoding, pass algorithms, private LLVM bridge ABI,
 cache entries, dispatch/collection runtimes, measurements, and undocumented
 compiler interfaces are not public contracts.
 
+The opt-in `--wasm-features simd128` profile may generate SIMD128 instructions
+for eligible O3 slice maps. It preserves CK observable semantics and the public
+WASM ABI; `baseline` remains the default scalar profile. Hosts choosing
+`simd128` must support that declared feature. Target-profile digests and
+generated module bytes are compiler-owned identities, not stable public bytes.
+
 ## 0.13.0 to 0.14.0 migration
 
 - Accepted 0.13 source, diagnostics, semantic MIR, checked first-error order,

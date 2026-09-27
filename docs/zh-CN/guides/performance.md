@@ -1,4 +1,4 @@
-# CalcKernel 0.14 性能指南
+# CalcKernel 性能指南
 
 [English](../../guides/performance.md)
 
@@ -18,6 +18,13 @@ correctness 另含 adversarial corpus。
 `benches/baselines/sources/`。Fresh clone 不需要旧仓库历史：preparer 会校验每个归档及其
 固定输入 digest，然后重建临时 baseline tree，以检查批准的 adapter 和源码 diff。Replay
 report 仍记录 baseline manifest 中原始源码 commit identity。
+
+## 跨语言对比
+
+独立的[跨语言 benchmark](../../../benches/cross-language/README.md) 使用相同的确定性输入，对比
+仓库内 CalcKernel、C++、Rust、JavaScript、Java 与 NumPy 内核。Runner 在计时前验证输出 hash，
+并记录源码 hash、工具版本、编译参数、样本顺序和原始测量值。可从全新 compiler
+checkout 按该 benchmark README 中列出的依赖运行。
 
 ## Sampling protocol
 
@@ -136,6 +143,41 @@ Report 在独立 checker 读取前 canonicalize 并 hash；benchmark 本身不�
 只检查实际 report/artifact，不重建或重新计时 required gate。修改 source、corpus、profile、
 target/capability、oracle precondition、threshold、statistic、exclusion 或 checker 均属于需评审
 contract change。
+
+## WebAssembly 运行时观测
+
+独立的 Node/V8 runner 测量 WebAssembly 产物，与上述 Native 发布门槛分开。
+先构建一次 `ckc`，再用固定输入测量同一批 CK 示例的 O0 和 O3。Runner 接受
+`--wasm-features baseline|simd128`，默认 `baseline`；分别记录两个 profile 时使用独立输出目录：
+
+```sh
+cargo build --release --locked --bin ckc
+node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features baseline \
+  --out build/wasm-perf/baseline --samples 20 --warmup 10 --batch 100 --size 1024
+node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features simd128 \
+  --out build/wasm-perf/simd128 --samples 20 --warmup 10 --batch 100 --size 1024
+CKC=target/release/ckc node --test benches/wasm/bench.test.mjs
+```
+
+Runner 将 `wasm-runtime-report.json` 和生成的模块写入所选 `--out` 目录（默认
+`build/wasm-perf`）；该目录应保持为 ignored build output。它在计时前校验输出，并记录准确的源码、编译器、runner 与产物身份，以及原始样本和
+宿主/runtime 信息。Report 还记录请求的 feature profile、规范化 profile digest，以及每个产物的
+`ck.wasm.target` metadata；计时前会核对请求值、digest 与实际 metadata 是否一致。O3 的
+`f64_map`、`i32_map`、`u32_compare_select`、`i32_to_f64`、`u32_to_f64`、
+`u32_alias_map`、`u32_reduce_sum` 和 `u32_reduce_product` case 在选用 `simd128` 时测试
+经过独立验证的 SIMD128 路径；baseline profile 与 O0 artifact 提供标量对照。评估别名回退
+还须运行单独的重叠与地址边界测试。计时结果应连同正确性和指令形态一并保存。
+`u32_cursor_copy` 测量经过检查的 O3 地址游标，`u32_field_offset` 测量有证明支持的
+memarg 字段位移。评估这两条标量路径时，除 O0 外还应与相同 profile 的旧 O3 编译器
+比较，并保留发射的指令形态。
+
+CK 发射、
+模块编译、实例化、预热、稳定内核调用、宿主数据准备与读取
+分别记录。模块编译时间是每个产物在该 Node 进程内的首次编译时间，并非浏览器冷启动
+测量。每轮端到端样本只涵盖已实例化模块上的准备、调用和读取，不包含模块编译、
+实例化与内存扩展。比较编译器版本时应使用相同参数并保留完整 report；一次本地运行
+既不能证明普遍加速，也不构成发布阈值。当前 runtime 通道是 Node/V8，性能结论须标明
+这一范围。
 
 PGO 与受限 multiversioning 已在 0.13 交付，0.14 仍需通过这些原样保留的 gate。离线
 Auto-Tuning 延期；这个兼容性版本不声称新的 optimizer 加速。indirect-call promotion、

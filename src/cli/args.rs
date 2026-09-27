@@ -1,4 +1,4 @@
-use calckernel::{BoundsMode, KirConsumer, OverflowMode};
+use calckernel::{BoundsMode, KirConsumer, KirWasmFeatures, OverflowMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArtifactKind {
@@ -80,6 +80,16 @@ impl CpuPolicy {
     }
 }
 
+fn parse_wasm_features(value: &str) -> Result<KirWasmFeatures, String> {
+    match value {
+        "baseline" => Ok(KirWasmFeatures::Baseline),
+        "simd128" => Ok(KirWasmFeatures::Simd128),
+        _ => Err(format!(
+            "Invalid value for --wasm-features: {value}. Expected 'baseline' or 'simd128'."
+        )),
+    }
+}
+
 pub(super) fn require_input<'args>(
     args: &'args ParsedArgs,
     command: &str,
@@ -111,6 +121,7 @@ pub(super) struct ParsedArgs {
     pub(super) kind: Option<ArtifactKind>,
     pub(super) cpu: Option<CpuPolicy>,
     pub(super) consumer: Option<EmitKirConsumer>,
+    pub(super) wasm_features: Option<KirWasmFeatures>,
     pub(super) header: Option<String>,
     pub(super) profile_out: Option<String>,
     pub(super) pgo_generate: Option<String>,
@@ -135,6 +146,7 @@ impl ParsedArgs {
             kind: None,
             cpu: None,
             consumer: None,
+            wasm_features: None,
             header: None,
             profile_out: None,
             pgo_generate: None,
@@ -209,6 +221,16 @@ impl ParsedArgs {
                         "--consumer",
                     )?)?);
                 }
+                "--wasm-features" => {
+                    require_allowed(command, "--wasm-features")?;
+                    index += 1;
+                    let value = parse_wasm_features(require_long_flag_value(
+                        args,
+                        index,
+                        "--wasm-features",
+                    )?)?;
+                    set_once(&mut parsed.wasm_features, value, "--wasm-features")?;
+                }
                 "--header" => {
                     require_allowed(command, "--header")?;
                     index += 1;
@@ -278,6 +300,9 @@ impl ParsedArgs {
             }
             if consumer.is_native() && parsed.cpu.is_none() {
                 parsed.cpu = Some(CpuPolicy::Baseline);
+            }
+            if parsed.wasm_features.is_some() && consumer != EmitKirConsumer::WebAssembly {
+                return Err("Option --wasm-features requires --consumer wasm.".to_string());
             }
         }
         validate_profile_options(&parsed)?;
@@ -355,6 +380,7 @@ fn require_allowed(command: &str, flag: &str) -> Result<(), String> {
         "--kind" => matches!(command, "build" | "build-llvm"),
         "--cpu" => matches!(command, "build" | "emit-kir" | "pgo-build"),
         "--consumer" => command == "emit-kir",
+        "--wasm-features" => matches!(command, "emit-kir" | "emit-wat" | "emit-wasm"),
         "--header" => command == "emit-c",
         "--no-cache" => command == "run",
         "--inspection" => matches!(
@@ -499,13 +525,14 @@ pub(super) fn require_short_flag_value<'args>(
 pub(super) fn usage() -> &'static str {
     concat!(
         "Usage:\n",
+        "  ckc lsp\n",
         "  ckc check <file>\n",
         "  ckc emit-c <file> --out <c-file> [--header <h-file>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
         "  ckc emit-mir <file> [--out <mir-file>] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-kir <file> [--out <kir-file>] [--consumer <inspection|c|wasm|native-library|native-executable>] [--cpu <baseline|native|multiversion>] [--pgo-use <file.ckprof>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
+        "  ckc emit-kir <file> [--out <kir-file>] [--consumer <inspection|c|wasm|native-library|native-executable>] [--wasm-features <baseline|simd128>] [--cpu <baseline|native|multiversion>] [--pgo-use <file.ckprof>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>] [inspection options]\n",
         "  ckc emit-llvm <file> [--out <ll-file>] [--target <host-triple>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-wat <file> [--out <wat-file>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
-        "  ckc emit-wasm <file> --out <wasm-file> [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-wat <file> [--out <wat-file>] [--wasm-features <baseline|simd128>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
+        "  ckc emit-wasm <file> --out <wasm-file> [--wasm-features <baseline|simd128>] [--overflow unchecked] [--bounds unchecked] [--opt-level <0|1|2|3>]\n",
         "  ckc build <file> --out <output-path> [--kind <executable|dynamic|static|object>] [--overflow <unchecked|checked>] [--bounds <unchecked|checked>] [--cpu <baseline|native|multiversion>] [--pgo-generate <directory>|--pgo-use <file.ckprof>] [-O0|-O1|-O2|-O3] [--sanitize-contracts]\n",
         "  ckc build-llvm <file> --out <output-path> [--kind <dynamic|object>] [native build options]\n",
         "  ckc pgo build <file> --out <executable> [--profile-out <file.ckprof>] [-O3]\n",
@@ -521,6 +548,7 @@ pub(super) fn usage() -> &'static str {
         "  -o <file>                         Alias for --out <file>.\n",
         "  --opt-level <0|1|2|3>            KIR and backend optimization level.\n",
         "  --consumer <consumer>             Consumer profile for emit-kir. Default: inspection.\n",
+        "  --wasm-features <baseline|simd128> Wasm target feature profile. Default: baseline.\n",
         "  --cpu <baseline|native|multiversion> CPU policy for build or Native emit-kir.\n",
         "  --pgo-generate <directory>         Build a temporary Native collection artifact.\n",
         "  --pgo-use <file.ckprof>            Apply a validated CK workload profile.\n",

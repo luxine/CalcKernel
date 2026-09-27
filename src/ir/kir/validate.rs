@@ -816,13 +816,15 @@ fn validate_version_predicate(
         KirProfileLayout::Known { pointer_width_bits, .. }
             if pointer_width_bits == u16::from(predicate.address_bits)
     );
+    let consumer_supports_predicate = matches!(
+        profile.consumer(),
+        KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
+    ) || (profile.consumer() == KirConsumer::WebAssembly
+        && profile.wasm_features() == Some(KirWasmFeatures::Simd128));
     if !valid_result
         || instruction.memory.is_some()
         || instruction.effect.is_some()
-        || !matches!(
-            profile.consumer(),
-            KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
-        )
+        || !consumer_supports_predicate
         || !layout_matches
         || predicate.conjuncts.is_empty()
         || predicate.conjuncts.len() > 4

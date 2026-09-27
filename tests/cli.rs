@@ -5,6 +5,8 @@ mod support;
 mod commands;
 #[path = "cli/kir_inspection.rs"]
 mod kir_inspection;
+#[path = "cli/lsp.rs"]
+mod lsp;
 #[path = "cli/oracle_portability.rs"]
 mod oracle_portability;
 #[path = "cli/oracle_readiness.rs"]

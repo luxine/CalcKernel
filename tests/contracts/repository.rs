@@ -10,12 +10,12 @@ fn read(path: &str) -> String {
 }
 
 #[test]
-fn repository_should_preserve_v0_10_as_compatibility_history() {
+fn repository_should_preserve_v0_10_in_compatibility_docs() {
     for path in [
-        "README.md",
-        "README.zh-CN.md",
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
+        "docs/project/compatibility.md",
+        "docs/zh-CN/project/compatibility.md",
     ] {
         assert!(read(path).contains("0.10.0"), "{path} must name 0.10.0");
     }
@@ -34,18 +34,18 @@ fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_histo
 }
 
 #[test]
-fn repository_should_declare_v0_14_candidate_and_retain_v0_13_history() {
+fn repository_should_declare_v0_15_development_version_and_retain_release_history() {
     let cargo = read("Cargo.toml");
     let lock = read("Cargo.lock");
-    assert!(cargo.contains("version = \"0.14.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.14.0\""));
+    assert!(cargo.contains("version = \"0.15.0-dev.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.0-dev.0\""));
     for path in [
-        "README.md",
-        "README.zh-CN.md",
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
         "docs/index.md",
         "docs/zh-CN/index.md",
+        "docs/project/compatibility.md",
+        "docs/zh-CN/project/compatibility.md",
     ] {
         assert!(read(path).contains("0.13.0"), "{path} must name 0.13.0");
     }
@@ -66,9 +66,6 @@ fn repository_identity_should_use_the_canonical_github_name() {
             "{path} must use the canonical project name"
         );
     }
-    let workflow = read(".github/workflows/ci.yml");
-    assert!(workflow.contains("working-directory: tests/oracles/typescript"));
-    assert!(!workflow.contains("git clone"));
 }
 
 #[test]
@@ -321,7 +318,7 @@ fn v0_10_compatibility_sources_should_parse_at_the_frozen_boundary() {
 }
 
 #[test]
-fn repository_ignore_rules_should_cover_generated_build_and_python_files() {
+fn repository_policy_should_keep_generated_files_ignored_and_docs_current() {
     let ignore = read(".gitignore");
     for required in [
         "/target/",
@@ -334,6 +331,20 @@ fn repository_ignore_rules_should_cover_generated_build_and_python_files() {
         assert!(
             ignore.lines().any(|line| line == required),
             "ignore {required}"
+        );
+    }
+    let policy = read("docs/project/conventions.md");
+    for required in [
+        "CK and CalcKernel",
+        "`ckc`",
+        "`.ck`",
+        "`docs/zh-CN`",
+        "`tests/support`",
+        "not committed",
+    ] {
+        assert!(
+            policy.contains(required),
+            "public repository conventions must contain {required:?}"
         );
     }
 }

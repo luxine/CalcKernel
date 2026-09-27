@@ -99,7 +99,26 @@ consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
-C and WebAssembly profiles disable Vector KIR in 0.14.
+C and WebAssembly `baseline` profiles disable Vector KIR in 0.14.
+For WebAssembly, the `--wasm-features baseline|simd128` option selects the
+target profile for WAT/WASM emission or `emit-kir --consumer wasm`, defaulting
+to `baseline`.
+The selected feature and canonical profile digest are carried into module
+metadata. At O3, `simd128` enables an independently verified Loop SIMD
+frontier for contiguous `slice<f64>`, `slice<i32>`, and `slice<u32>` maps and
+modular `i32`/`u32` sum and product reductions. Full-width vectors use `f64x2`
+or `i32x4`; two-lane `i32`/`u32` inputs can convert to `f64x2` with an exact
+eight-byte load. The supported map operations include splat, load/store,
+add, subtract, multiply, negate, `f64x2` divide, and pure lane comparison and
+selection. A simple same-induction slice loop can use a checked Wasm32 runtime
+alias predicate; overlap or an unsafe address range selects the original scalar
+loop. Reductions fold four integer lanes modulo 2^32 before combining with the
+scalar accumulator. Candidates require the existing unit-stride induction,
+independent legality and cost checks, and scalar remainder. The unroll factor
+is one. WebAssembly SLP, floating-point reductions, checked arithmetic,
+masked memory, and other vector shapes remain unavailable. Unsupported source
+candidates stay scalar; unsupported hand-constructed Vector KIR is rejected by
+the backend. `baseline` and O0–O2 remain scalar.
 
 Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
 the complete candidate module, proof/fact state, and audit-budget delta are
@@ -292,6 +311,11 @@ new undefined behavior from failed analysis.
 Only verified pairwise no-alias, alignment, range, and effect facts reach C or
 LLVM. C emits portable hints only when their complete preconditions hold. Native
 performs a pre-LLVM fact audit and rejects injected or stale metadata.
+WebAssembly O3 also uses independently checked loop structure for byte-address
+cursors. A verified final KIR result may supply alignment facts to field-offset
+lowering; an isolated KIR module supplies none. The backend retains the source
+32-bit address arithmetic whenever it cannot prove offset folding preserves
+wraparound behavior.
 
 Performance gates compare identical algorithms, safety modes, data, hardware,
 CPU policy, training/evaluation split, and strict semantics. Schema 8 compares

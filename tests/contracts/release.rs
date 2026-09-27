@@ -64,10 +64,10 @@ fn release_surface_should_not_include_npm_or_javascript_compatibility_layer() {
 #[test]
 fn v0_10_release_identity_should_remain_in_compatibility_history() {
     for path in [
-        "README.md",
-        "README.zh-CN.md",
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
+        "docs/project/compatibility.md",
+        "docs/zh-CN/project/compatibility.md",
     ] {
         assert!(
             fs::read_to_string(repo_root().join(path))
@@ -100,22 +100,25 @@ fn v0_10_release_identity_should_remain_in_compatibility_history() {
 }
 
 #[test]
-fn release_v0_14_candidate_identity_should_match_cargo_and_cli() {
+fn development_version_identity_should_match_cargo_and_cli() {
     let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
     let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
-    assert!(cargo.contains("version = \"0.14.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.14.0\""));
+    assert!(cargo.contains("version = \"0.15.0-dev.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.0-dev.0\""));
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .arg("--version")
         .output()
         .expect("run ckc --version");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.14.0");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "ckc 0.15.0-dev.0"
+    );
     for path in [
-        "README.md",
-        "README.zh-CN.md",
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
+        "docs/project/compatibility.md",
+        "docs/zh-CN/project/compatibility.md",
     ] {
         assert!(
             fs::read_to_string(repo_root().join(path))
@@ -176,7 +179,7 @@ fn release_v0_14_verbose_identity_should_report_retained_public_and_private_cont
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("verbose version is UTF-8");
     for required in [
-        "ckc 0.14.0",
+        "ckc 0.15.0-dev.0",
         "Native ABI: 1",
         "Runtime ABI: 2",
         "KIR: 3",
@@ -320,7 +323,6 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         "npm pack",
         "setup-node",
         "CALCKERNEL_TS_ROOT",
-        "repository: luxine/CalcKernel",
         "repository:",
         "tests/oracles/typescript",
         "gh release upload",

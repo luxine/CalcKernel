@@ -4,7 +4,7 @@ This index is embedded byte-for-byte in every `ckc` executable. Source archive
 and crate hashes are immutable acquisition identities; repository license paths
 name the exact notice bytes emitted by `ckc licenses`. CalcKernel chooses the
 Apache-2.0 option where a Cargo dependency offers `MIT OR Apache-2.0`, except
-for the two explicitly named MIT copies below. Build-only crates are included
+for the explicitly named MIT copies below. Build-only crates are included
 because they participate in producing the distributed executable.
 
 ## Compiler and native runtime
@@ -27,11 +27,14 @@ because they participate in producing the distributed executable.
 - digest 0.10.7 — crates.io SHA-256 `9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - find-msvc-tools 0.1.11 — crates.io SHA-256 `d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - generic-array 0.14.7 — crates.io SHA-256 `85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a` — `third_party/licenses/generic-array-MIT.txt`
+- itoa 1.0.18 — crates.io SHA-256 `8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - leb128fmt 0.1.0 — crates.io SHA-256 `09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - libc 0.2.186 — crates.io SHA-256 `68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - memchr 2.8.2 — crates.io SHA-256 `88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4` — `third_party/licenses/memchr-MIT.txt`
 - proc-macro2 1.0.106 — crates.io SHA-256 `8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - quote 1.0.46 — crates.io SHA-256 `dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368` — `native/runtime/vendor/ryu/LICENSE-Apache2`
+- serde_core 1.0.228 — crates.io SHA-256 `41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad` — `native/runtime/vendor/ryu/LICENSE-Apache2`
+- serde_json 1.0.151 — crates.io SHA-256 `c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - sha2 0.10.9 — crates.io SHA-256 `a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - shlex 2.0.1 — crates.io SHA-256 `f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - syn 2.0.118 — crates.io SHA-256 `1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422` — `native/runtime/vendor/ryu/LICENSE-Apache2`
@@ -44,6 +47,7 @@ because they participate in producing the distributed executable.
 - wasm-encoder 0.252.0 — crates.io SHA-256 `8185ae345fa5687c054626ff9a50e7089797a343d9904d1dc9820eb4c4d3196f` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - wast 252.0.0 — crates.io SHA-256 `942a3449d6a593fccc111a6241c8df52bda168af30e40bf9580d4394d7374c65` — `native/runtime/vendor/ryu/LICENSE-Apache2`
 - wat 1.252.0 — crates.io SHA-256 `c72a4ba7088f7bac94cf516e49882bdf97068904a563768cf249efc839ec42cb` — `native/runtime/vendor/ryu/LICENSE-Apache2`
+- zmij 1.0.23 — crates.io SHA-256 `29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b` — `third_party/licenses/zmij-MIT.txt`
 
 The complete license texts follow the index in `ckc licenses`; duplicate
 Apache-2.0 text is emitted once. Development-only test dependencies are not

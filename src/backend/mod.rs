@@ -66,7 +66,10 @@ pub use native_runtime::{
     NATIVE_DISPATCH_RUNTIME_SCHEMA, NATIVE_DISPATCH_RUNTIME_SHA256, NATIVE_PROFILE_RUNTIME_SCHEMA,
     NATIVE_PROFILE_RUNTIME_SHA256, embedded_dispatch_runtime_object,
 };
-pub use wasm::{EmitWasmOptions, emit_wasm_kir_module, emit_wat_kir_module};
+pub use wasm::{
+    EmitWasmOptions, emit_wasm_kir_module, emit_wasm_kir_result, emit_wat_kir_module,
+    emit_wat_kir_result,
+};
 
 pub(super) fn is_f64_type(type_node: &MirType) -> bool {
     matches!(type_node, MirType::Primitive(MirPrimitiveTypeName::F64))

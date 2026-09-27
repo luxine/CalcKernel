@@ -1,16 +1,65 @@
-use crate::*;
+use super::features::validate_wasm;
 
-use super::{EmitWasmOptions, emit::emit_wat_module_with_options};
+use crate::KirWasmFeatures;
 
-pub fn emit_wasm_module_with_options(
-    module: &MirModule,
-    options: EmitWasmOptions,
+pub(super) fn emit_wasm_module_from_profile_wat(
+    source: &str,
+    features: KirWasmFeatures,
+    expected_metadata: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let artifact = prepare_non_executable_artifact(module, MirArtifactConsumer::WebAssembly)
-        .map_err(|error| error.to_string())?;
-    let bytes = wat::parse_str(emit_wat_module_with_options(&artifact, options))
-        .map_err(|error| error.to_string())?;
+    let bytes = encode_and_strip_names(source)?;
+    validate_profile_binary(&bytes, features, expected_metadata)?;
+    Ok(bytes)
+}
+
+pub(super) fn validate_profile_wat(
+    source: &str,
+    features: KirWasmFeatures,
+    expected_metadata: &[u8],
+) -> Result<(), String> {
+    let bytes = encode_and_strip_names(source)?;
+    validate_profile_binary(&bytes, features, expected_metadata)
+}
+
+fn validate_profile_binary(
+    bytes: &[u8],
+    features: KirWasmFeatures,
+    expected_metadata: &[u8],
+) -> Result<(), String> {
+    verify_target_metadata(bytes, expected_metadata)?;
+    validate_wasm(bytes, features)?;
+    Ok(())
+}
+
+fn encode_and_strip_names(source: &str) -> Result<Vec<u8>, String> {
+    let bytes = wat::parse_str(source).map_err(|error| error.to_string())?;
     strip_wasm_name_section(&bytes)
+}
+
+fn verify_target_metadata(bytes: &[u8], expected: &[u8]) -> Result<(), String> {
+    let sections = wasmparser::Parser::new(0)
+        .parse_all(bytes)
+        .map(|payload| payload.map_err(|error| error.to_string()))
+        .filter_map(|payload| match payload {
+            Ok(wasmparser::Payload::CustomSection(section))
+                if section.name() == "ck.wasm.target" =>
+            {
+                Some(Ok(section.data()))
+            }
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if sections.len() != 1 {
+        return Err(format!(
+            "WebAssembly module must contain exactly one ck.wasm.target section (found {})",
+            sections.len()
+        ));
+    }
+    if sections[0] != expected {
+        return Err("WebAssembly target metadata does not match the selected KIR profile".into());
+    }
+    Ok(())
 }
 
 fn strip_wasm_name_section(bytes: &[u8]) -> Result<Vec<u8>, String> {

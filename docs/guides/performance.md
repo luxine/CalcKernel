@@ -1,4 +1,4 @@
-# CalcKernel 0.14 Performance Guide
+# CalcKernel Performance Guide
 
 [简体中文](../zh-CN/guides/performance.md)
 
@@ -23,6 +23,15 @@ repository history: the preparer validates each archive and its frozen input
 digests, then reconstructs a temporary local baseline tree for the approved
 adapter and source-diff checks. Replay reports retain the original source
 commit identities from the baseline manifests.
+
+## Cross-language comparison
+
+The standalone [cross-language benchmark](../../benches/cross-language/README.md)
+compares checked-in CalcKernel, C++, Rust, JavaScript, Java, and NumPy kernels on
+the same deterministic inputs. Its runner verifies output hashes before timing
+and records source hashes, tool versions, flags, sample order, and raw
+measurements. Run it from a fresh compiler checkout using the dependencies
+listed in that benchmark's README.
 
 ## Sampling protocol
 
@@ -166,6 +175,52 @@ The benchmark cannot declare itself passing. Diagnostics inspect only the actual
 report/artifacts and do not rebuild or remeasure a required gate. Changing a
 source, corpus, profile, target/capability, oracle precondition, threshold,
 statistic, exclusion, or checker is a reviewed contract change.
+
+## WebAssembly runtime observations
+
+The standalone Node/V8 runner measures WebAssembly artifacts separately from
+the Native release gates above. Build `ckc` once, then run the same CK examples
+at O0 and O3 with fixed inputs. The runner accepts `--wasm-features
+baseline|simd128`, defaulting to `baseline`; use separate output directories
+when recording both profiles:
+
+```sh
+cargo build --release --locked --bin ckc
+node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features baseline \
+  --out build/wasm-perf/baseline --samples 20 --warmup 10 --batch 100 --size 1024
+node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features simd128 \
+  --out build/wasm-perf/simd128 --samples 20 --warmup 10 --batch 100 --size 1024
+CKC=target/release/ckc node --test benches/wasm/bench.test.mjs
+```
+
+The runner writes `wasm-runtime-report.json` and emitted modules under the
+selected `--out` directory (default: `build/wasm-perf`), which should remain
+ignored build output. It checks outputs before timing and records
+the exact source, compiler, runner, and artifact identities along with raw
+samples and host/runtime details. It also records the requested feature profile,
+canonical profile digest, and `ck.wasm.target` metadata for every artifact, and
+checks that the requested profile, digest, and emitted metadata agree before
+timing. The O3 `f64_map`, `i32_map`, `u32_compare_select`, `i32_to_f64`,
+`u32_to_f64`, `u32_alias_map`, `u32_reduce_sum`, and `u32_reduce_product` cases
+exercise the independently verified SIMD128 paths when selected; the baseline
+profile and O0 artifacts provide scalar comparisons. Use the separate overlap
+and address-boundary tests when assessing the alias fallback. Keep correctness
+results and instruction shape alongside timing.
+`u32_cursor_copy` exercises the checked O3 address cursor, while
+`u32_field_offset` exercises proof-backed field displacement in a memarg.
+Compare these scalar paths against an identical-profile compiler revision at
+O3 as well as against O0, and include the emitted instruction shape.
+
+CK emission, module compilation,
+instantiation, warm-up, steady kernel calls, and host preparation/readback are
+separate observations. Module compilation is the first compile of each artifact
+in that Node process; it is not a browser cold-start measurement. The per-round
+end-to-end sample covers preparation,
+calls, and readback on an already instantiated module; it excludes module
+compilation, instantiation, and memory growth. Reuse identical options when
+comparing compiler revisions, and keep the full reports; a single local run
+does not establish a portable speedup or a release threshold. The current
+runtime channel is Node/V8, so its results must be labeled accordingly.
 
 PGO and bounded multiversioning shipped in 0.13 and remain subject to these
 unchanged gates in 0.14. Offline Auto-Tuning is deferred; this compatibility

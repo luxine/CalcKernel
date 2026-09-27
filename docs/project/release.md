@@ -5,14 +5,20 @@
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
 
-The 0.14.0 version in a feature branch is a release candidate, not a published
-Release. This ordinary-version scope retains 0.13 PGO and multiversion but
-defers offline Auto-Tuning. No tag or GitHub Release may be created until the
-unchanged schema-7/8 x86-64/AArch64 performance gates, all six native hosts,
-and the exact candidate-SHA ten-job CI succeed. After PR merge, require a new
-exact-main-SHA ten-job CI and publishing-disabled six-platform release preview
-before creating the annotated tag. Re-recording evidence after any source or
-contract change requires rerunning the affected gates on the new exact SHA.
+The public `v0.14.0` tag identifies the stable compiler source snapshot. The
+default branch currently reports `0.15.0-dev.0`; it retains the 0.14 language
+and ABI contracts while development continues. Official compiler archives are
+built only from a public compiler commit whose tag matches `Cargo.toml`, and
+the tag workflow builds directly from that checked-out source. It does not
+checkout source from another repository. The 0.14 performance gates and six
+native hosts remain the release baseline; offline Auto-Tuning is deferred.
+
+For a new release, require the schema-7/8 x86-64/AArch64 performance gates, all
+six native hosts, and the exact candidate-SHA ten-job CI to succeed. After PR
+merge, require a new exact-main-SHA ten-job CI and publishing-disabled
+six-platform release preview before creating the annotated tag. Re-recording
+evidence after any source or contract change requires rerunning the affected
+gates on the new exact SHA.
 
 Repository text checks out with LF endings on every host. Vendored provenance
 files retain their original bytes without Git newline conversion; hash checks

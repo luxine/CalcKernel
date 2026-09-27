@@ -70,12 +70,27 @@ the same pre-state, verifies them independently, and forbids cross-variant LTO.
 
 `src/backend/` consumes verified KIR only. C and Native support the four
 overflow/bounds combinations through explicit guards and status flow; WASM is
-unchecked-only. C and WebAssembly profiles deliberately disable Vector KIR in
-0.14, so both continue from verified scalar KIR while retaining profitable
-scalar specialization and cleanup. C contract facts may become portable
+unchecked-only. C and WebAssembly `baseline` disable Vector KIR; WebAssembly
+`simd128` can lower its narrow, independently verified Loop SIMD subset. All
+retain scalar specialization and cleanup. C contract facts may become portable
 restrict/alignment hints. Native structurally lowers checked Vector KIR and the
 same scalar facts to LLVM IR, validates metadata with a pre-LLVM fact audit,
 verifies the module, and emits object bytes with the host TargetMachine.
+
+`src/backend/wasm/` builds a backend-private typed view borrowed from verified
+KIR. It retains source value types, block and edge identities, edge arguments,
+memory/effect ordering, and the target profile while reusing the scalar and
+slice instruction emitters. For supported Vector KIR, it assigns true `v128`
+locals and emits SIMD loads, lane operations, and stores in KIR order; scalar
+ABI values and scalar leaves retain their existing representation. At O3, a closed control plan turns reducible
+diamonds and nested natural loops, including break, continue, and early return,
+into WebAssembly `block`, `loop`, and `if` control. The planner validates every
+branch scope before emission. An unsupported or irreducible CFG uses the entire
+deterministic whole-function dispatcher path that preserves vector instructions;
+the existing compact canonical-while path is
+retained. This lowering creates no new safety facts or proof authority. WAT and
+WASM select the same control plan; binary emission still parses WAT and removes
+the name section.
 
 `src/backend/llvm/` and `native/bridge/` provide typed ownership across the
 Rust/C++ boundary. `native/runtime/` owns entry, checked and sanitizer runtime

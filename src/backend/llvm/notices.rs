@@ -53,6 +53,10 @@ pub const fn embedded_notices() -> &'static [EmbeddedNotice] {
             bytes: include_bytes!("../../../third_party/licenses/memchr-MIT.txt"),
         },
         EmbeddedNotice {
+            name: "zmij MIT license",
+            bytes: include_bytes!("../../../third_party/licenses/zmij-MIT.txt"),
+        },
+        EmbeddedNotice {
             name: "Unicode License V3",
             bytes: include_bytes!("../../../third_party/licenses/LICENSE-UNICODE"),
         },

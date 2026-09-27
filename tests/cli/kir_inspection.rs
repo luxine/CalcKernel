@@ -111,6 +111,92 @@ fn emit_kir_consumer_should_select_every_portable_identity_and_validate_cpu_pair
     );
 }
 
+#[test]
+fn emit_kir_wasm_features_should_select_a_distinct_stable_profile() {
+    let (_, source) = fixture("export fn answer() -> i32 { return 42; }");
+    let default = run([os("emit-kir"), os(&source), os("--consumer"), os("wasm")]);
+    let explicit_baseline = run([
+        os("emit-kir"),
+        os(&source),
+        os("--consumer"),
+        os("wasm"),
+        os("--wasm-features"),
+        os("baseline"),
+    ]);
+    let simd128 = run([
+        os("emit-kir"),
+        os(&source),
+        os("--consumer"),
+        os("wasm"),
+        os("--wasm-features"),
+        os("simd128"),
+    ]);
+
+    for output in [&default, &explicit_baseline, &simd128] {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(default.stdout, explicit_baseline.stdout);
+    let default_digest = profile_digest(&default.stdout);
+    assert_eq!(
+        default_digest,
+        "ce0ccf53cf133340ba86406a3ba056c53e43411b1ae986eb97847279073f4238"
+    );
+    assert_ne!(default_digest, profile_digest(&simd128.stdout));
+}
+
+#[test]
+fn emit_kir_wasm_features_should_reject_invalid_consumer_and_value_before_source_io() {
+    let missing_source = std::env::temp_dir().join(format!("missing-{}.ck", unique_id()));
+    let invalid_consumer = run([
+        os("emit-kir"),
+        os(&missing_source),
+        os("--consumer"),
+        os("c"),
+        os("--wasm-features"),
+        os("simd128"),
+    ]);
+    assert_eq!(invalid_consumer.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&invalid_consumer.stderr)
+            .contains("--wasm-features requires --consumer wasm"),
+        "{}",
+        String::from_utf8_lossy(&invalid_consumer.stderr)
+    );
+
+    let invalid_value = run([
+        os("emit-kir"),
+        os(&missing_source),
+        os("--consumer"),
+        os("wasm"),
+        os("--wasm-features"),
+        os("relaxed-simd"),
+    ]);
+    assert_eq!(invalid_value.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&invalid_value.stderr).contains("Expected 'baseline' or 'simd128'"),
+        "{}",
+        String::from_utf8_lossy(&invalid_value.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&invalid_value.stderr).contains("--wasm-features"),
+        "{}",
+        String::from_utf8_lossy(&invalid_value.stderr)
+    );
+}
+
+fn profile_digest(kir: &[u8]) -> String {
+    let text = std::str::from_utf8(kir).expect("KIR UTF-8");
+    text.lines()
+        .next()
+        .and_then(|header| header.split("profile-sha256=").nth(1))
+        .expect("KIR target profile digest")
+        .to_string()
+}
+
 #[cfg(not(feature = "native-toolchain"))]
 #[test]
 fn emit_kir_consumer_should_fail_closed_for_native_without_the_toolchain() {

@@ -6,9 +6,9 @@ use std::collections::BTreeSet;
 use calckernel::{
     BoundsMode, CheckedProgram, EffectTarget, EmitWasmOptions, KirBoundsMode, KirBuildConfig,
     KirConsumer, KirOptimizationLevel, KirOverflowMode, KirPassManagerResult, KirSanitizerMode,
-    KirTargetProfile, MemoryEffect, OverflowMode, SourceFile, annotate_unsafe_contracts,
-    build_kir_module, build_kir_module_with_profile, check, emit_c_kir_header,
-    emit_c_kir_module_with_contracts, emit_wasm_kir_module, emit_wat_kir_module,
+    KirTargetProfile, KirWasmFeatures, MemoryEffect, OverflowMode, SourceFile,
+    annotate_unsafe_contracts, build_kir_module, build_kir_module_with_profile, check,
+    emit_c_kir_header, emit_c_kir_module_with_contracts, emit_wasm_kir_result, emit_wat_kir_result,
     format_diagnostics, import_contract_facts, lower_to_mir, print_fact_arena, print_kir_module,
     print_mir_module, print_optimization_audit, print_proof_arena,
     run_kir_multiversion_pass_pipeline, run_kir_pass_pipeline,
@@ -230,6 +230,12 @@ struct CompiledKir {
 struct KirCompilationTarget {
     consumer: KirConsumer,
     profile: Option<KirTargetProfile>,
+}
+
+fn wasm_target_profile(args: &ParsedArgs) -> KirTargetProfile {
+    KirTargetProfile::webassembly_with_features(
+        args.wasm_features.unwrap_or(KirWasmFeatures::Baseline),
+    )
 }
 
 fn compile_kir(
@@ -491,7 +497,9 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         None
     };
     #[cfg(feature = "native-toolchain")]
-    let profile = if matches!(
+    let profile = if consumer == KirConsumer::WebAssembly {
+        Some(wasm_target_profile(args))
+    } else if matches!(
         consumer,
         KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
     ) {
@@ -514,7 +522,7 @@ pub(super) fn run_emit_kir(args: &ParsedArgs) -> Result<(), String> {
         None
     };
     #[cfg(not(feature = "native-toolchain"))]
-    let profile = None;
+    let profile = (consumer == KirConsumer::WebAssembly).then(|| wasm_target_profile(args));
     #[cfg(feature = "native-toolchain")]
     let compiled = if let Some(application) = &multiversion_application {
         compile_profile_guided_kir(&checked.checked_program, application, args, true)?
@@ -823,7 +831,7 @@ pub(super) fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         KirCompilationTarget {
             consumer: KirConsumer::WebAssembly,
-            profile: None,
+            profile: Some(wasm_target_profile(args)),
         },
         overflow_mode,
         bounds_mode,
@@ -831,14 +839,9 @@ pub(super) fn run_emit_wat(args: &ParsedArgs) -> Result<(), String> {
         false,
         args,
     )?;
-    let kir = compiled
-        .result
-        .artifact
-        .as_ref()
-        .expect("verified WebAssembly KIR artifact");
     write_or_print_single_line(
         args.out.as_deref(),
-        &emit_wat_kir_module(kir, EmitWasmOptions { opt_level })?,
+        &emit_wat_kir_result(&compiled.result, EmitWasmOptions { opt_level })?,
         "WAT",
     )
 }
@@ -863,7 +866,7 @@ pub(super) fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
         &checked.checked_program,
         KirCompilationTarget {
             consumer: KirConsumer::WebAssembly,
-            profile: None,
+            profile: Some(wasm_target_profile(args)),
         },
         overflow_mode,
         bounds_mode,
@@ -871,14 +874,7 @@ pub(super) fn run_emit_wasm(args: &ParsedArgs) -> Result<(), String> {
         false,
         args,
     )?;
-    let bytes = emit_wasm_kir_module(
-        compiled
-            .result
-            .artifact
-            .as_ref()
-            .expect("verified WebAssembly KIR artifact"),
-        EmitWasmOptions { opt_level },
-    )?;
+    let bytes = emit_wasm_kir_result(&compiled.result, EmitWasmOptions { opt_level })?;
     write_bytes_atomic(out, &bytes)?;
     println!("OK: emitted WASM {out}");
     Ok(())

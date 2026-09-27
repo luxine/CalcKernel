@@ -23,6 +23,7 @@ text output 写 stdout，另有说明时除外。
 | `ckc pgo merge <shard-or-directory>... --out <file.ckprof>` | Canonical merge 已完成的 `CKPART01` shard。 |
 | `ckc pgo inspect <file.ckprof> [--json]` | 验证并查看 terminal `CKPROF01` profile。 |
 | `ckc cache clean` | 仅删除解析出的 CK native cache。 |
+| `ckc lsp` | 通过标准输入和输出为编辑器客户端启动 CK language server。 |
 | `ckc licenses` | 输出内嵌 third-party notice。 |
 | `ckc --version --verbose` | 输出 compiler、ABI、LLVM、target、codegen 与 ORC identity。 |
 
@@ -39,6 +40,22 @@ dynamic 产物带 sibling Native C ABI header；Windows dynamic 还带 import li
 Compiler 在进程内使用 LLVM 22.1.8 与 LLD。产品命令不发现或启动外部 Clang、linker 或
 archiver，Native build 不留下 `.c` 或 `.ll` intermediate。`emit-c` 永不编译或链接输出。
 
+## Language server
+
+`ckc lsp` 使用 stdin/stdout 上的 Language Server Protocol framing 启动
+JSON-RPC language server，供编辑器客户端调用；stdout 专用于协议消息，服务端错误写入
+stderr。此命令不接受参数。VS Code 配置与编辑器功能见
+[Visual Studio Code 指南](../guides/vscode.md)。
+
+Language server 使用编辑器发送的完整文本（包括未保存修改）调用 CK frontend，不启动 LLVM，
+也不提供 Native Run/Build。除了 CK diagnostics，还提供补全、悬停、签名帮助、定义与引用导航、
+绑定安全的重命名、文档与工作区符号、语义 token、折叠范围、选择范围和整份文档格式化。
+工作区符号也包含工作区目录内未打开的 `.ck` 文件的顶层声明，未保存的文档内容优先于磁盘内容。
+源位置使用 LSP UTF-16 坐标。文档打开或更改时发布
+CK diagnostics，关闭时清除 diagnostics。服务端采用完整文档同步，并忽略过期文档版本，避免
+旧修改覆盖较新的诊断。输入过大或语法复杂度过高时，服务端可能跳过分析并报告原因；之后
+仍会继续处理其他文档。
+
 ## 选项与默认值
 
 - `--out`/`-o` 选择输出，`--header` 选择 C header。
@@ -46,6 +63,14 @@ archiver，Native build 不留下 `.c` 或 `.ll` intermediate。`emit-c` 永不�
 - `--opt-level 0|1|2|3` 和 `-O0`–`-O3` 控制 KIR/LLVM；执行命令默认 O3，inspection 默认 O0。
 - `--consumer inspection|c|wasm|native-library|native-executable` 为 `emit-kir` 选择精确
   target profile；inspection 是 scalar、target-independent 默认值。
+- `--wasm-features baseline|simd128` 只接受于 `emit-wat`、`emit-wasm`，以及
+  `emit-kir --consumer wasm`；默认值为 `baseline`。该选择属于规范化的 WebAssembly KIR
+  target profile，并进入其 digest。O3 下，`simd128` 可为受支持的连续 `f64` 和
+  `i32`/`u32` slice map、整数到 `f64` 的转换及模整数归约生成经过独立验证的 SIMD128，
+  包括带运行时保护的未知别名循环；`baseline` 与 O0–O2 保持标量。O3 下两个 profile
+  也可使用经过检查的标量地址游标，以及有证明支持的结构字段 memarg 偏移。
+  无效值以及不匹配的 command/consumer
+  组合会在读取 source 或修改输出前失败。
 - `--cpu baseline|native|multiversion` 用于 build 与 Native `emit-kir`；baseline 为 portable build 默认值，
   run 使用 host CPU。`emit-kir` 只有显式选择 Native consumer 后才接受 `--cpu`。
 - `--target <host-triple>` 只接受规范化后等于当前 host triple 的目标；不支持 cross compile。
