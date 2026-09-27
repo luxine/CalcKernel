@@ -13,6 +13,12 @@ the tag workflow builds directly from that checked-out source. It does not
 checkout source from another repository. The 0.14 performance gates and six
 native hosts remain the release baseline; offline Auto-Tuning is deferred.
 
+The tag event filter is intentionally broad so invalid release-like tags fail
+at the workflow gate. A release must use an annotated tag matching the stable
+`vMAJOR.MINOR.PATCH` form and the checked-out Cargo version; `-dev` tags and
+lightweight tags are rejected before artifact builds. Manual publishing uses
+the same validation.
+
 For a new release, require the schema-7/8 x86-64/AArch64 performance gates, all
 six native hosts, and the exact candidate-SHA ten-job CI to succeed. After PR
 merge, require a new exact-main-SHA ten-job CI and publishing-disabled

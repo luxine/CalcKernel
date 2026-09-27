@@ -257,6 +257,10 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
     for required in [
         "name: native ckc release",
         "tags:\n      - \"v*\"",
+        "fetch-depth: 0",
+        "Validate stable annotated release tag",
+        "if: github.event_name == 'push' || inputs.publish == true",
+        "scripts/validate-release-tag.sh \"${RELEASE_TAG}\"",
         "workflow_dispatch:",
         "default: false",
         "cargo fmt --check",
@@ -372,6 +376,66 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         entitlements.contains("<key>com.apple.security.cs.allow-jit</key>\n    <true/>"),
         "Darwin JIT entitlement policy must enable allow-jit"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn public_release_tag_validator_should_require_stable_annotated_tags() {
+    let root = super::support::temp::temp_dir("calckernel-release-tag-validator");
+    fs::create_dir_all(&root).expect("create temporary release repository");
+
+    let run_git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap_or_else(|error| panic!("run git {args:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    run_git(&["init", "--quiet"]);
+    run_git(&["config", "user.name", "CalcKernel Contract Test"]);
+    run_git(&["config", "user.email", "contracts@example.invalid"]);
+    fs::write(root.join("source.txt"), "public release source\n")
+        .expect("write temporary release source");
+    run_git(&["add", "source.txt"]);
+    run_git(&["commit", "--quiet", "-m", "release source"]);
+    run_git(&["tag", "--annotate", "v1.2.3", "--message", "stable release"]);
+    run_git(&["tag", "v1.2.4"]);
+
+    let validator = repo_root().join("scripts/validate-release-tag.sh");
+    let validate = |tag: &str| {
+        Command::new("bash")
+            .arg(&validator)
+            .arg(tag)
+            .current_dir(&root)
+            .output()
+            .unwrap_or_else(|error| panic!("run release tag validator: {error}"))
+    };
+
+    let stable = validate("v1.2.3");
+    assert!(
+        stable.status.success(),
+        "annotated stable tag should pass: {}",
+        String::from_utf8_lossy(&stable.stderr)
+    );
+
+    let development = validate("v1.2.3-dev.0");
+    assert!(
+        !development.status.success(),
+        "development tag must be rejected"
+    );
+
+    let lightweight = validate("v1.2.4");
+    assert!(
+        !lightweight.status.success(),
+        "lightweight stable tag must be rejected"
+    );
+
+    fs::remove_dir_all(root).expect("remove temporary release repository");
 }
 
 #[test]

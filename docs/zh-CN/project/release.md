@@ -11,6 +11,10 @@ wrapper 或 registry package。
 checkout 的源码，不会从其他仓库 checkout source。0.14 performance gate 与六平台 Native
 仍是发布基线；离线 Auto-Tuning 延期。
 
+Tag event filter 有意保持宽泛，使不合法的发布候选 tag 能在 workflow gate 中明确失败。正式发布
+必须使用匹配 `vMAJOR.MINOR.PATCH` 稳定版本格式且带注释的 tag，并与 checkout 中的 Cargo 版本
+一致；`-dev` tag 和轻量 tag 会在构建 artifact 前被拒绝。手动发布也执行相同校验。
+
 新版本发布前，必须通过 schema-7/8 x86-64/AArch64 performance gate、全部六个平台 Native
 以及精确 candidate-SHA 十作业 CI。PR 合并后，还需在精确 main SHA 上重新完成十作业 CI 与
 关闭发布的六平台 release preview，才能创建 annotated tag。代码或 contract 变化后必须在新

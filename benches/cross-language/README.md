@@ -5,6 +5,31 @@ numerical kernels. It compares CalcKernel (CK), C++, Rust, JavaScript on Node.js
 Java on OpenJDK 21, and Python using NumPy. It compares these checked-in
 implementations on one host, not the languages in general.
 
+## Published M5 Max report provenance
+
+The published Apple M5 Max report dated 2026-09-27 retains the command and
+source paths recorded at measurement time, including
+`website/benchmarks/run.py`. Keep those report fields unchanged: they identify
+the measured inputs and commands.
+
+The exact runner bytes named by that report are preserved at
+[`provenance/m5-max-2026-09-27-run.py`](provenance/m5-max-2026-09-27-run.py).
+Its SHA-256 matches the report's `sourceHashes["run.py"]` value exactly:
+`987bc7c8fac31eb591e6ab0260c3521fad780d9d762c97b9e442de42553c12c6`. Verify
+the archived bytes from the repository root with:
+
+```sh
+(cd benches/cross-language/provenance && \
+  shasum -a 256 -c m5-max-2026-09-27-run.py.sha256)
+```
+
+The report's `website/benchmarks/run.py` runner is archived at
+`benches/cross-language/provenance/m5-max-2026-09-27-run.py`; its
+`website/benchmarks/kernels/<language>/...` paths correspond to the nine files
+under `benches/cross-language/kernels/<language>/...`, whose hashes are
+unchanged. The standalone runner at [`run.py`](run.py) is the current entry
+point for new runs and records the current public paths and runner hash.
+
 ## Run it
 
 Use the release `ckc` executable built with the Native toolchain, a C++ compiler,
