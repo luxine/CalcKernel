@@ -1,0 +1,174 @@
+diff --git a/benches/ckc_perf.rs b/benches/ckc_perf.rs
+index 0fe890e..10539e7 100644
+--- a/benches/ckc_perf.rs
++++ b/benches/ckc_perf.rs
+@@ -571,6 +571,11 @@ fn measure_native_case(
+         20_000_000
+     };
+     let seed = 17i64;
++    let proof_values = (name == "proof_loop").then(|| {
++        (0..batch_iterations)
++            .map(|index| index % 4_093 - 2_046)
++            .collect::<Vec<_>>()
++    });
+ 
+     let native_compile_start = Instant::now();
+     let context = NativeContext::new().map_err(|error| error.to_string())?;
+@@ -631,12 +636,28 @@ fn measure_native_case(
+ 
+     let native_cold_start = Instant::now();
+     let native_library = DynamicLibrary::open(&native_path)?;
+-    let native_result = unsafe { call_kernel(&native_library, checked, batch_iterations, seed)? };
++    let native_result = unsafe {
++        call_kernel(
++            &native_library,
++            checked,
++            batch_iterations,
++            seed,
++            proof_values.as_deref(),
++        )?
++    };
+     let native_cold_ns = native_cold_start.elapsed().as_nanos();
+ 
+     let clang_c_cold_start = Instant::now();
+     let clang_library = DynamicLibrary::open(&clang_path)?;
+-    let clang_result = unsafe { call_kernel(&clang_library, checked, batch_iterations, seed)? };
++    let clang_result = unsafe {
++        call_kernel(
++            &clang_library,
++            checked,
++            batch_iterations,
++            seed,
++            proof_values.as_deref(),
++        )?
++    };
+     let clang_c_cold_ns = clang_c_cold_start.elapsed().as_nanos();
+     let reference_equivalent = native_result == clang_result;
+     if !reference_equivalent {
+@@ -646,8 +667,24 @@ fn measure_native_case(
+     }
+ 
+     for _ in 0..config.warmup {
+-        black_box(unsafe { call_kernel(&native_library, checked, batch_iterations, seed)? });
+-        black_box(unsafe { call_kernel(&clang_library, checked, batch_iterations, seed)? });
++        black_box(unsafe {
++            call_kernel(
++                &native_library,
++                checked,
++                batch_iterations,
++                seed,
++                proof_values.as_deref(),
++            )?
++        });
++        black_box(unsafe {
++            call_kernel(
++                &clang_library,
++                checked,
++                batch_iterations,
++                seed,
++                proof_values.as_deref(),
++            )?
++        });
+     }
+     let mut native_samples_ns = Vec::with_capacity(config.iterations);
+     let mut clang_c_samples_ns = Vec::with_capacity(config.iterations);
+@@ -659,6 +696,7 @@ fn measure_native_case(
+                 batch_iterations,
+                 seed,
+                 native_result,
++                proof_values.as_deref(),
+             )?);
+             clang_c_samples_ns.push(measure_kernel_sample(
+                 &clang_library,
+@@ -666,6 +704,7 @@ fn measure_native_case(
+                 batch_iterations,
+                 seed,
+                 clang_result,
++                proof_values.as_deref(),
+             )?);
+         } else {
+             clang_c_samples_ns.push(measure_kernel_sample(
+@@ -674,6 +713,7 @@ fn measure_native_case(
+                 batch_iterations,
+                 seed,
+                 clang_result,
++                proof_values.as_deref(),
+             )?);
+             native_samples_ns.push(measure_kernel_sample(
+                 &native_library,
+@@ -681,6 +721,7 @@ fn measure_native_case(
+                 batch_iterations,
+                 seed,
+                 native_result,
++                proof_values.as_deref(),
+             )?);
+         }
+     }
+@@ -713,9 +754,18 @@ fn measure_kernel_call(
+     iterations: i64,
+     seed: i64,
+     expected: i64,
++    proof_values: Option<&[i64]>,
+ ) -> Result<u128, String> {
+     let start = Instant::now();
+-    let actual = unsafe { call_kernel(library, checked, black_box(iterations), black_box(seed))? };
++    let actual = unsafe {
++        call_kernel(
++            library,
++            checked,
++            black_box(iterations),
++            black_box(seed),
++            proof_values,
++        )?
++    };
+     let elapsed = start.elapsed().as_nanos().max(1);
+     if black_box(actual) != expected {
+         return Err(format!(
+@@ -732,11 +782,17 @@ fn measure_kernel_sample(
+     iterations: i64,
+     seed: i64,
+     expected: i64,
++    proof_values: Option<&[i64]>,
+ ) -> Result<u128, String> {
+     let mut minimum = u128::MAX;
+     for _ in 0..SAMPLE_REPETITIONS {
+         minimum = minimum.min(measure_kernel_call(
+-            library, checked, iterations, seed, expected,
++            library,
++            checked,
++            iterations,
++            seed,
++            expected,
++            proof_values,
+         )?);
+     }
+     Ok(minimum)
+@@ -748,7 +804,28 @@ unsafe fn call_kernel(
+     checked: bool,
+     iterations: i64,
+     seed: i64,
++    proof_values: Option<&[i64]>,
+ ) -> Result<i64, String> {
++    if let Some(values) = proof_values {
++        let len = u32::try_from(values.len())
++            .map_err(|_| "proof-loop input exceeds the CK slice length limit".to_string())?;
++        let data = values.as_ptr().cast_mut();
++        if checked {
++            type Kernel = unsafe extern "C" fn(*mut i64, u32, i64, *mut i64) -> i32;
++            let kernel: Kernel = unsafe { library.symbol("kernel")? };
++            let mut result = 0i64;
++            let status = unsafe { kernel(data, len, seed, &mut result) };
++            if status != 0 {
++                return Err(format!(
++                    "checked proof-loop performance kernel returned status {status}"
++                ));
++            }
++            return Ok(result);
++        }
++        type Kernel = unsafe extern "C" fn(*mut i64, u32, i64) -> i64;
++        let kernel: Kernel = unsafe { library.symbol("kernel")? };
++        return Ok(unsafe { kernel(data, len, seed) });
++    }
+     if checked {
+         type Kernel = unsafe extern "C" fn(i64, i64, *mut i64) -> i32;
+         let kernel: Kernel = unsafe { library.symbol("kernel")? };

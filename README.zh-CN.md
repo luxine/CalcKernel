@@ -1,0 +1,138 @@
+# CalcKernel
+
+[English](README.md)
+
+CalcKernel 0.14.0 发布 `native ckc`：一个用 Rust 实现、可自包含运行的 CK computation-kernel
+语言命令行编译器。Release binary 无需外部 compiler toolchain 即可编译、链接和运行 Native CK；
+仓库同时保留可检查的 C 与 WebAssembly emitter。
+正式发布的 0.13.0 仍是本次更新的兼容基线。
+
+## 发布能力
+
+- Rust lexer、parser、type checker、deterministic semantic MIR，以及所有 backend 共用的
+  单一 verified fact-driven KIR optimizer。
+- `unsafe fn` entry contract，覆盖 affine range、alignment、no-alias 与 memory-effect
+  ceiling，并提供 opt-in contract sanitizer。
+- `break`/`continue`、return-only `void`、caller-owned `slice<T>`、可选 overflow/bounds
+  checked mode 与无参数 `main` entry。
+- `ckc run` 隔离 child、确定性 numeric/boolean print 与安全 persistent object cache。
+- 内嵌 LLVM 22.1.8 codegen 和进程内 LLD 的
+  `ckc build --kind executable|dynamic|static|object`。
+- Object/static/dynamic library 共用 generated-header Native C ABI。
+- 基于 target profile、由独立 checker 验证的 O3 optimizer，支持 transactional
+  specialization、受控 unroll、SLP、Loop SIMD、runtime alias versioning、strict-f64
+  vector 与精确 modular integer reduction。
+- CK 自有 `CKPART01`/`CKPROF01` profile generation、merge、inspection，以及通过显式
+  `ckc pgo` / `--pgo-*` workflow 进行的 non-proof PGO application。
+- 显式 Native `--cpu multiversion` build，包含 portable baseline、已验证的受限 variant、
+  baseline-safe one-time dispatch 与 executable/dynamic/static artifact 中的稳定 ABI thunk。
+- Source-only C 与 portable WAT/WASM 输出。
+- 面向 macOS、Linux、Windows 的 AArch64/x86-64 六个零工具链 release archive。
+
+Native checked mode 支持 overflow/bounds 四种组合；C emission 使用相同 status semantics；
+WebAssembly 仅支持 unchecked。Native runtime print 可用于 `run`/executable，library、C、
+WebAssembly root 可达的 print 会被拒绝。
+
+## Pipeline
+
+```text
+.ck -> frontend -> semantic MIR -> mode/consumer-specific verified KIR v3
+                                 -> optional CK workload profile (non-proof)
+                                 -> target-profiled transactional optimizer
+                                 -> optional verified CPU variants + dispatcher
+                                      +-> C source/header
+                                      +-> WAT/WASM
+                                      +-> structural LLVM -> object
+                                                               +-> ORC run
+                                                               +-> in-process LLD -> executable/library
+```
+
+产品路径不调用 Clang、system linker 或 archiver。固定 Clang 22.1.8 只作为仓库的 differential
+与 ABI test oracle。
+
+## 使用 release binary
+
+```sh
+ckc --version --verbose
+ckc check examples/core/scalar.ck
+ckc emit-kir examples/core/scalar.ck --print-facts
+ckc emit-kir examples/core/scalar.ck --consumer native-library \
+  --cpu baseline --explain-optimization
+ckc run examples/native/hello.ck
+ckc build examples/native/hello.ck --kind executable --out /tmp/hello
+ckc build examples/core/scalar.ck --kind dynamic --out /tmp/scalar
+ckc pgo build examples/native/hello.ck --out /tmp/hello-pgo \
+  --profile-out /tmp/hello.ckprof
+ckc build examples/core/scalar.ck --kind static --cpu multiversion \
+  --pgo-use /tmp/scalar.ckprof --out /tmp/libscalar.a
+ckc emit-c examples/applications/pricing.ck --out /tmp/pricing.c
+ckc emit-wasm examples/wasm/scalar.ck --out /tmp/scalar.wasm
+ckc licenses
+```
+
+`run` 与 `build` 默认 O3。只有显式使用 `pgo` command 或 `--pgo-*` option 才启用 PGO；
+普通开发不会训练或读取 profile。Native build 默认 portable CPU baseline，`--cpu native`
+与 `--cpu multiversion` 均为显式选择。`build-llvm` 是 deprecated alias，不提供 PGO 或
+multiversion behavior。
+
+0.14.0 保留 0.13 的 PGO 与 multiversion 工作流。离线 Auto-Tuning 延期：`ckc tune`
+与 `ckc build --tune-use` 会在读取输入或创建输出前明确失败，不会静默退回普通 build。
+
+## 从源码构建
+
+Native feature 需要 `native/llvm/manifest.toml` 定义的精确 LLVM prefix；仓库脚本将其 bootstrap
+到 `build/llvm`。该 prefix 是 build input，不是 end-user runtime dependency。
+
+```sh
+rustc_host="$(rustc -vV | sed -n 's/^host: //p')"
+llvm_archive=/path/to/llvm-project-22.1.8.src.tar.xz
+./scripts/bootstrap-llvm.sh --archive "$llvm_archive" \
+  --prefix "$PWD/build/llvm/prefix-$rustc_host-release" \
+  --target "$rustc_host" --profile release
+export CKC_LLVM_PREFIX="$PWD/build/llvm/prefix-$rustc_host-release"
+cargo build --release --features native-toolchain --locked
+cargo test --all-features --locked
+```
+
+Default feature 可构建 frontend/C/WASM-only developer 版本：
+
+```sh
+cargo test --locked
+cargo build --release --locked
+```
+
+## 文档与验证
+
+入口见 [文档索引](docs/zh-CN/index.md)、[语言参考](docs/zh-CN/reference/language.md)、
+[CLI 参考](docs/zh-CN/reference/cli.md) 与 [Native ABI](docs/zh-CN/abi/llvm.md)。
+语言示例包含 [control flow](examples/core/control_flow.ck)、[void procedure](examples/core/void.ck)
+与 [slice](examples/core/slices.ck)。英文 [release policy](docs/project/release.md) 与中文版本保持镜像。
+
+严格 Native local gate：
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-features --locked
+cargo build --release --features native-toolchain --locked
+./target/release/ckc --version --verbose
+./target/release/ckc licenses
+```
+
+Release policy、platform audit、performance gate、archive name 与 immutable GitHub Release
+发布见 [release policy](docs/zh-CN/project/release.md)。
+
+CalcKernel 0.14.0 保持 public Native C ABI version 1 与 Runtime ABI version 2；private
+LLVM bridge 为 ABI 4，KIR 使用 `kir-v3` identity，Native object cache 使用
+`CKCOBJ03` 及 key/manifest schema 4。旧 0.12/0.11 private cache entry 会 fail closed，
+不会与 0.13 artifact 混用。已接受的 0.12.0、0.11.0 与 0.10.0 source boundary 保留在
+[兼容性策略](docs/zh-CN/project/compatibility.md)中。
+
+PGO 与受限 runtime multiversioning 已在 0.13 实现并于 0.14 保留。Auto-Tuning 延期；
+indirect-call promotion、scalable KIR vector 与 adaptive JIT PGO 仍是未来工作。
+
+## 内存边界
+
+`slice(data, len)` 与 `items[start..end]` 创建 non-owning `slice<T>` descriptor。Raw pointer validity、
+allocation extent、alignment、lifetime 与声明 length 仍由 caller 负责。`--bounds checked` 只验证
+slice index/range relation，不会让任意 pointer use 变为 memory-safe。

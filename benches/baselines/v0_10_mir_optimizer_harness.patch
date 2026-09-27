@@ -1,0 +1,72 @@
+diff --git a/benches/ckc_perf.rs b/benches/ckc_perf.rs
+index 0fe890e..b8685d4 100644
+--- a/benches/ckc_perf.rs
++++ b/benches/ckc_perf.rs
+@@ -103,6 +103,12 @@ fn run() -> Result<(), String> {
+         fs::write(&runtime_path, runtime.to_json())
+             .map_err(|error| format!("failed to write {}: {error}", runtime_path.display()))?;
+         println!("Wrote {}", relative_to_repo(&repo_root, &runtime_path));
++
++        let optimizer_path = repo_root.join("target/ckc-perf/v0-10-mir-optimizer.tsv");
++        let optimizer = measure_mir_optimizer_baselines(&repo_root, &cases, &config)?;
++        fs::write(&optimizer_path, optimizer)
++            .map_err(|error| format!("failed to write {}: {error}", optimizer_path.display()))?;
++        println!("Wrote {}", relative_to_repo(&repo_root, &optimizer_path));
+     }
+ 
+     println!("Wrote {}", relative_to_repo(&repo_root, &json_path));
+@@ -480,6 +486,54 @@ fn optimized_module(
+     Ok(result.module)
+ }
+ 
++#[cfg(feature = "native-toolchain")]
++fn measure_mir_optimizer_baselines(
++    repo_root: &Path,
++    cases: &[Case],
++    config: &Config,
++) -> Result<String, String> {
++    let mut output = String::from("case\tmedian_ns\n");
++    for case in cases {
++        let input = CaseInput::load(repo_root, case)?;
++        for _ in 0..config.warmup {
++            black_box(time_mir_optimization(&input)?);
++        }
++        let mut samples = Vec::with_capacity(config.iterations);
++        for _ in 0..config.iterations {
++            samples.push(time_mir_optimization(&input)?);
++        }
++        output.push_str(&format!("{}\t{}\n", case.name, median(&samples)));
++    }
++    Ok(output)
++}
++
++#[cfg(feature = "native-toolchain")]
++fn time_mir_optimization(input: &CaseInput) -> Result<u128, String> {
++    let checked = checked_program(input)?;
++    let mir = lower_to_mir(&checked).map_err(|error| error.to_string())?;
++    let pipeline = build_mir_optimization_pipeline(3);
++    let context = MirPassContext {
++        opt_level: 3,
++        overflow_mode: MirPassOverflowMode::Unchecked,
++        bounds_mode: MirPassBoundsMode::Unchecked,
++        target_backend: MirPassTargetBackend::Llvm,
++        debug: Default::default(),
++    };
++    let start = Instant::now();
++    let result = run_mir_pass_pipeline(mir, &pipeline, &context);
++    let elapsed = start.elapsed().as_nanos().max(1);
++    if !result.validation_errors.is_empty() {
++        return Err(result
++            .validation_errors
++            .into_iter()
++            .map(|error| error.message)
++            .collect::<Vec<_>>()
++            .join("\n"));
++    }
++    black_box(result.module);
++    Ok(elapsed)
++}
++
+ #[cfg(feature = "native-toolchain")]
+ fn measure_native_runtime(
+     repo_root: &Path,

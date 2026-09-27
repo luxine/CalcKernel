@@ -1,0 +1,10 @@
+/target/
+/.DS_Store
+/build/
+/build/llvm/
+/npm/bin/
+*.tmp
+__pycache__/
+*.py[cod]
+/tests/oracles/typescript/node_modules/
+/tests/oracles/typescript/dist/

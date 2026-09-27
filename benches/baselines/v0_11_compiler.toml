@@ -1,0 +1,24 @@
+schema_version = 1
+commit = "80c0acf6bb5d65e4d9d40352b9501ea32b79f43d"
+compiler_identity = "calckernel 0.11.0 (80c0acf6bb5d65e4d9d40352b9501ea32b79f43d)"
+llvm_version = "22.1.8"
+native_abi = 1
+runtime_abi = 2
+bridge_abi = 2
+cpu = "baseline"
+
+[source_digests]
+branch_mix = "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8"
+integer_accumulate = "4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39"
+proof_loop = "ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d"
+remainder_chain = "87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e"
+
+[c_oracle_digests]
+branch_mix_checked = "fb5b95130998c20a0014b01af5659720771d836614c5bd0aa85e5c02d68921e2"
+branch_mix_unchecked = "523e5f4af4c4bb64e6949dd7bfcd15578adb8ff47aa4437b5e1d01e6df84512b"
+integer_accumulate_checked = "91b9abc17ff50d7d55733ba0972f268779e8f2ea07ed96683dfa376a57113952"
+integer_accumulate_unchecked = "82b09a2e7428d99190cc50b03c709e5b018b082d0c265564bb4618e547fadf8a"
+proof_loop_checked = "044bc8d4b456a64d9cb6f3af057466796466b8cf32628fa4cb5e78b0e57bfee8"
+proof_loop_unchecked = "fed666f2048f254401e8554f8447b874cd4f602c1996f16825ea01d55e968326"
+remainder_chain_checked = "1dc89902f0e636a2c0a8f63a644a734ffcbbedb0b3039e299bc0c8b6ac439eda"
+remainder_chain_unchecked = "855c5bcb9bf82a8b06aab295c05211663a97a505654613a7b5dae33d2a6e9aeb"

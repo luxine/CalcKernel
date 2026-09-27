@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "command": "cargo bench --bench ckc_perf",
+  "generatedAtUnixSeconds": 0,
+  "target": "example",
+  "iterations": 5,
+  "warmup": 1,
+  "results": [
+    {
+      "case": "pricing",
+      "path": "benches/fixtures/pricing_helpers.ck",
+      "task": "check",
+      "stage": "frontend",
+      "iterations": 5,
+      "warmup": 1,
+      "minNs": 0,
+      "medianNs": 0,
+      "p95Ns": 0,
+      "meanNs": 0,
+      "outputUnits": 0
+    }
+  ]
+}

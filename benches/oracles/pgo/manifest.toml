@@ -1,0 +1,43 @@
+schema_version = 1
+clang_version = "22.1.8"
+rust_version = "1.90.0"
+fast_math = false
+contraction = false
+training_split = "benches/fixtures/pgo/training.tsv"
+held_out_split = "benches/fixtures/pgo/held-out.tsv"
+adversarial_split = "benches/fixtures/pgo/adversarial.tsv"
+
+[[source]]
+language = "c11"
+path = "benches/oracles/pgo/c/pgo_oracle.c"
+sha256 = "7265fd6f792326b14ad9df9912d407b6d9e970a103e81fb11de507e0de688b30"
+
+[[source]]
+language = "rust2024"
+path = "benches/oracles/pgo/rust/pgo_oracle.rs"
+sha256 = "d0635c588c7aff19a5d895a320f8647bb0673e5f60b12e248a0d3525e5b54857"
+
+[[case]]
+name = "branch-layout"
+oracle_case = 1
+safety = "u64 modular recurrence; n <= input length"
+
+[[case]]
+name = "call-constant-length"
+oracle_case = 2
+safety = "disjoint 4000-element u32 buffers; modular recurrence"
+
+[[case]]
+name = "trip-unroll-simd"
+oracle_case = 3
+safety = "disjoint u32 buffers; n <= both lengths"
+
+[[case]]
+name = "memory-bound"
+oracle_case = 4
+safety = "three pairwise-disjoint u32 buffers; sums fit checked domain"
+
+[[case]]
+name = "compute-bound"
+oracle_case = 5
+safety = "finite normal f64 inputs; strict operations; contraction disabled"

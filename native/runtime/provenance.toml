@@ -1,0 +1,29 @@
+schema = 1
+runtime_abi = 2
+heap = false
+locale = false
+libc_formatting = false
+runtime_files = ["common/runtime.c", "common/contract.c", "include/ckc_runtime.h", "linux/syscalls.S", "windows/jit_image_base.c"]
+runtime_source_sha256 = ["d84babba682a69ad433997bf8e160a5ab77fc93672950f212a94212b2a98e248", "12433a7ba30b4cfbc85d8c01423266b8cea9621ba1f96002ef793fc2c7809a97", "6f4e8c46360cf19548e94bf240334d091e7aaf6955097125afb9aa34ec93266b", "06aa3109392552090bd56faee69b520b1cf527edec92863ac343a6bf6fb75033", "39341a0b3b9485209e1ffb3ec5ef387135ba57c15e58004a0aa59348386e5cad"]
+
+[[vendor]]
+name = "Ryu"
+upstream = "https://github.com/ulfjack/ryu"
+commit = "59661c3f883dfd39cef6dc8eaf2fcbaae53597e8"
+license_files = ["vendor/ryu/LICENSE-Apache2", "vendor/ryu/LICENSE-Boost"]
+files = ["vendor/ryu/d2s.c", "vendor/ryu/common.h", "vendor/ryu/digit_table.h", "vendor/ryu/d2s_intrinsics.h", "vendor/ryu/d2s_full_table.h", "vendor/ryu/ryu.h"]
+source_sha256 = ["f50df6ebc19075d2aa7b2ff5114bb6b2d953ee905bf2b2d4d8deb5390a36c631", "0bbd71d26da6193e678d0776cf418f43f287c73d6fd6725353df0aadf70f2a19", "8b782573abc0b8554d74163ae6c02f0beb5c30d1e63eaebdb0ddf2c98d817e01", "1d05702f2edacce428223d4b43dd3095c1bd1f3ad30128ce1761d84356dddc7d", "2618f6e5fae6c4443899b184efe3d08295dd267dc9f1a994c983c7caca59ebe6", "b7feab0ba1df5e9ef3d602f386592ad152491405e49b408fb21c0e0e9e6bfb16"]
+license_sha256 = ["c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4", "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"]
+adaptations = ["disable allocation convenience API with CKC_RYU_NO_MALLOC", "normalize Ryu scientific output to the shortest CK fixed/scientific spelling"]
+
+[platform.darwin]
+imports = ["/usr/lib/libSystem.B.dylib:fcntl", "/usr/lib/libSystem.B.dylib:signal", "/usr/lib/libSystem.B.dylib:write", "/usr/lib/libSystem.B.dylib:_exit"]
+
+[platform.linux]
+imports = []
+syscalls = ["rt_sigaction", "write", "exit"]
+
+[platform.windows]
+imports = ["kernel32.dll:GetStdHandle", "kernel32.dll:WriteFile", "kernel32.dll:ExitProcess"]
+import_definition = "platform/kernel32.def"
+compiler_helpers = ["_fltused"]

@@ -1,0 +1,60 @@
+{
+  "name": "calckernel",
+  "version": "0.8.0",
+  "description": "A small CK / CalcKernel integer-computation DSL compiler with C, WASM, and LLVM backends.",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "bin": {
+    "ckc": "./dist/src/cli.js"
+  },
+  "files": [
+    "dist/src",
+    "docs",
+    "examples",
+    "bench/README.md",
+    "bench/README.zh-CN.md",
+    "bench/perf",
+    "bench/pricing_baseline.js",
+    "bench/pricing_c_harness.c",
+    "bench/pricing_checked_benchmark.c",
+    "bench/wasm_pricing_benchmark.mjs",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "ckc": "node dist/src/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "calckernel",
+    "ck",
+    "compiler",
+    "dsl",
+    "c",
+    "wasm",
+    "llvm"
+  ],
+  "license": "MIT",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "wabt": "^1.0.39"
+  }
+}

@@ -1,0 +1,5 @@
+fn main() -> i32 {
+  print_i32(42);
+  print_newline();
+  return 0;
+}

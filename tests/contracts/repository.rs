@@ -1,0 +1,339 @@
+use std::fs;
+
+use calckernel::{SourceFile, check};
+
+use super::support::oracle::repo_root;
+
+fn read(path: &str) -> String {
+    fs::read_to_string(repo_root().join(path))
+        .unwrap_or_else(|error| panic!("failed to read {path}: {error}"))
+}
+
+#[test]
+fn repository_should_preserve_v0_10_as_compatibility_history() {
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "CHANGELOG.md",
+        "CHANGELOG.zh-CN.md",
+    ] {
+        assert!(read(path).contains("0.10.0"), "{path} must name 0.10.0");
+    }
+}
+
+#[test]
+fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_history() {
+    let printer = read("src/ir/kir/print.rs");
+    assert!(printer.contains("KIR_FORMAT_VERSION: u32 = 3"));
+    assert!(printer.contains("kir-v{} consumer="));
+    assert!(read("src/cli/commands.rs").contains("kir-v3;strict-fp"));
+    assert!(
+        read("tests/fixtures/compatibility/v0_12/manifest.toml")
+            .contains("id = \"kir-v2-target-profile\"")
+    );
+}
+
+#[test]
+fn repository_should_declare_v0_14_candidate_and_retain_v0_13_history() {
+    let cargo = read("Cargo.toml");
+    let lock = read("Cargo.lock");
+    assert!(cargo.contains("version = \"0.14.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.14.0\""));
+    for path in [
+        "README.md",
+        "README.zh-CN.md",
+        "CHANGELOG.md",
+        "CHANGELOG.zh-CN.md",
+        "docs/index.md",
+        "docs/zh-CN/index.md",
+    ] {
+        assert!(read(path).contains("0.13.0"), "{path} must name 0.13.0");
+    }
+}
+
+#[test]
+fn repository_identity_should_use_the_canonical_github_name() {
+    let canonical = "https://github.com/luxine/CalcKernel";
+    let cargo = read("Cargo.toml");
+    assert!(
+        cargo.contains(&format!("repository = \"{canonical}\"")),
+        "Cargo package metadata must publish the canonical repository"
+    );
+    for path in ["README.md", "README.zh-CN.md"] {
+        let readme = read(path);
+        assert!(
+            readme.starts_with("# CalcKernel\n"),
+            "{path} must use the canonical project name"
+        );
+    }
+    let workflow = read(".github/workflows/ci.yml");
+    assert!(workflow.contains("working-directory: tests/oracles/typescript"));
+    assert!(!workflow.contains("git clone"));
+}
+
+#[test]
+fn v0_12_compatibility_manifest_should_cover_optimizer_and_v0_11_boundary() {
+    let manifest = read("tests/fixtures/compatibility/v0_12/manifest.toml");
+    assert!(manifest.contains("release = \"0.12.0\""));
+    for id in [
+        "kir-v2-target-profile",
+        "transactional-optimizer",
+        "loop-simd-versioning",
+        "specialization-unroll-slp",
+        "native-cache-v3",
+        "v0-11-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.12 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.12 compatibility evidence does not resolve: {evidence}"
+            );
+        }
+    }
+}
+
+#[test]
+fn v0_13_compatibility_manifest_should_cover_pgo_multiversion_and_v0_12_boundary() {
+    let manifest = read("tests/fixtures/compatibility/v0_13/manifest.toml");
+    assert!(manifest.contains("release = \"0.13.0\""));
+    for id in [
+        "profile-schema1",
+        "kir-v3-profile-sites",
+        "pgo-transactions",
+        "multiversion-dispatch",
+        "native-cache-v4",
+        "v0-12-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.13 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.13 compatibility evidence does not resolve: {evidence}"
+            );
+        }
+    }
+}
+
+#[test]
+fn repository_formal_consumers_should_not_depend_on_the_legacy_mir_optimizer() {
+    for path in ["src/cli/commands.rs", "benches/ckc_perf.rs"] {
+        let text = read(path);
+        for forbidden in [
+            "MirPass",
+            "build_mir_optimization_pipeline",
+            "run_mir_pass_pipeline",
+            "lower_native_llvm_module",
+            "emit_c_module(",
+            "emit_wasm_module_with_options(",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "formal consumer {path} retains legacy dependency {forbidden}"
+            );
+        }
+    }
+    let optimizer = read("src/optimizer/mod.rs");
+    assert!(!optimizer.contains("pub use pipeline::*"));
+    let backend = read("src/backend/mod.rs");
+    for forbidden in [
+        "emit_c_module,",
+        "emit_c_module_with_header",
+        "emit_wasm_module,",
+        "lower_native_llvm_module,",
+    ] {
+        assert!(
+            !backend.contains(forbidden),
+            "public backend surface retains legacy entry {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn v0_11_compatibility_manifest_should_cover_new_contracts_and_executable_evidence() {
+    let manifest = read("tests/fixtures/compatibility/v0_11/manifest.toml");
+    assert!(manifest.contains("release = \"0.11.0\""));
+    for id in [
+        "unsafe-contracts",
+        "kir-inspection",
+        "contract-sanitizer",
+        "native-fact-audit",
+        "v0-10-source-compatibility",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "0.11 compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("fixture = \"") {
+            let path = path.strip_suffix('"').expect("quoted fixture path");
+            assert!(repo_root().join(path).is_file(), "missing fixture {path}");
+        }
+        if let Some(evidence) = line.strip_prefix("evidence = \"") {
+            let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+            let (path, test_name) = evidence
+                .split_once(':')
+                .expect("evidence uses path:test_name");
+            assert!(
+                read(path).contains(&format!("fn {test_name}")),
+                "0.11 compatibility evidence does not resolve: {evidence}"
+            );
+        }
+    }
+}
+
+#[test]
+fn v0_11_compatibility_sources_should_parse_at_the_frozen_boundary() {
+    let path = "tests/fixtures/compatibility/v0_11/contracts.ck";
+    let source = SourceFile::new(path, read(path));
+    let result = check(&source);
+    assert_eq!(result.diagnostics, [], "{path} must remain accepted");
+}
+
+#[test]
+fn release_tree_should_not_keep_temporary_native_toolchain_plans() {
+    for forbidden in [
+        "docs/compiler/native-toolchain-design.md",
+        "docs/zh-CN/compiler/native-toolchain-design.md",
+        "docs/compiler/native-toolchain-implementation",
+        "docs/zh-CN/compiler/native-toolchain-implementation",
+    ] {
+        assert!(
+            !repo_root().join(forbidden).exists(),
+            "temporary design or execution plan must not ship: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn v0_10_compatibility_manifest_should_cover_every_intentional_change() {
+    let manifest = read("tests/fixtures/compatibility/v0_10/manifest.toml");
+    for id in [
+        "native-build-no-clang",
+        "native-artifact-kinds",
+        "run-main-print",
+        "reserved-native-names",
+        "build-llvm-deprecation",
+        "native-checked-status",
+        "single-native-c-abi",
+        "host-only-emit-llvm",
+        "no-native-intermediates",
+        "emit-c-source-only",
+        "unaffected-v0-9-source",
+    ] {
+        assert!(
+            manifest.contains(&format!("id = \"{id}\"")),
+            "compatibility manifest is missing {id}"
+        );
+    }
+    for line in manifest.lines() {
+        let Some(path) = line.trim().strip_prefix("fixture = \"") else {
+            continue;
+        };
+        let path = path.strip_suffix('"').expect("quoted fixture path");
+        assert!(
+            repo_root().join(path).is_file(),
+            "missing compatibility fixture {path}"
+        );
+    }
+    for line in manifest.lines() {
+        let Some(evidence) = line.trim().strip_prefix("evidence = \"") else {
+            continue;
+        };
+        let evidence = evidence.strip_suffix('"').expect("quoted evidence");
+        let (path, test_name) = evidence
+            .split_once(':')
+            .expect("evidence uses path:test_name");
+        let source = read(path);
+        assert!(
+            source.contains(&format!("fn {test_name}")),
+            "compatibility evidence does not resolve: {evidence}"
+        );
+    }
+    for fixture in [
+        "tests/fixtures/compatibility/v0_10/legacy_export.ck",
+        "tests/fixtures/compatibility/v0_10/main_print.ck",
+        "tests/fixtures/compatibility/v0_10/native_checked.ck",
+        "tests/fixtures/compatibility/v0_10/reserved_print.ck",
+    ] {
+        assert!(repo_root().join(fixture).is_file(), "missing {fixture}");
+    }
+}
+
+#[test]
+fn v0_10_compatibility_sources_should_parse_at_the_frozen_boundary() {
+    for fixture in ["legacy_export.ck", "main_print.ck", "native_checked.ck"] {
+        let path = format!("tests/fixtures/compatibility/v0_10/{fixture}");
+        let source = SourceFile::new(path.clone(), read(&path));
+        let result = check(&source);
+        assert_eq!(result.diagnostics, [], "{path} must remain accepted");
+    }
+
+    let path = "tests/fixtures/compatibility/v0_10/main_print.ck";
+    let source = SourceFile::new(path, read(path));
+    assert!(
+        check(&source).checked_program.entry.is_some(),
+        "0.10 entry fixture must classify main"
+    );
+
+    let path = "tests/fixtures/compatibility/v0_10/reserved_print.ck";
+    let source = SourceFile::new(path, read(path));
+    let messages = check(&source)
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        ["Cannot define reserved compiler builtin 'print_i32'."],
+        "reserved-name migration diagnostic is frozen"
+    );
+}
+
+#[test]
+fn repository_ignore_rules_should_cover_generated_build_and_python_files() {
+    let ignore = read(".gitignore");
+    for required in [
+        "/target/",
+        "/build/",
+        "/.DS_Store",
+        "*.tmp",
+        "__pycache__/",
+        "*.py[cod]",
+    ] {
+        assert!(
+            ignore.lines().any(|line| line == required),
+            "ignore {required}"
+        );
+    }
+}

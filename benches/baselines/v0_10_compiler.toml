@@ -1,0 +1,307 @@
+schema_version = 2
+commit = "df816502876fba41676f9ebc190e4fadd18cd5a5"
+compiler_identity = "calckernel 0.10.0 (df816502876fba41676f9ebc190e4fadd18cd5a5)"
+llvm_version = "22.1.8"
+harness = "ckc_perf schema 2 + proof-loop ABI adapter sha256=316b64bf3e24ade271d870444bb66a85018c4dcb66229afce202da2d2b53af6e + MIR optimizer timer sha256=828138f376472b177d8bbd1aa4f7888ed323ec03d098e21a74abcfce32a98d0b + Linux C++ runtime link adapter sha256=099305e8a9d5ff8d54e574b0fbd202a511f28a8543508f8c0ea06001704cdaff + Clang CPU policy adapter sha256=f22d58f4e2712e792a5b933376fe3a81fa1bd44a4cdb39b2790359ab5a40c7f1; warmup=3; samples=20; repetitions=7; batch=20000000"
+statistics = "minimum-of-7 call samples; upper-median-of-20; strict-fp; pinned clang 22.1.8"
+
+# Source digests make the baseline input corpus immutable and independently auditable.
+source_digest_branch_mix = "d4f80ba571422feffe4d568bd476b44dde2a3f9086d30ebd77972dcf4254d7b8"
+source_digest_integer_accumulate = "4734807a96981f42e85b68ba4b964ce21e354c3486e7f668d89dcaefa391fc39"
+source_digest_proof_loop = "ea8c9f1be3e5fffa8c1c0e5e448d6617be15d855fdef2ee49670c4f98b88e30d"
+source_digest_remainder_chain = "87a36a9f5cd951c7281480bd180a9d8a657fd85e553f5a93edb2d5e74c00311e"
+source_digest_pricing = "be74bd3851e54db09955255b463025a6ee8464620ae1753c88b7d6d453388416"
+source_digest_pricing_soa = "5c003b70649f34516a2830584542086ce52ff0adfdd6dd0d76010a33e1d23cad"
+source_digest_f64_kernels = "58e10d6c28c5d95088a2e156197eb51c880b361a555d016ae11e9e0b7ecad7be"
+source_digest_example_pricing = "aebfe8bc5de317e32a7c945c7424a75b32a4330d7fd6dd53bb2d0c01cfbcb65a"
+source_digest_example_dijkstra = "490a7a3a3a04abb9cb9f05c9dbeea60d61690fc32897f36916f1ffa3c28a2f96"
+source_digest_v0_10_c_branch_mix_checked = "fb5b95130998c20a0014b01af5659720771d836614c5bd0aa85e5c02d68921e2"
+source_digest_v0_10_c_branch_mix_unchecked = "523e5f4af4c4bb64e6949dd7bfcd15578adb8ff47aa4437b5e1d01e6df84512b"
+source_digest_v0_10_c_integer_accumulate_checked = "91b9abc17ff50d7d55733ba0972f268779e8f2ea07ed96683dfa376a57113952"
+source_digest_v0_10_c_integer_accumulate_unchecked = "82b09a2e7428d99190cc50b03c709e5b018b082d0c265564bb4618e547fadf8a"
+source_digest_v0_10_c_proof_loop_checked = "044bc8d4b456a64d9cb6f3af057466796466b8cf32628fa4cb5e78b0e57bfee8"
+source_digest_v0_10_c_proof_loop_unchecked = "fed666f2048f254401e8554f8447b874cd4f602c1996f16825ea01d55e968326"
+source_digest_v0_10_c_remainder_chain_checked = "1dc89902f0e636a2c0a8f63a644a734ffcbbedb0b3039e299bc0c8b6ac439eda"
+source_digest_v0_10_c_remainder_chain_unchecked = "855c5bcb9bf82a8b06aab295c05211663a97a505654613a7b5dae33d2a6e9aeb"
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "branch_mix"
+median_ns = 7274208
+clang_median_ns = 7316750
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "integer_accumulate"
+median_ns = 8487750
+clang_median_ns = 8497083
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "proof_loop"
+median_ns = 4528917
+clang_median_ns = 4525458
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "remainder_chain"
+median_ns = 49007042
+clang_median_ns = 48871458
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "branch_mix"
+median_ns = 7575416
+clang_median_ns = 7544959
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "integer_accumulate"
+median_ns = 9884959
+clang_median_ns = 9902417
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "proof_loop"
+median_ns = 4539041
+clang_median_ns = 4521708
+
+[[runtime]]
+target = "macos-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "remainder_chain"
+median_ns = 53533959
+clang_median_ns = 53511917
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "pricing"
+median_ns = 83334
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "pricing-soa"
+median_ns = 68583
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "f64-kernels"
+median_ns = 162375
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "proof"
+median_ns = 40375
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "example-pricing"
+median_ns = 66709
+
+[[optimizer]]
+target = "macos-aarch64"
+case = "example-dijkstra"
+median_ns = 350000
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "branch_mix"
+median_ns = 16692559
+clang_median_ns = 16690240
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "integer_accumulate"
+median_ns = 17070617
+clang_median_ns = 17070569
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "proof_loop"
+median_ns = 7300126
+clang_median_ns = 7275959
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "unchecked"
+case = "remainder_chain"
+median_ns = 58921452
+clang_median_ns = 58920707
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "branch_mix"
+median_ns = 19280205
+clang_median_ns = 19281149
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "integer_accumulate"
+median_ns = 24120198
+clang_median_ns = 24117047
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "proof_loop"
+median_ns = 7473812
+clang_median_ns = 7434246
+
+[[runtime]]
+target = "linux-aarch64"
+cpu = "baseline"
+mode = "checked"
+case = "remainder_chain"
+median_ns = 64814292
+clang_median_ns = 64814836
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "pricing"
+median_ns = 164038
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "pricing-soa"
+median_ns = 132600
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "f64-kernels"
+median_ns = 310325
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "example-pricing"
+median_ns = 129808
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "example-dijkstra"
+median_ns = 703886
+
+[[optimizer]]
+target = "linux-aarch64"
+case = "proof"
+median_ns = 78172
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "branch_mix"
+median_ns = 17815317
+clang_median_ns = 17817641
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "integer_accumulate"
+median_ns = 23000767
+clang_median_ns = 27975716
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "proof_loop"
+median_ns = 15531804
+clang_median_ns = 15556285
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "unchecked"
+case = "remainder_chain"
+median_ns = 87470085
+clang_median_ns = 87454078
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "branch_mix"
+median_ns = 18414753
+clang_median_ns = 19778956
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "integer_accumulate"
+median_ns = 27021068
+clang_median_ns = 27016270
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "proof_loop"
+median_ns = 15655936
+clang_median_ns = 15570987
+
+[[runtime]]
+target = "linux-x86_64"
+cpu = "baseline"
+mode = "checked"
+case = "remainder_chain"
+median_ns = 80957339
+clang_median_ns = 80949184
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "pricing"
+median_ns = 197290
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "pricing-soa"
+median_ns = 157136
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "f64-kernels"
+median_ns = 361990
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "example-pricing"
+median_ns = 158859
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "example-dijkstra"
+median_ns = 832254
+
+[[optimizer]]
+target = "linux-x86_64"
+case = "proof"
+median_ns = 94447

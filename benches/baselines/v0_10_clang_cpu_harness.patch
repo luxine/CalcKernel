@@ -1,0 +1,32 @@
+diff --git a/benches/ckc_perf.rs b/benches/ckc_perf.rs
+--- a/benches/ckc_perf.rs
++++ b/benches/ckc_perf.rs
+@@ -789,8 +789,26 @@ fn compile_strict_clang_library(
+     match cpu_policy {
+         CpuPolicy::Baseline => {
+-            command.arg("-mcpu=generic");
++            if cfg!(target_arch = "x86_64") {
++                command.args(["-march=x86-64", "-mtune=generic"]);
++            } else if cfg!(target_arch = "aarch64") {
++                command.arg("-mcpu=generic");
++            } else {
++                return Err(format!(
++                    "the baseline Clang oracle has no policy for {}",
++                    env::consts::ARCH
++                ));
++            }
+         }
+         CpuPolicy::Native => {
+-            command.arg("-march=native");
++            if cfg!(target_arch = "x86_64") {
++                command.arg("-march=native");
++            } else if cfg!(target_arch = "aarch64") {
++                command.arg("-mcpu=native");
++            } else {
++                return Err(format!(
++                    "the native Clang oracle has no policy for {}",
++                    env::consts::ARCH
++                ));
++            }
+         }
+     }

@@ -1,0 +1,7 @@
+ckc-pgo-inputs	1	training
+# case	record	length	seed-or-salt	parameter
+branch-layout	train-branch-biased	8192	7	3
+call-constant-length	train-fixed-4000	4000	11	13
+trip-unroll-simd	train-map-4000	4000	17	0
+memory-bound	train-zip-4000	4000	23	0
+compute-bound	train-f64-4000	4000	29	1.0009765625
