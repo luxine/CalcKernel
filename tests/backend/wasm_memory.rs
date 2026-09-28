@@ -468,6 +468,38 @@ WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
     try { copy_u32(65532, 8192, 0, 2); }
     catch (error) { destinationTrap = error instanceof WebAssembly.RuntimeError; }
     if (!destinationTrap || words[16383] !== words[2048]) process.exit(8);
+
+    for (const length of [15, 16, 17]) {
+      words.fill(0xf0f0f0f0, 2000, 2018);
+      for (let i = 0; i < 17; i++) words[1000 + i] = 100 + i;
+      copy_u32(8000, 4000, 0, length);
+      for (let i = 0; i < length; i++) if (words[2000 + i] !== 100 + i) process.exit(10);
+      if (words[2000 + length] !== 0xf0f0f0f0) process.exit(11);
+    }
+
+    for (let i = 0; i < 18; i++) words[3000 + i] = i + 1;
+    copy_u32(12004, 12000, 0, 17);
+    for (let i = 1; i <= 17; i++) if (words[3000 + i] !== 1) process.exit(12);
+
+    for (let i = 0; i < 16; i++) words[16368 + i] = 300 + i;
+    words.fill(0xdeadbeef, 4000, 4017);
+    let longSourceTrap = false;
+    try { copy_u32(16000, 65472, 0, 17); }
+    catch (error) { longSourceTrap = error instanceof WebAssembly.RuntimeError; }
+    if (!longSourceTrap) process.exit(13);
+    for (let i = 0; i < 16; i++) if (words[4000 + i] !== 300 + i) process.exit(14);
+    if (words[4016] !== 0xdeadbeef) process.exit(15);
+
+    for (let i = 0; i < 17; i++) words[5000 + i] = 500 + i;
+    let longDestinationTrap = false;
+    try { copy_u32(65472, 20000, 0, 17); }
+    catch (error) { longDestinationTrap = error instanceof WebAssembly.RuntimeError; }
+    if (!longDestinationTrap) process.exit(16);
+    for (let i = 0; i < 16; i++) if (words[16368 + i] !== 500 + i) process.exit(17);
+
+    for (let i = 0; i < 16; i++) words[i] = 700 + i;
+    copy_u32(24000, 0xfffffff0, 4, 20);
+    for (let i = 0; i < 16; i++) if (words[6004 + i] !== 700 + i) process.exit(18);
   })
   .catch((error) => { console.error(error); process.exit(9); });
 "#;
@@ -526,6 +558,28 @@ WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
     try { fill_u32(65532, 0, 2); }
     catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
     if (!trapped || words[16383] !== 0x5a5a5a5a) process.exit(4);
+
+    for (const length of [15, 16, 17]) {
+      words.fill(0xdeadbeef, 2000, 2018);
+      fill_u32(8000, 0, length);
+      for (let i = 0; i < length; i++) if (words[2000 + i] !== 0x5a5a5a5a) process.exit(6);
+      if (words[2000 + length] !== 0xdeadbeef) process.exit(7);
+    }
+
+    words.fill(0xdeadbeef, 16368, 16384);
+    fill_u32(65472, 0, 16);
+    for (let i = 0; i < 16; i++) if (words[16368 + i] !== 0x5a5a5a5a) process.exit(8);
+
+    words.fill(0xdeadbeef, 16368, 16384);
+    let longTrap = false;
+    try { fill_u32(65472, 0, 17); }
+    catch (error) { longTrap = error instanceof WebAssembly.RuntimeError; }
+    if (!longTrap) process.exit(9);
+    for (let i = 0; i < 16; i++) if (words[16368 + i] !== 0x5a5a5a5a) process.exit(10);
+
+    words.fill(0xdeadbeef, 0, 16);
+    fill_u32(0xfffffff0, 4, 20);
+    for (let i = 0; i < 16; i++) if (words[i] !== 0x5a5a5a5a) process.exit(11);
   })
   .catch((error) => { console.error(error); process.exit(5); });
 "#;
