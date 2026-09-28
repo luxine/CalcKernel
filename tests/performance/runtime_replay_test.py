@@ -3,6 +3,7 @@
 import importlib.util
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,40 @@ SPEC.loader.exec_module(PREPARE)
 
 
 class ReplayPreparation(unittest.TestCase):
+    def test_cargo_outputs_stay_outside_audited_source_tree(self):
+        with tempfile.TemporaryDirectory(prefix="ckc-replay-build-output-") as directory:
+            root = pathlib.Path(directory)
+            bundle = root / "bundle"
+            source = bundle / ".source"
+            source.mkdir(parents=True)
+            (source / "Cargo.toml").write_text("[package]\nname='baseline'\nversion='0.12.0'\n", encoding="utf-8")
+            def run(command, cwd=source):
+                return subprocess.run(
+                    command, cwd=cwd, check=True, text=True, capture_output=True
+                ).stdout
+            run(["git", "init", "--quiet"])
+            run(["git", "add", "--all"])
+            run([
+                "git", "-c", "user.name=Replay test", "-c", "user.email=replay@example.invalid",
+                "commit", "--quiet", "-m", "baseline",
+            ])
+            baseline_commit = run(["git", "rev-parse", "HEAD"]).strip()
+
+            cargo_target = PREPARE.cargo_target_dir(bundle)
+            self.assertEqual(cargo_target, bundle / "cargo-target")
+            self.assertFalse(cargo_target.is_relative_to(source))
+            (cargo_target / "release").mkdir(parents=True)
+            (cargo_target / "release/ckc").write_bytes(b"test build output")
+
+            clean_state = PREPARE.audit_source_state(
+                source, baseline_commit, "0.12", run
+            )
+            self.assertEqual(clean_state[0], "")
+
+            (source / "unexpected.ck").write_text("fn main() {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unexpected untracked baseline source input"):
+                PREPARE.audit_source_state(source, baseline_commit, "0.12", run)
+
     def test_preparation_must_not_overwrite_an_existing_target(self):
         with tempfile.TemporaryDirectory(prefix="ckc-replay-owned-") as directory:
             root = pathlib.Path(directory)

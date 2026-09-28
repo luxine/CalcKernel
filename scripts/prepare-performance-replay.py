@@ -250,6 +250,25 @@ def host_identity() -> tuple[str, str, str]:
     return target, triple, ".so" if os_name == "linux" else ".dylib"
 
 
+def cargo_target_dir(out: pathlib.Path) -> pathlib.Path:
+    """Keep Cargo's generated files outside the audited frozen source tree."""
+    return out / "cargo-target"
+
+
+def audit_source_state(source: pathlib.Path, baseline_tree_commit: str, version: str, run) -> tuple[str, str]:
+    if run(["git", "rev-parse", "HEAD"], source).strip() != baseline_tree_commit:
+        raise ValueError("reconstructed baseline source commit moved during preparation")
+    if run(["git", "ls-files", "--others", "--exclude-standard"], source).strip():
+        raise ValueError("unexpected untracked baseline source input")
+    names = set(run(["git", "diff", "--name-only"], source).splitlines())
+    expected_names = {"build.rs", "benches/ckc_perf.rs"} if version == "0.10" else set()
+    if names != expected_names:
+        raise ValueError("only the fixed version-specific adapters may modify baseline source")
+    diff = run(["git", "diff", "--binary", "--full-index", "--no-ext-diff"], source)
+    status = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
+    return status, hashlib.sha256(diff.encode("utf-8")).hexdigest()
+
+
 def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> None:
     repo = repo.resolve()
     out = out.absolute()
@@ -316,22 +335,14 @@ def prepare(repo: pathlib.Path, out: pathlib.Path, version: str = "0.12") -> Non
             run(["git", "apply", patch], source)
 
         def source_state() -> tuple[str, str]:
-            if run(["git", "rev-parse", "HEAD"], source).strip() != baseline_tree_commit:
-                raise ValueError("reconstructed baseline source commit moved during preparation")
-            if run(["git", "ls-files", "--others", "--exclude-standard"], source).strip():
-                raise ValueError("unexpected untracked baseline source input")
-            names = set(run(["git", "diff", "--name-only"], source).splitlines())
-            expected_names = {"build.rs", "benches/ckc_perf.rs"} if version == "0.10" else set()
-            if names != expected_names:
-                raise ValueError("only the fixed version-specific adapters may modify baseline source")
-            diff = run(["git", "diff", "--binary", "--full-index", "--no-ext-diff"], source)
-            status = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
-            return status, hashlib.sha256(diff.encode("utf-8")).hexdigest()
+            return audit_source_state(source, baseline_tree_commit, version, run)
 
         original_state = source_state()
         run(["rustc", "+1.90.0", "--version", "--verbose"], source)
-        run(["cargo", "+1.90.0", "build", "--release", "--locked", "--features", "native-toolchain", "--bin", "ckc"], source)
-        compiler = source / "target/release/ckc"
+        target_dir = cargo_target_dir(out)
+        run(["cargo", "+1.90.0", "build", "--release", "--locked", "--features", "native-toolchain", "--bin", "ckc",
+             "--target-dir", target_dir], source)
+        compiler = target_dir / "release/ckc"
         verbose = run([compiler, "--version", "--verbose"], source)
         # build.rs embeds the installed component manifest, not the source recipe.
         validate_compiler_output(verbose, triple, component_digest, identity["version"])
