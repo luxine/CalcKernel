@@ -190,7 +190,7 @@ node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features baseline \
   --out build/wasm-perf/baseline --samples 20 --warmup 10 --batch 100 --size 1024
 node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features simd128 \
   --out build/wasm-perf/simd128 --samples 20 --warmup 10 --batch 100 --size 1024
-CKC=target/release/ckc node --test benches/wasm/bench.test.mjs
+CKC=target/release/ckc node --test benches/wasm/bench.test.mjs examples/wasm/host/*.test.mjs
 ```
 
 The runner writes `wasm-runtime-report.json` and emitted modules under the

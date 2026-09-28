@@ -66,7 +66,7 @@ jobs:
         run: test -s docs/project/release-checklist.md && test -s docs/guides/performance.md && test -s docs/zh-CN/guides/performance.md
       - run: cargo build --release --locked
       - name: Verify WebAssembly runtime benchmark harness
-        run: CKC=target/release/ckc node --test benches/wasm/bench.test.mjs
+        run: CKC=target/release/ckc node --test benches/wasm/bench.test.mjs examples/wasm/host/*.test.mjs
       - run: ./target/release/ckc --help
       - run: ./target/release/ckc check examples/core/scalar.ck
       - run: ./target/release/ckc emit-mir examples/core/scalar.ck -O3
