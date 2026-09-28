@@ -37,8 +37,8 @@ fn kir_schema_should_advance_current_compiler_to_v3_without_rewriting_v012_histo
 fn repository_should_declare_v0_15_release_version_and_retain_release_history() {
     let cargo = read("Cargo.toml");
     let lock = read("Cargo.lock");
-    assert!(cargo.contains("version = \"0.15.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.0\""));
+    assert!(cargo.contains("version = \"0.15.1\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.1\""));
     for path in [
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",

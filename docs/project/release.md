@@ -5,14 +5,17 @@
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
 
-The public `v0.15.0` tag identifies the stable compiler source snapshot.
-Official compiler archives are built only from a public compiler commit whose
-tag matches `Cargo.toml`, and the tag workflow builds directly from that
-checked-out source. It does not checkout source from another repository. The
-schema-7/8 performance gates and six native hosts remain required release gates;
-offline Auto-Tuning is deferred. Node/V8 WebAssembly map measurements are
-workload-specific local observations, not a portable release threshold or a
-general speed claim.
+The immutable public `v0.15.0` tag records a compiler source snapshot, but it
+did not produce an official GitHub Release or compiler archives. Version
+`0.15.1` is the first published release in the 0.15 line and carries forward
+that source. Its release workflow validates annotated tags while retaining the
+exact tagged source and all existing release gates. Official compiler archives
+are built only from a public compiler commit whose tag matches `Cargo.toml`;
+the workflow builds directly from that checked-out source and does not checkout
+source from another repository. The schema-7/8 performance gates and six native
+hosts remain required release gates; offline Auto-Tuning is deferred. Node/V8
+WebAssembly map measurements are workload-specific local observations, not a
+portable release threshold or a general speed claim.
 
 The tag event filter is intentionally broad so invalid release-like tags fail
 at the workflow gate. A release must use an annotated tag matching the stable
@@ -95,9 +98,9 @@ only after every platform succeeds. Repository write permission exists only in
 that final publish job.
 
 Release tags are annotated `vMAJOR.MINOR.PATCH` tags and are never moved. A
-published Release or asset is never overwritten. If a defect is discovered
-after `v0.15.0`, fix it in a new patch release such as `v0.15.1`. The 0.15.0
-release consists of six archives and their six checksum sidecars; publication
-is all-or-nothing.
+published Release or asset is never overwritten. The `v0.15.0` tag remains an
+unpublished historical source snapshot; `v0.15.1` is the first published 0.15
+release. Any later defect must be fixed in a new patch release. Publication is
+all-or-nothing and consists of six archives and their six checksum sidecars.
 
 The [release checklist](release-checklist.md) is the required sign-off record.

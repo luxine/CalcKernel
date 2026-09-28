@@ -2,7 +2,24 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
-## 0.15.0
+## 0.15.1
+
+这是 0.15 系列首个正式发布版本，延续不可移动的 `v0.15.0` tagged source snapshot
+中的 compiler 与 WebAssembly 功能。该版本还修复了 release workflow 对 annotated tag
+的校验，同时保留精确 tag source 与全部现有发布门禁。
+
+- 包含可选的 WebAssembly `simd128` profile，以及对符合条件的复制和字节填充采用的 O3
+  Bulk Memory 路径；不符合条件时仍使用标量代码。
+- 包含将 verified KIR 直接 lowering 为 WAT 与 binary module 的能力，同时保持导出函数签名
+  和 caller-owned memory 不变。`ck.wasm.target` custom-section metadata 使用 schema 2。
+- Apple M5 Max、Node.js 24.14.0/V8 本地测试中，O3 `simd128` map 对 4,096–65,536
+  个元素的 `i32` 数据测得 3.1–6.0×，`f64` 数据测得 2.2–2.8×。这些热内核测量不含编译、
+  实例化和数据准备时间；结果来自单台机器和 runtime，不代表 Wasm 的普遍性能。
+
+## 0.15.0 — 仅标记源码，未发布
+
+不可移动的 `v0.15.0` tag 记录了这段 source history。其 workflow 未创建官方 GitHub
+Release，也未发布 compiler archive 或 checksum；该 source 已由 0.15.1 延续。
 
 - 新增可选的 WebAssembly `simd128` profile。在 O3 下，符合条件的连续 slice 映射，以及
   `i32`/`u32` 模 2^32 求和与求积归约可使用 SIMD；不支持的情况和标量余数部分保持原有行为。

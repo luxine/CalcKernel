@@ -2,7 +2,7 @@
 
 [English](../../guides/vscode.md)
 
-CalcKernel 扩展为 `.ck` 源文件提供编辑器支持。扩展的发布周期独立于 CK 0.15.0
+CalcKernel 扩展为 `.ck` 源文件提供编辑器支持。扩展的发布周期独立于 CK 0.15.1
 编译器。请安装与 VS Code 所在操作系统和处理器架构对应的可用 VSIX：
 
 | VS Code 主机 | VSIX target |
@@ -44,7 +44,7 @@ CK 没有 import 或 module system，因此语言导航与重命名基于 CK 源
 ## 编译器路径
 
 VSIX 内含一个 frontend-only `ckc` 供语言服务使用。它不需要 LLVM，可离线提供编辑器分析。
-内置编译器的版本取决于单独发布的 VSIX，可能早于编译器 0.15.0。默认先使用安装包内的
+内置编译器的版本取决于单独发布的 VSIX，可能早于编译器 0.15.1。默认先使用安装包内的
 服务端；若该程序不可用，再从 `PATH` 查找。将 `ck.server.path` 设为绝对路径，可使用
 单独安装的 `ckc` 0.15.x 服务端。
 

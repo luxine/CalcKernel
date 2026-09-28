@@ -5,6 +5,10 @@
 本文是 `0.15.x` 的规范性兼容权威。
 已发布的 `0.14.x` 补丁系列仍遵循其历史兼容性边界；下文的迁移说明列出 0.15 的变更。
 
+不可移动的 `v0.15.0` tag 记录了 compiler source snapshot，但其 workflow 未创建官方
+GitHub Release，也未发布 archive。`0.15.1` 是 0.15 系列首个正式发布版本，并延续该 source
+及其兼容性契约。
+
 Patch release 保持 0.15.0 已接受 source 与 observable semantics、稳定 diagnostic
 identifier/category、已记录 CLI name/flag/default、stdout/stderr class、semantic textual MIR、
 public C/WASM/Native C ABI shape、checked first-error order、runtime diagnostic byte/status，以及
@@ -20,7 +24,7 @@ collection runtime、measurement 与未记录 compiler interface 不是 public c
 `simd128` 的 host 必须支持该声明的 feature。Target-profile digest 与生成的模块字节属于
 编译器内部 identity，不承诺逐字节稳定。
 
-## 从 0.14.0 迁移到 0.15.0
+## 从 0.14.0 迁移到 0.15.1
 
 - WebAssembly function 与 caller-owned memory ABI 保持不变。`ck.wasm.target` custom-section
   payload 从 schema 1 升级到 schema 2。`baseline` 与 `simd128` profile 都允许 Bulk Memory；
