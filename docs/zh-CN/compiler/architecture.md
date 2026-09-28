@@ -69,8 +69,12 @@ attribute/metadata，验证 IR，最后由 host TargetMachine 输出 object。
 逐 lane 运算和 store；标量 ABI 值与指令沿用原表示。O3 使用封闭的控制流计划，把可约的 diamond 与嵌套自然循环（含 break、
 continue 和提前返回）转换成 WebAssembly 的 `block`、`loop`、`if`。Planner 在发射前
 验证全部分支作用域；不支持或不可约的 CFG 仍走保留向量指令的整函数 deterministic dispatcher，已有的
-紧凑 canonical-while 路径也保留。该 lowering 不产生新的安全事实或证明权限。WAT 与
-WASM 选择同一控制流计划；二进制输出仍解析 WAT 并移除 name section。
+紧凑 canonical-while 路径也保留。该 lowering 不产生新的安全事实或证明权限。后端私有的
+最终指令模块统一记录选定的控制流、有序 local、类型化立即数和内存操作。WAT printer
+与直接二进制 encoder 共同消费该模块；二进制 encoder 不解析 WAT。O3 后期 placement
+在原有仅处理标量的安全范围内操作类型化指令。两个 sink 都从相同的导出根产物准备流程开始。
+二进制体积策略为省略 name section、复用相同签名，
+并发射唯一且确定性的目标 metadata section；不另设 `-Os` 或 `-Oz` pipeline。
 
 `src/backend/llvm/`、`native/bridge/` 负责 Rust/C++ typed ownership；
 `native/runtime/` 负责 entry、checked/sanitizer diagnostic 和 print effect；LLD/ORC 均进程内

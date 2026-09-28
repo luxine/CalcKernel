@@ -67,7 +67,9 @@ CK diagnostics，关闭时清除 diagnostics。服务端采用完整文档同步
   `emit-kir --consumer wasm`；默认值为 `baseline`。该选择属于规范化的 WebAssembly KIR
   target profile，并进入其 digest。O3 下，`simd128` 可为受支持的连续 `f64` 和
   `i32`/`u32` slice map、整数到 `f64` 的转换及模整数归约生成经过独立验证的 SIMD128，
-  包括带运行时保护的未知别名循环；`baseline` 与 O0–O2 保持标量。O3 下两个 profile
+  包括带运行时保护的未知别名循环；`baseline` 与 O0–O2 在 SIMD lowering 上保持标量。O3
+  下两个 profile 都允许 WebAssembly Bulk Memory；只有 `simd128` 允许 SIMD128。生成的 module 使用
+  `ck.wasm.target` metadata schema 2 声明 0.15 capability contract。
   也可使用经过检查的标量地址游标，以及有证明支持的结构字段 memarg 偏移。
   无效值以及不匹配的 command/consumer
   组合会在读取 source 或修改输出前失败。

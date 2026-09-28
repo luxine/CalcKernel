@@ -1,4 +1,4 @@
-# CalcKernel 0.14 WebAssembly ABI
+# CalcKernel 0.15 WebAssembly ABI
 
 [简体中文](../zh-CN/abi/wasm.md)
 
@@ -25,32 +25,43 @@ It must recreate host views after `memory.grow`. CK supplies no allocator.
 `--wasm-features baseline|simd128` selects the WebAssembly target profile for
 `emit-wat`, `emit-wasm`, or `emit-kir --consumer wasm`; the default is
 `baseline`. The value is part of the canonical KIR target profile and changes
-its SHA-256 digest. `baseline` emits scalar code. At O3, `simd128` can emit
+its SHA-256 digest. `baseline` does not emit SIMD. Both profiles allow Bulk
+Memory instructions. At O3, `simd128` can emit
 128-bit SIMD for independently verified, contiguous `slice<f64>`, `slice<i32>`,
 and `slice<u32>` maps, `i32`/`u32` to `f64` casts, and modular integer sum or
 product reductions. Full-width operations use `f64x2` and `i32x4` instructions.
-Other unsupported loops and O0–O2 remain scalar.
+Other unsupported SIMD candidates and O0–O2 remain scalar.
 
 Every emitted WAT and binary module carries the `ck.wasm.target` custom
-section. Its UTF-8 payload is deterministic JSON, schema 1, with these keys in
+section. Its UTF-8 payload is deterministic JSON, schema 2, with these keys in
 this order:
 
 ```json
-{"schema":1,"target":"wasm32","features":"baseline","profile_sha256":"<64 lowercase hex>"}
+{"schema":2,"target":"wasm32","features":"baseline","profile_sha256":"<64 lowercase hex>"}
 ```
 
 The `features` value is exactly `baseline` or `simd128`. The digest identifies
-the selected canonical KIR target profile; the two profiles can also produce
-different instructions and module bytes.
+the selected canonical KIR target profile. The v0.15 capability encoding
+changes the digest for both Wasm profiles; non-Wasm profile digests are
+unchanged. The two profiles can also produce different instructions and module
+bytes.
 
 The `baseline` allowlist is WebAssembly core MVP plus `MULTI_VALUE`, which is
-required by the slice return ABI. The `simd128` allowlist adds `SIMD128`. The
-backend rejects `RELAXED_SIMD`, threads, Memory64, and every undeclared
-proposal; profile selection does not relax instruction validation. Hosts should
-read and validate `ck.wasm.target`, then confirm runtime support for the named
-profile before instantiating a module. A host that uses the standard WebAssembly
-API can compile first, inspect `WebAssembly.Module.customSections`, and perform
+required by the slice return ABI, and `BULK_MEMORY`. The `simd128` allowlist
+adds `SIMD128` to that set. The backend rejects `RELAXED_SIMD`, threads,
+Memory64, and every undeclared proposal; profile selection does not relax
+instruction validation. Hosts should read and validate `ck.wasm.target`, then
+confirm runtime support for the named profile and its v0.15 capability set
+before instantiating a module. A host that uses the standard WebAssembly API
+can compile first, inspect `WebAssembly.Module.customSections`, and perform
 this check before instantiation.
+
+At O3, eligible direct-pointer `i32`/`u32` copy loops and repeated-byte fills
+may use a guarded Bulk Memory fast path. The guard proves the complete ranges
+are in current Wasm memory without 32-bit address wrap; copy also requires
+disjoint source and destination ranges. If the proof fails, the original
+scalar loop runs, preserving its overlap behavior and any writes before a
+later trap. O0 keeps these loops scalar.
 
 Full-width SIMD memory operations use contiguous 16-byte loads and stores with
 proven natural alignment (8 bytes for `f64`, 4 for `i32`/`u32`). Two-lane

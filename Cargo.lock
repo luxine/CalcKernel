@@ -82,6 +82,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "wasm-encoder",
  "wasmparser",
  "wat",
  "windows-sys",

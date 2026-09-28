@@ -2,10 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::*;
 
-use super::{
-    EmitWasmOptions, emit_wat_module_with_options,
-    features::{append_target_metadata, target_metadata},
-};
+use super::{EmitWasmOptions, features::target_metadata, final_ir::FinalWasmModule};
 
 pub fn emit_wat_kir_module(module: &KirModule, options: EmitWasmOptions) -> Result<String, String> {
     emit_wat_kir_module_with_contracts(module, None, options)
@@ -28,43 +25,36 @@ fn emit_wat_kir_module_with_contracts(
     options: EmitWasmOptions,
 ) -> Result<String, String> {
     let features = validate_wasm_kir_module(module)?;
-    let wat = emit_wat_kir_module_validated(module, contracts, options, features)?;
+    let mir = adapt_unchecked_kir(module)?;
+    let artifact = prepare_non_executable_artifact(&mir, MirArtifactConsumer::WebAssembly)
+        .map_err(|error| error.to_string())?;
     let metadata = target_metadata(features, &module.profile.digest_hex());
+    let mut lowered = emit_final_for_mir(module, &artifact, contracts, options)?;
+    lowered.set_target_metadata(metadata.as_bytes().to_vec())?;
+    let wat = lowered.to_wat();
     super::binary::validate_profile_wat(&wat, features, metadata.as_bytes())?;
     Ok(wat)
 }
 
-fn emit_wat_kir_module_validated(
-    module: &KirModule,
-    contracts: Option<&ContractFactSet>,
-    options: EmitWasmOptions,
-    features: KirWasmFeatures,
-) -> Result<String, String> {
-    let mir = adapt_unchecked_kir(module)?;
-    emit_wat_for_mir(module, &mir, contracts, options, features)
-}
-
-fn emit_wat_for_mir(
+fn emit_final_for_mir(
     module: &KirModule,
     mir: &MirModule,
     contracts: Option<&ContractFactSet>,
     options: EmitWasmOptions,
-    features: KirWasmFeatures,
-) -> Result<String, String> {
+) -> Result<FinalWasmModule, String> {
     let has_vector = module_has_vector_instructions(module);
     let has_version_predicate = module_has_version_predicates(module);
     let needs_typed_lowering = has_vector || has_version_predicate;
-    let wat = if needs_typed_lowering {
+    if needs_typed_lowering {
         let lowered = super::lower::lower_wasm_module(module, contracts, mir)?;
-        super::emit::emit_wat_module_with_lowering(mir, &lowered, options)?
+        super::emit::emit_final_module_with_lowering(mir, &lowered, options)
     } else if options.opt_level >= 3
         && let Ok(lowered) = super::lower::lower_wasm_module(module, contracts, mir)
     {
-        super::emit::emit_wat_module_with_lowering(mir, &lowered, options)?
+        super::emit::emit_final_module_with_lowering(mir, &lowered, options)
     } else {
-        emit_wat_module_with_options(mir, options)
-    };
-    append_target_metadata(wat, features, &module.profile.digest_hex())
+        super::emit::emit_final_module_with_options(mir, options)
+    }
 }
 
 pub fn emit_wasm_kir_module(
@@ -94,9 +84,10 @@ fn emit_wasm_kir_module_with_contracts(
     let mir = adapt_unchecked_kir(module)?;
     let artifact = prepare_non_executable_artifact(&mir, MirArtifactConsumer::WebAssembly)
         .map_err(|error| error.to_string())?;
-    let wat = emit_wat_for_mir(module, &artifact, contracts, options, features)?;
     let metadata = target_metadata(features, &module.profile.digest_hex());
-    super::binary::emit_wasm_module_from_profile_wat(&wat, features, metadata.as_bytes())
+    let mut lowered = emit_final_for_mir(module, &artifact, contracts, options)?;
+    lowered.set_target_metadata(metadata.as_bytes().to_vec())?;
+    super::binary::encode_final_module(&lowered, features, metadata.as_bytes())
 }
 
 fn validate_wasm_kir_module(module: &KirModule) -> Result<KirWasmFeatures, String> {
@@ -135,15 +126,51 @@ fn adapt_unchecked_kir(module: &KirModule) -> Result<MirModule, String> {
     {
         return Err("WebAssembly KIR backend accepts only unchecked KIR".to_string());
     }
+    let reachable = reachable_wasm_functions(module)?;
     Ok(MirModule {
         entry: module.entry.clone(),
         structs: module.structs.clone(),
         functions: module
             .functions
             .iter()
+            .filter(|function| reachable.contains(&function.name))
             .map(adapt_function)
             .collect::<Result<Vec<_>, _>>()?,
     })
+}
+
+fn reachable_wasm_functions(module: &KirModule) -> Result<BTreeSet<String>, String> {
+    let by_name = module
+        .functions
+        .iter()
+        .map(|function| (function.name.as_str(), function))
+        .collect::<BTreeMap<_, _>>();
+    let mut reachable = BTreeSet::<String>::new();
+    let mut pending = module
+        .functions
+        .iter()
+        .filter(|function| function.exported)
+        .map(|function| function.name.as_str())
+        .collect::<Vec<_>>();
+    while let Some(name) = pending.pop() {
+        if !reachable.insert(name.to_string()) {
+            continue;
+        }
+        let function = by_name
+            .get(name)
+            .ok_or_else(|| format!("WebAssembly export references unknown function {name}"))?;
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            if let KirInstructionKind::Call { function_name, .. } = &instruction.kind {
+                if !by_name.contains_key(function_name.as_str()) {
+                    return Err(format!(
+                        "WebAssembly call references unknown function {function_name}"
+                    ));
+                }
+                pending.push(function_name);
+            }
+        }
+    }
+    Ok(reachable)
 }
 
 fn adapt_function(function: &KirFunction) -> Result<MirFunction, String> {

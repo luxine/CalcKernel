@@ -39,7 +39,9 @@ fn optimized_kir(source: &str, level: KirOptimizationLevel) -> calckernel::KirMo
 }
 
 fn wasm_features(features: KirWasmFeatures) -> wasmparser::WasmFeatures {
-    let mut allowed = wasmparser::WasmFeatures::MVP | wasmparser::WasmFeatures::MULTI_VALUE;
+    let mut allowed = wasmparser::WasmFeatures::MVP
+        | wasmparser::WasmFeatures::MULTI_VALUE
+        | wasmparser::WasmFeatures::BULK_MEMORY;
     if features == KirWasmFeatures::Simd128 {
         allowed |= wasmparser::WasmFeatures::SIMD;
     }

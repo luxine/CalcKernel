@@ -83,10 +83,13 @@ serving later documents.
 - `--wasm-features baseline|simd128` is accepted only by `emit-wat`,
   `emit-wasm`, and `emit-kir --consumer wasm`; it defaults to `baseline`.
   The selection is part of the canonical WebAssembly KIR target profile and
-  its digest. At O3, `simd128` enables independently verified SIMD128 lowering
-  for supported contiguous `f64` and `i32`/`u32` slice maps, integer-to-`f64`
-  casts, and modular integer reductions, including guarded unknown-alias loops;
-  `baseline` and O0–O2 remain scalar.
+  its digest. Both profiles allow WebAssembly Bulk Memory; only `simd128` allows
+  SIMD128. Emitted modules identify the v0.15 capability contract with
+  `ck.wasm.target` metadata schema 2. At O3, `simd128` enables independently
+  verified SIMD128 lowering for supported contiguous `f64` and `i32`/`u32`
+  slice maps, integer-to-`f64` casts, and modular integer reductions, including
+  guarded unknown-alias loops;
+  `baseline` and O0–O2 remain scalar for SIMD lowering.
   At O3, either profile may also use checked scalar address cursors and
   proof-backed struct-field memarg offsets. Invalid values or command/consumer
   combinations fail before source input or output changes.

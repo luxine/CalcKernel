@@ -1,10 +1,11 @@
-# CalcKernel 0.14 兼容策略
+# CalcKernel 0.15 兼容策略
 
 [English](../../project/compatibility.md)
 
-本文是 `0.14.x` 的规范性兼容权威。
+本文是 `0.15.x` 的规范性兼容权威。
+已发布的 `0.14.x` 补丁系列仍遵循其历史兼容性边界；下文的迁移说明列出 0.15 的变更。
 
-Patch release 保持 0.14.0 已接受 source 与 observable semantics、稳定 diagnostic
+Patch release 保持 0.15.0 已接受 source 与 observable semantics、稳定 diagnostic
 identifier/category、已记录 CLI name/flag/default、stdout/stderr class、semantic textual MIR、
 public C/WASM/Native C ABI shape、checked first-error order、runtime diagnostic byte/status，以及
 六个 release archive name 与 checksum sidecar。
@@ -15,9 +16,18 @@ format、fact/proof encoding、pass algorithm、private LLVM bridge ABI、cache 
 collection runtime、measurement 与未记录 compiler interface 不是 public contract。
 
 显式选择 `--wasm-features simd128` 后，符合条件的 O3 slice map 可生成 SIMD128 指令。
-该优化保持 CK 可观察语义和 public WASM ABI；`baseline` 仍是默认标量 profile。选择
+该优化保持 CK 可观察语义和 public WASM ABI；`baseline` 仍是默认的无 SIMD profile。选择
 `simd128` 的 host 必须支持该声明的 feature。Target-profile digest 与生成的模块字节属于
 编译器内部 identity，不承诺逐字节稳定。
+
+## 从 0.14.0 迁移到 0.15.0
+
+- WebAssembly function 与 caller-owned memory ABI 保持不变。`ck.wasm.target` custom-section
+  payload 从 schema 1 升级到 schema 2。`baseline` 与 `simd128` profile 都允许 Bulk Memory；
+  只有 `simd128` 允许 SIMD128。由于 canonical capability encoding 改变，两个 Wasm profile
+  的 digest 都会改变；非 Wasm profile digest 保持不变。
+- 验证 custom-section schema 的工具必须在消费 0.15 产物前接受 schema 2。Wasm backend 仍会在
+  `baseline` 下拒绝 SIMD128，也会拒绝 relaxed SIMD、threads、Memory64 及未声明 proposal。
 
 ## 从 0.13.0 迁移到 0.14.0
 

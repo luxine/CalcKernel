@@ -1,4 +1,4 @@
-# CalcKernel 0.14 WebAssembly ABI
+# CalcKernel 0.15 WebAssembly ABI
 
 [English](../../abi/wasm.md)
 
@@ -18,26 +18,34 @@ Caller 负责 allocation、validity、alignment、lifetime、growth 与 alias，
 
 `--wasm-features baseline|simd128` 为 `emit-wat`、`emit-wasm` 或
 `emit-kir --consumer wasm` 选择 WebAssembly target profile；默认值为 `baseline`。此值属于
-规范化 KIR target profile，并改变其 SHA-256 digest。`baseline` 生成标量代码。O3 的
+规范化 KIR target profile，并改变其 SHA-256 digest。`baseline` 不生成 SIMD 指令；两个
+profile 都允许 Bulk Memory 指令。O3 的
 `simd128` 可为经过独立验证的连续 `slice<f64>`、`slice<i32>`、`slice<u32>` map、
 `i32`/`u32` 到 `f64` 的转换，以及模整数求和、求积归约生成 128 位 SIMD。完整向量
-使用 `f64x2` 或 `i32x4` 指令；其他不受支持的循环及 O0–O2 保持标量。
+使用 `f64x2` 或 `i32x4` 指令；其他不受支持的 SIMD 候选及 O0–O2 保持标量。
 
 每个 WAT 和 binary module 都带有 `ck.wasm.target` custom section。其 UTF-8 payload 是确定性
-JSON，schema 1，键按以下顺序排列：
+JSON，schema 2，键按以下顺序排列：
 
 ```json
-{"schema":1,"target":"wasm32","features":"baseline","profile_sha256":"<64 lowercase hex>"}
+{"schema":2,"target":"wasm32","features":"baseline","profile_sha256":"<64 lowercase hex>"}
 ```
 
-`features` 的值只能是 `baseline` 或 `simd128`。Digest 标识所选的规范化 KIR target profile；
+`features` 的值只能是 `baseline` 或 `simd128`。Digest 标识所选的规范化 KIR target profile。
+0.15 的 capability encoding 会改变两个 Wasm profile 的 digest；非 Wasm profile digest 保持不变。
 两个 profile 也可能生成不同指令和模块字节。
 
-`baseline` allowlist 为 WebAssembly core MVP 加 `MULTI_VALUE`，slice return ABI 需要该能力。
-`simd128` allowlist 再加 `SIMD128`。Backend 拒绝 `RELAXED_SIMD`、threads、Memory64
-以及所有未声明的 proposal；选择 profile 不会放宽 instruction 验证。Host 应读取并验证
-`ck.wasm.target`，再确认 runtime 支持其中声明的 profile，然后实例化 module。使用标准
-WebAssembly API 的 host 可以先 compile、检查 `WebAssembly.Module.customSections`，再于实例化前完成检查。
+`baseline` allowlist 为 WebAssembly core MVP、`MULTI_VALUE`（slice return ABI 需要）以及
+`BULK_MEMORY`。`simd128` allowlist 在此基础上增加 `SIMD128`。Backend 拒绝
+`RELAXED_SIMD`、threads、Memory64 以及所有未声明的 proposal；选择 profile 不会放宽
+instruction 验证。Host 应读取并验证 `ck.wasm.target`，再确认 runtime 支持该 profile 及其
+0.15 capability set，然后实例化 module。使用标准 WebAssembly API 的 host 可以先 compile、检查
+`WebAssembly.Module.customSections`，再于实例化前完成检查。
+
+O3 下，符合条件的直接指针 `i32`/`u32` 复制循环和重复字节填充可能使用带 guard 的
+Bulk Memory 快速路径。Guard 会证明完整地址范围位于当前 Wasm memory 中且 32 位地址不回绕；
+复制还要求源、目标范围不相交。证明失败时执行原标量循环，以保留重叠时的行为及后续 trap
+之前已发生的写入。O0 保持这些循环为标量。
 
 完整宽度的 SIMD 内存操作使用连续 16 字节 load/store，以及已证明的自然对齐（`f64`
 为 8 字节，`i32`/`u32` 为 4 字节）。两 lane 的 `i32`/`u32` 到 `f64x2` 转换通过

@@ -190,7 +190,7 @@ node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features baseline \
   --out build/wasm-perf/baseline --samples 20 --warmup 10 --batch 100 --size 1024
 node benches/wasm/bench.mjs --ckc target/release/ckc --wasm-features simd128 \
   --out build/wasm-perf/simd128 --samples 20 --warmup 10 --batch 100 --size 1024
-CKC=target/release/ckc node --test benches/wasm/bench.test.mjs
+CKC=target/release/ckc node --test benches/wasm/bench.test.mjs examples/wasm/host/*.test.mjs
 ```
 
 The runner writes `wasm-runtime-report.json` and emitted modules under the
@@ -208,12 +208,27 @@ and address-boundary tests when assessing the alias fallback. Keep correctness
 results and instruction shape alongside timing.
 `u32_cursor_copy` exercises the checked O3 address cursor, while
 `u32_field_offset` exercises proof-backed field displacement in a memarg.
-Compare these scalar paths against an identical-profile compiler revision at
-O3 as well as against O0, and include the emitted instruction shape.
+`u32_fill` exercises the guarded Bulk Memory fill path, and `pricing_batch`
+compares one Wasm call for many records with one call per record using the same
+persistent arena.
+Compare these paths against O0 under the same v0.15 profile and include the
+emitted instruction shape. A P8 compiler is a historical comparison with the
+older schema-1 baseline; its profile digest and allowed features differ.
 
 CK emission, module compilation,
 instantiation, warm-up, steady kernel calls, and host preparation/readback are
-separate observations. Module compilation is the first compile of each artifact
+separate observations. `--emission-samples` repeats compiler emission and keeps
+each raw duration; the compatibility `ck_emission` field is their median. The
+artifact record includes total bytes, section payload bytes, code bytes,
+function count, and local count so direct binary emission can be assessed
+alongside code growth. Compare the same source/profile/optimization level on
+the old and new compiler in alternating runs, labeling their profile-schema
+boundary explicitly. Bulk copy/fill results also need
+short and long ranges plus overlap and trapping fallbacks; the batch case
+reports logical rows and actual JS-to-Wasm crossings separately from the
+runner's `--batch` repetition count.
+
+Module compilation is the first compile of each artifact
 in that Node process; it is not a browser cold-start measurement. The per-round
 end-to-end sample covers preparation,
 calls, and readback on an already instantiated module; it excludes module

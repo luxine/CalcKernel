@@ -78,10 +78,11 @@ CLI 将 opaque independent-check authority 保留到 emission，source-to-object
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.14 的 C 与 WebAssembly `baseline` profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.15 的 C 与 WebAssembly `baseline` profile 禁用 Vector KIR。
 WebAssembly 提供 `baseline` 和 `simd128` 两种 feature profile；`emit-wat`、`emit-wasm` 或
 `emit-kir --consumer wasm` 可通过 `--wasm-features baseline|simd128` 选择，默认 `baseline`。
-所选 feature 与规范化 profile digest 会写入 module metadata。O3 的 `simd128` 为连续的
+两个 Wasm profile 都允许 Bulk Memory；只有 `simd128` 允许 SIMD128。`ck.wasm.target` module
+metadata 使用 schema 2，记录所选 feature 与规范化 profile digest。O3 的 `simd128` 为连续的
 `slice<f64>`、`slice<i32>`、`slice<u32>` map，以及模 2^32 的 `i32`/`u32` 求和、求积归约
 开放经过独立验证的 Loop SIMD。完整向量使用 `f64x2` 或 `i32x4`；两 lane 的 `i32`/`u32`
 输入可通过精确的 8 字节 load 转为 `f64x2`。map 支持 splat、load/store、加、减、乘、
@@ -90,7 +91,11 @@ Wasm32 运行时别名谓词；发生重叠或地址范围不安全时执行原�
 按模 2^32 折叠后再与标量累加器合并。候选仍需单位步长归纳、独立合法性与成本检查，以及
 原有标量余数循环；unroll factor 为一。WebAssembly SLP、浮点归约、checked arithmetic、
 masked memory 和其他向量形状仍不可用。不支持的源码候选保持标量；不支持的手工 Vector KIR
-由 backend 拒绝。`baseline` 与 O0–O2 保持标量。
+由 backend 拒绝。`baseline` 与 O0–O2 在 vector lowering 上保持标量。
+此外，O3 在任一 Wasm profile 下都可能为符合条件的直接指针 32 位复制和重复字节填充使用
+带 guard 的 Bulk Memory 路径。它要求当前 memory 内的地址范围不回绕，复制还要求源、目标范围
+不相交；条件不满足时保留原标量循环作为 fallback。快路径还要求至少 16 个元素，
+让短调用跳过整段范围 guard；该体积阈值不改变安全检查。
 
 Specialization、unroll、SLP 与 Loop SIMD 共用 verified transactional state：完整 candidate
 module、proof/fact state 和 audit-budget delta 在不修改 accepted pre-state 的情况下生成。

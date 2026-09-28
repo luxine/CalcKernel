@@ -30,11 +30,16 @@ pub(super) fn lower_wasm_module<'a>(
     })?;
     validate_vector_kir(module, features)?;
     let layout = WasmStructLayout::new(mir);
+    let artifact_functions = mir
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect::<BTreeSet<_>>();
     Ok(WasmLoweredModule {
-        source: module,
         functions: module
             .functions
             .iter()
+            .filter(|function| artifact_functions.contains(function.name.as_str()))
             .map(|function| lower_wasm_function(function, contracts, &layout))
             .collect::<Result<Vec<_>, _>>()?,
     })
@@ -297,7 +302,7 @@ mod tests {
 
     use super::{WasmPhysicalType, WasmSourceType, lower_wasm_module};
 
-    fn test_kir() -> crate::KirModule {
+    fn test_kir() -> (crate::KirModule, crate::MirModule) {
         let checked = check(&SourceFile::new(
             "wasm-typed-lowering.ck",
             r#"
@@ -315,7 +320,7 @@ mod tests {
         ));
         assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
         let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
-        build_kir_module(
+        let kir = build_kir_module(
             &mir,
             KirBuildConfig {
                 consumer: KirConsumer::WebAssembly,
@@ -324,20 +329,14 @@ mod tests {
                 sanitizer_mode: KirSanitizerMode::Disabled,
             },
         )
-        .expect("valid unchecked WebAssembly KIR")
+        .expect("valid unchecked WebAssembly KIR");
+        (kir, mir)
     }
 
     #[test]
     fn wasm_lowering_should_retain_typed_values_sources_effects_edges_and_order() {
-        let module = test_kir();
-        let mir = crate::MirModule {
-            entry: module.entry.clone(),
-            structs: module.structs.clone(),
-            functions: Vec::new(),
-        };
+        let (module, mir) = test_kir();
         let lowered = lower_wasm_module(&module, None, &mir).expect("typed lowering");
-        assert_eq!(lowered.source.profile, module.profile);
-        assert_eq!(lowered.source.config, module.config);
 
         let source = &module.functions[0];
         let function = &lowered.functions[0];
