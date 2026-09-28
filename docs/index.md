@@ -2,10 +2,9 @@
 
 [简体中文](zh-CN/index.md)
 
-These pages describe the stable 0.14.0 product contract. The current default
-branch is `0.15.0-dev.0`; updated language and compiler contracts are recorded
-here as they become part of the public product. The formal 0.13.0 release is the
-retained compatibility baseline.
+These pages describe the stable 0.15.0 product contract. The `0.15.x`
+compatibility policy is normative; earlier release contracts and migration
+boundaries remain documented where they apply.
 
 ## Language and commands
 
@@ -33,8 +32,8 @@ retained compatibility baseline.
 
 ## Project
 
-- [Compatibility](project/compatibility.md) — normative `0.14.x` authority and
-  retained 0.13/0.12/0.11/0.10 migration boundaries.
+- [Compatibility](project/compatibility.md) — normative `0.15.x` authority and
+  retained 0.14.0/0.13.0/0.12.0/0.11.0/0.10.0 migration boundaries.
 - [Release](project/release.md) and [checklist](project/release-checklist.md)
 - [Conventions](project/conventions.md)
 - [Roadmap](project/roadmap.md) — non-normative future possibilities.

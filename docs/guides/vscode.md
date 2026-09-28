@@ -2,8 +2,9 @@
 
 [简体中文](../zh-CN/guides/vscode.md)
 
-The CalcKernel extension supports CK 0.14 `.ck` source files. Install the VSIX
-that matches the editor host platform and architecture:
+The CalcKernel extension provides editor support for `.ck` source files. Its
+release cycle is separate from the CK 0.15.0 compiler release. Install an
+available VSIX that matches the editor host platform and architecture:
 
 | VS Code host | VSIX target |
 | --- | --- |
@@ -15,12 +16,13 @@ that matches the editor host platform and architecture:
 | Windows x64 | `win32-x64` |
 
 The extension ID is `Luxine.calckernel-vscode-plugin`, matching the existing
-Marketplace listing. The package name is
-`calckernel-vscode-plugin-0.14.0-<target>.vsix`. Install it from
-the Extensions view with **Install from VSIX...**, or use the command line:
+Marketplace listing. The package name includes the extension release version
+and target, for example `calckernel-vscode-plugin-<version>-<target>.vsix`.
+Install the downloaded VSIX from the Extensions view with **Install from VSIX...**,
+or point the command line at that file:
 
 ```sh
-code --install-extension calckernel-vscode-plugin-0.14.0-linux-x64.vsix
+code --install-extension ./path/to/the-downloaded-extension.vsix
 ```
 
 The Marketplace listing provides the published extension package. Build and
@@ -52,11 +54,13 @@ operating system are omitted from workspace symbol results.
 ## Compiler paths
 
 The VSIX includes a frontend-only `ckc` for the language server. It runs without
-LLVM and provides editor analysis offline. By default, the extension uses this
-bundled server, then searches `PATH` if the bundled executable is unavailable.
-Set `ck.server.path` to an absolute path to select another `ckc` 0.14.x server.
+LLVM and provides editor analysis offline. The bundled compiler version depends
+on the separately published VSIX and may predate compiler 0.15.0. By default,
+the extension uses this bundled server, then searches `PATH` if the bundled
+executable is unavailable. Set `ck.server.path` to an absolute path to use a
+separately installed `ckc` 0.15.x server.
 
-Run and Build need a separate Native-enabled `ckc` 0.14.x. Set `ck.compiler.path`
+Run and Build need a separate Native-enabled `ckc` 0.15.x. Set `ck.compiler.path`
 to its absolute path, or leave the setting empty to search `PATH`. Build asks
 for an artifact kind (`executable`, `dynamic`, `static`, or `object`) and an
 output path. These commands save the active file before invoking `ckc`; their

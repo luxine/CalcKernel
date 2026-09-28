@@ -1,4 +1,4 @@
-# CalcKernel 0.14 Fact-Driven Optimizer
+# CalcKernel 0.15 Fact-Driven Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -165,7 +165,7 @@ Loop SIMD, loop SLP, and unroll are priced over the same immutable loop scope an
 only one winner commits. A vector candidate must beat the scalar cost by at least
 20% at its conservative trip threshold; exact shorter trips stay scalar. The
 aggregate O3 growth ceiling and proposer/checker work budgets apply across all
-0.14 speculative transforms, including rejected alternatives and clones.
+0.15 speculative transforms, including rejected alternatives and clones.
 
 Ordinary static O3 may inline a pure helper of at most 32 KIR instructions.
 Unprofiled multiversion lowering uses a compact eight-instruction inline budget
@@ -326,14 +326,15 @@ wraparound behavior.
 
 Performance gates compare identical algorithms, safety modes, data, hardware,
 CPU policy, training/evaluation split, and strict semantics. Schema 8 compares
-0.14 ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
+the candidate's ordinary/PGO/multiversion/combined channels with pinned Clang/Rust PGO and
 hand-written SIMD oracles, and replays exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`. Correctness, optimization time,
 generation overhead, artifact size, compiler archive size, and cache behavior
 have separate gates. PGO and bounded multiversioning shipped in 0.13 and remain
-supported in 0.14. Offline Auto-Tuning is deferred; no new optimizer benefit
-is claimed by this compatibility release. Indirect calls, scalable KIR, and
-adaptive JIT PGO remain future work.
+supported in 0.15. Offline Auto-Tuning is still deferred. WebAssembly
+observations in the performance guide cover local Node/V8 map kernels on one
+Apple M5 Max and do not establish a universal Wasm speedup. Indirect calls,
+scalable KIR, and adaptive JIT PGO remain future work.
 Thresholds never authorize weaker semantics or invalid contract-domain inputs.
 Dynamic-library final links also discard unreachable compiler-private sections
 using the native object-format mechanism while retaining CK exports and every

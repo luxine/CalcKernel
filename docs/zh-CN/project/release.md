@@ -1,15 +1,15 @@
-# 原生 `ckc` 0.14 发布策略
+# 原生 `ckc` 0.15 发布策略
 
 [English](../../project/release.md)
 
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
 
-公开 `v0.14.0` tag 标识稳定版 compiler 源码快照。默认分支当前报告版本为
-`0.15.0-dev.0`；开发期间继续保留 0.14 language 与 ABI contract。官方 compiler archive
-仅从带有匹配 `Cargo.toml` tag 的公开 compiler commit 构建，tag workflow 直接使用该
-checkout 的源码，不会从其他仓库 checkout source。0.14 performance gate 与六平台 Native
-仍是发布基线；离线 Auto-Tuning 延期。
+公开 `v0.15.0` tag 标识稳定版 compiler 源码快照。官方 compiler archive 仅从带有匹配
+`Cargo.toml` tag 的公开 compiler commit 构建，tag workflow 直接使用该 checkout 的源码，
+不会从其他仓库 checkout source。Schema-7/8 performance gate 与六平台 Native 仍是必要发布门禁；
+离线 Auto-Tuning 延期。Node/V8 WebAssembly map 测量是特定工作负载的本地观察结果，不是可移植的
+release threshold，也不能概括为普遍的性能提升。
 
 Tag event filter 有意保持宽泛，使不合法的发布候选 tag 能在 workflow gate 中明确失败。正式发布
 必须使用匹配 `vMAJOR.MINOR.PATCH` 稳定版本格式且带注释的 tag，并与 checkout 中的 Cargo 版本
@@ -72,6 +72,6 @@ run 验证完整的六个 archive 与六个 checksum；若 Release 已存在则�
 publish job 具有 repository write permission。
 
 Release tag 是 annotated `vMAJOR.MINOR.PATCH`，永不移动。Published Release 或
-asset 不覆盖；若 `v0.14.0` 之后发现缺陷，发布 `v0.14.1` 等新 patch version。0.14.0
+asset 不覆盖；若 `v0.15.0` 之后发现缺陷，发布 `v0.15.1` 等新 patch version。0.15.0
 发布由六个 archive 和对应六个 checksum sidecar 组成，必须 all-or-nothing 发布。
 [发布清单](release-checklist.md)是必须完成的 sign-off record。

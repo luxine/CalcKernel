@@ -2,6 +2,20 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.15.0
+
+- 新增可选的 WebAssembly `simd128` profile。在 O3 下，符合条件的连续 slice 映射，以及
+  `i32`/`u32` 模 2^32 求和与求积归约可使用 SIMD；不支持的情况和标量余数部分保持原有行为。
+- 默认 `baseline` 与可选 `simd128` profile 均允许 Bulk Memory。对于符合条件的复制与字节填充，
+  O3 可使用带 guard 的 `memory.copy` 和 `memory.fill` 路径；条件不满足时保留原标量循环。
+- WebAssembly emission 现在直接将 verified KIR lower 为 WAT 与 binary module，采用 structured
+  control flow、直接 binary encoding，并改进循环地址 lowering。
+- 导出函数签名和 caller-owned memory 保持不变。`ck.wasm.target` custom-section metadata
+  升级到 schema 2，用于标识所选 Wasm feature profile。
+- Apple M5 Max、Node.js 24.14.0/V8 上的本地测试中，O3 `simd128` map 对 4,096–65,536
+  个元素的 `i32` 数据测得 3.1–6.0×，`f64` 数据测得 2.2–2.8×。这些是单台机器、单种 runtime 的热内核结果，
+  不含编译、实例化和数据准备时间，也不代表 Wasm 的普遍性能。
+
 ## 0.14.0
 
 - 修复 PGO-generation library 在 build 后收集目录变为不可写时的 flush 状态：现在返回

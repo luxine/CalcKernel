@@ -92,12 +92,12 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distribution() {
+fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distribution() {
     let required_by_file = [
         (
             "docs/reference/language.md",
             &[
-                "CalcKernel 0.14",
+                "CalcKernel 0.15",
                 "fn main() -> void",
                 "fn main() -> i32",
                 "print_i32",
@@ -131,7 +131,7 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         (
             "docs/reference/mir.md",
             &[
-                "CalcKernel 0.14",
+                "CalcKernel 0.15",
                 "entry",
                 "runtime effect",
                 "print",
@@ -161,7 +161,15 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         ),
         (
             "docs/abi/wasm.md",
-            &["reachable print", "rejected", "caller-owned", "slice<T>"][..],
+            &[
+                "reachable print",
+                "rejected",
+                "caller-owned",
+                "slice<T>",
+                "schema 2",
+                "Bulk Memory",
+                "simd128",
+            ][..],
         ),
         (
             "docs/abi/modes.md",
@@ -178,6 +186,7 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         (
             "docs/project/compatibility.md",
             &[
+                "0.15.x",
                 "0.14.x",
                 "0.12.0",
                 "0.11.0",
@@ -198,11 +207,17 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
                 "2x",
                 "3x",
                 "Clang 22.1.8",
+                "Apple M5 Max",
+                "Node 24.14.0",
+                "3.09x",
+                "6.01x",
+                "2.22x",
+                "2.79x",
             ][..],
         ),
         (
             "docs/project/release.md",
-            &["0.14.0", "native-toolchain", "ckc licenses", "six archives"][..],
+            &["0.15.0", "native-toolchain", "ckc licenses", "six archives"][..],
         ),
     ];
     for (path, required) in required_by_file {
@@ -212,9 +227,107 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         }
     }
 
+    let current_titles = [
+        (
+            "docs/reference/language.md",
+            "# CalcKernel 0.15 Language Reference",
+        ),
+        (
+            "docs/zh-CN/reference/language.md",
+            "# CalcKernel 0.15 语言参考",
+        ),
+        ("docs/reference/diagnostics.md", "# CK 0.15 Diagnostics"),
+        (
+            "docs/zh-CN/reference/diagnostics.md",
+            "# CK 0.15 Diagnostic",
+        ),
+        ("docs/reference/cli.md", "# `ckc` 0.15 CLI Reference"),
+        ("docs/zh-CN/reference/cli.md", "# `ckc` 0.15 CLI 参考"),
+        (
+            "docs/reference/mir.md",
+            "# CalcKernel 0.15 MIR and KIR Boundary",
+        ),
+        (
+            "docs/zh-CN/reference/mir.md",
+            "# CalcKernel 0.15 MIR 与 KIR 边界",
+        ),
+        (
+            "docs/compiler/architecture.md",
+            "# CalcKernel 0.15 Compiler Architecture",
+        ),
+        (
+            "docs/zh-CN/compiler/architecture.md",
+            "# CalcKernel 0.15 编译器架构",
+        ),
+        (
+            "docs/compiler/optimizer.md",
+            "# CalcKernel 0.15 Fact-Driven Optimizer",
+        ),
+        (
+            "docs/zh-CN/compiler/optimizer.md",
+            "# CalcKernel 0.15 Fact-Driven Optimizer",
+        ),
+        (
+            "docs/guides/getting-started.md",
+            "# Getting Started with CalcKernel 0.15",
+        ),
+        (
+            "docs/zh-CN/guides/getting-started.md",
+            "# CalcKernel 0.15 入门",
+        ),
+        ("docs/abi/c.md", "# CalcKernel 0.15 C Source ABI"),
+        ("docs/zh-CN/abi/c.md", "# CalcKernel 0.15 C Source ABI"),
+        (
+            "docs/abi/llvm.md",
+            "# CalcKernel 0.15 Native LLVM and C ABI",
+        ),
+        (
+            "docs/zh-CN/abi/llvm.md",
+            "# CalcKernel 0.15 Native LLVM 与 C ABI",
+        ),
+        (
+            "docs/abi/modes.md",
+            "# CalcKernel 0.15 Checked C and Native Modes",
+        ),
+        (
+            "docs/zh-CN/abi/modes.md",
+            "# CalcKernel 0.15 C 与 Native Checked Mode",
+        ),
+        ("docs/abi/wasm.md", "# CalcKernel 0.15 WebAssembly ABI"),
+        (
+            "docs/zh-CN/abi/wasm.md",
+            "# CalcKernel 0.15 WebAssembly ABI",
+        ),
+        (
+            "docs/project/release.md",
+            "# Native `ckc` 0.15 Release Policy",
+        ),
+        (
+            "docs/zh-CN/project/release.md",
+            "# 原生 `ckc` 0.15 发布策略",
+        ),
+    ];
+    for (path, title) in current_titles {
+        assert!(
+            read(path).starts_with(title),
+            "{path} must identify the 0.15 contract"
+        );
+    }
+
+    for path in ["README.md", "README.zh-CN.md"] {
+        assert!(
+            read(path).contains("0.15.0"),
+            "{path} must identify stable 0.15.0"
+        );
+    }
+
     for path in ["CHANGELOG.md", "CHANGELOG.zh-CN.md"] {
         let text = read(path);
-        assert!(text.contains("## 0.14.0"), "{path} must identify 0.14.0");
+        assert!(text.contains("## 0.15.0"), "{path} must identify 0.15.0");
+        assert!(
+            text.contains("## 0.14.0"),
+            "{path} must retain 0.14.0 history"
+        );
         assert!(
             text.contains("## 0.13.0"),
             "{path} must retain 0.13.0 history"
@@ -225,7 +338,7 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         "docs/zh-CN/project/compatibility.md",
     ] {
         let text = read(path);
-        for required in ["0.14.x", "0.13.0", "0.12.0", "0.11.0", "0.10.0"] {
+        for required in ["0.15.x", "0.14.x", "0.13.0", "0.12.0", "0.11.0", "0.10.0"] {
             assert!(
                 text.contains(required),
                 "{path} must retain {required} compatibility history"
@@ -265,7 +378,7 @@ fn docs_v0_14_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
 }
 
 #[test]
-fn docs_v0_14_should_describe_only_the_implemented_optimizer_boundary() {
+fn docs_v0_15_should_describe_only_the_implemented_optimizer_boundary() {
     for path in [
         "docs/compiler/architecture.md",
         "docs/zh-CN/compiler/architecture.md",
@@ -297,7 +410,7 @@ fn docs_v0_14_should_describe_only_the_implemented_optimizer_boundary() {
 }
 
 #[test]
-fn docs_v0_14_should_retain_pgo_multiversion_security_and_future_boundaries() {
+fn docs_v0_15_should_retain_pgo_multiversion_security_and_future_boundaries() {
     for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
         let text = read(path);
         for required in [
@@ -401,7 +514,7 @@ fn docs_v0_14_should_identify_the_real_pgo_fix_and_deferred_tuning() {
 }
 
 #[test]
-fn docs_v0_14_should_define_canonical_slice_and_mode_contracts() {
+fn docs_v0_15_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
         "C and Native support optional `--bounds checked` guards for slice indexing and"

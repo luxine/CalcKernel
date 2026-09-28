@@ -1,4 +1,4 @@
-# `ckc` 0.14 CLI 参考
+# `ckc` 0.15 CLI 参考
 
 [English](../../reference/cli.md)
 
@@ -27,7 +27,7 @@ text output 写 stdout，另有说明时除外。
 | `ckc licenses` | 输出内嵌 third-party notice。 |
 | `ckc --version --verbose` | 输出 compiler、ABI、LLVM、target、codegen 与 ORC identity。 |
 
-0.14 不提供离线 Auto-Tuning。`ckc tune ...` 与 `ckc build --tune-use ...` 在读取
+0.15 不提供离线 Auto-Tuning。`ckc tune ...` 与 `ckc build --tune-use ...` 在读取
 workload、decision 或 source，以及创建或修改输出前返回非零错误；不会退回普通编译。
 保留的 `ckc pgo` 与 `--pgo-*` 是独立且受支持的工作流。
 
@@ -107,7 +107,7 @@ ckc build kernels.ck --kind static --pgo-use kernels.ckprof \
 
 Profile use 接受 O2/O3；specialization 与 `--cpu multiversion` 要求 O3。Generation 支持
 executable、dynamic 与 static，但 generation object 因没有 process/library flush owner 而拒绝。
-multiversion object 也会拒绝，因为 0.14 保留 named-object bundle，不定义 partial-link format；
+multiversion object 也会拒绝，因为 0.15 保留 named-object bundle，不定义 partial-link format；
 baseline/native single-version profile-use object 仍支持。Dynamic/static/object 使用
 Native-library topology，executable 使用 Native-executable topology。`--pgo-use` 与
 `--pgo-generate` 互斥，并且都不能与 `--sanitize-contracts` 组合。每个 invalid CLI combination
@@ -146,7 +146,7 @@ object 与 SHA-256 integrity digest。`--no-cache` 绕过读写。Corruption、u
 permission、symlink replacement 或 unparseable object 视为 miss。Same-user cache 仍属于 user
 trust boundary，不是 security sandbox。
 
-0.14 保留 KIR v3 与 `CKCOBJ03` manifest schema 4。Key 包含 contract sanitizer、consumer
+0.15 保留 KIR v3 与 `CKCOBJ03` manifest schema 4。Key 包含 contract sanitizer、consumer
 root、checked mode、规范化 `KirTargetProfile` digest、cost/proof schema identity、target/CPU
 policy 与 optimization budget；0.12 及更早 private object fail closed，不会被复用。
 

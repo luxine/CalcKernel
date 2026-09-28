@@ -2,10 +2,10 @@
 
 [English](../../project/roadmap.md)
 
-本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.14 兼容策略](compatibility.md)。
+本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.15 兼容策略](compatibility.md)。
 
 - Search-based offline Auto-Tuning 只可通过未来独立评审的 contract 加入，
-  不隐含在保留的 0.13 PGO 或普通 0.14 编译中。
+  不包含在保留的 0.13 PGO 或普通 0.14/0.15 编译器版本中。
 - 评估 indirect calls 与 indirect-call promotion，且不能削弱闭合 effect、ABI 或
   profile-mapping contract。
 - scalable KIR vector 与保留的 fixed-width target variant 分开评估。

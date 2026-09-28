@@ -2,8 +2,8 @@
 
 [English](../../guides/vscode.md)
 
-CalcKernel 扩展支持 CK 0.14 的 `.ck` 源文件。请安装与 VS Code 所在操作系统和处理器架构
-对应的 VSIX：
+CalcKernel 扩展为 `.ck` 源文件提供编辑器支持。扩展的发布周期独立于 CK 0.15.0
+编译器。请安装与 VS Code 所在操作系统和处理器架构对应的可用 VSIX：
 
 | VS Code 主机 | VSIX target |
 | --- | --- |
@@ -15,11 +15,11 @@ CalcKernel 扩展支持 CK 0.14 的 `.ck` 源文件。请安装与 VS Code 所�
 | Windows x64 | `win32-x64` |
 
 扩展 ID 为 `Luxine.calckernel-vscode-plugin`，与现有的 Marketplace 条目一致。
-安装包名为 `calckernel-vscode-plugin-0.14.0-<target>.vsix`。可在扩展视图中选择
-**Install from VSIX...**，也可以使用命令行：
+安装包名包含扩展自身版本和目标平台，例如 `calckernel-vscode-plugin-<version>-<target>.vsix`。
+可在扩展视图中选择 **Install from VSIX...**，也可以在命令行中指定下载的文件：
 
 ```sh
-code --install-extension calckernel-vscode-plugin-0.14.0-linux-x64.vsix
+code --install-extension ./path/to/the-downloaded-extension.vsix
 ```
 
 Marketplace 条目提供已发布的扩展包。构建和打包说明由扩展的公开源码仓库维护。
@@ -44,10 +44,11 @@ CK 没有 import 或 module system，因此语言导航与重命名基于 CK 源
 ## 编译器路径
 
 VSIX 内含一个 frontend-only `ckc` 供语言服务使用。它不需要 LLVM，可离线提供编辑器分析。
-默认先使用安装包内的服务端；若该程序不可用，再从 `PATH` 查找。将 `ck.server.path` 设为
-绝对路径，可指定其他 `ckc` 0.14.x 服务端。
+内置编译器的版本取决于单独发布的 VSIX，可能早于编译器 0.15.0。默认先使用安装包内的
+服务端；若该程序不可用，再从 `PATH` 查找。将 `ck.server.path` 设为绝对路径，可使用
+单独安装的 `ckc` 0.15.x 服务端。
 
-Run 和 Build 需要单独安装启用了 Native toolchain 的 `ckc` 0.14.x。将
+Run 和 Build 需要单独安装启用了 Native toolchain 的 `ckc` 0.15.x。将
 `ck.compiler.path` 设为其绝对路径；留空时会从 `PATH` 查找。Build 会让你选择产物类型
 （`executable`、`dynamic`、`static` 或 `object`）和输出路径。调用 `ckc` 前，这些命令会先
 保存当前文件；标准输出和错误输出会显示在 CalcKernel 输出面板中。Run 与 Build 使用的
