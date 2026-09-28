@@ -2,7 +2,29 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
-## 0.15.0
+## 0.15.1
+
+The first published 0.15 release carries forward the compiler and WebAssembly
+features from the immutable `v0.15.0` tagged source snapshot. It also fixes the
+release workflow's validation of annotated tags while retaining the exact
+tagged source and all existing release gates.
+
+- Includes the opt-in WebAssembly `simd128` profile and O3 Bulk Memory paths
+  for eligible copies and byte fills. Unsupported cases retain scalar code.
+- Includes direct verified-KIR lowering to WAT and binary modules, while
+  preserving exported function signatures and caller-owned memory. The
+  `ck.wasm.target` custom-section metadata uses schema 2.
+- In local Node.js 24.14.0/V8 tests on Apple M5 Max, O3 `simd128` maps
+  measured 3.1–6.0× Node.js for `i32` and 2.2–2.8× for `f64` across
+  4,096–65,536 elements. These hot-kernel measurements exclude compilation,
+  instantiation, and data preparation; they describe one machine and runtime,
+  not general Wasm performance.
+
+## 0.15.0 — Tagged source snapshot; not released
+
+The immutable `v0.15.0` tag records this source history. Its workflow did not
+create an official GitHub Release or publish compiler archives or checksums;
+the source is carried forward in 0.15.1.
 
 - Added an opt-in WebAssembly `simd128` profile. At O3, eligible contiguous
   slice maps and modulo-2^32 `i32`/`u32` sum and product reductions can use SIMD;

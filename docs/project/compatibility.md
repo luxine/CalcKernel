@@ -6,6 +6,11 @@ This document is the normative compatibility authority for `0.15.x`.
 The published `0.14.x` patch line retains its historical compatibility boundary;
 the migration below describes the 0.15 changes.
 
+The immutable `v0.15.0` tag records a compiler source snapshot, but its workflow
+did not create an official GitHub Release or publish archives. Version `0.15.1`
+is the first published release in the 0.15 line and carries forward that source
+and its compatibility contract.
+
 Patch releases preserve accepted 0.15.0 source and observable semantics, stable
 diagnostic identifiers/categories, documented CLI names/flags/defaults,
 stdout/stderr classes, semantic textual MIR, public C/WASM/Native C ABI shapes,
@@ -25,7 +30,7 @@ WASM ABI; `baseline` remains the default profile without SIMD. Hosts choosing
 `simd128` must support that declared feature. Target-profile digests and
 generated module bytes are compiler-owned identities, not stable public bytes.
 
-## 0.14.0 to 0.15.0 migration
+## 0.14.0 to 0.15.1 migration
 
 - The WebAssembly function and caller-owned memory ABI stay the same. The
   `ck.wasm.target` custom-section payload advances from schema 1 to schema 2.

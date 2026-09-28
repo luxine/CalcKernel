@@ -210,7 +210,7 @@ class SchemaEightGateTests(unittest.TestCase):
             "benches/fixtures/pgo/compute_bound.ck",
         ]]
         self.report = {
-            "schemaVersion": 8, "candidateVersion": "0.15.0", "candidateSha": "1" * 40,
+            "schemaVersion": 8, "candidateVersion": "0.15.1", "candidateSha": "1" * 40,
             "replayCommit": gate.V012_COMMIT, "evidenceDirectory": self.evidence.name,
             "toolchain": {"llvmVersion": "22.1.8", "clangVersion": "22.1.8",
                           "rustVersion": "1.90.0", "componentManifestSha256": digest(component.read_bytes()),

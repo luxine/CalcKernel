@@ -103,14 +103,14 @@ fn v0_10_release_identity_should_remain_in_compatibility_history() {
 fn release_v0_15_identity_should_match_cargo_and_cli() {
     let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
     let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
-    assert!(cargo.contains("version = \"0.15.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.0\""));
+    assert!(cargo.contains("version = \"0.15.1\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.1\""));
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .arg("--version")
         .output()
         .expect("run ckc --version");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.15.0");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.15.1");
     for path in [
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
@@ -176,7 +176,7 @@ fn release_v0_15_verbose_identity_should_report_retained_public_and_private_cont
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("verbose version is UTF-8");
     for required in [
-        "ckc 0.15.0",
+        "ckc 0.15.1",
         "Native ABI: 1",
         "Runtime ABI: 2",
         "KIR: 3",
@@ -255,9 +255,11 @@ fn native_release_workflow_should_build_sign_and_archive_native_ckc_artifacts() 
         "name: native ckc release",
         "tags:\n      - \"v*\"",
         "fetch-depth: 0",
+        "ref: ${{ github.sha }}",
+        "refs/tags/${RELEASE_TAG}:refs/release-validation/${RELEASE_TAG}",
         "Validate stable annotated release tag",
         "if: github.event_name == 'push' || inputs.publish == true",
-        "scripts/validate-release-tag.sh \"${RELEASE_TAG}\"",
+        "scripts/validate-release-tag.sh \"${RELEASE_TAG}\" \"refs/release-validation/${RELEASE_TAG}\" \"${GITHUB_SHA}\"",
         "workflow_dispatch:",
         "default: false",
         "cargo fmt --check",
@@ -402,34 +404,86 @@ fn public_release_tag_validator_should_require_stable_annotated_tags() {
     run_git(&["commit", "--quiet", "-m", "release source"]);
     run_git(&["tag", "--annotate", "v1.2.3", "--message", "stable release"]);
     run_git(&["tag", "v1.2.4"]);
+    let event_commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&root)
+        .output()
+        .expect("read temporary release commit");
+    assert!(event_commit.status.success());
+    let event_commit = String::from_utf8(event_commit.stdout)
+        .expect("temporary release commit is UTF-8")
+        .trim()
+        .to_owned();
 
     let validator = repo_root().join("scripts/validate-release-tag.sh");
-    let validate = |tag: &str| {
+    let validate = |tag: &str, tag_ref: Option<&str>, event_commit: Option<&str>| {
         Command::new("bash")
             .arg(&validator)
             .arg(tag)
+            .arg(tag_ref.unwrap_or_default())
+            .arg(event_commit.unwrap_or_default())
             .current_dir(&root)
             .output()
             .unwrap_or_else(|error| panic!("run release tag validator: {error}"))
     };
 
-    let stable = validate("v1.2.3");
+    let stable = validate("v1.2.3", None, Some(&event_commit));
     assert!(
         stable.status.success(),
         "annotated stable tag should pass: {}",
         String::from_utf8_lossy(&stable.stderr)
     );
 
-    let development = validate("v1.2.3-dev.0");
+    let development = validate("v1.2.3-dev.0", None, None);
     assert!(
         !development.status.success(),
         "development tag must be rejected"
     );
 
-    let lightweight = validate("v1.2.4");
+    let lightweight = validate("v1.2.4", None, None);
     assert!(
         !lightweight.status.success(),
         "lightweight stable tag must be rejected"
+    );
+
+    run_git(&["clone", "--bare", ".", "remote.git"]);
+    run_git(&["update-ref", "refs/tags/v1.2.3", "HEAD"]);
+    run_git(&[
+        "fetch",
+        "--no-tags",
+        "remote.git",
+        "refs/tags/v1.2.3:refs/release-validation/v1.2.3",
+    ]);
+    let restored_tag = validate(
+        "v1.2.3",
+        Some("refs/release-validation/v1.2.3"),
+        Some(&event_commit),
+    );
+    assert!(
+        restored_tag.status.success(),
+        "fetched annotated tag should validate independently of the checkout tag ref: {}",
+        String::from_utf8_lossy(&restored_tag.stderr)
+    );
+
+    fs::write(root.join("second.txt"), "a later checkout commit\n")
+        .expect("write a later checkout commit");
+    run_git(&["add", "second.txt"]);
+    run_git(&["commit", "--quiet", "-m", "later checkout commit"]);
+    let mismatched_commit = validate("v1.2.3", Some("refs/release-validation/v1.2.3"), None);
+    assert!(
+        !mismatched_commit.status.success(),
+        "annotated tag pointing at another commit must be rejected: {}",
+        String::from_utf8_lossy(&mismatched_commit.stderr)
+    );
+    let mismatched_event = validate(
+        "v1.2.3",
+        Some("refs/release-validation/v1.2.3"),
+        Some(&event_commit),
+    );
+    assert!(
+        !mismatched_event.status.success(),
+        "checkout that differs from the triggering event commit must be rejected: {}",
+        String::from_utf8_lossy(&mismatched_event.stderr)
     );
 
     fs::remove_dir_all(root).expect("remove temporary release repository");
