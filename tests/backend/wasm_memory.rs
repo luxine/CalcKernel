@@ -39,6 +39,54 @@ export unsafe fn copy_skip(dst: ptr<u32>, src: ptr<u32>, start: u32, end: u32, s
 }
 "#;
 
+const FILL_U32: &str = r#"
+export unsafe fn fill_u32(dst: ptr<u32>, start: u32, end: u32) -> void contract {
+  requires start <= end;
+} {
+  let i: u32 = start;
+  while i < end {
+    dst[i] = 1515870810;
+    i = i + 1;
+  }
+}
+"#;
+
+const COPY_I32: &str = r#"
+export unsafe fn copy_i32(dst: ptr<i32>, src: ptr<i32>, start: u32, end: u32) -> void contract {
+  requires start <= end;
+} {
+  let i: u32 = start;
+  while i < end {
+    dst[i] = src[i];
+    i = i + 1;
+  }
+}
+"#;
+
+const FILL_U32_AB: &str = r#"
+export unsafe fn fill_u32_ab(dst: ptr<u32>, start: u32, end: u32) -> void contract {
+  requires start <= end;
+} {
+  let i: u32 = start;
+  while i < end {
+    dst[i] = 2880154539;
+    i = i + 1;
+  }
+}
+"#;
+
+const FILL_U32_NONREPEATED_WORD: &str = r#"
+export unsafe fn fill_u32_nonrepeated(dst: ptr<u32>, start: u32, end: u32) -> void contract {
+  requires start <= end;
+} {
+  let i: u32 = start;
+  while i < end {
+    dst[i] = 1;
+    i = i + 1;
+  }
+}
+"#;
+
 const SLOT_OFFSETS: &str = include_str!("../../examples/wasm/field_offset.ck");
 
 const COPY_SWITCHED_BASE: &str = r#"
@@ -317,6 +365,193 @@ fn wasm_o3_should_advance_a_checked_memory_cursor_instead_of_recomputing_indexed
         2,
         "the O0 reference should retain its two indexed address calculations:\n{o0_loop}"
     );
+}
+
+#[test]
+fn wasm_o3_should_emit_bulk_memory_only_for_checked_copy_and_fill_loops() {
+    let (o0_copy, _) = emit_source(COPY_U32, 0);
+    let (o3_copy, _) = emit_source(COPY_U32, 3);
+    let (o3_fill, _) = emit_source(FILL_U32, 3);
+    let (o3_i32_copy, _) = emit_source(COPY_I32, 3);
+    let (o3_ab_fill, _) = emit_source(FILL_U32_AB, 3);
+    let (o3_nonrepeated_fill, _) = emit_source(FILL_U32_NONREPEATED_WORD, 3);
+
+    assert!(
+        !o0_copy.contains("memory.copy"),
+        "O0 must remain scalar:\n{o0_copy}"
+    );
+    assert!(
+        o3_copy.contains("memory.copy"),
+        "O3 should emit a checked copy fast path:\n{o3_copy}"
+    );
+    assert!(
+        o3_copy.contains("memory.size"),
+        "the fast path must guard against the current memory size:\n{o3_copy}"
+    );
+    assert!(
+        o3_fill.contains("memory.fill"),
+        "O3 should emit a checked repeated-byte fill fast path:\n{o3_fill}"
+    );
+    assert!(
+        o3_i32_copy.contains("memory.copy"),
+        "ptr<i32> should share the checked copy subset:\n{o3_i32_copy}"
+    );
+    assert!(
+        o3_ab_fill.contains("i32.const 171\n"),
+        "the repeated 0xab byte must be selected from 0xabababab:\n{o3_ab_fill}"
+    );
+    assert!(
+        !o3_nonrepeated_fill.contains("memory.fill"),
+        "a non-repeated u32 word must keep the scalar loop:\n{o3_nonrepeated_fill}"
+    );
+
+    let copy_skip = o3_copy
+        .split_once("(func $copy_skip")
+        .expect("multi-exit loop follows the eligible copy")
+        .1;
+    assert!(
+        !copy_skip.contains("memory.copy"),
+        "a loop with a conditional continue must remain scalar:\n{copy_skip}"
+    );
+    let (mutated, _) = emit_mutated_copy_switch(3);
+    assert!(
+        !mutated.contains("memory.copy"),
+        "a changed source pointer on the loop backedge must fail the independent checker:\n{mutated}"
+    );
+}
+
+#[test]
+fn wasm_bulk_copy_should_preserve_scalar_overlap_wrap_and_partial_trap_behavior() {
+    if !node_available() {
+        return;
+    }
+
+    const RUNNER: &str = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const { memory, copy_u32 } = instance.exports;
+    const words = new Uint32Array(memory.buffer);
+
+    words[65] = 0x12345678; words[66] = 0x23456789; words[67] = 0x3456789a;
+    copy_u32(512, 256, 1, 4);
+    if (words[129] !== words[65] || words[130] !== words[66] || words[131] !== words[67]) process.exit(1);
+
+    words[20] = 1; words[21] = 2; words[22] = 3; words[23] = 4;
+    copy_u32(84, 80, 0, 4);
+    if (words[21] !== 1 || words[22] !== 1 || words[23] !== 1 || words[24] !== 1) process.exit(2);
+
+    words[30] = 5; words[31] = 6; words[32] = 7; words[33] = 8;
+    copy_u32(120, 124, 0, 3);
+    if (words[30] !== 6 || words[31] !== 7 || words[32] !== 8) process.exit(3);
+
+    words[16] = 0xaabbccdd;
+    copy_u32(0xfffffff8, 0xfffffff8, 0xffffffff, 0xffffffff);
+    if (words[16] !== 0xaabbccdd) process.exit(4);
+
+    words[0] = 0x10293847;
+    copy_u32(64, 0, 0x40000000, 0x40000001);
+    if (words[16] !== 0x10293847) process.exit(5);
+
+    words[0] = 0x55667788;
+    copy_u32(0xfffffff4, 0xfffffff0, 4, 5);
+    if (words[1] !== 0x55667788) process.exit(6);
+
+    words[16383] = 0xcafebabe;
+    let sourceTrap = false;
+    try { copy_u32(0x2000, 65532, 0, 2); }
+    catch (error) { sourceTrap = error instanceof WebAssembly.RuntimeError; }
+    if (!sourceTrap || words[2048] !== 0xcafebabe) process.exit(7);
+
+    words[2049] = 0x0badf00d;
+    let destinationTrap = false;
+    try { copy_u32(65532, 8192, 0, 2); }
+    catch (error) { destinationTrap = error instanceof WebAssembly.RuntimeError; }
+    if (!destinationTrap || words[16383] !== words[2048]) process.exit(8);
+  })
+  .catch((error) => { console.error(error); process.exit(9); });
+"#;
+
+    for opt_level in [0, 3] {
+        let (_, wasm) = emit_source(COPY_U32, opt_level);
+        let id = NEXT_WASM_MEMORY_ID.fetch_add(1, Ordering::Relaxed);
+        let wasm_path = std::env::temp_dir().join(format!(
+            "calckernel_wasm_bulk_copy_{}_o{opt_level}.wasm",
+            id
+        ));
+        fs::write(&wasm_path, wasm).expect("write Wasm module");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(RUNNER)
+            .arg(&wasm_path)
+            .output()
+            .expect("run Node Wasm harness");
+        let _ = fs::remove_file(&wasm_path);
+        assert!(
+            output.status.success(),
+            "O{opt_level} Node runtime failed with {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn wasm_bulk_fill_should_preserve_zero_wrap_and_partial_trap_behavior() {
+    if !node_available() {
+        return;
+    }
+
+    const RUNNER: &str = r#"
+const fs = require("node:fs");
+WebAssembly.instantiate(fs.readFileSync(process.argv[1]))
+  .then(({ instance }) => {
+    const { memory, fill_u32 } = instance.exports;
+    const words = new Uint32Array(memory.buffer);
+
+    words.fill(0xdeadbeef, 40, 44);
+    fill_u32(160, 0, 3);
+    if (words[40] !== 0x5a5a5a5a || words[41] !== 0x5a5a5a5a || words[42] !== 0x5a5a5a5a) process.exit(1);
+
+    words[50] = 0x12345678;
+    fill_u32(0xfffffff8, 0xffffffff, 0xffffffff);
+    if (words[50] !== 0x12345678) process.exit(2);
+
+    words[1] = 0x10203040;
+    fill_u32(0xfffffff4, 4, 5);
+    if (words[1] !== 0x5a5a5a5a) process.exit(3);
+
+    words[16383] = 0xa5a5a5a5;
+    let trapped = false;
+    try { fill_u32(65532, 0, 2); }
+    catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
+    if (!trapped || words[16383] !== 0x5a5a5a5a) process.exit(4);
+  })
+  .catch((error) => { console.error(error); process.exit(5); });
+"#;
+
+    for opt_level in [0, 3] {
+        let (_, wasm) = emit_source(FILL_U32, opt_level);
+        let id = NEXT_WASM_MEMORY_ID.fetch_add(1, Ordering::Relaxed);
+        let wasm_path = std::env::temp_dir().join(format!(
+            "calckernel_wasm_bulk_fill_{}_o{opt_level}.wasm",
+            id
+        ));
+        fs::write(&wasm_path, wasm).expect("write Wasm module");
+        let output = Command::new("node")
+            .arg("-e")
+            .arg(RUNNER)
+            .arg(&wasm_path)
+            .output()
+            .expect("run Node Wasm harness");
+        let _ = fs::remove_file(&wasm_path);
+        assert!(
+            output.status.success(),
+            "O{opt_level} Node runtime failed with {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]

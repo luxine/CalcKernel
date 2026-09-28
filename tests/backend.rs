@@ -16,5 +16,7 @@ mod kir_wasm;
 mod llvm;
 #[path = "backend/wasm.rs"]
 mod wasm;
+#[path = "backend/wasm_direct.rs"]
+mod wasm_direct;
 #[path = "backend/wasm_memory.rs"]
 mod wasm_memory;

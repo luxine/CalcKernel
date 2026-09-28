@@ -607,7 +607,7 @@ fn architecture_docs_should_describe_current_native_modules() {
 }
 
 #[test]
-fn wasm_docs_should_describe_artifacts_not_removed_helper_apis() {
+fn wasm_docs_should_describe_artifacts_and_local_host_examples_without_package_api_claims() {
     for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
         let text = read(path);
         for required in ["emit-wasm", "WASM", "--bounds"] {
@@ -627,8 +627,6 @@ fn wasm_docs_should_describe_artifacts_not_removed_helper_apis() {
         }
 
         for forbidden in [
-            "CKWasmArena",
-            "createCKWasmArena",
             "package-root",
             "package root",
             "from \"calckernel\"",
@@ -638,6 +636,17 @@ fn wasm_docs_should_describe_artifacts_not_removed_helper_apis() {
             assert!(
                 !text.contains(forbidden),
                 "{path} must not mention {forbidden:?}"
+            );
+        }
+        if path.contains("/abi/") {
+            assert!(
+                !text.contains("createCKWasmArena"),
+                "{path} must describe the ABI, not a host helper"
+            );
+        } else {
+            assert!(
+                text.contains("examples/wasm/host/ck-wasm-arena.mjs"),
+                "{path} must locate the shipped local host example"
             );
         }
     }

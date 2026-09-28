@@ -1,10 +1,12 @@
-# CalcKernel 0.14 Compatibility Policy
+# CalcKernel 0.15 Compatibility Policy
 
 [简体中文](../zh-CN/project/compatibility.md)
 
-This document is the normative compatibility authority for `0.14.x`.
+This document is the normative compatibility authority for `0.15.x`.
+The published `0.14.x` patch line retains its historical compatibility boundary;
+the migration below describes the 0.15 changes.
 
-Patch releases preserve accepted 0.14.0 source and observable semantics, stable
+Patch releases preserve accepted 0.15.0 source and observable semantics, stable
 diagnostic identifiers/categories, documented CLI names/flags/defaults,
 stdout/stderr classes, semantic textual MIR, public C/WASM/Native C ABI shapes,
 checked first-error order, runtime diagnostic bytes/statuses, and the six
@@ -19,9 +21,22 @@ compiler interfaces are not public contracts.
 
 The opt-in `--wasm-features simd128` profile may generate SIMD128 instructions
 for eligible O3 slice maps. It preserves CK observable semantics and the public
-WASM ABI; `baseline` remains the default scalar profile. Hosts choosing
+WASM ABI; `baseline` remains the default profile without SIMD. Hosts choosing
 `simd128` must support that declared feature. Target-profile digests and
 generated module bytes are compiler-owned identities, not stable public bytes.
+
+## 0.14.0 to 0.15.0 migration
+
+- The WebAssembly function and caller-owned memory ABI stay the same. The
+  `ck.wasm.target` custom-section payload advances from schema 1 to schema 2.
+  Both `baseline` and `simd128` profiles allow Bulk Memory; `simd128` remains
+  the only profile that allows SIMD128. The profile digest changes for both
+  Wasm profiles because their canonical capability encoding changed. Non-Wasm
+  profile digests are unchanged.
+- Tools that validate the custom-section schema must accept schema 2 before
+  consuming 0.15 artifacts. The Wasm backend continues to reject SIMD128 under
+  `baseline`, as well as relaxed SIMD, threads, Memory64, and undeclared
+  proposals.
 
 ## 0.13.0 to 0.14.0 migration
 

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    KirBlock, KirEdge, KirFunction, KirInstruction, KirModule, KirTerminator, KirValueType,
-    MirFunction, MirPrimitiveTypeName, MirType, MirValue, ValueId, value_type,
+    KirBlock, KirEdge, KirFunction, KirInstruction, KirTerminator, KirValueType, MirFunction,
+    MirPrimitiveTypeName, MirType, MirValue, ValueId, value_type,
 };
 
 use super::memory::WasmMemoryPlan;
@@ -33,7 +33,6 @@ pub(super) struct WasmTypedValue<'a> {
 
 #[derive(Debug)]
 pub(super) struct WasmLoweredModule<'a> {
-    pub source: &'a KirModule,
     pub functions: Vec<WasmLoweredFunction<'a>>,
 }
 

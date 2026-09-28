@@ -1077,8 +1077,11 @@ fn encode_target(bytes: &mut Vec<u8>, target: &KirTargetIdentity) {
     match target {
         KirTargetIdentity::Inspection => bytes.push(1),
         KirTargetIdentity::PortableC => bytes.push(2),
-        KirTargetIdentity::WebAssembly => bytes.push(3),
-        KirTargetIdentity::WebAssemblySimd128 => bytes.push(5),
+        // Wasm target tags 6 and 7 identify the v0.15 capability encoding,
+        // which includes the Bulk Memory proposal in both feature profiles.
+        // Keep all non-Wasm tags stable so their canonical digests do not move.
+        KirTargetIdentity::WebAssembly => bytes.push(6),
+        KirTargetIdentity::WebAssemblySimd128 => bytes.push(7),
         KirTargetIdentity::Native { triple } => {
             bytes.push(4);
             put_string(bytes, triple);
@@ -1236,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn wasm_feature_profiles_preserve_the_p5_baseline_identity() {
+    fn wasm_feature_profiles_encode_the_v015_capability_identity() {
         let baseline = KirTargetProfile::webassembly_with_features(KirWasmFeatures::Baseline);
         let simd128 = KirTargetProfile::webassembly_with_features(KirWasmFeatures::Simd128);
 
@@ -1244,7 +1247,7 @@ mod tests {
         assert_eq!(baseline.target_identity(), &KirTargetIdentity::WebAssembly);
         assert_eq!(
             baseline.digest_hex(),
-            "ce0ccf53cf133340ba86406a3ba056c53e43411b1ae986eb97847279073f4238"
+            "e2b27705bad3a17d11c42cd103a4eb4ff21053e6426772dbc6aa6430438bb4f9"
         );
         assert_eq!(baseline.wasm_features(), Some(KirWasmFeatures::Baseline));
         assert_eq!(simd128.wasm_features(), Some(KirWasmFeatures::Simd128));
@@ -1269,11 +1272,31 @@ mod tests {
     }
 
     #[test]
+    fn wasm_capability_encoding_changes_only_wasm_profile_digests() {
+        let c = KirTargetProfile::portable_c();
+        let baseline = KirTargetProfile::webassembly_with_features(KirWasmFeatures::Baseline);
+        let simd128 = KirTargetProfile::webassembly_with_features(KirWasmFeatures::Simd128);
+
+        assert_eq!(
+            c.digest_hex(),
+            "89975cae3b8e881b6e2bdae121187b71f58f9b94eee590e7b2b21d1e3354a8a9"
+        );
+        assert_ne!(
+            baseline.digest_hex(),
+            "ce0ccf53cf133340ba86406a3ba056c53e43411b1ae986eb97847279073f4238"
+        );
+        assert_ne!(
+            simd128.digest_hex(),
+            "a73e04ad8467cda7a2ac3e9145167a9b5433b21265b0b487261bb525e65417d8"
+        );
+    }
+
+    #[test]
     fn wasm_simd128_profile_exposes_only_the_minimum_loop_vector_subset() {
         let profile = KirTargetProfile::webassembly_with_features(KirWasmFeatures::Simd128);
         assert_eq!(
             profile.digest_hex(),
-            "a73e04ad8467cda7a2ac3e9145167a9b5433b21265b0b487261bb525e65417d8"
+            "7126fe09c676898d2fc2d462ab8232d2bd8cde1fb3201aa111b9241b54800f85"
         );
         assert!(profile.vector_operations_enabled());
         assert_eq!(profile.maximum_interleave_factor(), 1);

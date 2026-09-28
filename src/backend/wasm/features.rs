@@ -4,37 +4,14 @@ use wasmparser::{Validator, WasmFeatures};
 
 pub(super) fn target_metadata(features: KirWasmFeatures, profile_sha256: &str) -> String {
     format!(
-        "{{\"schema\":1,\"target\":\"wasm32\",\"features\":\"{}\",\"profile_sha256\":\"{}\"}}",
+        "{{\"schema\":2,\"target\":\"wasm32\",\"features\":\"{}\",\"profile_sha256\":\"{}\"}}",
         features.as_str(),
         profile_sha256,
     )
 }
 
-pub(super) fn append_target_metadata(
-    mut wat: String,
-    features: KirWasmFeatures,
-    profile_sha256: &str,
-) -> Result<String, String> {
-    let metadata = target_metadata(features, profile_sha256);
-    let escaped = metadata
-        .bytes()
-        .map(|byte| match byte {
-            b'"' => "\\22".to_string(),
-            b'\\' => "\\5c".to_string(),
-            0x20..=0x7e => char::from(byte).to_string(),
-            _ => format!("\\{byte:02x}"),
-        })
-        .collect::<String>();
-    let custom = format!("  (@custom \"ck.wasm.target\" \"{escaped}\")\n");
-    let closing = wat
-        .rfind(')')
-        .ok_or_else(|| "WebAssembly WAT is missing its module terminator".to_string())?;
-    wat.insert_str(closing, &custom);
-    Ok(wat)
-}
-
 pub(super) fn allowed_wasm_features(features: KirWasmFeatures) -> WasmFeatures {
-    let mut allowed = WasmFeatures::MVP | WasmFeatures::MULTI_VALUE;
+    let mut allowed = WasmFeatures::MVP | WasmFeatures::MULTI_VALUE | WasmFeatures::BULK_MEMORY;
     if features == KirWasmFeatures::Simd128 {
         allowed |= WasmFeatures::SIMD;
     }
@@ -68,6 +45,26 @@ mod tests {
         assert!(validate_wat(SIMD, KirWasmFeatures::Baseline).is_err());
         assert!(validate_wat(SIMD, KirWasmFeatures::Simd128).is_ok());
 
+        const BULK_MEMORY: &str = r#"(module
+            (memory 1)
+            (data $source "\00")
+            (func (param $destination i32) (param $source_offset i32) (param $length i32)
+                local.get $destination
+                local.get $source_offset
+                local.get $length
+                memory.copy
+                local.get $destination
+                i32.const 0
+                i32.const 1
+                memory.fill
+                local.get $destination
+                i32.const 0
+                i32.const 1
+                memory.init $source
+                data.drop $source))"#;
+        assert!(validate_wat(BULK_MEMORY, KirWasmFeatures::Baseline).is_ok());
+        assert!(validate_wat(BULK_MEMORY, KirWasmFeatures::Simd128).is_ok());
+
         const RELAXED_SIMD: &str = r#"(module (func (result v128) (i8x16.relaxed_swizzle (v128.const i8x16 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0) (v128.const i8x16 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0))))"#;
         assert!(validate_wat(RELAXED_SIMD, KirWasmFeatures::Simd128).is_err());
 
@@ -77,5 +74,16 @@ mod tests {
         const MEMORY64: &str = r#"(module (memory i64 1))"#;
         assert!(validate_wat(MEMORY64, KirWasmFeatures::Baseline).is_err());
         assert!(validate_wat(MEMORY64, KirWasmFeatures::Simd128).is_err());
+    }
+
+    #[test]
+    fn target_metadata_uses_schema_two_for_the_v015_capability_contract() {
+        assert_eq!(
+            target_metadata(KirWasmFeatures::Baseline, &"a".repeat(64)),
+            format!(
+                r#"{{"schema":2,"target":"wasm32","features":"baseline","profile_sha256":"{}"}}"#,
+                "a".repeat(64),
+            )
+        );
     }
 }

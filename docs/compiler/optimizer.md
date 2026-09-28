@@ -99,14 +99,15 @@ consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
-C and WebAssembly `baseline` profiles disable Vector KIR in 0.14.
+C and WebAssembly `baseline` profiles disable Vector KIR in 0.15.
 For WebAssembly, the `--wasm-features baseline|simd128` option selects the
 target profile for WAT/WASM emission or `emit-kir --consumer wasm`, defaulting
 to `baseline`.
-The selected feature and canonical profile digest are carried into module
-metadata. At O3, `simd128` enables an independently verified Loop SIMD
-frontier for contiguous `slice<f64>`, `slice<i32>`, and `slice<u32>` maps and
-modular `i32`/`u32` sum and product reductions. Full-width vectors use `f64x2`
+Both Wasm profiles allow Bulk Memory; only `simd128` allows SIMD128. The
+`ck.wasm.target` module metadata uses schema 2 and carries the selected feature
+and canonical profile digest. At O3, `simd128` enables an independently
+verified Loop SIMD frontier for contiguous `slice<f64>`, `slice<i32>`, and
+`slice<u32>` maps and modular `i32`/`u32` sum and product reductions. Full-width vectors use `f64x2`
 or `i32x4`; two-lane `i32`/`u32` inputs can convert to `f64x2` with an exact
 eight-byte load. The supported map operations include splat, load/store,
 add, subtract, multiply, negate, `f64x2` divide, and pure lane comparison and
@@ -118,7 +119,13 @@ independent legality and cost checks, and scalar remainder. The unroll factor
 is one. WebAssembly SLP, floating-point reductions, checked arithmetic,
 masked memory, and other vector shapes remain unavailable. Unsupported source
 candidates stay scalar; unsupported hand-constructed Vector KIR is rejected by
-the backend. `baseline` and O0–O2 remain scalar.
+the backend. `baseline` and O0–O2 remain scalar for vector lowering.
+Independently, O3 may use a guarded Bulk Memory path for eligible direct-pointer
+32-bit copies and repeated-byte fills under either Wasm profile. It requires
+nonwrapping ranges inside current memory and disjoint ranges for copies; otherwise
+the original scalar loop remains the fallback. The fast path requires at least
+16 elements so short calls skip its complete-range guard; this size threshold
+does not change the safety checks.
 
 Specialization, unroll, SLP, and Loop SIMD use one verified transactional state:
 the complete candidate module, proof/fact state, and audit-budget delta are

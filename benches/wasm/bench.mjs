@@ -55,6 +55,7 @@ Options:
   --ckc <path>       Explicit path to the ckc executable (required)
   --out <path>       JSON file, or output directory (default: build/wasm-perf/${outputFilename})
   --samples <count>  Measured rounds per case and optimization level (default: 20)
+  --emission-samples <count>  Raw emit-wasm measurements per artifact (default: 3)
   --warmup <count>   Warmup rounds per case and optimization level (default: 5)
   --batch <count>    Independent kernel calls in each round (default: 10)
   --size <count>     Elements per memory-kernel call (default: 4096)
@@ -83,6 +84,7 @@ function parseArgs(args) {
     ckc: null,
     out: `build/wasm-perf/${outputFilename}`,
     samples: 20,
+    emissionSamples: 3,
     warmup: 5,
     batch: 10,
     size: 4096,
@@ -94,6 +96,7 @@ function parseArgs(args) {
     ['--ckc', 'ckc'],
     ['--out', 'out'],
     ['--samples', 'samples'],
+    ['--emission-samples', 'emissionSamples'],
     ['--warmup', 'warmup'],
     ['--batch', 'batch'],
     ['--size', 'size'],
@@ -121,6 +124,7 @@ function parseArgs(args) {
     const value = args[++index];
     if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value`);
     if (key === 'samples') options.samples = parseCount(key, value, 1);
+    else if (key === 'emissionSamples') options.emissionSamples = parseCount('emission-samples', value, 1);
     else if (key === 'warmup') options.warmup = parseCount(key, value, 0);
     else if (key === 'batch') options.batch = parseCount(key, value, 1);
     else if (key === 'size') options.size = parseCount(key, value, 0);
@@ -664,6 +668,59 @@ function u32CursorCopy() {
   };
 }
 
+function u32Fill() {
+  const guardBefore = 0x13579bdf;
+  const guardAfter = 0xfedcba98;
+  const untouched = 0x55555555;
+  const fillValue = 0x5a5a5a5a;
+  const strideBytes = (size) => align((size + 2) * Uint32Array.BYTES_PER_ELEMENT, 16);
+  return {
+    name: 'u32_fill',
+    source: 'examples/wasm/bulk_fill.ck',
+    outputTypes: { dst: 'u32' },
+    workloadFor(size, batch) {
+      return {
+        elements_per_workload: size,
+        wasm_calls_per_workload: 1,
+        benchmark_workloads_per_sample: batch,
+      };
+    },
+    workspaceBytes: (size, batch) => strideBytes(size) * batch,
+    prepare(workspace, size, batch) {
+      for (let slot = 0; slot < batch; slot += 1) {
+        const base = workspace.start + slot * strideBytes(size) + 4;
+        workspace.view.setUint32(base - 4, guardBefore, true);
+        workspace.view.setUint32(base + size * 4, guardAfter, true);
+        for (let index = 0; index < size; index += 1) {
+          workspace.view.setUint32(base + index * 4, untouched, true);
+        }
+      }
+    },
+    invoke(instance, workspace, size, slot) {
+      const base = workspace.start + slot * strideBytes(size) + 4;
+      return instance.exports.fill_u32(base, 0, size);
+    },
+    capture(_instance, workspace, size, batch, returns) {
+      const output = [];
+      for (let slot = 0; slot < batch; slot += 1) {
+        const base = workspace.start + slot * strideBytes(size) + 4;
+        if (workspace.view.getUint32(base - 4, true) !== guardBefore ||
+            workspace.view.getUint32(base + size * 4, true) !== guardAfter) {
+          throw new Error(`u32_fill slot ${slot} wrote outside the destination range`);
+        }
+        output.push(Array.from({ length: size }, (_, index) =>
+          workspace.view.getUint32(base + index * 4, true)));
+      }
+      return callSummary('fill_u32', returns, { dst: output });
+    },
+    expected(size, batch) {
+      return callSummary('fill_u32', Array(batch).fill(undefined), {
+        dst: Array.from({ length: batch }, () => Array(size).fill(fillValue)),
+      });
+    },
+  };
+}
+
 function u32FieldOffset() {
   const values = [0, 1, 0x7fffffff, 0x80000000, 0xffffffff, 0x12345678];
   const count = (size) => Math.max(size, 1);
@@ -916,6 +973,90 @@ function pricingSoa() {
   };
 }
 
+function pricingCrossingComparison(scalarCalls) {
+  const exportName = scalarCalls ? 'pricing_one' : 'pricing_batch';
+  const name = scalarCalls ? 'pricing_one_calls' : 'pricing_batch_call';
+  const totalsForSlot = (size, slot) => Array.from({ length: size }, (_, index) => {
+    const item = index + slot;
+    const subtotal = BigInt(101 + (item % 11)) * BigInt(1 + (item % 5));
+    const afterDiscount = subtotal - BigInt(item % 9);
+    const tax = (afterDiscount * BigInt(100_000 + (item % 5) * 10_000)) / 1_000_000n;
+    return afterDiscount + tax;
+  });
+  return {
+    name,
+    source: 'examples/wasm/pricing_batch.ck',
+    outputTypes: { out_totals: 'i64' },
+    workloadFor(size, batch) {
+      return {
+        logical_rows_per_workload: size,
+        wasm_calls_per_workload: scalarCalls ? size : 1,
+        benchmark_workloads_per_sample: batch,
+      };
+    },
+    workspaceBytes: (size, batch) => 5 * size * batch * 8,
+    prepare(workspace, size, batch) {
+      const regionBytes = size * batch * 8;
+      for (let slot = 0; slot < batch; slot += 1) {
+        for (let index = 0; index < size; index += 1) {
+          const item = index + slot;
+          const offset = slot * size * 8 + index * 8;
+          workspace.view.setBigInt64(workspace.start + offset, BigInt(101 + (item % 11)), true);
+          workspace.view.setBigInt64(workspace.start + regionBytes + offset, BigInt(1 + (item % 5)), true);
+          workspace.view.setBigInt64(workspace.start + 2 * regionBytes + offset, BigInt(item % 9), true);
+          workspace.view.setBigInt64(workspace.start + 3 * regionBytes + offset, BigInt(100_000 + (item % 5) * 10_000), true);
+          workspace.view.setBigInt64(workspace.start + 4 * regionBytes + offset, -1n, true);
+        }
+      }
+    },
+    invoke(instance, workspace, size, slot, batch) {
+      const regionBytes = size * batch * 8;
+      const input = [0, 1, 2, 3].map((region) => workspace.start + region * regionBytes + slot * size * 8);
+      const outputBase = workspace.start + 4 * regionBytes + slot * size * 8;
+      if (scalarCalls) {
+        let last = 0n;
+        for (let index = 0; index < size; index += 1) {
+          const offset = index * 8;
+          last = instance.exports.pricing_one(
+            workspace.view.getBigInt64(input[0] + offset, true),
+            workspace.view.getBigInt64(input[1] + offset, true),
+            workspace.view.getBigInt64(input[2] + offset, true),
+            workspace.view.getBigInt64(input[3] + offset, true),
+          );
+          workspace.view.setBigInt64(outputBase + offset, last, true);
+        }
+        return last;
+      }
+      return instance.exports.pricing_batch(...input, outputBase, size);
+    },
+    capture(_instance, workspace, size, batch, returns) {
+      const regionBytes = size * batch * 8;
+      const output = [];
+      for (let slot = 0; slot < batch; slot += 1) {
+        const base = workspace.start + 4 * regionBytes + slot * size * 8;
+        output.push(Array.from({ length: size }, (_, index) =>
+          workspace.view.getBigInt64(base + index * 8, true)));
+      }
+      return callSummary(exportName, returns, { out_totals: output });
+    },
+    expected(size, batch) {
+      const outputs = Array.from({ length: batch }, (_, slot) => totalsForSlot(size, slot));
+      const returns = scalarCalls
+        ? outputs.map((row) => row.at(-1) ?? 0n)
+        : Array(batch).fill(0);
+      return callSummary(exportName, returns, { out_totals: outputs });
+    },
+  };
+}
+
+function pricingOneCalls() {
+  return pricingCrossingComparison(true);
+}
+
+function pricingBatchCall() {
+  return pricingCrossingComparison(false);
+}
+
 const caseDefinitions = [
   scalarSmallCall(),
   controlFlow(),
@@ -930,10 +1071,13 @@ const caseDefinitions = [
   u32Reduction(false),
   u32Reduction(true),
   u32CursorCopy(),
+  u32Fill(),
   u32FieldOffset(),
   f64Sum(),
   f64Axpy(),
   pricingSoa(),
+  pricingOneCalls(),
+  pricingBatchCall(),
 ];
 
 function selectCase(name) {
@@ -973,12 +1117,52 @@ function decodeUtf8(bytes, description) {
   }
 }
 
+function codeSectionStats(bytes, start, end) {
+  const functionCount = readU32Leb(bytes, start, end, 'code function count');
+  let offset = functionCount.next;
+  let localCount = 0;
+  const functionBodyBytes = [];
+  for (let functionIndex = 0; functionIndex < functionCount.value; functionIndex += 1) {
+    const bodyLength = readU32Leb(bytes, offset, end, 'function body length');
+    offset = bodyLength.next;
+    functionBodyBytes.push(bodyLength.value);
+    const bodyEnd = offset + bodyLength.value;
+    if (!Number.isSafeInteger(bodyEnd) || bodyEnd > end) {
+      throw new Error('function body extends past the code section');
+    }
+    const groupCount = readU32Leb(bytes, offset, bodyEnd, 'function local group count');
+    offset = groupCount.next;
+    if (groupCount.value > bodyEnd - offset) {
+      throw new Error('function local declarations extend past the function body');
+    }
+    for (let groupIndex = 0; groupIndex < groupCount.value; groupIndex += 1) {
+      const groupSize = readU32Leb(bytes, offset, bodyEnd, 'function local count');
+      offset = groupSize.next;
+      if (offset >= bodyEnd) throw new Error('function local type is missing');
+      offset += 1; // value type byte
+      localCount += groupSize.value;
+      if (!Number.isSafeInteger(localCount)) throw new Error('function local count is too large');
+    }
+    offset = bodyEnd;
+  }
+  if (offset !== end) throw new Error('Wasm code section has trailing bytes');
+  return {
+    function_count: functionCount.value,
+    function_body_bytes: functionBodyBytes,
+    local_count: localCount,
+  };
+}
+
 function parseWasmTargetMetadata(bytes) {
   if (bytes.byteLength < 8 || !bytes.subarray(0, 8).equals(Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))) {
     throw new Error('ckc emitted an invalid Wasm header');
   }
 
   const targetSections = [];
+  const sectionPayloadBytes = {};
+  let codeSectionBytes = 0;
+  let codeStats = { function_count: 0, function_body_bytes: [], local_count: 0 };
+  const sectionNames = ['custom', 'type', 'import', 'function', 'table', 'memory', 'global', 'export', 'start', 'element', 'code', 'data'];
   let offset = 8;
   while (offset < bytes.byteLength) {
     const sectionId = bytes[offset++];
@@ -987,6 +1171,13 @@ function parseWasmTargetMetadata(bytes) {
     const sectionEnd = offset + sectionLength.value;
     if (!Number.isSafeInteger(sectionEnd) || sectionEnd > bytes.byteLength) {
       throw new Error('Wasm section extends past the end of the artifact');
+    }
+    const sectionName = sectionNames[sectionId] ?? `section_${sectionId}`;
+    sectionPayloadBytes[sectionName] = (sectionPayloadBytes[sectionName] ?? 0) + sectionLength.value;
+
+    if (sectionId === 10) {
+      codeSectionBytes += sectionLength.value;
+      codeStats = codeSectionStats(bytes, offset, sectionEnd);
     }
 
     if (sectionId === 0) {
@@ -1015,12 +1206,20 @@ function parseWasmTargetMetadata(bytes) {
       JSON.stringify(metadata) !== text) {
     throw new Error('ck.wasm.target payload must use the canonical deterministic JSON schema');
   }
-  if (metadata.schema !== 1 || metadata.target !== 'wasm32' ||
+  if (metadata.schema !== 2 || metadata.target !== 'wasm32' ||
       !['baseline', 'simd128'].includes(metadata.features) ||
       typeof metadata.profile_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.profile_sha256)) {
     throw new Error('ck.wasm.target payload has invalid schema, target, feature, or profile digest values');
   }
-  return metadata;
+  return {
+    metadata,
+    wasm_stats: {
+      module_bytes: bytes.byteLength,
+      section_payload_bytes: sectionPayloadBytes,
+      code_section_bytes: codeSectionBytes,
+      ...codeStats,
+    },
+  };
 }
 
 function parseKirProfileDigest(output) {
@@ -1121,9 +1320,8 @@ export function writeReportAtomically(reportFile, contents, rename = renameSync)
   }
 }
 
-function prepareArtifact(compilerPath, definition, optLevel, wasmFeatures, tempDir) {
+function prepareArtifact(compilerPath, definition, optLevel, wasmFeatures, emissionSampleCount, tempDir) {
   const sourcePath = path.join(repoRoot, definition.source);
-  const artifactPath = path.join(tempDir, `${definition.name}-O${optLevel}.wasm`);
   const identityStart = nowNs();
   const kirHeader = runCompiler(compilerPath, [
     'emit-kir',
@@ -1137,25 +1335,35 @@ function prepareArtifact(compilerPath, definition, optLevel, wasmFeatures, tempD
   const profileDigest = parseKirProfileDigest(kirHeader);
   const profileEvidenceNs = elapsedNs(identityStart);
 
-  const emissionStart = nowNs();
-  runCompiler(compilerPath, [
-    'emit-wasm',
-    sourcePath,
-    '--out', artifactPath,
-    '--overflow', 'unchecked',
-    '--bounds', 'unchecked',
-    '--opt-level', String(optLevel),
-    '--wasm-features', wasmFeatures,
-  ]);
-  const emissionNs = elapsedNs(emissionStart);
-  const bytes = readFileSync(artifactPath);
-  const targetMetadata = parseWasmTargetMetadata(bytes);
-  if (targetMetadata.features !== wasmFeatures) {
-    throw new Error(`ck.wasm.target feature '${targetMetadata.features}' does not match requested '${wasmFeatures}'`);
+  const emissionSamplesNs = [];
+  const emissionOutputs = [];
+  let bytes;
+  let parsedArtifact;
+  for (let sample = 0; sample < emissionSampleCount; sample += 1) {
+    const artifactPath = path.join(tempDir, `${definition.name}-O${optLevel}-emission-${sample}.wasm`);
+    const emissionStart = nowNs();
+    runCompiler(compilerPath, [
+      'emit-wasm',
+      sourcePath,
+      '--out', artifactPath,
+      '--overflow', 'unchecked',
+      '--bounds', 'unchecked',
+      '--opt-level', String(optLevel),
+      '--wasm-features', wasmFeatures,
+    ]);
+    emissionSamplesNs.push(elapsedNs(emissionStart));
+    bytes = readFileSync(artifactPath);
+    parsedArtifact = parseWasmTargetMetadata(bytes);
+    if (parsedArtifact.metadata.features !== wasmFeatures) {
+      throw new Error(`ck.wasm.target feature '${parsedArtifact.metadata.features}' does not match requested '${wasmFeatures}'`);
+    }
+    if (parsedArtifact.metadata.profile_sha256 !== profileDigest) {
+      throw new Error('ck.wasm.target profile digest does not match the independently emitted KIR profile digest');
+    }
+    emissionOutputs.push({ bytes: bytes.byteLength, sha256: sha256(bytes) });
   }
-  if (targetMetadata.profile_sha256 !== profileDigest) {
-    throw new Error('ck.wasm.target profile digest does not match the independently emitted KIR profile digest');
-  }
+  const sortedEmissionSamples = [...emissionSamplesNs].sort((left, right) => left - right);
+  const emissionNs = sortedEmissionSamples[Math.floor(sortedEmissionSamples.length / 2)];
   return {
     source: {
       path: definition.source,
@@ -1165,9 +1373,12 @@ function prepareArtifact(compilerPath, definition, optLevel, wasmFeatures, tempD
     artifact: {
       bytes: bytes.byteLength,
       sha256: sha256(bytes),
-      target_metadata: targetMetadata,
+      target_metadata: parsedArtifact.metadata,
+      wasm_stats: parsedArtifact.wasm_stats,
+      emission_outputs: emissionOutputs,
     },
     emissionNs,
+    emissionSamplesNs,
     profileEvidenceNs,
   };
 }
@@ -1279,10 +1490,11 @@ function captureResult(definition, instance, workspace, size, batch, returns) {
   return definition.capture(instance, workspace, size, batch, returns);
 }
 
-function makeResultRow(definition, optLevel, artifactInfo, timings, samples, correctness, module) {
+function makeResultRow(definition, optLevel, artifactInfo, timings, samples, correctness, module, size, batch) {
   return {
     case: definition.name,
     opt_level: optLevel,
+    ...(definition.workloadFor ? { workload: definition.workloadFor(size, batch) } : {}),
     source: artifactInfo.source,
     correctness: {
       status: 'passed',
@@ -1342,6 +1554,7 @@ async function measureVariant(definition, optLevel, artifactInfo, preflightResul
     ...preflightResult.timings_ns,
   };
   const samples = {
+    ck_emission_raw_ns: artifactInfo.emissionSamplesNs,
     warmup: [],
     kernel_ns: [],
     kernel_ns_per_call: [],
@@ -1394,6 +1607,8 @@ async function measureVariant(definition, optLevel, artifactInfo, preflightResul
     samples,
     { expected, actual: finalActual },
     module,
+    size,
+    batch,
   );
 }
 
@@ -1413,7 +1628,14 @@ async function main() {
     const variants = [];
     for (const definition of selectedCases) {
       for (const optLevel of optLevels) {
-        const artifactInfo = prepareArtifact(compiler.path, definition, optLevel, options.wasmFeatures, tempDir);
+        const artifactInfo = prepareArtifact(
+          compiler.path,
+          definition,
+          optLevel,
+          options.wasmFeatures,
+          options.emissionSamples,
+          tempDir,
+        );
         const checked = await preflight(definition, optLevel, artifactInfo, options.size, options.batch);
         variants.push({ definition, optLevel, artifactInfo, checked });
       }
@@ -1447,6 +1669,7 @@ async function main() {
       },
       configuration: {
         samples: options.samples,
+        emission_samples: options.emissionSamples,
         warmup: options.warmup,
         batch: options.batch,
         size: options.size,

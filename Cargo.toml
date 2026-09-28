@@ -37,6 +37,7 @@ sha2 = "0.10"
 thiserror = "2.0"
 wat = "1.0"
 wasmparser = "0.252"
+wasm-encoder = "0.252"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

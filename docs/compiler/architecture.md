@@ -88,9 +88,16 @@ into WebAssembly `block`, `loop`, and `if` control. The planner validates every
 branch scope before emission. An unsupported or irreducible CFG uses the entire
 deterministic whole-function dispatcher path that preserves vector instructions;
 the existing compact canonical-while path is
-retained. This lowering creates no new safety facts or proof authority. WAT and
-WASM select the same control plan; binary emission still parses WAT and removes
-the name section.
+retained. This lowering creates no new safety facts or proof authority. A
+backend-private final instruction module records the selected control flow,
+ordered locals, typed immediates, and memory operations once. The WAT printer
+and direct binary encoder consume that module; the binary encoder does not
+parse WAT. O3 late placement operates on its typed instructions within the
+existing scalar-only safety envelope. Both sinks start from the same
+exported-root artifact preparation. The binary
+size policy omits the name section, deduplicates identical signatures, and
+emits one deterministic target-metadata section. There is no separate `-Os` or
+`-Oz` pipeline.
 
 `src/backend/llvm/` and `native/bridge/` provide typed ownership across the
 Rust/C++ boundary. `native/runtime/` owns entry, checked and sanitizer runtime

@@ -155,6 +155,7 @@ pub const LOCAL_ONLY_EXAMPLES: &[&str] = &[
     "examples/native/hello.ck",
     "examples/wasm/alias_map.ck",
     "examples/wasm/branch_diamond.ck",
+    "examples/wasm/bulk_fill.ck",
     "examples/wasm/cast_map.ck",
     "examples/wasm/compare_select.ck",
     "examples/wasm/cursor_copy.ck",
@@ -162,5 +163,6 @@ pub const LOCAL_ONLY_EXAMPLES: &[&str] = &[
     "examples/wasm/field_offset.ck",
     "examples/wasm/i32_map.ck",
     "examples/wasm/nested_control.ck",
+    "examples/wasm/pricing_batch.ck",
     "examples/wasm/reduction.ck",
 ];

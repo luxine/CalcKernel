@@ -143,7 +143,7 @@ fn emit_kir_wasm_features_should_select_a_distinct_stable_profile() {
     let default_digest = profile_digest(&default.stdout);
     assert_eq!(
         default_digest,
-        "ce0ccf53cf133340ba86406a3ba056c53e43411b1ae986eb97847279073f4238"
+        "e2b27705bad3a17d11c42cd103a4eb4ff21053e6426772dbc6aa6430438bb4f9"
     );
     assert_ne!(default_digest, profile_digest(&simd128.stdout));
 }

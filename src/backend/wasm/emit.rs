@@ -5,7 +5,9 @@ use crate::*;
 use super::super::{collect_temps, is_f64_type, is_unsigned_integer_type, place_type, value_type};
 use super::{
     EmitWasmOptions,
+    bulk::{CheckedWasmBulkMemory, WasmBulkKind, checked_wasm_bulk_memory_candidate},
     control::{BranchTarget, StructureItem, StructurePlan, StructureRegion, plan_structure},
+    final_ir::{FinalWasmBuilder, FinalWasmModule, WasmOutput},
     ir::{
         WasmLoweredBlock, WasmLoweredEdge, WasmLoweredFunction, WasmLoweredModule, WasmSourceType,
     },
@@ -14,10 +16,12 @@ use super::{
     plan::*,
 };
 
-#[must_use]
-pub fn emit_wat_module_with_options(module: &MirModule, options: EmitWasmOptions) -> String {
+pub(super) fn emit_final_module_with_options(
+    module: &MirModule,
+    options: EmitWasmOptions,
+) -> Result<FinalWasmModule, String> {
     let layout = WasmStructLayout::new(module);
-    let mut out = String::new();
+    let mut out = FinalWasmBuilder::new();
     out.push_str("(module\n");
     out.push_str("  (memory (export \"memory\") 1)\n");
     out.push_str("  (global (export \"__ck_heap_base\") i32 (i32.const 0))\n");
@@ -26,15 +30,30 @@ pub fn emit_wat_module_with_options(module: &MirModule, options: EmitWasmOptions
         emit_wat_function(&mut out, function, &layout, options);
     }
     out.push_str(")\n");
-    super::placement::optimize_wat_module(&out, options.opt_level)
+    let mut final_module = out.finish()?;
+    super::placement::optimize_final_module(&mut final_module, options.opt_level);
+    Ok(final_module)
 }
 
-pub(super) fn emit_wat_module_with_lowering(
+pub(super) fn emit_final_module_with_lowering(
     module: &MirModule,
     lowered: &WasmLoweredModule<'_>,
     options: EmitWasmOptions,
-) -> Result<String, String> {
-    debug_assert_eq!(lowered.source.functions.len(), lowered.functions.len());
+) -> Result<FinalWasmModule, String> {
+    let mut out = FinalWasmBuilder::new();
+    emit_module_with_lowering_into(module, lowered, options, &mut out)?;
+    let mut final_module = out.finish()?;
+    super::placement::optimize_final_module(&mut final_module, options.opt_level);
+    Ok(final_module)
+}
+
+fn emit_module_with_lowering_into(
+    module: &MirModule,
+    lowered: &WasmLoweredModule<'_>,
+    options: EmitWasmOptions,
+    out: &mut impl WasmOutput,
+) -> Result<(), String> {
+    debug_assert_eq!(module.functions.len(), lowered.functions.len());
     debug_assert!(
         lowered
             .functions
@@ -42,7 +61,6 @@ pub(super) fn emit_wat_module_with_lowering(
             .all(WasmLoweredFunction::source_metadata_is_consistent)
     );
     let layout = WasmStructLayout::new(module);
-    let mut out = String::new();
     out.push_str("(module\n");
     out.push_str("  (memory (export \"memory\") 1)\n");
     out.push_str("  (global (export \"__ck_heap_base\") i32 (i32.const 0))\n");
@@ -73,8 +91,17 @@ pub(super) fn emit_wat_module_with_lowering(
                     .is_empty()
                     && single_block_scalar_memarg_sink_is_eligible(candidate)
             });
-        let needs_typed_lowering =
-            has_vectors || has_version_predicate || has_memory_cursors || has_memarg_offsets;
+        let bulk_candidate = (options.opt_level >= 3)
+            .then(|| {
+                typed.and_then(|candidate| checked_wasm_bulk_memory_candidate(candidate.source))
+            })
+            .flatten();
+        let has_bulk_candidate = bulk_candidate.is_some();
+        let needs_typed_lowering = has_vectors
+            || has_version_predicate
+            || has_memory_cursors
+            || has_memarg_offsets
+            || has_bulk_candidate;
         let mut structure = if options.opt_level >= 3
             && (needs_typed_lowering || detect_simple_wasm_while(function).is_none())
         {
@@ -100,7 +127,7 @@ pub(super) fn emit_wat_module_with_lowering(
             && let Some(typed) =
                 typed.filter(|candidate| single_block_scalar_memarg_sink_is_eligible(candidate))
         {
-            emit_wat_typed_single_block_function(&mut out, typed, &layout)?;
+            emit_wat_typed_single_block_function(out, typed, &layout)?;
             continue;
         }
         if let Some(typed) = typed.filter(|_| needs_typed_lowering) {
@@ -112,44 +139,42 @@ pub(super) fn emit_wat_module_with_lowering(
             };
             if let Some(structure) = structure.as_ref() {
                 emit_wat_structured_function(
-                    &mut out,
-                    &typed.local_view,
+                    out,
                     typed,
                     structure,
                     &layout,
                     &vector_names,
                     &cursor_names,
+                    bulk_candidate.as_ref(),
                 )?;
             } else {
                 emit_wat_typed_dispatcher_function(
-                    &mut out,
+                    out,
                     typed,
                     &layout,
                     &vector_names,
                     &cursor_names,
+                    bulk_candidate.as_ref(),
                 )?;
             }
         } else if let (Some(typed), Some(structure)) = (typed, structure.as_ref()) {
             let vector_names = BTreeMap::new();
             let cursor_names = BTreeMap::new();
             emit_wat_structured_function(
-                &mut out,
-                &typed.local_view,
+                out,
                 typed,
                 structure,
                 &layout,
                 &vector_names,
                 &cursor_names,
+                bulk_candidate.as_ref(),
             )?;
         } else {
-            emit_wat_function(&mut out, function, &layout, options);
+            emit_wat_function(out, function, &layout, options);
         }
     }
     out.push_str(")\n");
-    Ok(super::placement::optimize_wat_module(
-        &out,
-        options.opt_level,
-    ))
+    Ok(())
 }
 
 fn single_block_scalar_memarg_sink_is_eligible(lowered: &WasmLoweredFunction<'_>) -> bool {
@@ -245,10 +270,279 @@ fn memory_cursor_local_names(
         .collect()
 }
 
-fn emit_wat_memory_cursor_locals(out: &mut String, cursor_names: &BTreeMap<CursorId, String>) {
+fn emit_wat_memory_cursor_locals(
+    out: &mut impl WasmOutput,
+    cursor_names: &BTreeMap<CursorId, String>,
+) {
     for name in cursor_names.values() {
         out.push_str(&format!("    (local ${name} i32)\n"));
     }
+}
+
+struct WasmBulkScratch {
+    length: String,
+    destination_start: String,
+    destination_end: String,
+    source_start: String,
+    source_end: String,
+    memory_end: String,
+}
+
+// At shorter ranges the complete-bounds guard can cost more than the scalar
+// loop. Keep those calls on the original path; this threshold is a size policy,
+// not a safety assumption.
+const MIN_BULK_ELEMENTS: u32 = 16;
+
+impl WasmBulkScratch {
+    fn new(used_names: &mut HashSet<String>) -> Self {
+        Self {
+            length: unique_wasm_internal_name("ik_bulk_length", used_names),
+            destination_start: unique_wasm_internal_name("ik_bulk_dst_start", used_names),
+            destination_end: unique_wasm_internal_name("ik_bulk_dst_end", used_names),
+            source_start: unique_wasm_internal_name("ik_bulk_src_start", used_names),
+            source_end: unique_wasm_internal_name("ik_bulk_src_end", used_names),
+            memory_end: unique_wasm_internal_name("ik_bulk_memory_end", used_names),
+        }
+    }
+
+    fn emit_locals(&self, out: &mut impl WasmOutput) {
+        for name in [
+            &self.length,
+            &self.destination_start,
+            &self.destination_end,
+            &self.source_start,
+            &self.source_end,
+            &self.memory_end,
+        ] {
+            out.push_str(&format!("    (local ${name} i64)\n"));
+        }
+    }
+}
+
+fn emit_wat_bulk_memory_guard(
+    out: &mut impl WasmOutput,
+    candidate: &CheckedWasmBulkMemory,
+    scratch: &WasmBulkScratch,
+    lowered: &WasmLoweredFunction<'_>,
+    indent: usize,
+) -> Result<(), String> {
+    let destination = scalar_operand(lowered, candidate.destination)?;
+    let start = scalar_operand(lowered, candidate.start)?;
+    let end = scalar_operand(lowered, candidate.end)?;
+    if !matches!(
+        destination,
+        MirValue::Param {
+            type_node: MirType::Pointer(_),
+            ..
+        }
+    ) || value_type(start) != &MirType::Primitive(MirPrimitiveTypeName::U32)
+        || value_type(end) != &MirType::Primitive(MirPrimitiveTypeName::U32)
+    {
+        return Err("WebAssembly bulk memory candidate has invalid entry operands".into());
+    }
+    let source = candidate
+        .source
+        .map(|value| scalar_operand(lowered, value))
+        .transpose()?;
+    if let Some(source) = source
+        && !matches!(
+            source,
+            MirValue::Param {
+                type_node: MirType::Pointer(_),
+                ..
+            }
+        )
+    {
+        return Err("WebAssembly bulk copy source is not a pointer parameter".into());
+    }
+
+    let pad = " ".repeat(indent);
+    emit_wat_value(out, end, indent);
+    emit_wat_value(out, start, indent);
+    out.push_str(&format!("{pad}i32.gt_u\n",));
+    emit_wat_value(out, end, indent);
+    emit_wat_value(out, start, indent);
+    out.push_str(&format!(
+        "{pad}i32.sub\n{pad}i32.const {MIN_BULK_ELEMENTS}\n{pad}i32.ge_u\n{pad}i32.and\n{pad}if\n{}",
+        " ".repeat(indent + 2)
+    ));
+
+    emit_wat_value(out, end, indent + 2);
+    out.push_str(&format!("{}i64.extend_i32_u\n", " ".repeat(indent + 2)));
+    emit_wat_value(out, start, indent + 2);
+    out.push_str(&format!(
+        "{}i64.extend_i32_u\n{}i64.sub\n{}i64.const {}\n{}i64.mul\n{}local.tee ${}\n{}i64.const 4294967295\n{}i64.le_u\n{}if\n",
+        " ".repeat(indent + 2),
+        " ".repeat(indent + 2),
+        " ".repeat(indent + 2),
+        candidate.element_bytes,
+        " ".repeat(indent + 2),
+        " ".repeat(indent + 2),
+        scratch.length,
+        " ".repeat(indent + 2),
+        " ".repeat(indent + 2),
+        " ".repeat(indent + 2),
+    ));
+
+    emit_wat_bulk_range_start(
+        out,
+        destination,
+        start,
+        candidate.element_bytes,
+        &scratch.destination_start,
+        indent + 4,
+    );
+    emit_wat_bulk_range_end(
+        out,
+        &scratch.destination_start,
+        &scratch.length,
+        &scratch.destination_end,
+        indent + 4,
+    );
+    if let Some(source) = source {
+        emit_wat_bulk_range_start(
+            out,
+            source,
+            start,
+            candidate.element_bytes,
+            &scratch.source_start,
+            indent + 4,
+        );
+        emit_wat_bulk_range_end(
+            out,
+            &scratch.source_start,
+            &scratch.length,
+            &scratch.source_end,
+            indent + 4,
+        );
+    }
+    out.push_str(&format!(
+        "{}memory.size\n{}i64.extend_i32_u\n{}i64.const 65536\n{}i64.mul\n{}local.set ${}\n",
+        " ".repeat(indent + 4),
+        " ".repeat(indent + 4),
+        " ".repeat(indent + 4),
+        " ".repeat(indent + 4),
+        " ".repeat(indent + 4),
+        scratch.memory_end,
+    ));
+
+    emit_wat_bulk_range_is_in_bounds(
+        out,
+        &scratch.destination_start,
+        &scratch.destination_end,
+        &scratch.memory_end,
+        indent + 4,
+    );
+    if source.is_some() {
+        emit_wat_bulk_range_is_in_bounds(
+            out,
+            &scratch.source_start,
+            &scratch.source_end,
+            &scratch.memory_end,
+            indent + 4,
+        );
+        out.push_str(&format!("{}i32.and\n", " ".repeat(indent + 4)));
+        out.push_str(&format!(
+            "{}local.get ${}\n{}local.get ${}\n{}i64.le_u\n{}local.get ${}\n{}local.get ${}\n{}i64.le_u\n{}i32.or\n{}i32.and\n",
+            " ".repeat(indent + 4),
+            scratch.source_end,
+            " ".repeat(indent + 4),
+            scratch.destination_start,
+            " ".repeat(indent + 4),
+            " ".repeat(indent + 4),
+            scratch.destination_end,
+            " ".repeat(indent + 4),
+            scratch.source_start,
+            " ".repeat(indent + 4),
+            " ".repeat(indent + 4),
+            " ".repeat(indent + 4),
+        ));
+    }
+
+    out.push_str(&format!("{}if\n", " ".repeat(indent + 4)));
+    match candidate.kind {
+        WasmBulkKind::Copy => {
+            out.push_str(&format!(
+                "{}local.get ${}\n{}i32.wrap_i64\n{}local.get ${}\n{}i32.wrap_i64\n{}local.get ${}\n{}i32.wrap_i64\n{}memory.copy\n{}return\n",
+                " ".repeat(indent + 6),
+                scratch.destination_start,
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+                scratch.source_start,
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+                scratch.length,
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+            ));
+        }
+        WasmBulkKind::Fill { byte } => {
+            out.push_str(&format!(
+                "{}local.get ${}\n{}i32.wrap_i64\n{}i32.const {}\n{}local.get ${}\n{}i32.wrap_i64\n{}memory.fill\n{}return\n",
+                " ".repeat(indent + 6),
+                scratch.destination_start,
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+                byte,
+                " ".repeat(indent + 6),
+                scratch.length,
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+                " ".repeat(indent + 6),
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "{}end\n{}end\n{}end\n",
+        " ".repeat(indent + 4),
+        " ".repeat(indent + 2),
+        pad,
+    ));
+    Ok(())
+}
+
+fn emit_wat_bulk_range_start(
+    out: &mut impl WasmOutput,
+    pointer: &MirValue,
+    start: &MirValue,
+    element_bytes: u32,
+    local: &str,
+    indent: usize,
+) {
+    let pad = " ".repeat(indent);
+    emit_wat_value(out, pointer, indent);
+    out.push_str(&format!("{pad}i64.extend_i32_u\n"));
+    emit_wat_value(out, start, indent);
+    out.push_str(&format!(
+        "{pad}i64.extend_i32_u\n{pad}i64.const {element_bytes}\n{pad}i64.mul\n{pad}i64.add\n{pad}local.set ${local}\n"
+    ));
+}
+
+fn emit_wat_bulk_range_end(
+    out: &mut impl WasmOutput,
+    range_start: &str,
+    length: &str,
+    range_end: &str,
+    indent: usize,
+) {
+    let pad = " ".repeat(indent);
+    out.push_str(&format!(
+        "{pad}local.get ${range_start}\n{pad}local.get ${length}\n{pad}i64.add\n{pad}local.set ${range_end}\n"
+    ));
+}
+
+fn emit_wat_bulk_range_is_in_bounds(
+    out: &mut impl WasmOutput,
+    range_start: &str,
+    range_end: &str,
+    memory_end: &str,
+    indent: usize,
+) {
+    let pad = " ".repeat(indent);
+    out.push_str(&format!(
+        "{pad}local.get ${range_start}\n{pad}i64.const 4294967295\n{pad}i64.le_u\n{pad}local.get ${range_end}\n{pad}i64.const 4294967296\n{pad}i64.le_u\n{pad}i32.and\n{pad}local.get ${range_end}\n{pad}local.get ${memory_end}\n{pad}i64.le_u\n{pad}i32.and\n"
+    ));
 }
 
 #[derive(Debug)]
@@ -318,7 +612,7 @@ fn version_predicate_scratch(
 }
 
 fn emit_version_predicate_scratch_locals(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     scratch: Option<&VersionPredicateScratch>,
 ) {
     if let Some(scratch) = scratch {
@@ -515,7 +809,7 @@ fn collect_planned_blocks(region: &StructureRegion, blocks: &mut BTreeSet<crate:
 }
 
 pub(super) fn emit_wat_function(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     function: &MirFunction,
     layout: &WasmStructLayout,
     options: EmitWasmOptions,
@@ -577,14 +871,15 @@ pub(super) fn emit_wat_function(
 }
 
 fn emit_wat_structured_function(
-    out: &mut String,
-    function: &MirFunction,
+    out: &mut impl WasmOutput,
     lowered: &WasmLoweredFunction<'_>,
     structure: &StructurePlan,
     layout: &WasmStructLayout,
     vector_names: &BTreeMap<crate::ValueId, String>,
     cursor_names: &BTreeMap<CursorId, String>,
+    bulk_candidate: Option<&CheckedWasmBulkMemory>,
 ) -> Result<(), String> {
+    let function = &lowered.local_view;
     if wasm_function_uses_slices(function) {
         emit_wat_structured_slice_function(
             out,
@@ -598,18 +893,18 @@ fn emit_wat_structured_function(
     } else {
         emit_wat_structured_scalar_function(
             out,
-            function,
             lowered,
             structure,
             layout,
             vector_names,
             cursor_names,
+            bulk_candidate,
         )
     }
 }
 
 fn emit_wat_typed_single_block_function(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     lowered: &WasmLoweredFunction<'_>,
     layout: &WasmStructLayout,
 ) -> Result<(), String> {
@@ -698,14 +993,15 @@ fn emit_wat_typed_single_block_function(
 }
 
 fn emit_wat_structured_scalar_function(
-    out: &mut String,
-    function: &MirFunction,
+    out: &mut impl WasmOutput,
     lowered: &WasmLoweredFunction<'_>,
     structure: &StructurePlan,
     layout: &WasmStructLayout,
     vector_names: &BTreeMap<crate::ValueId, String>,
     cursor_names: &BTreeMap<CursorId, String>,
+    bulk_candidate: Option<&CheckedWasmBulkMemory>,
 ) -> Result<(), String> {
+    let function = &lowered.local_view;
     let predicate_scratch = version_predicate_scratch(lowered, None, vector_names);
     let export = if function.exported {
         format!(" (export \"{}\")", function.name)
@@ -747,6 +1043,11 @@ fn emit_wat_structured_scalar_function(
     emit_version_predicate_scratch_locals(out, predicate_scratch.as_ref());
 
     let mut used_names = collect_wasm_function_names(function);
+    let bulk_scratch = bulk_candidate.map(|_| {
+        let scratch = WasmBulkScratch::new(&mut used_names);
+        scratch.emit_locals(out);
+        scratch
+    });
     let exit_label = unique_wasm_internal_name("ik_exit", &mut used_names);
     let return_local = if matches!(function.return_type, MirType::Void) {
         None
@@ -758,6 +1059,9 @@ fn emit_wat_structured_scalar_function(
         ));
         Some(name)
     };
+    if let (Some(candidate), Some(scratch)) = (bulk_candidate, bulk_scratch.as_ref()) {
+        emit_wat_bulk_memory_guard(out, candidate, scratch, lowered, 4)?;
+    }
     out.push_str(&format!("    block ${exit_label}\n"));
     StructuredEmission {
         lowered,
@@ -780,7 +1084,7 @@ fn emit_wat_structured_scalar_function(
 }
 
 fn emit_wat_structured_slice_function(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     function: &MirFunction,
     lowered: &WasmLoweredFunction<'_>,
     structure: &StructurePlan,
@@ -879,18 +1183,22 @@ fn emit_wat_structured_slice_function(
     Ok(())
 }
 
-fn emit_wat_vector_locals(out: &mut String, vector_names: &BTreeMap<crate::ValueId, String>) {
+fn emit_wat_vector_locals(
+    out: &mut impl WasmOutput,
+    vector_names: &BTreeMap<crate::ValueId, String>,
+) {
     for name in vector_names.values() {
         out.push_str(&format!("    (local ${name} v128)\n"));
     }
 }
 
 fn emit_wat_typed_dispatcher_function(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     lowered: &WasmLoweredFunction<'_>,
     layout: &WasmStructLayout,
     vector_names: &BTreeMap<crate::ValueId, String>,
     cursor_names: &BTreeMap<CursorId, String>,
+    bulk_candidate: Option<&CheckedWasmBulkMemory>,
 ) -> Result<(), String> {
     let function = &lowered.local_view;
     let plan = WasmFunctionPlan::new(function);
@@ -943,6 +1251,12 @@ fn emit_wat_typed_dispatcher_function(
     emit_wat_vector_locals(out, vector_names);
     emit_wat_memory_cursor_locals(out, cursor_names);
     emit_version_predicate_scratch_locals(out, predicate_scratch.as_ref());
+    let mut used_names = collect_wasm_function_names(function);
+    let bulk_scratch = bulk_candidate.map(|_| {
+        let scratch = WasmBulkScratch::new(&mut used_names);
+        scratch.emit_locals(out);
+        scratch
+    });
     out.push_str(&format!("    (local ${} i32)\n", plan.address_local));
     out.push_str(&format!("    (local ${} i32)\n", plan.block_local));
     match &function.return_type {
@@ -958,7 +1272,10 @@ fn emit_wat_typed_dispatcher_function(
         )),
     }
 
-    let mut used_names = collect_wasm_function_names(function);
+    if let (Some(candidate), Some(scratch)) = (bulk_candidate, bulk_scratch.as_ref()) {
+        emit_wat_bulk_memory_guard(out, candidate, scratch, lowered, 4)?;
+    }
+
     let exit_label = unique_wasm_internal_name("ik_exit", &mut used_names);
     let dispatch_label = unique_wasm_internal_name("ik_dispatch", &mut used_names);
     let case_labels = (0..lowered.blocks.len())
@@ -1054,7 +1371,7 @@ struct TypedDispatcher<'a, 'source> {
 impl TypedDispatcher<'_, '_> {
     fn emit_terminator(
         &self,
-        out: &mut String,
+        out: &mut impl WasmOutput,
         block: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
@@ -1124,7 +1441,7 @@ impl TypedDispatcher<'_, '_> {
 
     fn emit_edge(
         &self,
-        out: &mut String,
+        out: &mut impl WasmOutput,
         edge: &WasmLoweredEdge<'_>,
         source: crate::BlockId,
         target: crate::BlockId,
@@ -1172,7 +1489,7 @@ fn scalar_operand<'a>(
 }
 
 fn emit_wat_version_predicate(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &KirInstruction,
     predicate: &KirVersionPredicate,
     lowered: &WasmLoweredFunction<'_>,
@@ -1269,7 +1586,7 @@ fn emit_wat_version_predicate(
 }
 
 fn emit_version_predicate_scalar(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     value: crate::ValueId,
     lowered: &WasmLoweredFunction<'_>,
     plan: Option<&WasmFunctionPlan>,
@@ -1288,7 +1605,7 @@ fn emit_version_predicate_scalar(
 }
 
 fn emit_wat_version_interval_end(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     count: crate::ValueId,
     slice: crate::ValueId,
     element_bytes: u32,
@@ -1309,7 +1626,7 @@ fn emit_wat_version_interval_end(
 }
 
 fn emit_wat_version_end_le_address(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     end_local: &str,
     address_slice: crate::ValueId,
     context: &VersionPredicateSliceContext<'_, '_>,
@@ -1323,7 +1640,7 @@ fn emit_wat_version_end_le_address(
 }
 
 fn emit_wat_version_slice_data_i64(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     slice: crate::ValueId,
     context: &VersionPredicateSliceContext<'_, '_>,
     indent: usize,
@@ -1339,7 +1656,7 @@ fn emit_wat_version_slice_data_i64(
 }
 
 fn emit_wat_lowered_instruction(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &super::ir::WasmLoweredInstruction<'_>,
     lowered: &WasmLoweredFunction<'_>,
     layout: &WasmStructLayout,
@@ -1399,7 +1716,7 @@ fn emit_wat_lowered_instruction(
 }
 
 fn emit_wat_memarg_offset_instruction(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &super::ir::WasmLoweredInstruction<'_>,
     lowered: &WasmLoweredFunction<'_>,
     layout: &WasmStructLayout,
@@ -1498,7 +1815,7 @@ fn emit_wat_memarg_offset_instruction(
 }
 
 fn emit_wat_scalar_memory_cursor_instruction(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &KirInstruction,
     lowered: &WasmLoweredFunction<'_>,
     layout: &WasmStructLayout,
@@ -1580,7 +1897,7 @@ fn validate_cursor_memory_type(
 }
 
 fn emit_wat_memory_edge_actions(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     lowered: &WasmLoweredFunction<'_>,
     edge: &WasmLoweredEdge<'_>,
     source: crate::BlockId,
@@ -1658,7 +1975,7 @@ fn emit_wat_memory_edge_actions(
 }
 
 fn emit_wat_memory_cursor_base(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     value: crate::ValueId,
     lowered: &WasmLoweredFunction<'_>,
     paired: Option<&WasmFunctionPlan>,
@@ -1690,7 +2007,7 @@ fn emit_wat_memory_cursor_base(
 }
 
 fn emit_wat_memory_cursor_index(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     value: crate::ValueId,
     lowered: &WasmLoweredFunction<'_>,
     paired: Option<&WasmFunctionPlan>,
@@ -1729,7 +2046,7 @@ fn is_vector_instruction(kind: &KirInstructionKind) -> bool {
 }
 
 fn emit_wat_vector_instruction(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &KirInstruction,
     lowered: &WasmLoweredFunction<'_>,
     plan: &WasmFunctionPlan,
@@ -1940,7 +2257,7 @@ struct WasmVectorAddressContext<'a, 'source> {
 }
 
 fn emit_wat_vector_address(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &KirInstruction,
     access: &KirVectorMemoryAccess,
     context: &WasmVectorAddressContext<'_, '_>,
@@ -2146,7 +2463,7 @@ struct StructuredEmission<'a, 'source> {
 impl StructuredEmission<'_, '_> {
     fn emit_region(
         &self,
-        out: &mut String,
+        out: &mut impl WasmOutput,
         region: &StructureRegion,
         indent: usize,
     ) -> Result<(), String> {
@@ -2206,7 +2523,7 @@ impl StructuredEmission<'_, '_> {
 
     fn emit_terminator(
         &self,
-        out: &mut String,
+        out: &mut impl WasmOutput,
         block: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
@@ -2289,7 +2606,7 @@ impl StructuredEmission<'_, '_> {
 
     fn emit_edge(
         &self,
-        out: &mut String,
+        out: &mut impl WasmOutput,
         edge: &WasmLoweredEdge<'_>,
         source: &WasmLoweredBlock<'_>,
         indent: usize,
@@ -2326,7 +2643,7 @@ impl StructuredEmission<'_, '_> {
 }
 
 pub(super) fn emit_wat_slice_function(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     function: &MirFunction,
     layout: &WasmStructLayout,
     options: EmitWasmOptions,
@@ -2397,7 +2714,7 @@ pub(super) fn emit_wat_slice_function(
 }
 
 pub(super) fn emit_wat_physical_local(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     value: &WasmPhysicalValue,
     type_node: &MirType,
 ) {
@@ -2413,7 +2730,7 @@ pub(super) fn emit_wat_physical_local(
 }
 
 pub(super) fn emit_structured_wasm_while_paired(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     loop_context: &StructuredWasmWhile<'_>,
     layout: &WasmStructLayout,
     plan: &WasmFunctionPlan,
@@ -2444,7 +2761,7 @@ pub(super) fn emit_structured_wasm_while_paired(
 }
 
 pub(super) fn emit_dispatched_wasm_function_paired(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     function: &MirFunction,
     layout: &WasmStructLayout,
     plan: &WasmFunctionPlan,
@@ -2501,7 +2818,7 @@ pub(super) fn emit_dispatched_wasm_function_paired(
 }
 
 pub(super) fn emit_wat_paired_instruction(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &MirInstruction,
     layout: &WasmStructLayout,
     plan: &WasmFunctionPlan,
@@ -2700,7 +3017,7 @@ pub(super) fn emit_wat_paired_instruction(
 }
 
 pub(super) fn emit_wat_paired_scalar_value(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     value: &MirValue,
     plan: &WasmFunctionPlan,
     indent: usize,
@@ -2721,7 +3038,7 @@ pub(super) fn emit_wat_paired_scalar_value(
 }
 
 pub(super) fn emit_wat_paired_slice_value(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     value: &MirValue,
     plan: &WasmFunctionPlan,
     indent: usize,
@@ -2732,7 +3049,7 @@ pub(super) fn emit_wat_paired_slice_value(
 }
 
 pub(super) fn emit_wat_paired_unary(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     op: MirUnaryOp,
     operand: &MirValue,
     target: &MirValue,
@@ -2771,7 +3088,7 @@ pub(super) fn emit_wat_paired_unary(
 }
 
 pub(super) fn emit_wat_paired_address(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     place: &MirPlace,
     layout: &WasmStructLayout,
     plan: &WasmFunctionPlan,
@@ -2827,7 +3144,7 @@ pub(super) fn emit_wat_paired_address(
 }
 
 pub(super) fn emit_wat_paired_terminator(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     terminator: &MirTerminator,
     function: Option<&MirFunction>,
     plan: &WasmFunctionPlan,
@@ -2962,7 +3279,7 @@ pub(super) fn wasm_block_by_label<'a>(
 }
 
 pub(super) fn emit_structured_wasm_while(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     loop_context: &StructuredWasmWhile<'_>,
     layout: &WasmStructLayout,
 ) {
@@ -2996,7 +3313,7 @@ pub(super) fn emit_structured_wasm_while(
 }
 
 pub(super) fn emit_dispatched_wasm_function(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     function: &MirFunction,
     layout: &WasmStructLayout,
 ) {
@@ -3043,7 +3360,7 @@ pub(super) fn emit_dispatched_wasm_function(
 }
 
 pub(super) fn emit_wat_instruction(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     instruction: &MirInstruction,
     layout: &WasmStructLayout,
     indent: usize,
@@ -3166,7 +3483,7 @@ pub(super) fn emit_wat_instruction(
 }
 
 pub(super) fn emit_wat_terminator(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     terminator: &MirTerminator,
     function: Option<&MirFunction>,
     indent: usize,
@@ -3209,7 +3526,7 @@ pub(super) fn emit_wat_terminator(
     }
 }
 
-pub(super) fn emit_wat_value(out: &mut String, value: &MirValue, indent: usize) {
+pub(super) fn emit_wat_value(out: &mut impl WasmOutput, value: &MirValue, indent: usize) {
     let pad = " ".repeat(indent);
     match value {
         MirValue::Param { name, .. }
@@ -3230,7 +3547,7 @@ pub(super) fn emit_wat_value(out: &mut String, value: &MirValue, indent: usize) 
 }
 
 pub(super) fn emit_wat_unary(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     op: MirUnaryOp,
     operand: &MirValue,
     target: &MirValue,
@@ -3279,7 +3596,7 @@ pub(super) fn wat_local_name(value: &MirValue) -> &str {
 }
 
 pub(super) fn emit_wat_address(
-    out: &mut String,
+    out: &mut impl WasmOutput,
     place: &MirPlace,
     layout: &WasmStructLayout,
     indent: usize,

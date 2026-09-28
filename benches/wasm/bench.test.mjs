@@ -109,7 +109,7 @@ function makeConstant84CalcModule() {
   const type = wasmSection(1, [1, 0x60, 2, 0x7e, 0x7e, 1, 0x7e]);
   const functionSection = wasmSection(3, [1, 0]);
   const exports = wasmSection(7, [1, ...encodeWasmName('calc'), 0x00, 0x00]);
-  const body = [0x00, 0x42, 0xd4, 0x00, 0x0b];
+  const body = [0x01, 0x02, 0x7e, 0x42, 0xd4, 0x00, 0x0b];
   const code = wasmSection(10, [1, body.length, ...body]);
   return Buffer.concat([header, type, functionSection, exports, code]);
 }
@@ -118,7 +118,7 @@ function makeCompiler(directory, fileName, wasm) {
   const digests = { baseline: 'a'.repeat(64), simd128: 'b'.repeat(64) };
   return makeIdentityCompiler(directory, fileName, (feature) => {
     const metadata = {
-      schema: 1,
+      schema: 2,
       target: 'wasm32',
       features: feature,
       profile_sha256: digests[feature],
@@ -284,6 +284,10 @@ test('rejects invalid benchmark options before starting a compiler', () => {
   assert.notEqual(zeroSamples.status, 0);
   assert.match(zeroSamples.stderr, /samples/i);
 
+  const zeroEmissionSamples = runRunner(['--emission-samples', '0']);
+  assert.notEqual(zeroEmissionSamples.status, 0);
+  assert.match(zeroEmissionSamples.stderr, /emission-samples/i);
+
   const unknownOption = runRunner(['--not-a-benchmark-option']);
   assert.notEqual(unknownOption.status, 0);
   assert.match(unknownOption.stderr, /unknown|invalid|usage/i);
@@ -303,6 +307,7 @@ test('records requested Wasm feature and canonical target metadata verified agai
       '--case', 'scalar-small-call',
       '--wasm-features', 'simd128',
       '--samples', '1',
+      '--emission-samples', '2',
       '--warmup', '0',
       '--batch', '1',
       '--size', '3',
@@ -311,14 +316,21 @@ test('records requested Wasm feature and canonical target metadata verified agai
 
     const report = JSON.parse(readFileSync(reportPath, 'utf8'));
     assert.equal(report.configuration.wasm_features, 'simd128');
+    assert.equal(report.configuration.emission_samples, 2);
     assert.equal(report.results.length, 2);
     for (const row of report.results) {
       assert.deepEqual(row.artifact.target_metadata, {
-        schema: 1,
+        schema: 2,
         target: 'wasm32',
         features: 'simd128',
         profile_sha256: 'b'.repeat(64),
       });
+      assert.equal(row.artifact.wasm_stats.code_section_bytes, 9);
+      assert.equal(row.artifact.wasm_stats.function_count, 1);
+      assert.deepEqual(row.artifact.wasm_stats.function_body_bytes, [7]);
+      assert.equal(row.artifact.wasm_stats.local_count, 2);
+      assert.equal(row.artifact.emission_outputs.length, 2);
+      assert.equal(row.samples.ck_emission_raw_ns.length, 2);
       assert.ok(row.timings_ns.ck_kir_profile_evidence >= 0);
       assert.ok(row.timings_ns.ck_emission >= 0);
     }
@@ -328,7 +340,7 @@ test('records requested Wasm feature and canonical target metadata verified agai
 test('rejects a missing or duplicated ck.wasm.target section before report commit', () => {
   const validModule = makeConstant84CalcModule();
   const metadata = {
-    schema: 1,
+    schema: 2,
     target: 'wasm32',
     features: 'baseline',
     profile_sha256: 'a'.repeat(64),
@@ -395,22 +407,28 @@ test('an identity failure leaves a prior report and its referenced artifact inta
 test('rejects non-canonical target JSON and a profile digest that disagrees with emit-kir', () => {
   const validModule = makeConstant84CalcModule();
   const canonicalText = JSON.stringify({
-    schema: 1,
+    schema: 2,
     target: 'wasm32',
     features: 'baseline',
     profile_sha256: 'a'.repeat(64),
   });
-  const nonCanonical = canonicalText.replace('{"schema":1', '{ "schema":1');
+  const nonCanonical = canonicalText.replace('{"schema":2', '{ "schema":2');
   for (const [fileName, module, expectedError] of [
     ['non-canonical-target-ckc.mjs', appendTargetSections(validModule, [nonCanonical]), /canonical|deterministic|JSON/i],
-    ['wrong-digest-ckc.mjs', appendTargetSections(validModule, [{
+    ['legacy-schema-target-ckc.mjs', appendTargetSections(validModule, [{
       schema: 1,
+      target: 'wasm32',
+      features: 'baseline',
+      profile_sha256: 'a'.repeat(64),
+    }]), /schema|invalid/i],
+    ['wrong-digest-ckc.mjs', appendTargetSections(validModule, [{
+      schema: 2,
       target: 'wasm32',
       features: 'baseline',
       profile_sha256: 'c'.repeat(64),
     }]), /profile.*digest|digest.*profile/i],
     ['wrong-feature-ckc.mjs', appendTargetSections(validModule, [{
-      schema: 1,
+      schema: 2,
       target: 'wasm32',
       features: 'baseline',
       profile_sha256: 'a'.repeat(64),
@@ -456,6 +474,7 @@ test('writes complete O0/O3 runtime evidence for all wasm fixtures', { timeout: 
     const report = JSON.parse(readFileSync(reportPath, 'utf8'));
     assert.equal(report.schema_version, 1);
     assert.equal(report.configuration.samples, 2);
+    assert.equal(report.configuration.emission_samples, 3);
     assert.equal(report.configuration.warmup, 1);
     assert.equal(report.configuration.batch, 2);
     assert.equal(report.configuration.size, 31);
@@ -481,13 +500,42 @@ test('writes complete O0/O3 runtime evidence for all wasm fixtures', { timeout: 
       'u32_reduce_sum',
       'u32_reduce_product',
       'u32_cursor_copy',
+      'u32_fill',
       'u32_field_offset',
       'pricing_soa',
       'branch_diamond',
       'nested_control',
+      'pricing_one_calls',
+      'pricing_batch_call',
     ];
     assert.deepEqual([...new Set(report.results.map((entry) => entry.case))].sort(), expectedFixtures.sort());
     assert.equal(report.results.length, expectedFixtures.length * 2);
+    for (const optLevel of [0, 3]) {
+      const scalarPricing = report.results.find((entry) =>
+        entry.case === 'pricing_one_calls' && entry.opt_level === optLevel);
+      const batchPricing = report.results.find((entry) =>
+        entry.case === 'pricing_batch_call' && entry.opt_level === optLevel);
+      assert.equal(scalarPricing.correctness.actual.outputs.out_totals.sha256,
+        batchPricing.correctness.actual.outputs.out_totals.sha256);
+      assert.deepEqual(scalarPricing.workload, {
+        logical_rows_per_workload: 31,
+        wasm_calls_per_workload: 31,
+        benchmark_workloads_per_sample: 2,
+      });
+      assert.deepEqual(batchPricing.workload, {
+        logical_rows_per_workload: 31,
+        wasm_calls_per_workload: 1,
+        benchmark_workloads_per_sample: 2,
+      });
+    }
+    const fillO0 = report.results.find((entry) => entry.case === 'u32_fill' && entry.opt_level === 0);
+    const fillO3 = report.results.find((entry) => entry.case === 'u32_fill' && entry.opt_level === 3);
+    assert.equal(fillO0.correctness.actual.outputs.dst.sha256, fillO3.correctness.actual.outputs.dst.sha256);
+    assert.deepEqual(fillO0.workload, {
+      elements_per_workload: 31,
+      wasm_calls_per_workload: 1,
+      benchmark_workloads_per_sample: 2,
+    });
 
     for (const entry of report.results) {
       assert.ok([0, 3].includes(entry.opt_level));
@@ -500,11 +548,19 @@ test('writes complete O0/O3 runtime evidence for all wasm fixtures', { timeout: 
       assert.deepEqual(Object.keys(entry.artifact.target_metadata), [
         'schema', 'target', 'features', 'profile_sha256',
       ]);
-      assert.equal(entry.artifact.target_metadata.schema, 1);
+      assert.equal(entry.artifact.target_metadata.schema, 2);
       assert.equal(entry.artifact.target_metadata.target, 'wasm32');
       assert.equal(entry.artifact.target_metadata.features, 'baseline');
       assert.match(entry.artifact.target_metadata.profile_sha256, /^[a-f0-9]{64}$/);
       assert.match(entry.artifact.path, /^artifacts\/.+\.wasm$/);
+      assert.ok(entry.artifact.wasm_stats.code_section_bytes > 0);
+      assert.ok(entry.artifact.wasm_stats.function_count > 0);
+      assert.equal(entry.artifact.wasm_stats.function_body_bytes.length,
+        entry.artifact.wasm_stats.function_count);
+      assert.ok(entry.artifact.wasm_stats.function_body_bytes.every((size) => size > 0));
+      assert.ok(entry.artifact.wasm_stats.local_count >= 0);
+      assert.equal(entry.artifact.emission_outputs.length, 3);
+      assert.equal(entry.samples.ck_emission_raw_ns.length, 3);
       const artifactBytes = readFileSync(path.join(path.dirname(reportPath), entry.artifact.path));
       assert.equal(artifactBytes.byteLength, entry.artifact.bytes);
       assert.equal(createHash('sha256').update(artifactBytes).digest('hex'), entry.artifact.sha256);

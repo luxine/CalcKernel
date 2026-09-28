@@ -79,7 +79,7 @@ fn wasm_kir_emits_profile_identity_once_and_keeps_wat_and_binary_metadata_identi
             let sections = target_metadata_sections(&wasm);
             let digest = module.profile.digest_hex();
             let expected = format!(
-                r#"{{"schema":1,"target":"wasm32","features":"{}","profile_sha256":"{}"}}"#,
+                r#"{{"schema":2,"target":"wasm32","features":"{}","profile_sha256":"{}"}}"#,
                 features.as_str(),
                 digest,
             );
@@ -100,7 +100,9 @@ fn wasm_kir_emits_profile_identity_once_and_keeps_wat_and_binary_metadata_identi
 }
 
 fn wasm_features(features: KirWasmFeatures) -> wasmparser::WasmFeatures {
-    let mut allowed = wasmparser::WasmFeatures::MVP | wasmparser::WasmFeatures::MULTI_VALUE;
+    let mut allowed = wasmparser::WasmFeatures::MVP
+        | wasmparser::WasmFeatures::MULTI_VALUE
+        | wasmparser::WasmFeatures::BULK_MEMORY;
     if features == KirWasmFeatures::Simd128 {
         allowed |= wasmparser::WasmFeatures::SIMD;
     }

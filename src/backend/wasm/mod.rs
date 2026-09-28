@@ -1,7 +1,9 @@
 mod binary;
+mod bulk;
 mod control;
 mod emit;
 mod features;
+mod final_ir;
 mod ir;
 mod kir;
 mod layout;
@@ -10,7 +12,6 @@ mod memory;
 mod placement;
 mod plan;
 
-pub(crate) use emit::emit_wat_module_with_options;
 pub use kir::{
     emit_wasm_kir_module, emit_wasm_kir_result, emit_wat_kir_module, emit_wat_kir_result,
 };
