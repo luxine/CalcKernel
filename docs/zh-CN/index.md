@@ -2,8 +2,8 @@
 
 [English](../index.md)
 
-这些页面描述稳定版 0.14.0 的产品契约。当前默认分支版本为 `0.15.0-dev.0`；公开产品的新语言
-与编译器契约在确定后记录在此。正式发布的 0.13.0 是保留的兼容基线。
+这些页面描述稳定版 0.15.0 的产品契约。`0.15.x` 兼容策略具有规范性效力；适用的历史
+版本契约与迁移边界仍会保留在文档中。
 
 ## 语言与命令
 
@@ -31,7 +31,7 @@
 
 ## Project
 
-- [兼容性](project/compatibility.md) — `0.14.x` 规范性权威及保留的 0.13/0.12/0.11/0.10 migration boundary。
+- [兼容性](project/compatibility.md) — `0.15.x` 规范性权威及保留的 0.14.0/0.13.0/0.12.0/0.11.0/0.10.0 migration boundary。
 - [Release](project/release.md) 与 [checklist](project/release-checklist.md)
 - [约定](project/conventions.md)
 - [Roadmap](project/roadmap.md) — 非规范的未来可能性。

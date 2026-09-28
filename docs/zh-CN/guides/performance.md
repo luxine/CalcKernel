@@ -2,7 +2,7 @@
 
 [English](../../guides/performance.md)
 
-CalcKernel 0.14 保留 fail-closed performance report schema 8。正式 release 必须具有固定
+CalcKernel 0.15 保留 fail-closed performance report schema 8。正式 release 必须具有固定
 x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
 Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
 hardware/capability manifest、compiler/oracle/source/recipe digest、training/held-out corpus、
@@ -47,9 +47,9 @@ audit。缺失、无效或测量后排除 competitor 都会使 gate 失败。
 
 ## 累积 release gate
 
-- 0.14 ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
+- candidate ordinary no-PGO baseline/native 相对 exact 0.12 replay：geometric-mean slowdown 不超过
   2%，单项不超过 5%。
-- PGO use 相对相同 0.14 ordinary CPU policy：geometric-mean improvement 至少 5%，held-out
+- PGO use 相对相同 candidate ordinary CPU policy：geometric-mean improvement 至少 5%，held-out
   单项 slowdown 不超过 3%；固定 instrumentation corpus 上 generation execution 不超过 ordinary 5x。
 - Eligible multiversion dispatch 相对 portable baseline：geometric-mean improvement 至少 8%，
   单项 slowdown 不超过 3%；dispatch 至少达到独立加载的同字节 artifact 中 resolver 实际选中
@@ -186,6 +186,12 @@ CK 发射、模块编译、实例化、预热、稳定内核调用、宿主数�
 既不能证明普遍加速，也不构成发布阈值。当前 runtime 通道是 Node/V8，性能结论须标明
 这一范围。
 
-PGO 与受限 multiversioning 已在 0.13 交付，0.14 仍需通过这些原样保留的 gate。离线
-Auto-Tuning 延期；这个兼容性版本不声称新的 optimizer 加速。indirect-call promotion、
-scalable KIR 与 adaptive JIT PGO 仍是未来工作。
+Apple M5 Max 与 Node 24.14.0 上的一次本地数组映射比较，使用预分配的
+`Int32Array`/`Float64Array` 输入和输出、O3 `simd128` Wasm，以及算法一致的 JavaScript map
+循环。以 JS 耗时为 1.0，在 4,096、16,384 和 65,536 个元素时，Wasm `i32` 分别为 3.09x、
+5.95x、6.01x；Wasm `f64` 分别为 2.22x、2.79x、2.79x。这些是本地热内核观察结果，不包含编译、
+实例化和数据准备，也不能预测其他算法、机器或 runtime。
+
+PGO 与受限 multiversioning 已在 0.13 交付，0.15 仍需通过这些原样保留的 gate。离线
+Auto-Tuning 延期。上述本地 WebAssembly map 观察结果与 Native release gate 分开。indirect-call
+promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。

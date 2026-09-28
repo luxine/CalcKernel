@@ -100,20 +100,17 @@ fn v0_10_release_identity_should_remain_in_compatibility_history() {
 }
 
 #[test]
-fn development_version_identity_should_match_cargo_and_cli() {
+fn release_v0_15_identity_should_match_cargo_and_cli() {
     let cargo = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
     let lock = fs::read_to_string(repo_root().join("Cargo.lock")).expect("read Cargo.lock");
-    assert!(cargo.contains("version = \"0.15.0-dev.0\""));
-    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.0-dev.0\""));
+    assert!(cargo.contains("version = \"0.15.0\""));
+    assert!(lock.contains("name = \"calckernel\"\nversion = \"0.15.0\""));
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .arg("--version")
         .output()
         .expect("run ckc --version");
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "ckc 0.15.0-dev.0"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ckc 0.15.0");
     for path in [
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
@@ -171,7 +168,7 @@ fn release_v0_13_notices_should_cover_private_profile_and_dispatch_runtimes() {
 
 #[cfg(feature = "native-toolchain")]
 #[test]
-fn release_v0_14_verbose_identity_should_report_retained_public_and_private_contracts() {
+fn release_v0_15_verbose_identity_should_report_retained_public_and_private_contracts() {
     let output = Command::new(env!("CARGO_BIN_EXE_ckc"))
         .args(["--version", "--verbose"])
         .output()
@@ -179,7 +176,7 @@ fn release_v0_14_verbose_identity_should_report_retained_public_and_private_cont
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("verbose version is UTF-8");
     for required in [
-        "ckc 0.15.0-dev.0",
+        "ckc 0.15.0",
         "Native ABI: 1",
         "Runtime ABI: 2",
         "KIR: 3",

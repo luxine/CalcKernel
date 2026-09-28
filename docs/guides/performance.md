@@ -2,7 +2,7 @@
 
 [简体中文](../zh-CN/guides/performance.md)
 
-CalcKernel 0.14 retains the fail-closed performance report schema 8. A formal release
+CalcKernel 0.15 retains the fail-closed performance report schema 8. A formal release
 requires complete reports from fixed x86-64 and AArch64 workers; a local build
 or release-candidate identity does not sign those gates. Measurements bind the
 candidate SHA, exact 0.12 replay SHA, LLVM/Clang 22.1.8, Rust 1.90.0, hardware
@@ -59,9 +59,9 @@ domain. Missing, invalid, or post-measurement-excluded competitors fail the gate
 
 ## Cumulative release gates
 
-- Ordinary no-PGO 0.14 baseline/native versus exact 0.12 replay: geometric-mean
+- Ordinary no-PGO candidate baseline/native versus exact 0.12 replay: geometric-mean
   slowdown at most 2%, individual slowdown at most 5%.
-- PGO use versus matching 0.14 ordinary CPU policy: geometric-mean improvement
+- PGO use versus the matching candidate ordinary CPU policy: geometric-mean improvement
   at least 5%, with held-out individual slowdown at most 3%. Generation
   execution is at most 5x ordinary on the fixed instrumentation corpus.
 - Eligible multiversion dispatch versus portable baseline: geometric-mean
@@ -237,7 +237,15 @@ comparing compiler revisions, and keep the full reports; a single local run
 does not establish a portable speedup or a release threshold. The current
 runtime channel is Node/V8, so its results must be labeled accordingly.
 
+One local array-map comparison on Apple M5 Max with Node 24.14.0 used
+preallocated `Int32Array`/`Float64Array` inputs and outputs, O3 `simd128` Wasm,
+and the same JavaScript map loops. With JS elapsed time set to 1.0, the measured
+Wasm speedups at 4,096, 16,384, and 65,536 elements were 3.09x, 5.95x, and
+6.01x for `i32`, and 2.22x, 2.79x, and 2.79x for `f64`. These are local hot-kernel
+observations; they exclude compilation, instantiation, and data preparation,
+and do not predict other algorithms, machines, or runtimes.
+
 PGO and bounded multiversioning shipped in 0.13 and remain subject to these
-unchanged gates in 0.14. Offline Auto-Tuning is deferred; this compatibility
-release claims no new optimizer speedup. Indirect-call promotion, scalable
-KIR, and adaptive JIT PGO remain future work.
+gates in 0.15. Offline Auto-Tuning is deferred. The local WebAssembly map
+observations above are separate from the native release gates. Indirect-call
+promotion, scalable KIR, and adaptive JIT PGO remain future work.

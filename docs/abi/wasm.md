@@ -106,5 +106,5 @@ WASM accepts `--overflow unchecked` and `--bounds unchecked`; either checked
 selection is rejected before output. No implicit slice guard or trap is added.
 The C/Native checked status ABI is not part of this ABI.
 
-WebAssembly has no 0.14 runtime printing. A reachable print from an exported
+WebAssembly has no 0.15 runtime printing. A reachable print from an exported
 root is rejected. An internal `main` does not create a WASI or browser entry.

@@ -1,8 +1,8 @@
-# CalcKernel 0.14 Native LLVM and C ABI
+# CalcKernel 0.15 Native LLVM and C ABI
 
 [简体中文](../zh-CN/abi/llvm.md)
 
-CalcKernel 0.14 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
+CalcKernel 0.15 pins LLVM 22.1.8. Verified KIR is lowered structurally through a
 checked C++ bridge, verified before and after optimization, emitted as object
 bytes by the host TargetMachine, and linked in process with LLD. `emit-llvm`
 prints this verified module for inspection.
@@ -71,7 +71,7 @@ explicit or natural completion uses `ret void`.
 These forms are compiler internals, not the public library ABI. The independent
 0.9 textual LLVM export-shape promise is retired.
 
-The public Native C ABI remains version 1 in 0.14 and the Runtime ABI remains
+The public Native C ABI remains version 1 in 0.15 and the Runtime ABI remains
 version 2. The private LLVM bridge ABI 4 replaces 0.12 bridge ABI 3; native cache
 and code-generation identity use KIR v3 plus `CKCOBJ03` key schema 4 and
 manifest schema 4. These private identities intentionally invalidate 0.12 and older
@@ -119,7 +119,7 @@ materialize the allocated writable section as `SHT_PROGBITS` or `SHT_NOBITS`.
 The section is not exported and does not extend the Native C ABI.
 
 The named-object bundle links as an executable, dynamic library, or static archive.
-A multiversion object output is rejected because 0.14 has no partial-link bundle
+A multiversion object output is rejected because 0.15 has no partial-link bundle
 contract; baseline/native single-version objects remain supported. `CKCOBJ03`
 admits a cached bundle only when ordered member names/roles, target set, profile,
 dispatch runtime, physical artifact kind, every object digest, key schema 4, and
@@ -203,5 +203,5 @@ not an RWX fallback. The internal audit rejects mixed capability tuples and
 proves relocation, final code/data permissions, and instruction-cache
 finalization for both paths.
 
-ORC is not a public embeddable API in 0.14. `emit-llvm` is host-only diagnostic
+ORC is not a public embeddable API in 0.15. `emit-llvm` is host-only diagnostic
 output and does not promise a stable external LLVM ABI.

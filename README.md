@@ -6,13 +6,14 @@ CalcKernel (CK) is a statically typed language for numerical computation kernels
 
 CK is designed to handle the calculation while your application keeps responsibility for the surrounding work, such as user interfaces, input and output, and data storage. Its typed function interfaces and caller-owned data slices make that boundary explicit.
 
-The latest stable release is 0.14.0. The current default branch has development version `0.15.0-dev.0`.
+The latest stable release is 0.15.0.
 
 ## Why CalcKernel
 
 - **Focused numerical code.** Express calculations with typed functions, structures, integer and floating-point values, conditions, and loops.
 - **Native builds.** Compile CK programs and libraries to native machine code, with compiler optimizations for eligible calculations.
 - **Flexible integration.** Build a native library with a C ABI, or emit C source or a WebAssembly module.
+- **WebAssembly optimization.** O3 can use guarded bulk-memory operations for eligible copies and byte fills. The opt-in `simd128` profile vectorizes supported array maps and integer reductions; unsupported cases keep scalar code.
 - **Explicit data ownership.** Applications provide and retain ownership of memory passed to CK. Native and C builds can also enable integer-overflow and slice-bounds checks.
 
 ## Start using CK

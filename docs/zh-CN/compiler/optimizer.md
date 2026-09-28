@@ -1,4 +1,4 @@
-# CalcKernel 0.14 Fact-Driven Optimizer
+# CalcKernel 0.15 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -125,7 +125,7 @@ Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainde
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
 提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
-保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.14
+保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.15
 speculative transform，包括被拒绝的 alternative 与 clone。
 
 普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
@@ -233,12 +233,13 @@ WebAssembly O3 也会依据独立检查的循环结构生成字节地址游标�
 保留 32 位地址回绕语义时，backend 保留源码的地址运算。
 
 Performance gate 在相同算法、safety mode、data、hardware、CPU policy 和 strict semantics
-下使用 schema 8 比较 0.14 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
+下使用 schema 8 比较 candidate 的 ordinary/PGO/multiversion/combined、固定 Clang/Rust PGO、
 hand-written SIMD oracle，并 replay exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`。Correctness、optimization time、generation
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
-已在 0.13 交付且于 0.14 保留；离线 Auto-Tuning 延期，此兼容性版本不声称新的 optimizer
-收益。indirect calls、scalable KIR 与 adaptive JIT PGO 仍属未来。阈值不能成为弱化语义或
+已在 0.13 交付且于 0.15 保留；离线 Auto-Tuning 继续延期。WebAssembly 性能指南中的观察结果来自
+Apple M5 Max 上的本地 Node/V8 map kernel，不代表普遍的 Wasm 加速。indirect calls、scalable KIR
+与 adaptive JIT PGO 仍属未来。阈值不能成为弱化语义或
 使用 contract domain 外输入的理由。
 Dynamic library final link 还会按 object format 使用原生 dead-section 机制回收未引用的
 compiler-private section，同时保留 CK export 与全部实际引用的 dispatch/runtime section。
