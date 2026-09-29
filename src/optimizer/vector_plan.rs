@@ -54,6 +54,13 @@ pub struct VectorMemoryGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WasmRangeCount {
     TripBound(ValueId),
+    Invariant(ValueId),
+    /// The checked stencil route admits exactly 3 * width. The emitted
+    /// multiply is modular; the width guard establishes mathematical scaling.
+    ScaledInvariant {
+        value: ValueId,
+        scale: u32,
+    },
     One,
 }
 
@@ -305,7 +312,10 @@ pub fn validate_vectorization_plan(
     if !is_sha256(&plan.pre_state.kir_digest) {
         return Err("vector plan pre-state KIR digest is malformed".to_string());
     }
-    if !matches!(plan.vf, 2 | 4 | 8 | 16) || !(1..=4).contains(&plan.uf) {
+    if !matches!(plan.vf, 2 | 4 | 8 | 16)
+        || !(1..=4).contains(&plan.uf)
+        || plan.uf > profile.maximum_interleave_factor()
+    {
         return Err("vector plan VF/UF is outside the closed schema".to_string());
     }
     if plan.operations.is_empty() {
@@ -382,9 +392,9 @@ pub fn validate_vectorization_plan(
     if has_affine_wasm
         && (profile.wasm_features() != Some(crate::KirWasmFeatures::Simd128)
             || plan.vf != 2
-            || plan.uf != 1)
+            || !matches!(plan.uf, 1 | 2 | 4))
     {
-        return Err("affine WASM vector plan requires the f64x2 UF1 profile".to_string());
+        return Err("affine WASM vector plan requires the f64x2 profile".to_string());
     }
     let mut ranges = BTreeSet::new();
     for predicate in &plan.predicates {
@@ -395,7 +405,22 @@ pub fn validate_vectorization_plan(
         }
     }
     validate_cost(plan.cost, 20)?;
-    validate_growth(plan.pre_state.frozen_kir_units, plan.growth)?;
+    let growth_factor = if has_affine_wasm && plan.uf > 1 {
+        1_u32.saturating_add(u32::from(plan.uf))
+    } else {
+        3
+    };
+    let module_growth_factor = if has_affine_wasm && plan.uf > 1 {
+        growth_factor
+    } else {
+        2
+    };
+    validate_growth(
+        plan.pre_state.frozen_kir_units,
+        plan.growth,
+        growth_factor,
+        module_growth_factor,
+    )?;
     Ok(())
 }
 
@@ -415,10 +440,22 @@ fn validate_cost(cost: KirCostEstimate, minimum_reduction_percent: u32) -> Resul
     Ok(())
 }
 
-fn validate_growth(frozen_units: u32, growth: VectorPlanGrowth) -> Result<(), String> {
+fn validate_growth(
+    frozen_units: u32,
+    growth: VectorPlanGrowth,
+    function_growth_factor: u32,
+    module_growth_factor: u32,
+) -> Result<(), String> {
     if growth.original_units != frozen_units
-        || growth.transformed_units > growth.original_units.saturating_mul(3).saturating_add(32)
-        || growth.module_after_units > growth.module_before_units.saturating_mul(2)
+        || growth.transformed_units
+            > growth
+                .original_units
+                .saturating_mul(function_growth_factor)
+                .saturating_add(32)
+        || growth.module_after_units
+            > growth
+                .module_before_units
+                .saturating_mul(module_growth_factor)
     {
         return Err("vector plan growth exceeds its frozen structural budget".to_string());
     }

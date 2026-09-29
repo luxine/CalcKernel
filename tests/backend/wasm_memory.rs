@@ -794,7 +794,7 @@ fn wasm_o3_should_keep_struct_field_access_out_of_the_primitive_cursor_subset() 
 }
 
 #[test]
-fn wasm_o3_should_keep_indexed_addresses_for_a_multi_exit_loop() {
+fn wasm_o3_should_keep_indexed_addresses_for_a_conditional_continue_loop() {
     let (o3_wat, _) = emit_copy(3);
     let copy_skip = o3_wat
         .split_once("(func $copy_skip")
@@ -809,10 +809,42 @@ fn wasm_o3_should_keep_indexed_addresses_for_a_multi_exit_loop() {
         copy_skip.contains("if\n"),
         "expected conditional continue CFG:\n{copy_skip}"
     );
+    let instructions = copy_skip.lines().map(str::trim).collect::<Vec<_>>();
+    let loads = instructions
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| **line == "i32.load offset=0 align=4")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let stores = instructions
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| **line == "i32.store offset=0 align=4")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    assert!(
+        !loads.is_empty() && loads.len() == stores.len(),
+        "{copy_skip}"
+    );
+    for index in loads {
+        assert!(
+            index >= 3 && instructions[index - 3..index] == ["i32.const 4", "i32.mul", "i32.add"],
+            "each load must retain its original indexed address:\n{copy_skip}"
+        );
+    }
+    for index in stores {
+        assert!(
+            index >= 4
+                && instructions[index - 4..index - 1] == ["i32.const 4", "i32.mul", "i32.add"]
+                && instructions[index - 1].starts_with("local.get "),
+            "each store must retain its original indexed address:\n{copy_skip}"
+        );
+    }
     assert_eq!(
         copy_skip.matches("i32.mul").count(),
-        2,
-        "unsupported multi-exit CFG must keep its original indexed load/store addresses:\n{copy_skip}"
+        copy_skip.matches("i32.load offset=0 align=4").count()
+            + copy_skip.matches("i32.store offset=0 align=4").count(),
+        "every scalar access must retain one indexed multiplication:\n{copy_skip}"
     );
 }
 

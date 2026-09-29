@@ -228,7 +228,56 @@ fn frozen_matmul_o3_pipeline_emits_checked_affine_wat_and_binary() {
                     | calckernel::KirInstructionKind::VectorStore { .. }
             ))
             .count(),
-        3
+        12,
+        "UF4 has one output and one B vector access per unrolled chunk"
+    );
+    assert_eq!(
+        body.instructions
+            .iter()
+            .filter(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::Load { .. }
+            ))
+            .count(),
+        1,
+        "the invariant A element is loaded once for the UF4 bundle"
+    );
+    assert_eq!(
+        body.instructions
+            .iter()
+            .filter(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorSplat { .. }
+            ))
+            .count(),
+        1,
+        "the shared A element is splatted once"
+    );
+    assert_eq!(
+        body.instructions
+            .iter()
+            .filter(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorBinary {
+                    op: calckernel::KirVectorBinaryOp::Multiply,
+                    ..
+                }
+            ))
+            .count(),
+        4
+    );
+    assert_eq!(
+        body.instructions
+            .iter()
+            .filter(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorBinary {
+                    op: calckernel::KirVectorBinaryOp::Add,
+                    ..
+                }
+            ))
+            .count(),
+        4
     );
     let options = EmitWasmOptions { opt_level: 3 };
     let wat = emit_wat_kir_module(optimized.module(), options).expect("matmul O3 WAT");

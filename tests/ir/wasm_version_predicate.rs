@@ -123,7 +123,7 @@ fn wasm_slice_range_accepts_supported_element_widths_and_exact_u32_bounds() {
 }
 
 #[test]
-fn wasm_slice_range_rejects_unsupported_types_widths_and_profiles() {
+fn wasm_slice_range_rejects_unsupported_types_and_widths_in_both_wasm_profiles() {
     let valid_start = primitive(MirPrimitiveTypeName::U32);
     let valid_count = primitive(MirPrimitiveTypeName::U32);
 
@@ -162,11 +162,29 @@ fn wasm_slice_range_rejects_unsupported_types_widths_and_profiles() {
         vec![range()],
         KirWasmFeatures::Simd128,
     )));
+    assert_eq!(
+        validate_kir_module(&module(
+            primitive(MirPrimitiveTypeName::I32),
+            primitive(MirPrimitiveTypeName::U32),
+            primitive(MirPrimitiveTypeName::U32),
+            vec![range()],
+            KirWasmFeatures::Baseline,
+        ))
+        .errors,
+        []
+    );
+    let mut wrong_baseline_width = range();
+    let KirVersionPredicateConjunct::WasmSliceRange { element_bytes, .. } =
+        &mut wrong_baseline_width
+    else {
+        unreachable!();
+    };
+    *element_bytes = 8;
     assert!(has_error(&module(
         primitive(MirPrimitiveTypeName::I32),
         primitive(MirPrimitiveTypeName::U32),
         primitive(MirPrimitiveTypeName::U32),
-        vec![range()],
+        vec![wrong_baseline_width],
         KirWasmFeatures::Baseline,
     )));
 }

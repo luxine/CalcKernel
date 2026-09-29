@@ -731,8 +731,33 @@ pub(super) fn validate_vector_kir(
     if features == KirWasmFeatures::Baseline {
         reject_vector_values(module)?;
         reject_vector_instructions(module)?;
-        if module_has_version_predicates(module) {
-            return Err("WebAssembly baseline cannot lower runtime version predicates".into());
+        for function in &module.functions {
+            let types = value_kir_types(function);
+            for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+                let KirInstructionKind::VersionPredicate { predicate } = &instruction.kind else {
+                    continue;
+                };
+                if !matches!(predicate.conjuncts.as_slice(),
+                    [KirVersionPredicateConjunct::TripThreshold { .. },
+                     KirVersionPredicateConjunct::WasmSliceRange { count, element_bytes: 8, .. },
+                     KirVersionPredicateConjunct::WasmSliceRange { element_bytes: 8, .. }]
+                        if function.blocks.iter().flat_map(|block| &block.instructions)
+                            .any(|instruction| matches!(&instruction.kind,
+                                KirInstructionKind::ConstInt { value }
+                                    if value == "1" && instruction.results.iter().any(|result| result.value == *count))))
+                {
+                    return Err(
+                        "WebAssembly baseline only lowers guarded invariant-load and output-write ranges".into(),
+                    );
+                }
+                validate_wasm_version_predicate(
+                    function,
+                    instruction,
+                    predicate,
+                    &types,
+                    module.profile.layout(),
+                )?;
+            }
         }
         return Ok(());
     }
@@ -1058,7 +1083,7 @@ fn validate_wasm_version_predicate(
         || nontrip > 3
     {
         return Err(format!(
-            "WebAssembly SIMD128 cannot lower this version predicate in {}",
+            "WebAssembly cannot lower this version predicate in {}",
             function.name
         ));
     }
@@ -1115,7 +1140,7 @@ fn validate_wasm_version_predicate(
         };
         if !valid {
             return Err(format!(
-                "WebAssembly SIMD128 cannot lower an unsupported version-predicate conjunct in {}",
+                "WebAssembly cannot lower an unsupported version-predicate conjunct in {}",
                 function.name
             ));
         }

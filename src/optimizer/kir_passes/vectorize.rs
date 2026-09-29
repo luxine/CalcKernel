@@ -70,15 +70,44 @@ pub(crate) fn materialize_vectorization_trial(
     let original_latch = block(&original, candidate.latch)?.clone();
     let original_preheader = block(&original, candidate.preheader)?.clone();
     let wasm_affine = candidate.wasm_affine.as_ref();
+    if wasm_affine.is_some()
+        && !crate::optimizer::analysis::wasm_affine_loop_state_is_forwarded(
+            &original,
+            candidate.header,
+            candidate.body,
+            candidate.induction,
+        )
+    {
+        return Err("WASM affine loop carries non-induction scalar state".to_string());
+    }
+    let matmul_interleave = wasm_affine.is_some_and(|affine| {
+        crate::optimizer::analysis::wasm_matmul_interleave_eligible(
+            affine,
+            &candidate.operations,
+            &candidate.accesses,
+            candidate.bound,
+        ) && crate::optimizer::analysis::wasm_matmul_interleave_source_is_closed(
+            &original,
+            candidate.header,
+            candidate.body,
+            candidate.induction,
+            affine,
+            &candidate.operations,
+            &candidate.accesses,
+            candidate.bound,
+        )
+    });
     if let Some(affine) = wasm_affine {
+        let direct_map_interleave = direct_wasm_map_candidate(candidate, affine);
         if pre_state.module().config.consumer != crate::KirConsumer::WebAssembly
             || pre_state.module().profile.wasm_features() != Some(crate::KirWasmFeatures::Simd128)
             || candidate.vf != 2
-            || candidate.uf != 1
+            || candidate.uf > 1 && !direct_map_interleave && !matmul_interleave
             || candidate.diamond.is_some()
             || candidate.reduction.is_some()
             || candidate.scalar_blocks.len() != 1
-            || affine.range_requirements.len() != 3
+            || !(affine.range_requirements.len() == 3
+                || direct_map_interleave && affine.range_requirements.len() == 2)
         {
             return Err("unsupported-wasm-affine-materialization-shape".to_string());
         }
@@ -141,14 +170,27 @@ pub(crate) fn materialize_vectorization_trial(
                 })?;
             if source.memory.is_some()
                 || source.effect.is_some()
-                || !matches!(
+                || !(matches!(
                     source.kind,
                     KirInstructionKind::Binary {
                         op: MirBinaryOp::Add,
                         semantics: KirArithmeticSemantics::Modular,
                         ..
                     }
-                )
+                ) || affine
+                    .range_requirements
+                    .iter()
+                    .any(|r| matches!(r.count, WasmRangeCount::ScaledInvariant { scale: 3, .. }))
+                    && matches!(
+                        source.kind,
+                        KirInstructionKind::Compare { .. }
+                            | KirInstructionKind::Binary {
+                                op: MirBinaryOp::Sub,
+                                semantics: KirArithmeticSemantics::Modular,
+                                ..
+                            }
+                            | KirInstructionKind::ConstInt { .. }
+                    ))
             {
                 return Err("WASM affine address setup is not a pure modular add".to_string());
             }
@@ -515,7 +557,16 @@ pub(crate) fn materialize_vectorization_trial(
                     )?
                 };
                 let count = match requirement.count {
-                    WasmRangeCount::TripBound(source_count) => materialize_entry_value(
+                    WasmRangeCount::TripBound(source_count) => {
+                        if source_count != candidate.bound {
+                            return Err(
+                                "WASM trip-bound footprint differs from the proven entry trip"
+                                    .into(),
+                            );
+                        }
+                        entry_bound
+                    }
+                    WasmRangeCount::Invariant(source_count) => materialize_entry_value(
                         &original,
                         &original_header,
                         &original_preheader,
@@ -524,6 +575,43 @@ pub(crate) fn materialize_vectorization_trial(
                         &mut trial,
                         &mut transformed_preheader,
                     )?,
+                    WasmRangeCount::ScaledInvariant { value, scale } => {
+                        if scale != 3 {
+                            return Err("unsupported affine invariant count scale".into());
+                        }
+                        let width = materialize_entry_value(
+                            &original,
+                            &original_header,
+                            &original_preheader,
+                            entry_edge,
+                            value,
+                            &mut trial,
+                            &mut transformed_preheader,
+                        )?;
+                        let factor = preheader_u32_constant(
+                            &mut trial,
+                            &mut transformed_preheader,
+                            &mut constants,
+                            scale,
+                        )?;
+                        let count = trial.fresh_value()?;
+                        transformed_preheader.instructions.push(KirInstruction {
+                            id: trial.fresh_instruction()?,
+                            results: vec![KirResult {
+                                value: count,
+                                type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
+                            }],
+                            kind: KirInstructionKind::Binary {
+                                op: MirBinaryOp::Mul,
+                                left: width,
+                                right: factor,
+                                semantics: crate::KirArithmeticSemantics::Modular,
+                            },
+                            memory: None,
+                            effect: None,
+                        });
+                        count
+                    }
                     WasmRangeCount::One => preheader_u32_constant(
                         &mut trial,
                         &mut transformed_preheader,
@@ -653,6 +741,7 @@ pub(crate) fn materialize_vectorization_trial(
     let mut operation_mappings = Vec::new();
     let mut memory_records = Vec::new();
     let mut broadcast_records = Vec::new();
+    let mut shared_broadcasts = BTreeMap::<crate::InstructionId, MappedValue>::new();
     let mut next_accumulator = None;
     let mut next_effect = original
         .blocks
@@ -831,21 +920,43 @@ pub(crate) fn materialize_vectorization_trial(
             if wasm_affine
                 .is_some_and(|affine| affine.scalar_address_setup.contains(&instruction.id))
             {
-                let KirInstructionKind::Binary {
-                    op: MirBinaryOp::Add,
-                    left,
-                    right,
-                    semantics: KirArithmeticSemantics::Modular,
-                } = instruction.kind
-                else {
-                    return Err("WASM affine address setup changed shape".to_string());
+                let kind = match &instruction.kind {
+                    KirInstructionKind::Binary {
+                        op,
+                        left,
+                        right,
+                        semantics: KirArithmeticSemantics::Modular,
+                    } if matches!(op, MirBinaryOp::Add | MirBinaryOp::Sub) => {
+                        let left = resolve_value(&mapped, *left);
+                        let right = resolve_value(&mapped, *right);
+                        if left.vector || right.vector {
+                            return Err("WASM affine address setup uses a vector operand".into());
+                        }
+                        KirInstructionKind::Binary {
+                            op: *op,
+                            left: left.value,
+                            right: right.value,
+                            semantics: KirArithmeticSemantics::Modular,
+                        }
+                    }
+                    KirInstructionKind::Compare { op, left, right } => {
+                        let left = resolve_value(&mapped, *left);
+                        let right = resolve_value(&mapped, *right);
+                        if left.vector || right.vector {
+                            return Err("WASM scalar setup compare uses a vector operand".into());
+                        }
+                        KirInstructionKind::Compare {
+                            op: *op,
+                            left: left.value,
+                            right: right.value,
+                        }
+                    }
+                    KirInstructionKind::ConstInt { value } => KirInstructionKind::ConstInt {
+                        value: value.clone(),
+                    },
+                    _ => return Err("WASM affine address setup changed shape".into()),
                 };
                 let result = scalar_result(instruction)?;
-                let left = resolve_value(&mapped, left);
-                let right = resolve_value(&mapped, right);
-                if left.vector || right.vector {
-                    return Err("WASM affine address setup uses a vector operand".to_string());
-                }
                 let fresh = trial.fresh_value()?;
                 emitted.push(KirInstruction {
                     id: trial.fresh_instruction()?,
@@ -853,12 +964,7 @@ pub(crate) fn materialize_vectorization_trial(
                         value: fresh,
                         type_node: instruction.results[0].type_node.clone(),
                     }],
-                    kind: KirInstructionKind::Binary {
-                        op: MirBinaryOp::Add,
-                        left: left.value,
-                        right: right.value,
-                        semantics: KirArithmeticSemantics::Modular,
-                    },
+                    kind,
                     memory: None,
                     effect: None,
                 });
@@ -952,6 +1058,17 @@ pub(crate) fn materialize_vectorization_trial(
                         ..
                     }) = affine_access
                     {
+                        if matmul_interleave && unroll_index != 0 {
+                            let shared = shared_broadcasts
+                                .get(&instruction.id)
+                                .copied()
+                                .ok_or_else(|| {
+                                    "shared matmul broadcast was not materialized by chunk zero"
+                                        .to_string()
+                                })?;
+                            mapped.insert(result, shared);
+                            continue;
+                        }
                         let source_slice = place_slice(place)?;
                         let source_index = place_index(place)?;
                         let source_slice_at_entry = materialize_entry_value(
@@ -1052,13 +1169,14 @@ pub(crate) fn materialize_vectorization_trial(
                             memory: None,
                             effect: None,
                         });
-                        mapped.insert(
-                            result,
-                            MappedValue {
-                                value: splat,
-                                vector: true,
-                            },
-                        );
+                        let broadcast_value = MappedValue {
+                            value: splat,
+                            vector: true,
+                        };
+                        mapped.insert(result, broadcast_value);
+                        if matmul_interleave {
+                            shared_broadcasts.insert(instruction.id, broadcast_value);
+                        }
                         broadcast_records.push((
                             instruction.id,
                             unroll_index,
@@ -1961,6 +2079,67 @@ pub(crate) fn materialize_vectorization_trial(
         plan,
         charge,
     })
+}
+
+fn direct_wasm_map_candidate(
+    candidate: &VectorizationCandidate,
+    affine: &crate::WasmAffineCandidate,
+) -> bool {
+    if !matches!(candidate.uf, 1 | 2 | 4)
+        || affine.accesses.len() != 2
+        || !affine.scalar_address_setup.is_empty()
+        || affine.range_requirements.len() != 2
+        || candidate.accesses.len() != 2
+        || candidate.operations.is_empty()
+        || candidate.operations.iter().any(|operation| {
+            operation.lane_type != KirLaneType::F64
+                || operation.result_lane_type != KirLaneType::F64
+                || operation.semantics != crate::KirCostSemantics::StrictFloat
+                || !matches!(
+                    operation.operation,
+                    crate::KirProfileOperation::Add
+                        | crate::KirProfileOperation::Subtract
+                        | crate::KirProfileOperation::Multiply
+                        | crate::KirProfileOperation::Divide
+                        | crate::KirProfileOperation::Negate
+                )
+        })
+    {
+        return false;
+    }
+    let Some(input) = affine.accesses.iter().find(|access| {
+        access.kind == crate::LoopMemoryAccessKind::Read
+            && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+    }) else {
+        return false;
+    };
+    let Some(output) = affine.accesses.iter().find(|access| {
+        access.kind == crate::LoopMemoryAccessKind::Write
+            && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+    }) else {
+        return false;
+    };
+    input.slice != output.slice
+        && affine
+            .accesses
+            .iter()
+            .all(|access| matches!(access.shape, WasmAffineShape::Contiguous { offset: None }))
+        && candidate.accesses.iter().all(|access| {
+            access.element_bytes == 8
+                && access.element_type == MirType::Primitive(MirPrimitiveTypeName::F64)
+        })
+        && affine.range_requirements.iter().all(|range| {
+            range.element_bytes == 8
+                && range.start.is_none()
+                && range.count == WasmRangeCount::TripBound(candidate.bound)
+                && (range.slice == input.slice || range.slice == output.slice)
+        })
+        && affine
+            .range_requirements
+            .iter()
+            .map(|range| range.slice)
+            .collect::<BTreeSet<_>>()
+            == BTreeSet::from([input.slice, output.slice])
 }
 
 fn schedule_unrolled_vector_body(
@@ -3065,6 +3244,235 @@ contract {
                 .filter(|predicate| matches!(predicate, VectorPredicate::WasmSliceRange { .. }))
                 .count(),
             3
+        );
+    }
+
+    #[test]
+    fn nested_matmul_materializer_should_share_one_broadcast_across_four_vector_chunks() {
+        let state = pre_state_for(NESTED_MATMUL_COLUMN, crate::KirOptimizationLevel::O3, true);
+        let discovery = crate::optimizer::analysis::discover_vectorization_candidates(&state);
+        let candidate = discovery
+            .candidates
+            .iter()
+            .find(|candidate| candidate.vf == 2 && candidate.uf == 4)
+            .unwrap_or_else(|| {
+                panic!(
+                    "strict nested matmul should expose VF2/UF4: {:?}",
+                    discovery.fallbacks
+                )
+            });
+        let affine = candidate.wasm_affine.as_ref().expect("affine matmul proof");
+        assert_eq!(affine.accesses.len(), 4);
+        assert_eq!(affine.scalar_address_setup.len(), 2);
+        assert_eq!(affine.range_requirements.len(), 3);
+
+        let prepared = materialize_vectorization_trial(&state, candidate)
+            .expect("strict matmul VF2/UF4 materialization");
+        assert_trial_is_valid(&prepared.trial);
+        crate::check_vectorization_trial_independently(
+            &state,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .expect("strict matmul VF2/UF4 independent proof check");
+        assert_eq!((prepared.plan.vf, prepared.plan.uf), (2, 4));
+        assert_eq!(prepared.plan.broadcast_groups.len(), 1);
+        assert_eq!(prepared.plan.broadcast_groups[0].unroll_index, 0);
+        assert_eq!(prepared.plan.memory_groups.len(), 12);
+        assert_eq!(prepared.plan.operations.len(), 8);
+        assert_eq!(
+            prepared
+                .plan
+                .predicates
+                .iter()
+                .filter(|predicate| matches!(predicate, VectorPredicate::WasmSliceRange { .. }))
+                .count(),
+            3
+        );
+
+        let function = prepared
+            .trial
+            .module()
+            .functions
+            .iter()
+            .find(|function| function.id == candidate.function)
+            .expect("trial function");
+        let vector_body = function
+            .blocks
+            .iter()
+            .find(|block| {
+                function
+                    .vector_regions
+                    .iter()
+                    .any(|region| region.blocks.contains(&block.id))
+                    && block.instructions.iter().any(|instruction| {
+                        instruction.id == prepared.plan.broadcast_groups[0].emitted_splat
+                    })
+            })
+            .expect("vector loop body");
+        let splat = prepared.plan.broadcast_groups[0].emitted_splat;
+        let splat_value = vector_body
+            .instructions
+            .iter()
+            .find(|instruction| instruction.id == splat)
+            .and_then(|instruction| instruction.results.first())
+            .expect("shared A splat result")
+            .value;
+        assert_eq!(
+            vector_body
+                .instructions
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Load { .. }))
+                .count(),
+            1,
+            "the invariant A value is loaded once for the UF4 bundle"
+        );
+        assert_eq!(
+            vector_body
+                .instructions
+                .iter()
+                .filter(|instruction| {
+                    matches!(instruction.kind, KirInstructionKind::VectorSplat { .. })
+                })
+                .count(),
+            1,
+            "one A splat feeds all four vector chunks"
+        );
+        let vector_multiplies = prepared
+            .plan
+            .operations
+            .iter()
+            .filter(|operation| operation.operation == crate::KirProfileOperation::Multiply)
+            .map(|operation| operation.vector)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(vector_multiplies.len(), 4);
+        assert_eq!(
+            vector_body
+                .instructions
+                .iter()
+                .filter(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        KirInstructionKind::VectorBinary {
+                            op: KirVectorBinaryOp::Multiply,
+                            ..
+                        }
+                    )
+                })
+                .count(),
+            4
+        );
+        for instruction in &vector_body.instructions {
+            if vector_multiplies.contains(&instruction.id) {
+                assert!(matches!(
+                    instruction.kind,
+                    KirInstructionKind::VectorBinary { left, right, .. }
+                        if left == splat_value || right == splat_value
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn nested_matmul_o3_pipeline_should_commit_the_shared_broadcast_uf4_shape() {
+        let checked = crate::check(&crate::SourceFile::new(
+            "nested-matmul-uf4.ck",
+            NESTED_MATMUL_COLUMN,
+        ));
+        assert_eq!(checked.diagnostics, []);
+        let mir = crate::lower_to_mir(&checked.checked_program).expect("MIR");
+        let profile =
+            crate::KirTargetProfile::webassembly_with_features(crate::KirWasmFeatures::Simd128);
+        let module = crate::build_kir_module_with_profile(
+            &mir,
+            crate::KirBuildConfig {
+                consumer: crate::KirConsumer::WebAssembly,
+                overflow_mode: crate::KirOverflowMode::Unchecked,
+                bounds_mode: crate::KirBoundsMode::Unchecked,
+                sanitizer_mode: crate::KirSanitizerMode::Disabled,
+            },
+            profile,
+        )
+        .expect("SIMD128 KIR");
+        let contracts = crate::import_contract_facts(&module, &checked.checked_program, 0)
+            .expect("source contracts");
+        let optimized =
+            crate::run_kir_pass_pipeline(module, crate::KirOptimizationLevel::O3, Some(&contracts));
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+        assert_eq!(
+            optimized.stats.vectorized_loops, 1,
+            "{:#?}",
+            optimized.stats
+        );
+        let function = optimized
+            .artifact
+            .as_ref()
+            .and_then(|module| {
+                module
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "matmul_column")
+            })
+            .expect("optimized matmul function");
+        assert_eq!(function.vector_regions.len(), 1);
+        let body = function
+            .blocks
+            .iter()
+            .find(|block| block.label == "loop_simd_body")
+            .expect("SIMD matmul body");
+        assert_eq!(
+            body.instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    KirInstructionKind::VectorLoad { .. } | KirInstructionKind::VectorStore { .. }
+                ))
+                .count(),
+            12
+        );
+        assert_eq!(
+            body.instructions
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Load { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            body.instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    KirInstructionKind::VectorSplat { .. }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            body.instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    KirInstructionKind::VectorBinary {
+                        op: KirVectorBinaryOp::Multiply,
+                        ..
+                    }
+                ))
+                .count(),
+            4
+        );
+        assert_eq!(
+            body.instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    KirInstructionKind::VectorBinary {
+                        op: KirVectorBinaryOp::Add,
+                        ..
+                    }
+                ))
+                .count(),
+            4
         );
     }
 }

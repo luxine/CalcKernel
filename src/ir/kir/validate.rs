@@ -816,11 +816,21 @@ fn validate_version_predicate(
         KirProfileLayout::Known { pointer_width_bits, .. }
             if pointer_width_bits == u16::from(predicate.address_bits)
     );
+    let baseline_total_range_predicate = profile.consumer() == KirConsumer::WebAssembly
+        && profile.wasm_features() == Some(KirWasmFeatures::Baseline)
+        && predicate.conjuncts.iter().all(|conjunct| {
+            matches!(
+                conjunct,
+                KirVersionPredicateConjunct::TripThreshold { .. }
+                    | KirVersionPredicateConjunct::WasmSliceRange { .. }
+            )
+        });
     let consumer_supports_predicate = matches!(
         profile.consumer(),
         KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
     ) || (profile.consumer() == KirConsumer::WebAssembly
-        && profile.wasm_features() == Some(KirWasmFeatures::Simd128));
+        && profile.wasm_features() == Some(KirWasmFeatures::Simd128))
+        || baseline_total_range_predicate;
     if !valid_result
         || instruction.memory.is_some()
         || instruction.effect.is_some()
@@ -910,10 +920,10 @@ fn validate_version_predicate(
                         },
                         _ => None,
                     });
-                let wasm_simd32 = profile.consumer() == KirConsumer::WebAssembly
-                    && profile.wasm_features() == Some(KirWasmFeatures::Simd128)
+                let wasm32 = profile.consumer() == KirConsumer::WebAssembly
+                    && profile.wasm_features().is_some()
                     && predicate.address_bits == 32;
-                wasm_simd32
+                wasm32
                     && slice_element_bytes == Some(*element_bytes)
                     && matches!(*element_bytes, 4 | 8)
                     && values.type_of(*start).and_then(KirValueType::as_scalar) == Some(&u32_type)

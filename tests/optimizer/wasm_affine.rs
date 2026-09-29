@@ -355,17 +355,30 @@ contract {
         .iter()
         .filter(|candidate| candidate.wasm_affine.is_some())
         .collect::<Vec<_>>();
+    let mut variants = candidates
+        .iter()
+        .map(|candidate| (candidate.vf, candidate.uf))
+        .collect::<Vec<_>>();
+    variants.sort_unstable();
     assert_eq!(
-        candidates.len(),
-        1,
-        "nested affine candidate should be found; fallbacks: {:?}",
+        variants,
+        [(2, 1), (2, 2), (2, 4)],
+        "nested affine UF variants should be found; fallbacks: {:?}",
         discovery.fallbacks
     );
-    let affine = candidates[0]
+    let affine = candidates
+        .iter()
+        .find(|candidate| candidate.uf == 1)
+        .expect("original UF1 affine candidate")
         .wasm_affine
         .as_ref()
         .expect("affine candidate");
-    assert_eq!((candidates[0].vf, candidates[0].uf), (2, 1));
     assert_eq!(affine.scalar_address_setup.len(), 2);
     assert_eq!(affine.range_requirements.len(), 3);
+    assert!(candidates.iter().all(|candidate| {
+        candidate
+            .wasm_affine
+            .as_ref()
+            .is_some_and(|affine| affine.range_requirements.len() == 3)
+    }));
 }

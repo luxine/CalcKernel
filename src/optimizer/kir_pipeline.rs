@@ -6,13 +6,18 @@ use super::{
     CandidateBudgetCharge, CandidateDisposition, ContractFactSet, EvidenceValidationError,
     EvidenceValidationResult, FactArena, KirOptimizationAuditState, KirVerifiedProgramState,
     ProofArena, ProofStep, TransactionOutcome, analyze_canonical_loops_for_discovery,
-    check_slp_plan_independently, check_specialization_plan_independently,
-    check_stencil_peel_independently, check_unroll_plan_independently,
-    check_vectorization_trial_independently, discover_slp_candidates,
-    discover_specialization_candidates, discover_stencil_peel_candidates,
+    check_decision_tree_vector_trial_independently, check_slp_plan_independently,
+    check_specialization_plan_independently, check_stencil_peel_independently,
+    check_unroll_plan_independently, check_vectorization_trial_independently,
+    check_wasm_invariant_load_trial_independently, check_wasm_runtime_scalar_unroll_independently,
+    discover_slp_candidates, discover_specialization_candidates, discover_stencil_peel_candidates,
     discover_unroll_candidates, discover_vectorization_candidates,
-    execute_verified_transaction_with_disposition, is_specialization_clone, kir_function_units,
-    kir_passes, prepare_stencil_peel_trial, verify_proof_arena,
+    discover_wasm_decision_tree_candidates, discover_wasm_invariant_load_candidates,
+    discover_wasm_runtime_scalar_unroll_candidates, execute_verified_transaction_with_disposition,
+    is_specialization_clone, kir_function_units, kir_passes, prepare_decision_tree_vector_trial,
+    prepare_stencil_peel_trial, prepare_wasm_invariant_load_trial,
+    prepare_wasm_runtime_scalar_unroll_trial, run_interior_normalize_frontier,
+    run_normalization_unswitch_frontier, verify_proof_arena,
 };
 
 /// Stable optimization levels for the KIR pass manager.
@@ -922,6 +927,82 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     result.module = module;
                     return result;
                 }
+                if module.profile.wasm_features() == Some(crate::KirWasmFeatures::Baseline) {
+                    let hoisted =
+                        match run_wasm_invariant_load_frontier(&mut state, &mut result.audit) {
+                            Ok(hoisted) => hoisted,
+                            Err(error) => {
+                                result.errors.push(error);
+                                result.module = module;
+                                return result;
+                            }
+                        };
+                    module = state.module().clone();
+                    result.contract_facts = state.contract_facts().cloned();
+                    result.proofs = state.proofs().clone();
+                    result.eliminated_guards = state.eliminated_guards().to_vec();
+                    result.analysis_fallbacks.extend(hoisted.fallbacks);
+                    if !record_current_pass(
+                        &module,
+                        "wasm-invariant-load",
+                        hoisted.accepted != 0,
+                        &mut result,
+                        GENERATION,
+                    ) {
+                        result.module = module;
+                        return result;
+                    }
+                    let scalar_unroll = match run_wasm_runtime_scalar_unroll_frontier(
+                        &mut state,
+                        &mut result.audit,
+                    ) {
+                        Ok(unroll) => unroll,
+                        Err(error) => {
+                            result.errors.push(error);
+                            result.module = module;
+                            return result;
+                        }
+                    };
+                    module = state.module().clone();
+                    result.contract_facts = state.contract_facts().cloned();
+                    result.proofs = state.proofs().clone();
+                    result.eliminated_guards = state.eliminated_guards().to_vec();
+                    result.analysis_fallbacks.extend(scalar_unroll.fallbacks);
+                    if !record_current_pass(
+                        &module,
+                        "wasm-runtime-scalar-unroll",
+                        scalar_unroll.accepted != 0,
+                        &mut result,
+                        GENERATION,
+                    ) {
+                        result.module = module;
+                        return result;
+                    }
+                }
+                let unswitched =
+                    match run_normalization_unswitch_frontier(&mut state, &mut result.audit) {
+                        Ok(unswitched) => unswitched,
+                        Err(error) => {
+                            result.errors.push(error);
+                            result.module = module;
+                            return result;
+                        }
+                    };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.analysis_fallbacks.extend(unswitched.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "normalization-unswitch",
+                    unswitched.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
             }
             result.analysis_fallbacks.extend(unroll_fallbacks);
             for name in [
@@ -979,6 +1060,137 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     return result;
                 }
             }
+            if module.config.consumer == crate::KirConsumer::WebAssembly
+                && module.profile.wasm_features() == Some(crate::KirWasmFeatures::Baseline)
+            {
+                let hoisted = match run_wasm_invariant_load_frontier(&mut state, &mut result.audit)
+                {
+                    Ok(hoisted) => hoisted,
+                    Err(error) => {
+                        result.errors.push(error);
+                        result.module = module;
+                        return result;
+                    }
+                };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.analysis_fallbacks.extend(hoisted.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "wasm-invariant-load",
+                    hoisted.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
+                let scalar_unroll =
+                    match run_wasm_runtime_scalar_unroll_frontier(&mut state, &mut result.audit) {
+                        Ok(unroll) => unroll,
+                        Err(error) => {
+                            result.errors.push(error);
+                            result.module = module;
+                            return result;
+                        }
+                    };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.analysis_fallbacks.extend(scalar_unroll.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "wasm-runtime-scalar-unroll",
+                    scalar_unroll.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
+            }
+            if module.config.consumer == crate::KirConsumer::WebAssembly {
+                let normalized =
+                    match run_interior_normalize_frontier(&mut state, &mut result.audit) {
+                        Ok(normalized) => normalized,
+                        Err(error) => {
+                            result.errors.push(error);
+                            result.module = module;
+                            return result;
+                        }
+                    };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.analysis_fallbacks.extend(normalized.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "stencil-interior-normalize",
+                    normalized.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
+                let unswitched =
+                    match run_normalization_unswitch_frontier(&mut state, &mut result.audit) {
+                        Ok(unswitched) => unswitched,
+                        Err(error) => {
+                            result.errors.push(error);
+                            result.module = module;
+                            return result;
+                        }
+                    };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.analysis_fallbacks.extend(unswitched.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "normalization-unswitch",
+                    unswitched.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
+            }
+            let decision_tree = if module.config.consumer == crate::KirConsumer::WebAssembly {
+                match run_decision_tree_vector_frontier(&mut state, &mut result.audit) {
+                    Ok(frontier) => frontier,
+                    Err(error) => {
+                        result.errors.push(error);
+                        result.module = module;
+                        return result;
+                    }
+                }
+            } else {
+                DecisionTreeVectorFrontierResult::default()
+            };
+            module = state.module().clone();
+            result.contract_facts = state.contract_facts().cloned();
+            result.proofs = state.proofs().clone();
+            result.eliminated_guards = state.eliminated_guards().to_vec();
+            result.analysis_fallbacks.extend(decision_tree.fallbacks);
+            if module.config.consumer == crate::KirConsumer::WebAssembly
+                && !record_current_pass(
+                    &module,
+                    "wasm-decision-tree-vector",
+                    decision_tree.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                )
+            {
+                result.module = module;
+                return result;
+            }
             let vector = match run_loop_simd_frontier(
                 &mut state,
                 &mut result.audit,
@@ -996,8 +1208,9 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
             result.contract_facts = state.contract_facts().cloned();
             result.proofs = state.proofs().clone();
             result.eliminated_guards = state.eliminated_guards().to_vec();
-            result.stats.vectorized_loops = vector.accepted;
-            result.stats.rejected_vector_candidates = vector.rejected;
+            result.stats.vectorized_loops = vector.accepted.saturating_add(decision_tree.accepted);
+            result.stats.rejected_vector_candidates =
+                vector.rejected.saturating_add(decision_tree.rejected);
             result.stats.vector_scalar_fallbacks = vector.scalar_fallbacks;
             let loop_slp_nonwinners = vector.slp_nonwinners;
             let loop_slp_winners = vector.slp_winners;
@@ -1345,6 +1558,12 @@ fn vector_plan_explanation(
                 match requirement.count {
                     super::WasmRangeCount::TripBound(value) => format!("v{}", value.index()),
                     super::WasmRangeCount::One => "one".to_string(),
+                    super::WasmRangeCount::Invariant(value) => {
+                        format!("invariant-v{}", value.index())
+                    }
+                    super::WasmRangeCount::ScaledInvariant { value, scale } => {
+                        format!("{scale}*invariant-v{}", value.index())
+                    }
                 },
                 requirement.element_bytes,
             ),
@@ -1532,6 +1751,284 @@ fn run_stencil_peel_frontier(
             TransactionOutcome::CompilerError(error) => return Err(error),
         }
     }
+    Ok(result)
+}
+
+#[derive(Default)]
+struct WasmInvariantLoadFrontierResult {
+    accepted: u32,
+    fallbacks: Vec<KirAnalysisFallback>,
+}
+
+fn run_wasm_invariant_load_frontier(
+    state: &mut KirVerifiedProgramState,
+    audit: &mut KirOptimizationAuditState,
+) -> Result<WasmInvariantLoadFrontierResult, String> {
+    let mut result = WasmInvariantLoadFrontierResult::default();
+    let mut processed = std::collections::BTreeSet::new();
+    loop {
+        let discovery = discover_wasm_invariant_load_candidates(state);
+        result
+            .fallbacks
+            .extend(
+                discovery
+                    .fallbacks
+                    .into_iter()
+                    .map(|fallback| KirAnalysisFallback {
+                        function: fallback.function,
+                        pass: "wasm-invariant-load".to_string(),
+                        reason: fallback.reason,
+                    }),
+            );
+        let Some(candidate) = discovery
+            .candidates
+            .into_iter()
+            .find(|candidate| processed.insert(candidate.key.clone()))
+        else {
+            break;
+        };
+        let key = candidate.key.clone();
+        let prepared = match prepare_wasm_invariant_load_trial(state, &candidate) {
+            Ok(prepared) => prepared,
+            Err(reason) => {
+                audit.record_noncommitting_attempt(
+                    key,
+                    CandidateBudgetCharge::single(candidate.function, 16, 32),
+                    CandidateDisposition::Rejected,
+                    &reason,
+                )?;
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "wasm-invariant-load".to_string(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        let plan = prepared.plan;
+        let charge = prepared.charge;
+        let proposed = prepared.trial;
+        match execute_verified_transaction_with_disposition(
+            state,
+            audit,
+            key,
+            charge.clone(),
+            CandidateDisposition::Accepted,
+            move |trial| {
+                *trial = proposed;
+                Ok(())
+            },
+            |pre, trial| check_wasm_invariant_load_trial_independently(pre, trial, &plan, &charge),
+        ) {
+            TransactionOutcome::Committed => {
+                result.accepted = result.accepted.saturating_add(1);
+            }
+            TransactionOutcome::Rejected | TransactionOutcome::BudgetExhausted => {
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "wasm-invariant-load".to_string(),
+                    reason: "independent-check-or-budget-rejected".to_string(),
+                });
+            }
+            TransactionOutcome::CompilerError(error) => return Err(error),
+        }
+    }
+    result.fallbacks.sort_by(|left, right| {
+        (left.function, left.pass.as_str(), left.reason.as_str()).cmp(&(
+            right.function,
+            right.pass.as_str(),
+            right.reason.as_str(),
+        ))
+    });
+    result.fallbacks.dedup();
+    Ok(result)
+}
+
+#[derive(Default)]
+struct WasmRuntimeScalarUnrollFrontierResult {
+    accepted: u32,
+    fallbacks: Vec<KirAnalysisFallback>,
+}
+
+fn run_wasm_runtime_scalar_unroll_frontier(
+    state: &mut KirVerifiedProgramState,
+    audit: &mut KirOptimizationAuditState,
+) -> Result<WasmRuntimeScalarUnrollFrontierResult, String> {
+    let mut result = WasmRuntimeScalarUnrollFrontierResult::default();
+    let mut processed = std::collections::BTreeSet::new();
+    loop {
+        let mut candidates = Vec::new();
+        for function in &state.module().functions {
+            let loops = analyze_canonical_loops_for_discovery(function);
+            let discovery = discover_wasm_runtime_scalar_unroll_candidates(state, &loops.loops);
+            result
+                .fallbacks
+                .extend(
+                    discovery
+                        .fallbacks
+                        .into_iter()
+                        .map(|fallback| KirAnalysisFallback {
+                            function: fallback.function,
+                            pass: "wasm-runtime-scalar-unroll".to_string(),
+                            reason: fallback.reason,
+                        }),
+                );
+            candidates.extend(discovery.candidates);
+        }
+        candidates.sort_by(|left, right| left.key.cmp(&right.key));
+        let Some(candidate) = candidates
+            .into_iter()
+            .find(|candidate| processed.insert(candidate.key.clone()))
+        else {
+            break;
+        };
+        let key = candidate.key.clone();
+        let prepared = match prepare_wasm_runtime_scalar_unroll_trial(state, &candidate) {
+            Ok(prepared) => prepared,
+            Err(reason) => {
+                audit.record_noncommitting_attempt(
+                    key,
+                    CandidateBudgetCharge::single(candidate.function, 16, 32),
+                    CandidateDisposition::Rejected,
+                    &reason,
+                )?;
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "wasm-runtime-scalar-unroll".to_string(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        let plan = prepared.plan;
+        let charge = prepared.charge;
+        let proposed = prepared.trial;
+        match execute_verified_transaction_with_disposition(
+            state,
+            audit,
+            key,
+            charge.clone(),
+            CandidateDisposition::Accepted,
+            move |trial| {
+                *trial = proposed;
+                Ok(())
+            },
+            |pre, trial| check_wasm_runtime_scalar_unroll_independently(pre, trial, &plan, &charge),
+        ) {
+            TransactionOutcome::Committed => {
+                result.accepted = result.accepted.saturating_add(1);
+            }
+            TransactionOutcome::Rejected | TransactionOutcome::BudgetExhausted => {
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "wasm-runtime-scalar-unroll".to_string(),
+                    reason: "independent-check-or-budget-rejected".to_string(),
+                });
+            }
+            TransactionOutcome::CompilerError(error) => return Err(error),
+        }
+    }
+    result.fallbacks.sort_by(|left, right| {
+        (left.function, left.pass.as_str(), left.reason.as_str()).cmp(&(
+            right.function,
+            right.pass.as_str(),
+            right.reason.as_str(),
+        ))
+    });
+    result.fallbacks.dedup();
+    Ok(result)
+}
+
+#[derive(Default)]
+struct DecisionTreeVectorFrontierResult {
+    accepted: u32,
+    rejected: u32,
+    fallbacks: Vec<KirAnalysisFallback>,
+}
+
+fn run_decision_tree_vector_frontier(
+    state: &mut KirVerifiedProgramState,
+    audit: &mut KirOptimizationAuditState,
+) -> Result<DecisionTreeVectorFrontierResult, String> {
+    let mut result = DecisionTreeVectorFrontierResult::default();
+    let mut processed = std::collections::BTreeSet::new();
+    loop {
+        let discovery = discover_wasm_decision_tree_candidates(state);
+        result
+            .fallbacks
+            .extend(
+                discovery
+                    .fallbacks
+                    .into_iter()
+                    .map(|fallback| KirAnalysisFallback {
+                        function: fallback.function,
+                        pass: "wasm-decision-tree-vector".to_string(),
+                        reason: fallback.reason,
+                    }),
+            );
+        let Some(candidate) = discovery
+            .candidates
+            .into_iter()
+            .find(|candidate| processed.insert(candidate.key.clone()))
+        else {
+            break;
+        };
+        let key = candidate.key.clone();
+        let prepared = match prepare_decision_tree_vector_trial(state, &candidate) {
+            Ok(prepared) => prepared,
+            Err(reason) => {
+                audit.record_noncommitting_attempt(
+                    key,
+                    CandidateBudgetCharge::single(candidate.function, 16, 32),
+                    CandidateDisposition::Rejected,
+                    &reason,
+                )?;
+                result.rejected = result.rejected.saturating_add(1);
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "wasm-decision-tree-vector".to_string(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        let plan = prepared.plan;
+        let charge = prepared.charge;
+        let proposed = prepared.trial;
+        match execute_verified_transaction_with_disposition(
+            state,
+            audit,
+            key,
+            charge.clone(),
+            CandidateDisposition::Accepted,
+            move |trial| {
+                *trial = proposed;
+                Ok(())
+            },
+            |pre, trial| check_decision_tree_vector_trial_independently(pre, trial, &plan, &charge),
+        ) {
+            TransactionOutcome::Committed => {
+                result.accepted = result.accepted.saturating_add(1);
+            }
+            TransactionOutcome::Rejected | TransactionOutcome::BudgetExhausted => {
+                result.rejected = result.rejected.saturating_add(1);
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "wasm-decision-tree-vector".to_string(),
+                    reason: "independent-check-or-budget-rejected".to_string(),
+                });
+            }
+            TransactionOutcome::CompilerError(error) => return Err(error),
+        }
+    }
+    result.fallbacks.sort_by(|left, right| {
+        (left.function, left.pass.as_str(), left.reason.as_str()).cmp(&(
+            right.function,
+            right.pass.as_str(),
+            right.reason.as_str(),
+        ))
+    });
+    result.fallbacks.dedup();
     Ok(result)
 }
 

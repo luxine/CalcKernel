@@ -304,8 +304,11 @@ fn verify_predicates(
                 if let Some(start) = requirement.start {
                     values.push(start);
                 }
-                if let super::WasmRangeCount::TripBound(bound) = requirement.count {
-                    values.push(bound);
+                match requirement.count {
+                    super::WasmRangeCount::TripBound(value)
+                    | super::WasmRangeCount::Invariant(value)
+                    | super::WasmRangeCount::ScaledInvariant { value, .. } => values.push(value),
+                    super::WasmRangeCount::One => {}
                 }
                 (
                     values,

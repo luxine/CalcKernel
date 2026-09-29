@@ -184,6 +184,32 @@ fn discover_one(
 ) -> Result<Vec<VectorizationCandidate>, String> {
     let shape = simple_shape(function, descriptor)
         .ok_or_else(|| "unsupported-vector-loop-shape".to_string())?;
+    let source_header = function
+        .blocks
+        .iter()
+        .find(|block| block.id == descriptor.header)
+        .ok_or_else(|| "vector-loop-header-is-missing".to_string())?;
+    if source_header.instructions.iter().any(|instruction| {
+        instruction.memory.is_some()
+            || instruction.effect.is_some()
+            || !matches!(
+                instruction.kind,
+                KirInstructionKind::ConstInt { .. }
+                    | KirInstructionKind::ConstFloat { .. }
+                    | KirInstructionKind::ConstBool { .. }
+                    | KirInstructionKind::Copy { .. }
+                    | KirInstructionKind::Compare { .. }
+                    | KirInstructionKind::SliceData { .. }
+                    | KirInstructionKind::SliceLen { .. }
+                    | KirInstructionKind::Binary {
+                        op: MirBinaryOp::Add | MirBinaryOp::Sub | MirBinaryOp::Mul,
+                        semantics: KirArithmeticSemantics::Modular,
+                        ..
+                    }
+            )
+    }) {
+        return Err("vector-loop-header-may-trap-before-vector-lanes".to_string());
+    }
     let wasm_simd128_consumer = state.module().config.consumer == crate::KirConsumer::WebAssembly
         && state.module().profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128);
     if matches!(
@@ -277,17 +303,89 @@ fn discover_one(
         descriptor,
         state.contract_facts().map(crate::ContractFactSet::facts),
     )?;
-    let wasm_affine =
-        (wasm_simd128_consumer && version_predicate.is_none() && shape.diamond.is_none())
-            .then(|| {
-                discover_wasm_affine_candidate(
-                    function,
-                    descriptor,
-                    &accesses,
-                    state.contract_facts().map(crate::ContractFactSet::facts),
-                )
+    let wasm_affine = (wasm_simd128_consumer
+        && version_predicate.is_none()
+        && shape.diamond.is_none())
+    .then(|| {
+        discover_wasm_affine_candidate(
+            function,
+            descriptor,
+            &accesses,
+            state.contract_facts().map(crate::ContractFactSet::facts),
+        )
+    })
+    .flatten()
+    .or_else(|| {
+        if !wasm_simd128_consumer || version_predicate.is_some() || shape.diamond.is_some() {
+            return None;
+        }
+        let source = crate::discover_wasm_stencil_sources(state)
+            .into_iter()
+            .find(|source| source.function == function.id && source.header == descriptor.header)?;
+        let source_slice = |id| {
+            let instruction = function
+                .blocks
+                .iter()
+                .flat_map(|b| &b.instructions)
+                .find(|i| i.id == id)?;
+            let place = match &instruction.kind {
+                KirInstructionKind::Load { place } | KirInstructionKind::Store { place, .. } => {
+                    place
+                }
+                _ => return None,
+            };
+            let KirPlace::SliceIndex { slice, .. } = place.as_ref() else {
+                return None;
+            };
+            loop_preheader_value_for_body_value(function, descriptor, *slice)
+        };
+        let mut stencil_accesses = source
+            .loads
+            .iter()
+            .map(|load| {
+                Some(WasmAffineAccessShape {
+                    instruction: load.instruction,
+                    slice: source_slice(load.instruction)?,
+                    kind: super::LoopMemoryAccessKind::Read,
+                    shape: WasmAffineShape::Contiguous {
+                        offset: Some(load.origin),
+                    },
+                })
             })
-            .flatten();
+            .collect::<Option<Vec<_>>>()?;
+        stencil_accesses.push(WasmAffineAccessShape {
+            instruction: source.store,
+            slice: source_slice(source.store)?,
+            kind: super::LoopMemoryAccessKind::Write,
+            shape: WasmAffineShape::Contiguous {
+                offset: Some(source.store_origin),
+            },
+        });
+        let ranges = source
+            .ranges
+            .iter()
+            .map(|range| WasmSliceRangeRequirement {
+                slice: range.slice,
+                start: range.start,
+                element_bytes: range.element_bytes,
+                count: match range.count {
+                    crate::StencilRangeCount::Width => WasmRangeCount::Invariant(source.width),
+                    crate::StencilRangeCount::ThreeWidths => WasmRangeCount::ScaledInvariant {
+                        value: source.width,
+                        scale: 3,
+                    },
+                    crate::StencilRangeCount::InteriorTrip => {
+                        WasmRangeCount::TripBound(source.bound)
+                    }
+                },
+            })
+            .collect();
+        Some(WasmAffineCandidate {
+            accesses: stencil_accesses,
+            scalar_address_setup: source.scalar_address_setup,
+            range_requirements: ranges,
+        })
+    });
     let affine_shape_requires_wasm_route = wasm_simd128_consumer
         && accesses.accesses.iter().any(|access| {
             access.invariant_offset.is_some()
@@ -315,6 +413,13 @@ fn discover_one(
     }
     if affine_shape_requires_wasm_route && wasm_affine.is_none() {
         return Err("wasm-affine-access-shape-is-not-proven".to_string());
+    }
+    // Interleaved lanes/chunks may reuse invariant scalar state, but cannot
+    // reconstruct a loop-carried scalar recurrence as a splat.
+    if wasm_affine.is_some()
+        && !wasm_affine_loop_state_is_forwarded(function, descriptor.header, body, induction.value)
+    {
+        return Err("wasm-affine-loop-has-non-induction-carried-state".to_string());
     }
     let header_block = function
         .blocks
@@ -654,7 +759,47 @@ fn discover_one(
     }
     let maximum_uf = state.module().profile.maximum_interleave_factor().min(4);
     let interleavable = shape.diamond.is_none() && reduction.is_none();
-    let legal_ufs = if wasm_affine.is_some() {
+    let wasm_direct_map_interleave = wasm_simd128_consumer
+        && interleavable
+        && shape.scalar_blocks.len() == 1
+        && wasm_affine.as_ref().is_some_and(|affine| {
+            wasm_direct_map_interleave_eligible(
+                affine,
+                &operations,
+                &accesses.accesses,
+                induction.bound,
+            )
+        });
+    let wasm_matmul_interleave = wasm_simd128_consumer
+        && interleavable
+        && shape.scalar_blocks.len() == 1
+        && wasm_affine.as_ref().is_some_and(|affine| {
+            wasm_matmul_interleave_eligible(
+                affine,
+                &operations,
+                &accesses.accesses,
+                induction.bound,
+            ) && wasm_matmul_interleave_source_is_closed(
+                function,
+                descriptor.header,
+                body,
+                induction.value,
+                affine,
+                &operations,
+                &accesses.accesses,
+                induction.bound,
+            )
+        });
+    let legal_ufs = if wasm_simd128_consumer {
+        if wasm_direct_map_interleave || wasm_matmul_interleave {
+            [1_u8, 2, 4]
+                .into_iter()
+                .filter(|uf| *uf <= maximum_uf)
+                .collect::<Vec<_>>()
+        } else {
+            vec![1]
+        }
+    } else if wasm_affine.is_some() {
         vec![1]
     } else {
         [1_u8, 2, 4]
@@ -922,7 +1067,27 @@ fn discover_wasm_affine_candidate(
             && access.kind == super::LoopMemoryAccessKind::Read
             && matches!(access.shape, WasmAffineShape::Broadcast { .. })
     });
-    if !source_contiguous_read || !source_broadcast_read {
+    let direct_map_shape = candidate_accesses.len() == 2
+        && setup.is_empty()
+        && candidate_accesses
+            .iter()
+            .filter(|access| {
+                access.kind == super::LoopMemoryAccessKind::Read
+                    && access.slice != output_slice
+                    && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+            })
+            .count()
+            == 1
+        && candidate_accesses
+            .iter()
+            .filter(|access| {
+                access.kind == super::LoopMemoryAccessKind::Write
+                    && access.slice == output_slice
+                    && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+            })
+            .count()
+            == 1;
+    if !source_contiguous_read || (!source_broadcast_read && !direct_map_shape) {
         return None;
     }
 
@@ -1029,6 +1194,500 @@ fn discover_wasm_affine_candidate(
         scalar_address_setup: address_setup,
         range_requirements: ranges.into_iter().collect(),
     })
+}
+
+// Keep the direct-map interleave case deliberately narrow. Broadcast and
+// offset shapes require their own closed proof before multiplying the body.
+fn wasm_direct_map_interleave_eligible(
+    affine: &WasmAffineCandidate,
+    operations: &[VectorCandidateOperation],
+    accesses: &[AffineMemoryAccess],
+    bound: crate::ValueId,
+) -> bool {
+    if affine.accesses.len() != 2
+        || !affine.scalar_address_setup.is_empty()
+        || affine.range_requirements.len() != 2
+        || accesses.len() != 2
+        || operations.is_empty()
+        || operations.iter().any(|operation| {
+            operation.lane_type != KirLaneType::F64
+                || operation.result_lane_type != KirLaneType::F64
+                || operation.semantics != KirCostSemantics::StrictFloat
+                || !matches!(
+                    operation.operation,
+                    KirProfileOperation::Add
+                        | KirProfileOperation::Subtract
+                        | KirProfileOperation::Multiply
+                        | KirProfileOperation::Divide
+                        | KirProfileOperation::Negate
+                )
+        })
+    {
+        return false;
+    }
+    let Some(input) = affine.accesses.iter().find(|access| {
+        access.kind == super::LoopMemoryAccessKind::Read
+            && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+    }) else {
+        return false;
+    };
+    let Some(output) = affine.accesses.iter().find(|access| {
+        access.kind == super::LoopMemoryAccessKind::Write
+            && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+    }) else {
+        return false;
+    };
+    if input.slice == output.slice
+        || affine
+            .accesses
+            .iter()
+            .any(|access| !matches!(access.shape, WasmAffineShape::Contiguous { offset: None }))
+        || accesses.iter().any(|access| {
+            access.element_bytes != 8
+                || access.element_type != MirType::Primitive(MirPrimitiveTypeName::F64)
+                || !access.vector_group_eligible
+        })
+    {
+        return false;
+    }
+    affine.range_requirements.iter().all(|range| {
+        range.element_bytes == 8
+            && range.start.is_none()
+            && range.count == WasmRangeCount::TripBound(bound)
+            && (range.slice == input.slice || range.slice == output.slice)
+    }) && affine
+        .range_requirements
+        .iter()
+        .map(|range| range.slice)
+        .collect::<BTreeSet<_>>()
+        == BTreeSet::from([input.slice, output.slice])
+}
+
+pub(crate) fn wasm_matmul_interleave_eligible(
+    affine: &WasmAffineCandidate,
+    operations: &[VectorCandidateOperation],
+    accesses: &[AffineMemoryAccess],
+    bound: crate::ValueId,
+) -> bool {
+    if affine.accesses.len() != 4
+        || affine.scalar_address_setup.len() != 2
+        || affine.range_requirements.len() != 3
+        || accesses.len() != 4
+        || operations.len() != 2
+        || operations
+            .iter()
+            .map(|operation| operation.operation)
+            .collect::<Vec<_>>()
+            != [KirProfileOperation::Multiply, KirProfileOperation::Add]
+        || operations.iter().any(|operation| {
+            operation.lane_type != KirLaneType::F64
+                || operation.result_lane_type != KirLaneType::F64
+                || operation.semantics != KirCostSemantics::StrictFloat
+        })
+        || accesses.iter().any(|access| {
+            access.element_bytes != 8
+                || access.element_type != MirType::Primitive(MirPrimitiveTypeName::F64)
+        })
+        || accesses
+            .iter()
+            .filter(|access| access.kind == super::LoopMemoryAccessKind::Read)
+            .count()
+            != 3
+        || accesses
+            .iter()
+            .filter(|access| access.kind == super::LoopMemoryAccessKind::Write)
+            .count()
+            != 1
+    {
+        return false;
+    }
+
+    let Some(broadcast) = affine.accesses.iter().find(|access| {
+        access.kind == super::LoopMemoryAccessKind::Read
+            && matches!(access.shape, WasmAffineShape::Broadcast { .. })
+    }) else {
+        return false;
+    };
+    let WasmAffineShape::Broadcast {
+        index: broadcast_index,
+    } = &broadcast.shape
+    else {
+        return false;
+    };
+    let contiguous = affine
+        .accesses
+        .iter()
+        .filter(|access| matches!(access.shape, WasmAffineShape::Contiguous { .. }))
+        .collect::<Vec<_>>();
+    if contiguous.len() != 3
+        || affine
+            .accesses
+            .iter()
+            .filter(|access| matches!(access.shape, WasmAffineShape::Broadcast { .. }))
+            .count()
+            != 1
+    {
+        return false;
+    }
+    let Some(output) = contiguous
+        .iter()
+        .find(|access| access.kind == super::LoopMemoryAccessKind::Write)
+    else {
+        return false;
+    };
+    let WasmAffineShape::Contiguous {
+        offset: Some(output_offset),
+    } = &output.shape
+    else {
+        return false;
+    };
+    let output_reads = contiguous
+        .iter()
+        .filter(|access| {
+            access.kind == super::LoopMemoryAccessKind::Read && access.slice == output.slice
+        })
+        .collect::<Vec<_>>();
+    let b_reads = contiguous
+        .iter()
+        .filter(|access| {
+            access.kind == super::LoopMemoryAccessKind::Read && access.slice != output.slice
+        })
+        .collect::<Vec<_>>();
+    let [output_read] = output_reads.as_slice() else {
+        return false;
+    };
+    let [b_read] = b_reads.as_slice() else {
+        return false;
+    };
+    let WasmAffineShape::Contiguous {
+        offset: Some(b_offset),
+    } = &b_read.shape
+    else {
+        return false;
+    };
+    if output_read.shape != output.shape
+        || broadcast.slice == output.slice
+        || broadcast.slice == b_read.slice
+        || output.slice == b_read.slice
+    {
+        return false;
+    }
+
+    let Some(output_read_access) = accesses
+        .iter()
+        .find(|access| access.instruction == output_read.instruction)
+    else {
+        return false;
+    };
+    let Some(output_write_access) = accesses
+        .iter()
+        .find(|access| access.instruction == output.instruction)
+    else {
+        return false;
+    };
+    if output_read_access.region != output_write_access.region {
+        return false;
+    }
+    if contiguous.iter().any(|shape| {
+        accesses
+            .iter()
+            .find(|access| access.instruction == shape.instruction)
+            .is_none_or(|access| !access.vector_group_eligible)
+    }) {
+        return false;
+    }
+
+    let expected_ranges = [
+        WasmSliceRangeRequirement {
+            slice: broadcast.slice,
+            start: Some(*broadcast_index),
+            count: WasmRangeCount::One,
+            element_bytes: 8,
+        },
+        WasmSliceRangeRequirement {
+            slice: b_read.slice,
+            start: Some(*b_offset),
+            count: WasmRangeCount::TripBound(bound),
+            element_bytes: 8,
+        },
+        WasmSliceRangeRequirement {
+            slice: output.slice,
+            start: Some(*output_offset),
+            count: WasmRangeCount::TripBound(bound),
+            element_bytes: 8,
+        },
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    affine
+        .range_requirements
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        == expected_ranges
+}
+
+// The source proof keeps every independently reconstructed candidate input
+// explicit instead of hiding evidence in a shared mutable context.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn wasm_matmul_interleave_source_is_closed(
+    function: &crate::KirFunction,
+    header_id: BlockId,
+    body_id: BlockId,
+    induction: crate::ValueId,
+    affine: &WasmAffineCandidate,
+    operations: &[VectorCandidateOperation],
+    accesses: &[AffineMemoryAccess],
+    bound: crate::ValueId,
+) -> bool {
+    let Some(body) = function.blocks.iter().find(|block| block.id == body_id) else {
+        return false;
+    };
+    if !wasm_matmul_interleave_eligible(affine, operations, accesses, bound)
+        || !wasm_affine_loop_state_is_forwarded(function, header_id, body_id, induction)
+    {
+        return false;
+    }
+
+    let Some(broadcast) = affine.accesses.iter().find(|access| {
+        access.kind == super::LoopMemoryAccessKind::Read
+            && matches!(access.shape, WasmAffineShape::Broadcast { .. })
+    }) else {
+        return false;
+    };
+    let Some(output_write) = affine
+        .accesses
+        .iter()
+        .find(|access| access.kind == super::LoopMemoryAccessKind::Write)
+    else {
+        return false;
+    };
+    let Some(output_read) = affine.accesses.iter().find(|access| {
+        access.kind == super::LoopMemoryAccessKind::Read
+            && access.slice == output_write.slice
+            && matches!(access.shape, WasmAffineShape::Contiguous { .. })
+    }) else {
+        return false;
+    };
+    let Some(b_read) = affine.accesses.iter().find(|access| {
+        access.kind == super::LoopMemoryAccessKind::Read
+            && access.slice != broadcast.slice
+            && access.slice != output_read.slice
+    }) else {
+        return false;
+    };
+    let operation_instruction = |operation: KirProfileOperation| {
+        let mut matching = operations
+            .iter()
+            .filter(|candidate| candidate.operation == operation);
+        let first = matching.next()?.scalar;
+        matching.next().is_none().then_some(first)
+    };
+    let Some(multiply_id) = operation_instruction(KirProfileOperation::Multiply) else {
+        return false;
+    };
+    let Some(add_id) = operation_instruction(KirProfileOperation::Add) else {
+        return false;
+    };
+    let instruction = |id| {
+        body.instructions
+            .iter()
+            .find(|instruction| instruction.id == id)
+    };
+    let Some((broadcast_value, broadcast_index)) =
+        instruction(broadcast.instruction).and_then(|instruction| {
+            let KirInstructionKind::Load { place } = &instruction.kind else {
+                return None;
+            };
+            let result = single_f64_result(instruction)?;
+            let KirPlace::SliceIndex { index, .. } = place.as_ref() else {
+                return None;
+            };
+            Some((result, *index))
+        })
+    else {
+        return false;
+    };
+    let Some((output_value, output_slice, output_index)) = instruction(output_read.instruction)
+        .and_then(|instruction| {
+            let KirInstructionKind::Load { place } = &instruction.kind else {
+                return None;
+            };
+            let result = single_f64_result(instruction)?;
+            let KirPlace::SliceIndex { slice, index, .. } = place.as_ref() else {
+                return None;
+            };
+            Some((result, *slice, *index))
+        })
+    else {
+        return false;
+    };
+    let Some((b_value, b_index)) = instruction(b_read.instruction).and_then(|instruction| {
+        let KirInstructionKind::Load { place } = &instruction.kind else {
+            return None;
+        };
+        let result = single_f64_result(instruction)?;
+        let KirPlace::SliceIndex { index, .. } = place.as_ref() else {
+            return None;
+        };
+        Some((result, *index))
+    }) else {
+        return false;
+    };
+    let Some((store_slice, store_index, stored_value)) = instruction(output_write.instruction)
+        .and_then(|instruction| {
+            let KirInstructionKind::Store { place, value } = &instruction.kind else {
+                return None;
+            };
+            let KirPlace::SliceIndex { slice, index, .. } = place.as_ref() else {
+                return None;
+            };
+            Some((*slice, *index, *value))
+        })
+    else {
+        return false;
+    };
+    let setup_values = affine
+        .scalar_address_setup
+        .iter()
+        .filter_map(|id| instruction(*id))
+        .flat_map(|instruction| instruction.results.iter().map(|result| result.value))
+        .collect::<BTreeSet<_>>();
+    let WasmAffineShape::Broadcast {
+        index: affine_broadcast_index,
+    } = &broadcast.shape
+    else {
+        return false;
+    };
+    if !setup_values.contains(&output_index)
+        || !setup_values.contains(&b_index)
+        || broadcast_index != *affine_broadcast_index
+    {
+        return false;
+    }
+    let Some(multiply) = instruction(multiply_id) else {
+        return false;
+    };
+    let Some(product) = single_f64_result(multiply) else {
+        return false;
+    };
+    let KirInstructionKind::Binary {
+        op: MirBinaryOp::Mul,
+        left: multiply_left,
+        right: multiply_right,
+        semantics: KirArithmeticSemantics::StrictFloat,
+    } = &multiply.kind
+    else {
+        return false;
+    };
+    let Some(add) = instruction(add_id) else {
+        return false;
+    };
+    let Some(sum) = single_f64_result(add) else {
+        return false;
+    };
+    if add.kind
+        != (KirInstructionKind::Binary {
+            op: MirBinaryOp::Add,
+            left: output_value,
+            right: product,
+            semantics: KirArithmeticSemantics::StrictFloat,
+        })
+        || stored_value != sum
+        || output_slice != store_slice
+        || output_index != store_index
+        || !((*multiply_left == broadcast_value && *multiply_right == b_value)
+            || (*multiply_left == b_value && *multiply_right == broadcast_value))
+    {
+        return false;
+    }
+    let positions = [
+        output_read.instruction,
+        broadcast.instruction,
+        b_read.instruction,
+        multiply_id,
+        add_id,
+        output_write.instruction,
+    ]
+    .map(|id| {
+        body.instructions
+            .iter()
+            .position(|instruction| instruction.id == id)
+    });
+    let [
+        Some(output_pos),
+        Some(broadcast_pos),
+        Some(b_pos),
+        Some(multiply_pos),
+        Some(add_pos),
+        Some(store_pos),
+    ] = positions
+    else {
+        return false;
+    };
+    output_pos < broadcast_pos
+        && broadcast_pos < b_pos
+        && b_pos < multiply_pos
+        && multiply_pos < add_pos
+        && add_pos < store_pos
+}
+
+fn single_f64_result(instruction: &crate::KirInstruction) -> Option<crate::ValueId> {
+    let [result] = instruction.results.as_slice() else {
+        return None;
+    };
+    (result.type_node.as_scalar() == Some(&MirType::Primitive(MirPrimitiveTypeName::F64)))
+        .then_some(result.value)
+}
+
+pub(crate) fn wasm_affine_loop_state_is_forwarded(
+    function: &crate::KirFunction,
+    header_id: BlockId,
+    body_id: BlockId,
+    induction: crate::ValueId,
+) -> bool {
+    let Some(header) = function.blocks.iter().find(|block| block.id == header_id) else {
+        return false;
+    };
+    let Some(body) = function.blocks.iter().find(|block| block.id == body_id) else {
+        return false;
+    };
+    let crate::KirTerminator::Branch { then_edge, .. } = &header.terminator else {
+        return false;
+    };
+    let crate::KirTerminator::Jump { edge: backedge } = &body.terminator else {
+        return false;
+    };
+    let Some(induction_slot) = header
+        .params
+        .iter()
+        .position(|param| param.value == induction)
+    else {
+        return false;
+    };
+    if then_edge.target != body_id
+        || backedge.target != header_id
+        || header.params.len() != body.params.len()
+        || then_edge.args.len() != body.params.len()
+        || backedge.args.len() != header.params.len()
+        || header
+            .params
+            .iter()
+            .zip(&body.params)
+            .any(|(header_param, body_param)| header_param.type_node != body_param.type_node)
+    {
+        return false;
+    }
+    header
+        .params
+        .iter()
+        .zip(&body.params)
+        .enumerate()
+        .all(|(index, (header_param, body_param))| {
+            index == induction_slot
+                || (then_edge.args[index] == header_param.value
+                    && backedge.args[index] == body_param.value)
+        })
 }
 
 fn is_u32_value(function: &crate::KirFunction, value: crate::ValueId) -> bool {
@@ -1336,9 +1995,17 @@ fn candidate_cost_and_threshold(
         version_predicate,
         wasm_affine,
     } = model;
+    let shared_matmul_broadcast = vf == 2
+        && uf > 1
+        && descriptor.induction.as_ref().is_some_and(|induction| {
+            wasm_affine.is_some_and(|affine| {
+                wasm_matmul_interleave_eligible(affine, operations, accesses, induction.bound)
+            })
+        });
     let lanes = u8::try_from(vf).map_err(|_| "vector VF exceeds cost schema".to_string())?;
     let mut scalar_iteration = 0_u32;
     let mut vector_lane_chunk = 0_u32;
+    let mut shared_broadcast_setup_cost = 0_u32;
     let mut reduction_setup_cost = 0_u32;
     for operation in operations {
         let scalar_operation = match operation.operation {
@@ -1460,9 +2127,15 @@ fn candidate_cost_and_threshold(
                     alignment: KirAlignmentClass::NotApplicable,
                 },
             )?;
-            vector_lane_chunk = vector_lane_chunk
-                .saturating_add(scalar_load)
-                .saturating_add(splat);
+            if shared_matmul_broadcast {
+                shared_broadcast_setup_cost = shared_broadcast_setup_cost
+                    .saturating_add(scalar_load)
+                    .saturating_add(splat);
+            } else {
+                vector_lane_chunk = vector_lane_chunk
+                    .saturating_add(scalar_load)
+                    .saturating_add(splat);
+            }
         } else {
             vector_lane_chunk = vector_lane_chunk.saturating_add(profile_cost(
                 profile,
@@ -1545,6 +2218,7 @@ fn candidate_cost_and_threshold(
     scalar_iteration = scalar_iteration.saturating_add(scalar_control);
     let vector_chunk = vector_lane_chunk
         .saturating_mul(u32::from(uf))
+        .saturating_add(shared_broadcast_setup_cost)
         .saturating_add(splat_cost)
         .saturating_add(scalar_control);
 
@@ -1590,7 +2264,28 @@ fn candidate_cost_and_threshold(
     } else {
         predicate_base
     })
-    .saturating_add(reduction_setup_cost);
+    .saturating_add(reduction_setup_cost)
+    .saturating_add(
+        if wasm_affine.is_some_and(|affine| {
+            affine
+                .range_requirements
+                .iter()
+                .any(|range| matches!(range.count, WasmRangeCount::ScaledInvariant { .. }))
+        }) {
+            profile_cost(
+                profile,
+                KirCostKey {
+                    operation: KirProfileOperation::Multiply,
+                    lane: KirLaneType::U32,
+                    lanes: 1,
+                    semantics: KirCostSemantics::Modular,
+                    alignment: KirAlignmentClass::NotApplicable,
+                },
+            )?
+        } else {
+            0
+        },
+    );
     let epilogue = profile_control_cost(
         profile,
         KirCostKey {

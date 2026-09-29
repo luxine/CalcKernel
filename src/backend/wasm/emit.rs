@@ -17,6 +17,7 @@ use super::{
 };
 
 mod rotation;
+mod unroll;
 
 pub(super) fn emit_final_module_with_options(
     module: &MirModule,
@@ -84,7 +85,10 @@ fn emit_module_with_lowering_into(
             })
         });
         let has_memory_cursors = options.opt_level >= 3
-            && typed.is_some_and(|candidate| !candidate.memory_plan.cursors.is_empty());
+            && typed.is_some_and(|candidate| {
+                !candidate.memory_plan.cursors.is_empty()
+                    || !candidate.memory_plan.factored.bases.is_empty()
+            });
         let has_memarg_offsets = options.opt_level >= 3
             && typed.is_some_and(|candidate| {
                 !candidate
@@ -104,8 +108,13 @@ fn emit_module_with_lowering_into(
             || has_memory_cursors
             || has_memarg_offsets
             || has_bulk_candidate;
+        let typed_scalar_simple_loop = options.opt_level >= 3
+            && detect_simple_wasm_while(function).is_some()
+            && typed.is_some_and(typed_slice_scalar_simple_loop_eligible);
         let mut structure = if options.opt_level >= 3
-            && (needs_typed_lowering || detect_simple_wasm_while(function).is_none())
+            && (needs_typed_lowering
+                || typed_scalar_simple_loop
+                || detect_simple_wasm_while(function).is_none())
         {
             typed
                 .filter(|candidate| {
@@ -180,6 +189,38 @@ fn emit_module_with_lowering_into(
     Ok(())
 }
 
+fn typed_slice_scalar_simple_loop_eligible(lowered: &WasmLoweredFunction<'_>) -> bool {
+    if lowered.source.blocks.len() != 4
+        || !lowered.vector_values.is_empty()
+        || lowered.source.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    KirInstructionKind::VersionPredicate { .. }
+                ) || is_vector_instruction(&instruction.kind)
+            })
+        })
+    {
+        return false;
+    }
+    let memory_instructions = lowered
+        .source
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| instruction.memory.is_some())
+        .collect::<Vec<_>>();
+    !memory_instructions.is_empty()
+        && memory_instructions
+            .iter()
+            .all(|instruction| match &instruction.kind {
+                KirInstructionKind::Load { place } | KirInstructionKind::Store { place, .. } => {
+                    matches!(place.as_ref(), KirPlace::SliceIndex { .. })
+                }
+                _ => false,
+            })
+}
+
 fn single_block_scalar_memarg_sink_is_eligible(lowered: &WasmLoweredFunction<'_>) -> bool {
     if lowered.source.blocks.len() != 1
         || lowered.blocks.len() != 1
@@ -233,7 +274,10 @@ fn memory_cursor_local_names(
     lowered: &WasmLoweredFunction<'_>,
     vector_names: &BTreeMap<crate::ValueId, String>,
 ) -> BTreeMap<CursorId, String> {
-    if lowered.memory_plan.cursors.is_empty() {
+    if lowered.memory_plan.cursors.is_empty()
+        && lowered.memory_plan.factored.bases.is_empty()
+        && lowered.memory_plan.factored.bundles.bases.is_empty()
+    {
         return BTreeMap::new();
     }
     let mut used_names = collect_wasm_function_names(&lowered.local_view);
@@ -257,7 +301,7 @@ fn memory_cursor_local_names(
         plan.return_data,
         plan.return_len,
     ]);
-    lowered
+    let mut names: BTreeMap<_, _> = lowered
         .memory_plan
         .cursors
         .iter()
@@ -270,7 +314,20 @@ fn memory_cursor_local_names(
                 ),
             )
         })
-        .collect()
+        .collect();
+    for base in &lowered.memory_plan.factored.bases {
+        names.insert(
+            CursorId::factored(base.id),
+            unique_wasm_internal_name(&format!("ik_factored_base{}", base.id), &mut used_names),
+        );
+    }
+    for base in &lowered.memory_plan.factored.bundles.bases {
+        names.insert(
+            CursorId::bundle(base.id),
+            unique_wasm_internal_name(&format!("ik_bundle_base{}", base.id), &mut used_names),
+        );
+    }
+    names
 }
 
 fn emit_wat_memory_cursor_locals(
@@ -1839,6 +1896,27 @@ fn emit_wat_lowered_instruction(
     }
     if lowered
         .memory_plan
+        .factored
+        .accesses
+        .get(&instruction.source.id)
+        .is_some_and(|access| {
+            special_locals
+                .memory_cursor_names
+                .contains_key(&CursorId::factored(access.base))
+        })
+    {
+        return emit_wat_factored_memory_instruction(
+            out,
+            instruction.source,
+            lowered,
+            layout,
+            paired,
+            special_locals.memory_cursor_names,
+            indent,
+        );
+    }
+    if lowered
+        .memory_plan
         .access_by_instruction
         .get(&instruction.source.id)
         .is_some_and(|cursor| special_locals.memory_cursor_names.contains_key(cursor))
@@ -1962,6 +2040,79 @@ fn emit_wat_memarg_offset_instruction(
     Ok(())
 }
 
+fn emit_wat_factored_memory_instruction(
+    out: &mut impl WasmOutput,
+    instruction: &KirInstruction,
+    lowered: &WasmLoweredFunction<'_>,
+    layout: &WasmStructLayout,
+    paired: Option<&WasmFunctionPlan>,
+    cursor_names: &BTreeMap<CursorId, String>,
+    indent: usize,
+) -> Result<(), String> {
+    let access = lowered
+        .memory_plan
+        .factored
+        .accesses
+        .get(&instruction.id)
+        .ok_or_else(|| "WebAssembly factored address access is missing".to_string())?;
+    let base = lowered
+        .memory_plan
+        .factored
+        .bases
+        .iter()
+        .find(|base| base.id == access.base)
+        .ok_or_else(|| "WebAssembly factored address base is missing".to_string())?;
+    let name = cursor_names
+        .get(&CursorId::factored(base.id))
+        .ok_or_else(|| "WebAssembly factored address local is missing".to_string())?;
+    let pad = " ".repeat(indent);
+    // Both additions and the multiply are the original Wasm32 ring operations.
+    // Only the stable byte base was evaluated on the original entry edge.
+    out.push_str(&format!("{pad}local.get ${name}\n"));
+    emit_wat_memory_cursor_index(out, access.index, lowered, paired, indent)?;
+    out.push_str(&format!(
+        "{pad}i32.const {}\n{pad}i32.mul\n{pad}i32.add\n",
+        base.element_bytes
+    ));
+    match &instruction.kind {
+        KirInstructionKind::Load { .. } => {
+            let [result] = instruction.results.as_slice() else {
+                return Err("WebAssembly factored load result is malformed".into());
+            };
+            let type_node = result
+                .type_node
+                .as_scalar()
+                .ok_or_else(|| "WebAssembly factored load must be scalar".to_string())?;
+            validate_cursor_memory_type(type_node, base.element_bytes, layout)?;
+            out.push_str(&format!(
+                "{pad}{}.load offset=0 align={}\n",
+                wasm_type(type_node),
+                layout.align_of(type_node)
+            ));
+            let target = scalar_operand(lowered, result.value)?;
+            let local = paired.map_or_else(|| wat_local_name(target), |plan| plan.scalar(target));
+            out.push_str(&format!("{pad}local.set ${local}\n"));
+        }
+        KirInstructionKind::Store { value, .. } => {
+            let stored = scalar_operand(lowered, *value)?;
+            let type_node = value_type(stored);
+            validate_cursor_memory_type(type_node, base.element_bytes, layout)?;
+            if let Some(plan) = paired {
+                emit_wat_paired_scalar_value(out, stored, plan, indent);
+            } else {
+                emit_wat_value(out, stored, indent);
+            }
+            out.push_str(&format!(
+                "{pad}{}.store offset=0 align={}\n",
+                wasm_type(type_node),
+                layout.align_of(type_node)
+            ));
+        }
+        _ => return Err("WebAssembly factored address targets a non-memory instruction".into()),
+    }
+    Ok(())
+}
+
 fn emit_wat_scalar_memory_cursor_instruction(
     out: &mut impl WasmOutput,
     instruction: &KirInstruction,
@@ -1997,6 +2148,7 @@ fn emit_wat_scalar_memory_cursor_instruction(
             validate_cursor_memory_type(type_node, cursor_spec.element_bytes, layout)?;
             let target = scalar_operand(lowered, result.value)?;
             out.push_str(&format!("{pad}local.get ${cursor_name}\n"));
+            emit_wat_memory_cursor_access_bias(out, lowered, instruction.id, indent)?;
             out.push_str(&format!(
                 "{pad}{}.load offset=0 align={}\n",
                 wasm_type(type_node),
@@ -2010,6 +2162,7 @@ fn emit_wat_scalar_memory_cursor_instruction(
             let type_node = value_type(stored);
             validate_cursor_memory_type(type_node, cursor_spec.element_bytes, layout)?;
             out.push_str(&format!("{pad}local.get ${cursor_name}\n"));
+            emit_wat_memory_cursor_access_bias(out, lowered, instruction.id, indent)?;
             if let Some(plan) = paired {
                 emit_wat_paired_scalar_value(out, stored, plan, indent);
             } else {
@@ -2024,6 +2177,24 @@ fn emit_wat_scalar_memory_cursor_instruction(
         _ => {
             return Err("WebAssembly cursor plan targets a non-scalar memory access".into());
         }
+    }
+    Ok(())
+}
+
+fn emit_wat_memory_cursor_access_bias(
+    out: &mut impl WasmOutput,
+    lowered: &WasmLoweredFunction<'_>,
+    instruction: crate::InstructionId,
+    indent: usize,
+) -> Result<(), String> {
+    let bias = lowered
+        .memory_plan
+        .access_bias_bytes_by_instruction
+        .get(&instruction)
+        .ok_or_else(|| "WebAssembly memory cursor access bias is missing".to_string())?;
+    if *bias != 0 {
+        let pad = " ".repeat(indent);
+        out.push_str(&format!("{pad}i32.const {bias}\n{pad}i32.add\n"));
     }
     Ok(())
 }
@@ -2056,6 +2227,21 @@ fn emit_wat_memory_edge_actions(
     if cursor_names.is_empty() {
         return Ok(());
     }
+    let pad = " ".repeat(indent);
+    for base in &lowered.memory_plan.factored.bases {
+        if base.preheader != source || base.header != edge.source.target {
+            continue;
+        }
+        let name = cursor_names
+            .get(&CursorId::factored(base.id))
+            .ok_or_else(|| "WebAssembly factored base has no local".to_string())?;
+        emit_wat_memory_cursor_base(out, base.slice, lowered, paired, indent)?;
+        emit_wat_memory_cursor_index(out, base.offset, lowered, paired, indent)?;
+        out.push_str(&format!(
+            "{pad}i32.const {}\n{pad}i32.mul\n{pad}i32.add\n{pad}local.set ${name}\n",
+            base.element_bytes
+        ));
+    }
     let Some(actions) = lowered.memory_plan.edge_actions.get(&(source, edge.arm)) else {
         return Ok(());
     };
@@ -2066,7 +2252,7 @@ fn emit_wat_memory_edge_actions(
                 cursor,
                 base,
                 induction_arg_index,
-                bias_bytes,
+                index_terms,
             } => {
                 let cursor_name = cursor_names.get(cursor).ok_or_else(|| {
                     format!("WebAssembly memory cursor {} has no local", cursor.0)
@@ -2101,8 +2287,20 @@ fn emit_wat_memory_edge_actions(
                     "{pad}i32.const {}\n{pad}i32.mul\n{pad}i32.add\n",
                     cursor_spec.element_bytes
                 ));
-                if *bias_bytes != 0 {
-                    out.push_str(&format!("{pad}i32.const {bias_bytes}\n{pad}i32.add\n"));
+                for (operand, coefficient_bytes) in index_terms.iter() {
+                    let term_value = match operand {
+                        CursorOperand::HeaderArgument(index) => {
+                            edge.source.args.get(index).copied().ok_or_else(|| {
+                                "WebAssembly cursor entry edge omits an affine index term"
+                                    .to_string()
+                            })?
+                        }
+                        CursorOperand::Value(value) => value,
+                    };
+                    emit_wat_memory_cursor_index(out, term_value, lowered, paired, indent)?;
+                    out.push_str(&format!(
+                        "{pad}i32.const {coefficient_bytes}\n{pad}i32.mul\n{pad}i32.add\n"
+                    ));
                 }
                 out.push_str(&format!("{pad}local.set ${cursor_name}\n"));
             }
@@ -2413,6 +2611,55 @@ fn emit_wat_vector_address(
     indent: usize,
 ) -> Result<(), String> {
     let pad = " ".repeat(indent);
+    if let Some(mapped) = context
+        .lowered
+        .memory_plan
+        .factored
+        .bundles
+        .accesses
+        .get(&instruction.id)
+        && let Some(name) = context.cursor_names.get(&CursorId::bundle(mapped.base))
+    {
+        let base = context
+            .lowered
+            .memory_plan
+            .factored
+            .bundles
+            .bases
+            .iter()
+            .find(|base| base.id == mapped.base)
+            .ok_or_else(|| "WebAssembly vector address bundle base is missing".to_string())?;
+        if element_bytes != 8 || access.slice != base.slice {
+            return Err("WebAssembly vector address bundle shape changed".into());
+        }
+        if instruction.id == base.first {
+            if access.start != base.start || mapped.delta_bytes != 0 {
+                return Err("WebAssembly vector address bundle initialization changed".into());
+            }
+            let slice = scalar_operand(context.lowered, access.slice)?;
+            let (data, _) = context.plan.slice(slice);
+            out.push_str(&format!("{pad}local.get ${data}\n"));
+            emit_wat_paired_scalar_value(
+                out,
+                scalar_operand(context.lowered, access.start)?,
+                context.plan,
+                indent,
+            );
+            out.push_str(&format!(
+                "{pad}i32.const 8\n{pad}i32.mul\n{pad}i32.add\n{pad}local.tee ${name}\n"
+            ));
+        } else {
+            out.push_str(&format!("{pad}local.get ${name}\n"));
+            if mapped.delta_bytes != 0 {
+                // A memarg offset would use nonwrapping address arithmetic.
+                out.push_str(&format!(
+                    "{pad}i32.const {}\n{pad}i32.add\n",
+                    mapped.delta_bytes
+                ));
+            }
+        }
+        return Ok(());
+    }
     if let Some(cursor) = context
         .lowered
         .memory_plan
@@ -2435,6 +2682,7 @@ fn emit_wat_vector_address(
             .get(cursor)
             .ok_or_else(|| format!("WebAssembly memory cursor {} has no local", cursor.0))?;
         out.push_str(&format!("{pad}local.get ${name}\n"));
+        emit_wat_memory_cursor_access_bias(out, context.lowered, instruction.id, indent)?;
         return Ok(());
     }
     let slice = scalar_operand(context.lowered, access.slice)?;
@@ -2693,7 +2941,9 @@ impl StructuredEmission<'_, '_> {
                     }
                 }
                 StructureItem::Loop { header, body } => {
-                    if !rotation::try_emit_rotated_loop(self, out, *header, body, indent + 2)? {
+                    if !unroll::try_emit_guarded_unroll(self, out, *header, body, indent + 2)?
+                        && !rotation::try_emit_rotated_loop(self, out, *header, body, indent + 2)?
+                    {
                         let label = self
                             .structure
                             .loop_labels
