@@ -68,8 +68,10 @@ proven natural alignment (8 bytes for `f64`, 4 for `i32`/`u32`). Two-lane
 `i32`/`u32` to `f64x2` casts read exactly eight source bytes with
 `v128.load64_zero`; the converted result stores 16 bytes. Supported lane
 operations include splat, add, subtract, multiply, negate, pure comparison and
-selection; `f64x2` also supports divide. Integer reductions fold four lanes
-with modular scalar operations before updating the carried accumulator. A
+selection; `f64x2` also supports divide. Eligible modular `i32`/`u32` sums
+carry an `i32x4` accumulator and fold its lanes once after the vector loop;
+the original scalar seed is added once. Modular products still fold each
+four-lane chunk before updating the scalar accumulator. A
 vector loop handles complete chunks and uses the original scalar loop for the
 remainder or a short trip. Simple unknown-alias loops use a nontrapping Wasm32
 range and disjointness predicate and take the scalar path when it fails.

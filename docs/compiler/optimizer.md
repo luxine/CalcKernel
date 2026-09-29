@@ -113,13 +113,21 @@ eight-byte load. The supported map operations include splat, load/store,
 add, subtract, multiply, negate, `f64x2` divide, and pure lane comparison and
 selection. A simple same-induction slice loop can use a checked Wasm32 runtime
 alias predicate; overlap or an unsafe address range selects the original scalar
-loop. Reductions fold four integer lanes modulo 2^32 before combining with the
-scalar accumulator. Candidates require the existing unit-stride induction,
+loop. Eligible modular `i32`/`u32` sums carry an `i32x4` accumulator across
+chunks, fold it once on exit, then combine the original scalar seed exactly
+once before the scalar tail. Modular products retain the per-chunk scalar
+fold. A partial accumulator used by any other loop state rejects either
+reduction shape. Candidates require the existing unit-stride induction,
 independent legality and cost checks, and scalar remainder. The unroll factor
 is one. WebAssembly SLP, floating-point reductions, checked arithmetic,
 masked memory, and other vector shapes remain unavailable. Unsupported source
 candidates stay scalar; unsupported hand-constructed Vector KIR is rejected by
 the backend. `baseline` and O0–O2 remain scalar for vector lowering.
+Separately, O3 can compose two constant-affine modular 32-bit integer steps
+without changing observable intermediate values; this excludes checked
+overflow and floating-point arithmetic. The typed WASM emitter can remove a
+single effect-free conditional modular increment triangle after verifying
+its edge values and memory state; other branches retain their control flow.
 Independently, O3 may use a guarded Bulk Memory path for eligible direct-pointer
 32-bit copies and repeated-byte fills under either Wasm profile. It requires
 nonwrapping ranges inside current memory and disjoint ranges for copies; otherwise

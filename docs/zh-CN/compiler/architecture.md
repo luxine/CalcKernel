@@ -72,7 +72,7 @@ continue 和提前返回）转换成 WebAssembly 的 `block`、`loop`、`if`。P
 紧凑 canonical-while 路径也保留。该 lowering 不产生新的安全事实或证明权限。后端私有的
 最终指令模块统一记录选定的控制流、有序 local、类型化立即数和内存操作。WAT printer
 与直接二进制 encoder 共同消费该模块；二进制 encoder 不解析 WAT。O3 后期 placement
-在原有仅处理标量的安全范围内操作类型化指令。两个 sink 都从相同的导出根产物准备流程开始。
+对受支持的标量及 `v128` 指令建模栈效果，并保持副作用和 trap 顺序。两个 sink 都从相同的导出根产物准备流程开始。
 二进制体积策略为省略 name section、复用相同签名，
 并发射唯一且确定性的目标 metadata section；不另设 `-Os` 或 `-Oz` pipeline。
 
