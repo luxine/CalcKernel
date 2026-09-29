@@ -555,6 +555,23 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
             return result;
         }
 
+        if level == KirOptimizationLevel::O3 {
+            let changed = kir_passes::run_modular_affine_composition(
+                &mut module,
+                &result.proofs.instruction_dependencies(),
+            );
+            if !record_current_pass(
+                &module,
+                "modular-affine-composition",
+                changed,
+                &mut result,
+                GENERATION,
+            ) {
+                result.module = module;
+                return result;
+            }
+        }
+
         result.stats.forwarded_loads = kir_passes::run_load_forwarding(&mut module);
         if !record_current_pass(
             &module,

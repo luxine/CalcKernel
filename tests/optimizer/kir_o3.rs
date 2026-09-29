@@ -69,6 +69,7 @@ fn kir_o3_pipeline_should_use_the_exact_verified_pass_order() {
             "effect-aware-inline",
             "memory-ssa-refine",
             "gvn",
+            "modular-affine-composition",
             "load-forwarding",
             "dead-store-elimination",
             "sccp-range-post-inline",

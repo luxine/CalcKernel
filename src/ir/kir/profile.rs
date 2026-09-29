@@ -948,7 +948,8 @@ fn wasm_simd128_operation_cost(key: &KirCostKey) -> Option<u32> {
         {
             // A Wasm horizontal fold costs four lane extracts, three modular
             // operations to combine them, and one operation with the carried
-            // scalar accumulator.
+            // scalar accumulator. Persistent modular-add loops charge this
+            // fold once at exit and use vector Add for each loop chunk.
             Some(8)
         }
         KirProfileOperation::RuntimePredicate

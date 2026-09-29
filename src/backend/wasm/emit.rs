@@ -155,6 +155,7 @@ fn emit_module_with_lowering_into(
                     &vector_names,
                     &cursor_names,
                     bulk_candidate.as_ref(),
+                    options.opt_level >= 3,
                 )?;
             }
         } else if let (Some(typed), Some(structure)) = (typed, structure.as_ref()) {
@@ -740,6 +741,9 @@ fn structured_plan_is_emittable(
             if edge.copies != copies {
                 return false;
             }
+            if super::lower::vector_edge_copies(lowered, edge).is_err() {
+                return false;
+            }
             expected_instructions.extend(copies);
             if structure.reachable.contains(&lowered_block.source.id) {
                 let key = (lowered_block.source.id, edge.arm);
@@ -880,7 +884,7 @@ fn emit_wat_structured_function(
     bulk_candidate: Option<&CheckedWasmBulkMemory>,
 ) -> Result<(), String> {
     let function = &lowered.local_view;
-    if wasm_function_uses_slices(function) {
+    if wasm_function_uses_slices(function) || !vector_names.is_empty() {
         emit_wat_structured_slice_function(
             out,
             function,
@@ -1199,6 +1203,7 @@ fn emit_wat_typed_dispatcher_function(
     vector_names: &BTreeMap<crate::ValueId, String>,
     cursor_names: &BTreeMap<CursorId, String>,
     bulk_candidate: Option<&CheckedWasmBulkMemory>,
+    optimize_conditional_increments: bool,
 ) -> Result<(), String> {
     let function = &lowered.local_view;
     let plan = WasmFunctionPlan::new(function);
@@ -1299,6 +1304,8 @@ fn emit_wat_typed_dispatcher_function(
         block_indices: &block_indices,
         layout,
         plan: &plan,
+        vector_names,
+        optimize_conditional_increments,
         cursor_names,
         exit_label: &exit_label,
         dispatch_label: &dispatch_label,
@@ -1363,6 +1370,8 @@ struct TypedDispatcher<'a, 'source> {
     block_indices: &'a BTreeMap<crate::BlockId, u32>,
     layout: &'a WasmStructLayout,
     plan: &'a WasmFunctionPlan,
+    vector_names: &'a BTreeMap<crate::ValueId, String>,
+    optimize_conditional_increments: bool,
     cursor_names: &'a BTreeMap<CursorId, String>,
     exit_label: &'a str,
     dispatch_label: &'a str,
@@ -1375,6 +1384,19 @@ impl TypedDispatcher<'_, '_> {
         block: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
+        if self.optimize_conditional_increments
+            && let Some(increment) =
+                super::lower::checked_conditional_increment(self.lowered, block)
+        {
+            let edge = emit_wat_conditional_increment(
+                out,
+                self.lowered,
+                &increment,
+                Some(self.plan),
+                indent,
+            )?;
+            return self.emit_edge(out, &edge, block.source.id, edge.source.target, indent);
+        }
         let pad = " ".repeat(indent);
         match &block.source.terminator {
             KirTerminator::Return { value, .. } => {
@@ -1459,6 +1481,7 @@ impl TypedDispatcher<'_, '_> {
         for copy in &edge.copies {
             emit_wat_paired_instruction(out, copy, self.layout, self.plan, indent);
         }
+        emit_wat_vector_edge_copies(out, self.lowered, edge, self.vector_names, indent)?;
         let index = self
             .block_indices
             .get(&target)
@@ -1470,6 +1493,83 @@ impl TypedDispatcher<'_, '_> {
         ));
         Ok(())
     }
+}
+
+fn emit_wat_vector_edge_copies(
+    out: &mut impl WasmOutput,
+    lowered: &WasmLoweredFunction<'_>,
+    edge: &WasmLoweredEdge<'_>,
+    vector_names: &BTreeMap<crate::ValueId, String>,
+    indent: usize,
+) -> Result<(), String> {
+    let copies =
+        super::lower::vector_edge_copies(lowered, edge).map_err(|error| error.to_string())?;
+    let local = |value| {
+        vector_names.get(&value).ok_or_else(|| {
+            format!(
+                "WebAssembly vector edge value {} has no v128 local",
+                value.index()
+            )
+        })
+    };
+    let names = copies
+        .iter()
+        .map(|(target, source)| Ok((local(*target)?, local(*source)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let pad = " ".repeat(indent);
+    // Save every source before changing any target, including cycles and repeated
+    // arguments. The operand stack provides the parallel-copy temporaries.
+    for (_, source) in &names {
+        out.push_str(&format!("{pad}local.get ${source}\n"));
+    }
+    for (target, _) in names.iter().rev() {
+        out.push_str(&format!("{pad}local.set ${target}\n"));
+    }
+    Ok(())
+}
+
+fn emit_wat_conditional_increment<'source>(
+    out: &mut impl WasmOutput,
+    lowered: &WasmLoweredFunction<'source>,
+    increment: &super::lower::WasmConditionalIncrement<'_, 'source>,
+    paired: Option<&WasmFunctionPlan>,
+    indent: usize,
+) -> Result<WasmLoweredEdge<'source>, String> {
+    let base = scalar_operand(lowered, increment.base)?;
+    let condition = scalar_operand(lowered, increment.condition)?;
+    let result = scalar_operand(lowered, increment.result)?;
+    let result_name = match paired {
+        Some(plan) => plan.scalar(result),
+        None => match result {
+            MirValue::Local { name, .. } | MirValue::Temp { name, .. } => name,
+            _ => return Err("WebAssembly conditional increment result has no local".into()),
+        },
+    };
+    let mut edge = WasmLoweredEdge {
+        arm: increment.direct_edge.arm,
+        source: increment.direct_edge.source,
+        copies: increment.direct_edge.copies.clone(),
+    };
+    let Some(MirInstruction::Move { value, .. }) = edge.copies.get_mut(increment.copy_index) else {
+        return Err("WebAssembly conditional increment is missing its join copy".into());
+    };
+    *value = result.clone();
+    if let Some(plan) = paired {
+        emit_wat_paired_scalar_value(out, base, plan, indent);
+        emit_wat_paired_scalar_value(out, condition, plan, indent);
+    } else {
+        emit_wat_value(out, base, indent);
+        emit_wat_value(out, condition, indent);
+    }
+    let pad = " ".repeat(indent);
+    // A bool supplied by a host may be any nonzero i32. Normalize it before
+    // arithmetic; the false arm needs exactly the complementary 0/1 value.
+    out.push_str(&format!("{pad}i32.eqz\n"));
+    if increment.increment_on_true {
+        out.push_str(&format!("{pad}i32.eqz\n"));
+    }
+    out.push_str(&format!("{pad}i32.add\n{pad}local.set ${result_name}\n"));
+    Ok(edge)
 }
 
 fn scalar_operand<'a>(
@@ -2527,6 +2627,11 @@ impl StructuredEmission<'_, '_> {
         block: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
+        if let Some(increment) = super::lower::checked_conditional_increment(self.lowered, block) {
+            let edge =
+                emit_wat_conditional_increment(out, self.lowered, &increment, self.paired, indent)?;
+            return self.emit_edge(out, &edge, block, indent);
+        }
         let index = self
             .lowered
             .blocks
@@ -2627,6 +2732,7 @@ impl StructuredEmission<'_, '_> {
                 emit_wat_instruction(out, copy, self.layout, indent);
             }
         }
+        emit_wat_vector_edge_copies(out, self.lowered, edge, self.vector_names, indent)?;
         let target = self
             .structure
             .branch_targets

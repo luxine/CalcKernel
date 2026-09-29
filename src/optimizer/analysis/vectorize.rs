@@ -386,6 +386,74 @@ fn discover_one(
         return Err("vector-loop-has-multiple-reductions".to_string());
     }
     let reduction = reductions.pop();
+    if state.module().profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+        && let Some(reduction) = reduction.as_ref()
+    {
+        // Neither per-chunk folds nor persistent vector accumulators preserve
+        // every scalar partial result. Reject any observable intermediate sum
+        // or product, even when the final update resembles a modular reduction.
+        let body_block = function
+            .blocks
+            .iter()
+            .find(|block| block.id == body)
+            .ok_or_else(|| "vector reduction body is missing".to_string())?;
+        let mut recurrent = BTreeSet::from([reduction.header_value, reduction.body_value]);
+        let updated = body_block
+            .instructions
+            .iter()
+            .find(|instruction| instruction.id == reduction.instruction)
+            .and_then(|instruction| instruction.results.first())
+            .map(|result| result.value)
+            .ok_or_else(|| "vector reduction result is missing".to_string())?;
+        recurrent.insert(updated);
+        recurrent.extend(
+            body_block
+                .params
+                .iter()
+                .zip(&body_edge.args)
+                .filter(|(_, source)| **source == reduction.header_value)
+                .map(|(param, _)| param.value),
+        );
+        let accumulator_index = header_block
+            .params
+            .iter()
+            .position(|param| param.value == reduction.header_value)
+            .ok_or_else(|| "vector reduction header parameter is missing".to_string())?;
+        // A previous-value alias can escape solely through the latch edge:
+        // `previous = total; total += a[i]` need not leave any Copy instruction.
+        // Only the updated value may reach the accumulator's own parameter.
+        if latch_edge.args.iter().enumerate().any(|(index, value)| {
+            let root = scalar_copy_root(function, *value);
+            if index == accumulator_index {
+                root != updated
+            } else {
+                recurrent.contains(&root)
+            }
+        }) {
+            return Err("vector-reduction-exposes-partial-accumulator".to_string());
+        }
+        for instruction in &body_block.instructions {
+            let operands = match instruction.kind {
+                KirInstructionKind::Binary { left, right, .. }
+                | KirInstructionKind::Compare { left, right, .. } => vec![left, right],
+                KirInstructionKind::Unary { operand, .. } => vec![operand],
+                KirInstructionKind::Cast { value, .. } | KirInstructionKind::Copy { value } => {
+                    vec![value]
+                }
+                _ => Vec::new(),
+            };
+            let uses = operands
+                .iter()
+                .filter(|value| recurrent.contains(&scalar_copy_root(function, **value)))
+                .count();
+            if (instruction.id == reduction.instruction && uses != 1)
+                || (instruction.id != reduction.instruction && uses != 0)
+                || matches!(instruction.kind, KirInstructionKind::Store { .. })
+            {
+                return Err("vector-reduction-exposes-partial-accumulator".to_string());
+            }
+        }
+    }
     if reduction.is_some()
         && matches!(
             state.module().profile.target_identity(),
@@ -509,8 +577,7 @@ fn discover_one(
         for &uf in &legal_ufs {
             let (predicted_cost, minimum_trip) = match candidate_cost_and_threshold(
                 &state.module().profile,
-                function,
-                descriptor,
+                (function, descriptor),
                 (vf, uf),
                 &operations,
                 &accesses.accesses,
@@ -632,18 +699,19 @@ fn is_constant_integer(
 
 fn candidate_cost_and_threshold(
     profile: &crate::KirTargetProfile,
-    function: &crate::KirFunction,
-    descriptor: &CanonicalLoopDescriptor,
+    source: (&crate::KirFunction, &CanonicalLoopDescriptor),
     shape: (u16, u8),
     operations: &[VectorCandidateOperation],
     accesses: &[AffineMemoryAccess],
     splat_inputs: &BTreeSet<(crate::ValueId, KirLaneType)>,
     version_predicate: Option<&super::TotalVersionPredicate>,
 ) -> Result<(KirCostEstimate, u32), String> {
+    let (function, descriptor) = source;
     let (vf, uf) = shape;
     let lanes = u8::try_from(vf).map_err(|_| "vector VF exceeds cost schema".to_string())?;
     let mut scalar_iteration = 0_u32;
     let mut vector_lane_chunk = 0_u32;
+    let mut reduction_setup_cost = 0_u32;
     for operation in operations {
         let scalar_operation = match operation.operation {
             KirProfileOperation::ReduceAdd => KirProfileOperation::Add,
@@ -660,10 +728,53 @@ fn candidate_cost_and_threshold(
                 alignment: operation.alignment,
             },
         )?);
+        let persistent_add = profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+            && vf == 4
+            && uf == 1
+            && operation.operation == KirProfileOperation::ReduceAdd;
+        if persistent_add {
+            // Horizontal fold plus scalar seed combine execute once. Charge
+            // initialization and the finalizer edge outside the chunk cost.
+            reduction_setup_cost = reduction_setup_cost
+                .saturating_add(profile_cost(
+                    profile,
+                    KirCostKey {
+                        operation: KirProfileOperation::ReduceAdd,
+                        lane: operation.lane_type,
+                        lanes,
+                        semantics: operation.semantics,
+                        alignment: operation.alignment,
+                    },
+                )?)
+                .saturating_add(profile_cost(
+                    profile,
+                    KirCostKey {
+                        operation: KirProfileOperation::Splat,
+                        lane: operation.lane_type,
+                        lanes,
+                        semantics: KirCostSemantics::NotApplicable,
+                        alignment: KirAlignmentClass::NotApplicable,
+                    },
+                )?)
+                .saturating_add(profile_control_cost(
+                    profile,
+                    KirCostKey {
+                        operation: KirProfileOperation::Branch,
+                        lane: KirLaneType::U32,
+                        lanes: 1,
+                        semantics: KirCostSemantics::NotApplicable,
+                        alignment: KirAlignmentClass::NotApplicable,
+                    },
+                )?);
+        }
         vector_lane_chunk = vector_lane_chunk.saturating_add(profile_cost(
             profile,
             KirCostKey {
-                operation: operation.operation,
+                operation: if persistent_add {
+                    KirProfileOperation::Add
+                } else {
+                    operation.operation
+                },
                 lane: operation.lane_type,
                 lanes,
                 semantics: operation.semantics,
@@ -779,7 +890,7 @@ fn candidate_cost_and_threshold(
             alignment: KirAlignmentClass::NotApplicable,
         },
     )?);
-    let predicate_cost = if let Some(predicate) = version_predicate {
+    let predicate_cost = (if let Some(predicate) = version_predicate {
         let one = profile_cost(
             profile,
             KirCostKey {
@@ -795,7 +906,8 @@ fn candidate_cost_and_threshold(
         )
     } else {
         predicate_base
-    };
+    })
+    .saturating_add(reduction_setup_cost);
     let epilogue = profile_control_cost(
         profile,
         KirCostKey {

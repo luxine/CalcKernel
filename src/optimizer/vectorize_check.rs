@@ -113,6 +113,14 @@ pub fn check_vectorization_trial_independently(
         return compiler("vector frozen function size is false");
     }
     let candidate = reconstruct_vector_source_independently(pre_state, trial, plan)?;
+    let persistent_add = pre_state.module().profile.wasm_features()
+        == Some(crate::KirWasmFeatures::Simd128)
+        && candidate.vf == 4
+        && candidate.uf == 1
+        && candidate
+            .reduction
+            .as_ref()
+            .is_some_and(|reduction| reduction.binary_op == MirBinaryOp::Add);
     if plan.cost != candidate.predicted_cost
         || plan.operations.len()
             != candidate
@@ -173,7 +181,8 @@ pub fn check_vectorization_trial_independently(
         .instructions
         .get(..preheader_before.instructions.len())
         != Some(preheader_before.instructions.as_slice())
-        || !(preheader_before.instructions.len() + 3..=preheader_before.instructions.len() + 6)
+        || !(preheader_before.instructions.len() + 3 + 2 * usize::from(persistent_add)
+            ..=preheader_before.instructions.len() + 6 + 2 * usize::from(persistent_add))
             .contains(&preheader_after.instructions.len())
     {
         return compiler("vector preheader predicate is not a closed append-only rewrite");
@@ -208,12 +217,13 @@ pub fn check_vectorization_trial_independently(
     else {
         return compiler("vector header does not branch to body and epilogue");
     };
-    if vector_entry.args != original_entry.args
+    if vector_entry.args.get(..original_entry.args.len()) != Some(original_entry.args.as_slice())
+        || vector_entry.args.len() != original_entry.args.len() + usize::from(persistent_add)
         || vector_entry.memory_args != original_entry.memory_args
     {
         return compiler("vector entry does not preserve the original loop state");
     }
-    if epilogue_edge.target != candidate.header {
+    if !persistent_add && epilogue_edge.target != candidate.header {
         return compiler("vector epilogue does not enter the original scalar header");
     }
     let original_header = original
@@ -390,7 +400,17 @@ pub fn check_vectorization_trial_independently(
     let [region] = transformed.vector_regions.as_slice() else {
         return compiler("vector trial must create exactly one owned vector region");
     };
-    if region.blocks != [vector_body.id] {
+    let expected_region_blocks = if persistent_add {
+        vec![
+            candidate.preheader,
+            vector_header.id,
+            vector_body.id,
+            epilogue_edge.target,
+        ]
+    } else {
+        vec![vector_body.id]
+    };
+    if region.blocks != expected_region_blocks {
         return compiler("vector region ownership is not exact");
     }
 
@@ -568,11 +588,37 @@ pub fn check_vectorization_trial_independently(
                 crate::KirProfileOperation::ReduceMultiply
             )
         );
+        let operation_matches = operation_matches
+            || (persistent_add
+                && mapping.operation == KirProfileOperation::ReduceAdd
+                && matches!(
+                    instruction.kind,
+                    KirInstructionKind::VectorBinary {
+                        op: crate::KirVectorBinaryOp::Add,
+                        semantics: crate::KirArithmeticSemantics::Modular,
+                        no_failure_proof: None,
+                        ..
+                    }
+                ));
         if !operation_matches {
             return compiler("mapped vector instruction has the wrong operation family");
         }
     }
-    if let Some(reduction) = &candidate.reduction {
+    if persistent_add {
+        check_persistent_modular_add(
+            original,
+            transformed,
+            &candidate,
+            preheader_after,
+            original_entry,
+            vector_entry,
+            vector_header,
+            vector_body,
+            vector_body_edge,
+            epilogue_edge,
+            plan,
+        )?;
+    } else if let Some(reduction) = &candidate.reduction {
         let mapping = plan
             .operations
             .iter()
@@ -919,6 +965,218 @@ pub fn check_vectorization_trial_independently(
                 .collect::<Vec<_>>()
                 .join("; ")
         )));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_persistent_modular_add(
+    original: &crate::KirFunction,
+    transformed: &crate::KirFunction,
+    candidate: &CheckedVectorSource,
+    preheader: &crate::KirBlock,
+    original_entry: &crate::KirEdge,
+    entry: &crate::KirEdge,
+    header: &crate::KirBlock,
+    body: &crate::KirBlock,
+    body_edge: &crate::KirEdge,
+    finalizer_edge: &crate::KirEdge,
+    plan: &VectorizationPlan,
+) -> Result<(), TransactionCheckError> {
+    let malformed = |message: &str| TransactionCheckError::compiler(message);
+    let reduction = candidate
+        .reduction
+        .as_ref()
+        .ok_or_else(|| malformed("persistent reduction source is missing"))?;
+    let source_header = source_block(original, candidate.header)
+        .ok_or_else(|| malformed("persistent reduction source header is missing"))?;
+    let source_body = source_block(original, candidate.body)
+        .ok_or_else(|| malformed("persistent reduction source body is missing"))?;
+    let seed_index = source_header
+        .params
+        .iter()
+        .position(|param| param.value == reduction.header_value)
+        .ok_or_else(|| malformed("persistent reduction seed is missing"))?;
+    let body_seed_index = source_body
+        .params
+        .iter()
+        .position(|param| param.value == reduction.body_value)
+        .ok_or_else(|| malformed("persistent reduction body seed is missing"))?;
+    let scalar_type = source_header.params[seed_index].type_node.clone();
+    let lane = scalar_type
+        .as_scalar()
+        .and_then(lane_from_type)
+        .filter(|lane| matches!(lane, KirLaneType::I32 | KirLaneType::U32))
+        .ok_or_else(|| malformed("persistent reduction is not a modular 32-bit integer"))?;
+    let vector_type = KirValueType::FixedVector { lane, lanes: 4 };
+    if header.params.len() != source_header.params.len() + 1
+        || body.params.len() != source_body.params.len() + 1
+    {
+        return Err(malformed(
+            "persistent reduction parameter partition is false",
+        ));
+    }
+    let header_acc = header
+        .params
+        .last()
+        .ok_or_else(|| malformed("persistent vector header accumulator is missing"))?;
+    let body_acc = body
+        .params
+        .last()
+        .ok_or_else(|| malformed("persistent vector body accumulator is missing"))?;
+    if header_acc.type_node != vector_type
+        || body_acc.type_node != vector_type
+        || body_edge.args.last() != Some(&header_acc.value)
+        || body_edge.args.len() != body.params.len()
+        || body_edge.args.get(body_seed_index) != Some(&header.params[seed_index].value)
+    {
+        return Err(malformed("persistent reduction accumulator edge is false"));
+    }
+    let initial = *entry
+        .args
+        .get(original_entry.args.len())
+        .ok_or_else(|| malformed("persistent reduction initial vector is missing"))?;
+    let splat = preheader
+        .instructions
+        .iter()
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == initial)
+        })
+        .ok_or_else(|| malformed("persistent reduction initialization is not in the preheader"))?;
+    let KirInstructionKind::VectorSplat { scalar: zero, .. } = splat.kind else {
+        return Err(malformed(
+            "persistent reduction initialization is not a zero splat",
+        ));
+    };
+    if splat.results.len() != 1 || splat.results[0].type_node != vector_type
+        || !preheader.instructions.iter().any(|instruction| instruction.results.len() == 1 && instruction.results[0].value == zero && instruction.results[0].type_node == scalar_type && matches!(&instruction.kind, KirInstructionKind::ConstInt { value } if value == "0"))
+    { return Err(malformed("persistent reduction initialization is not exact zero")); }
+    let mapping = plan
+        .operations
+        .iter()
+        .find(|mapping| mapping.scalar == reduction.instruction)
+        .ok_or_else(|| malformed("persistent reduction mapping is missing"))?;
+    let update = body
+        .instructions
+        .iter()
+        .find(|instruction| instruction.id == mapping.vector)
+        .ok_or_else(|| malformed("persistent reduction update is missing"))?;
+    let KirInstructionKind::VectorBinary {
+        op: crate::KirVectorBinaryOp::Add,
+        left,
+        right,
+        semantics: crate::KirArithmeticSemantics::Modular,
+        no_failure_proof: None,
+        ..
+    } = update.kind
+    else {
+        return Err(malformed(
+            "persistent reduction update is not modular vector addition",
+        ));
+    };
+    let scalar_update = defining_instruction_by_id(original, reduction.instruction)
+        .ok_or_else(|| malformed("persistent reduction scalar update is missing"))?;
+    let lane_source = match scalar_update.kind {
+        KirInstructionKind::Binary { left, right, .. } if left == reduction.body_value => right,
+        KirInstructionKind::Binary { left, right, .. } if right == reduction.body_value => left,
+        _ => return Err(malformed("persistent reduction scalar recurrence is false")),
+    };
+    let source = defining_instruction(
+        original,
+        independent_scalar_copy_root(original, lane_source),
+    )
+    .ok_or_else(|| malformed("persistent reduction lane source is missing"))?;
+    let source_mapping = plan
+        .operations
+        .iter()
+        .find(|mapping| mapping.scalar == source.id)
+        .map(|mapping| mapping.vector)
+        .or_else(|| {
+            plan.memory_groups
+                .iter()
+                .find(|mapping| mapping.scalar_instructions == [source.id])
+                .map(|mapping| mapping.vector_instruction)
+        });
+    let vector_source = source_mapping
+        .and_then(|id| {
+            body.instructions
+                .iter()
+                .find(|instruction| instruction.id == id)
+        })
+        .and_then(|instruction| instruction.results.first())
+        .map(|result| result.value);
+    let KirTerminator::Jump { edge: backedge } = &body.terminator else {
+        return Err(malformed("persistent reduction backedge is missing"));
+    };
+    if left != body_acc.value
+        || Some(right) != vector_source
+        || update.results.len() != 1
+        || update.results[0].type_node != vector_type
+        || backedge.args.last() != Some(&update.results[0].value)
+        || backedge.args.len() != header.params.len()
+        || backedge.args.get(seed_index) != Some(&body.params[body_seed_index].value)
+        || body
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction.kind, KirInstructionKind::VectorReduce { .. }))
+    {
+        return Err(malformed(
+            "persistent reduction recurrence or scalar seed preservation is false",
+        ));
+    }
+    let finalizer = source_block(transformed, finalizer_edge.target)
+        .ok_or_else(|| malformed("persistent reduction finalizer is missing"))?;
+    if finalizer.label != "loop_simd_finalize"
+        || !finalizer.params.is_empty()
+        || !finalizer.memory_params.is_empty()
+        || !finalizer_edge.args.is_empty()
+        || !finalizer_edge.memory_args.is_empty()
+    {
+        return Err(malformed("persistent reduction finalizer edge is false"));
+    }
+    let [fold, combine] = finalizer.instructions.as_slice() else {
+        return Err(malformed(
+            "persistent reduction finalizer is not one fold and seed combine",
+        ));
+    };
+    if !matches!(fold.kind, KirInstructionKind::VectorReduce { op: crate::KirVectorReductionOp::ModularAdd, vector, semantics: crate::KirArithmeticSemantics::Modular, .. } if vector == header_acc.value)
+        || fold.results.len() != 1
+        || fold.results[0].type_node != scalar_type
+        || !matches!(combine.kind, KirInstructionKind::Binary { op: MirBinaryOp::Add, left, right, semantics: crate::KirArithmeticSemantics::Modular } if left == header.params[seed_index].value && right == fold.results[0].value)
+        || combine.results.len() != 1
+        || combine.results[0].type_node != scalar_type
+        || fold.memory.is_some()
+        || fold.effect.is_some()
+        || combine.memory.is_some()
+        || combine.effect.is_some()
+    {
+        return Err(malformed(
+            "persistent reduction final fold or once-only seed combine is false",
+        ));
+    }
+    let KirTerminator::Jump { edge: tail } = &finalizer.terminator else {
+        return Err(malformed(
+            "persistent reduction finalizer does not enter the scalar tail",
+        ));
+    };
+    let mut expected = header.params[..source_header.params.len()]
+        .iter()
+        .map(|param| param.value)
+        .collect::<Vec<_>>();
+    expected[seed_index] = combine.results[0].value;
+    if tail.target != candidate.header
+        || tail.args != expected
+        || tail.memory_args
+            != header
+                .memory_params
+                .iter()
+                .map(|param| param.version)
+                .collect::<Vec<_>>()
+    {
+        return Err(malformed("persistent reduction scalar tail state is false"));
     }
     Ok(())
 }
@@ -1296,6 +1554,58 @@ fn reconstruct_vector_source_independently(
     }
 
     let reduction = recognize_reduction(original, header, body, backedge, plan)?;
+    if pre_state.module().profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+        && let Some(reduction) = reduction.as_ref()
+    {
+        let mut recurrent = BTreeSet::from([reduction.header_value, reduction.body_value]);
+        let updated = defining_instruction_by_id(original, reduction.instruction)
+            .and_then(|instruction| instruction.results.first())
+            .map(|result| result.value)
+            .ok_or_else(|| malformed("persistent reduction result is missing"))?;
+        recurrent.insert(updated);
+        recurrent.extend(
+            body.params
+                .iter()
+                .zip(&then_edge.args)
+                .filter(|(_, source)| **source == reduction.header_value)
+                .map(|(param, _)| param.value),
+        );
+        let accumulator_index = header
+            .params
+            .iter()
+            .position(|param| param.value == reduction.header_value)
+            .ok_or_else(|| malformed("persistent reduction header parameter is missing"))?;
+        for (index, value) in backedge.args.iter().enumerate() {
+            let root = independent_scalar_copy_root(original, *value);
+            if (index == accumulator_index && root != updated)
+                || (index != accumulator_index && recurrent.contains(&root))
+            {
+                return Err(malformed(
+                    "persistent reduction leaks an old or updated accumulator through another backedge parameter",
+                ));
+            }
+        }
+        for instruction in &body.instructions {
+            let inputs = match instruction.kind {
+                KirInstructionKind::Copy { value } => vec![value],
+                _ => operation_inputs(instruction),
+            };
+            let uses = inputs
+                .iter()
+                .filter(|value| {
+                    recurrent.contains(&independent_scalar_copy_root(original, **value))
+                })
+                .count();
+            if (instruction.id == reduction.instruction && uses != 1)
+                || (instruction.id != reduction.instruction && uses != 0)
+                || matches!(instruction.kind, KirInstructionKind::Store { .. })
+            {
+                return Err(malformed(
+                    "persistent reduction exposes a partial accumulator",
+                ));
+            }
+        }
+    }
     let operations = independently_collect_operations(
         original,
         &scalar_blocks,
@@ -1819,6 +2129,7 @@ fn independently_price_vector_plan(
         .map_err(|_| malformed("vector VF is not representable in the target profile"))?;
     let mut scalar_iteration = 0_u32;
     let mut vector_chunk = 0_u32;
+    let mut reduction_setup_cost = 0_u32;
     for operation in operations {
         let scalar_operation = match operation.operation {
             KirProfileOperation::ReduceAdd => KirProfileOperation::Add,
@@ -1838,10 +2149,54 @@ fn independently_price_vector_plan(
         )?);
     }
     for mapping in &plan.operations {
+        let persistent_add = profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+            && plan.vf == 4
+            && plan.uf == 1
+            && mapping.operation == KirProfileOperation::ReduceAdd;
+        if persistent_add {
+            reduction_setup_cost = reduction_setup_cost
+                .saturating_add(independent_profile_cost(
+                    profile,
+                    KirCostKey {
+                        operation: KirProfileOperation::ReduceAdd,
+                        lane: mapping.lane_type,
+                        lanes,
+                        semantics: mapping.semantics,
+                        alignment: mapping.alignment,
+                    },
+                    false,
+                )?)
+                .saturating_add(independent_profile_cost(
+                    profile,
+                    KirCostKey {
+                        operation: KirProfileOperation::Splat,
+                        lane: mapping.lane_type,
+                        lanes,
+                        semantics: KirCostSemantics::NotApplicable,
+                        alignment: KirAlignmentClass::NotApplicable,
+                    },
+                    false,
+                )?)
+                .saturating_add(independent_profile_cost(
+                    profile,
+                    KirCostKey {
+                        operation: KirProfileOperation::Branch,
+                        lane: KirLaneType::U32,
+                        lanes: 1,
+                        semantics: KirCostSemantics::NotApplicable,
+                        alignment: KirAlignmentClass::NotApplicable,
+                    },
+                    true,
+                )?);
+        }
         vector_chunk = vector_chunk.saturating_add(independent_profile_cost(
             profile,
             KirCostKey {
-                operation: mapping.operation,
+                operation: if persistent_add {
+                    KirProfileOperation::Add
+                } else {
+                    mapping.operation
+                },
                 lane: mapping.lane_type,
                 lanes,
                 semantics: mapping.semantics,
@@ -2049,7 +2404,7 @@ fn independently_price_vector_plan(
             .count(),
     )
     .unwrap_or(u32::MAX);
-    let predicate_cost = if has_runtime_predicate {
+    let predicate_cost = (if has_runtime_predicate {
         predicate_base.saturating_add(
             independent_profile_cost(
                 profile,
@@ -2066,7 +2421,8 @@ fn independently_price_vector_plan(
         )
     } else {
         predicate_base
-    };
+    })
+    .saturating_add(reduction_setup_cost);
     let epilogue = independent_profile_cost(
         profile,
         KirCostKey {

@@ -91,6 +91,14 @@ pub(crate) fn materialize_vectorization_trial(
         .get(induction_index)
         .ok_or_else(|| "vector candidate entry induction is missing".to_string())?;
     let mut trial = pre_state.clone();
+    let persistent_add = pre_state.module().profile.wasm_features()
+        == Some(crate::KirWasmFeatures::Simd128)
+        && candidate.vf == 4
+        && candidate.uf == 1
+        && candidate.reduction.as_ref().is_some_and(|reduction| {
+            reduction.binary_op == MirBinaryOp::Add
+                && matches!(reduction.lane_type, KirLaneType::I32 | KirLaneType::U32)
+        });
     let vector_header_id = trial.fresh_block()?;
     let vector_body_id = trial.fresh_block()?;
     let vector_region = trial.fresh_vector_region()?;
@@ -153,6 +161,64 @@ pub(crate) fn materialize_vectorization_trial(
             });
         }
     }
+    // Keep the scalar seed unchanged across the vector loop. Each lane starts
+    // at zero, and the seed is combined exactly once before the scalar tail.
+    let vector_accumulator = if persistent_add {
+        let reduction = candidate.reduction.as_ref().expect("persistent reduction");
+        let scalar_zero = trial.fresh_value()?;
+        let initial = trial.fresh_value()?;
+        let header = trial.fresh_value()?;
+        let body = trial.fresh_value()?;
+        let vector_type = KirValueType::FixedVector {
+            lane: reduction.lane_type,
+            lanes: 4,
+        };
+        let scalar_type = original_header
+            .params
+            .iter()
+            .find(|param| param.value == reduction.header_value)
+            .ok_or_else(|| "vector reduction seed parameter is missing".to_string())?
+            .type_node
+            .clone();
+        transformed_preheader.instructions.push(KirInstruction {
+            id: trial.fresh_instruction()?,
+            results: vec![KirResult {
+                value: scalar_zero,
+                type_node: scalar_type,
+            }],
+            kind: KirInstructionKind::ConstInt {
+                value: "0".to_string(),
+            },
+            memory: None,
+            effect: None,
+        });
+        transformed_preheader.instructions.push(KirInstruction {
+            id: trial.fresh_instruction()?,
+            results: vec![KirResult {
+                value: initial,
+                type_node: vector_type.clone(),
+            }],
+            kind: KirInstructionKind::VectorSplat {
+                scalar: scalar_zero,
+                region: vector_region,
+            },
+            memory: None,
+            effect: None,
+        });
+        vector_header_params.push(KirBlockParam {
+            value: header,
+            slot: "loop_simd_accumulator".to_string(),
+            type_node: vector_type.clone(),
+        });
+        vector_body_params.push(KirBlockParam {
+            value: body,
+            slot: "loop_simd_accumulator".to_string(),
+            type_node: vector_type,
+        });
+        Some((initial, header, body))
+    } else {
+        None
+    };
     let mut body_memories = BTreeMap::new();
     for (param, source) in original_body
         .memory_params
@@ -297,7 +363,12 @@ pub(crate) fn materialize_vectorization_trial(
         condition: entry_condition,
         then_edge: KirEdge {
             target: vector_header_id,
-            args: entry_edge.args.clone(),
+            args: entry_edge
+                .args
+                .iter()
+                .copied()
+                .chain(vector_accumulator.map(|(initial, _, _)| initial))
+                .collect(),
             memory_args: entry_edge.memory_args.clone(),
         },
         else_edge: entry_edge.clone(),
@@ -307,7 +378,7 @@ pub(crate) fn materialize_vectorization_trial(
     if let KirInstructionKind::Compare { right, .. } = &mut vector_compare.kind {
         *right = vector_limit;
     }
-    let vector_header = KirBlock {
+    let mut vector_header = KirBlock {
         id: vector_header_id,
         label: "loop_simd_header".to_string(),
         params: vector_header_params,
@@ -347,6 +418,12 @@ pub(crate) fn materialize_vectorization_trial(
             },
         },
     };
+    if let Some((_, accumulator, _)) = vector_accumulator {
+        let crate::KirTerminator::Branch { then_edge, .. } = &mut vector_header.terminator else {
+            unreachable!()
+        };
+        then_edge.args.push(accumulator);
+    }
 
     let mut emitted = Vec::new();
     let base_mapped = body_values
@@ -372,6 +449,7 @@ pub(crate) fn materialize_vectorization_trial(
     let mut splats = BTreeMap::<(crate::ValueId, KirLaneType), crate::ValueId>::new();
     let mut operation_mappings = Vec::new();
     let mut memory_records = Vec::new();
+    let mut next_accumulator = None;
     let mut next_effect = original
         .blocks
         .iter()
@@ -845,6 +923,34 @@ pub(crate) fn materialize_vectorization_trial(
                     if !lane_source.vector {
                         return Err("vector reduction lane source did not vectorize".to_string());
                     }
+                    if let Some((_, _, carried)) = vector_accumulator {
+                        let fresh = trial.fresh_value()?;
+                        let id = trial.fresh_instruction()?;
+                        emitted.push(KirInstruction {
+                            id,
+                            results: vec![KirResult {
+                                value: fresh,
+                                type_node: KirValueType::FixedVector {
+                                    lane: reduction.lane_type,
+                                    lanes: 4,
+                                },
+                            }],
+                            kind: KirInstructionKind::VectorBinary {
+                                op: KirVectorBinaryOp::Add,
+                                left: carried,
+                                right: lane_source.value,
+                                semantics: KirArithmeticSemantics::Modular,
+                                no_failure_proof: None,
+                                region: vector_region,
+                            },
+                            memory: None,
+                            effect: None,
+                        });
+                        next_accumulator = Some(fresh);
+                        mapped.insert(scalar_result(instruction)?, accumulator);
+                        operation_mappings.push((operation.clone(), unroll_index, id));
+                        continue;
+                    }
                     let reduced = trial.fresh_value()?;
                     let reduction_id = trial.fresh_instruction()?;
                     emitted.push(KirInstruction {
@@ -1103,7 +1209,10 @@ pub(crate) fn materialize_vectorization_trial(
                             "vector loop carries an unsupported vector recurrence".to_string()
                         })
                     })
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .chain(next_accumulator)
+                    .collect(),
                 memory_args: latch_edge
                     .memory_args
                     .iter()
@@ -1116,6 +1225,71 @@ pub(crate) fn materialize_vectorization_trial(
                     .collect::<Result<Vec<_>, _>>()?,
             },
         },
+    };
+
+    let finalizer = if let Some((_, accumulator, _)) = vector_accumulator {
+        let reduction = candidate.reduction.as_ref().expect("persistent reduction");
+        let finalizer_id = trial.fresh_block()?;
+        let reduced = trial.fresh_value()?;
+        let combined = trial.fresh_value()?;
+        let seed_index = original_header
+            .params
+            .iter()
+            .position(|param| param.value == reduction.header_value)
+            .ok_or_else(|| "vector reduction seed parameter is missing".to_string())?;
+        let scalar_type = original_header.params[seed_index].type_node.clone();
+        let crate::KirTerminator::Branch { else_edge, .. } = &mut vector_header.terminator else {
+            unreachable!()
+        };
+        let mut tail_edge = else_edge.clone();
+        let seed = tail_edge.args[seed_index];
+        tail_edge.args[seed_index] = combined;
+        *else_edge = KirEdge {
+            target: finalizer_id,
+            args: Vec::new(),
+            memory_args: Vec::new(),
+        };
+        Some(KirBlock {
+            id: finalizer_id,
+            label: "loop_simd_finalize".to_string(),
+            params: Vec::new(),
+            memory_params: Vec::new(),
+            instructions: vec![
+                KirInstruction {
+                    id: trial.fresh_instruction()?,
+                    results: vec![KirResult {
+                        value: reduced,
+                        type_node: scalar_type.clone(),
+                    }],
+                    kind: KirInstructionKind::VectorReduce {
+                        op: KirVectorReductionOp::ModularAdd,
+                        vector: accumulator,
+                        semantics: KirArithmeticSemantics::Modular,
+                        region: vector_region,
+                    },
+                    memory: None,
+                    effect: None,
+                },
+                KirInstruction {
+                    id: trial.fresh_instruction()?,
+                    results: vec![KirResult {
+                        value: combined,
+                        type_node: scalar_type,
+                    }],
+                    kind: KirInstructionKind::Binary {
+                        op: MirBinaryOp::Add,
+                        left: seed,
+                        right: reduced,
+                        semantics: KirArithmeticSemantics::Modular,
+                    },
+                    memory: None,
+                    effect: None,
+                },
+            ],
+            terminator: crate::KirTerminator::Jump { edge: tail_edge },
+        })
+    } else {
+        None
     };
 
     let transformed = trial
@@ -1131,10 +1305,21 @@ pub(crate) fn materialize_vectorization_trial(
         .ok_or_else(|| "vector trial preheader disappeared".to_string())? = transformed_preheader;
     transformed.vector_regions.push(KirVectorRegion {
         id: vector_region,
-        blocks: vec![vector_body_id],
+        blocks: finalizer.as_ref().map_or_else(
+            || vec![vector_body_id],
+            |block| {
+                vec![
+                    candidate.preheader,
+                    vector_header_id,
+                    vector_body_id,
+                    block.id,
+                ]
+            },
+        ),
     });
     transformed.blocks.push(vector_header);
     transformed.blocks.push(vector_body);
+    transformed.blocks.extend(finalizer);
 
     let roots = insert_vector_proofs(&mut trial, candidate, entry_bound)?;
     let before_function = kir_function_units(&original);

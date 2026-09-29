@@ -349,6 +349,309 @@ fn wasm_physical_type(
     }
 }
 
+/// Returns the v128 assignments on one selected edge. Scalar assignments live in
+/// the MIR leaf view; vector and mask values retain their exact KIR types here.
+pub(super) fn vector_edge_copies(
+    function: &WasmLoweredFunction<'_>,
+    edge: &WasmLoweredEdge<'_>,
+) -> Result<Vec<(ValueId, ValueId)>, WasmLoweringError> {
+    let invalid = |message: &str| WasmLoweringError::InvariantFailure(message.to_string());
+    let target = function
+        .source
+        .blocks
+        .iter()
+        .find(|block| block.id == edge.source.target)
+        .ok_or_else(|| invalid("WebAssembly vector edge targets an unknown block"))?;
+    if target.params.len() != edge.source.args.len() {
+        return Err(invalid(
+            "WebAssembly vector edge argument arity is inconsistent",
+        ));
+    }
+    let mut copies = Vec::new();
+    for (param, argument) in target.params.iter().zip(&edge.source.args) {
+        if param.type_node.as_scalar().is_some() {
+            continue;
+        }
+        for value in [param.value, *argument] {
+            let typed = function
+                .values
+                .get(&value)
+                .ok_or_else(|| invalid("WebAssembly vector edge value has no typed metadata"))?;
+            if typed.physical != WasmPhysicalType::V128
+                || !matches!(typed.source_type, WasmSourceType::Kir(type_node) if type_node == &param.type_node)
+            {
+                return Err(invalid(
+                    "WebAssembly vector edge value type is inconsistent",
+                ));
+            }
+        }
+        copies.push((param.value, *argument));
+    }
+    Ok(copies)
+}
+
+pub(super) struct WasmConditionalIncrement<'lowered, 'source> {
+    pub direct_edge: &'lowered WasmLoweredEdge<'source>,
+    pub condition: ValueId,
+    pub base: ValueId,
+    pub result: ValueId,
+    pub copy_index: usize,
+    pub increment_on_true: bool,
+}
+
+/// Recognizes a closed, effect-free triangle without changing its typed CFG.
+/// The direct join edge supplies all parallel assignments except one modular
+/// increment. Values defined in the bypassed arm cannot escape through other uses.
+pub(super) fn checked_conditional_increment<'lowered, 'source>(
+    function: &'lowered WasmLoweredFunction<'source>,
+    source: &'lowered WasmLoweredBlock<'source>,
+) -> Option<WasmConditionalIncrement<'lowered, 'source>> {
+    let KirTerminator::Branch { condition, .. } = source.source.terminator else {
+        return None;
+    };
+    for update_arm in 0..=1 {
+        let update_edge = source.edges.iter().find(|edge| edge.arm == update_arm)?;
+        let direct_edge = source.edges.iter().find(|edge| edge.arm != update_arm)?;
+        let Some(arm) = function
+            .blocks
+            .iter()
+            .find(|block| block.source.id == update_edge.source.target)
+        else {
+            continue;
+        };
+        let Some(candidate) =
+            check_increment_arm(function, source, arm, update_edge, direct_edge, condition)
+        else {
+            continue;
+        };
+        return Some(candidate);
+    }
+    None
+}
+
+fn check_increment_arm<'lowered, 'source>(
+    function: &'lowered WasmLoweredFunction<'source>,
+    source: &WasmLoweredBlock<'source>,
+    arm: &WasmLoweredBlock<'source>,
+    update_edge: &WasmLoweredEdge<'source>,
+    direct_edge: &'lowered WasmLoweredEdge<'source>,
+    condition: ValueId,
+) -> Option<WasmConditionalIncrement<'lowered, 'source>> {
+    if arm.source.id == source.source.id
+        || arm.source.id == direct_edge.source.target
+        || direct_edge.source.target == source.source.id
+        || function
+            .source
+            .blocks
+            .iter()
+            .flat_map(|block| wasm_edges(&block.terminator))
+            .flatten()
+            .filter(|edge| edge.target == arm.source.id)
+            .count()
+            != 1
+        || [
+            (source.source.id, update_edge.arm),
+            (source.source.id, direct_edge.arm),
+            (arm.source.id, 0),
+        ]
+        .iter()
+        .any(|edge| {
+            function
+                .memory_plan
+                .edge_actions
+                .get(edge)
+                .is_some_and(|actions| !actions.is_empty())
+        })
+    {
+        return None;
+    }
+    let KirTerminator::Jump { edge: join_edge } = &arm.source.terminator else {
+        return None;
+    };
+    if join_edge.target != direct_edge.source.target
+        || arm.source.params.len() != update_edge.source.args.len()
+        || arm.source.memory_params.len() != update_edge.source.memory_args.len()
+        || join_edge.args.len() != direct_edge.source.args.len()
+        || join_edge.memory_args.len() != direct_edge.source.memory_args.len()
+    {
+        return None;
+    }
+    let resolve = |value: ValueId| {
+        arm.source
+            .params
+            .iter()
+            .position(|param| param.value == value)
+            .map_or(value, |index| update_edge.source.args[index])
+    };
+    for (carried, direct) in join_edge
+        .memory_args
+        .iter()
+        .zip(&direct_edge.source.memory_args)
+    {
+        let resolved = arm
+            .source
+            .memory_params
+            .iter()
+            .position(|param| param.version == *carried)
+            .map_or(*carried, |index| update_edge.source.memory_args[index]);
+        if resolved != *direct {
+            return None;
+        }
+    }
+    let mut add = None;
+    for instruction in &arm.source.instructions {
+        if instruction.memory.is_some()
+            || instruction.effect.is_some()
+            || instruction.results.len() != 1
+        {
+            return None;
+        }
+        match &instruction.kind {
+            KirInstructionKind::Binary {
+                op: MirBinaryOp::Add,
+                semantics: KirArithmeticSemantics::Modular,
+                ..
+            } => {
+                if add.replace(instruction).is_some() {
+                    return None;
+                }
+            }
+            KirInstructionKind::ConstInt { value } if value.parse::<u32>().ok() == Some(1) => {}
+            _ => return None,
+        }
+    }
+    let add = add?;
+    let KirInstructionKind::Binary { left, right, .. } = add.kind else {
+        return None;
+    };
+    let result = &add.results[0];
+    if !matches!(
+        result.type_node,
+        KirValueType::Scalar(MirType::Primitive(
+            MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32
+        ))
+    ) {
+        return None;
+    }
+    let is_one = |value| {
+        function.source.blocks.iter().flat_map(|block| &block.instructions)
+        .any(|instruction| matches!(&instruction.kind, KirInstructionKind::ConstInt { value: literal } if literal.parse::<u32>().ok() == Some(1))
+            && instruction.results.as_slice().iter().any(|item| item.value == resolve(value) && item.type_node == result.type_node))
+    };
+    let (base, one) = if is_one(right) {
+        (resolve(left), resolve(right))
+    } else if is_one(left) {
+        (resolve(right), resolve(left))
+    } else {
+        return None;
+    };
+    // Any local constant must be precisely the unit operand, with no extra work.
+    if arm
+        .source
+        .instructions
+        .iter()
+        .filter(|instruction| instruction.id != add.id)
+        .any(|instruction| {
+            instruction.results[0].value != one
+                || instruction.results[0].type_node != result.type_node
+        })
+    {
+        return None;
+    }
+    let mut changed_index = None;
+    for (index, (carried, direct)) in join_edge
+        .args
+        .iter()
+        .zip(&direct_edge.source.args)
+        .enumerate()
+    {
+        if *carried == result.value {
+            if *direct != base || changed_index.replace(index).is_some() {
+                return None;
+            }
+        } else if resolve(*carried) != *direct {
+            return None;
+        }
+    }
+    let changed_index = changed_index?;
+    let definitions = arm
+        .source
+        .params
+        .iter()
+        .map(|param| param.value)
+        .chain(
+            arm.source
+                .instructions
+                .iter()
+                .flat_map(|instruction| instruction.results.iter().map(|result| result.value)),
+        )
+        .collect::<BTreeSet<_>>();
+    for block in &function.source.blocks {
+        if block.id == arm.source.id {
+            continue;
+        }
+        let mut external_use = false;
+        for instruction in &block.instructions {
+            crate::visit_instruction_uses(instruction, &mut |value| {
+                external_use |= definitions.contains(&value)
+            });
+        }
+        let control_value = match block.terminator {
+            KirTerminator::Return { value, .. } => value,
+            KirTerminator::Branch { condition, .. } => Some(condition),
+            KirTerminator::Jump { .. } => None,
+        };
+        if external_use
+            || control_value.is_some_and(|value| definitions.contains(&value))
+            || wasm_edges(&block.terminator)
+                .into_iter()
+                .flatten()
+                .flat_map(|edge| &edge.args)
+                .any(|value| definitions.contains(value))
+        {
+            return None;
+        }
+    }
+    let join = function
+        .source
+        .blocks
+        .iter()
+        .find(|block| block.id == join_edge.target)?;
+    if join.params.get(changed_index)?.type_node != result.type_node {
+        return None;
+    }
+    let copy_index = join.params[..changed_index]
+        .iter()
+        .filter(|param| param.type_node.as_scalar().is_some())
+        .count();
+    let MirInstruction::Move { value, .. } = direct_edge.copies.get(copy_index)? else {
+        return None;
+    };
+    if Some(value) != function.values.get(&base)?.operand.as_ref() {
+        return None;
+    }
+    Some(WasmConditionalIncrement {
+        direct_edge,
+        condition,
+        base,
+        result: result.value,
+        copy_index,
+        increment_on_true: update_edge.arm == 0,
+    })
+}
+
+fn wasm_edges(terminator: &KirTerminator) -> [Option<&KirEdge>; 2] {
+    match terminator {
+        KirTerminator::Return { .. } => [None, None],
+        KirTerminator::Jump { edge } => [Some(edge), None],
+        KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } => [Some(then_edge), Some(else_edge)],
+    }
+}
+
 fn wasm_scalar_physical_type(type_node: &MirType) -> Result<WasmPhysicalType, WasmLoweringError> {
     match type_node {
         MirType::Primitive(

@@ -843,7 +843,7 @@ mod tests {
     }
 
     fn validate_wat(module: &FinalWasmModule) {
-        let wasm = wat::parse_str(&module.to_wat()).expect("placement output WAT parses");
+        let wasm = wat::parse_str(module.to_wat()).expect("placement output WAT parses");
         let features = wasmparser::WasmFeatures::MVP
             | wasmparser::WasmFeatures::MULTI_VALUE
             | wasmparser::WasmFeatures::BULK_MEMORY

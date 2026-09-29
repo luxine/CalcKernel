@@ -1728,6 +1728,359 @@ const WASM_RUNTIME_ALIAS_MAP: &str = include_str!("../../examples/wasm/alias_map
 const WASM_MODULAR_REDUCTIONS: &str = include_str!("../../examples/wasm/reduction.ck");
 
 #[test]
+fn wasm_modular_sum_should_carry_a_vector_and_reduce_once_before_the_scalar_tail() {
+    let source = "export unsafe fn sum(a: slice<u32>, n: u32, seed: u32) -> u32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: u32 = seed; while i < n { total = total + a[i]; i = i + 1; } return total; }";
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let candidate = discover_vectorization_candidates(&pre).candidates.remove(0);
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("sum trial");
+    let function = &prepared.trial.module().functions[0];
+    let body = function
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .unwrap();
+    assert!(
+        body.params.iter().any(|param| matches!(
+            param.type_node,
+            calckernel::KirValueType::FixedVector { lanes: 4, .. }
+        )),
+        "sum must carry a vector accumulator"
+    );
+    assert!(
+        !body.instructions.iter().any(|instruction| matches!(
+            instruction.kind,
+            calckernel::KirInstructionKind::VectorReduce { .. }
+        )),
+        "horizontal fold must not execute each chunk"
+    );
+    let finalizer = function
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_finalize")
+        .expect("once-only finalizer");
+    assert_eq!(
+        finalizer
+            .instructions
+            .iter()
+            .filter(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorReduce { .. }
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn wasm_modular_accumulator_checker_should_reject_wrong_seed_recurrence_and_tail() {
+    use calckernel::{KirInstructionKind as Kind, KirTerminator};
+    let source = "export unsafe fn sum(a: slice<i32>, n: u32, seed: i32) -> i32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: i32 = seed; while i < n { total = total + a[i]; i = i + 1; } return total; }";
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let candidate = discover_vectorization_candidates(&pre).candidates.remove(0);
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("sum trial");
+    for mutation in [
+        "nonzero identity",
+        "wrong recurrence",
+        "wrong seed",
+        "wrong tail",
+    ] {
+        let mut forged = prepared.trial.clone();
+        let function = &mut forged.module_mut().functions[0];
+        match mutation {
+            "nonzero identity" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.id == candidate.preheader)
+                    .unwrap();
+                let zero = block
+                    .instructions
+                    .iter()
+                    .find_map(|instruction| match instruction.kind {
+                        Kind::VectorSplat { scalar, .. } => Some(scalar),
+                        _ => None,
+                    })
+                    .unwrap();
+                let instruction = block
+                    .instructions
+                    .iter_mut()
+                    .find(|instruction| {
+                        instruction
+                            .results
+                            .iter()
+                            .any(|result| result.value == zero)
+                    })
+                    .unwrap();
+                let Kind::ConstInt { value } = &mut instruction.kind else {
+                    unreachable!()
+                };
+                *value = "1".to_string();
+            }
+            "wrong recurrence" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.label == "loop_simd_body")
+                    .unwrap();
+                let fresh = block
+                    .instructions
+                    .iter()
+                    .find_map(|instruction| {
+                        matches!(instruction.kind, Kind::VectorLoad { .. })
+                            .then(|| instruction.results[0].value)
+                    })
+                    .unwrap();
+                let KirTerminator::Jump { edge } = &mut block.terminator else {
+                    unreachable!()
+                };
+                *edge.args.last_mut().unwrap() = fresh;
+            }
+            "wrong seed" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.label == "loop_simd_finalize")
+                    .unwrap();
+                let Kind::Binary { left, right, .. } = &mut block.instructions[1].kind else {
+                    unreachable!()
+                };
+                *left = *right;
+            }
+            "wrong tail" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.label == "loop_simd_finalize")
+                    .unwrap();
+                let folded = block.instructions[0].results[0].value;
+                let combined = block.instructions[1].results[0].value;
+                let KirTerminator::Jump { edge } = &mut block.terminator else {
+                    unreachable!()
+                };
+                *edge
+                    .args
+                    .iter_mut()
+                    .find(|value| **value == combined)
+                    .unwrap() = folded;
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            check_vectorization_trial_independently(
+                &pre,
+                &forged,
+                &prepared.plan,
+                &prepared.charge
+            )
+            .is_err(),
+            "checker accepted {mutation}"
+        );
+    }
+}
+
+#[test]
+fn wasm_modular_accumulator_must_not_expose_a_partial_sum_inside_the_loop() {
+    let source = "export unsafe fn sum(a: slice<u32>, n: u32) -> u32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: u32 = 7; while i < n { total = total + total * a[i]; i = i + 1; } return total; }";
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    assert!(
+        discover_vectorization_candidates(&pre)
+            .candidates
+            .is_empty(),
+        "a lane source depending on the partial sum cannot use a persistent modular-add accumulator"
+    );
+}
+
+const WASM_LAGGED_SUM: &str = r#"
+export unsafe fn lag(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { previous = total; total = total + a[i]; i = i + 1; }
+    return previous + total;
+}
+export unsafe fn lag_copy(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { let snapshot: u32 = total; previous = snapshot; total = total + a[i]; i = i + 1; }
+    return previous + total;
+}
+"#;
+
+const WASM_LAGGED_PRODUCT: &str = r#"
+export unsafe fn lag_product(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { previous = total; total = total * a[i]; i = i + 1; }
+    return previous + total;
+}
+export unsafe fn lag_product_copy(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { let snapshot: u32 = total; previous = snapshot; total = total * a[i]; i = i + 1; }
+    return previous + total;
+}
+export unsafe fn product(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed;
+    while i < n { total = total * a[i]; i = i + 1; }
+    return total;
+}
+"#;
+
+#[test]
+fn wasm_modular_product_should_preserve_observed_previous_values_at_runtime() {
+    if !crate::support::command::node_available() {
+        eprintln!("skipping lagged product runtime check: node unavailable");
+        return;
+    }
+    let bytes = [KirOptimizationLevel::O0, KirOptimizationLevel::O3].map(|level| {
+        let (pre, contracts) = wasm_map_state(WASM_LAGGED_PRODUCT, KirWasmFeatures::Simd128);
+        let optimized = run_kir_pass_pipeline(pre.module().clone(), level, contracts.as_ref());
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+        calckernel::emit_wasm_kir_module(
+            optimized.artifact.as_ref().expect("product artifact"),
+            calckernel::EmitWasmOptions {
+                opt_level: if level == KirOptimizationLevel::O0 {
+                    0
+                } else {
+                    3
+                },
+            },
+        )
+        .expect("product WASM")
+    });
+    let script = r#"
+        const assert = require('node:assert/strict');
+        const modules = JSON.parse(process.argv[1]).map(bytes => new WebAssembly.Instance(new WebAssembly.Module(Uint8Array.from(bytes))).exports);
+        for (const wasm of modules) {
+            const data = new Uint32Array(wasm.memory.buffer, 1024, 128);
+            for (const pattern of ['twos', 'wrapping']) {
+                for (let i = 0; i < data.length; i++) data[i] = pattern === 'twos' ? 2 : (Math.imul(i + 1, 0x9e3779b9) | 1) >>> 0;
+                for (const n of [0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128]) {
+                    for (const seed of [0, 3, 0x7fffffff, 0x80000000, 0xffffffff]) {
+                        let total = seed, previous = 0;
+                        for (let i = 0; i < n; i++) { previous = total; total = Math.imul(total, data[i]) >>> 0; }
+                        for (const name of ['lag_product', 'lag_product_copy']) assert.equal(wasm[name](1024, n, n, seed) >>> 0, (previous + total) >>> 0, `${name}, ${pattern}, n=${n}, seed=${seed}`);
+                        assert.equal(wasm.product(1024, n, n, seed) >>> 0, total, `ordinary product, ${pattern}, n=${n}, seed=${seed}`);
+                    }
+                }
+            }
+        }
+    "#;
+    let output = std::process::Command::new("node")
+        .args([
+            "-e",
+            script,
+            &serde_json::to_string(&bytes).expect("module JSON"),
+        ])
+        .output()
+        .expect("node");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn wasm_modular_product_should_reject_lagged_aliases_but_keep_an_unobserved_reduction() {
+    let (pre, _) = wasm_map_state(WASM_LAGGED_PRODUCT, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert_eq!(discovery.candidates.len(), 1, "{discovery:#?}");
+    let candidate = &discovery.candidates[0];
+    let function = pre
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.id == candidate.function)
+        .unwrap();
+    assert_eq!(function.name, "product");
+    let prepared = prepare_vectorization_trial(&pre, candidate).expect("ordinary product trial");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn wasm_modular_accumulator_should_reject_lagged_backedge_aliases() {
+    let (pre, _) = wasm_map_state(WASM_LAGGED_SUM, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery.candidates.is_empty(),
+        "old accumulator escapes through another loop-carried parameter: {discovery:#?}"
+    );
+}
+
+#[test]
+fn wasm_modular_accumulator_lagged_sum_should_match_scalar_results_at_runtime() {
+    if !crate::support::command::node_available() {
+        eprintln!("skipping lagged accumulator runtime check: node unavailable");
+        return;
+    }
+    let bytes = [KirOptimizationLevel::O0, KirOptimizationLevel::O3].map(|level| {
+        let (pre, contracts) = wasm_map_state(WASM_LAGGED_SUM, KirWasmFeatures::Simd128);
+        let optimized = run_kir_pass_pipeline(pre.module().clone(), level, contracts.as_ref());
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+        calckernel::emit_wasm_kir_module(
+            optimized.artifact.as_ref().expect("lagged sum artifact"),
+            calckernel::EmitWasmOptions {
+                opt_level: if level == KirOptimizationLevel::O0 {
+                    0
+                } else {
+                    3
+                },
+            },
+        )
+        .expect("lagged sum WASM")
+    });
+    let script = r#"
+        const assert = require('node:assert/strict');
+        const modules = JSON.parse(process.argv[1]).map(bytes => new WebAssembly.Instance(new WebAssembly.Module(Uint8Array.from(bytes))).exports);
+        for (const wasm of modules) {
+            const data = new Uint32Array(wasm.memory.buffer, 1024, 128);
+            for (const pattern of ['ones', 'wrapping']) {
+                for (let i = 0; i < data.length; i++) data[i] = pattern === 'ones' ? 1 : (Math.imul(i + 1, 0x9e3779b9) ^ 0xffffffff) >>> 0;
+                for (const n of [0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128]) {
+                    for (const seed of [0, 7, 0x7fffffff, 0x80000000, 0xffffffff]) {
+                        let total = seed, previous = 0;
+                        for (let i = 0; i < n; i++) { previous = total; total = (total + data[i]) >>> 0; }
+                        const expected = (previous + total) >>> 0;
+                        for (const name of ['lag', 'lag_copy']) assert.equal(wasm[name](1024, n, n, seed) >>> 0, expected, `${name}, ${pattern}, n=${n}, seed=${seed}`);
+                    }
+                }
+            }
+        }
+    "#;
+    let output = std::process::Command::new("node")
+        .args([
+            "-e",
+            script,
+            &serde_json::to_string(&bytes).expect("module JSON"),
+        ])
+        .output()
+        .expect("node");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn wasm_simd128_slice_len_bound_should_materialize_from_a_stable_descriptor_root() {
     let (pre, _) = wasm_map_state(WASM_SLICE_LEN_SUM, KirWasmFeatures::Simd128);
     let discovery = discover_vectorization_candidates(&pre);

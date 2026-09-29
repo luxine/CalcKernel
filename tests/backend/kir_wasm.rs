@@ -2245,6 +2245,587 @@ fn loop_simd_portable_wasm_should_remain_scalar_and_match_o0() {
     }
 }
 
+fn vector_edge_cycle_module() -> calckernel::KirModule {
+    use calckernel::{
+        KirArithmeticSemantics, KirBlockParam, KirLaneType, KirVectorReductionOp, KirVectorRegion,
+        MirBinaryOp, MirCompareOp, VectorRegionId,
+    };
+
+    let u32_ty = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::U32));
+    let i32_ty = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::I32));
+    let bool_ty = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::Bool));
+    let vector_ty = KirValueType::FixedVector {
+        lane: KirLaneType::I32,
+        lanes: 4,
+    };
+    let region = VectorRegionId::from_index(0);
+    let value = ValueId::from_index;
+    let edge = |target, args: &[u32]| KirEdge {
+        target: BlockId::from_index(target),
+        args: args.iter().copied().map(value).collect(),
+        memory_args: vec![],
+    };
+    let param = |id, type_node: KirValueType| KirBlockParam {
+        value: value(id),
+        slot: format!("p{id}"),
+        type_node,
+    };
+    let instruction = |id, type_node: KirValueType, kind| KirInstruction {
+        id: InstructionId::from_index(id),
+        results: vec![KirResult {
+            value: value(id),
+            type_node,
+        }],
+        kind,
+        memory: None,
+        effect: None,
+    };
+    let integer = |id, type_node, constant: &str| {
+        instruction(
+            id,
+            type_node,
+            KirInstructionKind::ConstInt {
+                value: constant.into(),
+            },
+        )
+    };
+    let binary = |id, type_node, op, left, right| {
+        instruction(
+            id,
+            type_node,
+            KirInstructionKind::Binary {
+                op,
+                left: value(left),
+                right: value(right),
+                semantics: KirArithmeticSemantics::Modular,
+            },
+        )
+    };
+    let mut module = wasm32_predicate_only_module();
+    module.functions = vec![KirFunction {
+        id: FunctionId::from_index(0),
+        name: "rotate".into(),
+        exported: true,
+        params: vec![
+            KirParam {
+                value: value(0),
+                name: "rounds".into(),
+                type_node: MirType::Primitive(MirPrimitiveTypeName::U32),
+            },
+            KirParam {
+                value: value(1),
+                name: "swap".into(),
+                type_node: MirType::Primitive(MirPrimitiveTypeName::Bool),
+            },
+        ],
+        return_type: MirType::Primitive(MirPrimitiveTypeName::I32),
+        regions: vec![],
+        initial_memory: vec![],
+        vector_regions: vec![KirVectorRegion {
+            id: region,
+            blocks: (0..4).map(BlockId::from_index).collect(),
+        }],
+        blocks: vec![
+            KirBlock {
+                id: BlockId::from_index(0),
+                label: "entry".into(),
+                params: vec![],
+                memory_params: vec![],
+                instructions: vec![
+                    integer(2, u32_ty.clone(), "0"),
+                    integer(3, u32_ty.clone(), "1"),
+                    integer(4, i32_ty.clone(), "1"),
+                    integer(5, i32_ty.clone(), "10"),
+                    integer(6, i32_ty.clone(), "100"),
+                    instruction(
+                        7,
+                        vector_ty.clone(),
+                        KirInstructionKind::VectorSplat {
+                            scalar: value(4),
+                            region,
+                        },
+                    ),
+                    instruction(
+                        8,
+                        vector_ty.clone(),
+                        KirInstructionKind::VectorSplat {
+                            scalar: value(5),
+                            region,
+                        },
+                    ),
+                ],
+                terminator: KirTerminator::Jump {
+                    edge: edge(1, &[2, 7, 8]),
+                },
+            },
+            KirBlock {
+                id: BlockId::from_index(1),
+                label: "header".into(),
+                params: vec![
+                    param(9, u32_ty.clone()),
+                    param(10, vector_ty.clone()),
+                    param(11, vector_ty.clone()),
+                ],
+                memory_params: vec![],
+                instructions: vec![instruction(
+                    12,
+                    bool_ty,
+                    KirInstructionKind::Compare {
+                        op: MirCompareOp::Lt,
+                        left: value(9),
+                        right: value(0),
+                    },
+                )],
+                terminator: KirTerminator::Branch {
+                    condition: value(12),
+                    then_edge: edge(2, &[]),
+                    else_edge: edge(3, &[10, 11]),
+                },
+            },
+            KirBlock {
+                id: BlockId::from_index(2),
+                label: "body".into(),
+                params: vec![],
+                memory_params: vec![],
+                instructions: vec![binary(13, u32_ty, MirBinaryOp::Add, 9, 3)],
+                // Both arms target the same header; the taken arm alone swaps its vector locals.
+                terminator: KirTerminator::Branch {
+                    condition: value(1),
+                    then_edge: edge(1, &[13, 11, 10]),
+                    else_edge: edge(1, &[13, 10, 11]),
+                },
+            },
+            KirBlock {
+                id: BlockId::from_index(3),
+                label: "exit".into(),
+                params: vec![param(14, vector_ty.clone()), param(15, vector_ty)],
+                memory_params: vec![],
+                instructions: vec![
+                    instruction(
+                        16,
+                        i32_ty.clone(),
+                        KirInstructionKind::VectorReduce {
+                            op: KirVectorReductionOp::ModularAdd,
+                            vector: value(14),
+                            semantics: KirArithmeticSemantics::Modular,
+                            region,
+                        },
+                    ),
+                    instruction(
+                        17,
+                        i32_ty.clone(),
+                        KirInstructionKind::VectorReduce {
+                            op: KirVectorReductionOp::ModularAdd,
+                            vector: value(15),
+                            semantics: KirArithmeticSemantics::Modular,
+                            region,
+                        },
+                    ),
+                    binary(18, i32_ty.clone(), MirBinaryOp::Mul, 16, 6),
+                    binary(19, i32_ty, MirBinaryOp::Add, 18, 17),
+                ],
+                terminator: KirTerminator::Return {
+                    value: Some(value(19)),
+                    memory: vec![],
+                    effect_order: 0,
+                },
+            },
+        ],
+    }];
+    module
+}
+
+#[test]
+fn kir_wasm_conditional_increment_should_remove_only_the_triangle_and_normalize_bool() {
+    const SOURCE: &str = r#"
+export fn inc(base: u32, flag: bool) -> u32 {
+  let result: u32 = base;
+  if flag { result = result + 1; }
+  return result;
+}
+export fn inc_false(base: i32, flag: bool) -> i32 {
+  let result: i32 = base;
+  if flag { } else { result = 1 + result; }
+  return result;
+}
+"#;
+    let module = optimized_kir(SOURCE, KirOptimizationLevel::O3);
+    let wat = emit_wat_kir_module(&module, EmitWasmOptions { opt_level: 3 }).expect("triangle WAT");
+    assert!(
+        !wat.lines().any(|line| line.trim() == "if"),
+        "increment triangles should be branchless:\n{wat}"
+    );
+    for opt_level in 0..=3 {
+        run_wasm(
+            &emit_wasm_kir_module(&module, EmitWasmOptions { opt_level }).expect("triangle WASM"),
+            r#"
+import fs from "node:fs";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+for (const base of [0, 1, 42, 0x7fffffff, 0x80000000, 0xffffffff]) {
+  for (const flag of [0, 1, 2, -1, -2147483648]) {
+    const actual = instance.exports.inc(base, flag) >>> 0;
+    const expected = (base + (flag !== 0 ? 1 : 0)) >>> 0;
+    if (actual !== expected) throw new Error(`inc ${base},${flag}: ${actual} != ${expected}`);
+    const actualFalse = instance.exports.inc_false(base, flag);
+    const expectedFalse = (base + (flag === 0 ? 1 : 0)) | 0;
+    if (actualFalse !== expectedFalse) throw new Error(`inc_false ${base},${flag}`);
+  }
+}
+"#,
+        );
+    }
+}
+
+#[test]
+fn kir_wasm_conditional_increment_should_preserve_loop_and_other_join_values() {
+    const SOURCE: &str = r#"
+export fn count(n: u32, seed: u32, flag: bool) -> u32 {
+  let i: u32 = 0;
+  let hits: u32 = seed;
+  while i < n {
+    if flag { hits = hits + 1; }
+    i = i + 1;
+  }
+  return hits + i;
+}
+"#;
+    let module = optimized_kir(SOURCE, KirOptimizationLevel::O3);
+    let wat = emit_wat_kir_module(&module, EmitWasmOptions { opt_level: 3 }).expect("count WAT");
+    assert_eq!(
+        wat.lines().filter(|line| line.trim() == "if").count(),
+        1,
+        "only the loop condition remains:\n{wat}"
+    );
+    for opt_level in [0, 3] {
+        run_wasm(
+            &emit_wasm_kir_module(&module, EmitWasmOptions { opt_level }).expect("count WASM"),
+            r#"
+import fs from "node:fs";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+for (const n of [0, 1, 2, 17]) for (const seed of [0, 0xffffffff]) for (const flag of [0, 1, 2, -1]) {
+  const expected = (seed + n + (flag !== 0 ? n : 0)) >>> 0;
+  const actual = instance.exports.count(n, seed, flag) >>> 0;
+  if (actual !== expected) throw new Error(`${n},${seed},${flag}: ${actual} != ${expected}`);
+}
+"#,
+        );
+    }
+}
+
+#[test]
+fn kir_wasm_conditional_increment_should_retain_effectful_trapping_and_nonunit_arms() {
+    for body in [
+        "result = result + 2;",
+        "result = result + 1; out[0] = result;",
+        "result = result / divisor;",
+        "result = result + 1; other = other + 1;",
+    ] {
+        let source = format!(
+            "export fn keep(base: u32, other_start: u32, flag: bool, out: ptr<u32>, divisor: u32) -> u32 {{ let result: u32 = base; let other: u32 = other_start; if flag {{ {body} }} return result + other; }}"
+        );
+        let module = optimized_kir(&source, KirOptimizationLevel::O3);
+        let wat = emit_wat_kir_module(&module, EmitWasmOptions { opt_level: 3 })
+            .expect("retained branch WAT");
+        assert!(
+            wat.lines().any(|line| line.trim() == "if"),
+            "unsupported arm must retain its branch: {body}\n{wat}"
+        );
+        run_wasm(
+            &emit_wasm_kir_module(&module, EmitWasmOptions { opt_level: 3 })
+                .expect("retained branch WASM"),
+            r#"
+import fs from "node:fs";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+// The untaken branch must neither write out of bounds nor divide by zero.
+if (instance.exports.keep(40, 2, 0, 0xffffffff, 0) !== 42) throw new Error("untaken arm changed behavior");
+"#,
+        );
+    }
+}
+
+#[test]
+fn kir_wasm_vector_edges_should_preserve_parallel_cycles_and_selected_loop_branches() {
+    let module = vector_edge_cycle_module();
+    assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+    for opt_level in 0..=3 {
+        let options = EmitWasmOptions { opt_level };
+        let wat = emit_wat_kir_module(&module, options).expect("vector edge WAT");
+        assert_eq!(wat.contains("br_table"), opt_level < 3, "{wat}");
+        let wasm = emit_wasm_kir_module(&module, options).expect("vector edge WASM");
+        wasmparser::Validator::new_with_features(wasm_features(KirWasmFeatures::Simd128))
+            .validate_all(&wasm)
+            .expect("vector edges validate");
+        run_wasm(
+            &wasm,
+            r#"
+import fs from "node:fs";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+for (const rounds of [0, 1, 2, 3, 4, 17, 32]) {
+    for (const swap of [0, 1]) {
+        const expected = swap && rounds % 2 ? 4004 : 440;
+        const actual = instance.exports.rotate(rounds, swap);
+        if (actual !== expected) throw new Error(`${rounds},${swap}: ${actual} != ${expected}`);
+    }
+}
+"#,
+        );
+    }
+}
+
+fn irreducible_vector_edge_cycle_module() -> calckernel::KirModule {
+    let mut module = vector_edge_cycle_module();
+    let function = &mut module.functions[0];
+    let KirTerminator::Jump { edge: entry } = function.blocks[0].terminator.clone() else {
+        unreachable!()
+    };
+    function.blocks[0].terminator = KirTerminator::Branch {
+        condition: ValueId::from_index(1),
+        then_edge: entry.clone(),
+        else_edge: KirEdge {
+            target: BlockId::from_index(2),
+            ..entry
+        },
+    };
+    function.blocks[2].params = function.blocks[1]
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| calckernel::KirBlockParam {
+            value: ValueId::from_index(20 + u32::try_from(index).unwrap()),
+            slot: format!("body{index}"),
+            type_node: param.type_node.clone(),
+        })
+        .collect();
+    let KirTerminator::Branch { then_edge, .. } = &mut function.blocks[1].terminator else {
+        unreachable!()
+    };
+    then_edge.args = [9, 10, 11].map(ValueId::from_index).to_vec();
+    let KirInstructionKind::Binary { left, .. } = &mut function.blocks[2].instructions[0].kind
+    else {
+        unreachable!()
+    };
+    *left = ValueId::from_index(20);
+    let KirTerminator::Branch {
+        then_edge,
+        else_edge,
+        ..
+    } = &mut function.blocks[2].terminator
+    else {
+        unreachable!()
+    };
+    then_edge.args = [13, 22, 21].map(ValueId::from_index).to_vec();
+    // Duplicated arguments must be read before either destination is assigned.
+    else_edge.args = [13, 22, 22].map(ValueId::from_index).to_vec();
+    module
+}
+
+#[test]
+fn kir_wasm_vector_edges_should_keep_parallel_copies_in_irreducible_dispatcher() {
+    let module = irreducible_vector_edge_cycle_module();
+    assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+    let options = EmitWasmOptions { opt_level: 3 };
+    let wat = emit_wat_kir_module(&module, options).expect("irreducible vector WAT");
+    assert!(wat.contains("br_table"), "{wat}");
+    run_wasm(
+        &emit_wasm_kir_module(&module, options).expect("irreducible vector WASM"),
+        r#"
+import fs from "node:fs";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+for (const rounds of [0, 1, 2, 3, 4, 17, 32]) {
+    if (instance.exports.rotate(rounds, 0) !== 4040) throw new Error(`duplicate edge ${rounds}`);
+    const expected = rounds % 2 ? 4004 : 440;
+    if (instance.exports.rotate(rounds, 1) !== expected) throw new Error(`cycle edge ${rounds}`);
+}
+"#,
+    );
+}
+
+#[test]
+fn kir_wasm_conditional_increment_should_optimize_a_typed_dispatcher_triangle() {
+    let mut module = irreducible_vector_edge_cycle_module();
+    let scalar_type = MirType::Primitive(MirPrimitiveTypeName::I32);
+    let edge = |target, argument| KirEdge {
+        target: BlockId::from_index(target),
+        args: vec![ValueId::from_index(argument)],
+        memory_args: vec![],
+    };
+    module.functions[0].blocks[3].terminator = KirTerminator::Branch {
+        condition: ValueId::from_index(1),
+        then_edge: edge(4, 19),
+        else_edge: edge(5, 19),
+    };
+    module.functions[0].blocks.extend([
+        KirBlock {
+            id: BlockId::from_index(4),
+            label: "increment".into(),
+            params: vec![calckernel::KirBlockParam {
+                value: ValueId::from_index(30),
+                slot: "base".into(),
+                type_node: scalar_type.clone().into(),
+            }],
+            memory_params: vec![],
+            instructions: vec![KirInstruction {
+                id: InstructionId::from_index(31),
+                results: vec![KirResult {
+                    value: ValueId::from_index(31),
+                    type_node: scalar_type.clone().into(),
+                }],
+                kind: KirInstructionKind::Binary {
+                    op: calckernel::MirBinaryOp::Add,
+                    left: ValueId::from_index(30),
+                    right: ValueId::from_index(4),
+                    semantics: calckernel::KirArithmeticSemantics::Modular,
+                },
+                memory: None,
+                effect: None,
+            }],
+            terminator: KirTerminator::Jump { edge: edge(5, 31) },
+        },
+        KirBlock {
+            id: BlockId::from_index(5),
+            label: "return".into(),
+            params: vec![calckernel::KirBlockParam {
+                value: ValueId::from_index(32),
+                slot: "result".into(),
+                type_node: scalar_type.into(),
+            }],
+            memory_params: vec![],
+            instructions: vec![],
+            terminator: KirTerminator::Return {
+                value: Some(ValueId::from_index(32)),
+                memory: vec![],
+                effect_order: 0,
+            },
+        },
+    ]);
+    assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+    let wat = emit_wat_kir_module(&module, EmitWasmOptions { opt_level: 3 })
+        .expect("dispatcher triangle WAT");
+    assert!(wat.contains("br_table"), "{wat}");
+    assert_eq!(
+        wat.lines().filter(|line| line.trim() == "if").count(),
+        3,
+        "only the original dispatcher branches remain:\n{wat}"
+    );
+    for opt_level in [0, 3] {
+        run_wasm(
+            &emit_wasm_kir_module(&module, EmitWasmOptions { opt_level })
+                .expect("dispatcher triangle WASM"),
+            r#"
+import fs from "node:fs";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+for (const rounds of [0, 1, 2, 17]) {
+  if (instance.exports.rotate(rounds, 0) !== 4040) throw new Error("false triangle");
+  const expected = (rounds % 2 ? 4004 : 440) + 1;
+  if (instance.exports.rotate(rounds, 2) !== expected) throw new Error("true triangle");
+}
+"#,
+        );
+    }
+}
+
+#[test]
+fn kir_wasm_conditional_increment_should_reject_an_update_arm_with_another_predecessor() {
+    let mut module = optimized_kir(
+        "export fn inc(base: u32, flag: bool) -> u32 { let hits: u32 = base; if flag { hits = hits + 1; } return hits; }",
+        KirOptimizationLevel::O3,
+    );
+    let KirTerminator::Branch { then_edge, .. } = &module.functions[0].blocks[0].terminator else {
+        unreachable!()
+    };
+    let extra_edge = then_edge.clone();
+    let id = module.functions[0]
+        .blocks
+        .iter()
+        .map(|block| block.id.index())
+        .max()
+        .unwrap()
+        + 1;
+    module.functions[0].blocks.push(KirBlock {
+        id: BlockId::from_index(id),
+        label: "other_entry".into(),
+        params: vec![],
+        memory_params: vec![],
+        instructions: vec![],
+        terminator: KirTerminator::Jump { edge: extra_edge },
+    });
+    assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+    let wat =
+        emit_wat_kir_module(&module, EmitWasmOptions { opt_level: 3 }).expect("shared arm WAT");
+    assert!(
+        wat.lines().any(|line| line.trim() == "if"),
+        "shared update arm must retain its branch:\n{wat}"
+    );
+}
+
+#[test]
+fn kir_wasm_vector_edges_should_reject_cross_region_values_without_panicking() {
+    let mut module = vector_edge_cycle_module();
+    module.functions[0].vector_regions[0].blocks.pop();
+    module.functions[0]
+        .vector_regions
+        .push(calckernel::KirVectorRegion {
+            id: calckernel::VectorRegionId::from_index(1),
+            blocks: vec![BlockId::from_index(3)],
+        });
+    for instruction in &mut module.functions[0].blocks[3].instructions {
+        if let KirInstructionKind::VectorReduce { region, .. } = &mut instruction.kind {
+            *region = calckernel::VectorRegionId::from_index(1);
+        }
+    }
+    assert!(
+        calckernel::validate_kir_module(&module)
+            .errors
+            .iter()
+            .any(|error| error.message.contains("escapes its vector region"))
+    );
+    for opt_level in 0..=3 {
+        let result = std::panic::catch_unwind(|| {
+            emit_wasm_kir_module(&module, EmitWasmOptions { opt_level })
+        })
+        .expect("cross-region edge must not panic");
+        assert!(result.is_err(), "cross-region vector edge must be rejected");
+    }
+}
+
+#[test]
+fn kir_wasm_vector_edges_should_reject_mismatched_phi_types_and_vector_returns() {
+    for mutation in 0..3 {
+        let mut module = vector_edge_cycle_module();
+        match mutation {
+            0 => {
+                module.functions[0].blocks[1].params[1].type_node = KirValueType::FixedVector {
+                    lane: calckernel::KirLaneType::U32,
+                    lanes: 4,
+                }
+            }
+            1 => {
+                let KirTerminator::Jump { edge } = &mut module.functions[0].blocks[0].terminator
+                else {
+                    unreachable!()
+                };
+                edge.args.pop();
+            }
+            _ => {
+                let KirTerminator::Return { value, .. } =
+                    &mut module.functions[0].blocks[3].terminator
+                else {
+                    unreachable!()
+                };
+                *value = Some(ValueId::from_index(14));
+            }
+        }
+        assert!(!calckernel::validate_kir_module(&module).errors.is_empty());
+        for opt_level in 0..=3 {
+            let result = std::panic::catch_unwind(|| {
+                emit_wasm_kir_module(&module, EmitWasmOptions { opt_level })
+            })
+            .expect("malformed vector edge or return must not panic");
+            assert!(result.is_err(), "mutation {mutation} must be rejected");
+        }
+    }
+}
+
 fn run_wasm(wasm: &[u8], runner_source: &str) {
     let temp = temp_dir("kir_wasm_matrix");
     fs::create_dir_all(&temp).expect("create temp dir");

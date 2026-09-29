@@ -51,3 +51,6 @@ mod pgo;
 
 #[path = "optimizer/multiversion.rs"]
 mod multiversion;
+
+#[path = "optimizer/modular_affine.rs"]
+mod modular_affine;
