@@ -46,13 +46,21 @@ fn emit_final_for_mir(
     let has_version_predicate = module_has_version_predicates(module);
     let needs_typed_lowering = has_vector || has_version_predicate;
     if needs_typed_lowering {
-        let lowered = super::lower::lower_wasm_module(module, contracts, mir)?;
+        let lowered = super::lower::lower_wasm_module(module, contracts, mir)
+            .map_err(|error| error.to_string())?;
         super::emit::emit_final_module_with_lowering(mir, &lowered, options)
-    } else if options.opt_level >= 3
-        && let Ok(lowered) = super::lower::lower_wasm_module(module, contracts, mir)
-    {
-        super::emit::emit_final_module_with_lowering(mir, &lowered, options)
+    } else if options.opt_level >= 3 {
+        match super::lower::lower_wasm_module(module, contracts, mir) {
+            Ok(lowered) => super::emit::emit_final_module_with_lowering(mir, &lowered, options),
+            Err(super::lower::WasmLoweringError::InvalidInput(message))
+            | Err(super::lower::WasmLoweringError::InvariantFailure(message)) => Err(message),
+            Err(error @ super::lower::WasmLoweringError::UnsupportedValueType(_)) => {
+                Err(error.to_string())
+            }
+        }
     } else {
+        super::lower::validate_wasm_scalar_value_types(module, mir)
+            .map_err(|error| error.to_string())?;
         super::emit::emit_final_module_with_options(mir, options)
     }
 }
@@ -118,6 +126,147 @@ fn validate_wasm_kir_module(module: &KirModule) -> Result<KirWasmFeatures, Strin
         return Err(error.message.clone());
     }
     Ok(features)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOverflowMode,
+        KirSanitizerMode, SourceFile, build_kir_module, check, emit_wasm_kir_module,
+        emit_wat_kir_module, lower_to_mir,
+    };
+
+    use super::emit_final_for_mir;
+
+    #[test]
+    fn o3_scalar_should_propagate_typed_lowering_invariant_failures() {
+        let checked = check(&SourceFile::new(
+            "wasm-lowering-invariant.ck",
+            "export fn choose(flag: bool, value: i32) -> i32 { if flag { return value + 1; } return value; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let mut module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+        let branch = module.functions[0]
+            .blocks
+            .iter_mut()
+            .find(|block| matches!(block.terminator, crate::KirTerminator::Branch { .. }))
+            .expect("conditional branch");
+        let crate::KirTerminator::Branch { then_edge, .. } = &mut branch.terminator else {
+            unreachable!();
+        };
+        then_edge.target = crate::BlockId::from_index(u32::MAX);
+
+        let error = emit_final_for_mir(&module, &mir, None, EmitWasmOptions { opt_level: 3 })
+            .expect_err("typed lowering invariant failures must not be swallowed");
+        assert!(error.contains("unknown block"), "{error}");
+    }
+
+    #[test]
+    fn wasm_emission_should_report_unsupported_aggregate_values_without_mir_fallback_at_all_levels()
+    {
+        let checked = check(&SourceFile::new(
+            "wasm-unsupported-aggregate.ck",
+            "struct Item { value: i32; } export fn read(item: Item) -> i32 { return item.value; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+
+        for opt_level in 0..=3 {
+            let options = EmitWasmOptions { opt_level };
+            let wat = std::panic::catch_unwind(|| emit_wat_kir_module(&module, options))
+                .expect("unsupported value should be reported instead of panicking");
+            assert!(
+                wat.expect_err("aggregate value is unsupported by the scalar WASM ABI")
+                    .contains("cannot lower value type"),
+                "O{opt_level} WAT"
+            );
+            let binary = std::panic::catch_unwind(|| emit_wasm_kir_module(&module, options))
+                .expect("unsupported value should be reported instead of panicking");
+            assert!(
+                binary
+                    .expect_err("aggregate value is unsupported by the scalar WASM ABI")
+                    .contains("cannot lower value type"),
+                "O{opt_level} binary"
+            );
+        }
+    }
+
+    #[test]
+    fn o3_wasm_emission_should_keep_dispatcher_for_an_irreducible_cfg() {
+        let checked = check(&SourceFile::new(
+            "wasm-irreducible-dispatcher.ck",
+            "export fn cycle(flag: bool) -> void { if flag { return; } return; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let mut module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+        let function = &mut module.functions[0];
+        assert_eq!(function.blocks.len(), 3, "entry and both branch arms");
+        let first = function.blocks[1].id;
+        let second = function.blocks[2].id;
+        let first_param = function.blocks[1].params[0].value;
+        let second_param = function.blocks[2].params[0].value;
+        let first_memory = function.blocks[1].memory_params[0].version;
+        let second_memory = function.blocks[2].memory_params[0].version;
+        function.blocks[1].terminator = crate::KirTerminator::Jump {
+            edge: crate::KirEdge {
+                target: second,
+                args: vec![first_param],
+                memory_args: vec![first_memory],
+            },
+        };
+        function.blocks[2].terminator = crate::KirTerminator::Jump {
+            edge: crate::KirEdge {
+                target: first,
+                args: vec![second_param],
+                memory_args: vec![second_memory],
+            },
+        };
+        let validation = crate::validate_kir_module(&module);
+        assert!(validation.errors.is_empty(), "{:#?}", validation.errors);
+
+        let options = EmitWasmOptions { opt_level: 3 };
+        let wat = emit_wat_kir_module(&module, options).expect("irreducible WAT");
+        assert!(
+            wat.contains("br_table"),
+            "dispatcher missing from WAT: {wat}"
+        );
+        let wasm = emit_wasm_kir_module(&module, options).expect("irreducible binary");
+        wasmparser::Validator::new_with_features(
+            wasmparser::WasmFeatures::MVP | wasmparser::WasmFeatures::MULTI_VALUE,
+        )
+        .validate_all(&wasm)
+        .expect("dispatcher binary validates");
+    }
 }
 
 fn adapt_unchecked_kir(module: &KirModule) -> Result<MirModule, String> {

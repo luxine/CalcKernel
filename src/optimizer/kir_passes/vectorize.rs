@@ -579,6 +579,29 @@ pub(crate) fn materialize_vectorization_trial(
                         },
                     );
                 }
+                KirInstructionKind::ConstFloat { value } => {
+                    let result = scalar_result(instruction)?;
+                    let fresh = trial.fresh_value()?;
+                    emitted.push(KirInstruction {
+                        id: trial.fresh_instruction()?,
+                        results: vec![KirResult {
+                            value: fresh,
+                            type_node: instruction.results[0].type_node.clone(),
+                        }],
+                        kind: KirInstructionKind::ConstFloat {
+                            value: value.clone(),
+                        },
+                        memory: None,
+                        effect: None,
+                    });
+                    mapped.insert(
+                        result,
+                        MappedValue {
+                            value: fresh,
+                            vector: false,
+                        },
+                    );
+                }
                 KirInstructionKind::Copy { value } => {
                     let result = scalar_result(instruction)?;
                     let source = resolve_value(&mapped, *value);
@@ -1737,6 +1760,95 @@ fn invariant_root_value(
         .ok_or_else(|| "vector slice base is not a loop-invariant root value".to_string())
 }
 
+fn stable_invariant_root_value(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+) -> Result<crate::ValueId, String> {
+    fn visit(
+        function: &crate::KirFunction,
+        value: crate::ValueId,
+        visiting: &mut BTreeSet<crate::ValueId>,
+    ) -> Result<Option<crate::ValueId>, ()> {
+        if function.params.iter().any(|param| param.value == value) {
+            return Ok(Some(value));
+        }
+        if !visiting.insert(value) {
+            return Ok(None);
+        }
+        let result = if let Some((block_id, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            let mut incoming_count = 0_usize;
+            let mut roots = BTreeSet::new();
+            for predecessor in &function.blocks {
+                let edges = match &predecessor.terminator {
+                    crate::KirTerminator::Jump { edge } if edge.target == block_id => {
+                        vec![edge]
+                    }
+                    crate::KirTerminator::Branch {
+                        then_edge,
+                        else_edge,
+                        ..
+                    } => [then_edge, else_edge]
+                        .into_iter()
+                        .filter(|edge| edge.target == block_id)
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for edge in edges {
+                    incoming_count = incoming_count.saturating_add(1);
+                    let source = *edge.args.get(index).ok_or(())?;
+                    if let Some(root) = visit(function, source, visiting)? {
+                        roots.insert(root);
+                    }
+                }
+            }
+            if incoming_count == 0 {
+                Err(())
+            } else {
+                match roots.len() {
+                    0 => Ok(None),
+                    1 => Ok(roots.first().copied()),
+                    _ => Err(()),
+                }
+            }
+        } else if let Some(source) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction.kind {
+                KirInstructionKind::Copy { value: source }
+                    if instruction
+                        .results
+                        .iter()
+                        .any(|result| result.value == value) =>
+                {
+                    Some(source)
+                }
+                _ => None,
+            })
+        {
+            visit(function, source, visiting)
+        } else {
+            Err(())
+        };
+        visiting.remove(&value);
+        result
+    }
+
+    visit(function, value, &mut BTreeSet::new())
+        .map_err(|()| {
+            "vector slice-length descriptor is not invariant across the loop".to_string()
+        })?
+        .ok_or_else(|| {
+            "vector slice-length descriptor is not invariant across the loop".to_string()
+        })
+}
+
 fn materialize_entry_value(
     function: &crate::KirFunction,
     header: &KirBlock,
@@ -1785,6 +1897,38 @@ fn materialize_entry_value(
             kind: KirInstructionKind::ConstInt {
                 value: constant.clone(),
             },
+            memory: None,
+            effect: None,
+        });
+        return Ok(fresh);
+    }
+    if let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == value)
+        })
+        && let KirInstructionKind::SliceLen { slice } = instruction.kind
+    {
+        if instruction.results.len() != 1
+            || instruction.memory.is_some()
+            || instruction.effect.is_some()
+        {
+            return Err("vector slice-length projection is not a pure scalar value".to_string());
+        }
+        let root = stable_invariant_root_value(function, slice)?;
+        let fresh = trial.fresh_value()?;
+        transformed_preheader.instructions.push(KirInstruction {
+            id: trial.fresh_instruction()?,
+            results: vec![KirResult {
+                value: fresh,
+                type_node: instruction.results[0].type_node.clone(),
+            }],
+            kind: KirInstructionKind::SliceLen { slice: root },
             memory: None,
             effect: None,
         });

@@ -29,26 +29,23 @@ grows memory when a requested range needs more pages. A failed growth leaves
 the allocation cursor unchanged. The arena does not free memory or validate
 other pointers; keep input and output regions within their allocations.
 
-```js
-import { readFile } from 'node:fs/promises';
-import { createCKWasmArena } from './examples/wasm/host/ck-wasm-arena.mjs';
+Build and run the complete host example with Node (WebAssembly support is built
+into the runtime):
 
-const bytes = await readFile('build/pricing_batch.wasm');
-const { instance } = await WebAssembly.instantiate(bytes);
-const arena = createCKWasmArena(instance);
-
-const count = 3;
-const prices = arena.copyInI64(new BigInt64Array([100n, 200n, 300n]));
-const quantities = arena.copyInI64(new BigInt64Array([2n, 1n, 4n]));
-const discounts = arena.copyInI64(new BigInt64Array([5n, 0n, 20n]));
-const taxRates = arena.copyInI64(new BigInt64Array([100_000n, 200_000n, 50_000n]));
-const totals = arena.allocI64(count);
-
-instance.exports.pricing_batch(
-  prices.ptr, quantities.ptr, discounts.ptr, taxRates.ptr, totals, count,
-);
-const result = arena.copyOutI64(totals, count);
+```sh
+cargo build --release --locked --bin ckc
+target/release/ckc emit-wasm examples/wasm/pricing_batch.ck \
+  --out build/pricing_batch.wasm --opt-level 3 \
+  --wasm-features baseline --overflow unchecked --bounds unchecked
+node examples/wasm/host/pricing-batch.mjs build/pricing_batch.wasm
 ```
+
+The example allocates the four input columns and output column once, forces one
+memory growth to demonstrate invalidated views, reacquires each view from the
+current memory buffer, and then updates and submits three batches through the
+same arena. It prints the three result arrays as JSON. In an application, reserve
+the expected workspace before the hot loop when practical; do not keep using a
+typed array created before a possible `memory.grow`.
 
 Use `allocI32`/`viewI32`, `allocU32`/`viewU32`, `allocI64`/`viewI64`,
 `allocU64`/`viewU64`, or `allocF64`/`viewF64` for typed regions. `copyIn*`
@@ -59,7 +56,9 @@ its own view source after growth.
 
 The example exports `pricing_one`, which computes one record, and
 `pricing_batch`, which computes N structure-of-arrays records in one Wasm call.
-Run the focused Node checks with `node --test examples/wasm/host/*.test.mjs`.
+The same directory contains the growth, alignment, invalid-length, and repeated
+batch tests. Run the focused Node checks with
+`node --test examples/wasm/host/*.test.mjs`.
 For a timing comparison, build `ckc` and run:
 
 ```sh
@@ -76,3 +75,20 @@ WASM uses `--bounds unchecked` and `--overflow unchecked`. The CLI will reject
 checked modes; no implicit trap or guard is inserted. Validate offsets and
 lengths in the host when untrusted input reaches an export. See the normative
 [WASM ABI](../abi/wasm.md).
+
+The unchecked memory contract is separate from floating-point semantics: `f64`
+operations preserve strict source evaluation order and binary64 rounding by
+default. `baseline` is the default feature profile and emits no SIMD;
+`--wasm-features simd128` is an explicit opt-in for the validated SIMD shapes in
+the ABI. It does not enable Relaxed SIMD, FMA, fast math, or reassociation. A
+source `requires noalias(a, b)` is a caller obligation: pass disjoint ranges of
+the declared lengths even if the module itself accepts arbitrary pointer values.
+
+For performance claims, distinguish a timed kernel invocation from host
+preparation/readback and from first compile/instantiation. The repository's
+Node/V8 runner measures CK WASM and checks its outputs; it does not provide
+Clang/Rust WASM oracle timings. Native or historical Native performance reports
+are not same-target WASM parity evidence. The recorded first module compile is
+not browser cold start, and the per-round end-to-end phase uses an already
+instantiated module and excludes memory growth. Keep those boundaries visible
+when comparing implementations.

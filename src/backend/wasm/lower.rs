@@ -15,20 +15,47 @@ use super::{
     memory::checked_wasm_memory_plan_with_evidence,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum WasmLoweringError {
+    InvalidInput(String),
+    UnsupportedValueType(MirType),
+    InvariantFailure(String),
+}
+
+impl std::fmt::Display for WasmLoweringError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput(message) | Self::InvariantFailure(message) => {
+                formatter.write_str(message)
+            }
+            Self::UnsupportedValueType(type_node) => write!(
+                formatter,
+                "WebAssembly KIR backend cannot lower value type {type_node:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WasmLoweringError {}
+
 pub(super) fn lower_wasm_module<'a>(
     module: &'a KirModule,
     contracts: Option<&ContractFactSet>,
     mir: &MirModule,
-) -> Result<WasmLoweredModule<'a>, String> {
+) -> Result<WasmLoweredModule<'a>, WasmLoweringError> {
     if module.config.overflow_mode != KirOverflowMode::Unchecked
         || module.config.bounds_mode != KirBoundsMode::Unchecked
     {
-        return Err("WebAssembly KIR backend accepts only unchecked KIR".to_string());
+        return Err(WasmLoweringError::InvalidInput(
+            "WebAssembly KIR backend accepts only unchecked KIR".to_string(),
+        ));
     }
     let features = module.profile.wasm_features().ok_or_else(|| {
-        "WebAssembly KIR backend requires a WebAssembly target profile".to_string()
+        WasmLoweringError::InvalidInput(
+            "WebAssembly KIR backend requires a WebAssembly target profile".to_string(),
+        )
     })?;
-    validate_vector_kir(module, features)?;
+    validate_vector_kir(module, features).map_err(WasmLoweringError::InvalidInput)?;
     let layout = WasmStructLayout::new(mir);
     let artifact_functions = mir
         .functions
@@ -41,15 +68,54 @@ pub(super) fn lower_wasm_module<'a>(
             .iter()
             .filter(|function| artifact_functions.contains(function.name.as_str()))
             .map(|function| lower_wasm_function(function, contracts, &layout))
-            .collect::<Result<Vec<_>, _>>()?,
+            .collect::<Result<Vec<_>, WasmLoweringError>>()?,
     })
+}
+
+/// Rejects scalar KIR values that the legacy MIR emitter cannot represent before
+/// optimization levels that intentionally skip typed lowering reach that emitter.
+pub(super) fn validate_wasm_scalar_value_types(
+    module: &KirModule,
+    mir: &MirModule,
+) -> Result<(), WasmLoweringError> {
+    let artifact_functions = mir
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for function in module
+        .functions
+        .iter()
+        .filter(|function| artifact_functions.contains(function.name.as_str()))
+    {
+        if !matches!(function.return_type, MirType::Void) {
+            wasm_scalar_physical_type(&function.return_type)?;
+        }
+        for param in &function.params {
+            wasm_scalar_physical_type(&param.type_node)?;
+        }
+        for value_type in function.blocks.iter().flat_map(|block| {
+            block.params.iter().map(|param| &param.type_node).chain(
+                block.instructions.iter().flat_map(|instruction| {
+                    instruction.results.iter().map(|result| &result.type_node)
+                }),
+            )
+        }) {
+            if let KirValueType::Scalar(type_node) = value_type {
+                wasm_scalar_physical_type(type_node)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn lower_wasm_function<'a>(
     function: &'a KirFunction,
     contracts: Option<&ContractFactSet>,
     layout: &WasmStructLayout,
-) -> Result<WasmLoweredFunction<'a>, String> {
+) -> Result<WasmLoweredFunction<'a>, WasmLoweringError> {
     let types = value_types(function);
     let kir_types = value_kir_types(function);
     let params = function
@@ -77,9 +143,12 @@ fn lower_wasm_function<'a>(
     let values = source_types
         .into_iter()
         .map(|(id, source_type)| {
-            let kir_type = kir_types
-                .get(&id)
-                .ok_or_else(|| format!("WebAssembly KIR has no type for value {}", id.index()))?;
+            let kir_type = kir_types.get(&id).ok_or_else(|| {
+                WasmLoweringError::InvariantFailure(format!(
+                    "WebAssembly KIR has no type for value {}",
+                    id.index()
+                ))
+            })?;
             let operand = match source_type {
                 WasmSourceType::Mir(_) | WasmSourceType::Kir(KirValueType::Scalar(_)) => {
                     Some(super::kir::mir_value(id, &types, &params))
@@ -87,17 +156,18 @@ fn lower_wasm_function<'a>(
                 WasmSourceType::Kir(KirValueType::FixedVector { .. }) => None,
                 WasmSourceType::Kir(KirValueType::Mask { .. }) => None,
             };
+            let physical = wasm_physical_type(source_type, kir_type)?;
             Ok((
                 id,
                 WasmTypedValue {
                     value: id,
                     source_type,
                     operand,
-                    physical: wasm_physical_type(source_type, kir_type)?,
+                    physical,
                 },
             ))
         })
-        .collect::<Result<BTreeMap<_, _>, String>>()?;
+        .collect::<Result<BTreeMap<_, _>, WasmLoweringError>>()?;
     if !matches!(function.return_type, MirType::Void) {
         wasm_scalar_physical_type(&function.return_type)?;
     }
@@ -135,7 +205,8 @@ fn lower_wasm_function<'a>(
         let mut lowered_instructions = Vec::with_capacity(block.instructions.len());
         let mut view_instructions = Vec::new();
         for instruction in &block.instructions {
-            let leaves = adapt_instruction(instruction, &types, &params)?;
+            let leaves = adapt_instruction(instruction, &types, &params)
+                .map_err(WasmLoweringError::InvalidInput)?;
             view_instructions.extend(leaves.iter().cloned());
             lowered_instructions.push(WasmLoweredInstruction {
                 source: instruction,
@@ -239,12 +310,12 @@ fn lower_edge<'a>(
     blocks: &HashMap<BlockId, &'a KirBlock>,
     types: &BTreeMap<ValueId, MirType>,
     params: &BTreeMap<ValueId, (String, MirType)>,
-) -> Result<WasmLoweredEdge<'a>, String> {
+) -> Result<WasmLoweredEdge<'a>, WasmLoweringError> {
     let target = blocks.get(&edge.target).ok_or_else(|| {
-        format!(
+        WasmLoweringError::InvariantFailure(format!(
             "WebAssembly KIR edge targets unknown block {}",
             edge.target.index()
-        )
+        ))
     })?;
     let label = super::kir::edge_label(source.id, edge.target, u32::from(arm));
     Ok(WasmLoweredEdge {
@@ -257,7 +328,7 @@ fn lower_edge<'a>(
 fn wasm_physical_type(
     source_type: WasmSourceType<'_>,
     kir_type: &KirValueType,
-) -> Result<WasmPhysicalType, String> {
+) -> Result<WasmPhysicalType, WasmLoweringError> {
     match (source_type, kir_type) {
         (WasmSourceType::Mir(type_node), KirValueType::Scalar(source))
         | (WasmSourceType::Kir(KirValueType::Scalar(type_node)), KirValueType::Scalar(source))
@@ -272,11 +343,13 @@ fn wasm_physical_type(
         (WasmSourceType::Kir(KirValueType::Mask { .. }), KirValueType::Mask { .. }) => {
             Ok(WasmPhysicalType::V128)
         }
-        _ => Err("WebAssembly KIR typed value source metadata is inconsistent".to_string()),
+        _ => Err(WasmLoweringError::InvariantFailure(
+            "WebAssembly KIR typed value source metadata is inconsistent".to_string(),
+        )),
     }
 }
 
-fn wasm_scalar_physical_type(type_node: &MirType) -> Result<WasmPhysicalType, String> {
+fn wasm_scalar_physical_type(type_node: &MirType) -> Result<WasmPhysicalType, WasmLoweringError> {
     match type_node {
         MirType::Primitive(
             MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32 | MirPrimitiveTypeName::Bool,
@@ -287,9 +360,9 @@ fn wasm_scalar_physical_type(type_node: &MirType) -> Result<WasmPhysicalType, St
         }
         MirType::Primitive(MirPrimitiveTypeName::F64) => Ok(WasmPhysicalType::F64),
         MirType::Slice(_) => Ok(WasmPhysicalType::I32Pair),
-        MirType::Struct(_) | MirType::Void => Err(format!(
-            "WebAssembly KIR backend cannot lower value type {type_node:?}"
-        )),
+        MirType::Struct(_) | MirType::Void => {
+            Err(WasmLoweringError::UnsupportedValueType(type_node.clone()))
+        }
     }
 }
 
@@ -300,7 +373,7 @@ mod tests {
         KirValueType, MirType, SourceFile, build_kir_module, check, lower_to_mir,
     };
 
-    use super::{WasmPhysicalType, WasmSourceType, lower_wasm_module};
+    use super::{WasmLoweringError, WasmPhysicalType, WasmSourceType, lower_wasm_module};
 
     fn test_kir() -> (crate::KirModule, crate::MirModule) {
         let checked = check(&SourceFile::new(
@@ -331,6 +404,65 @@ mod tests {
         )
         .expect("valid unchecked WebAssembly KIR");
         (kir, mir)
+    }
+
+    #[test]
+    fn wasm_lowering_should_classify_invalid_input_and_cfg_invariants() {
+        let (mut module, mir) = test_kir();
+        module.profile = crate::KirTargetProfile::portable_c();
+        assert!(matches!(
+            lower_wasm_module(&module, None, &mir),
+            Err(WasmLoweringError::InvalidInput(_))
+        ));
+
+        let (mut module, mir) = test_kir();
+        let branch = module.functions[0]
+            .blocks
+            .iter_mut()
+            .find(|block| matches!(block.terminator, crate::KirTerminator::Branch { .. }))
+            .expect("conditional branch");
+        let crate::KirTerminator::Branch { then_edge, .. } = &mut branch.terminator else {
+            unreachable!();
+        };
+        then_edge.target = crate::BlockId::from_index(u32::MAX);
+        let error = lower_wasm_module(&module, None, &mir).expect_err("unknown edge target");
+        assert!(matches!(error, WasmLoweringError::InvariantFailure(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("WebAssembly KIR edge targets unknown block"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn wasm_lowering_should_classify_unsupported_value_types_and_preserve_display() {
+        let checked = check(&SourceFile::new(
+            "wasm-typed-unsupported.ck",
+            "struct Item { value: i32; } export fn read(item: Item) -> i32 { return item.value; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+
+        let error = lower_wasm_module(&module, None, &mir).expect_err("struct values unsupported");
+        assert!(matches!(
+            &error,
+            WasmLoweringError::UnsupportedValueType(MirType::Struct(name)) if name == "Item"
+        ));
+        assert_eq!(
+            error.to_string(),
+            "WebAssembly KIR backend cannot lower value type Struct(\"Item\")"
+        );
     }
 
     #[test]

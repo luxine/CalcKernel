@@ -79,3 +79,26 @@ test('one batch export matches per-record calls across repeated arena reuse at O
     }
   }
 });
+
+test('runnable host example keeps one arena and refreshes its views after growth', (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ck-wasm-pricing-example-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const wasmPath = path.join(directory, 'pricing_batch.wasm');
+  compileFixture(wasmPath, 3);
+
+  const examplePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pricing-batch.mjs');
+  const result = spawnSync(process.execPath, [examplePath, wasmPath], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  assert.equal(result.status, 0, `pricing-batch example failed: ${result.stderr || result.stdout}`);
+
+  const report = JSON.parse(result.stdout);
+  assert.ok(report.memoryBytesAfterGrowth > report.memoryBytesBeforeGrowth);
+  assert.deepEqual(report.rounds.map(({ totals }) => totals), [
+    ['214', '240', '1239'],
+    ['236', '252', '1281'],
+    ['258', '264', '1323'],
+  ]);
+});

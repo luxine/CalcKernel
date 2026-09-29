@@ -678,6 +678,108 @@ fn kir_wasm_simd128_unknown_alias_f64_vf2_should_match_scalar_for_tails_and_over
 }
 
 #[test]
+fn kir_wasm_simd128_const_float_maps_should_preserve_strict_fp_and_ieee_edges() {
+    const SOURCE: &str = r#"
+        export unsafe fn affine(a: slice<f64>, b: slice<f64>, n: u32) -> void
+        contract { requires n <= a.len && n <= b.len; requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i] * 1.25 + 0.5; i = i + 1; }
+        }
+
+        export unsafe fn negate(a: slice<f64>, b: slice<f64>, n: u32) -> void
+        contract { requires n <= a.len && n <= b.len; requires noalias(a, b); effects read(a), write(b); }
+        {
+          let i: u32 = 0;
+          while i < n { b[i] = a[i] * -1.0; i = i + 1; }
+        }
+    "#;
+    let o0 = optimized_simd128_kir(SOURCE, KirWasmFeatures::Simd128, KirOptimizationLevel::O0);
+    assert_eq!(o0.stats.vectorized_loops, 0);
+    let o0_module = o0.artifact.expect("SIMD profile O0 scalar KIR");
+    let o0_wat = emit_wat_kir_module(&o0_module, EmitWasmOptions { opt_level: 0 })
+        .expect("O0 scalar constant-float WAT");
+    assert!(
+        !o0_wat.contains("f64x2"),
+        "O0 must stay scalar with a SIMD128 target profile: {o0_wat}"
+    );
+    let optimized =
+        optimized_simd128_kir(SOURCE, KirWasmFeatures::Simd128, KirOptimizationLevel::O3);
+    assert_eq!(
+        optimized.stats.vectorized_loops, 2,
+        "{:?}",
+        optimized.analysis_fallbacks
+    );
+    let module = optimized
+        .artifact
+        .expect("verified constant-float SIMD KIR");
+    let vector_operations = module
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match instruction.kind {
+            KirInstructionKind::VectorBinary { semantics, .. } => Some(semantics),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !vector_operations.is_empty()
+            && vector_operations
+                .iter()
+                .all(|semantics| { *semantics == calckernel::KirArithmeticSemantics::StrictFloat }),
+        "constant-float vectors must retain strict lane semantics: {vector_operations:?}"
+    );
+    let wat = emit_wat_kir_module(&module, EmitWasmOptions { opt_level: 3 })
+        .expect("strict constant-float SIMD WAT");
+    assert!(wat.contains("f64x2.mul"), "{wat}");
+    assert!(wat.contains("f64x2.add"), "{wat}");
+    assert!(wat.contains("f64x2.neg"), "{wat}");
+    assert!(
+        !wat.contains("fma"),
+        "strict FP must not emit fused operations: {wat}"
+    );
+    let wasm = emit_wasm_kir_module(&module, EmitWasmOptions { opt_level: 3 })
+        .expect("strict constant-float SIMD binary");
+    run_wasm(
+        &wasm,
+        r#"
+        import fs from "node:fs";
+        import assert from "node:assert/strict";
+        const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]), {});
+        const view = new DataView(instance.exports.memory.buffer);
+        const input = 4096;
+        const affineOutput = 8192;
+        const negateOutput = 12288;
+        const values = [NaN, -0, 0, -Infinity, Infinity, -Number.MAX_VALUE,
+          Number.MAX_VALUE, 1, -1, Number.MIN_VALUE, -Number.MIN_VALUE,
+          2 ** -1022, 1 + 2 ** -52];
+        const guard = 0x7ff8123456789abcn;
+        for (let size = 0; size <= 64; ++size) {
+          for (let i = 0; i < size; ++i) view.setFloat64(input + i * 8, values[i % values.length], true);
+          view.setBigUint64(affineOutput - 8, guard, true);
+          view.setBigUint64(affineOutput + 64 * 8, guard, true);
+          view.setBigUint64(negateOutput - 8, guard, true);
+          view.setBigUint64(negateOutput + 64 * 8, guard, true);
+          instance.exports.affine(input, size, affineOutput, size, size);
+          instance.exports.negate(input, size, negateOutput, size, size);
+          for (let i = 0; i < size; ++i) {
+            const value = values[i % values.length];
+            assert.ok(Object.is(view.getFloat64(affineOutput + i * 8, true), value * 1.25 + 0.5),
+              `affine size=${size}, index=${i}, value=${value}`);
+            assert.ok(Object.is(view.getFloat64(negateOutput + i * 8, true), value * -1.0),
+              `negate size=${size}, index=${i}, value=${value}`);
+          }
+          assert.equal(view.getBigUint64(affineOutput - 8, true), guard);
+          assert.equal(view.getBigUint64(affineOutput + 64 * 8, true), guard);
+          assert.equal(view.getBigUint64(negateOutput - 8, true), guard);
+          assert.equal(view.getBigUint64(negateOutput + 64 * 8, true), guard);
+        }
+        "#,
+    );
+}
+
+#[test]
 fn kir_wasm_simd128_unknown_alias_i32_should_match_scalar_for_tails_and_overlap() {
     const SOURCE: &str = r#"
         export fn alias_map_i32(a: slice<i32>, b: slice<i32>, n: u32) -> void {

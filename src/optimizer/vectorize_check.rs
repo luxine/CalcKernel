@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use crate::{
     BlockId, CandidateBudgetCharge, FunctionId, InstructionId, KirAlignmentClass, KirCostEstimate,
     KirCostKey, KirCostSemantics, KirInstruction, KirInstructionKind, KirLaneType,
-    KirOperationAvailability, KirProfileOperation, KirTargetIdentity, KirTerminator, LoopId,
-    MemoryRegionId, MirBinaryOp, MirPrimitiveTypeName, MirType, TransactionCheckError, ValueId,
-    VectorEpilogue, VectorMemoryAccessKind, VectorizationPlan, compute_kir_dominators,
+    KirOperationAvailability, KirProfileOperation, KirTargetIdentity, KirTerminator, KirValueType,
+    LoopId, MemoryRegionId, MirBinaryOp, MirPrimitiveTypeName, MirType, TransactionCheckError,
+    ValueId, VectorEpilogue, VectorMemoryAccessKind, VectorizationPlan, compute_kir_dominators,
     kir_function_units, validate_kir_module, validate_vectorization_plan,
 };
 
@@ -735,32 +735,62 @@ pub fn check_vectorization_trial_independently(
                 })
                 .map(|instruction| instruction.id)
         };
-        let expected_true = defining_instruction(then_scalar).and_then(|scalar| {
-            plan.operations
-                .iter()
-                .find(|mapping| mapping.scalar == scalar)
-                .and_then(|mapping| {
-                    vector_body
-                        .instructions
-                        .iter()
-                        .find(|instruction| instruction.id == mapping.vector)
-                        .and_then(|instruction| instruction.results.first())
-                        .map(|result| result.value)
+        let expected_arm = |scalar| {
+            let root =
+                independent_diamond_arm_root(original, &candidate.scalar_blocks, diamond, scalar);
+            let vectorized_operation = defining_instruction(root).and_then(|instruction| {
+                plan.operations
+                    .iter()
+                    .find(|mapping| mapping.scalar == instruction)
+                    .and_then(|mapping| {
+                        vector_body
+                            .instructions
+                            .iter()
+                            .find(|instruction| instruction.id == mapping.vector)
+                            .and_then(|instruction| instruction.results.first())
+                            .map(|result| result.value)
+                    })
+                    .or_else(|| {
+                        plan.memory_groups
+                            .iter()
+                            .find(|group| group.scalar_instructions.contains(&instruction))
+                            .and_then(|group| {
+                                vector_body
+                                    .instructions
+                                    .iter()
+                                    .find(|instruction| instruction.id == group.vector_instruction)
+                                    .and_then(|instruction| instruction.results.first())
+                                    .map(|result| result.value)
+                            })
+                    })
+            });
+            vectorized_operation.or_else(|| {
+                let scalar_source = independent_diamond_scalar_source(
+                    original,
+                    transformed,
+                    original_header,
+                    original_body,
+                    vector_header,
+                    vector_body,
+                    root,
+                )?;
+                vector_body.instructions.iter().find_map(|instruction| {
+                    let KirInstructionKind::VectorSplat { scalar, .. } = instruction.kind else {
+                        return None;
+                    };
+                    let result = instruction.results.first()?;
+                    (scalar == scalar_source
+                        && result.type_node
+                            == (KirValueType::FixedVector {
+                                lane: select_mapping.lane_type,
+                                lanes: candidate.vf,
+                            }))
+                    .then_some(result.value)
                 })
-        });
-        let expected_false = defining_instruction(else_scalar).and_then(|scalar| {
-            plan.operations
-                .iter()
-                .find(|mapping| mapping.scalar == scalar)
-                .and_then(|mapping| {
-                    vector_body
-                        .instructions
-                        .iter()
-                        .find(|instruction| instruction.id == mapping.vector)
-                        .and_then(|instruction| instruction.results.first())
-                        .map(|result| result.value)
-                })
-        });
+            })
+        };
+        let expected_true = expected_arm(then_scalar);
+        let expected_false = expected_arm(else_scalar);
         if *mask != compare.value
             || expected_true != Some(*when_true)
             || expected_false != Some(*when_false)
@@ -1352,6 +1382,8 @@ fn reconstruct_vector_source_independently(
         &scalar_blocks,
         &operations,
         &accesses,
+        diamond.as_ref(),
+        reduction.as_ref(),
         plan,
         version_predicate.is_some(),
     )?;
@@ -1600,7 +1632,9 @@ fn independently_collect_operations(
         }
         if matches!(
             instruction.kind,
-            KirInstructionKind::ConstInt { .. } | KirInstructionKind::Copy { .. }
+            KirInstructionKind::ConstInt { .. }
+                | KirInstructionKind::ConstFloat { .. }
+                | KirInstructionKind::Copy { .. }
         ) {
             continue;
         }
@@ -1774,6 +1808,8 @@ fn independently_price_vector_plan(
     scalar_blocks: &[BlockId],
     operations: &[CheckedVectorOperation],
     accesses: &[CheckedVectorAccess],
+    diamond: Option<&CheckedVectorDiamond>,
+    reduction: Option<&CheckedVectorReduction>,
     plan: &VectorizationPlan,
     has_runtime_predicate: bool,
 ) -> Result<(KirCostEstimate, u32), TransactionCheckError> {
@@ -1854,59 +1890,97 @@ fn independently_price_vector_plan(
         }
     }
 
-    let mut loop_values = scalar_blocks
+    let mut vectorized_values = accesses
         .iter()
-        .filter_map(|id| source_block(function, *id))
-        .flat_map(|block| {
-            block.params.iter().map(|param| param.value).chain(
-                block
-                    .instructions
-                    .iter()
-                    .flat_map(|instruction| instruction.results.iter().map(|result| result.value)),
-            )
+        .filter(|access| access.kind == CheckedMemoryAccessKind::Read)
+        .filter_map(|access| {
+            defining_instruction_by_id(function, access.instruction)
+                .and_then(|instruction| instruction.results.first())
+                .map(|result| result.value)
         })
         .collect::<BTreeSet<_>>();
-    for block in &function.blocks {
-        if successor_ids(&block.terminator)
-            .iter()
-            .any(|target| scalar_blocks.first() == Some(target))
-        {
-            loop_values.extend(block.params.iter().map(|param| param.value));
+    for mapping in &plan.operations {
+        if matches!(
+            mapping.operation,
+            KirProfileOperation::Select
+                | KirProfileOperation::ReduceAdd
+                | KirProfileOperation::ReduceMultiply
+        ) {
+            continue;
+        }
+        if let Some(instruction) = defining_instruction_by_id(function, mapping.scalar) {
+            vectorized_values.extend(instruction.results.iter().map(|result| result.value));
         }
     }
-    let needs_splat = operations.iter().any(|operation| {
-        if matches!(
-            operation.operation,
-            KirProfileOperation::ReduceAdd
-                | KirProfileOperation::ReduceMultiply
-                | KirProfileOperation::Select
-        ) {
-            return false;
+    if let Some(diamond) = diamond
+        && let Some(value) = source_block(function, diamond.merge_block)
+            .and_then(|block| block.params.get(diamond.selected_param_index))
+            .map(|param| param.value)
+    {
+        vectorized_values.insert(value);
+    }
+
+    let mut splat_inputs = BTreeSet::new();
+    for mapping in &plan.operations {
+        if mapping.operation == KirProfileOperation::Select {
+            continue;
         }
-        defining_instruction_by_id(function, operation.scalar).is_some_and(|instruction| {
-            operation_inputs(instruction)
-                .into_iter()
-                .any(|value| !loop_values.contains(&value))
-        })
-    });
-    if needs_splat {
-        for lane in operations
-            .iter()
-            .map(|operation| operation.lane_type)
-            .collect::<BTreeSet<_>>()
+        let Some(instruction) = defining_instruction_by_id(function, mapping.scalar) else {
+            continue;
+        };
+        let operands = if let Some(reduction) = reduction
+            && reduction.instruction == instruction.id
         {
-            vector_chunk = vector_chunk.saturating_add(independent_profile_cost(
-                profile,
-                KirCostKey {
-                    operation: KirProfileOperation::Splat,
-                    lane,
-                    lanes,
-                    semantics: KirCostSemantics::NotApplicable,
-                    alignment: KirAlignmentClass::NotApplicable,
-                },
-                false,
-            )?);
+            match instruction.kind {
+                KirInstructionKind::Binary { left, right, .. } if left == reduction.body_value => {
+                    vec![right]
+                }
+                KirInstructionKind::Binary { left, right, .. } if right == reduction.body_value => {
+                    vec![left]
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            operation_inputs(instruction)
+        };
+        for operand in operands {
+            let value = independent_scalar_copy_root(function, operand);
+            if !vectorized_values.contains(&value) {
+                splat_inputs.insert((value, mapping.lane_type));
+            }
         }
+    }
+    if let Some(diamond) = diamond
+        && let Some(lane) = source_block(function, diamond.merge_block)
+            .and_then(|block| block.params.get(diamond.selected_param_index))
+            .and_then(|param| param.type_node.as_scalar())
+            .and_then(lane_from_type)
+    {
+        for operand in independent_diamond_select_values(function, scalar_blocks, diamond) {
+            let root = independent_diamond_arm_root(function, scalar_blocks, diamond, operand);
+            if !vectorized_values.contains(&root) {
+                splat_inputs.insert((root, lane));
+            }
+        }
+    }
+    for (value, lane) in splat_inputs {
+        let repetitions = if independent_loop_local_constant(function, scalar_blocks, value) {
+            u32::from(plan.uf)
+        } else {
+            1
+        };
+        let cost = independent_profile_cost(
+            profile,
+            KirCostKey {
+                operation: KirProfileOperation::Splat,
+                lane,
+                lanes,
+                semantics: KirCostSemantics::NotApplicable,
+                alignment: KirAlignmentClass::NotApplicable,
+            },
+            false,
+        )?;
+        vector_chunk = vector_chunk.saturating_add(cost.saturating_mul(repetitions));
     }
     let scalar_control = independent_profile_cost(
         profile,
@@ -2237,6 +2311,208 @@ fn operation_inputs(instruction: &KirInstruction) -> Vec<ValueId> {
     }
 }
 
+fn independent_scalar_copy_root(function: &crate::KirFunction, value: ValueId) -> ValueId {
+    let mut value = value;
+    let mut visited = BTreeSet::new();
+    while visited.insert(value) {
+        let source =
+            defining_instruction(function, value).and_then(|instruction| match instruction.kind {
+                KirInstructionKind::Copy { value } => Some(value),
+                _ => None,
+            });
+        let Some(source) = source else {
+            break;
+        };
+        value = source;
+    }
+    value
+}
+
+fn independent_diamond_select_values(
+    function: &crate::KirFunction,
+    scalar_blocks: &[BlockId],
+    diamond: &CheckedVectorDiamond,
+) -> Vec<ValueId> {
+    let Some(merge) = source_block(function, diamond.merge_block) else {
+        return Vec::new();
+    };
+    let Some(body) = scalar_blocks
+        .first()
+        .and_then(|id| source_block(function, *id))
+    else {
+        return Vec::new();
+    };
+    let KirTerminator::Branch { .. } = &body.terminator else {
+        return Vec::new();
+    };
+    let Some(then_block) = source_block(function, diamond.then_block) else {
+        return Vec::new();
+    };
+    let Some(else_block) = source_block(function, diamond.else_block) else {
+        return Vec::new();
+    };
+    let KirTerminator::Jump { edge: then_merge } = &then_block.terminator else {
+        return Vec::new();
+    };
+    let KirTerminator::Jump { edge: else_merge } = &else_block.terminator else {
+        return Vec::new();
+    };
+    if merge.params.get(diamond.selected_param_index).is_none() {
+        return Vec::new();
+    }
+    then_merge
+        .args
+        .get(diamond.selected_param_index)
+        .copied()
+        .into_iter()
+        .chain(else_merge.args.get(diamond.selected_param_index).copied())
+        .collect()
+}
+
+fn independent_diamond_arm_root(
+    function: &crate::KirFunction,
+    scalar_blocks: &[BlockId],
+    diamond: &CheckedVectorDiamond,
+    value: ValueId,
+) -> ValueId {
+    let mut value = value;
+    let mut visited = BTreeSet::new();
+    while visited.insert(value) {
+        if let Some(source) =
+            defining_instruction(function, value).and_then(|instruction| match instruction.kind {
+                KirInstructionKind::Copy { value } => Some(value),
+                _ => None,
+            })
+        {
+            value = source;
+            continue;
+        }
+        let Some((arm, index)) = [diamond.then_block, diamond.else_block]
+            .into_iter()
+            .find_map(|arm_id| {
+                source_block(function, arm_id)
+                    .and_then(|block| block.params.iter().position(|param| param.value == value))
+                    .map(|index| (arm_id, index))
+            })
+        else {
+            break;
+        };
+        let Some(body) = scalar_blocks
+            .first()
+            .and_then(|id| source_block(function, *id))
+        else {
+            break;
+        };
+        let KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &body.terminator
+        else {
+            break;
+        };
+        let entry = if then_edge.target == arm {
+            then_edge
+        } else if else_edge.target == arm {
+            else_edge
+        } else {
+            break;
+        };
+        let Some(source) = entry.args.get(index).copied() else {
+            break;
+        };
+        value = source;
+    }
+    value
+}
+
+fn independent_diamond_scalar_source(
+    original: &crate::KirFunction,
+    transformed: &crate::KirFunction,
+    original_header: &crate::KirBlock,
+    original_body: &crate::KirBlock,
+    vector_header: &crate::KirBlock,
+    vector_body: &crate::KirBlock,
+    source: ValueId,
+) -> Option<ValueId> {
+    let matching_parameter = |source_params: &[crate::KirBlockParam],
+                              target_params: &[crate::KirBlockParam]| {
+        source_params
+            .iter()
+            .position(|param| param.value == source)
+            .and_then(|index| {
+                let source = source_params.get(index)?;
+                let target = target_params.get(index)?;
+                (source.type_node == target.type_node).then_some(target.value)
+            })
+    };
+    if let Some(value) = matching_parameter(&original_body.params, &vector_body.params) {
+        return Some(value);
+    }
+    if let Some(value) = matching_parameter(&original_header.params, &vector_header.params) {
+        return Some(value);
+    }
+    if let Some(value) = original
+        .params
+        .iter()
+        .position(|param| param.value == source)
+        .and_then(|index| {
+            let source = original.params.get(index)?;
+            let target = transformed.params.get(index)?;
+            (source.type_node == target.type_node).then_some(target.value)
+        })
+    {
+        return Some(value);
+    }
+
+    let source_instruction = defining_instruction(original, source)?;
+    let source_result = source_instruction
+        .results
+        .iter()
+        .find(|result| result.value == source)?;
+    vector_body.instructions.iter().find_map(|instruction| {
+        let same_constant = match (&source_instruction.kind, &instruction.kind) {
+            (
+                KirInstructionKind::ConstInt { value: source },
+                KirInstructionKind::ConstInt { value: target },
+            )
+            | (
+                KirInstructionKind::ConstFloat { value: source },
+                KirInstructionKind::ConstFloat { value: target },
+            ) => source == target,
+            _ => false,
+        };
+        if !same_constant {
+            return None;
+        }
+        instruction
+            .results
+            .iter()
+            .find(|result| result.type_node == source_result.type_node)
+            .map(|result| result.value)
+    })
+}
+
+fn independent_loop_local_constant(
+    function: &crate::KirFunction,
+    scalar_blocks: &[BlockId],
+    value: ValueId,
+) -> bool {
+    function.blocks.iter().any(|block| {
+        scalar_blocks.contains(&block.id)
+            && block.instructions.iter().any(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+                    && matches!(
+                        instruction.kind,
+                        KirInstructionKind::ConstInt { .. } | KirInstructionKind::ConstFloat { .. }
+                    )
+            })
+    })
+}
+
 fn source_block(function: &crate::KirFunction, id: BlockId) -> Option<&crate::KirBlock> {
     function.blocks.iter().find(|block| block.id == id)
 }
@@ -2297,6 +2573,36 @@ fn entry_bound_matches(
     let Some(source) = defining_instruction(original, source_bound) else {
         return false;
     };
+    if let KirInstructionKind::SliceLen {
+        slice: source_slice,
+    } = &source.kind
+    {
+        if source.results.len() != 1 || source.memory.is_some() || source.effect.is_some() {
+            return false;
+        }
+        let Some(source_root) = stable_invariant_descriptor_root(original, *source_slice) else {
+            return false;
+        };
+        return transformed_preheader
+            .instructions
+            .iter()
+            .any(|instruction| {
+                instruction.results.iter().any(|result| {
+                    result.value == trial_bound && result.type_node == source.results[0].type_node
+                }) && instruction.memory.is_none()
+                    && instruction.effect.is_none()
+                    && match instruction.kind {
+                        KirInstructionKind::SliceLen { slice } => {
+                            slice == source_root
+                                && original
+                                    .params
+                                    .iter()
+                                    .any(|parameter| parameter.value == slice)
+                        }
+                        _ => false,
+                    }
+            });
+    }
     let KirInstructionKind::ConstInt {
         value: source_value,
     } = &source.kind
@@ -2314,6 +2620,60 @@ fn entry_bound_matches(
                 KirInstructionKind::ConstInt { value } if value == source_value
             )
         })
+}
+
+fn stable_invariant_descriptor_root(
+    function: &crate::KirFunction,
+    value: ValueId,
+) -> Option<ValueId> {
+    let mut pending = vec![value];
+    let mut visited = BTreeSet::new();
+    let mut roots = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if function.params.iter().any(|param| param.value == value) {
+            roots.insert(value);
+            continue;
+        }
+        if !visited.insert(value) {
+            continue;
+        }
+        if let Some((block_id, index)) = function.blocks.iter().find_map(|block| {
+            block
+                .params
+                .iter()
+                .position(|param| param.value == value)
+                .map(|index| (block.id, index))
+        }) {
+            let mut incoming_count = 0_usize;
+            for predecessor in &function.blocks {
+                let edges = match &predecessor.terminator {
+                    KirTerminator::Jump { edge } => vec![edge],
+                    KirTerminator::Branch {
+                        then_edge,
+                        else_edge,
+                        ..
+                    } => vec![then_edge, else_edge],
+                    KirTerminator::Return { .. } => Vec::new(),
+                };
+                for edge in edges.into_iter().filter(|edge| edge.target == block_id) {
+                    incoming_count = incoming_count.saturating_add(1);
+                    pending.push(*edge.args.get(index)?);
+                }
+            }
+            if incoming_count == 0 {
+                return None;
+            }
+        } else if let Some(KirInstruction {
+            kind: KirInstructionKind::Copy { value },
+            ..
+        }) = defining_instruction(function, value)
+        {
+            pending.push(*value);
+        } else {
+            return None;
+        }
+    }
+    (roots.len() == 1).then(|| *roots.first().expect("one descriptor root"))
 }
 
 fn integer_constant(function: &crate::KirFunction, value: ValueId) -> Option<i128> {

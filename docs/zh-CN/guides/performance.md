@@ -25,6 +25,7 @@ report 仍记录 baseline manifest 中原始源码 commit identity。
 仓库内 CalcKernel、C++、Rust、JavaScript、Java 与 NumPy 内核。Runner 在计时前验证输出 hash，
 并记录源码 hash、工具版本、编译参数、样本顺序和原始测量值。可从全新 compiler
 checkout 按该 benchmark README 中列出的依赖运行。
+这些结果不是相同目标的 WebAssembly 对比，也不能证明 Clang/Rust WASM 性能追平。
 
 ## Sampling protocol
 
@@ -173,24 +174,44 @@ memarg 字段位移。`u32_fill` 测量受运行时守卫保护的 Bulk Memory �
 评估这些路径时，应与相同 v0.15 profile 下的 O0 比较，并保留发射的指令形态。
 P8 编译器可作历史对照，但它使用旧 schema-1 baseline，其 profile digest 和允许特性不同。
 
-CK 发射、模块编译、实例化、预热、稳定内核调用、宿主数据准备与读取分别记录。
+当前 runner 只发射和测量 CalcKernel WASM，没有 Clang 或 Rust WASM oracle 通道。因此，Native
+Clang/Rust gate 与历史 Native report（包括旧编译器 replay）不能作为 CK 在 WASM 上追平任一编译器
+的证据。该 runner 未建立数值 kernel 对 Clang/Rust WASM 的追平结论。有效对比必须对各实现使用
+相同算法和输入域、精度与 strict 浮点语义、有效内存和 `noalias` 前置条件、SIMD 特性范围、runtime
+及计时边界。Kernel 执行、host 准备/读取，以及进程或浏览器启动应分开比较；不要把 CK 的热 kernel
+样本与对手的冷启动端到端耗时混在一起。
+
+`baseline` 是默认的可移植 WASM profile，不发射 SIMD。显式选择
+`--wasm-features simd128` 才会启用 [WASM ABI](../abi/wasm.md) 所列、经过验证的 SIMD128 形态。
+它保留 strict `f64` 求值顺序与舍入，不启用 Relaxed SIMD、fast math、FMA 或重结合。WASM 的
+memory/overflow ABI 仍是 unchecked：CLI 会拒绝 checked bounds 和 overflow mode。Host 必须提供有效
+range 并满足每个源代码 `noalias` contract。因此 strict 浮点语义不表示指针边界已检查；比较结果也
+必须标明使用的是 baseline 还是 simd128 profile。
+
+CK 发射、模块编译、实例化、预热、稳定内核调用、宿主数据准备与读取分别记录。`kernel_ns` 是
+Node 侧 invocation 阶段的耗时，不是只统计机器指令的硬件计数。`pricing_one_calls` 包含 host loop、
+标量参数读写，以及每行一次 JS 到 WASM 的调用；`pricing_batch_call` 则包含每个 workload 一次
+export 调用，以及 CK 对多行的循环。`host_preparation_ns` 和 `readback_ns` 单独记录；在已预热实例上，
+`round_end_to_end_ns` 包含这三个阶段。
 `--emission-samples` 重复编译器发射并保存每次原始耗时；兼容字段 `ck_emission` 为其中位数。
 产物记录包含总字节数、各 section payload 字节数、code 字节数、函数数和 local 数，
 以便同时评估直接二进制输出与代码增长。比较新旧编译器时，应交替运行同一源码、profile 名称
 和优化级别，并明确标注 profile schema 的差异。Bulk copy/fill 还需测量短/长区间、重叠和陷阱回退；批处理 case 分别报告逻辑行数、
 实际 JS 到 Wasm 的调用次数与 runner 的 `--batch` 重复次数。
 
-模块编译时间是每个产物在该 Node 进程内的首次编译时间，并非浏览器冷启动
-测量。每轮端到端样本只涵盖已实例化模块上的准备、调用和读取，不包含模块编译、
+模块编译时间是每个产物在该 Node 进程内记录一次的首次编译时间，并非浏览器冷启动测量，
+也不包含获取模块或启动浏览器。每轮端到端样本只涵盖已实例化模块上的准备、调用和读取，不包含模块编译、
 实例化与内存扩展。比较编译器版本时应使用相同参数并保留完整 report；一次本地运行
 既不能证明普遍加速，也不构成发布阈值。当前 runtime 通道是 Node/V8，性能结论须标明
 这一范围。
 
-Apple M5 Max 与 Node 24.14.0 上的一次本地数组映射比较，使用预分配的
+Apple M5 Max 与 Node 24.14.0 上的一次历史本地数组映射比较，使用预分配的
 `Int32Array`/`Float64Array` 输入和输出、O3 `simd128` Wasm，以及算法一致的 JavaScript map
-循环。以 JS 耗时为 1.0，在 4,096、16,384 和 65,536 个元素时，Wasm `i32` 分别为 3.09x、
+循环。该对比只有 CK WASM 与 JavaScript，不是 Clang/Rust 对比，也不证明普遍的 WASM 追平。
+以 JS 耗时为 1.0，在 4,096、16,384 和 65,536 个元素时，Wasm `i32` 分别为 3.09x、
 5.95x、6.01x；Wasm `f64` 分别为 2.22x、2.79x、2.79x。这些是本地热内核观察结果，不包含编译、
-实例化和数据准备，也不能预测其他算法、机器或 runtime。
+实例化和数据准备，也不能预测其他算法、机器或 runtime。请将这条历史观察与当前编译器版本和可复现
+report 分开标注。
 
 PGO 与受限 multiversioning 已在 0.13 交付，0.15 仍需通过这些原样保留的 gate。离线
 Auto-Tuning 延期。上述本地 WebAssembly map 观察结果与 Native release gate 分开。indirect-call

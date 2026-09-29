@@ -401,7 +401,6 @@ fn discover_one(
         .map(|access| access.instruction)
         .collect::<BTreeSet<_>>();
     let mut operations = Vec::new();
-    let mut needs_splat = false;
     let scheduled_blocks = shape
         .scalar_blocks
         .iter()
@@ -426,13 +425,12 @@ fn discover_one(
             continue;
         }
         match scalar_vector_operation(function, instruction) {
-            Some(operation) => {
-                needs_splat |= operation_has_scalar_invariant(function, descriptor, instruction);
-                operations.push(operation);
-            }
+            Some(operation) => operations.push(operation),
             None if matches!(
                 instruction.kind,
-                KirInstructionKind::ConstInt { .. } | KirInstructionKind::Copy { .. }
+                KirInstructionKind::ConstInt { .. }
+                    | KirInstructionKind::ConstFloat { .. }
+                    | KirInstructionKind::Copy { .. }
             ) => {}
             None => return Err("vector-loop-contains-unsupported-operation".to_string()),
         }
@@ -473,6 +471,16 @@ fn discover_one(
         return Err("vector-loop-access-lanes-are-not-covered-by-operations".to_string());
     }
 
+    let splat_inputs = vector_splat_inputs(
+        function,
+        &shape.scalar_blocks,
+        &operations,
+        &accesses.accesses,
+        shape.diamond.as_ref(),
+        reduction.as_ref(),
+    );
+    let needs_splat = !splat_inputs.is_empty();
+
     let legal_vfs = [2_u16, 4, 8, 16]
         .into_iter()
         .filter(|vf| {
@@ -501,11 +509,12 @@ fn discover_one(
         for &uf in &legal_ufs {
             let (predicted_cost, minimum_trip) = match candidate_cost_and_threshold(
                 &state.module().profile,
+                function,
                 descriptor,
                 (vf, uf),
                 &operations,
                 &accesses.accesses,
-                needs_splat,
+                &splat_inputs,
                 version_predicate.as_ref(),
             ) {
                 Ok(result) => result,
@@ -623,11 +632,12 @@ fn is_constant_integer(
 
 fn candidate_cost_and_threshold(
     profile: &crate::KirTargetProfile,
+    function: &crate::KirFunction,
     descriptor: &CanonicalLoopDescriptor,
     shape: (u16, u8),
     operations: &[VectorCandidateOperation],
     accesses: &[AffineMemoryAccess],
-    needs_splat: bool,
+    splat_inputs: &BTreeSet<(crate::ValueId, KirLaneType)>,
     version_predicate: Option<&super::TotalVersionPredicate>,
 ) -> Result<(KirCostEstimate, u32), String> {
     let (vf, uf) = shape;
@@ -694,26 +704,23 @@ fn candidate_cost_and_threshold(
         )?);
     }
     let mut splat_cost = 0_u32;
-    if needs_splat {
-        let mut splat_lanes = operations
-            .iter()
-            .map(|operation| operation.lane_type)
-            .collect::<BTreeSet<_>>();
-        if splat_lanes.is_empty() {
-            splat_lanes.insert(KirLaneType::U32);
-        }
-        for lane in splat_lanes {
-            splat_cost = splat_cost.saturating_add(profile_cost(
-                profile,
-                KirCostKey {
-                    operation: KirProfileOperation::Splat,
-                    lane,
-                    lanes,
-                    semantics: KirCostSemantics::NotApplicable,
-                    alignment: KirAlignmentClass::NotApplicable,
-                },
-            )?);
-        }
+    for (value, lane) in splat_inputs {
+        let repetitions = if is_loop_local_scalar_constant(function, descriptor, *value) {
+            u32::from(uf)
+        } else {
+            1
+        };
+        let cost = profile_cost(
+            profile,
+            KirCostKey {
+                operation: KirProfileOperation::Splat,
+                lane: *lane,
+                lanes,
+                semantics: KirCostSemantics::NotApplicable,
+                alignment: KirAlignmentClass::NotApplicable,
+            },
+        )?;
+        splat_cost = splat_cost.saturating_add(cost.saturating_mul(repetitions));
     }
 
     let scalar_control = profile_cost(
@@ -847,6 +854,26 @@ fn candidate_cost_and_threshold(
         ),
         minimum_trip,
     ))
+}
+
+fn is_loop_local_scalar_constant(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    value: crate::ValueId,
+) -> bool {
+    function.blocks.iter().any(|block| {
+        descriptor.blocks.contains(&block.id)
+            && block.instructions.iter().any(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+                    && matches!(
+                        instruction.kind,
+                        KirInstructionKind::ConstInt { .. } | KirInstructionKind::ConstFloat { .. }
+                    )
+            })
+    })
 }
 
 fn profile_cost(profile: &crate::KirTargetProfile, key: KirCostKey) -> Result<u32, String> {
@@ -1157,32 +1184,269 @@ fn lane_type(type_node: &MirType) -> Option<KirLaneType> {
     }
 }
 
-fn operation_has_scalar_invariant(
+fn vector_splat_inputs(
     function: &crate::KirFunction,
-    descriptor: &CanonicalLoopDescriptor,
-    instruction: &KirInstruction,
-) -> bool {
-    let loop_values = descriptor
+    scalar_blocks: &[BlockId],
+    operations: &[VectorCandidateOperation],
+    accesses: &[AffineMemoryAccess],
+    diamond: Option<&VectorDiamond>,
+    reduction: Option<&VectorReduction>,
+) -> BTreeSet<(crate::ValueId, KirLaneType)> {
+    let mut vectorized_values = BTreeSet::new();
+    for access in accesses
+        .iter()
+        .filter(|access| access.kind == super::LoopMemoryAccessKind::Read)
+    {
+        if let Some(value) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == access.instruction)
+            .and_then(|instruction| instruction.results.first())
+            .map(|result| result.value)
+        {
+            vectorized_values.insert(value);
+        }
+    }
+    for operation in operations.iter().filter(|operation| {
+        !matches!(
+            operation.operation,
+            KirProfileOperation::Select
+                | KirProfileOperation::ReduceAdd
+                | KirProfileOperation::ReduceMultiply
+        )
+    }) {
+        if let Some(instruction) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == operation.scalar)
+        {
+            vectorized_values.extend(instruction.results.iter().map(|result| result.value));
+        }
+    }
+    if let Some(diamond) = diamond
+        && let Some(value) = function
+            .blocks
+            .iter()
+            .find(|block| block.id == diamond.merge_block)
+            .and_then(|block| block.params.get(diamond.selected_param_index))
+            .map(|param| param.value)
+    {
+        vectorized_values.insert(value);
+    }
+
+    let mut splats = BTreeSet::new();
+    for operation in operations {
+        if operation.operation == KirProfileOperation::Select {
+            continue;
+        }
+        let Some(instruction) = scalar_blocks
+            .iter()
+            .filter_map(|id| function.blocks.iter().find(|block| block.id == *id))
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == operation.scalar)
+        else {
+            continue;
+        };
+        let operands = if let Some(reduction) = reduction
+            && reduction.instruction == instruction.id
+        {
+            match instruction.kind {
+                KirInstructionKind::Binary { left, right, .. } if left == reduction.body_value => {
+                    vec![right]
+                }
+                KirInstructionKind::Binary { left, right, .. } if right == reduction.body_value => {
+                    vec![left]
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            match instruction.kind {
+                KirInstructionKind::Binary { left, right, .. }
+                | KirInstructionKind::Compare { left, right, .. } => vec![left, right],
+                KirInstructionKind::Unary { operand, .. } => vec![operand],
+                KirInstructionKind::Cast { value, .. } => vec![value],
+                _ => Vec::new(),
+            }
+        };
+        for operand in operands {
+            let root = scalar_copy_root(function, operand);
+            if !vectorized_values.contains(&root) {
+                splats.insert((root, operation.lane_type));
+            }
+        }
+    }
+    if let Some(diamond) = diamond
+        && let Some(lane) = function
+            .blocks
+            .iter()
+            .find(|block| block.id == diamond.merge_block)
+            .and_then(|block| block.params.get(diamond.selected_param_index))
+            .and_then(|param| param.type_node.as_scalar())
+            .and_then(lane_type)
+    {
+        for operand in diamond_select_arm_values(function, scalar_blocks, diamond) {
+            let root = scalar_diamond_arm_root(function, scalar_blocks, diamond, operand);
+            if !vectorized_values.contains(&root) {
+                splats.insert((root, lane));
+            }
+        }
+    }
+    splats
+}
+
+fn diamond_select_arm_values(
+    function: &crate::KirFunction,
+    scalar_blocks: &[BlockId],
+    diamond: &VectorDiamond,
+) -> Vec<crate::ValueId> {
+    let Some(merge_block) = function
         .blocks
         .iter()
-        .filter_map(|id| function.blocks.iter().find(|block| block.id == *id))
-        .flat_map(|block| {
-            block.params.iter().map(|param| param.value).chain(
-                block
-                    .instructions
-                    .iter()
-                    .flat_map(|instruction| instruction.results.iter().map(|result| result.value)),
-            )
-        })
-        .collect::<BTreeSet<_>>();
-    match instruction.kind {
-        KirInstructionKind::Binary { left, right, .. } => {
-            !loop_values.contains(&left) || !loop_values.contains(&right)
-        }
-        KirInstructionKind::Unary { operand, .. } => !loop_values.contains(&operand),
-        KirInstructionKind::Cast { value, .. } => !loop_values.contains(&value),
-        _ => false,
+        .find(|block| block.id == diamond.merge_block)
+    else {
+        return Vec::new();
+    };
+    let Some(body) = scalar_blocks
+        .first()
+        .and_then(|id| function.blocks.iter().find(|block| block.id == *id))
+    else {
+        return Vec::new();
+    };
+    let crate::KirTerminator::Branch { .. } = &body.terminator else {
+        return Vec::new();
+    };
+    let Some(then_block) = function
+        .blocks
+        .iter()
+        .find(|block| block.id == diamond.then_block)
+    else {
+        return Vec::new();
+    };
+    let Some(else_block) = function
+        .blocks
+        .iter()
+        .find(|block| block.id == diamond.else_block)
+    else {
+        return Vec::new();
+    };
+    let crate::KirTerminator::Jump { edge: then_merge } = &then_block.terminator else {
+        return Vec::new();
+    };
+    let crate::KirTerminator::Jump { edge: else_merge } = &else_block.terminator else {
+        return Vec::new();
+    };
+    if merge_block
+        .params
+        .get(diamond.selected_param_index)
+        .is_none()
+    {
+        return Vec::new();
     }
+    then_merge
+        .args
+        .get(diamond.selected_param_index)
+        .copied()
+        .into_iter()
+        .chain(else_merge.args.get(diamond.selected_param_index).copied())
+        .collect()
+}
+
+fn scalar_diamond_arm_root(
+    function: &crate::KirFunction,
+    scalar_blocks: &[BlockId],
+    diamond: &VectorDiamond,
+    value: crate::ValueId,
+) -> crate::ValueId {
+    let mut value = value;
+    let mut visited = BTreeSet::new();
+    while visited.insert(value) {
+        if let Some(source) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction.kind {
+                KirInstructionKind::Copy { value: source }
+                    if instruction
+                        .results
+                        .iter()
+                        .any(|result| result.value == value) =>
+                {
+                    Some(source)
+                }
+                _ => None,
+            })
+        {
+            value = source;
+            continue;
+        }
+        let Some((arm, index)) = [diamond.then_block, diamond.else_block]
+            .into_iter()
+            .find_map(|arm_id| {
+                function
+                    .blocks
+                    .iter()
+                    .find(|block| block.id == arm_id)
+                    .and_then(|block| block.params.iter().position(|param| param.value == value))
+                    .map(|index| (arm_id, index))
+            })
+        else {
+            break;
+        };
+        let Some(body) = scalar_blocks
+            .first()
+            .and_then(|id| function.blocks.iter().find(|block| block.id == *id))
+        else {
+            break;
+        };
+        let crate::KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &body.terminator
+        else {
+            break;
+        };
+        let entry = if then_edge.target == arm {
+            then_edge
+        } else if else_edge.target == arm {
+            else_edge
+        } else {
+            break;
+        };
+        let Some(source) = entry.args.get(index).copied() else {
+            break;
+        };
+        value = source;
+    }
+    value
+}
+
+fn scalar_copy_root(function: &crate::KirFunction, value: crate::ValueId) -> crate::ValueId {
+    let mut value = value;
+    let mut visited = BTreeSet::new();
+    while visited.insert(value) {
+        let source = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            })
+            .and_then(|instruction| match instruction.kind {
+                KirInstructionKind::Copy { value } => Some(value),
+                _ => None,
+            });
+        let Some(source) = source else {
+            break;
+        };
+        value = source;
+    }
+    value
 }
 
 fn profile_supports_candidate(
