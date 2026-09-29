@@ -105,24 +105,47 @@ target profile for WAT/WASM emission or `emit-kir --consumer wasm`, defaulting
 to `baseline`.
 Both Wasm profiles allow Bulk Memory; only `simd128` allows SIMD128. The
 `ck.wasm.target` module metadata uses schema 2 and carries the selected feature
-and canonical profile digest. At O3, `simd128` enables an independently
-verified Loop SIMD frontier for contiguous `slice<f64>`, `slice<i32>`, and
-`slice<u32>` maps and modular `i32`/`u32` sum and product reductions. Full-width vectors use `f64x2`
-or `i32x4`; two-lane `i32`/`u32` inputs can convert to `f64x2` with an exact
-eight-byte load. The supported map operations include splat, load/store,
-add, subtract, multiply, negate, `f64x2` divide, and pure lane comparison and
-selection. A simple same-induction slice loop can use a checked Wasm32 runtime
-alias predicate; overlap or an unsafe address range selects the original scalar
-loop. Eligible modular `i32`/`u32` sums carry an `i32x4` accumulator across
-chunks, fold it once on exit, then combine the original scalar seed exactly
-once before the scalar tail. Modular products retain the per-chunk scalar
-fold. A partial accumulator used by any other loop state rejects either
-reduction shape. Candidates require the existing unit-stride induction,
-independent legality and cost checks, and scalar remainder. The unroll factor
-is one. WebAssembly SLP, floating-point reductions, checked arithmetic,
-masked memory, and other vector shapes remain unavailable. Unsupported source
-candidates stay scalar; unsupported hand-constructed Vector KIR is rejected by
-the backend. `baseline` and O0–O2 remain scalar for vector lowering.
+and canonical profile digest. At O3, `simd128` enables independently verified
+SIMD128 lowering for contiguous `slice<f64>`, `slice<i32>`, and `slice<u32>`
+maps, supported integer-to-`f64` casts, and modular `i32`/`u32` sum and product
+reductions. Full-width vectors use `f64x2` or `i32x4`; two-lane `i32`/`u32`
+inputs can convert to `f64x2` with an exact eight-byte load. Supported lane
+operations include splat, load/store, add, subtract, multiply, negate,
+`f64x2` divide, and pure lane comparison and selection.
+
+The Wasm SIMD frontiers also recognize narrower source forms: strict `f64x2`
+affine maps with contiguous, invariant-broadcast, or proven affine accesses
+(including the tested nested matrix column loop); a closed piecewise store
+tree that can be if-converted to lane selects; a normalization loop after a
+proven zero/nonzero unswitch; and the nine-load `3x3` stencil interior after
+boundary peeling. These are shape-specific recognizers, not general matrix,
+stencil, or branch vectorization. Affine direct maps and the supported matrix
+column form use VF2 and consider UF1/2/4; the piecewise tree uses VF2 and
+considers UF1 or UF4. The cost model selects among eligible candidates. Other
+generic maps, casts, reductions, and the stencil interior use one vector chunk
+per loop iteration. Floating-point lanes preserve strict source operation
+order and rounding: polynomial evaluation and multiply-plus-add stay separate
+operations, with no FMA or reassociation.
+
+Unknown aliasing or an insufficient range proof can guard a SIMD fast path with
+a total, nontrapping Wasm32 predicate; failure takes the original scalar path.
+Eligible modular `i32`/`u32` sums carry an `i32x4` accumulator across chunks,
+fold it once on exit, then combine the original scalar seed exactly once before
+the scalar tail. Modular products retain the per-chunk scalar fold. A partial
+accumulator used by another loop state rejects either reduction shape. Every
+candidate still needs the required induction, independent legality and cost
+checks, and scalar remainder. WebAssembly SLP, floating-point reductions,
+checked arithmetic, masked memory, and unsupported vector shapes remain
+unavailable. Unsupported source candidates stay scalar; unsupported
+hand-constructed Vector KIR is rejected by the backend. `baseline` and O0–O2
+remain scalar for vector lowering.
+
+O3 `baseline` has a separate, scalar-only runtime UF4 frontier for two narrow
+shapes: a `u32` modular sum and a strict `f64` direct map of the form
+`input[i] * constant + constant`, with a proven no-alias relation for the map.
+It bounds the unrolled body to complete groups of four and sends the remainder
+through the original scalar loop. It emits no SIMD and is not general loop
+unrolling.
 Separately, O3 can compose two constant-affine modular 32-bit integer steps
 without changing observable intermediate values; this excludes checked
 overflow and floating-point arithmetic. The typed WASM emitter can remove a

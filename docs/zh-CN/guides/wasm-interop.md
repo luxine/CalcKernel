@@ -58,8 +58,10 @@ node benches/wasm/bench.mjs --ckc target/debug/ckc \
 各阶段耗时。单一 runtime 的结果不能证明所有环境都会普遍加速。
 
 WASM 使用 `--bounds unchecked` 与 `--overflow unchecked`。CLI 拒绝 checked
-mode，不插入 implicit trap/guard；untrusted input 必须由 host 验证 offset/length。
-规范 contract 见 [WASM ABI](../abi/wasm.md)。
+mode，因此 ABI 不提供 checked pointer 或 slice 安全。O3 可在 SIMD 或 Bulk Memory 快路径外插入经过验证、
+不陷阱的优化谓词；谓词失败时执行原标量/源码路径，包括其正常 WebAssembly trap 与已完成的写入前缀。
+这类 guard 不验证任意 host pointer，也不会使错误的 `noalias` contract 变安全。untrusted input 到达 export
+时，host 必须验证 offset/length。规范 contract 见 [WASM ABI](../abi/wasm.md)。
 
 Unchecked memory contract 与浮点语义相互独立：默认 `f64` 运算保留 strict 源码求值顺序和
 binary64 舍入。`baseline` 是默认 feature profile，不发射 SIMD；显式选择

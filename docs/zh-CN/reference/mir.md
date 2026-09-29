@@ -31,5 +31,6 @@ KIR 的纯 `VersionPredicate` instruction 返回 `bool`，最多含四个 conjun
 `i64`、`u64` 或 `f64`。它只适用于 Wasm32 `simd128` profile。`count` 为零时结果为 true；否则使用
 扩宽后的无符号 64 位运算，检查 `start + count <= slice.len`，并检查 exclusive end byte address
 `slice.data + (start + count) * element_bytes` 同时不超过 `2^32` 和 `memory.size * 65536`。
-该谓词不访问或修改内存。独立 checker 仅在能够重新证明受支持 `f64x2` 仿射循环的准确标量访问
-范围、源码 alias 证据及标量回退路径时接受它；其他候选保持标量。
+该谓词不访问或修改内存。它是优化 guard，不是 checked-memory 操作。每种受支持 SIMD plan 的独立 checker
+都会重建准确的标量访问范围及适用的别名证据，随后验证所需的标量、边界或源码控制流路径。当前已检查用途包括
+受支持的仿射 map/矩阵列、封闭分段树和规范化 stencil 内部区域；任意谓词都不能授权内存访问。

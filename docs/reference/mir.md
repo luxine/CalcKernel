@@ -65,9 +65,12 @@ WebAssembly-only `WasmSliceRange` conjunct takes a `slice<T>`, `start: u32`,
 64-bit arithmetic, it checks `start + count <= slice.len` and that the
 exclusive end byte address `slice.data + (start + count) * element_bytes` is
 at most both `2^32` and `memory.size * 65536`. The predicate does not access or
-change memory. The independent checker accepts it only when it reconstructs
-the exact scalar access ranges, source alias proof, and scalar fallback for a
-supported `f64x2` affine loop; other candidates remain scalar.
+change memory. It is an optimization guard, not a checked-memory operation.
+The checker for each supported SIMD plan reconstructs the exact scalar access
+ranges and applicable alias evidence, then verifies the required scalar,
+boundary, or source-control-flow path. Current checked uses include supported
+affine maps and matrix columns, closed piecewise trees, and a normalized
+stencil interior; an arbitrary predicate does not authorize a memory access.
 
 The semantic MIR textual format is compatible within `0.15.x`; a breaking grammar or meaning
 change requires a later minor release and migration note under the project

@@ -71,10 +71,14 @@ The report checks every output and separates per-record calls from one batch
 call. It also includes artifact bytes and host-side timing phases; a single
 runtime's result does not establish a universal speedup.
 
-WASM uses `--bounds unchecked` and `--overflow unchecked`. The CLI will reject
-checked modes; no implicit trap or guard is inserted. Validate offsets and
-lengths in the host when untrusted input reaches an export. See the normative
-[WASM ABI](../abi/wasm.md).
+WASM uses `--bounds unchecked` and `--overflow unchecked`. The CLI rejects
+checked modes, so the ABI does not add checked pointer or slice safety. O3 may
+insert a verified, nontrapping optimization predicate around a SIMD or Bulk
+Memory fast path; when it fails, execution uses the original scalar/source
+path, including its ordinary WebAssembly traps and write prefix. Such a guard
+does not validate arbitrary host pointers or make a false `noalias` contract
+safe. Validate offsets and lengths in the host when untrusted input reaches an
+export. See the normative [WASM ABI](../abi/wasm.md).
 
 The unchecked memory contract is separate from floating-point semantics: `f64`
 operations preserve strict source evaluation order and binary64 rounding by
