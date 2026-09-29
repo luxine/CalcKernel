@@ -112,6 +112,16 @@ pub(super) fn remap_instruction_values(
                         remap_value(right, values);
                         remap_value(right_count, values);
                     }
+                    crate::KirVersionPredicateConjunct::WasmSliceRange {
+                        slice,
+                        start,
+                        count,
+                        ..
+                    } => {
+                        remap_value(slice, values);
+                        remap_value(start, values);
+                        remap_value(count, values);
+                    }
                 }
             }
         }

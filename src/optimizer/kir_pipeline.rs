@@ -7,10 +7,12 @@ use super::{
     EvidenceValidationResult, FactArena, KirOptimizationAuditState, KirVerifiedProgramState,
     ProofArena, ProofStep, TransactionOutcome, analyze_canonical_loops_for_discovery,
     check_slp_plan_independently, check_specialization_plan_independently,
-    check_unroll_plan_independently, check_vectorization_trial_independently,
-    discover_slp_candidates, discover_specialization_candidates, discover_unroll_candidates,
-    discover_vectorization_candidates, execute_verified_transaction_with_disposition,
-    is_specialization_clone, kir_function_units, kir_passes, verify_proof_arena,
+    check_stencil_peel_independently, check_unroll_plan_independently,
+    check_vectorization_trial_independently, discover_slp_candidates,
+    discover_specialization_candidates, discover_stencil_peel_candidates,
+    discover_unroll_candidates, discover_vectorization_candidates,
+    execute_verified_transaction_with_disposition, is_specialization_clone, kir_function_units,
+    kir_passes, prepare_stencil_peel_trial, verify_proof_arena,
 };
 
 /// Stable optimization levels for the KIR pass manager.
@@ -133,6 +135,7 @@ pub struct KirOptimizationStats {
     pub staged_native_slp_candidates: u32,
     pub rejected_slp_candidates: u32,
     pub vectorized_loops: u32,
+    pub stencil_peeled_loops: u32,
     pub rejected_vector_candidates: u32,
     pub vector_scalar_fallbacks: u32,
 }
@@ -876,6 +879,50 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
             &module,
             canonical_discovery_preserved.then_some(canonical_loop_analyses.as_slice()),
         ) {
+            if module.config.consumer == crate::KirConsumer::WebAssembly {
+                let optimization_entry_module_units = o3_entry_module_units.unwrap_or_else(|| {
+                    module.functions.iter().fold(0_u32, |total, function| {
+                        total.saturating_add(kir_function_units(function))
+                    })
+                });
+                let mut state = match verified_program_state_from_pass_cache(
+                    &module,
+                    &result,
+                    GENERATION,
+                    Some(optimization_entry_module_units),
+                ) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        result.errors.push(error);
+                        result.module = module;
+                        return result;
+                    }
+                };
+                let peeled = match run_stencil_peel_frontier(&mut state, &mut result.audit) {
+                    Ok(peeled) => peeled,
+                    Err(error) => {
+                        result.errors.push(error);
+                        result.module = module;
+                        return result;
+                    }
+                };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.stats.stencil_peeled_loops = peeled.accepted;
+                result.analysis_fallbacks.extend(peeled.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "stencil-boundary-peel",
+                    peeled.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
+            }
             result.analysis_fallbacks.extend(unroll_fallbacks);
             for name in [
                 "loop-vector-frontier",
@@ -906,6 +953,32 @@ pub(crate) fn run_kir_pass_pipeline_with_profile(
                     return result;
                 }
             };
+            if module.config.consumer == crate::KirConsumer::WebAssembly {
+                let peeled = match run_stencil_peel_frontier(&mut state, &mut result.audit) {
+                    Ok(peeled) => peeled,
+                    Err(error) => {
+                        result.errors.push(error);
+                        result.module = module;
+                        return result;
+                    }
+                };
+                module = state.module().clone();
+                result.contract_facts = state.contract_facts().cloned();
+                result.proofs = state.proofs().clone();
+                result.eliminated_guards = state.eliminated_guards().to_vec();
+                result.stats.stencil_peeled_loops = peeled.accepted;
+                result.analysis_fallbacks.extend(peeled.fallbacks);
+                if !record_current_pass(
+                    &module,
+                    "stencil-boundary-peel",
+                    peeled.accepted != 0,
+                    &mut result,
+                    GENERATION,
+                ) {
+                    result.module = module;
+                    return result;
+                }
+            }
             let vector = match run_loop_simd_frontier(
                 &mut state,
                 &mut result.audit,
@@ -1263,6 +1336,18 @@ fn vector_plan_explanation(
                 right.index(),
                 bytes.index()
             ),
+            super::VectorPredicate::WasmSliceRange { requirement, .. } => format!(
+                "wasm-slice-range:v{}:start-{}:count-{}:bytes-{}",
+                requirement.slice.index(),
+                requirement
+                    .start
+                    .map_or_else(|| "zero".to_string(), |value| format!("v{}", value.index())),
+                match requirement.count {
+                    super::WasmRangeCount::TripBound(value) => format!("v{}", value.index()),
+                    super::WasmRangeCount::One => "one".to_string(),
+                },
+                requirement.element_bytes,
+            ),
             super::VectorPredicate::PowerOfTwoAlignment {
                 value, alignment, ..
             } => format!("alignment:v{}:{alignment}", value.index()),
@@ -1371,6 +1456,83 @@ fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations:
         .saturating_sub(plan.cost.scalar)
         .saturating_add(plan.cost.total);
     u64::from(transformed_body).saturating_mul(u64::from(iterations))
+}
+
+#[derive(Default)]
+struct StencilPeelFrontierResult {
+    accepted: u32,
+    fallbacks: Vec<KirAnalysisFallback>,
+}
+
+fn run_stencil_peel_frontier(
+    state: &mut KirVerifiedProgramState,
+    audit: &mut KirOptimizationAuditState,
+) -> Result<StencilPeelFrontierResult, String> {
+    let mut result = StencilPeelFrontierResult::default();
+    let mut processed = std::collections::BTreeSet::new();
+    loop {
+        let mut candidates = discover_stencil_peel_candidates(state);
+        candidates.sort_by_key(|candidate| (candidate.function, candidate.header));
+        let Some(candidate) = candidates
+            .into_iter()
+            .find(|candidate| processed.insert((candidate.function, candidate.header)))
+        else {
+            break;
+        };
+        let key = super::CandidateKey::LoopFrontier {
+            function: candidate.function,
+            loop_id: candidate.loop_id,
+            kind: super::LoopCandidateKind::BoundaryPeel,
+            variant: super::LoopCandidateVariant::Scalar,
+            vf: 1,
+            uf: 1,
+        };
+        let prepared = match prepare_stencil_peel_trial(state, &candidate) {
+            Ok(prepared) => prepared,
+            Err(reason) => {
+                audit.record_noncommitting_attempt(
+                    key,
+                    CandidateBudgetCharge::single(candidate.function, 16, 32),
+                    CandidateDisposition::Rejected,
+                    &reason,
+                )?;
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "stencil-boundary-peel".to_string(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        let plan = prepared.plan;
+        let charge = prepared.charge;
+        let proposed = prepared.trial;
+        match execute_verified_transaction_with_disposition(
+            state,
+            audit,
+            key,
+            charge.clone(),
+            CandidateDisposition::Accepted,
+            move |trial| {
+                *trial = proposed;
+                Ok(())
+            },
+            |pre, trial| check_stencil_peel_independently(pre, trial, &plan, &charge),
+        ) {
+            TransactionOutcome::Committed => {
+                result.accepted = result.accepted.saturating_add(1);
+            }
+            TransactionOutcome::Rejected | TransactionOutcome::BudgetExhausted => {
+                result.fallbacks.push(KirAnalysisFallback {
+                    function: candidate.function,
+                    pass: "stencil-boundary-peel".to_string(),
+                    reason: "independent-check-or-budget-rejected".to_string(),
+                });
+            }
+            TransactionOutcome::CompilerError(error) => return Err(error),
+        }
+    }
+    Ok(result)
 }
 
 fn run_loop_simd_frontier(

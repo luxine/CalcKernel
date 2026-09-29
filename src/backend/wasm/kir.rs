@@ -1031,15 +1031,14 @@ fn validate_wasm_version_predicate(
 ) -> Result<(), String> {
     let bool_type = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::Bool));
     let u32_type = MirType::Primitive(MirPrimitiveTypeName::U32);
-    let (thresholds, intervals) =
+    let (thresholds, nontrip) =
         predicate
             .conjuncts
             .iter()
             .fold((0, 0), |counts, item| match item {
                 KirVersionPredicateConjunct::TripThreshold { .. } => (counts.0 + 1, counts.1),
-                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. } => {
-                    (counts.0, counts.1 + 1)
-                }
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. }
+                | KirVersionPredicateConjunct::WasmSliceRange { .. } => (counts.0, counts.1 + 1),
             });
     if predicate.address_bits != 32
         || !matches!(
@@ -1056,7 +1055,7 @@ fn validate_wasm_version_predicate(
         || predicate.conjuncts.is_empty()
         || predicate.conjuncts.len() > 4
         || thresholds > 1
-        || intervals > 3
+        || nontrip > 3
     {
         return Err(format!(
             "WebAssembly SIMD128 cannot lower this version predicate in {}",
@@ -1064,8 +1063,37 @@ fn validate_wasm_version_predicate(
         ));
     }
 
+    let slice_element_bytes = |value: &ValueId| {
+        types
+            .get(value)
+            .and_then(KirValueType::as_scalar)
+            .and_then(|type_node| match type_node {
+                MirType::Slice(element) => match element.as_ref() {
+                    MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32) => {
+                        Some(4)
+                    }
+                    MirType::Primitive(
+                        MirPrimitiveTypeName::I64
+                        | MirPrimitiveTypeName::U64
+                        | MirPrimitiveTypeName::F64,
+                    ) => Some(8),
+                    _ => None,
+                },
+                _ => None,
+            })
+    };
     for conjunct in &predicate.conjuncts {
         let valid = match conjunct {
+            KirVersionPredicateConjunct::WasmSliceRange {
+                slice,
+                start,
+                count,
+                element_bytes,
+            } => {
+                slice_element_bytes(slice) == Some(*element_bytes)
+                    && types.get(start).and_then(KirValueType::as_scalar) == Some(&u32_type)
+                    && types.get(count).and_then(KirValueType::as_scalar) == Some(&u32_type)
+            }
             KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
                 *minimum > 0
                     && types.get(value).and_then(KirValueType::as_scalar) == Some(&u32_type)
@@ -1078,25 +1106,6 @@ fn validate_wasm_version_predicate(
                 right_count,
                 right_element_bytes,
             } => {
-                let slice_element_bytes = |value: &ValueId| {
-                    types
-                        .get(value)
-                        .and_then(KirValueType::as_scalar)
-                        .and_then(|type_node| match type_node {
-                            MirType::Slice(element) => match element.as_ref() {
-                                MirType::Primitive(
-                                    MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32,
-                                ) => Some(4),
-                                MirType::Primitive(
-                                    MirPrimitiveTypeName::I64
-                                    | MirPrimitiveTypeName::U64
-                                    | MirPrimitiveTypeName::F64,
-                                ) => Some(8),
-                                _ => None,
-                            },
-                            _ => None,
-                        })
-                };
                 left != right
                     && slice_element_bytes(left) == Some(*left_element_bytes)
                     && slice_element_bytes(right) == Some(*right_element_bytes)

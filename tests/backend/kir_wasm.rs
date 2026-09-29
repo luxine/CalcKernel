@@ -1075,6 +1075,344 @@ fn kir_wasm_simd128_should_reject_unsupported_modular_min_vector_reduction() {
     );
 }
 
+fn wasm_slice_range_predicate_module(element_bytes: u32) -> calckernel::KirModule {
+    let mut module = wasm32_predicate_only_module();
+    let function = &mut module.functions[0];
+    function.name = "slice_range".into();
+    function.params[0].name = "ik_pred_left_end".into();
+    function.params[0].type_node =
+        MirType::Slice(Box::new(MirType::Primitive(if element_bytes == 8 {
+            MirPrimitiveTypeName::F64
+        } else {
+            MirPrimitiveTypeName::U32
+        })));
+    function.params[1].name = "ik_pred_right_end".into();
+    function.params[1].type_node = MirType::Primitive(MirPrimitiveTypeName::U32);
+    let KirInstructionKind::VersionPredicate { predicate } =
+        &mut function.blocks[0].instructions[0].kind
+    else {
+        unreachable!()
+    };
+    predicate.conjuncts = vec![KirVersionPredicateConjunct::WasmSliceRange {
+        slice: ValueId::from_index(0),
+        start: ValueId::from_index(1),
+        count: ValueId::from_index(2),
+        element_bytes,
+    }];
+    module
+}
+
+#[test]
+fn kir_wasm_slice_range_should_be_total_widened_and_observe_memory_growth() {
+    for element_bytes in [4, 8] {
+        let module = wasm_slice_range_predicate_module(element_bytes);
+        assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+        for opt_level in [0, 3] {
+            let options = EmitWasmOptions { opt_level };
+            let wat = emit_wat_kir_module(&module, options).expect("range-only WAT");
+            assert!(wat.contains("memory.size"), "{wat}");
+            assert!(
+                !wat.contains(".load") && !wat.contains(".store"),
+                "range predicates must not read or write payloads:\n{wat}"
+            );
+            let direct = emit_wasm_kir_module(&module, options).expect("range-only direct WASM");
+            let oracle = wat::parse_str(&wat).expect("range WAT oracle");
+            let runner = r#"
+import fs from "node:fs";
+import assert from "node:assert/strict";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+const memory = instance.exports.memory;
+const check = instance.exports.slice_range;
+const bytes = ELEMENT_BYTES;
+const expected = (data, length, start, count) => {
+  if (count === 0) return 1;
+  const indexEnd = BigInt(start) + BigInt(count);
+  const byteEnd = BigInt(data) + indexEnd * BigInt(bytes);
+  return Number(indexEnd <= BigInt(length) && byteEnd <= 0x100000000n && byteEnd <= BigInt(memory.buffer.byteLength));
+};
+const cases = [
+  [0xffffffff, 0, 0xffffffff, 0], [0, 0, 0, 0], [0, 0, 0, 1],
+  [0, 1, 0, 1], [65536 - bytes, 1, 0, 1], [65537 - bytes, 1, 0, 1],
+  [65536, 1, 0, 1], [0, 16, 15, 1], [0, 16, 16, 1],
+  [0, 0xffffffff, 0xffffffff, 1], [0, 0xffffffff, 0xfffffffe, 2],
+  [0, 0xffffffff, 0xffffffff, 0xffffffff],
+  [4, 0x40000000, 0, 0x40000000], [4, 0xffffffff, 0, 0xffffffff],
+  [0x100000000 - bytes, 1, 0, 1], [0x100000001 - bytes, 1, 0, 1],
+  [0xffffffff, 1, 0, 1], [0xfffffff0, 0xffffffff, 1, 0xffffffff],
+  [65536 - bytes, 2, 1, 1], [131072 - bytes, 1, 0, 1],
+];
+let random = 0x12345678;
+for (let i=0; i<64; i++) {
+  const values=[];
+  for(let j=0; j<4; j++) { random=(Math.imul(random,1664525)+1013904223)>>>0; values.push(random); }
+  cases.push(values);
+}
+for (let grown=0; grown<2; grown++) {
+  const payload = new Uint8Array(memory.buffer);
+  payload.fill(0xa5);
+  for(const values of cases) assert.equal(check(...values), expected(...values), `${grown}: ${values}`);
+  assert(payload.every(value => value === 0xa5), "predicate changed memory");
+  assert.equal(check(65536, 1, 0, 1), grown);
+  if (!grown) assert.equal(memory.grow(1), 1);
+}
+// Reserve the full Wasm32 address space without touching its payload. This
+// distinguishes the valid exclusive end 2^32 from a wrapped or rejected end.
+assert.equal(memory.grow(65534), 2);
+assert.equal(memory.buffer.byteLength, 4294967296);
+const maximumCases = [
+  [0x100000000 - bytes, 1, 0, 1], [0x100000001 - bytes, 1, 0, 1],
+  [0x100000000 - 2 * bytes, 2, 1, 1], [0x100000001 - 2 * bytes, 2, 1, 1],
+  [0, 0xffffffff, 0, 0x100000000 / bytes],
+  [0, 0xffffffff, 0, 0x100000000 / bytes + 1],
+];
+for (const values of maximumCases) assert.equal(check(...values), expected(...values), `4GiB: ${values}`);
+assert.equal(check(0x100000000 - bytes, 1, 0, 1), 1);
+"#.replace("ELEMENT_BYTES", &element_bytes.to_string());
+            for wasm in [&direct, &oracle] {
+                wasmparser::Validator::new_with_features(wasm_features(KirWasmFeatures::Simd128))
+                    .validate_all(wasm)
+                    .expect("range WASM validates");
+                run_wasm(wasm, &runner);
+            }
+        }
+    }
+}
+
+#[test]
+fn kir_wasm_slice_range_should_reject_invalid_types_sizes_and_predicate_budgets() {
+    for mutation in 0..8 {
+        let mut module = wasm_slice_range_predicate_module(4);
+        let function = &mut module.functions[0];
+        let KirInstructionKind::VersionPredicate { predicate } =
+            &mut function.blocks[0].instructions[0].kind
+        else {
+            unreachable!()
+        };
+        match mutation {
+            0 => {
+                let KirVersionPredicateConjunct::WasmSliceRange { element_bytes, .. } =
+                    &mut predicate.conjuncts[0]
+                else {
+                    unreachable!()
+                };
+                *element_bytes = 0;
+            }
+            1 => {
+                let KirVersionPredicateConjunct::WasmSliceRange { element_bytes, .. } =
+                    &mut predicate.conjuncts[0]
+                else {
+                    unreachable!()
+                };
+                *element_bytes = 8;
+            }
+            2 => {
+                function.params[0].type_node =
+                    MirType::Pointer(Box::new(MirType::Primitive(MirPrimitiveTypeName::U32)))
+            }
+            3 => function.params[1].type_node = MirType::Primitive(MirPrimitiveTypeName::I32),
+            4 => function.params[2].type_node = MirType::Primitive(MirPrimitiveTypeName::U64),
+            5 => predicate.address_bits = 64,
+            6 => predicate.conjuncts = vec![predicate.conjuncts[0].clone(); 4],
+            _ => predicate.conjuncts.extend(vec![
+                KirVersionPredicateConjunct::TripThreshold {
+                    value: ValueId::from_index(2),
+                    minimum: 1
+                };
+                2
+            ]),
+        }
+        for opt_level in [0, 3] {
+            let options = EmitWasmOptions { opt_level };
+            let result = std::panic::catch_unwind(|| {
+                (
+                    emit_wat_kir_module(&module, options),
+                    emit_wasm_kir_module(&module, options),
+                )
+            })
+            .expect("invalid range predicates must not panic");
+            assert!(
+                result.0.is_err() && result.1.is_err(),
+                "mutation {mutation} was accepted"
+            );
+        }
+    }
+}
+
+#[test]
+fn kir_wasm_slice_range_should_combine_three_ranges_and_one_threshold() {
+    let mut module = wasm_slice_range_predicate_module(4);
+    let KirInstructionKind::VersionPredicate { predicate } =
+        &mut module.functions[0].blocks[0].instructions[0].kind
+    else {
+        unreachable!()
+    };
+    predicate.conjuncts = vec![predicate.conjuncts[0].clone(); 3];
+    predicate.conjuncts.insert(
+        1,
+        KirVersionPredicateConjunct::TripThreshold {
+            value: ValueId::from_index(2),
+            minimum: 4,
+        },
+    );
+    for opt_level in [0, 3] {
+        let options = EmitWasmOptions { opt_level };
+        let wat = emit_wat_kir_module(&module, options).expect("combined range WAT");
+        let direct = emit_wasm_kir_module(&module, options).expect("combined range WASM");
+        let oracle = wat::parse_str(&wat).expect("combined range WAT oracle");
+        for wasm in [&direct, &oracle] {
+            run_wasm(
+                wasm,
+                r#"
+import fs from "node:fs";
+import assert from "node:assert/strict";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+const check = instance.exports.slice_range;
+assert.equal(check(0, 4, 0, 4), 1);
+assert.equal(check(0, 4, 0, 3), 0);
+assert.equal(check(0, 4, 1, 4), 0);
+assert.equal(check(0xffffffff, 0, 0xffffffff, 0), 0);
+assert.equal(check(65520, 4, 0, 4), 1);
+assert.equal(check(65524, 4, 0, 4), 0);
+"#,
+            );
+        }
+    }
+}
+
+#[test]
+fn kir_wasm_slice_range_should_share_scratch_with_disjoint_predicates() {
+    let mut module = wasm32_predicate_only_module();
+    let function = &mut module.functions[0];
+    let start = ValueId::from_index(4);
+    function.params.push(KirParam {
+        value: start,
+        name: "start".into(),
+        type_node: MirType::Primitive(MirPrimitiveTypeName::U32),
+    });
+    let KirInstructionKind::VersionPredicate { predicate } =
+        &mut function.blocks[0].instructions[0].kind
+    else {
+        unreachable!()
+    };
+    predicate.conjuncts.insert(
+        0,
+        KirVersionPredicateConjunct::WasmSliceRange {
+            slice: ValueId::from_index(0),
+            start,
+            count: ValueId::from_index(2),
+            element_bytes: 4,
+        },
+    );
+    predicate
+        .conjuncts
+        .push(KirVersionPredicateConjunct::WasmSliceRange {
+            slice: ValueId::from_index(1),
+            start,
+            count: ValueId::from_index(2),
+            element_bytes: 4,
+        });
+    assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+    for opt_level in [0, 3] {
+        let options = EmitWasmOptions { opt_level };
+        let wat = emit_wat_kir_module(&module, options).expect("mixed range/disjoint WAT");
+        let direct = emit_wasm_kir_module(&module, options).expect("mixed range/disjoint WASM");
+        let oracle = wat::parse_str(&wat).expect("mixed range/disjoint WAT oracle");
+        for wasm in [&direct, &oracle] {
+            run_wasm(
+                wasm,
+                r#"
+import fs from "node:fs";
+import assert from "node:assert/strict";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+const check = instance.exports.versioned_disjoint;
+assert.equal(check(0, 4, 32, 4, 4, 0), 1);
+assert.equal(check(0, 3, 32, 4, 4, 0), 0);
+assert.equal(check(0, 4, 32, 3, 4, 0), 0);
+assert.equal(check(0, 4, 32, 4, 4, 1), 0);
+assert.equal(check(0, 4, 4, 4, 4, 0), 0);
+assert.equal(check(65520, 4, 128, 4, 4, 0), 1);
+assert.equal(check(65524, 4, 128, 4, 4, 0), 0);
+assert.equal(check(0, 4, 32, 4, 3, 0), 0);
+assert.equal(check(0xffffffff, 0, 0xffffffff, 0, 0, 0xffffffff), 0);
+instance.exports.memory.grow(1);
+assert.equal(check(65524, 4, 128, 4, 4, 0), 1);
+"#,
+            );
+        }
+    }
+}
+
+#[test]
+fn kir_wasm_slice_range_should_select_scalar_fallback_without_touching_payload() {
+    let mut module = wasm_slice_range_predicate_module(4);
+    let function = &mut module.functions[0];
+    function.return_type = MirType::Primitive(MirPrimitiveTypeName::U32);
+    function.blocks[0].terminator = KirTerminator::Branch {
+        condition: ValueId::from_index(3),
+        then_edge: KirEdge {
+            target: BlockId::from_index(1),
+            args: vec![],
+            memory_args: vec![],
+        },
+        else_edge: KirEdge {
+            target: BlockId::from_index(2),
+            args: vec![],
+            memory_args: vec![],
+        },
+    };
+    for (id, result) in [(1, 7), (2, 11)] {
+        let value = ValueId::from_index(id + 3);
+        function.blocks.push(KirBlock {
+            id: BlockId::from_index(id),
+            label: format!("path{id}"),
+            params: vec![],
+            memory_params: vec![],
+            instructions: vec![KirInstruction {
+                id: InstructionId::from_index(id),
+                results: vec![KirResult {
+                    value,
+                    type_node: function.return_type.clone().into(),
+                }],
+                kind: KirInstructionKind::ConstInt {
+                    value: result.to_string(),
+                },
+                memory: None,
+                effect: None,
+            }],
+            terminator: KirTerminator::Return {
+                value: Some(value),
+                memory: vec![],
+                effect_order: id,
+            },
+        });
+    }
+    assert_eq!(calckernel::validate_kir_module(&module).errors, []);
+    for opt_level in [0, 3] {
+        let options = EmitWasmOptions { opt_level };
+        let wat = emit_wat_kir_module(&module, options).expect("range fallback WAT");
+        let direct = emit_wasm_kir_module(&module, options).expect("range fallback direct WASM");
+        let oracle = wat::parse_str(&wat).expect("range fallback WAT oracle");
+        for wasm in [&direct, &oracle] {
+            run_wasm(
+                wasm,
+                r#"
+import fs from "node:fs";
+import assert from "node:assert/strict";
+const { instance } = await WebAssembly.instantiate(fs.readFileSync(process.argv[2]));
+const check = instance.exports.slice_range;
+assert.equal(check(0, 4, 0, 4), 7);
+assert.equal(check(0, 4, 1, 4), 11);
+assert.equal(check(0xffffffff, 1, 0, 1), 11);
+assert.equal(check(0xffffffff, 0, 0xffffffff, 0), 7);
+assert.equal(check(65536, 1, 0, 1), 11);
+instance.exports.memory.grow(1);
+assert.equal(check(65536, 1, 0, 1), 7);
+"#,
+            );
+        }
+    }
+}
+
 fn wasm32_predicate_only_module() -> calckernel::KirModule {
     let left = ValueId::from_index(0);
     let right = ValueId::from_index(1);

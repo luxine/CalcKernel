@@ -876,6 +876,458 @@ fn kir_o1_cfg_should_keep_forwarding_parameters_used_outside_the_forwarded_edge(
     }
 }
 
+fn branch_thread_fixture(
+    constant: bool,
+) -> (
+    calckernel::KirModule,
+    Option<ContractFactSet>,
+    calckernel::BlockId,
+    calckernel::BlockId,
+    calckernel::BlockId,
+    calckernel::BlockId,
+) {
+    let (_, mut kir, contracts) = build_with_overflow(
+        "export fn route(flag: bool, dynamic: bool, n: i32) -> i32 { let yes: bool = true; let no: bool = false; if flag { if dynamic { return n; } else { return 2; } } return 3; }",
+        KirOverflowMode::Unchecked,
+    );
+    let function = &mut kir.functions[0];
+    let entry_id = function.blocks[0].id;
+    let (bridge_id, chosen_target, dynamic_predecessor_id) = {
+        let entry = &function.blocks[0];
+        let calckernel::KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &entry.terminator
+        else {
+            unreachable!()
+        };
+        let bridge_id = then_edge.target;
+        let dynamic_predecessor_id = else_edge.target;
+        let bridge = function
+            .blocks
+            .iter()
+            .find(|block| block.id == bridge_id)
+            .expect("inner branch target");
+        let calckernel::KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &bridge.terminator
+        else {
+            unreachable!()
+        };
+        (
+            bridge_id,
+            if constant {
+                then_edge.target
+            } else {
+                else_edge.target
+            },
+            dynamic_predecessor_id,
+        )
+    };
+    let constant_value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            KirInstructionKind::ConstBool { value } if value == constant => {
+                instruction.results.first().map(|result| result.value)
+            }
+            _ => None,
+        })
+        .expect("boolean constant");
+    let bridge = function
+        .blocks
+        .iter()
+        .find(|block| block.id == bridge_id)
+        .expect("inner branch");
+    let condition = match bridge.terminator {
+        calckernel::KirTerminator::Branch { condition, .. } => condition,
+        _ => unreachable!(),
+    };
+    let condition_index = bridge
+        .params
+        .iter()
+        .position(|param| param.value == condition)
+        .expect("branch condition parameter");
+    let entry = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == entry_id)
+        .expect("entry");
+    let calckernel::KirTerminator::Branch { then_edge, .. } = &mut entry.terminator else {
+        unreachable!()
+    };
+    then_edge.args[condition_index] = constant_value;
+
+    let dynamic_predecessor = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == dynamic_predecessor_id)
+        .expect("else predecessor");
+    let args = dynamic_predecessor
+        .params
+        .iter()
+        .map(|param| param.value)
+        .collect();
+    let memory_args = dynamic_predecessor
+        .memory_params
+        .iter()
+        .map(|param| param.version)
+        .collect();
+    dynamic_predecessor.terminator = calckernel::KirTerminator::Jump {
+        edge: calckernel::KirEdge {
+            target: bridge_id,
+            args,
+            memory_args,
+        },
+    };
+
+    assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+    (
+        kir,
+        contracts,
+        entry_id,
+        bridge_id,
+        dynamic_predecessor_id,
+        chosen_target,
+    )
+}
+
+#[test]
+fn kir_o1_cfg_should_thread_constant_branch_arguments_and_keep_dynamic_predecessors() {
+    for constant in [true, false] {
+        let (kir, contracts, entry_id, bridge_id, dynamic_predecessor_id, chosen_target) =
+            branch_thread_fixture(constant);
+        let original_entry_memory = match &kir.functions[0]
+            .blocks
+            .iter()
+            .find(|block| block.id == entry_id)
+            .expect("entry")
+            .terminator
+        {
+            calckernel::KirTerminator::Branch { then_edge, .. } => then_edge.memory_args.clone(),
+            _ => unreachable!(),
+        };
+
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let artifact = result.artifact.as_ref().expect("verified artifact");
+        let function = &artifact.functions[0];
+        let entry = function
+            .blocks
+            .iter()
+            .find(|block| block.id == entry_id)
+            .expect("entry remains reachable");
+        let calckernel::KirTerminator::Branch { then_edge, .. } = &entry.terminator else {
+            panic!("entry branch is required to preserve the dynamic path");
+        };
+        assert_eq!(
+            then_edge.target, chosen_target,
+            "constant {constant} must select its branch arm"
+        );
+        assert_eq!(then_edge.memory_args, original_entry_memory);
+        assert!(
+            function.blocks.iter().any(|block| block.id == bridge_id),
+            "the original bridge must remain for its dynamic incoming edge: {}",
+            print_kir_module(artifact)
+        );
+        let dynamic_predecessor = function
+            .blocks
+            .iter()
+            .find(|block| block.id == dynamic_predecessor_id)
+            .expect("dynamic predecessor");
+        assert!(matches!(
+            &dynamic_predecessor.terminator,
+            calckernel::KirTerminator::Jump { edge } if edge.target == bridge_id
+        ));
+    }
+}
+
+#[test]
+fn kir_o1_cfg_should_not_thread_branch_parameters_with_nonlocal_uses() {
+    for memory_use in [false, true] {
+        let (mut kir, contracts, entry_id, bridge_id, _dynamic_predecessor_id, chosen_target) =
+            branch_thread_fixture(true);
+        let bridge = kir.functions[0]
+            .blocks
+            .iter()
+            .find(|block| block.id == bridge_id)
+            .expect("bridge")
+            .clone();
+        let child_id = chosen_target;
+        let child = kir.functions[0]
+            .blocks
+            .iter_mut()
+            .find(|block| block.id == child_id)
+            .expect("selected branch child");
+        let calckernel::KirTerminator::Return { value, memory, .. } = &mut child.terminator else {
+            unreachable!()
+        };
+        if memory_use {
+            memory[0].1 = bridge.memory_params[0].version;
+        } else {
+            *value = Some(bridge.params[2].value);
+        }
+        assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+
+        let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let function = &result.artifact.expect("verified artifact").functions[0];
+        let entry = function
+            .blocks
+            .iter()
+            .find(|block| block.id == entry_id)
+            .expect("entry");
+        assert!(matches!(
+            &entry.terminator,
+            calckernel::KirTerminator::Branch { then_edge, .. } if then_edge.target == bridge_id
+        ));
+    }
+}
+
+#[test]
+fn kir_o1_cfg_should_bound_branch_threading_when_a_target_loops_to_itself() {
+    let (mut kir, contracts, entry_id, bridge_id, _dynamic_predecessor_id, _chosen_target) =
+        branch_thread_fixture(true);
+    let bridge = kir.functions[0]
+        .blocks
+        .iter()
+        .find(|block| block.id == bridge_id)
+        .expect("bridge")
+        .clone();
+    let bridge_mut = kir.functions[0]
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == bridge_id)
+        .expect("bridge");
+    let calckernel::KirTerminator::Branch { then_edge, .. } = &mut bridge_mut.terminator else {
+        unreachable!()
+    };
+    then_edge.target = bridge_id;
+    then_edge.args = bridge.params.iter().map(|param| param.value).collect();
+    then_edge.memory_args = bridge
+        .memory_params
+        .iter()
+        .map(|param| param.version)
+        .collect();
+    assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let function = &result.artifact.expect("verified artifact").functions[0];
+    let entry = function
+        .blocks
+        .iter()
+        .find(|block| block.id == entry_id)
+        .expect("entry");
+    assert!(matches!(
+        &entry.terminator,
+        calckernel::KirTerminator::Branch { then_edge, .. } if then_edge.target == bridge_id
+    ));
+}
+
+#[test]
+fn kir_o1_cfg_should_not_skip_effects_in_a_branch_target() {
+    let (_, mut kir, contracts) = build_with_overflow(
+        "export fn route(flag: bool, dynamic: bool, n: i32) -> i32 { let yes: bool = true; let no: bool = false; if flag { print_i32(77); if dynamic { return n; } else { return 2; } } return 3; }",
+        KirOverflowMode::Unchecked,
+    );
+    let function = &mut kir.functions[0];
+    let entry_id = function.blocks[0].id;
+    let bridge_id = match &function.blocks[0].terminator {
+        calckernel::KirTerminator::Branch { then_edge, .. } => then_edge.target,
+        _ => unreachable!(),
+    };
+    let constant = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            KirInstructionKind::ConstBool { value: true } => {
+                instruction.results.first().map(|result| result.value)
+            }
+            _ => None,
+        })
+        .expect("true constant");
+    let bridge = function
+        .blocks
+        .iter()
+        .find(|block| block.id == bridge_id)
+        .expect("bridge");
+    let condition = match bridge.terminator {
+        calckernel::KirTerminator::Branch { condition, .. } => condition,
+        _ => unreachable!(),
+    };
+    let condition_index = bridge
+        .params
+        .iter()
+        .position(|param| param.value == condition)
+        .expect("condition parameter");
+    let entry = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == entry_id)
+        .expect("entry");
+    let calckernel::KirTerminator::Branch { then_edge, .. } = &mut entry.terminator else {
+        unreachable!()
+    };
+    then_edge.args[condition_index] = constant;
+    assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let function = &result.artifact.expect("verified artifact").functions[0];
+    let entry = function
+        .blocks
+        .iter()
+        .find(|block| block.id == entry_id)
+        .expect("entry");
+    assert!(matches!(
+        &entry.terminator,
+        calckernel::KirTerminator::Branch { then_edge, .. } if then_edge.target == bridge_id
+    ));
+    assert!(
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(instruction.kind, KirInstructionKind::RuntimeCall { .. }))
+    );
+}
+
+#[test]
+fn kir_o1_cfg_should_thread_a_bounded_chain_with_forwarded_constants() {
+    let (_, mut kir, contracts) = build_with_overflow(
+        "export fn route(flag: bool, first: bool, n: i32) -> i32 { let yes: bool = true; if flag { if first { if yes { return n; } else { return 2; } } return 4; } return 3; }",
+        KirOverflowMode::Unchecked,
+    );
+    let function = &mut kir.functions[0];
+    let entry_id = function.blocks[0].id;
+    let (first_bridge_id, final_target_id) = {
+        let entry = &function.blocks[0];
+        let calckernel::KirTerminator::Branch { then_edge, .. } = &entry.terminator else {
+            unreachable!()
+        };
+        let first_bridge = function
+            .blocks
+            .iter()
+            .find(|block| block.id == then_edge.target)
+            .expect("first bridge");
+        let calckernel::KirTerminator::Branch {
+            condition,
+            then_edge,
+            ..
+        } = &first_bridge.terminator
+        else {
+            unreachable!()
+        };
+        assert!(
+            first_bridge
+                .params
+                .iter()
+                .any(|param| param.value == *condition)
+        );
+        let second_bridge = function
+            .blocks
+            .iter()
+            .find(|block| block.id == then_edge.target)
+            .expect("second bridge");
+        let calckernel::KirTerminator::Branch { then_edge, .. } = &second_bridge.terminator else {
+            unreachable!()
+        };
+        (first_bridge.id, then_edge.target)
+    };
+    let constant = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            KirInstructionKind::ConstBool { value: true } => {
+                instruction.results.first().map(|result| result.value)
+            }
+            _ => None,
+        })
+        .expect("true constant");
+    let first_bridge = function
+        .blocks
+        .iter()
+        .find(|block| block.id == first_bridge_id)
+        .expect("first bridge");
+    let condition = match &first_bridge.terminator {
+        calckernel::KirTerminator::Branch { condition, .. } => *condition,
+        _ => unreachable!(),
+    };
+    let condition_index = first_bridge
+        .params
+        .iter()
+        .position(|param| param.value == condition)
+        .expect("condition parameter");
+    let entry = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == entry_id)
+        .expect("entry");
+    let calckernel::KirTerminator::Branch { then_edge, .. } = &mut entry.terminator else {
+        unreachable!()
+    };
+    then_edge.args[condition_index] = constant;
+    assert!(calckernel::validate_kir_module(&kir).errors.is_empty());
+
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let artifact = result.artifact.as_ref().expect("verified artifact");
+    let entry = artifact.functions[0]
+        .blocks
+        .iter()
+        .find(|block| block.id == entry_id)
+        .expect("entry");
+    assert!(
+        matches!(
+            &entry.terminator,
+            calckernel::KirTerminator::Branch { then_edge, .. } if then_edge.target == final_target_id
+        ),
+        "chain must compose both block-parameter substitutions:\n{}",
+        print_kir_module(artifact)
+    );
+}
+
+#[test]
+fn kir_o1_cfg_should_keep_short_circuit_traps_behind_their_guard() {
+    let (_, kir, contracts) = build(
+        "export fn short_circuit(flag: bool, numerator: u32, denominator: u32) -> u32 { if flag && (numerator / denominator > 0) { return 1; } return 0; }",
+    );
+    let guards_before = kir.functions[0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+        .count();
+    assert!(
+        guards_before > 0,
+        "fixture must contain a trapping division"
+    );
+
+    let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O1, contracts.as_ref());
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let function = &result.artifact.expect("verified artifact").functions[0];
+    let guards_after = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Guard { .. }))
+        .count();
+    assert_eq!(guards_after, guards_before);
+}
+
 #[test]
 fn kir_o1_dce_should_remove_unused_slice_regions_but_keep_checked_failure() {
     for source in [

@@ -58,6 +58,15 @@ chunk，余数或短 trip 交给原有标量循环。
 每个浮点 lane 保留原标量求值顺序及舍入，不引入 relaxed SIMD 或融合运算；整数运算按
 2^32 取模。不受支持的候选保持标量。源码中的 `noalias` contract 仍由 caller 负责。
 
+内部 `WasmSliceRange` predicate 使用扩宽后的无符号 64 位运算。`count == 0` 时结果为 true；否则
+要求 `start + count <= slice.len`，并要求 exclusive end byte address
+`slice.data + (start + count) * element_bytes` 同时不超过 `2^32` 和当前的
+`memory.size * 65536`。它仅适用于 Wasm32 SIMD128 KIR，`start`/`count` 必须是 `u32`，slice 元素
+仅限 `i32`、`u32`、`i64`、`u64` 或 `f64`，且宽度必须匹配。该内部 total range predicate 不会让
+一般内存访问进入 checked mode。对于受支持的 O3 `f64x2` 仿射循环形态，独立 checker
+会重新分析原始标量地址与准确的范围要求，核验源码 `noalias` 证据和原标量回退路径；
+这些检查无法通过时拒绝候选。
+
 ## 标量地址 lowering
 
 O3 可以对范围有限、经过独立检查的直接指针循环使用 Wasm32 字节地址游标：循环中只有一个

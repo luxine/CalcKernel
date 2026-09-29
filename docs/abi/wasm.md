@@ -80,6 +80,18 @@ rounding; no relaxed SIMD or fused operation is introduced. Integer arithmetic
 wraps modulo 2^32. Unsupported candidates remain scalar. Source `noalias`
 contracts remain caller obligations.
 
+The internal `WasmSliceRange` predicate uses widened unsigned 64-bit arithmetic.
+It returns true for `count == 0`; otherwise it requires `start + count <=
+slice.len` and the exclusive end byte address `slice.data + (start + count) *
+element_bytes` to be no greater than both `2^32` and the current
+`memory.size * 65536`. It is restricted to Wasm32 SIMD128 KIR, `u32` start and
+count, and `i32`, `u32`, `i64`, `u64`, or `f64` slices with a matching element
+width. This is an internal total range predicate, not a general checked-memory
+mode. For the supported O3 `f64x2` affine loop shape, the independent checker
+reconstructs the scalar addresses and exact range requirements, verifies
+source `noalias` evidence and the original scalar fallback, and rejects a
+candidate when those checks fail.
+
 ## Scalar address lowering
 
 At O3, a bounded, independently checked direct-pointer loop can carry a

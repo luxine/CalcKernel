@@ -417,6 +417,12 @@ fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
                     right_count,
                     ..
                 } => vec![*left, *left_count, *right, *right_count],
+                crate::KirVersionPredicateConjunct::WasmSliceRange {
+                    slice,
+                    start,
+                    count,
+                    ..
+                } => vec![*slice, *start, *count],
             })
             .collect(),
         KirInstructionKind::VectorSplat { scalar, .. } => vec![*scalar],

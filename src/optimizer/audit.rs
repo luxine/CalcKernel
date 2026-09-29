@@ -5,6 +5,7 @@ use crate::{BlockId, FunctionId, InstructionId, KirFunction, KirModule, LoopId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LoopCandidateKind {
     LoopSimd,
+    BoundaryPeel,
     FullUnroll,
     PartialUnroll,
 }
@@ -410,6 +411,7 @@ pub fn print_optimization_audit(audit: &KirOptimizationAuditState) -> String {
 const fn loop_kind_name(kind: LoopCandidateKind) -> &'static str {
     match kind {
         LoopCandidateKind::LoopSimd => "loop-simd",
+        LoopCandidateKind::BoundaryPeel => "boundary-peel",
         LoopCandidateKind::FullUnroll => "full-unroll",
         LoopCandidateKind::PartialUnroll => "partial-unroll",
     }

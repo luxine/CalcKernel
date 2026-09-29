@@ -3,7 +3,8 @@
 [简体中文](../zh-CN/guides/getting-started.md)
 
 For end users, unpack the release archive for the host and run the self-contained
-compiler:
+compiler. The archive contains `ckc`, while the example files in these commands
+come from a separate [compiler source checkout](https://github.com/luxine/CalcKernel/tree/main/examples):
 
 ```sh
 ckc --version --verbose

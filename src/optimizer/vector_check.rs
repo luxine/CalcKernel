@@ -125,12 +125,21 @@ pub fn check_vectorization_plan_independently(
     if plan.predicates.len() > 4 {
         return malformed("vector plan has more than four runtime predicates");
     }
+    let affine_wasm = !plan.broadcast_groups.is_empty()
+        || plan
+            .predicates
+            .iter()
+            .any(|predicate| matches!(predicate, VectorPredicate::WasmSliceRange { .. }));
     verify_memory_groups(pre_state, function.id, plan)?;
+    verify_broadcast_groups(pre_state, function.id, plan)?;
     verify_predicates(pre_state, function.id, plan)?;
     verify_epilogue(pre_state, function.id, plan)?;
     verify_proof_roots(pre_state, function.id, plan)?;
     verify_cost(plan)?;
     verify_growth(module, function_units, plan)?;
+    if affine_wasm {
+        return malformed("affine WASM vector proof is not yet checked");
+    }
 
     let expected_charge = independently_recompute_charge(plan);
     if charge != &expected_charge {
@@ -215,6 +224,57 @@ fn verify_memory_groups(
     Ok(())
 }
 
+fn verify_broadcast_groups(
+    pre_state: &KirVerifiedProgramState,
+    function: FunctionId,
+    plan: &VectorizationPlan,
+) -> Result<(), TransactionCheckError> {
+    let malformed = |message: &str| Err(TransactionCheckError::compiler(message));
+    let function_data = pre_state
+        .module()
+        .functions
+        .iter()
+        .find(|item| item.id == function)
+        .expect("caller established the function");
+    let mut sources = BTreeSet::new();
+    let mut emitted = plan
+        .operations
+        .iter()
+        .map(|operation| operation.vector)
+        .chain(
+            plan.memory_groups
+                .iter()
+                .map(|group| group.vector_instruction),
+        )
+        .collect::<BTreeSet<_>>();
+    for group in &plan.broadcast_groups {
+        let Some(source) = instruction(function_data, group.scalar_instruction) else {
+            return malformed("broadcast source load is missing");
+        };
+        if group.unroll_index >= plan.uf
+            || !sources.insert((group.scalar_instruction, group.unroll_index))
+            || !matches!(source.kind, KirInstructionKind::Load { .. })
+            || source
+                .memory
+                .as_ref()
+                .is_none_or(|memory| memory.region != group.region)
+            || group.footprint_proof != plan.proofs.operation_equivalence
+        {
+            return malformed("broadcast source footprint is invalid");
+        }
+        for id in [group.emitted_scalar_load, group.emitted_splat] {
+            if !emitted.insert(id)
+                || instruction(function_data, id).is_some()
+                || id.index() < pre_state.ids().next_instruction
+            {
+                return malformed("broadcast emitted identity is not fresh and unique");
+            }
+        }
+        verify_proof(pre_state, function, group.footprint_proof)?;
+    }
+    Ok(())
+}
+
 fn verify_predicates(
     pre_state: &KirVerifiedProgramState,
     function: FunctionId,
@@ -239,6 +299,22 @@ fn verify_predicates(
                 bytes,
                 proof,
             } => (vec![*bytes], vec![*left, *right], *proof, left != right),
+            VectorPredicate::WasmSliceRange { requirement, proof } => {
+                let mut values = vec![requirement.slice];
+                if let Some(start) = requirement.start {
+                    values.push(start);
+                }
+                if let super::WasmRangeCount::TripBound(bound) = requirement.count {
+                    values.push(bound);
+                }
+                (
+                    values,
+                    Vec::new(),
+                    *proof,
+                    matches!(requirement.element_bytes, 4 | 8)
+                        && *proof == plan.proofs.target_legality,
+                )
+            }
             VectorPredicate::PowerOfTwoAlignment {
                 value,
                 alignment,
@@ -380,11 +456,14 @@ fn independently_recompute_charge(plan: &VectorizationPlan) -> CandidateBudgetCh
     let lane_steps = plan.operations.iter().fold(0_u32, |total, operation| {
         total.saturating_add(u32::try_from(operation.lanes.len()).unwrap_or(u32::MAX))
     });
-    let memory_steps = plan.memory_groups.iter().fold(0_u32, |total, group| {
+    let broadcasts = u32::try_from(plan.broadcast_groups.len()).unwrap_or(u32::MAX);
+    let memory_steps = plan.memory_groups.iter().fold(broadcasts, |total, group| {
         total.saturating_add(u32::try_from(group.scalar_instructions.len()).unwrap_or(u32::MAX))
     });
     let operations = u32::try_from(plan.operations.len()).unwrap_or(u32::MAX);
-    let groups = u32::try_from(plan.memory_groups.len()).unwrap_or(u32::MAX);
+    let groups = u32::try_from(plan.memory_groups.len())
+        .unwrap_or(u32::MAX)
+        .saturating_add(broadcasts);
     let predicates = u32::try_from(plan.predicates.len()).unwrap_or(u32::MAX);
     let epilogue = u32::from(matches!(plan.epilogue, VectorEpilogue::Scalar { .. }));
     let proposal_units = 8_u32
@@ -392,6 +471,7 @@ fn independently_recompute_charge(plan: &VectorizationPlan) -> CandidateBudgetCh
         .saturating_add(lane_steps)
         .saturating_add(groups.saturating_mul(4))
         .saturating_add(memory_steps)
+        .saturating_add(broadcasts.saturating_mul(2))
         .saturating_add(predicates.saturating_mul(3))
         .saturating_add(epilogue.saturating_mul(2));
     let checker = 16_u32
@@ -399,6 +479,7 @@ fn independently_recompute_charge(plan: &VectorizationPlan) -> CandidateBudgetCh
         .saturating_add(lane_steps.saturating_mul(2))
         .saturating_add(groups.saturating_mul(6))
         .saturating_add(memory_steps.saturating_mul(2))
+        .saturating_add(broadcasts.saturating_mul(3))
         .saturating_add(predicates.saturating_mul(4))
         .saturating_add(7)
         .saturating_add(epilogue.saturating_mul(3));

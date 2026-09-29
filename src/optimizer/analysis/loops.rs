@@ -1058,6 +1058,16 @@ pub(crate) fn visit_instruction_uses(
                         visit(*right);
                         visit(*right_count);
                     }
+                    crate::KirVersionPredicateConjunct::WasmSliceRange {
+                        slice,
+                        start,
+                        count,
+                        ..
+                    } => {
+                        visit(*slice);
+                        visit(*start);
+                        visit(*count);
+                    }
                 }
             }
         }

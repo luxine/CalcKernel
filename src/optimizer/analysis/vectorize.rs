@@ -5,14 +5,16 @@ use num_bigint::BigInt;
 use crate::{
     BlockId, CandidateKey, CanonicalLoopDescriptor, FunctionId, InstructionId, KirAlignmentClass,
     KirArithmeticSemantics, KirCostEstimate, KirCostKey, KirCostSemantics, KirCpuIdentity,
-    KirInstruction, KirInstructionKind, KirLaneType, KirOperationAvailability, KirProfileOperation,
-    KirTargetIdentity, LoopCandidateKind, LoopCandidateVariant, LoopId, LoopTripCount, MirBinaryOp,
-    MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
+    KirInstruction, KirInstructionKind, KirLaneType, KirOperationAvailability, KirPlace,
+    KirProfileOperation, KirTargetIdentity, LoopCandidateKind, LoopCandidateVariant, LoopId,
+    LoopTripCount, MirBinaryOp, MirCompareOp, MirPrimitiveTypeName, MirType, MirUnaryOp,
+    WasmRangeCount, WasmSliceRangeRequirement,
 };
 
 use super::{
-    AffineMemoryAccess, IntegerType, analyze_affine_loop_accesses,
-    analyze_canonical_loops_for_discovery, analyze_loop_legality_for_profile,
+    AffineMemoryAccess, AliasKind, IntegerType, analyze_affine_loop_accesses,
+    analyze_canonical_loops_for_discovery, analyze_loop_legality_for_profile, analyze_regions,
+    query_alias,
 };
 use crate::optimizer::KirVerifiedProgramState;
 
@@ -47,8 +49,30 @@ pub struct VectorizationCandidate {
     pub minimum_trip: u32,
     pub operations: Vec<VectorCandidateOperation>,
     pub accesses: Vec<AffineMemoryAccess>,
+    pub wasm_affine: Option<WasmAffineCandidate>,
     pub version_predicate: Option<super::TotalVersionPredicate>,
     pub predicted_cost: KirCostEstimate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmAffineCandidate {
+    pub accesses: Vec<WasmAffineAccessShape>,
+    pub scalar_address_setup: Vec<InstructionId>,
+    pub range_requirements: Vec<WasmSliceRangeRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmAffineAccessShape {
+    pub instruction: InstructionId,
+    pub slice: crate::ValueId,
+    pub kind: super::LoopMemoryAccessKind,
+    pub shape: WasmAffineShape,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WasmAffineShape {
+    Contiguous { offset: Option<crate::ValueId> },
+    Broadcast { index: crate::ValueId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +184,8 @@ fn discover_one(
 ) -> Result<Vec<VectorizationCandidate>, String> {
     let shape = simple_shape(function, descriptor)
         .ok_or_else(|| "unsupported-vector-loop-shape".to_string())?;
+    let wasm_simd128_consumer = state.module().config.consumer == crate::KirConsumer::WebAssembly
+        && state.module().profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128);
     if matches!(
         state.module().profile.target_identity(),
         KirTargetIdentity::Native { triple } if triple.starts_with("aarch64-")
@@ -251,6 +277,23 @@ fn discover_one(
         descriptor,
         state.contract_facts().map(crate::ContractFactSet::facts),
     )?;
+    let wasm_affine =
+        (wasm_simd128_consumer && version_predicate.is_none() && shape.diamond.is_none())
+            .then(|| {
+                discover_wasm_affine_candidate(
+                    function,
+                    descriptor,
+                    &accesses,
+                    state.contract_facts().map(crate::ContractFactSet::facts),
+                )
+            })
+            .flatten();
+    let affine_shape_requires_wasm_route = wasm_simd128_consumer
+        && accesses.accesses.iter().any(|access| {
+            access.invariant_offset.is_some()
+                || !access.unit_stride
+                || access.bias != BigInt::from(0)
+        });
     let access_lanes = accesses
         .accesses
         .iter()
@@ -262,9 +305,16 @@ fn discover_one(
             !access.vector_group_eligible
                 || !access.slice_base
                 || lane_type(&access.element_type).is_none()
-        })
+        }) && wasm_affine.is_none()
     {
-        return Err("vector-loop-has-non-unit-slice-access".to_string());
+        return Err(if affine_shape_requires_wasm_route {
+            "wasm-affine-access-shape-is-not-proven".to_string()
+        } else {
+            "vector-loop-has-non-unit-slice-access".to_string()
+        });
+    }
+    if affine_shape_requires_wasm_route && wasm_affine.is_none() {
+        return Err("wasm-affine-access-shape-is-not-proven".to_string());
     }
     let header_block = function
         .blocks
@@ -463,18 +513,34 @@ fn discover_one(
         return Err("x86-horizontal-reduction-deferred-to-native-loop-vectorizer".to_string());
     }
 
+    if wasm_affine.is_some() && (shape.diamond.is_some() || reduction.is_some()) {
+        return Err("wasm-affine-loop-has-diamond-or-reduction".to_string());
+    }
     let access_ids = accesses
         .accesses
         .iter()
         .map(|access| access.instruction)
         .collect::<BTreeSet<_>>();
+    let address_setup_ids = wasm_affine
+        .as_ref()
+        .map(|affine| {
+            affine
+                .scalar_address_setup
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
     let mut operations = Vec::new();
     let scheduled_blocks = shape
         .scalar_blocks
         .iter()
         .filter_map(|id| function.blocks.iter().find(|block| block.id == *id));
     for instruction in scheduled_blocks.flat_map(|block| &block.instructions) {
-        if instruction.id == induction_update || access_ids.contains(&instruction.id) {
+        if instruction.id == induction_update
+            || access_ids.contains(&instruction.id)
+            || address_setup_ids.contains(&instruction.id)
+        {
             continue;
         }
         if reduction
@@ -547,30 +613,55 @@ fn discover_one(
         shape.diamond.as_ref(),
         reduction.as_ref(),
     );
-    let needs_splat = !splat_inputs.is_empty();
+    let needs_splat = !splat_inputs.is_empty()
+        || wasm_affine.as_ref().is_some_and(|affine| {
+            affine
+                .accesses
+                .iter()
+                .any(|access| matches!(access.shape, WasmAffineShape::Broadcast { .. }))
+        });
 
-    let legal_vfs = [2_u16, 4, 8, 16]
-        .into_iter()
-        .filter(|vf| {
-            profile_supports_candidate(
-                &state.module().profile,
-                *vf,
-                &operations,
-                &accesses.accesses,
-                needs_splat,
-                version_predicate.is_some(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let legal_vfs = if let Some(affine) = wasm_affine.as_ref() {
+        [2_u16]
+            .into_iter()
+            .filter(|vf| {
+                profile_supports_wasm_affine_candidate(
+                    &state.module().profile,
+                    &operations,
+                    &accesses.accesses,
+                    affine,
+                    needs_splat,
+                ) && *vf == 2
+            })
+            .collect::<Vec<_>>()
+    } else {
+        [2_u16, 4, 8, 16]
+            .into_iter()
+            .filter(|vf| {
+                profile_supports_candidate(
+                    &state.module().profile,
+                    *vf,
+                    &operations,
+                    &accesses.accesses,
+                    needs_splat,
+                    version_predicate.is_some(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
     if legal_vfs.is_empty() {
         return Err("vector-loop-target-profile-is-unavailable".to_string());
     }
     let maximum_uf = state.module().profile.maximum_interleave_factor().min(4);
     let interleavable = shape.diamond.is_none() && reduction.is_none();
-    let legal_ufs = [1_u8, 2, 4]
-        .into_iter()
-        .filter(|uf| *uf <= maximum_uf && (*uf == 1 || interleavable))
-        .collect::<Vec<_>>();
+    let legal_ufs = if wasm_affine.is_some() {
+        vec![1]
+    } else {
+        [1_u8, 2, 4]
+            .into_iter()
+            .filter(|uf| *uf <= maximum_uf && (*uf == 1 || interleavable))
+            .collect::<Vec<_>>()
+    };
     let mut candidates = Vec::new();
     let mut profitability_error = None;
     for vf in legal_vfs {
@@ -579,10 +670,13 @@ fn discover_one(
                 &state.module().profile,
                 (function, descriptor),
                 (vf, uf),
-                &operations,
-                &accesses.accesses,
-                &splat_inputs,
-                version_predicate.as_ref(),
+                CandidateCostModelInput {
+                    operations: &operations,
+                    accesses: &accesses.accesses,
+                    splat_inputs: &splat_inputs,
+                    version_predicate: version_predicate.as_ref(),
+                    wasm_affine: wasm_affine.as_ref(),
+                },
             ) {
                 Ok(result) => result,
                 Err(error) if error == "vector-profitability-threshold-not-met" => {
@@ -618,6 +712,7 @@ fn discover_one(
                 minimum_trip,
                 operations: operations.clone(),
                 accesses: accesses.accesses.clone(),
+                wasm_affine: wasm_affine.clone(),
                 version_predicate: version_predicate.clone(),
                 predicted_cost,
             });
@@ -628,6 +723,527 @@ fn discover_one(
             .unwrap_or_else(|| "vector-profitability-threshold-not-met".to_string()));
     }
     Ok(candidates)
+}
+
+fn discover_wasm_affine_candidate(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    accesses: &super::LoopAccessAnalysis,
+    facts: Option<&crate::FactArena>,
+) -> Option<WasmAffineCandidate> {
+    if descriptor.blocks.len() != 2
+        || accesses.accesses.is_empty()
+        || !accesses.rejected_instructions.is_empty()
+    {
+        return None;
+    }
+    let induction = descriptor.induction.as_ref()?;
+    let preheader = descriptor.preheader?;
+    let induction_local = loop_body_value_for_header_value(function, descriptor, induction.value)?;
+    if induction.type_node != IntegerType::U32
+        || induction.start != BigInt::from(0)
+        || induction.step != BigInt::from(1)
+    {
+        return None;
+    }
+    let dominators = crate::compute_kir_dominators(function);
+    let mut candidate_accesses = Vec::with_capacity(accesses.accesses.len());
+    let mut setup = BTreeSet::new();
+    let mut written_slices = BTreeSet::new();
+    let mut indices_by_slice = Vec::new();
+    let mut output_regions = BTreeSet::new();
+    let mut all_slice_regions = BTreeSet::new();
+
+    for access in &accesses.accesses {
+        if !access.slice_base
+            || access.element_bytes != 8
+            || access.element_type != MirType::Primitive(MirPrimitiveTypeName::F64)
+            || access.trip_start != BigInt::from(0)
+            || access.trip_bound != induction.bound
+        {
+            return None;
+        }
+        let instruction = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == access.instruction)?;
+        let (slice, index, kind) = match &instruction.kind {
+            KirInstructionKind::Load { place } => match place.as_ref() {
+                KirPlace::SliceIndex {
+                    slice,
+                    index,
+                    type_node,
+                    ..
+                } if *type_node == MirType::Primitive(MirPrimitiveTypeName::F64) => {
+                    (*slice, *index, super::LoopMemoryAccessKind::Read)
+                }
+                _ => return None,
+            },
+            KirInstructionKind::Store { place, .. } => match place.as_ref() {
+                KirPlace::SliceIndex {
+                    slice,
+                    index,
+                    type_node,
+                    ..
+                } if *type_node == MirType::Primitive(MirPrimitiveTypeName::F64) => {
+                    (*slice, *index, super::LoopMemoryAccessKind::Write)
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if kind != access.kind || !is_u32_value(function, index) {
+            return None;
+        }
+        let source_slice = loop_preheader_value_for_body_value(function, descriptor, slice)?;
+        indices_by_slice.push((source_slice, index));
+        all_slice_regions.insert((source_slice, access.region));
+
+        let affine_shape = if access.coefficient == BigInt::from(1)
+            && access.bias == BigInt::from(0)
+        {
+            match access.invariant_offset {
+                Some(offset)
+                    if is_preheader_u32_value(
+                        function,
+                        descriptor,
+                        &dominators,
+                        preheader,
+                        offset,
+                    ) && loop_body_value_for_invariant(function, descriptor, offset)
+                        .and_then(|offset_local| {
+                            address_add_definition(
+                                function,
+                                descriptor,
+                                index,
+                                induction_local,
+                                offset_local,
+                            )
+                        })
+                        .is_some() =>
+                {
+                    let offset_local = loop_body_value_for_invariant(function, descriptor, offset)?;
+                    setup.insert(address_add_definition(
+                        function,
+                        descriptor,
+                        index,
+                        induction_local,
+                        offset_local,
+                    )?);
+                    WasmAffineShape::Contiguous {
+                        offset: Some(offset),
+                    }
+                }
+                Some(_) => return None,
+                None if index == induction_local => WasmAffineShape::Contiguous { offset: None },
+                None => return None,
+            }
+        } else if access.coefficient == BigInt::from(0)
+            && access.bias == BigInt::from(0)
+            && kind == super::LoopMemoryAccessKind::Read
+        {
+            match access.invariant_offset {
+                Some(invariant)
+                    if loop_body_value_for_invariant(function, descriptor, invariant)
+                        == Some(index)
+                        && is_preheader_u32_value(
+                            function,
+                            descriptor,
+                            &dominators,
+                            preheader,
+                            invariant,
+                        ) =>
+                {
+                    WasmAffineShape::Broadcast { index: invariant }
+                }
+                Some(_) => return None,
+                None if value_integer_constant(function, index) == Some(BigInt::from(0)) => {
+                    WasmAffineShape::Broadcast { index }
+                }
+                None => return None,
+            }
+        } else {
+            return None;
+        };
+
+        match (&affine_shape, kind) {
+            (WasmAffineShape::Contiguous { .. }, super::LoopMemoryAccessKind::Read) => {}
+            (WasmAffineShape::Broadcast { .. }, super::LoopMemoryAccessKind::Read) => {}
+            (WasmAffineShape::Contiguous { .. }, super::LoopMemoryAccessKind::Write) => {
+                written_slices.insert(source_slice);
+                output_regions.insert(access.region);
+            }
+            (WasmAffineShape::Broadcast { .. }, super::LoopMemoryAccessKind::Write) => {
+                return None;
+            }
+        }
+        candidate_accesses.push(WasmAffineAccessShape {
+            instruction: access.instruction,
+            slice: source_slice,
+            kind,
+            shape: affine_shape,
+        });
+    }
+
+    if written_slices.len() != 1 || output_regions.len() != 1 {
+        return None;
+    }
+    let output_slice = *written_slices.first()?;
+    let output_indices = indices_by_slice
+        .iter()
+        .filter(|(slice, _)| *slice == output_slice)
+        .map(|(_, index)| *index)
+        .collect::<BTreeSet<_>>();
+    if output_indices.len() != 1 {
+        return None;
+    }
+    let output_region = *output_regions.first()?;
+    let output_shape = candidate_accesses
+        .iter()
+        .find(|access| {
+            access.slice == output_slice && access.kind == super::LoopMemoryAccessKind::Write
+        })?
+        .shape
+        .clone();
+    if candidate_accesses
+        .iter()
+        .any(|access| access.slice == output_slice && access.shape != output_shape)
+    {
+        return None;
+    }
+    let source_contiguous_read = candidate_accesses.iter().any(|access| {
+        access.slice != output_slice
+            && access.kind == super::LoopMemoryAccessKind::Read
+            && matches!(access.shape, WasmAffineShape::Contiguous { .. })
+    });
+    let source_broadcast_read = candidate_accesses.iter().any(|access| {
+        access.slice != output_slice
+            && access.kind == super::LoopMemoryAccessKind::Read
+            && matches!(access.shape, WasmAffineShape::Broadcast { .. })
+    });
+    if !source_contiguous_read || !source_broadcast_read {
+        return None;
+    }
+
+    let regions = analyze_regions(function, facts).ok()?;
+    for (slice, region) in &all_slice_regions {
+        if *slice == output_slice {
+            if *region != output_region {
+                return None;
+            }
+            continue;
+        }
+        let alias = query_alias(&regions, output_region, *region);
+        if alias.kind != AliasKind::NoAlias || alias.fact.is_none() {
+            return None;
+        }
+    }
+
+    let covered_accesses = candidate_accesses
+        .iter()
+        .map(|access| access.instruction)
+        .collect::<BTreeSet<_>>();
+    for setup_id in &setup {
+        let definition = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.id == *setup_id)?;
+        for result in &definition.results {
+            let value = result.value;
+            let mut saw_use = false;
+            for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+                if !instruction_uses_value(instruction, value) {
+                    continue;
+                }
+                let valid_index_use = covered_accesses.contains(&instruction.id)
+                    && matches!(
+                        &instruction.kind,
+                        KirInstructionKind::Load { place }
+                            if matches!(place.as_ref(), KirPlace::SliceIndex { index, .. } if *index == value)
+                    )
+                    || covered_accesses.contains(&instruction.id)
+                        && matches!(
+                            &instruction.kind,
+                            KirInstructionKind::Store { place, .. }
+                                if matches!(place.as_ref(), KirPlace::SliceIndex { index, .. } if *index == value)
+                        );
+                if !valid_index_use {
+                    return None;
+                }
+                saw_use = true;
+            }
+            for block in &function.blocks {
+                if terminator_uses_value(&block.terminator, value) {
+                    return None;
+                }
+            }
+            if !saw_use {
+                return None;
+            }
+        }
+    }
+
+    let mut ranges = BTreeSet::new();
+    for access in &candidate_accesses {
+        let affine = accesses
+            .accesses
+            .iter()
+            .find(|source| source.instruction == access.instruction)?;
+        let requirement = match access.shape {
+            WasmAffineShape::Contiguous { offset } => WasmSliceRangeRequirement {
+                slice: access.slice,
+                start: offset,
+                count: WasmRangeCount::TripBound(induction.bound),
+                element_bytes: affine.element_bytes,
+            },
+            WasmAffineShape::Broadcast { index } => WasmSliceRangeRequirement {
+                slice: access.slice,
+                start: (value_integer_constant(function, index) != Some(BigInt::from(0)))
+                    .then_some(index),
+                count: WasmRangeCount::One,
+                element_bytes: affine.element_bytes,
+            },
+        };
+        ranges.insert(requirement);
+    }
+    if ranges.is_empty() || ranges.len() > 3 {
+        return None;
+    }
+    let address_setup = setup.into_iter().collect::<Vec<_>>();
+    if address_setup.len() > 2
+        || !address_setup.iter().all(|id| {
+            function
+                .blocks
+                .iter()
+                .filter(|block| descriptor.blocks.contains(&block.id))
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| instruction.id == *id)
+        })
+    {
+        return None;
+    }
+    Some(WasmAffineCandidate {
+        accesses: candidate_accesses,
+        scalar_address_setup: address_setup,
+        range_requirements: ranges.into_iter().collect(),
+    })
+}
+
+fn is_u32_value(function: &crate::KirFunction, value: crate::ValueId) -> bool {
+    value_type(function, value) == Some(&MirType::Primitive(MirPrimitiveTypeName::U32))
+}
+
+fn loop_body_value_for_header_value(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    value: crate::ValueId,
+) -> Option<crate::ValueId> {
+    let header = function
+        .blocks
+        .iter()
+        .find(|block| block.id == descriptor.header)?;
+    let param_index = header
+        .params
+        .iter()
+        .position(|param| param.value == value)?;
+    let crate::KirTerminator::Branch { then_edge, .. } = &header.terminator else {
+        return None;
+    };
+    let body = function
+        .blocks
+        .iter()
+        .find(|block| block.id == then_edge.target && descriptor.blocks.contains(&block.id))?;
+    let body_param_index = then_edge
+        .args
+        .iter()
+        .position(|argument| *argument == value)
+        .or_else(|| (param_index < then_edge.args.len()).then_some(param_index))?;
+    let result = body.params.get(body_param_index)?.value;
+    is_u32_value(function, result).then_some(result)
+}
+
+fn loop_preheader_value_for_body_value(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    value: crate::ValueId,
+) -> Option<crate::ValueId> {
+    let body = function
+        .blocks
+        .iter()
+        .find(|block| block.id != descriptor.header && descriptor.blocks.contains(&block.id))?;
+    let body_index = body.params.iter().position(|param| param.value == value)?;
+    let header = function
+        .blocks
+        .iter()
+        .find(|block| block.id == descriptor.header)?;
+    let crate::KirTerminator::Branch { then_edge, .. } = &header.terminator else {
+        return None;
+    };
+    if then_edge.target != body.id {
+        return None;
+    }
+    let header_value = *then_edge.args.get(body_index)?;
+    let header_index = header
+        .params
+        .iter()
+        .position(|param| param.value == header_value)?;
+    let preheader = function
+        .blocks
+        .iter()
+        .find(|block| Some(block.id) == descriptor.preheader)?;
+    let crate::KirTerminator::Jump { edge } = &preheader.terminator else {
+        return None;
+    };
+    (edge.target == descriptor.header)
+        .then(|| edge.args.get(header_index).copied())
+        .flatten()
+}
+
+fn loop_body_value_for_invariant(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    value: crate::ValueId,
+) -> Option<crate::ValueId> {
+    let preheader = function
+        .blocks
+        .iter()
+        .find(|block| Some(block.id) == descriptor.preheader)?;
+    let crate::KirTerminator::Jump { edge } = &preheader.terminator else {
+        return None;
+    };
+    let header = function
+        .blocks
+        .iter()
+        .find(|block| block.id == descriptor.header && block.id == edge.target)?;
+    if let Some(header_index) = edge.args.iter().position(|argument| *argument == value) {
+        let header_value = header.params.get(header_index)?.value;
+        return loop_body_value_for_header_value(function, descriptor, header_value);
+    }
+
+    // A value computed in an enclosing loop or this loop's preheader can
+    // dominate the inner body without being threaded through its header
+    // parameters. Preserve that complete SSA value for the range guard.
+    let dominators = crate::compute_kir_dominators(function);
+    let owner = function.blocks.iter().find_map(|block| {
+        (block.params.iter().any(|param| param.value == value)
+            || block.instructions.iter().any(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            }))
+        .then_some(block.id)
+    });
+    owner
+        .is_none_or(|block| {
+            !descriptor.blocks.contains(&block) && dominators.dominates(block, preheader.id)
+        })
+        .then_some(value)
+}
+
+fn is_preheader_u32_value(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    dominators: &crate::KirDominators,
+    preheader: BlockId,
+    value: crate::ValueId,
+) -> bool {
+    if !is_u32_value(function, value) {
+        return false;
+    }
+    let owner = function.blocks.iter().find_map(|block| {
+        (block.params.iter().any(|param| param.value == value)
+            || block.instructions.iter().any(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == value)
+            }))
+        .then_some(block.id)
+    });
+    owner.is_none_or(|block| {
+        !descriptor.blocks.contains(&block) && dominators.dominates(block, preheader)
+    })
+}
+
+fn address_add_definition(
+    function: &crate::KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    index: crate::ValueId,
+    induction: crate::ValueId,
+    offset: crate::ValueId,
+) -> Option<InstructionId> {
+    let (block, instruction) = function.blocks.iter().find_map(|block| {
+        block
+            .instructions
+            .iter()
+            .find(|instruction| {
+                instruction
+                    .results
+                    .iter()
+                    .any(|result| result.value == index)
+            })
+            .map(|instruction| (block, instruction))
+    })?;
+    if !descriptor.blocks.contains(&block.id)
+        || !is_u32_value(function, index)
+        || !matches!(
+            instruction.kind,
+            KirInstructionKind::Binary {
+                op: MirBinaryOp::Add,
+                semantics: KirArithmeticSemantics::Modular,
+                left,
+                right,
+            } if (left == induction && right == offset) || (left == offset && right == induction)
+        )
+    {
+        return None;
+    }
+    Some(instruction.id)
+}
+
+fn value_integer_constant(function: &crate::KirFunction, value: crate::ValueId) -> Option<BigInt> {
+    let instruction = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            instruction
+                .results
+                .iter()
+                .any(|result| result.value == value)
+        })?;
+    match &instruction.kind {
+        KirInstructionKind::ConstInt { value } => BigInt::parse_bytes(value.as_bytes(), 10),
+        KirInstructionKind::Copy { value } => value_integer_constant(function, *value),
+        _ => None,
+    }
+}
+
+fn instruction_uses_value(instruction: &KirInstruction, value: crate::ValueId) -> bool {
+    let mut found = false;
+    super::visit_instruction_uses(instruction, &mut |used| found |= used == value);
+    found
+}
+
+fn terminator_uses_value(terminator: &crate::KirTerminator, value: crate::ValueId) -> bool {
+    match terminator {
+        crate::KirTerminator::Return {
+            value: returned, ..
+        } => *returned == Some(value),
+        crate::KirTerminator::Jump { edge } => edge.args.contains(&value),
+        crate::KirTerminator::Branch {
+            condition,
+            then_edge,
+            else_edge,
+        } => {
+            *condition == value
+                || then_edge.args.contains(&value)
+                || else_edge.args.contains(&value)
+        }
+    }
 }
 
 fn has_constant_call_bound(
@@ -697,17 +1313,29 @@ fn is_constant_integer(
     result
 }
 
+struct CandidateCostModelInput<'a> {
+    operations: &'a [VectorCandidateOperation],
+    accesses: &'a [AffineMemoryAccess],
+    splat_inputs: &'a BTreeSet<(crate::ValueId, KirLaneType)>,
+    version_predicate: Option<&'a super::TotalVersionPredicate>,
+    wasm_affine: Option<&'a WasmAffineCandidate>,
+}
+
 fn candidate_cost_and_threshold(
     profile: &crate::KirTargetProfile,
     source: (&crate::KirFunction, &CanonicalLoopDescriptor),
     shape: (u16, u8),
-    operations: &[VectorCandidateOperation],
-    accesses: &[AffineMemoryAccess],
-    splat_inputs: &BTreeSet<(crate::ValueId, KirLaneType)>,
-    version_predicate: Option<&super::TotalVersionPredicate>,
+    model: CandidateCostModelInput<'_>,
 ) -> Result<(KirCostEstimate, u32), String> {
     let (function, descriptor) = source;
     let (vf, uf) = shape;
+    let CandidateCostModelInput {
+        operations,
+        accesses,
+        splat_inputs,
+        version_predicate,
+        wasm_affine,
+    } = model;
     let lanes = u8::try_from(vf).map_err(|_| "vector VF exceeds cost schema".to_string())?;
     let mut scalar_iteration = 0_u32;
     let mut vector_lane_chunk = 0_u32;
@@ -803,16 +1431,66 @@ fn candidate_cost_and_threshold(
                 alignment,
             },
         )?);
-        vector_lane_chunk = vector_lane_chunk.saturating_add(profile_cost(
-            profile,
-            KirCostKey {
-                operation,
-                lane,
-                lanes,
-                semantics: KirCostSemantics::NotApplicable,
-                alignment,
-            },
-        )?);
+        let affine_shape = wasm_affine.and_then(|affine| {
+            affine
+                .accesses
+                .iter()
+                .find(|candidate| candidate.instruction == access.instruction)
+        });
+        if affine_shape
+            .is_some_and(|candidate| matches!(candidate.shape, WasmAffineShape::Broadcast { .. }))
+        {
+            let scalar_load = profile_cost(
+                profile,
+                KirCostKey {
+                    operation,
+                    lane,
+                    lanes: 1,
+                    semantics: KirCostSemantics::NotApplicable,
+                    alignment,
+                },
+            )?;
+            let splat = profile_cost(
+                profile,
+                KirCostKey {
+                    operation: KirProfileOperation::Splat,
+                    lane,
+                    lanes,
+                    semantics: KirCostSemantics::NotApplicable,
+                    alignment: KirAlignmentClass::NotApplicable,
+                },
+            )?;
+            vector_lane_chunk = vector_lane_chunk
+                .saturating_add(scalar_load)
+                .saturating_add(splat);
+        } else {
+            vector_lane_chunk = vector_lane_chunk.saturating_add(profile_cost(
+                profile,
+                KirCostKey {
+                    operation,
+                    lane,
+                    lanes,
+                    semantics: KirCostSemantics::NotApplicable,
+                    alignment,
+                },
+            )?);
+        }
+    }
+    if let Some(affine) = wasm_affine {
+        for _ in &affine.scalar_address_setup {
+            let setup_cost = profile_cost(
+                profile,
+                KirCostKey {
+                    operation: KirProfileOperation::Add,
+                    lane: KirLaneType::U32,
+                    lanes: 1,
+                    semantics: KirCostSemantics::Modular,
+                    alignment: KirAlignmentClass::NotApplicable,
+                },
+            )?;
+            scalar_iteration = scalar_iteration.saturating_add(setup_cost);
+            vector_lane_chunk = vector_lane_chunk.saturating_add(setup_cost);
+        }
     }
     let mut splat_cost = 0_u32;
     for (value, lane) in splat_inputs {
@@ -890,7 +1568,14 @@ fn candidate_cost_and_threshold(
             alignment: KirAlignmentClass::NotApplicable,
         },
     )?);
-    let predicate_cost = (if let Some(predicate) = version_predicate {
+    let predicate_count = version_predicate
+        .map_or(0, |predicate| {
+            u32::try_from(predicate.conjuncts.len()).unwrap_or(u32::MAX)
+        })
+        .saturating_add(wasm_affine.map_or(0, |affine| {
+            u32::try_from(affine.range_requirements.len()).unwrap_or(u32::MAX)
+        }));
+    let predicate_cost = (if predicate_count > 0 {
         let one = profile_cost(
             profile,
             KirCostKey {
@@ -901,9 +1586,7 @@ fn candidate_cost_and_threshold(
                 alignment: KirAlignmentClass::NotApplicable,
             },
         )?;
-        predicate_base.saturating_add(
-            one.saturating_mul(u32::try_from(predicate.conjuncts.len()).unwrap_or(u32::MAX)),
-        )
+        predicate_base.saturating_add(one.saturating_mul(predicate_count))
     } else {
         predicate_base
     })
@@ -1626,6 +2309,90 @@ fn profile_supports_candidate(
             } else {
                 KirProfileOperation::Store
             },
+            lane,
+            lanes,
+            semantics: KirCostSemantics::NotApplicable,
+            alignment: KirAlignmentClass::Bytes(alignment),
+        })
+    })
+}
+
+fn profile_supports_wasm_affine_candidate(
+    profile: &crate::KirTargetProfile,
+    operations: &[VectorCandidateOperation],
+    accesses: &[AffineMemoryAccess],
+    affine: &WasmAffineCandidate,
+    needs_splat: bool,
+) -> bool {
+    let legal = |key: KirCostKey| {
+        matches!(
+            profile.operation_availability(&key),
+            Some(KirOperationAvailability::Legal(cost)) if cost.legalization_parts == 1
+        )
+    };
+    let lanes = 2;
+    if operations.iter().any(|operation| {
+        !legal(KirCostKey {
+            operation: operation.operation,
+            lane: operation.lane_type,
+            lanes,
+            semantics: operation.semantics,
+            alignment: operation.alignment,
+        })
+    }) {
+        return false;
+    }
+    if needs_splat
+        && !legal(KirCostKey {
+            operation: KirProfileOperation::Splat,
+            lane: KirLaneType::F64,
+            lanes,
+            semantics: KirCostSemantics::NotApplicable,
+            alignment: KirAlignmentClass::NotApplicable,
+        })
+    {
+        return false;
+    }
+    if affine.scalar_address_setup.iter().any(|_| {
+        !legal(KirCostKey {
+            operation: KirProfileOperation::Add,
+            lane: KirLaneType::U32,
+            lanes: 1,
+            semantics: KirCostSemantics::Modular,
+            alignment: KirAlignmentClass::NotApplicable,
+        })
+    }) {
+        return false;
+    }
+    accesses.iter().all(|access| {
+        let Some(candidate) = affine
+            .accesses
+            .iter()
+            .find(|candidate| candidate.instruction == access.instruction)
+        else {
+            return false;
+        };
+        let Some(lane) = lane_type(&access.element_type) else {
+            return false;
+        };
+        let Ok(alignment) = u16::try_from(access.element_bytes) else {
+            return false;
+        };
+        let operation = if access.kind == super::LoopMemoryAccessKind::Read {
+            KirProfileOperation::Load
+        } else {
+            KirProfileOperation::Store
+        };
+        let lanes = if matches!(candidate.shape, WasmAffineShape::Broadcast { .. }) {
+            if access.kind != super::LoopMemoryAccessKind::Read {
+                return false;
+            }
+            1
+        } else {
+            2
+        };
+        legal(KirCostKey {
+            operation,
             lane,
             lanes,
             semantics: KirCostSemantics::NotApplicable,

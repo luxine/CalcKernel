@@ -40,6 +40,15 @@ mod slp;
 #[path = "optimizer/vectorize.rs"]
 mod vectorize;
 
+#[path = "optimizer/wasm_affine_checker.rs"]
+mod wasm_affine_checker;
+
+#[path = "optimizer/wasm_affine.rs"]
+mod wasm_affine;
+
+#[path = "optimizer/stencil_peel.rs"]
+mod stencil_peel;
+
 #[path = "optimizer/vector_alias_predicate.rs"]
 mod vector_alias_predicate;
 

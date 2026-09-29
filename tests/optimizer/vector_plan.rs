@@ -91,6 +91,7 @@ fn plan(profile: &KirTargetProfile) -> VectorizationPlan {
             unroll_index: 0,
             footprint_proof: ProofId::from_index(4),
         }],
+        broadcast_groups: vec![],
         predicates: vec![VectorPredicate::TripThreshold {
             trip_count: ValueId::from_index(5),
             minimum: 8,
@@ -223,6 +224,7 @@ fn independently_checkable_plan() -> (
                 .collect(),
         }],
         memory_groups: vec![],
+        broadcast_groups: vec![],
         predicates: vec![],
         epilogue: VectorEpilogue::None,
         cost: KirCostEstimate::new(10, 8, 0, 0),

@@ -261,6 +261,18 @@ fn print_kir_instruction(instruction: &KirInstruction) -> String {
                         right_count.index(),
                         right_element_bytes
                     ),
+                    KirVersionPredicateConjunct::WasmSliceRange {
+                        slice,
+                        start,
+                        count,
+                        element_bytes,
+                    } => format!(
+                        "slice_range(v{},v{},v{},{})",
+                        slice.index(),
+                        start.index(),
+                        count.index(),
+                        element_bytes
+                    ),
                 })
                 .collect::<Vec<_>>()
                 .join("&&")

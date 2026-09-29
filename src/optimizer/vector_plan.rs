@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::{
     BlockId, FunctionId, InstructionId, KirAlignmentClass, KirCostKey, KirCostSemantics,
     KirLaneType, KirOperationAvailability, KirProfileOperation, KirTargetProfile, LoopId,
@@ -49,6 +51,31 @@ pub struct VectorMemoryGroup {
     pub footprint_proof: ProofId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WasmRangeCount {
+    TripBound(ValueId),
+    One,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WasmSliceRangeRequirement {
+    pub slice: ValueId,
+    /// None represents the exact source index zero, not an inferred offset.
+    pub start: Option<ValueId>,
+    pub count: WasmRangeCount,
+    pub element_bytes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorBroadcastGroup {
+    pub region: MemoryRegionId,
+    pub scalar_instruction: InstructionId,
+    pub emitted_scalar_load: InstructionId,
+    pub emitted_splat: InstructionId,
+    pub unroll_index: u8,
+    pub footprint_proof: ProofId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VectorPredicate {
     TripThreshold {
@@ -65,6 +92,10 @@ pub enum VectorPredicate {
         left: MemoryRegionId,
         right: MemoryRegionId,
         bytes: ValueId,
+        proof: ProofId,
+    },
+    WasmSliceRange {
+        requirement: WasmSliceRangeRequirement,
         proof: ProofId,
     },
     PowerOfTwoAlignment {
@@ -152,6 +183,7 @@ pub struct VectorizationPlan {
     pub uf: u8,
     pub operations: Vec<VectorOperationMapping>,
     pub memory_groups: Vec<VectorMemoryGroup>,
+    pub broadcast_groups: Vec<VectorBroadcastGroup>,
     pub predicates: Vec<VectorPredicate>,
     pub epilogue: VectorEpilogue,
     pub cost: KirCostEstimate,
@@ -327,8 +359,40 @@ pub fn validate_vectorization_plan(
     {
         return Err("vector plan memory group UF identity is outside the plan".to_string());
     }
+    let mut broadcast_sources = BTreeSet::new();
+    let mut emitted_broadcast_ids = BTreeSet::new();
+    for group in &plan.broadcast_groups {
+        if group.unroll_index >= plan.uf
+            || !broadcast_sources.insert((group.scalar_instruction, group.unroll_index))
+            || group.emitted_scalar_load == group.emitted_splat
+            || !emitted_broadcast_ids.insert(group.emitted_scalar_load)
+            || !emitted_broadcast_ids.insert(group.emitted_splat)
+        {
+            return Err("vector plan broadcast group identity is invalid".to_string());
+        }
+    }
     if plan.predicates.len() > 4 {
         return Err("vector plan has more than four runtime predicates".to_string());
+    }
+    let has_affine_wasm = !plan.broadcast_groups.is_empty()
+        || plan
+            .predicates
+            .iter()
+            .any(|predicate| matches!(predicate, VectorPredicate::WasmSliceRange { .. }));
+    if has_affine_wasm
+        && (profile.wasm_features() != Some(crate::KirWasmFeatures::Simd128)
+            || plan.vf != 2
+            || plan.uf != 1)
+    {
+        return Err("affine WASM vector plan requires the f64x2 UF1 profile".to_string());
+    }
+    let mut ranges = BTreeSet::new();
+    for predicate in &plan.predicates {
+        if let VectorPredicate::WasmSliceRange { requirement, .. } = predicate
+            && (!matches!(requirement.element_bytes, 4 | 8) || !ranges.insert(*requirement))
+        {
+            return Err("affine WASM vector plan has an invalid range requirement".to_string());
+        }
     }
     validate_cost(plan.cost, 20)?;
     validate_growth(plan.pre_state.frozen_kir_units, plan.growth)?;

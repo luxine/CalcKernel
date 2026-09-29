@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 
 use calckernel::{
     CandidateDisposition, ContractFactSet, KirAlignmentClass, KirBoundsMode, KirBuildConfig,
-    KirConsumer, KirCostKey, KirLegalCost, KirNativeCpuPolicy, KirOperationAvailability,
-    KirOptimizationLevel, KirOverflowMode, KirProfileOperation, KirSanitizerMode, KirTargetProfile,
-    KirTargetProfileBuilder, KirVerifiedProgramState, KirWasmFeatures, SourceFile, VectorEpilogue,
+    KirConsumer, KirCostKey, KirInstructionKind, KirLegalCost, KirNativeCpuPolicy,
+    KirOperationAvailability, KirOptimizationLevel, KirOverflowMode, KirProfileOperation,
+    KirSanitizerMode, KirTargetProfile, KirTargetProfileBuilder, KirVerifiedProgramState,
+    KirVersionPredicateConjunct, KirWasmFeatures, SourceFile, VectorEpilogue,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
     discover_vectorization_candidates, import_contract_facts, lower_to_mir,
     prepare_vectorization_trial, print_kir_module, run_kir_multiversion_pass_pipeline,
-    run_kir_pass_pipeline,
+    run_kir_pass_pipeline, validate_kir_module,
 };
 
 #[test]
@@ -1324,6 +1325,7 @@ export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
   let i: u32 = 0;
   while i < n { b[i] = a[i] + 1; i = i + 1; }
 }
+
 "#;
     let (pre, _) = map_state(source);
     let discovery = discover_vectorization_candidates(&pre);
@@ -1378,6 +1380,84 @@ export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
     );
 }
 
+#[test]
+fn independent_vector_checker_should_fail_closed_on_wasm_slice_range_predicates() {
+    let source = r#"
+export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] + 1; i = i + 1; }
+}
+"#;
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let candidate = discover_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 4 && candidate.version_predicate.is_some())
+        .expect("unknown-alias Wasm VF4 candidate");
+    let mut prepared = prepare_vectorization_trial(&pre, &candidate).expect("vector trial");
+    let function = prepared
+        .trial
+        .module_mut()
+        .functions
+        .iter_mut()
+        .find(|function| function.id == candidate.function)
+        .expect("candidate function");
+    let preheader = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == candidate.preheader)
+        .expect("candidate preheader");
+    let predicate = preheader
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.kind {
+            KirInstructionKind::VersionPredicate { predicate } => Some(predicate),
+            _ => None,
+        })
+        .expect("emitted version predicate");
+    let alias_index = predicate
+        .conjuncts
+        .iter()
+        .position(|conjunct| {
+            matches!(
+                conjunct,
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. }
+            )
+        })
+        .expect("alias conjunct");
+    let KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+        left,
+        left_count,
+        left_element_bytes,
+        ..
+    } = predicate.conjuncts[alias_index]
+    else {
+        unreachable!();
+    };
+    predicate.conjuncts[alias_index] = KirVersionPredicateConjunct::WasmSliceRange {
+        slice: left,
+        start: left_count,
+        count: left_count,
+        element_bytes: left_element_bytes,
+    };
+
+    assert!(
+        validate_kir_module(prepared.trial.module())
+            .errors
+            .is_empty()
+    );
+    let error = check_vectorization_trial_independently(
+        &pre,
+        &prepared.trial,
+        &prepared.plan,
+        &prepared.charge,
+    )
+    .expect_err("the independent checker must not approve an unsupported predicate");
+    assert!(
+        format!("{error:?}").contains("does not accept Wasm slice-range predicates yet"),
+        "{error:?}"
+    );
+}
 #[test]
 fn vector_differential_total_predicate_and_lane_partition_cover_edges() {
     let trip = calckernel::ValueId::from_index(1);

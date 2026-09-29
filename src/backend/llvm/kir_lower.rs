@@ -2682,6 +2682,11 @@ impl<'module, 'context> KirFunctionLowerer<'module, 'context, '_> {
                     *right_count,
                     *right_element_bytes,
                 )?,
+                KirVersionPredicateConjunct::WasmSliceRange { .. } => {
+                    return Err(lowering_error(
+                        "Wasm slice-range predicate cannot be lowered by the LLVM backend",
+                    ));
+                }
             };
             combined = Some(if let Some(previous) = combined {
                 self.bool_and(previous, condition, "version.and")?
