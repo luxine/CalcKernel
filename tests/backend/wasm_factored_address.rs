@@ -188,7 +188,7 @@ fn simd_affine_bundle_reuses_modular_byte_addresses_in_typed_emission() {
 }
 
 #[test]
-fn simd_factored_bundle_preserves_raw_nan_payloads_and_trap_write_prefixes() {
+fn simd_factored_bundle_preserves_trap_prefixes_and_non_nan_bytes() {
     if !super::support::command::node_available() {
         return;
     }
@@ -206,7 +206,8 @@ fn simd_factored_bundle_preserves_raw_nan_payloads_and_trap_write_prefixes() {
     fs::write(dir.join("check.cjs"), r#"
 const fs=require('node:fs'), assert=require('node:assert/strict');
 const mods=process.argv.slice(2).map(p=>new WebAssembly.Module(fs.readFileSync(p)));
-const bits=[0n,0x8000000000000000n,1n,0x3ff0000000000000n,0xbff0000000000000n,0x7ff8000000000042n,0x7ff8000012345678n,0x7ff0000000000001n,0x7ff0000000000000n,0xfff0000000000000n];
+const finiteBits=[0n,0x8000000000000000n,0x3fe0000000000000n,0x3ff0000000000000n,0xbff0000000000000n,0x4000000000000000n,0x400a000000000000n,0xc010000000000000n];
+const nanBits=[0n,0x8000000000000000n,1n,0x3ff0000000000000n,0xbff0000000000000n,0x7ff8000000000042n,0x7ff8000012345678n,0x7ff0000000000001n,0x7ff0000000000000n,0xfff0000000000000n];
 const cases=[];
 for(const n of [0,1,2,7,8,15,16,17,23,24,31,32,33,63,64,65])for(const limited of [false,true]){
  const len=limited?Math.max(n,1):Math.max(n*n,1),a=4096,b=a+len*8+64,out=b+len*8+64;
@@ -215,14 +216,61 @@ for(const n of [0,1,2,7,8,15,16,17,23,24,31,32,33,63,64,65])for(const limited of
 for(const key of ['a','b','out'])for(const remain of [1,7,8,15,16]){const c={n:32,len:1024,a:4096,b:16384,out:32768};c[key]=131072-remain*8;cases.push(c);}
 cases.push({n:17,len:289,a:0xfffffff8,b:16384,out:32768});
 let checks=0;
-for(const c of cases){let expected;
+const corpora=[
+ {name:'finite',bits:finiteBits,compareNaNs:false},
+ {name:'nan',bits:nanBits,compareNaNs:true}
+];
+for(const corpus of corpora)for(const c of cases){let expected;
  for(const mod of mods){const w=new WebAssembly.Instance(mod).exports;if(w.memory.buffer.byteLength<131072)w.memory.grow(1);
- const raw=new Uint8Array(w.memory.buffer);raw.fill(0xa5);const view=new DataView(raw.buffer);
- for(const [ptr,seed] of [[c.a,1],[c.b,3],[c.out,5]])for(let i=0;i<c.len&&ptr+i*8+8<=raw.length;i++)view.setBigUint64(ptr+i*8,bits[(i+seed)%bits.length],true);
- let trapped=false;try{w.matmul_column(c.a,c.len,c.b,c.len,c.out,c.len,c.n);}catch(e){assert(e instanceof WebAssembly.RuntimeError);trapped=true;}
- const result={trapped,bytes:Buffer.from(raw)};
- if(expected){assert.equal(result.trapped,expected.trapped,JSON.stringify(c));assert(result.bytes.equals(expected.bytes),`raw payload/memory differs: ${JSON.stringify(c)}`);checks++;}else expected=result;
+ const raw=new Uint8Array(w.memory.buffer),view=new DataView(raw.buffer);
+ for(let i=0;i<raw.length;i+=8)view.setBigUint64(i,0x405edd2f1a9fbe77n,true);
+ for(const [ptr,seed] of [[c.a,1],[c.b,3]])for(let i=0;i<c.len&&ptr+i*8+8<=raw.length;i++)view.setBigUint64(ptr+i*8,corpus.bits[(i+seed)%corpus.bits.length],true);
+ for(let i=0;i<c.n*c.n&&c.out+i*8+8<=raw.length;i++)view.setBigUint64(c.out+i*8,0x4059000000000000n,true);
+ const initial=Buffer.from(raw);let trapped=false;try{w.matmul_column(c.a,c.len,c.b,c.len,c.out,c.len,c.n);}catch(e){assert(e instanceof WebAssembly.RuntimeError);trapped=true;}
+ const result={trapped,bytes:Buffer.from(raw),initial};
+ if(expected){
+  assert.equal(result.trapped,expected.trapped,`${corpus.name} trap status ${JSON.stringify(c)}`);
+  if(corpus.compareNaNs){
+   const initialView=new DataView(expected.initial.buffer,expected.initial.byteOffset,expected.initial.byteLength);
+   const expectedView=new DataView(expected.bytes.buffer,expected.bytes.byteOffset,expected.bytes.byteLength);
+   const actualView=new DataView(result.bytes.buffer,result.bytes.byteOffset,result.bytes.byteLength);
+   const outputStarts=new Set();
+   for(let row=0;row<c.n;row++)for(let col=0;col<c.n;col++){
+    const index=(row*c.n+col)>>>0,offset=(c.out+Math.imul(index,8))>>>0;
+    if(offset+8<=result.bytes.length)outputStarts.add(offset);
+   }
+   for(let offset=0;offset<result.bytes.length;offset+=8){
+    const same=result.bytes.subarray(offset,offset+8).equals(expected.bytes.subarray(offset,offset+8));
+    if(same)continue;
+    const expectedBits=expectedView.getBigUint64(offset,true),actualBits=actualView.getBigUint64(offset,true);
+    const arithmeticNaN=outputStarts.has(offset)
+      && !Number.isNaN(initialView.getFloat64(offset,true))
+      && Number.isNaN(expectedView.getFloat64(offset,true))
+      && Number.isNaN(actualView.getFloat64(offset,true))
+      && (expectedBits&0x0008000000000000n)!==0n
+      && (actualBits&0x0008000000000000n)!==0n;
+    assert(arithmeticNaN,`non-NaN memory or write-prefix differs at byte ${offset}: ${JSON.stringify(c)}`);
+   }
+  }else assert(result.bytes.equals(expected.bytes),`finite memory/write-prefix differs: ${JSON.stringify(c)}`);
+  checks++;
+ }else expected=result;
  }
+}
+let negativeZeroExpected;
+for(const mod of mods){
+ const w=new WebAssembly.Instance(mod).exports;if(w.memory.buffer.byteLength<131072)w.memory.grow(1);
+ const raw=new Uint8Array(w.memory.buffer),view=new DataView(raw.buffer);
+ for(let i=0;i<raw.length;i+=8)view.setBigUint64(i,0x405edd2f1a9fbe77n,true);
+ const a=4096,b=4160,out=4224,negativeZero=0x8000000000000000n;
+ view.setBigUint64(a,negativeZero,true);
+ view.setBigUint64(b,0x3ff0000000000000n,true);
+ view.setBigUint64(out,negativeZero,true);
+ let trapped=false;try{w.matmul_column(a,1,b,1,out,1,1);}catch(e){assert(e instanceof WebAssembly.RuntimeError);trapped=true;}
+ assert.equal(trapped,false,'signed-zero case must not trap');
+ assert.equal(view.getBigUint64(out,true),negativeZero,'finite arithmetic must preserve the exact negative-zero output bits');
+ const bytes=Buffer.from(raw);
+ if(negativeZeroExpected){assert(bytes.equals(negativeZeroExpected), 'signed-zero memory differs');checks++;}
+ else negativeZeroExpected=bytes;
 }
 console.log(checks);
 "#).unwrap();
@@ -241,5 +289,5 @@ console.log(checks);
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    assert_eq!(String::from_utf8(result.stdout).unwrap().trim(), "96");
+    assert_eq!(String::from_utf8(result.stdout).unwrap().trim(), "194");
 }
