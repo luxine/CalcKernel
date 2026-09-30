@@ -6,7 +6,7 @@ CalcKernel (CK) is a statically typed language for numerical computation kernels
 
 CK is designed to handle the calculation while your application keeps responsibility for the surrounding work, such as user interfaces, input and output, and data storage. Its typed function interfaces and caller-owned data slices make that boundary explicit.
 
-The latest stable release is 0.15.1.
+The latest stable release is 0.15.2, a WebAssembly performance and correctness update.
 
 ## Why CalcKernel
 

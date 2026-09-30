@@ -60,8 +60,11 @@ KIR's pure `VersionPredicate` instruction returns `bool`. It permits at most
 four conjuncts: one `TripThreshold` and three non-trip predicates. The
 WebAssembly-only `WasmSliceRange` conjunct takes a `slice<T>`, `start: u32`,
 `count: u32`, and a matching 4- or 8-byte element width; `T` is limited to
-`i32`, `u32`, `i64`, `u64`, or `f64`. It is valid only for the Wasm32
-`simd128` profile. A zero count is true. Otherwise, with widened unsigned
+`i32`, `u32`, `i64`, `u64`, or `f64`. The `baseline` profile permits it only in
+a total-range predicate made up of `TripThreshold` and `WasmSliceRange`
+conjuncts; alias-disjoint conjuncts are not valid there. `simd128` also permits
+supported `AddressIntervalsDisjoint` conjuncts. A zero count is true.
+Otherwise, with widened unsigned
 64-bit arithmetic, it checks `start + count <= slice.len` and that the
 exclusive end byte address `slice.data + (start + count) * element_bytes` is
 at most both `2^32` and `memory.size * 65536`. The predicate does not access or

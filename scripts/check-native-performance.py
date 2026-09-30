@@ -17,6 +17,7 @@ import sys
 import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+CANDIDATE_VERSION = "0.15.2"
 V010_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
 V010_COMPILER = f"calckernel 0.10.0 ({V010_COMMIT})"
 V010_MANIFEST_SHA256 = "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3"
@@ -963,8 +964,8 @@ def check_schema8(report, path, baseline_manifest):
         "variantObjects", "sampling", "cases", "compileTime", "artifactSize", "archiveSize", "correctness",
     }
     exact_keys(report, top_keys, "schema-8 performance report")
-    if report["schemaVersion"] != 8 or report["candidateVersion"] != "0.15.1":
-        fail("schemaVersion: 8 and candidate 0.15.1 are required")
+    if report["schemaVersion"] != 8 or report["candidateVersion"] != CANDIDATE_VERSION:
+        fail(f"schemaVersion: 8 and candidate {CANDIDATE_VERSION} are required")
     if report["candidateSha"] != current_candidate_sha() or report["replayCommit"] != V012_COMMIT:
         fail("candidateSha or exact v0.12 replay commit mismatch")
     directory = report["evidenceDirectory"]
@@ -1104,8 +1105,8 @@ def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
     exact_keys(report, top_keys, "performance report")
     if report["schemaVersion"] != 7:
         fail("performance report schemaVersion must be 7")
-    if report["candidateVersion"] != "0.15.1":
-        fail("candidateVersion must identify the 0.15.1 candidate")
+    if report["candidateVersion"] != CANDIDATE_VERSION:
+        fail(f"candidateVersion must identify the {CANDIDATE_VERSION} candidate")
     if report["cpuPolicy"] != "baseline":
         fail("release performance requires baseline CPU policy")
     if report["fastMath"] is not False:

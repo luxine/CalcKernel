@@ -12,6 +12,7 @@
 - [ ] 使用 checksum-verified LLVM 22.1.8 release prefix 与 pinned Clang oracle 执行 `cargo test --all-features --locked`。
 - [ ] `cargo build --release --features native-toolchain --locked`
 - [ ] Generated/mutation suite 在 C、WebAssembly、Native 支持的 O0–O3 mode 下通过。
+- [ ] 对有 WebAssembly codegen 变化的版本，严格 `baseline` 与 `simd128` 正确性/性能证据须标明精确候选源码与编译器二进制。对照已验收开发候选报告，核验正式构建的 module hash、所需 feature 声明与正确性输出；若生成 module 不同，则重测并单独标明正式构建数据。冷调用和模块体积单独于热调用比率报告，并明确标注开发候选实测结果。
 - [ ] 六 host pre-LLVM fact audit 通过并拒绝 mutation corpus。
 - [ ] Contract sanitizer ownership test 在 ASan/UBSan 下通过。
 - [ ] `./target/release/ckc --help`、`--version --verbose` 与 `licenses` 暴露完整 identity/notice evidence。

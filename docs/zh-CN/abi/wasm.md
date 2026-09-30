@@ -66,8 +66,10 @@ relaxed SIMD；整数运算按 2^32 取模。不受支持的候选保持标量�
 内部 `WasmSliceRange` predicate 使用扩宽后的无符号 64 位运算。`count == 0` 时结果为 true；否则
 要求 `start + count <= slice.len`，并要求 exclusive end byte address
 `slice.data + (start + count) * element_bytes` 同时不超过 `2^32` 和当前的
-`memory.size * 65536`。它仅适用于 Wasm32 SIMD128 KIR，`start`/`count` 必须是 `u32`，slice 元素
-仅限 `i32`、`u32`、`i64`、`u64` 或 `f64`，且宽度必须匹配。该内部 total range predicate 是优化谓词，
+`memory.size * 65536`。它仅适用于 Wasm32 KIR，`start`/`count` 必须是 `u32`，slice 元素仅限
+`i32`、`u32`、`i64`、`u64` 或 `f64`，且宽度必须匹配。`baseline` 仅允许由 `TripThreshold` 与
+`WasmSliceRange` conjunct 构成的窄 total-range 形式，不能包含 alias-disjoint conjunct；`simd128`
+还允许受支持的 `AddressIntervalsDisjoint` conjunct。该内部 total range predicate 是优化谓词，
 不会让一般内存访问进入 checked mode。每种受支持 SIMD plan 的独立 checker 都会重建精确标量访问范围及
 适用的别名证据，并验证所需的原标量、边界或源码控制流路径。当前用途包括受支持的仿射 map/矩阵列、
 封闭分段树和规范化 stencil 内部区域；任意手工构造的谓词都不能为内存访问授权。

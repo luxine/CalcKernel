@@ -2,6 +2,29 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.15.2 — WebAssembly 性能与正确性更新
+
+本补丁版本优化符合条件的 WebAssembly kernel，同时保持现有语言、CLI、公共 ABI、严格浮点
+行为以及 `baseline`/`simd128` 特性边界。不适用的情况继续使用安全的标量路径。
+
+- 为符合条件的矩阵、stencil 和其他数值 kernel 增加受证明约束的向量与标量 lowering。
+  优化保持输入顺序、边界与 alias guard、整数回绕和严格浮点求值语义。
+- 严格 11-kernel 套件的开发候选证据包含两次相互独立的七轮测试。每次测试包含 66 项
+  backend/profile/负载结果，全部正确性检查通过，且 profile 比较均可进行。与等价的
+  Clang/Rust WebAssembly 实现中较快者相比，baseline 吞吐
+  几何平均为 1.117× 和 1.118×（最慢项为 0.920× 和 0.914×）；SIMD128 为 1.016× 和
+  1.008×（最慢项为 0.923× 和 0.920×）。报告标识的源码提交为
+  `08292f18b6374f9636bae5ab07fbfcb8e9e30091`，`ckc` 二进制 SHA-256 为
+  `5db7c4db4146dda00020941f1047a1ade794741374e9446af4b2669de8979e3b`，报告中的候选版本仍为
+  `ckc 0.15.1`；两份报告 SHA-256 分别为
+  `ed56abd762d3d02404ae92b09ce213f8e8ef95f378020dea0f4b7355f302351e` 和
+  `4384dc2262a4a967a40d1b6f04096235def2b51408c12ae9c363c7946243378b`。这些是开发候选结果，
+  并非 v0.15.2 正式发布 archive 的实测结果。测试方法与当前公开结果见[性能指南](https://calckernel.org/zh-CN/docs/performance/)。
+- 热调用比较不含编译、进程启动、fixture I/O、WebAssembly 实例化、内存增长和报告生成。
+  同一候选测试中，baseline 与 SIMD128 模块分别为 28,325 和 34,941 字节；实测模块编译
+  约为 0.16–0.18 ms。首次调用成本因负载而异（例如 baseline matmul 约 43.95 ms，SIMD128
+  matmul 约 20.58 ms）。这些冷启动成本和模块体积与热吞吐分开报告，不作为追平结果。
+
 ## 0.15.1
 
 这是 0.15 系列首个正式发布版本，延续不可移动的 `v0.15.0` tagged source snapshot

@@ -3,7 +3,7 @@
 [简体中文](../zh-CN/guides/vscode.md)
 
 The CalcKernel extension provides editor support for `.ck` source files. Its
-release cycle is separate from the CK 0.15.1 compiler release. Install an
+release cycle is separate from the CK 0.15.2 compiler release. Install an
 available VSIX that matches the editor host platform and architecture:
 
 | VS Code host | VSIX target |
@@ -55,7 +55,7 @@ operating system are omitted from workspace symbol results.
 
 The VSIX includes a frontend-only `ckc` for the language server. It runs without
 LLVM and provides editor analysis offline. The bundled compiler version depends
-on the separately published VSIX and may predate compiler 0.15.1. By default,
+on the separately published VSIX and may predate compiler 0.15.2. By default,
 the extension uses this bundled server, then searches `PATH` if the bundled
 executable is unavailable. Set `ck.server.path` to an absolute path to use a
 separately installed `ckc` 0.15.x server.

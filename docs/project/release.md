@@ -7,8 +7,9 @@ does not publish a JavaScript wrapper or registry package.
 
 The immutable public `v0.15.0` tag records a compiler source snapshot, but it
 did not produce an official GitHub Release or compiler archives. Version
-`0.15.1` is the first published release in the 0.15 line and carries forward
-that source. Its release workflow validates annotated tags while retaining the
+`0.15.1` was the first published release in the 0.15 line. Version `0.15.2`
+is the WebAssembly performance and correctness update and retains the same
+public compatibility boundary. Its release workflow validates annotated tags while retaining the
 exact tagged source and all existing release gates. Official compiler archives
 are built only from a public compiler commit whose tag matches `Cargo.toml`;
 the workflow builds directly from that checked-out source and does not checkout
@@ -16,6 +17,24 @@ source from another repository. The schema-7/8 performance gates and six native
 hosts remain required release gates; offline Auto-Tuning is deferred. Node/V8
 WebAssembly map measurements are workload-specific local observations, not a
 portable release threshold or a general speed claim.
+
+The strict 11-kernel WebAssembly parity suite recorded two seven-round
+development-candidate runs on Apple M5 Max with Node.js 24.14.0/V8. The
+candidate source was commit `08292f18b6374f9636bae5ab07fbfcb8e9e30091`, and
+the `ckc` binary SHA-256 was
+`5db7c4db4146dda00020941f1047a1ade794741374e9446af4b2669de8979e3b`; the reports
+identify the compiler as `ckc 0.15.1` and have SHA-256 values
+`ed56abd762d3d02404ae92b09ce213f8e8ef95f378020dea0f4b7355f302351e` and
+`4384dc2262a4a967a40d1b6f04096235def2b51408c12ae9c363c7946243378b`. Baseline geometric means were 1.117× and
+1.118× with minima 0.920× and 0.914×; SIMD128 geometric means were 1.016× and
+1.008× with minima 0.923× and 0.920×. These exact-candidate records are
+development evidence, not measurements of the v0.15.2 release archives. They
+measure hot calls and exclude process start, compilation, fixture I/O, module
+instantiation, and memory growth. The candidate modules were 28,325 bytes for
+baseline and 34,941 bytes for SIMD128; first-call latency is workload-dependent
+and remains materially higher for some kernels. Release performance material
+must keep these costs separate and may identify archive performance only from
+verification bound to that exact release build and its generated modules.
 
 The tag event filter is intentionally broad so invalid release-like tags fail
 at the workflow gate. A release must use an annotated tag matching the stable

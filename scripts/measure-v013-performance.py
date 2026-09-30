@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - release performance workers are Unix
     resource = None
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+CANDIDATE_VERSION = "0.15.2"
 V012_COMMIT = "e1bcea461492a5a2619cdb960ea00dd668847f0a"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"
@@ -130,6 +131,11 @@ def command_output(command: list[object], *, env=None, cwd=REPO) -> str:
     if result.returncode:
         fail(f"command failed ({result.returncode}): {' '.join(command)}\n{result.stdout[-6000:]}")
     return result.stdout
+
+
+def require_candidate_version(version_output: str):
+    if version_output.strip() != f"ckc {CANDIDATE_VERSION}":
+        fail(f"CKC_CANDIDATE_COMPILER must identify ckc {CANDIDATE_VERSION}")
 
 
 def terminated_child_cpu_time_ns():
@@ -697,8 +703,7 @@ def collect_compile_samples(candidate, case, profiles, evidence, warmup, samples
 def collect(output, quick):
     candidate = pathlib.Path(os.environ.get("CKC_CANDIDATE_COMPILER", REPO / "target/release/ckc"))
     candidate = candidate if candidate.is_absolute() else (REPO / candidate).resolve()
-    if command_output([candidate, "--version"]).strip() != "ckc 0.15.1":
-        fail("CKC_CANDIDATE_COMPILER must identify ckc 0.15.1")
+    require_candidate_version(command_output([candidate, "--version"]))
     candidate_sha = command_output(["git", "rev-parse", "HEAD"]).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha):
         fail("candidate SHA is not exact")
@@ -849,7 +854,7 @@ def collect(output, quick):
     deterministic_archive(archive_path, candidate)
     replay_archive = replay_report["archive"]
     report = {
-        "schemaVersion": 8, "candidateVersion": "0.15.1", "candidateSha": candidate_sha,
+        "schemaVersion": 8, "candidateVersion": CANDIDATE_VERSION, "candidateSha": candidate_sha,
         "replayCommit": V012_COMMIT, "evidenceDirectory": evidence.name,
         "toolchain": {
             "llvmVersion": LLVM_VERSION, "clangVersion": LLVM_VERSION,

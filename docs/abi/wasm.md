@@ -94,10 +94,13 @@ The internal `WasmSliceRange` predicate uses widened unsigned 64-bit arithmetic.
 It returns true for `count == 0`; otherwise it requires `start + count <=
 slice.len` and the exclusive end byte address `slice.data + (start + count) *
 element_bytes` to be no greater than both `2^32` and the current
-`memory.size * 65536`. It is restricted to Wasm32 SIMD128 KIR, `u32` start and
-count, and `i32`, `u32`, `i64`, `u64`, or `f64` slices with a matching element
-width. This is an internal total optimization predicate, not a checked-memory
-mode. The independent checker for each supported SIMD plan reconstructs its
+`memory.size * 65536`. It is restricted to Wasm32 KIR, `u32` start and count,
+and `i32`, `u32`, `i64`, `u64`, or `f64` slices with a matching element width.
+In `baseline`, only the narrow total-range form containing `TripThreshold` and
+`WasmSliceRange` conjuncts is valid; it cannot include an alias-disjoint
+conjunct. The `simd128` profile also permits supported
+`AddressIntervalsDisjoint` conjuncts. This is an internal total optimization
+predicate, not a checked-memory mode. The independent checker for each supported SIMD plan reconstructs its
 exact scalar access ranges and applicable alias evidence, then verifies the
 required original scalar, boundary, or source-control-flow path. Uses include
 supported affine maps and matrix columns, closed piecewise trees, and the

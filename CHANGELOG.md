@@ -2,6 +2,39 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
+## 0.15.2 — WebAssembly Performance and Correctness Update
+
+This patch release improves eligible WebAssembly kernels while preserving the
+existing language, CLI, public ABI, strict floating-point behavior, and
+`baseline`/`simd128` feature boundaries. Unsupported cases retain their safe
+scalar paths.
+
+- Adds independently verified vector and scalar lowering for eligible matrix, stencil, and
+  other numerical kernels. The optimizations preserve input order, bounds and
+  alias guards, integer wraparound, and strict floating-point evaluation.
+- Development-candidate evidence from the strict 11-kernel suite records two
+  independent seven-round runs. Each run contains 66 backend/profile/workload
+  results with all correctness checks passing and all profile comparisons
+  eligible. Against the faster equivalent Clang/Rust WebAssembly
+  implementation, baseline throughput geometric means were 1.117× and 1.118×
+  (slowest cases 0.920× and 0.914×); SIMD128 means were 1.016× and 1.008×
+  (slowest cases 0.923× and 0.920×). The reports identify source commit
+  `08292f18b6374f9636bae5ab07fbfcb8e9e30091` and `ckc` binary SHA-256
+  `5db7c4db4146dda00020941f1047a1ade794741374e9446af4b2669de8979e3b`, and
+  report the candidate as `ckc 0.15.1`; report SHA-256 values are
+  `ed56abd762d3d02404ae92b09ce213f8e8ef95f378020dea0f4b7355f302351e` and
+  `4384dc2262a4a967a40d1b6f04096235def2b51408c12ae9c363c7946243378b`. These
+  are development-candidate results, not measurements of the v0.15.2 release
+  archives. See the [performance guide](https://calckernel.org/docs/performance/)
+  for methodology and currently published measurements.
+- The hot-call comparison excludes compilation, process startup, fixture I/O,
+  WebAssembly instantiation, memory growth, and report generation. In the same
+  candidate runs, baseline and SIMD128 modules were 28,325 and 34,941 bytes;
+  measured module compilation was about 0.16–0.18 ms. First-call costs remain
+  workload-dependent (for example, baseline matmul was about 43.95 ms and
+  SIMD128 matmul about 20.58 ms). These cold costs and module sizes are reported
+  separately from hot throughput and are not claimed as parity results.
+
 ## 0.15.1
 
 The first published 0.15 release carries forward the compiler and WebAssembly

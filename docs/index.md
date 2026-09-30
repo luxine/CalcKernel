@@ -2,7 +2,7 @@
 
 [简体中文](zh-CN/index.md)
 
-These pages describe the stable 0.15.1 product contract. The `0.15.x`
+These pages describe the stable 0.15.2 product contract. The `0.15.x`
 compatibility policy is normative; earlier release contracts and migration
 boundaries remain documented where they apply.
 

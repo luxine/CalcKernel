@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import struct
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -210,7 +211,7 @@ class SchemaEightGateTests(unittest.TestCase):
             "benches/fixtures/pgo/compute_bound.ck",
         ]]
         self.report = {
-            "schemaVersion": 8, "candidateVersion": "0.15.1", "candidateSha": "1" * 40,
+            "schemaVersion": 8, "candidateVersion": gate.CANDIDATE_VERSION, "candidateSha": "1" * 40,
             "replayCommit": gate.V012_COMMIT, "evidenceDirectory": self.evidence.name,
             "toolchain": {"llvmVersion": "22.1.8", "clangVersion": "22.1.8",
                           "rustVersion": "1.90.0", "componentManifestSha256": digest(component.read_bytes()),
@@ -286,6 +287,14 @@ class SchemaEightGateTests(unittest.TestCase):
     def test_complete_schema_eight_passes(self):
         self.check()
 
+    def test_collector_accepts_only_the_current_candidate_cli_identity(self):
+        self.assertEqual(collector.CANDIDATE_VERSION, gate.CANDIDATE_VERSION)
+        cargo = tomllib.loads((REPO / "Cargo.toml").read_text())
+        self.assertEqual(cargo["package"]["version"], gate.CANDIDATE_VERSION)
+        collector.require_candidate_version(f"ckc {gate.CANDIDATE_VERSION}\n")
+        with self.assertRaisesRegex(ValueError, "0.15.2"):
+            collector.require_candidate_version("ckc 0.15.1\n")
+
     def test_collector_retains_a_self_contained_schema_seven_bundle(self):
         source_root = self.root / "schema-seven-source"
         source_root.mkdir()
@@ -353,6 +362,7 @@ class SchemaEightGateTests(unittest.TestCase):
             collector.dispatch_symbol_values(ambiguous, "kernel")
 
     def test_identity_capability_profile_and_evidence_fail_closed(self):
+        self.reject(lambda r: r.__setitem__("candidateVersion", "0.15.1"), "candidate")
         self.reject(lambda r: r.__setitem__("candidateVersion", "0.13.0"), "candidate")
         self.reject(lambda r: r.__setitem__("candidateSha", "2" * 40), "candidateSha")
         self.reject(lambda r: r["capabilityManifest"]["availableTiers"].pop(), "enhanced tier")

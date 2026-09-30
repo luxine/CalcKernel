@@ -28,7 +28,10 @@ target-neutral optimized input。`emit-kir` 是 deterministic inspection，但 K
 KIR 的纯 `VersionPredicate` instruction 返回 `bool`，最多含四个 conjunct：一个
 `TripThreshold` 和三个非 trip predicate。仅用于 WebAssembly 的 `WasmSliceRange` conjunct 接收
 `slice<T>`、`start: u32`、`count: u32` 和与元素宽度匹配的 4/8 字节值；`T` 仅限 `i32`、`u32`、
-`i64`、`u64` 或 `f64`。它只适用于 Wasm32 `simd128` profile。`count` 为零时结果为 true；否则使用
+`i64`、`u64` 或 `f64`。`baseline` 仅允许由 `TripThreshold` 与 `WasmSliceRange` conjunct 构成的
+total-range predicate，不能包含 alias-disjoint conjunct；`simd128` 还允许受支持的
+`AddressIntervalsDisjoint` conjunct。
+`count` 为零时结果为 true；否则使用
 扩宽后的无符号 64 位运算，检查 `start + count <= slice.len`，并检查 exclusive end byte address
 `slice.data + (start + count) * element_bytes` 同时不超过 `2^32` 和 `memory.size * 65536`。
 该谓词不访问或修改内存。它是优化 guard，不是 checked-memory 操作。每种受支持 SIMD plan 的独立 checker
