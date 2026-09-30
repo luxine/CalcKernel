@@ -18,13 +18,14 @@ scalar paths.
   eligible. Against the faster equivalent Clang/Rust WebAssembly
   implementation, baseline throughput geometric means were 1.117× and 1.118×
   (slowest cases 0.920× and 0.914×); SIMD128 means were 1.016× and 1.008×
-  (slowest cases 0.923× and 0.920×). The reports identify source commit
+  (slowest cases 0.923× and 0.920×). The reports declare a clean source checkout at commit
   `08292f18b6374f9636bae5ab07fbfcb8e9e30091` and `ckc` binary SHA-256
   `5db7c4db4146dda00020941f1047a1ade794741374e9446af4b2669de8979e3b`, and
   report the candidate as `ckc 0.15.1`; report SHA-256 values are
   `ed56abd762d3d02404ae92b09ce213f8e8ef95f378020dea0f4b7355f302351e` and
-  `4384dc2262a4a967a40d1b6f04096235def2b51408c12ae9c363c7946243378b`. These
-  are development-candidate results, not measurements of the v0.15.2 release
+  `4384dc2262a4a967a40d1b6f04096235def2b51408c12ae9c363c7946243378b`. The
+  binary-to-source relation is not independently verifiable; the exact binary
+  hash is authoritative. These are development-candidate results, not measurements of the v0.15.2 release
   archives. See the [performance guide](https://calckernel.org/docs/performance/)
   for methodology and currently published measurements.
 - The hot-call comparison excludes compilation, process startup, fixture I/O,

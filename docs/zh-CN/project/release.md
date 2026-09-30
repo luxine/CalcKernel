@@ -15,7 +15,9 @@ tag，同时保留精确 tag source 和全部现有发布门禁。
 特定工作负载的本地观察结果，不是可移植的 release threshold，也不能概括为普遍的性能提升。
 
 严格 11-kernel WebAssembly parity 套件在 Apple M5 Max、Node.js 24.14.0/V8 上记录了两次
-七轮开发候选运行。候选源码提交为 `08292f18b6374f9636bae5ab07fbfcb8e9e30091`，`ckc` 二进制
+七轮开发候选运行。报告声明源码 checkout 干净，提交为
+`08292f18b6374f9636bae5ab07fbfcb8e9e30091`；二进制与源码的对应关系
+无法独立验证，以精确的二进制 SHA-256 为准。`ckc` 二进制
 SHA-256 为 `5db7c4db4146dda00020941f1047a1ade794741374e9446af4b2669de8979e3b`；报告中的 compiler
 版本为 `ckc 0.15.1`，报告 SHA-256 分别为
 `ed56abd762d3d02404ae92b09ce213f8e8ef95f378020dea0f4b7355f302351e` 和

@@ -20,8 +20,10 @@ portable release threshold or a general speed claim.
 
 The strict 11-kernel WebAssembly parity suite recorded two seven-round
 development-candidate runs on Apple M5 Max with Node.js 24.14.0/V8. The
-candidate source was commit `08292f18b6374f9636bae5ab07fbfcb8e9e30091`, and
-the `ckc` binary SHA-256 was
+reports declare a clean source checkout at commit
+`08292f18b6374f9636bae5ab07fbfcb8e9e30091`, while the binary-to-source
+relation is not independently verifiable. The authoritative `ckc` binary
+SHA-256 was
 `5db7c4db4146dda00020941f1047a1ade794741374e9446af4b2669de8979e3b`; the reports
 identify the compiler as `ckc 0.15.1` and have SHA-256 values
 `ed56abd762d3d02404ae92b09ce213f8e8ef95f378020dea0f4b7355f302351e` and
