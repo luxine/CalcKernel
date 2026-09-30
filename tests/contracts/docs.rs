@@ -220,6 +220,7 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
             &[
                 "0.15.0",
                 "0.15.1",
+                "0.15.2",
                 "unpublished historical source snapshot",
                 "first published 0.15",
                 "native-toolchain",
@@ -324,14 +325,18 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
 
     for path in ["README.md", "README.zh-CN.md"] {
         assert!(
-            read(path).contains("0.15.1"),
-            "{path} must identify stable 0.15.1"
+            read(path).contains("0.15.2"),
+            "{path} must identify stable 0.15.2"
         );
     }
 
     for path in ["CHANGELOG.md", "CHANGELOG.zh-CN.md"] {
         let text = read(path);
-        assert!(text.contains("## 0.15.1"), "{path} must identify 0.15.1");
+        assert!(text.contains("## 0.15.2"), "{path} must identify 0.15.2");
+        assert!(
+            text.contains("## 0.15.1"),
+            "{path} must retain 0.15.1 history"
+        );
         assert!(text.contains("## 0.15.0"), "{path} must identify 0.15.0");
         assert!(
             text.contains("## 0.14.0"),

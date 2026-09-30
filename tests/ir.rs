@@ -15,3 +15,6 @@ mod memory_ssa;
 
 #[path = "ir/vector.rs"]
 mod vector;
+
+#[path = "ir/wasm_version_predicate.rs"]
+mod wasm_version_predicate;

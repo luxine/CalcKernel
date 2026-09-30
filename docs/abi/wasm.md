@@ -8,8 +8,10 @@ internal functions remain internal.
 
 WAT and WASM lower the same verified KIR used by C and Native. The consumer is
 selected before KIR construction, so unsupported checked modes and reachable
-Native print are rejected before optimization; the backend adds no hidden
-guards and has no legacy optimized-MIR path.
+Native print are rejected before optimization. Target lowering adds no
+unverified safety checks; O3 may contain explicit, verified optimization
+predicates that select a fast path and retain the source scalar path as fallback.
+There is no legacy optimized-MIR path.
 
 ## Values and memory
 
@@ -26,11 +28,15 @@ It must recreate host views after `memory.grow`. CK supplies no allocator.
 `emit-wat`, `emit-wasm`, or `emit-kir --consumer wasm`; the default is
 `baseline`. The value is part of the canonical KIR target profile and changes
 its SHA-256 digest. `baseline` does not emit SIMD. Both profiles allow Bulk
-Memory instructions. At O3, `simd128` can emit
-128-bit SIMD for independently verified, contiguous `slice<f64>`, `slice<i32>`,
-and `slice<u32>` maps, `i32`/`u32` to `f64` casts, and modular integer sum or
-product reductions. Full-width operations use `f64x2` and `i32x4` instructions.
-Other unsupported SIMD candidates and O0–O2 remain scalar.
+Memory instructions. At O3, `simd128` can emit 128-bit SIMD for independently
+verified, contiguous `slice<f64>`, `slice<i32>`, and `slice<u32>` maps,
+supported `i32`/`u32` to `f64` casts, modular integer sum or product
+reductions, and several closed source forms: `f64x2` affine maps (including the
+tested nested matrix column loop), a bounded piecewise store tree, a proven
+normalization fast path, and a nine-load `3x3` stencil interior after boundary
+peeling. These are shape-specific capabilities, not general matrix, stencil,
+or branch vectorization. Full-width operations use `f64x2` and `i32x4`
+instructions. Other unsupported SIMD candidates and O0–O2 remain scalar.
 
 Every emitted WAT and binary module carries the `ck.wasm.target` custom
 section. Its UTF-8 payload is deterministic JSON, schema 2, with these keys in
@@ -68,24 +74,49 @@ proven natural alignment (8 bytes for `f64`, 4 for `i32`/`u32`). Two-lane
 `i32`/`u32` to `f64x2` casts read exactly eight source bytes with
 `v128.load64_zero`; the converted result stores 16 bytes. Supported lane
 operations include splat, add, subtract, multiply, negate, pure comparison and
-selection; `f64x2` also supports divide. Integer reductions fold four lanes
-with modular scalar operations before updating the carried accumulator. A
+selection; `f64x2` also supports divide. Eligible modular `i32`/`u32` sums
+carry an `i32x4` accumulator and fold its lanes once after the vector loop;
+the original scalar seed is added once. Modular products still fold each
+four-lane chunk before updating the scalar accumulator. A
 vector loop handles complete chunks and uses the original scalar loop for the
-remainder or a short trip. Simple unknown-alias loops use a nontrapping Wasm32
-range and disjointness predicate and take the scalar path when it fails.
-Each floating-point lane retains the original scalar evaluation order and
-rounding; no relaxed SIMD or fused operation is introduced. Integer arithmetic
-wraps modulo 2^32. Unsupported candidates remain scalar. Source `noalias`
-contracts remain caller obligations.
+remainder or a short trip. Supported unknown-alias loops use a nontrapping
+Wasm32 range and disjointness predicate and take the scalar path when it fails.
+O3 affine direct maps and the supported matrix-column loop can use VF2 with
+cost-selected UF1/2/4; closed piecewise trees use VF2 with UF1 or UF4. Generic
+maps, casts, reductions, and the stencil interior use UF1. The compiler emits
+separate multiply and add operations for strict floating-point source
+expressions; it does not contract them to FMA or reassociate them. Each lane
+retains the original scalar evaluation order and rounding; no relaxed SIMD is
+introduced. Integer arithmetic wraps modulo 2^32. Unsupported candidates
+remain scalar. Source `noalias` contracts remain caller obligations.
+
+The internal `WasmSliceRange` predicate uses widened unsigned 64-bit arithmetic.
+It returns true for `count == 0`; otherwise it requires `start + count <=
+slice.len` and the exclusive end byte address `slice.data + (start + count) *
+element_bytes` to be no greater than both `2^32` and the current
+`memory.size * 65536`. It is restricted to Wasm32 KIR, `u32` start and count,
+and `i32`, `u32`, `i64`, `u64`, or `f64` slices with a matching element width.
+In `baseline`, only the narrow total-range form containing `TripThreshold` and
+`WasmSliceRange` conjuncts is valid; it cannot include an alias-disjoint
+conjunct. The `simd128` profile also permits supported
+`AddressIntervalsDisjoint` conjuncts. This is an internal total optimization
+predicate, not a checked-memory mode. The independent checker for each supported SIMD plan reconstructs its
+exact scalar access ranges and applicable alias evidence, then verifies the
+required original scalar, boundary, or source-control-flow path. Uses include
+supported affine maps and matrix columns, closed piecewise trees, and the
+normalized stencil interior; arbitrary hand-built predicates do not authorize
+memory operations.
 
 ## Scalar address lowering
 
-At O3, a bounded, independently checked direct-pointer loop can carry a
+At O3, a bounded, independently verified direct-pointer loop can carry a
 Wasm32 byte-address cursor when its sole changing loop state is a modular
 integer induction variable and it directly accesses 4- or 8-byte primitives.
 The cursor advances on the original backedge; unsupported loops retain their
 ordinary address calculation. Both `baseline` and `simd128` profiles use this
-scalar lowering.
+scalar lowering. This compile-time placement proof preserves the source's
+32-bit address arithmetic; it is not a runtime bounds, pointer-validity, or
+alias check.
 
 For a struct-field access, CLI emission can place a constant field displacement
 in a load memarg only when a verified alignment fact proves that the
@@ -103,8 +134,11 @@ descriptor is 8 bytes aligned to 4, with address at offset 0 and `u32` length at
 offset 4. Address arithmetic uses the deterministic CK/WASM element layout.
 
 WASM accepts `--overflow unchecked` and `--bounds unchecked`; either checked
-selection is rejected before output. No implicit slice guard or trap is added.
-The C/Native checked status ABI is not part of this ABI.
+selection is rejected before output. No checked-safety mode or implicit
+checked slice trap is added. O3 optimization predicates may guard a specialized
+fast path; if the predicate fails, execution takes the original source path,
+which retains its normal WebAssembly trap behavior. The C/Native checked
+status ABI is not part of this ABI.
 
 WebAssembly has no 0.15 runtime printing. A reachable print from an exported
 root is rejected. An internal `main` does not create a WASI or browser entry.

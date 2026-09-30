@@ -214,6 +214,172 @@ jobs:
           Compress-Archive -LiteralPath 'dist/${{ matrix.binary }}' -DestinationPath 'dist/${{ matrix.archive }}'
           $hash = (Get-FileHash -LiteralPath 'dist/${{ matrix.archive }}' -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText('dist/${{ matrix.archive }}.sha256', "$hash  ${{ matrix.archive }}`n", [Text.UTF8Encoding]::new($false))
+      - name: Verify Unix release archive after extraction
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          readonly archive='dist/${{ matrix.archive }}'
+          readonly checksum='dist/${{ matrix.archive }}.sha256'
+          readonly expected_member='${{ matrix.binary }}'
+          test "$(wc -l <"$checksum" | tr -d ' ')" -eq 1
+          checksum_digest="$(awk 'NR == 1 { print $1 }' "$checksum")"
+          [[ "$checksum_digest" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$(cat "$checksum")" == "${checksum_digest}  ${{ matrix.archive }}" ]]
+          (
+            cd dist
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum --check '${{ matrix.archive }}.sha256'
+            else
+              shasum -a 256 --check '${{ matrix.archive }}.sha256'
+            fi
+          )
+
+          archive_members="$(tar -tzf "$archive")"
+          [[ "$archive_members" == "$expected_member" ]]
+          verify_root="$(mktemp -d "${RUNNER_TEMP}/ckc-archive-check.XXXXXX")"
+          trap 'rm -rf -- "$verify_root"' EXIT
+          tar -xzf "$archive" -C "$verify_root"
+          unpacked="$verify_root/$expected_member"
+          test -f "$unpacked" && test -x "$unpacked"
+          cmp -s "$unpacked" '${{ matrix.executable }}'
+
+          cargo_version="$(awk -F ' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          verbose_identity="$("$unpacked" --version --verbose)"
+          printf '%s\n' "$verbose_identity"
+          grep -Fqx "ckc ${cargo_version}" <<<"$verbose_identity"
+          grep -q '^Native ABI: 1$' <<<"$verbose_identity"
+          grep -q '^Runtime ABI: 2$' <<<"$verbose_identity"
+          grep -q '^LLVM: 22.1.8$' <<<"$verbose_identity"
+          "$unpacked" licenses >"$verify_root/licenses.txt"
+          grep -q '^===== LLVM Project 22\.1\.8' "$verify_root/licenses.txt"
+
+          smoke_root="$verify_root/smoke"
+          mkdir -p "$smoke_root"
+          cat >"$smoke_root/main.ck" <<'CK'
+          fn main() -> i32 {
+            print_i32(42);
+            print_newline();
+            return 0;
+          }
+          CK
+          "$unpacked" run "$smoke_root/main.ck" --no-cache >"$smoke_root/run.stdout"
+          test "$(cat "$smoke_root/run.stdout")" = 42
+          PATH='' "$unpacked" build "$smoke_root/main.ck" --kind executable --out "$smoke_root/program"
+          smoke_program="$smoke_root/program"
+          PATH='' "$smoke_program" >"$smoke_root/build.stdout"
+          test "$(cat "$smoke_root/build.stdout")" = 42
+
+          scripts/audit-ckc-release.sh "$unpacked"
+          scripts/audit-jit-memory.sh "$unpacked"
+      - name: Verify Windows release archive after extraction
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archiveName = '${{ matrix.archive }}'
+          $memberName = '${{ matrix.binary }}'
+          $archivePath = (Resolve-Path -LiteralPath "dist/$archiveName").Path
+          $checksumPath = (Resolve-Path -LiteralPath "dist/$archiveName.sha256").Path
+          $checksumText = [IO.File]::ReadAllText($checksumPath)
+          $checksumPattern = '\A(?<digest>[0-9a-f]{64})  ' + [regex]::Escape($archiveName) + '\r?\n\z'
+          $checksumMatch = [regex]::Match($checksumText, $checksumPattern)
+          if (-not $checksumMatch.Success) {
+            throw "Windows release archive checksum sidecar has an invalid format"
+          }
+          $expectedHash = $checksumMatch.Groups['digest'].Value
+          $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -cne $expectedHash) {
+            throw "Windows release archive checksum verification failed"
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+          try {
+            $members = @($zip.Entries | ForEach-Object { $_.FullName })
+          } finally {
+            $zip.Dispose()
+          }
+          if ($members.Count -ne 1 -or $members[0] -cne $memberName) {
+            throw "Windows release archive must contain only $memberName at the archive root"
+          }
+
+          $verifyRoot = Join-Path $env:RUNNER_TEMP ("ckc-archive-check-" + [Guid]::NewGuid().ToString("N"))
+          [IO.Directory]::CreateDirectory($verifyRoot) | Out-Null
+          try {
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $verifyRoot
+            $files = @(Get-ChildItem -LiteralPath $verifyRoot -File -Recurse)
+            if ($files.Count -ne 1 -or $files[0].Name -cne $memberName) {
+              throw "Extracted Windows release archive has an unexpected member set"
+            }
+            $unpacked = $files[0].FullName
+            $packedHash = (Get-FileHash -LiteralPath '${{ matrix.executable }}' -Algorithm SHA256).Hash
+            $unpackedHash = (Get-FileHash -LiteralPath $unpacked -Algorithm SHA256).Hash
+            if ((Get-Item -LiteralPath '${{ matrix.executable }}').Length -ne (Get-Item -LiteralPath $unpacked).Length -or
+                $packedHash -cne $unpackedHash) {
+              throw "Extracted compiler bytes differ from the audited target executable"
+            }
+
+            $versionLine = Select-String -LiteralPath Cargo.toml -Pattern '^version = "([^"]+)"$' | Select-Object -First 1
+            $cargoVersion = $versionLine.Matches[0].Groups[1].Value
+            $verboseIdentity = (& $unpacked --version --verbose) -join "`n"
+            if ($LASTEXITCODE -ne 0 -or $verboseIdentity -notmatch "(?m)^ckc $([regex]::Escape($cargoVersion))$" -or
+                $verboseIdentity -notmatch '(?m)^Native ABI: 1$' -or
+                $verboseIdentity -notmatch '(?m)^Runtime ABI: 2$' -or
+                $verboseIdentity -notmatch '(?m)^LLVM: 22\.1\.8$') {
+              throw "Extracted compiler version or ABI identity check failed"
+            }
+            $licenses = (& $unpacked licenses) -join "`n"
+            if ($LASTEXITCODE -ne 0 -or $licenses -notmatch '(?m)^===== LLVM Project 22\.1\.8') {
+              throw "Extracted compiler licenses check failed"
+            }
+
+            $smokeRoot = Join-Path $verifyRoot "smoke"
+            [IO.Directory]::CreateDirectory($smokeRoot) | Out-Null
+            $source = Join-Path $smokeRoot "main.ck"
+            $programBase = Join-Path $smokeRoot "program"
+            $sourceText = @"
+          fn main() -> i32 {
+            print_i32(42);
+            print_newline();
+            return 0;
+          }
+          "@
+            [IO.File]::WriteAllText($source, $sourceText, [Text.UTF8Encoding]::new($false))
+            $runOutput = (& $unpacked run $source --no-cache) -join "`n"
+            if ($LASTEXITCODE -ne 0 -or $runOutput.TrimEnd("`r", "`n") -ne "42") {
+              throw "Extracted compiler run smoke failed"
+            }
+
+            $previousPath = $env:PATH
+            try {
+              $env:PATH = ""
+              & $unpacked build $source --kind executable --out $programBase
+              $buildStatus = $LASTEXITCODE
+            } finally {
+              $env:PATH = $previousPath
+            }
+            if ($buildStatus -ne 0) {
+              throw "Extracted compiler build failed with an empty PATH"
+            }
+            $smokeProgram = "$programBase.exe"
+            $previousPath = $env:PATH
+            try {
+              $env:PATH = ""
+              $buildOutput = (& $smokeProgram) -join "`n"
+              $programStatus = $LASTEXITCODE
+            } finally {
+              $env:PATH = $previousPath
+            }
+            if ($programStatus -ne 0 -or $buildOutput.TrimEnd("`r", "`n") -ne "42") {
+              throw "Extracted compiler build output smoke failed with an empty PATH"
+            }
+
+            scripts/audit-ckc-release.ps1 -Path $unpacked
+            if ($LASTEXITCODE -ne 0) { throw "Extracted compiler release audit failed" }
+            scripts/audit-jit-memory.ps1 -Path $unpacked
+            if ($LASTEXITCODE -ne 0) { throw "Extracted compiler JIT memory audit failed" }
+          } finally {
+            Remove-Item -LiteralPath $verifyRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-ckc-${{ matrix.target }}

@@ -6,8 +6,8 @@
 已发布的 `0.14.x` 补丁系列仍遵循其历史兼容性边界；下文的迁移说明列出 0.15 的变更。
 
 不可移动的 `v0.15.0` tag 记录了 compiler source snapshot，但其 workflow 未创建官方
-GitHub Release，也未发布 archive。`0.15.1` 是 0.15 系列首个正式发布版本，并延续该 source
-及其兼容性契约。
+GitHub Release，也未发布 archive。`0.15.1` 是 0.15 系列首个正式发布版本。`0.15.2` 延续相同的
+兼容性契约，并增加 WebAssembly 性能与正确性优化。
 
 Patch release 保持 0.15.0 已接受 source 与 observable semantics、稳定 diagnostic
 identifier/category、已记录 CLI name/flag/default、stdout/stderr class、semantic textual MIR、
@@ -23,6 +23,12 @@ collection runtime、measurement 与未记录 compiler interface 不是 public c
 该优化保持 CK 可观察语义和 public WASM ABI；`baseline` 仍是默认的无 SIMD profile。选择
 `simd128` 的 host 必须支持该声明的 feature。Target-profile digest 与生成的模块字节属于
 编译器内部 identity，不承诺逐字节稳定。
+
+## 0.15.1 到 0.15.2
+
+- 符合条件的 WebAssembly kernel 增加经过验证的向量或标量 lowering，同时保持现有公共函数
+  与 caller-owned memory ABI。默认 `baseline` profile 仍不含 SIMD128；`simd128` 仍为可选。
+  严格浮点求值顺序、trap 和整数回绕语义均保持不变；不支持的形态继续使用标量回退。
 
 ## 从 0.14.0 迁移到 0.15.1
 

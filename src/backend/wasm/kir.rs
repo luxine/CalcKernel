@@ -42,17 +42,25 @@ fn emit_final_for_mir(
     contracts: Option<&ContractFactSet>,
     options: EmitWasmOptions,
 ) -> Result<FinalWasmModule, String> {
-    let has_vector = module_has_vector_instructions(module);
+    let has_vector = module_has_vector_instructions(module) || module_has_vector_values(module);
     let has_version_predicate = module_has_version_predicates(module);
     let needs_typed_lowering = has_vector || has_version_predicate;
     if needs_typed_lowering {
-        let lowered = super::lower::lower_wasm_module(module, contracts, mir)?;
+        let lowered = super::lower::lower_wasm_module(module, contracts, mir)
+            .map_err(|error| error.to_string())?;
         super::emit::emit_final_module_with_lowering(mir, &lowered, options)
-    } else if options.opt_level >= 3
-        && let Ok(lowered) = super::lower::lower_wasm_module(module, contracts, mir)
-    {
-        super::emit::emit_final_module_with_lowering(mir, &lowered, options)
+    } else if options.opt_level >= 3 {
+        match super::lower::lower_wasm_module(module, contracts, mir) {
+            Ok(lowered) => super::emit::emit_final_module_with_lowering(mir, &lowered, options),
+            Err(super::lower::WasmLoweringError::InvalidInput(message))
+            | Err(super::lower::WasmLoweringError::InvariantFailure(message)) => Err(message),
+            Err(error @ super::lower::WasmLoweringError::UnsupportedValueType(_)) => {
+                Err(error.to_string())
+            }
+        }
     } else {
+        super::lower::validate_wasm_scalar_value_types(module, mir)
+            .map_err(|error| error.to_string())?;
         super::emit::emit_final_module_with_options(mir, options)
     }
 }
@@ -515,20 +523,27 @@ pub(super) fn edge_copy_instructions(
 ) -> Vec<MirInstruction> {
     let mut instructions = Vec::new();
     for (index, (target, argument)) in target.params.iter().zip(&edge.args).enumerate() {
+        let Some(type_node) = target.type_node.as_scalar() else {
+            // The typed emitter copies v128 values directly from the original edge.
+            continue;
+        };
         instructions.push(MirInstruction::Move {
             target: MirValue::Temp {
                 name: format!("edge_{}_{}", label, index),
-                type_node: scalar_type(&target.type_node).clone(),
+                type_node: type_node.clone(),
             },
             value: mir_value(*argument, types, params),
         });
     }
     for (index, target) in target.params.iter().enumerate() {
+        let Some(type_node) = target.type_node.as_scalar() else {
+            continue;
+        };
         instructions.push(MirInstruction::Move {
             target: mir_value(target.value, types, params),
             value: MirValue::Temp {
                 name: format!("edge_{}_{}", label, index),
-                type_node: scalar_type(&target.type_node).clone(),
+                type_node: type_node.clone(),
             },
         });
     }
@@ -679,12 +694,6 @@ pub(super) fn value_kir_types(function: &KirFunction) -> BTreeMap<ValueId, KirVa
         .collect()
 }
 
-pub(super) fn scalar_type(type_node: &KirValueType) -> &MirType {
-    type_node
-        .as_scalar()
-        .expect("vector KIR must be rejected before WebAssembly adaptation")
-}
-
 fn supported_vector_shape(lane: KirLaneType, lanes: u16) -> bool {
     matches!(
         (lane, lanes),
@@ -722,8 +731,33 @@ pub(super) fn validate_vector_kir(
     if features == KirWasmFeatures::Baseline {
         reject_vector_values(module)?;
         reject_vector_instructions(module)?;
-        if module_has_version_predicates(module) {
-            return Err("WebAssembly baseline cannot lower runtime version predicates".into());
+        for function in &module.functions {
+            let types = value_kir_types(function);
+            for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+                let KirInstructionKind::VersionPredicate { predicate } = &instruction.kind else {
+                    continue;
+                };
+                if !matches!(predicate.conjuncts.as_slice(),
+                    [KirVersionPredicateConjunct::TripThreshold { .. },
+                     KirVersionPredicateConjunct::WasmSliceRange { count, element_bytes: 8, .. },
+                     KirVersionPredicateConjunct::WasmSliceRange { element_bytes: 8, .. }]
+                        if function.blocks.iter().flat_map(|block| &block.instructions)
+                            .any(|instruction| matches!(&instruction.kind,
+                                KirInstructionKind::ConstInt { value }
+                                    if value == "1" && instruction.results.iter().any(|result| result.value == *count))))
+                {
+                    return Err(
+                        "WebAssembly baseline only lowers guarded invariant-load and output-write ranges".into(),
+                    );
+                }
+                validate_wasm_version_predicate(
+                    function,
+                    instruction,
+                    predicate,
+                    &types,
+                    module.profile.layout(),
+                )?;
+            }
         }
         return Ok(());
     }
@@ -758,33 +792,18 @@ pub(super) fn validate_vector_kir(
             continue;
         }
         for block in &function.blocks {
-            if block
-                .params
-                .iter()
-                .any(|param| param.type_node.as_scalar().is_none())
-            {
-                return Err("WebAssembly SIMD128 cannot lower vector block parameters".into());
-            }
-            let edges = match &block.terminator {
-                KirTerminator::Return { .. } => [None, None],
-                KirTerminator::Jump { edge } => [Some(edge), None],
-                KirTerminator::Branch {
-                    then_edge,
-                    else_edge,
-                    ..
-                } => [Some(then_edge), Some(else_edge)],
-            };
-            if edges
-                .into_iter()
-                .flatten()
-                .flat_map(|edge| &edge.args)
-                .any(|value| {
-                    types
-                        .get(value)
-                        .is_some_and(|type_node| type_node.as_scalar().is_none())
-                })
-            {
-                return Err("WebAssembly SIMD128 cannot lower vector edge arguments".into());
+            for param in &block.params {
+                let supported = match param.type_node {
+                    KirValueType::Scalar(_) => true,
+                    KirValueType::FixedVector { lane, lanes } => {
+                        supported_vector_shape(lane, lanes)
+                            || supported_narrow_load_shape(lane, lanes)
+                    }
+                    KirValueType::Mask { lanes } => matches!(lanes, 2 | 4),
+                };
+                if !supported {
+                    return Err("WebAssembly SIMD128 cannot lower this block parameter type".into());
+                }
             }
             for instruction in &block.instructions {
                 for result in &instruction.results {
@@ -1037,15 +1056,14 @@ fn validate_wasm_version_predicate(
 ) -> Result<(), String> {
     let bool_type = KirValueType::Scalar(MirType::Primitive(MirPrimitiveTypeName::Bool));
     let u32_type = MirType::Primitive(MirPrimitiveTypeName::U32);
-    let (thresholds, intervals) =
+    let (thresholds, nontrip) =
         predicate
             .conjuncts
             .iter()
             .fold((0, 0), |counts, item| match item {
                 KirVersionPredicateConjunct::TripThreshold { .. } => (counts.0 + 1, counts.1),
-                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. } => {
-                    (counts.0, counts.1 + 1)
-                }
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. }
+                | KirVersionPredicateConjunct::WasmSliceRange { .. } => (counts.0, counts.1 + 1),
             });
     if predicate.address_bits != 32
         || !matches!(
@@ -1062,16 +1080,45 @@ fn validate_wasm_version_predicate(
         || predicate.conjuncts.is_empty()
         || predicate.conjuncts.len() > 4
         || thresholds > 1
-        || intervals > 3
+        || nontrip > 3
     {
         return Err(format!(
-            "WebAssembly SIMD128 cannot lower this version predicate in {}",
+            "WebAssembly cannot lower this version predicate in {}",
             function.name
         ));
     }
 
+    let slice_element_bytes = |value: &ValueId| {
+        types
+            .get(value)
+            .and_then(KirValueType::as_scalar)
+            .and_then(|type_node| match type_node {
+                MirType::Slice(element) => match element.as_ref() {
+                    MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32) => {
+                        Some(4)
+                    }
+                    MirType::Primitive(
+                        MirPrimitiveTypeName::I64
+                        | MirPrimitiveTypeName::U64
+                        | MirPrimitiveTypeName::F64,
+                    ) => Some(8),
+                    _ => None,
+                },
+                _ => None,
+            })
+    };
     for conjunct in &predicate.conjuncts {
         let valid = match conjunct {
+            KirVersionPredicateConjunct::WasmSliceRange {
+                slice,
+                start,
+                count,
+                element_bytes,
+            } => {
+                slice_element_bytes(slice) == Some(*element_bytes)
+                    && types.get(start).and_then(KirValueType::as_scalar) == Some(&u32_type)
+                    && types.get(count).and_then(KirValueType::as_scalar) == Some(&u32_type)
+            }
             KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
                 *minimum > 0
                     && types.get(value).and_then(KirValueType::as_scalar) == Some(&u32_type)
@@ -1084,25 +1131,6 @@ fn validate_wasm_version_predicate(
                 right_count,
                 right_element_bytes,
             } => {
-                let slice_element_bytes = |value: &ValueId| {
-                    types
-                        .get(value)
-                        .and_then(KirValueType::as_scalar)
-                        .and_then(|type_node| match type_node {
-                            MirType::Slice(element) => match element.as_ref() {
-                                MirType::Primitive(
-                                    MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32,
-                                ) => Some(4),
-                                MirType::Primitive(
-                                    MirPrimitiveTypeName::I64
-                                    | MirPrimitiveTypeName::U64
-                                    | MirPrimitiveTypeName::F64,
-                                ) => Some(8),
-                                _ => None,
-                            },
-                            _ => None,
-                        })
-                };
                 left != right
                     && slice_element_bytes(left) == Some(*left_element_bytes)
                     && slice_element_bytes(right) == Some(*right_element_bytes)
@@ -1112,7 +1140,7 @@ fn validate_wasm_version_predicate(
         };
         if !valid {
             return Err(format!(
-                "WebAssembly SIMD128 cannot lower an unsupported version-predicate conjunct in {}",
+                "WebAssembly cannot lower an unsupported version-predicate conjunct in {}",
                 function.name
             ));
         }
@@ -1159,8 +1187,8 @@ pub(super) fn module_has_version_predicates(module: &KirModule) -> bool {
     })
 }
 
-pub(super) fn reject_vector_values(module: &KirModule) -> Result<(), String> {
-    if module
+fn module_has_vector_values(module: &KirModule) -> bool {
+    module
         .functions
         .iter()
         .flat_map(|function| &function.blocks)
@@ -1172,7 +1200,10 @@ pub(super) fn reject_vector_values(module: &KirModule) -> Result<(), String> {
             )
         })
         .any(|type_node| type_node.as_scalar().is_none())
-    {
+}
+
+pub(super) fn reject_vector_values(module: &KirModule) -> Result<(), String> {
+    if module_has_vector_values(module) {
         return Err("WebAssembly KIR backend cannot lower vector values".to_string());
     }
     Ok(())
@@ -1191,4 +1222,145 @@ pub(super) fn local_name(value: ValueId) -> String {
 
 pub(super) fn block_label(block: BlockId) -> String {
     format!("b{}", block.index())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        EmitWasmOptions, KirBoundsMode, KirBuildConfig, KirConsumer, KirOverflowMode,
+        KirSanitizerMode, SourceFile, build_kir_module, check, emit_wasm_kir_module,
+        emit_wat_kir_module, lower_to_mir,
+    };
+
+    use super::emit_final_for_mir;
+
+    #[test]
+    fn o3_scalar_should_propagate_typed_lowering_invariant_failures() {
+        let checked = check(&SourceFile::new(
+            "wasm-lowering-invariant.ck",
+            "export fn choose(flag: bool, value: i32) -> i32 { if flag { return value + 1; } return value; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let mut module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+        let branch = module.functions[0]
+            .blocks
+            .iter_mut()
+            .find(|block| matches!(block.terminator, crate::KirTerminator::Branch { .. }))
+            .expect("conditional branch");
+        let crate::KirTerminator::Branch { then_edge, .. } = &mut branch.terminator else {
+            unreachable!();
+        };
+        then_edge.target = crate::BlockId::from_index(u32::MAX);
+
+        let error = emit_final_for_mir(&module, &mir, None, EmitWasmOptions { opt_level: 3 })
+            .expect_err("typed lowering invariant failures must not be swallowed");
+        assert!(error.contains("unknown block"), "{error}");
+    }
+
+    #[test]
+    fn wasm_emission_should_report_unsupported_aggregate_values_without_mir_fallback_at_all_levels()
+    {
+        let checked = check(&SourceFile::new(
+            "wasm-unsupported-aggregate.ck",
+            "struct Item { value: i32; } export fn read(item: Item) -> i32 { return item.value; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+
+        for opt_level in 0..=3 {
+            let options = EmitWasmOptions { opt_level };
+            let wat = std::panic::catch_unwind(|| emit_wat_kir_module(&module, options))
+                .expect("unsupported value should be reported instead of panicking");
+            assert!(
+                wat.expect_err("aggregate value is unsupported by the scalar WASM ABI")
+                    .contains("cannot lower value type"),
+                "O{opt_level} WAT"
+            );
+            let binary = std::panic::catch_unwind(|| emit_wasm_kir_module(&module, options))
+                .expect("unsupported value should be reported instead of panicking");
+            assert!(
+                binary
+                    .expect_err("aggregate value is unsupported by the scalar WASM ABI")
+                    .contains("cannot lower value type"),
+                "O{opt_level} binary"
+            );
+        }
+    }
+
+    #[test]
+    fn o3_wasm_emission_should_keep_dispatcher_for_an_irreducible_cfg() {
+        let checked = check(&SourceFile::new(
+            "wasm-irreducible-dispatcher.ck",
+            "export fn cycle(flag: bool) -> void { if flag { return; } return; }",
+        ));
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        let mir = lower_to_mir(&checked.checked_program).expect("valid MIR");
+        let mut module = build_kir_module(
+            &mir,
+            KirBuildConfig {
+                consumer: KirConsumer::WebAssembly,
+                overflow_mode: KirOverflowMode::Unchecked,
+                bounds_mode: KirBoundsMode::Unchecked,
+                sanitizer_mode: KirSanitizerMode::Disabled,
+            },
+        )
+        .expect("valid unchecked WebAssembly KIR");
+        let function = &mut module.functions[0];
+        assert_eq!(function.blocks.len(), 3, "entry and both branch arms");
+        let first = function.blocks[1].id;
+        let second = function.blocks[2].id;
+        let first_param = function.blocks[1].params[0].value;
+        let second_param = function.blocks[2].params[0].value;
+        let first_memory = function.blocks[1].memory_params[0].version;
+        let second_memory = function.blocks[2].memory_params[0].version;
+        function.blocks[1].terminator = crate::KirTerminator::Jump {
+            edge: crate::KirEdge {
+                target: second,
+                args: vec![first_param],
+                memory_args: vec![first_memory],
+            },
+        };
+        function.blocks[2].terminator = crate::KirTerminator::Jump {
+            edge: crate::KirEdge {
+                target: first,
+                args: vec![second_param],
+                memory_args: vec![second_memory],
+            },
+        };
+        let validation = crate::validate_kir_module(&module);
+        assert!(validation.errors.is_empty(), "{:#?}", validation.errors);
+
+        let options = EmitWasmOptions { opt_level: 3 };
+        let wat = emit_wat_kir_module(&module, options).expect("irreducible WAT");
+        assert!(
+            wat.contains("br_table"),
+            "dispatcher missing from WAT: {wat}"
+        );
+        let wasm = emit_wasm_kir_module(&module, options).expect("irreducible binary");
+        wasmparser::Validator::new_with_features(
+            wasmparser::WasmFeatures::MVP | wasmparser::WasmFeatures::MULTI_VALUE,
+        )
+        .validate_all(&wasm)
+        .expect("dispatcher binary validates");
+    }
 }

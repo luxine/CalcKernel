@@ -69,6 +69,7 @@ fn kir_o3_pipeline_should_use_the_exact_verified_pass_order() {
             "effect-aware-inline",
             "memory-ssa-refine",
             "gvn",
+            "modular-affine-composition",
             "load-forwarding",
             "dead-store-elimination",
             "sccp-range-post-inline",
@@ -1274,6 +1275,88 @@ fn affine_access_should_extract_unit_stride_bias_alignment_and_reject_nonunit_gr
             .any(|access| access.slice_interval.is_some()),
         "{accesses:?}"
     );
+}
+
+#[test]
+fn affine_access_must_keep_the_full_scaled_invariant_expression() {
+    let (mut module, _) = build_with_modes(
+        r#"
+        export fn scaled(input: slice<u32>, factor: u32, n: u32) -> u32 {
+          let base: u32 = factor * 2;
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < n {
+            total = total + input[base + i];
+            i = i + 1;
+          }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut module).expect("loop simplify");
+    let function = &module.functions[0];
+    let scaled_base = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| {
+            matches!(
+                instruction.kind,
+                KirInstructionKind::Binary {
+                    op: calckernel::MirBinaryOp::Mul,
+                    ..
+                }
+            )
+        })
+        .and_then(|instruction| instruction.results.first())
+        .expect("scaled invariant definition")
+        .value;
+    let loops = analyze_canonical_loops(function);
+    let descriptor = loops
+        .loops
+        .iter()
+        .find(|loop_| loop_.innermost)
+        .expect("loop");
+    let accesses = analyze_affine_loop_accesses(function, descriptor, None).expect("accesses");
+    let read = accesses
+        .accesses
+        .iter()
+        .find(|access| access.kind == calckernel::LoopMemoryAccessKind::Read)
+        .expect("slice read");
+    assert_eq!(read.invariant_offset, Some(scaled_base), "{read:?}");
+    assert_eq!(read.coefficient.to_string(), "1");
+}
+
+#[test]
+fn affine_access_must_reject_unrepresentable_scaled_loop_expression() {
+    let (mut module, _) = build_with_modes(
+        r#"
+        export fn scaled(input: slice<u32>, factor: u32, n: u32) -> u32 {
+          let i: u32 = 0;
+          let total: u32 = 0;
+          while i < n {
+            total = total + input[3 * (i + factor)];
+            i = i + 1;
+          }
+          return total;
+        }
+        "#,
+        KirOverflowMode::Unchecked,
+        KirBoundsMode::Unchecked,
+    );
+    canonicalize_kir_loops(&mut module).expect("loop simplify");
+    let function = &module.functions[0];
+    let loops = analyze_canonical_loops(function);
+    let descriptor = loops
+        .loops
+        .iter()
+        .find(|loop_| loop_.innermost)
+        .expect("loop");
+    let accesses = analyze_affine_loop_accesses(function, descriptor, None).expect("accesses");
+    assert!(accesses.accesses.is_empty(), "{accesses:?}");
+    assert_eq!(accesses.rejected_instructions.len(), 1, "{accesses:?}");
 }
 
 #[test]

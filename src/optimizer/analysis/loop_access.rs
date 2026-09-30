@@ -5,7 +5,7 @@ use num_bigint::BigInt;
 use crate::{
     ContractFactPointer, ContractFactPredicate, FactArena, FactPredicate, InstructionId,
     KirFunction, KirInstructionKind, KirPlace, MemoryRegionId, MirBinaryOp, MirPrimitiveTypeName,
-    MirType, ValueId,
+    MirType, ValueId, compute_kir_dominators,
 };
 
 use super::{CanonicalLoopDescriptor, SymbolicByteInterval, analyze_regions};
@@ -69,6 +69,7 @@ pub fn analyze_affine_loop_accesses(
         .as_ref()
         .ok_or_else(|| "affine access analysis requires a canonical induction".to_string())?;
     let regions = analyze_regions(function, facts).map_err(|error| error.message)?;
+    let dominators = compute_kir_dominators(function);
     let loop_blocks = descriptor.blocks.iter().copied().collect::<BTreeSet<_>>();
     let mut accesses = Vec::new();
     let mut rejected = Vec::new();
@@ -91,8 +92,14 @@ pub fn analyze_affine_loop_accesses(
             continue;
         };
         let mut visiting = BTreeSet::new();
-        let Some(form) = affine_form(function, descriptor, induction.value, index, &mut visiting)
-        else {
+        let Some(form) = affine_form(
+            function,
+            descriptor,
+            &dominators,
+            induction.value,
+            index,
+            &mut visiting,
+        ) else {
             rejected.push(instruction.id);
             continue;
         };
@@ -175,6 +182,7 @@ fn root_value(place: &KirPlace) -> Option<ValueId> {
 fn affine_form(
     function: &KirFunction,
     descriptor: &CanonicalLoopDescriptor,
+    dominators: &crate::KirDominators,
     induction: ValueId,
     value: ValueId,
     visiting: &mut BTreeSet<ValueId>,
@@ -186,17 +194,24 @@ fn affine_form(
             bias: BigInt::from(0),
         });
     }
+    if let Some(constant) = integer_constant(function, value) {
+        return Some(AffineForm {
+            coefficient: BigInt::from(0),
+            invariant: None,
+            bias: constant,
+        });
+    }
+    // A complete SSA value computed before this loop is a single invariant
+    // leaf. Do not expand its internals: nested loops can define row*n in an
+    // outer header, and a one-leaf form cannot encode multiple scaled leaves.
+    if let Some(invariant) = invariant_value(function, descriptor, dominators, value) {
+        return Some(invariant);
+    }
     if !visiting.insert(value) {
         return None;
     }
     let result = (|| {
-        if let Some(constant) = integer_constant(function, value) {
-            Some(AffineForm {
-                coefficient: BigInt::from(0),
-                invariant: None,
-                bias: constant,
-            })
-        } else if let Some((block, index)) = function.blocks.iter().find_map(|block| {
+        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
             block
                 .params
                 .iter()
@@ -212,33 +227,41 @@ fn affine_form(
                 incoming
                     .iter()
                     .all(|(_, value)| forwarded_from(function, *value, entry, &mut BTreeSet::new()))
-                    .then(|| affine_form(function, descriptor, induction, entry, visiting))
+                    .then(|| {
+                        affine_form(function, descriptor, dominators, induction, entry, visiting)
+                    })
                     .flatten()
             } else {
                 let incoming = incoming_values(function, block, index);
                 let mut forms = incoming
                     .into_iter()
-                    .map(|value| affine_form(function, descriptor, induction, value, visiting))
+                    .map(|value| {
+                        affine_form(function, descriptor, dominators, induction, value, visiting)
+                    })
                     .collect::<Option<Vec<_>>>()?;
                 let first = forms.pop()?;
                 forms.into_iter().all(|form| form == first).then_some(first)
             }
         } else if let Some(instruction) = defining_instruction(function, value) {
             match &instruction.kind {
-                KirInstructionKind::Copy { value } => {
-                    affine_form(function, descriptor, induction, *value, visiting)
-                }
+                KirInstructionKind::Copy { value } => affine_form(
+                    function, descriptor, dominators, induction, *value, visiting,
+                ),
                 KirInstructionKind::Binary {
                     op, left, right, ..
                 } => {
-                    let left = affine_form(function, descriptor, induction, *left, visiting)?;
-                    let right = affine_form(function, descriptor, induction, *right, visiting)?;
+                    let left =
+                        affine_form(function, descriptor, dominators, induction, *left, visiting)?;
+                    let right = affine_form(
+                        function, descriptor, dominators, induction, *right, visiting,
+                    )?;
                     combine_affine(*op, left, right)
+                        .or_else(|| invariant_value(function, descriptor, dominators, value))
                 }
-                _ => invariant_value(function, descriptor, value),
+                _ => invariant_value(function, descriptor, dominators, value),
             }
         } else {
-            invariant_value(function, descriptor, value)
+            invariant_value(function, descriptor, dominators, value)
         }
     })();
     visiting.remove(&value);
@@ -248,6 +271,7 @@ fn affine_form(
 fn invariant_value(
     function: &KirFunction,
     descriptor: &CanonicalLoopDescriptor,
+    dominators: &crate::KirDominators,
     value: ValueId,
 ) -> Option<AffineForm> {
     let owner = function.blocks.iter().find_map(|block| {
@@ -260,14 +284,19 @@ fn invariant_value(
             }))
         .then_some(block.id)
     });
-    if owner.is_some_and(|block| descriptor.blocks.binary_search(&block).is_ok()) {
-        None
-    } else {
+    if owner.is_none_or(|block| {
+        descriptor.blocks.binary_search(&block).is_err()
+            && descriptor
+                .preheader
+                .is_some_and(|preheader| dominators.dominates(block, preheader))
+    }) {
         Some(AffineForm {
             coefficient: BigInt::from(0),
             invariant: Some(value),
             bias: BigInt::from(0),
         })
+    } else {
+        None
     }
 }
 
@@ -292,23 +321,38 @@ fn combine_affine(op: MirBinaryOp, left: AffineForm, right: AffineForm) -> Optio
         }
         MirBinaryOp::Mul => {
             if left.coefficient == BigInt::from(0) && left.invariant.is_none() {
-                Some(AffineForm {
-                    coefficient: left.bias.clone() * right.coefficient,
-                    invariant: right.invariant,
-                    bias: left.bias * right.bias,
-                })
+                scale_affine(left.bias, right)
             } else if right.coefficient == BigInt::from(0) && right.invariant.is_none() {
-                Some(AffineForm {
-                    coefficient: right.bias.clone() * left.coefficient,
-                    invariant: left.invariant,
-                    bias: right.bias * left.bias,
-                })
+                scale_affine(right.bias, left)
             } else {
                 None
             }
         }
         MirBinaryOp::Div | MirBinaryOp::Mod => None,
     }
+}
+
+fn scale_affine(factor: BigInt, form: AffineForm) -> Option<AffineForm> {
+    // A single invariant SSA value represents its full value, not an arbitrary
+    // coefficient of that value. Keep nontrivial scaling opaque if the whole
+    // expression dominates the loop; otherwise reject the access.
+    if form.invariant.is_some() {
+        if factor == BigInt::from(0) {
+            return Some(AffineForm {
+                coefficient: BigInt::from(0),
+                invariant: None,
+                bias: BigInt::from(0),
+            });
+        }
+        if factor != BigInt::from(1) {
+            return None;
+        }
+    }
+    Some(AffineForm {
+        coefficient: factor.clone() * form.coefficient,
+        invariant: form.invariant,
+        bias: factor * form.bias,
+    })
 }
 
 fn incoming_values(function: &KirFunction, target: crate::BlockId, index: usize) -> Vec<ValueId> {

@@ -23,26 +23,20 @@ descriptor 可 alias。
 长度与 Wasm32 地址运算，并在空间不足时增长 memory。增长失败时分配游标保持不变。
 Arena 不释放内存，也不验证其他指针；请确保输入和输出 region 都处于各自分配范围内。
 
-```js
-import { readFile } from 'node:fs/promises';
-import { createCKWasmArena } from './examples/wasm/host/ck-wasm-arena.mjs';
+使用 Node 直接构建并运行完整 host 示例（runtime 已内置 WebAssembly 支持）：
 
-const bytes = await readFile('build/pricing_batch.wasm');
-const { instance } = await WebAssembly.instantiate(bytes);
-const arena = createCKWasmArena(instance);
-
-const count = 3;
-const prices = arena.copyInI64(new BigInt64Array([100n, 200n, 300n]));
-const quantities = arena.copyInI64(new BigInt64Array([2n, 1n, 4n]));
-const discounts = arena.copyInI64(new BigInt64Array([5n, 0n, 20n]));
-const taxRates = arena.copyInI64(new BigInt64Array([100_000n, 200_000n, 50_000n]));
-const totals = arena.allocI64(count);
-
-instance.exports.pricing_batch(
-  prices.ptr, quantities.ptr, discounts.ptr, taxRates.ptr, totals, count,
-);
-const result = arena.copyOutI64(totals, count);
+```sh
+cargo build --release --locked --bin ckc
+target/release/ckc emit-wasm examples/wasm/pricing_batch.ck \
+  --out build/pricing_batch.wasm --opt-level 3 \
+  --wasm-features baseline --overflow unchecked --bounds unchecked
+node examples/wasm/host/pricing-batch.mjs build/pricing_batch.wasm
 ```
+
+示例只分配一次四个输入列和一个输出列，主动增长一次 memory 以演示 view 失效，随后从当前
+memory buffer 重新获取所有 view，再通过同一 arena 更新并提交三个 batch。它会将三组结果打印为
+JSON。应用中可在热循环开始前按需 reserve 预期工作区；不要在可能执行 `memory.grow` 后继续使用
+增长前创建的 typed array。
 
 Typed region 可使用 `allocI32`/`viewI32`、`allocU32`/`viewU32`、
 `allocI64`/`viewI64`、`allocU64`/`viewU64` 或 `allocF64`/`viewF64`。
@@ -51,7 +45,7 @@ Typed region 可使用 `allocI32`/`viewI32`、`allocU32`/`viewU32`、
 的操作后重新获取 view。Arena 会在增长后刷新自己的 view 来源。
 
 示例导出 `pricing_one` 计算一条记录，`pricing_batch` 则在一次 Wasm 调用中处理 N 条
-structure-of-arrays 记录。运行 Node 聚焦检查：
+structure-of-arrays 记录。相同目录还包含 growth、对齐、非法长度和批量复用测试。运行 Node 聚焦检查：
 `node --test examples/wasm/host/*.test.mjs`。若要比较耗时，先构建 `ckc`，然后执行：
 
 ```sh
@@ -64,5 +58,18 @@ node benches/wasm/bench.mjs --ckc target/debug/ckc \
 各阶段耗时。单一 runtime 的结果不能证明所有环境都会普遍加速。
 
 WASM 使用 `--bounds unchecked` 与 `--overflow unchecked`。CLI 拒绝 checked
-mode，不插入 implicit trap/guard；untrusted input 必须由 host 验证 offset/length。
-规范 contract 见 [WASM ABI](../abi/wasm.md)。
+mode，因此 ABI 不提供 checked pointer 或 slice 安全。O3 可在 SIMD 或 Bulk Memory 快路径外插入经过验证、
+不陷阱的优化谓词；谓词失败时执行原标量/源码路径，包括其正常 WebAssembly trap 与已完成的写入前缀。
+这类 guard 不验证任意 host pointer，也不会使错误的 `noalias` contract 变安全。untrusted input 到达 export
+时，host 必须验证 offset/length。规范 contract 见 [WASM ABI](../abi/wasm.md)。
+
+Unchecked memory contract 与浮点语义相互独立：默认 `f64` 运算保留 strict 源码求值顺序和
+binary64 舍入。`baseline` 是默认 feature profile，不发射 SIMD；显式选择
+`--wasm-features simd128` 才启用 ABI 中列出的、经过验证的 SIMD 形态，也不会启用 Relaxed SIMD、
+FMA、fast math 或重结合。若源代码声明 `requires noalias(a, b)`，这是调用者必须满足的前置条件：
+即使模块接受任意 pointer 值，也必须传入符合声明长度且互不重叠的 range。
+
+性能结论要区分 kernel 调用、host 准备/读取，以及首次编译/实例化。仓库的 Node/V8 runner 测量
+CK WASM 并校验输出，没有 Clang/Rust WASM oracle 耗时。Native 或历史 Native performance report
+不能证明相同目标下的 WASM 追平。记录的首次模块编译时间不是浏览器冷启动；每轮端到端测量使用
+已实例化模块，且排除 memory growth。比较实现时应保留这些边界。

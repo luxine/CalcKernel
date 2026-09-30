@@ -27,6 +27,7 @@ const COMPILE_SAMPLES: usize = 15;
 const ORACLE_SAMPLING_PROTOCOL: &str = "interleaved-upper-median-three-channel-v3";
 const ORACLE_MANIFEST_SHA256: &str =
     "e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3";
+const CANDIDATE_VERSION: &str = "0.15.2";
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
@@ -440,8 +441,12 @@ fn candidate_compiler(repo_root: &Path) -> Result<PathBuf, String> {
         .arg("--version")
         .output()
         .map_err(|error| format!("execute candidate compiler {}: {error}", path.display()))?;
-    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != "ckc 0.15.1" {
-        return Err("CKC_CANDIDATE_COMPILER must identify ckc 0.15.1".into());
+    if !output.status.success()
+        || String::from_utf8_lossy(&output.stdout).trim() != format!("ckc {CANDIDATE_VERSION}")
+    {
+        return Err(format!(
+            "CKC_CANDIDATE_COMPILER must identify ckc {CANDIDATE_VERSION}"
+        ));
     }
     Ok(path)
 }

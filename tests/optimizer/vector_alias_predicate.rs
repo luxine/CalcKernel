@@ -179,6 +179,8 @@ fn version_predicate_mut(
 fn alias_checker_should_reject_preheader_branch_that_bypasses_alias_result() {
     let (pre, candidate, prepared) = prepared_alias_trial();
     let mut forged = prepared.trial.clone();
+    let bypass = calckernel::ValueId::from_index(forged.ids().next_value);
+    let bypass_instruction = calckernel::InstructionId::from_index(forged.ids().next_instruction);
     let function = forged
         .module_mut()
         .functions
@@ -187,32 +189,25 @@ fn alias_checker_should_reject_preheader_branch_that_bypasses_alias_result() {
         .expect("versioned function");
     let preheader = function
         .blocks
-        .iter()
-        .find(|block| block.id == candidate.preheader)
-        .expect("loop preheader");
-    let threshold_result = preheader
-        .instructions
-        .iter()
-        .find_map(|instruction| {
-            matches!(
-                instruction.kind,
-                calckernel::KirInstructionKind::Compare {
-                    op: calckernel::MirCompareOp::Ge,
-                    ..
-                }
-            )
-            .then(|| instruction.results[0].value)
-        })
-        .expect("standalone trip-threshold comparison result");
-    let preheader = function
-        .blocks
         .iter_mut()
         .find(|block| block.id == candidate.preheader)
         .expect("mutable loop preheader");
     let calckernel::KirTerminator::Branch { condition, .. } = &mut preheader.terminator else {
         panic!("versioned preheader must branch");
     };
-    *condition = threshold_result;
+    preheader.instructions.push(calckernel::KirInstruction {
+        id: bypass_instruction,
+        results: vec![calckernel::KirResult {
+            value: bypass,
+            type_node: calckernel::KirValueType::Scalar(calckernel::MirType::Primitive(
+                calckernel::MirPrimitiveTypeName::Bool,
+            )),
+        }],
+        kind: calckernel::KirInstructionKind::ConstBool { value: true },
+        memory: None,
+        effect: None,
+    });
+    *condition = bypass;
 
     assert!(
         check_vectorization_trial_independently(&pre, &forged, &prepared.plan, &prepared.charge,)

@@ -56,6 +56,25 @@ and is the sole target-neutral optimized input to all backends. `emit-kir`
 prints deterministic inspection text and may also print fact/effect/proof
 evidence. KIR is a private compiler format with no cross-version text guarantee.
 
+KIR's pure `VersionPredicate` instruction returns `bool`. It permits at most
+four conjuncts: one `TripThreshold` and three non-trip predicates. The
+WebAssembly-only `WasmSliceRange` conjunct takes a `slice<T>`, `start: u32`,
+`count: u32`, and a matching 4- or 8-byte element width; `T` is limited to
+`i32`, `u32`, `i64`, `u64`, or `f64`. The `baseline` profile permits it only in
+a total-range predicate made up of `TripThreshold` and `WasmSliceRange`
+conjuncts; alias-disjoint conjuncts are not valid there. `simd128` also permits
+supported `AddressIntervalsDisjoint` conjuncts. A zero count is true.
+Otherwise, with widened unsigned
+64-bit arithmetic, it checks `start + count <= slice.len` and that the
+exclusive end byte address `slice.data + (start + count) * element_bytes` is
+at most both `2^32` and `memory.size * 65536`. The predicate does not access or
+change memory. It is an optimization guard, not a checked-memory operation.
+The checker for each supported SIMD plan reconstructs the exact scalar access
+ranges and applicable alias evidence, then verifies the required scalar,
+boundary, or source-control-flow path. Current checked uses include supported
+affine maps and matrix columns, closed piecewise trees, and a normalized
+stencil interior; an arbitrary predicate does not authorize a memory access.
+
 The semantic MIR textual format is compatible within `0.15.x`; a breaking grammar or meaning
 change requires a later minor release and migration note under the project
 [compatibility policy](../project/compatibility.md).

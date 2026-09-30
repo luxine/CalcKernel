@@ -16,6 +16,9 @@ use super::{
     plan::*,
 };
 
+mod rotation;
+mod unroll;
+
 pub(super) fn emit_final_module_with_options(
     module: &MirModule,
     options: EmitWasmOptions,
@@ -82,7 +85,10 @@ fn emit_module_with_lowering_into(
             })
         });
         let has_memory_cursors = options.opt_level >= 3
-            && typed.is_some_and(|candidate| !candidate.memory_plan.cursors.is_empty());
+            && typed.is_some_and(|candidate| {
+                !candidate.memory_plan.cursors.is_empty()
+                    || !candidate.memory_plan.factored.bases.is_empty()
+            });
         let has_memarg_offsets = options.opt_level >= 3
             && typed.is_some_and(|candidate| {
                 !candidate
@@ -102,8 +108,13 @@ fn emit_module_with_lowering_into(
             || has_memory_cursors
             || has_memarg_offsets
             || has_bulk_candidate;
+        let typed_scalar_simple_loop = options.opt_level >= 3
+            && detect_simple_wasm_while(function).is_some()
+            && typed.is_some_and(typed_slice_scalar_simple_loop_eligible);
         let mut structure = if options.opt_level >= 3
-            && (needs_typed_lowering || detect_simple_wasm_while(function).is_none())
+            && (needs_typed_lowering
+                || typed_scalar_simple_loop
+                || detect_simple_wasm_while(function).is_none())
         {
             typed
                 .filter(|candidate| {
@@ -155,6 +166,7 @@ fn emit_module_with_lowering_into(
                     &vector_names,
                     &cursor_names,
                     bulk_candidate.as_ref(),
+                    options.opt_level >= 3,
                 )?;
             }
         } else if let (Some(typed), Some(structure)) = (typed, structure.as_ref()) {
@@ -175,6 +187,38 @@ fn emit_module_with_lowering_into(
     }
     out.push_str(")\n");
     Ok(())
+}
+
+fn typed_slice_scalar_simple_loop_eligible(lowered: &WasmLoweredFunction<'_>) -> bool {
+    if lowered.source.blocks.len() != 4
+        || !lowered.vector_values.is_empty()
+        || lowered.source.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    KirInstructionKind::VersionPredicate { .. }
+                ) || is_vector_instruction(&instruction.kind)
+            })
+        })
+    {
+        return false;
+    }
+    let memory_instructions = lowered
+        .source
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| instruction.memory.is_some())
+        .collect::<Vec<_>>();
+    !memory_instructions.is_empty()
+        && memory_instructions
+            .iter()
+            .all(|instruction| match &instruction.kind {
+                KirInstructionKind::Load { place } | KirInstructionKind::Store { place, .. } => {
+                    matches!(place.as_ref(), KirPlace::SliceIndex { .. })
+                }
+                _ => false,
+            })
 }
 
 fn single_block_scalar_memarg_sink_is_eligible(lowered: &WasmLoweredFunction<'_>) -> bool {
@@ -230,7 +274,10 @@ fn memory_cursor_local_names(
     lowered: &WasmLoweredFunction<'_>,
     vector_names: &BTreeMap<crate::ValueId, String>,
 ) -> BTreeMap<CursorId, String> {
-    if lowered.memory_plan.cursors.is_empty() {
+    if lowered.memory_plan.cursors.is_empty()
+        && lowered.memory_plan.factored.bases.is_empty()
+        && lowered.memory_plan.factored.bundles.bases.is_empty()
+    {
         return BTreeMap::new();
     }
     let mut used_names = collect_wasm_function_names(&lowered.local_view);
@@ -254,7 +301,7 @@ fn memory_cursor_local_names(
         plan.return_data,
         plan.return_len,
     ]);
-    lowered
+    let mut names: BTreeMap<_, _> = lowered
         .memory_plan
         .cursors
         .iter()
@@ -267,7 +314,20 @@ fn memory_cursor_local_names(
                 ),
             )
         })
-        .collect()
+        .collect();
+    for base in &lowered.memory_plan.factored.bases {
+        names.insert(
+            CursorId::factored(base.id),
+            unique_wasm_internal_name(&format!("ik_factored_base{}", base.id), &mut used_names),
+        );
+    }
+    for base in &lowered.memory_plan.factored.bundles.bases {
+        names.insert(
+            CursorId::bundle(base.id),
+            unique_wasm_internal_name(&format!("ik_bundle_base{}", base.id), &mut used_names),
+        );
+    }
+    names
 }
 
 fn emit_wat_memory_cursor_locals(
@@ -567,7 +627,7 @@ fn version_predicate_scratch(
     plan: Option<&WasmFunctionPlan>,
     vector_names: &BTreeMap<crate::ValueId, String>,
 ) -> Option<VersionPredicateScratch> {
-    let uses_intervals = lowered.source.blocks.iter().any(|block| {
+    let uses_widened_ranges = lowered.source.blocks.iter().any(|block| {
         block.instructions.iter().any(|instruction| {
             matches!(
                 &instruction.kind,
@@ -575,11 +635,12 @@ fn version_predicate_scratch(
                     if predicate.conjuncts.iter().any(|conjunct| matches!(
                         conjunct,
                         KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. }
+                            | KirVersionPredicateConjunct::WasmSliceRange { .. }
                     ))
             )
         })
     });
-    if !uses_intervals {
+    if !uses_widened_ranges {
         return None;
     }
 
@@ -740,6 +801,9 @@ fn structured_plan_is_emittable(
             if edge.copies != copies {
                 return false;
             }
+            if super::lower::vector_edge_copies(lowered, edge).is_err() {
+                return false;
+            }
             expected_instructions.extend(copies);
             if structure.reachable.contains(&lowered_block.source.id) {
                 let key = (lowered_block.source.id, edge.arm);
@@ -880,7 +944,7 @@ fn emit_wat_structured_function(
     bulk_candidate: Option<&CheckedWasmBulkMemory>,
 ) -> Result<(), String> {
     let function = &lowered.local_view;
-    if wasm_function_uses_slices(function) {
+    if wasm_function_uses_slices(function) || !vector_names.is_empty() {
         emit_wat_structured_slice_function(
             out,
             function,
@@ -1199,6 +1263,7 @@ fn emit_wat_typed_dispatcher_function(
     vector_names: &BTreeMap<crate::ValueId, String>,
     cursor_names: &BTreeMap<CursorId, String>,
     bulk_candidate: Option<&CheckedWasmBulkMemory>,
+    optimize_conditional_increments: bool,
 ) -> Result<(), String> {
     let function = &lowered.local_view;
     let plan = WasmFunctionPlan::new(function);
@@ -1299,6 +1364,8 @@ fn emit_wat_typed_dispatcher_function(
         block_indices: &block_indices,
         layout,
         plan: &plan,
+        vector_names,
+        optimize_conditional_increments,
         cursor_names,
         exit_label: &exit_label,
         dispatch_label: &dispatch_label,
@@ -1363,6 +1430,8 @@ struct TypedDispatcher<'a, 'source> {
     block_indices: &'a BTreeMap<crate::BlockId, u32>,
     layout: &'a WasmStructLayout,
     plan: &'a WasmFunctionPlan,
+    vector_names: &'a BTreeMap<crate::ValueId, String>,
+    optimize_conditional_increments: bool,
     cursor_names: &'a BTreeMap<CursorId, String>,
     exit_label: &'a str,
     dispatch_label: &'a str,
@@ -1375,6 +1444,19 @@ impl TypedDispatcher<'_, '_> {
         block: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
+        if self.optimize_conditional_increments
+            && let Some(increment) =
+                super::lower::checked_conditional_increment(self.lowered, block)
+        {
+            let edge = emit_wat_conditional_increment(
+                out,
+                self.lowered,
+                &increment,
+                Some(self.plan),
+                indent,
+            )?;
+            return self.emit_edge(out, &edge, block.source.id, edge.source.target, indent);
+        }
         let pad = " ".repeat(indent);
         match &block.source.terminator {
             KirTerminator::Return { value, .. } => {
@@ -1459,6 +1541,7 @@ impl TypedDispatcher<'_, '_> {
         for copy in &edge.copies {
             emit_wat_paired_instruction(out, copy, self.layout, self.plan, indent);
         }
+        emit_wat_vector_edge_copies(out, self.lowered, edge, self.vector_names, indent)?;
         let index = self
             .block_indices
             .get(&target)
@@ -1470,6 +1553,83 @@ impl TypedDispatcher<'_, '_> {
         ));
         Ok(())
     }
+}
+
+fn emit_wat_vector_edge_copies(
+    out: &mut impl WasmOutput,
+    lowered: &WasmLoweredFunction<'_>,
+    edge: &WasmLoweredEdge<'_>,
+    vector_names: &BTreeMap<crate::ValueId, String>,
+    indent: usize,
+) -> Result<(), String> {
+    let copies =
+        super::lower::vector_edge_copies(lowered, edge).map_err(|error| error.to_string())?;
+    let local = |value| {
+        vector_names.get(&value).ok_or_else(|| {
+            format!(
+                "WebAssembly vector edge value {} has no v128 local",
+                value.index()
+            )
+        })
+    };
+    let names = copies
+        .iter()
+        .map(|(target, source)| Ok((local(*target)?, local(*source)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let pad = " ".repeat(indent);
+    // Save every source before changing any target, including cycles and repeated
+    // arguments. The operand stack provides the parallel-copy temporaries.
+    for (_, source) in &names {
+        out.push_str(&format!("{pad}local.get ${source}\n"));
+    }
+    for (target, _) in names.iter().rev() {
+        out.push_str(&format!("{pad}local.set ${target}\n"));
+    }
+    Ok(())
+}
+
+fn emit_wat_conditional_increment<'source>(
+    out: &mut impl WasmOutput,
+    lowered: &WasmLoweredFunction<'source>,
+    increment: &super::lower::WasmConditionalIncrement<'_, 'source>,
+    paired: Option<&WasmFunctionPlan>,
+    indent: usize,
+) -> Result<WasmLoweredEdge<'source>, String> {
+    let base = scalar_operand(lowered, increment.base)?;
+    let condition = scalar_operand(lowered, increment.condition)?;
+    let result = scalar_operand(lowered, increment.result)?;
+    let result_name = match paired {
+        Some(plan) => plan.scalar(result),
+        None => match result {
+            MirValue::Local { name, .. } | MirValue::Temp { name, .. } => name,
+            _ => return Err("WebAssembly conditional increment result has no local".into()),
+        },
+    };
+    let mut edge = WasmLoweredEdge {
+        arm: increment.direct_edge.arm,
+        source: increment.direct_edge.source,
+        copies: increment.direct_edge.copies.clone(),
+    };
+    let Some(MirInstruction::Move { value, .. }) = edge.copies.get_mut(increment.copy_index) else {
+        return Err("WebAssembly conditional increment is missing its join copy".into());
+    };
+    *value = result.clone();
+    if let Some(plan) = paired {
+        emit_wat_paired_scalar_value(out, base, plan, indent);
+        emit_wat_paired_scalar_value(out, condition, plan, indent);
+    } else {
+        emit_wat_value(out, base, indent);
+        emit_wat_value(out, condition, indent);
+    }
+    let pad = " ".repeat(indent);
+    // A bool supplied by a host may be any nonzero i32. Normalize it before
+    // arithmetic; the false arm needs exactly the complementary 0/1 value.
+    out.push_str(&format!("{pad}i32.eqz\n"));
+    if increment.increment_on_true {
+        out.push_str(&format!("{pad}i32.eqz\n"));
+    }
+    out.push_str(&format!("{pad}i32.add\n{pad}local.set ${result_name}\n"));
+    Ok(edge)
 }
 
 fn scalar_operand<'a>(
@@ -1506,6 +1666,51 @@ fn emit_wat_version_predicate(
     let pad = " ".repeat(indent);
     for (index, conjunct) in predicate.conjuncts.iter().enumerate() {
         match conjunct {
+            KirVersionPredicateConjunct::WasmSliceRange {
+                slice,
+                start,
+                count,
+                element_bytes,
+            } => {
+                let plan = plan.ok_or_else(|| {
+                    "WebAssembly slice range predicates require the paired slice ABI plan"
+                        .to_string()
+                })?;
+                let scratch = scratch.ok_or_else(|| {
+                    "WebAssembly slice range predicates are missing their i64 temporaries"
+                        .to_string()
+                })?;
+                let operand = scalar_operand(lowered, *slice)?;
+                if !matches!(value_type(operand), MirType::Slice(_)) {
+                    return Err("WebAssembly slice range predicate expected a slice".into());
+                }
+                let (_, length) = plan.slice(operand);
+                let context = VersionPredicateSliceContext { lowered, plan };
+                emit_version_predicate_scalar(out, *count, lowered, Some(plan), indent)?;
+                out.push_str(&format!(
+                    "{pad}i32.eqz\n{pad}if (result i32)\n{pad}  i32.const 1\n{pad}else\n"
+                ));
+
+                let inner = " ".repeat(indent + 2);
+                emit_version_predicate_scalar(out, *start, lowered, Some(plan), indent + 2)?;
+                out.push_str(&format!("{inner}i64.extend_i32_u\n"));
+                emit_version_predicate_scalar(out, *count, lowered, Some(plan), indent + 2)?;
+                out.push_str(&format!(
+                    "{inner}i64.extend_i32_u\n{inner}i64.add\n{inner}local.tee ${}\n{inner}local.get ${length}\n{inner}i64.extend_i32_u\n{inner}i64.le_u\n",
+                    scratch.left_end,
+                ));
+                // The validated 4/8-byte widths keep data + (start + count) *
+                // width below 2^37. No intermediate Wasm32 arithmetic may wrap.
+                emit_wat_version_slice_data_i64(out, *slice, &context, indent + 2)?;
+                out.push_str(&format!(
+                    "{inner}local.get ${}\n{inner}i64.const {element_bytes}\n{inner}i64.mul\n{inner}i64.add\n{inner}local.tee ${}\n{inner}i64.const 4294967296\n{inner}i64.le_u\n{inner}i32.and\n",
+                    scratch.left_end, scratch.right_end,
+                ));
+                out.push_str(&format!(
+                    "{inner}local.get ${}\n{inner}memory.size\n{inner}i64.extend_i32_u\n{inner}i64.const 65536\n{inner}i64.mul\n{inner}i64.le_u\n{inner}i32.and\n{pad}end\n",
+                    scratch.right_end,
+                ));
+            }
             KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
                 emit_version_predicate_scalar(out, *value, lowered, plan, indent)?;
                 out.push_str(&format!("{pad}i32.const {minimum}\n{pad}i32.ge_u\n"));
@@ -1691,6 +1896,27 @@ fn emit_wat_lowered_instruction(
     }
     if lowered
         .memory_plan
+        .factored
+        .accesses
+        .get(&instruction.source.id)
+        .is_some_and(|access| {
+            special_locals
+                .memory_cursor_names
+                .contains_key(&CursorId::factored(access.base))
+        })
+    {
+        return emit_wat_factored_memory_instruction(
+            out,
+            instruction.source,
+            lowered,
+            layout,
+            paired,
+            special_locals.memory_cursor_names,
+            indent,
+        );
+    }
+    if lowered
+        .memory_plan
         .access_by_instruction
         .get(&instruction.source.id)
         .is_some_and(|cursor| special_locals.memory_cursor_names.contains_key(cursor))
@@ -1814,6 +2040,79 @@ fn emit_wat_memarg_offset_instruction(
     Ok(())
 }
 
+fn emit_wat_factored_memory_instruction(
+    out: &mut impl WasmOutput,
+    instruction: &KirInstruction,
+    lowered: &WasmLoweredFunction<'_>,
+    layout: &WasmStructLayout,
+    paired: Option<&WasmFunctionPlan>,
+    cursor_names: &BTreeMap<CursorId, String>,
+    indent: usize,
+) -> Result<(), String> {
+    let access = lowered
+        .memory_plan
+        .factored
+        .accesses
+        .get(&instruction.id)
+        .ok_or_else(|| "WebAssembly factored address access is missing".to_string())?;
+    let base = lowered
+        .memory_plan
+        .factored
+        .bases
+        .iter()
+        .find(|base| base.id == access.base)
+        .ok_or_else(|| "WebAssembly factored address base is missing".to_string())?;
+    let name = cursor_names
+        .get(&CursorId::factored(base.id))
+        .ok_or_else(|| "WebAssembly factored address local is missing".to_string())?;
+    let pad = " ".repeat(indent);
+    // Both additions and the multiply are the original Wasm32 ring operations.
+    // Only the stable byte base was evaluated on the original entry edge.
+    out.push_str(&format!("{pad}local.get ${name}\n"));
+    emit_wat_memory_cursor_index(out, access.index, lowered, paired, indent)?;
+    out.push_str(&format!(
+        "{pad}i32.const {}\n{pad}i32.mul\n{pad}i32.add\n",
+        base.element_bytes
+    ));
+    match &instruction.kind {
+        KirInstructionKind::Load { .. } => {
+            let [result] = instruction.results.as_slice() else {
+                return Err("WebAssembly factored load result is malformed".into());
+            };
+            let type_node = result
+                .type_node
+                .as_scalar()
+                .ok_or_else(|| "WebAssembly factored load must be scalar".to_string())?;
+            validate_cursor_memory_type(type_node, base.element_bytes, layout)?;
+            out.push_str(&format!(
+                "{pad}{}.load offset=0 align={}\n",
+                wasm_type(type_node),
+                layout.align_of(type_node)
+            ));
+            let target = scalar_operand(lowered, result.value)?;
+            let local = paired.map_or_else(|| wat_local_name(target), |plan| plan.scalar(target));
+            out.push_str(&format!("{pad}local.set ${local}\n"));
+        }
+        KirInstructionKind::Store { value, .. } => {
+            let stored = scalar_operand(lowered, *value)?;
+            let type_node = value_type(stored);
+            validate_cursor_memory_type(type_node, base.element_bytes, layout)?;
+            if let Some(plan) = paired {
+                emit_wat_paired_scalar_value(out, stored, plan, indent);
+            } else {
+                emit_wat_value(out, stored, indent);
+            }
+            out.push_str(&format!(
+                "{pad}{}.store offset=0 align={}\n",
+                wasm_type(type_node),
+                layout.align_of(type_node)
+            ));
+        }
+        _ => return Err("WebAssembly factored address targets a non-memory instruction".into()),
+    }
+    Ok(())
+}
+
 fn emit_wat_scalar_memory_cursor_instruction(
     out: &mut impl WasmOutput,
     instruction: &KirInstruction,
@@ -1849,6 +2148,7 @@ fn emit_wat_scalar_memory_cursor_instruction(
             validate_cursor_memory_type(type_node, cursor_spec.element_bytes, layout)?;
             let target = scalar_operand(lowered, result.value)?;
             out.push_str(&format!("{pad}local.get ${cursor_name}\n"));
+            emit_wat_memory_cursor_access_bias(out, lowered, instruction.id, indent)?;
             out.push_str(&format!(
                 "{pad}{}.load offset=0 align={}\n",
                 wasm_type(type_node),
@@ -1862,6 +2162,7 @@ fn emit_wat_scalar_memory_cursor_instruction(
             let type_node = value_type(stored);
             validate_cursor_memory_type(type_node, cursor_spec.element_bytes, layout)?;
             out.push_str(&format!("{pad}local.get ${cursor_name}\n"));
+            emit_wat_memory_cursor_access_bias(out, lowered, instruction.id, indent)?;
             if let Some(plan) = paired {
                 emit_wat_paired_scalar_value(out, stored, plan, indent);
             } else {
@@ -1876,6 +2177,24 @@ fn emit_wat_scalar_memory_cursor_instruction(
         _ => {
             return Err("WebAssembly cursor plan targets a non-scalar memory access".into());
         }
+    }
+    Ok(())
+}
+
+fn emit_wat_memory_cursor_access_bias(
+    out: &mut impl WasmOutput,
+    lowered: &WasmLoweredFunction<'_>,
+    instruction: crate::InstructionId,
+    indent: usize,
+) -> Result<(), String> {
+    let bias = lowered
+        .memory_plan
+        .access_bias_bytes_by_instruction
+        .get(&instruction)
+        .ok_or_else(|| "WebAssembly memory cursor access bias is missing".to_string())?;
+    if *bias != 0 {
+        let pad = " ".repeat(indent);
+        out.push_str(&format!("{pad}i32.const {bias}\n{pad}i32.add\n"));
     }
     Ok(())
 }
@@ -1908,6 +2227,21 @@ fn emit_wat_memory_edge_actions(
     if cursor_names.is_empty() {
         return Ok(());
     }
+    let pad = " ".repeat(indent);
+    for base in &lowered.memory_plan.factored.bases {
+        if base.preheader != source || base.header != edge.source.target {
+            continue;
+        }
+        let name = cursor_names
+            .get(&CursorId::factored(base.id))
+            .ok_or_else(|| "WebAssembly factored base has no local".to_string())?;
+        emit_wat_memory_cursor_base(out, base.slice, lowered, paired, indent)?;
+        emit_wat_memory_cursor_index(out, base.offset, lowered, paired, indent)?;
+        out.push_str(&format!(
+            "{pad}i32.const {}\n{pad}i32.mul\n{pad}i32.add\n{pad}local.set ${name}\n",
+            base.element_bytes
+        ));
+    }
     let Some(actions) = lowered.memory_plan.edge_actions.get(&(source, edge.arm)) else {
         return Ok(());
     };
@@ -1918,7 +2252,7 @@ fn emit_wat_memory_edge_actions(
                 cursor,
                 base,
                 induction_arg_index,
-                bias_bytes,
+                index_terms,
             } => {
                 let cursor_name = cursor_names.get(cursor).ok_or_else(|| {
                     format!("WebAssembly memory cursor {} has no local", cursor.0)
@@ -1953,8 +2287,20 @@ fn emit_wat_memory_edge_actions(
                     "{pad}i32.const {}\n{pad}i32.mul\n{pad}i32.add\n",
                     cursor_spec.element_bytes
                 ));
-                if *bias_bytes != 0 {
-                    out.push_str(&format!("{pad}i32.const {bias_bytes}\n{pad}i32.add\n"));
+                for (operand, coefficient_bytes) in index_terms.iter() {
+                    let term_value = match operand {
+                        CursorOperand::HeaderArgument(index) => {
+                            edge.source.args.get(index).copied().ok_or_else(|| {
+                                "WebAssembly cursor entry edge omits an affine index term"
+                                    .to_string()
+                            })?
+                        }
+                        CursorOperand::Value(value) => value,
+                    };
+                    emit_wat_memory_cursor_index(out, term_value, lowered, paired, indent)?;
+                    out.push_str(&format!(
+                        "{pad}i32.const {coefficient_bytes}\n{pad}i32.mul\n{pad}i32.add\n"
+                    ));
                 }
                 out.push_str(&format!("{pad}local.set ${cursor_name}\n"));
             }
@@ -2265,6 +2611,55 @@ fn emit_wat_vector_address(
     indent: usize,
 ) -> Result<(), String> {
     let pad = " ".repeat(indent);
+    if let Some(mapped) = context
+        .lowered
+        .memory_plan
+        .factored
+        .bundles
+        .accesses
+        .get(&instruction.id)
+        && let Some(name) = context.cursor_names.get(&CursorId::bundle(mapped.base))
+    {
+        let base = context
+            .lowered
+            .memory_plan
+            .factored
+            .bundles
+            .bases
+            .iter()
+            .find(|base| base.id == mapped.base)
+            .ok_or_else(|| "WebAssembly vector address bundle base is missing".to_string())?;
+        if element_bytes != 8 || access.slice != base.slice {
+            return Err("WebAssembly vector address bundle shape changed".into());
+        }
+        if instruction.id == base.first {
+            if access.start != base.start || mapped.delta_bytes != 0 {
+                return Err("WebAssembly vector address bundle initialization changed".into());
+            }
+            let slice = scalar_operand(context.lowered, access.slice)?;
+            let (data, _) = context.plan.slice(slice);
+            out.push_str(&format!("{pad}local.get ${data}\n"));
+            emit_wat_paired_scalar_value(
+                out,
+                scalar_operand(context.lowered, access.start)?,
+                context.plan,
+                indent,
+            );
+            out.push_str(&format!(
+                "{pad}i32.const 8\n{pad}i32.mul\n{pad}i32.add\n{pad}local.tee ${name}\n"
+            ));
+        } else {
+            out.push_str(&format!("{pad}local.get ${name}\n"));
+            if mapped.delta_bytes != 0 {
+                // A memarg offset would use nonwrapping address arithmetic.
+                out.push_str(&format!(
+                    "{pad}i32.const {}\n{pad}i32.add\n",
+                    mapped.delta_bytes
+                ));
+            }
+        }
+        return Ok(());
+    }
     if let Some(cursor) = context
         .lowered
         .memory_plan
@@ -2287,6 +2682,7 @@ fn emit_wat_vector_address(
             .get(cursor)
             .ok_or_else(|| format!("WebAssembly memory cursor {} has no local", cursor.0))?;
         out.push_str(&format!("{pad}local.get ${name}\n"));
+        emit_wat_memory_cursor_access_bias(out, context.lowered, instruction.id, indent)?;
         return Ok(());
     }
     let slice = scalar_operand(context.lowered, access.slice)?;
@@ -2448,6 +2844,21 @@ fn structure_item_target(item: &StructureItem) -> crate::BlockId {
     }
 }
 
+fn first_piecewise_store(
+    shape: &super::lower::WasmPiecewiseTreeShape,
+) -> Option<(BlockId, InstructionId, ValueId)> {
+    match shape {
+        super::lower::WasmPiecewiseTreeShape::Leaf {
+            block,
+            store,
+            value,
+        } => Some((*block, *store, *value)),
+        super::lower::WasmPiecewiseTreeShape::Branch { then_node, .. } => {
+            first_piecewise_store(then_node)
+        }
+    }
+}
+
 struct StructuredEmission<'a, 'source> {
     lowered: &'a WasmLoweredFunction<'source>,
     structure: &'a StructurePlan,
@@ -2467,6 +2878,24 @@ impl StructuredEmission<'_, '_> {
         region: &StructureRegion,
         indent: usize,
     ) -> Result<(), String> {
+        let region_blocks = region
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                StructureItem::Block(block) => Some(*block),
+                StructureItem::Loop { .. } => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let region_positions = region
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| match item {
+                StructureItem::Block(block) => Some((*block, index)),
+                StructureItem::Loop { .. } => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut fused_piecewise_blocks = BTreeSet::new();
         for item in region.items.iter().skip(1).rev() {
             let target = structure_item_target(item);
             if let Some(label) = self.structure.forward_labels.get(&target) {
@@ -2482,43 +2911,271 @@ impl StructuredEmission<'_, '_> {
             }
             match item {
                 StructureItem::Block(block_id) => {
+                    if fused_piecewise_blocks.contains(block_id) {
+                        continue;
+                    }
                     let block = self
                         .lowered
                         .blocks
                         .iter()
                         .find(|block| block.source.id == *block_id)
                         .expect("planner only references blocks in typed lowering");
-                    for instruction in &block.instructions {
-                        let special_locals = WasmSpecialLocals {
-                            vector_names: self.vector_names,
-                            memory_cursor_names: self.memory_cursor_names,
-                            predicate_scratch: self.predicate_scratch,
-                        };
-                        emit_wat_lowered_instruction(
-                            out,
-                            instruction,
-                            self.lowered,
-                            self.layout,
-                            self.paired,
-                            &special_locals,
-                            indent + 2,
-                        )?;
+                    let piecewise = super::lower::piecewise_closed_store_tree(
+                        self.lowered,
+                        *block_id,
+                        &region_blocks,
+                    )
+                    .filter(|tree| {
+                        tree.members.iter().all(|member| {
+                            region_positions
+                                .get(member)
+                                .is_some_and(|position| *position >= index)
+                        })
+                    });
+                    if let Some(tree) = piecewise {
+                        self.emit_piecewise_closed_store_tree(out, &tree, indent + 2)?;
+                        fused_piecewise_blocks.extend(tree.members);
+                    } else {
+                        self.emit_block_instructions(out, block, indent + 2)?;
+                        self.emit_terminator(out, block, indent + 2)?;
                     }
-                    self.emit_terminator(out, block, indent + 2)?;
                 }
                 StructureItem::Loop { header, body } => {
-                    let label = self
-                        .structure
-                        .loop_labels
-                        .get(header)
-                        .expect("planner assigns a label to every natural loop");
-                    out.push_str(&format!("{}loop ${label}\n", " ".repeat(indent + 2)));
-                    self.emit_region(out, body, indent + 4)?;
-                    out.push_str(&format!("{}end\n", " ".repeat(indent + 2)));
+                    if !unroll::try_emit_guarded_unroll(self, out, *header, body, indent + 2)?
+                        && !rotation::try_emit_rotated_loop(self, out, *header, body, indent + 2)?
+                    {
+                        let label = self
+                            .structure
+                            .loop_labels
+                            .get(header)
+                            .expect("planner assigns a label to every natural loop");
+                        out.push_str(&format!("{}loop ${label}\n", " ".repeat(indent + 2)));
+                        self.emit_region(out, body, indent + 4)?;
+                        out.push_str(&format!("{}end\n", " ".repeat(indent + 2)));
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    fn emit_piecewise_closed_store_tree(
+        &self,
+        out: &mut impl WasmOutput,
+        tree: &super::lower::WasmPiecewiseClosedStoreTree,
+        indent: usize,
+    ) -> Result<(), String> {
+        self.emit_piecewise_tree_computations(out, &tree.shape, None, tree, indent)?;
+        let (store_block, store_id, _) = first_piecewise_store(&tree.shape)
+            .ok_or_else(|| "closed WebAssembly piecewise tree has no leaf store".to_string())?;
+        let lowered_block = self
+            .lowered
+            .blocks
+            .iter()
+            .find(|block| block.source.id == store_block)
+            .ok_or_else(|| "closed WebAssembly piecewise tree lost its leaf block".to_string())?;
+        let store = lowered_block
+            .instructions
+            .iter()
+            .find(|instruction| instruction.source.id == store_id)
+            .ok_or_else(|| "closed WebAssembly piecewise tree lost its store".to_string())?;
+        let [MirInstruction::Store { place, .. }] = store.leaves.as_slice() else {
+            return Err(
+                "closed WebAssembly piecewise store does not lower to one scalar store".into(),
+            );
+        };
+        if let Some(plan) = self.paired {
+            emit_wat_paired_address(out, place, self.layout, plan, indent);
+        } else {
+            emit_wat_address(out, place, self.layout, indent);
+        }
+        let result_type = self.emit_piecewise_selected_value(out, &tree.shape, indent)?;
+        let pad = " ".repeat(indent);
+        out.push_str(&format!(
+            "{pad}{}.store offset=0 align={}\n",
+            wasm_type(&result_type),
+            self.layout.align_of(&result_type)
+        ));
+
+        if let Some(increment_id) = tree.shared_increment {
+            let increment_block = self
+                .lowered
+                .blocks
+                .iter()
+                .find(|block| block.source.id == tree.representative_leaf)
+                .ok_or_else(|| {
+                    "closed WebAssembly piecewise tree lost its increment block".to_string()
+                })?;
+            let increment = increment_block
+                .instructions
+                .iter()
+                .find(|instruction| instruction.source.id == increment_id)
+                .ok_or_else(|| {
+                    "closed WebAssembly piecewise tree lost its common increment".to_string()
+                })?;
+            let special_locals = WasmSpecialLocals {
+                vector_names: self.vector_names,
+                memory_cursor_names: self.memory_cursor_names,
+                predicate_scratch: self.predicate_scratch,
+            };
+            emit_wat_lowered_instruction(
+                out,
+                increment,
+                self.lowered,
+                self.layout,
+                self.paired,
+                &special_locals,
+                indent,
+            )?;
+        }
+        let leaf = self
+            .lowered
+            .blocks
+            .iter()
+            .find(|block| block.source.id == tree.representative_leaf)
+            .ok_or_else(|| {
+                "closed WebAssembly piecewise tree lost its representative leaf".to_string()
+            })?;
+        if !matches!(
+            &leaf.source.terminator,
+            KirTerminator::Jump { edge } if edge.target == tree.join
+        ) {
+            return Err("closed WebAssembly piecewise representative edge changed".into());
+        }
+        self.emit_terminator(out, leaf, indent)
+    }
+
+    fn emit_piecewise_tree_computations(
+        &self,
+        out: &mut impl WasmOutput,
+        shape: &super::lower::WasmPiecewiseTreeShape,
+        incoming: Option<(BlockId, u8)>,
+        tree: &super::lower::WasmPiecewiseClosedStoreTree,
+        indent: usize,
+    ) -> Result<(), String> {
+        let block_id = match shape {
+            super::lower::WasmPiecewiseTreeShape::Branch { block, .. }
+            | super::lower::WasmPiecewiseTreeShape::Leaf { block, .. } => *block,
+        };
+        if let Some((parent_id, arm)) = incoming {
+            let parent = self
+                .lowered
+                .blocks
+                .iter()
+                .find(|block| block.source.id == parent_id)
+                .ok_or_else(|| "piecewise tree edge lost its parent block".to_string())?;
+            let edge = parent
+                .edges
+                .iter()
+                .find(|edge| edge.arm == arm)
+                .ok_or_else(|| "piecewise tree edge lost its typed edge".to_string())?;
+            self.emit_edge_prelude(out, edge, parent, indent)?;
+        }
+        let block = self
+            .lowered
+            .blocks
+            .iter()
+            .find(|block| block.source.id == block_id)
+            .ok_or_else(|| "piecewise tree lost a typed source block".to_string())?;
+        match shape {
+            super::lower::WasmPiecewiseTreeShape::Branch {
+                then_node,
+                else_node,
+                ..
+            } => {
+                self.emit_block_instructions(out, block, indent)?;
+                self.emit_piecewise_tree_computations(
+                    out,
+                    then_node,
+                    Some((block_id, 0)),
+                    tree,
+                    indent,
+                )?;
+                self.emit_piecewise_tree_computations(
+                    out,
+                    else_node,
+                    Some((block_id, 1)),
+                    tree,
+                    indent,
+                )?;
+            }
+            super::lower::WasmPiecewiseTreeShape::Leaf { .. } => {
+                let special_locals = WasmSpecialLocals {
+                    vector_names: self.vector_names,
+                    memory_cursor_names: self.memory_cursor_names,
+                    predicate_scratch: self.predicate_scratch,
+                };
+                for instruction in &block.instructions {
+                    if tree.stores.contains(&instruction.source.id)
+                        || tree.increments.contains(&instruction.source.id)
+                    {
+                        continue;
+                    }
+                    emit_wat_lowered_instruction(
+                        out,
+                        instruction,
+                        self.lowered,
+                        self.layout,
+                        self.paired,
+                        &special_locals,
+                        indent,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_piecewise_selected_value(
+        &self,
+        out: &mut impl WasmOutput,
+        shape: &super::lower::WasmPiecewiseTreeShape,
+        indent: usize,
+    ) -> Result<MirType, String> {
+        match shape {
+            super::lower::WasmPiecewiseTreeShape::Leaf { value, .. } => {
+                let typed = self
+                    .lowered
+                    .values
+                    .get(value)
+                    .ok_or_else(|| "piecewise leaf value has no typed lowering".to_string())?;
+                let operand = typed
+                    .operand
+                    .as_ref()
+                    .ok_or_else(|| "piecewise leaf value is not a scalar".to_string())?;
+                if let Some(plan) = self.paired {
+                    emit_wat_paired_scalar_value(out, operand, plan, indent);
+                } else {
+                    emit_wat_value(out, operand, indent);
+                }
+                Ok(value_type(operand).clone())
+            }
+            super::lower::WasmPiecewiseTreeShape::Branch {
+                block: _,
+                condition,
+                then_node,
+                else_node,
+            } => {
+                let then_type = self.emit_piecewise_selected_value(out, then_node, indent)?;
+                let else_type = self.emit_piecewise_selected_value(out, else_node, indent)?;
+                if then_type != else_type {
+                    return Err("piecewise select arms have inconsistent scalar types".into());
+                }
+                let condition_value = self
+                    .lowered
+                    .values
+                    .get(condition)
+                    .and_then(|typed| typed.operand.as_ref())
+                    .ok_or_else(|| "piecewise branch condition has no scalar view".to_string())?;
+                if let Some(plan) = self.paired {
+                    emit_wat_paired_scalar_value(out, condition_value, plan, indent);
+                } else {
+                    emit_wat_value(out, condition_value, indent);
+                }
+                out.push_str(&format!("{}select\n", " ".repeat(indent)));
+                Ok(then_type)
+            }
+        }
     }
 
     fn emit_terminator(
@@ -2527,6 +3184,11 @@ impl StructuredEmission<'_, '_> {
         block: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
+        if let Some(increment) = super::lower::checked_conditional_increment(self.lowered, block) {
+            let edge =
+                emit_wat_conditional_increment(out, self.lowered, &increment, self.paired, indent)?;
+            return self.emit_edge(out, &edge, block, indent);
+        }
         let index = self
             .lowered
             .blocks
@@ -2611,6 +3273,28 @@ impl StructuredEmission<'_, '_> {
         source: &WasmLoweredBlock<'_>,
         indent: usize,
     ) -> Result<(), String> {
+        self.emit_edge_prelude(out, edge, source, indent)?;
+        let target = self
+            .structure
+            .branch_targets
+            .get(&(source.source.id, edge.arm))
+            .expect("planner validates every edge before emission");
+        let label = match target {
+            BranchTarget::Forward(block) => self.structure.forward_labels.get(block),
+            BranchTarget::Loop(block) => self.structure.loop_labels.get(block),
+        }
+        .expect("planner validates every target label before emission");
+        out.push_str(&format!("{}br ${label}\n", " ".repeat(indent)));
+        Ok(())
+    }
+
+    fn emit_edge_prelude(
+        &self,
+        out: &mut impl WasmOutput,
+        edge: &WasmLoweredEdge<'_>,
+        source: &WasmLoweredBlock<'_>,
+        indent: usize,
+    ) -> Result<(), String> {
         emit_wat_memory_edge_actions(
             out,
             self.lowered,
@@ -2627,17 +3311,31 @@ impl StructuredEmission<'_, '_> {
                 emit_wat_instruction(out, copy, self.layout, indent);
             }
         }
-        let target = self
-            .structure
-            .branch_targets
-            .get(&(source.source.id, edge.arm))
-            .expect("planner validates every edge before emission");
-        let label = match target {
-            BranchTarget::Forward(block) => self.structure.forward_labels.get(block),
-            BranchTarget::Loop(block) => self.structure.loop_labels.get(block),
+        emit_wat_vector_edge_copies(out, self.lowered, edge, self.vector_names, indent)
+    }
+
+    fn emit_block_instructions(
+        &self,
+        out: &mut impl WasmOutput,
+        block: &WasmLoweredBlock<'_>,
+        indent: usize,
+    ) -> Result<(), String> {
+        let special_locals = WasmSpecialLocals {
+            vector_names: self.vector_names,
+            memory_cursor_names: self.memory_cursor_names,
+            predicate_scratch: self.predicate_scratch,
+        };
+        for instruction in &block.instructions {
+            emit_wat_lowered_instruction(
+                out,
+                instruction,
+                self.lowered,
+                self.layout,
+                self.paired,
+                &special_locals,
+                indent,
+            )?;
         }
-        .expect("planner validates every target label before emission");
-        out.push_str(&format!("{}br ${label}\n", " ".repeat(indent)));
         Ok(())
     }
 }

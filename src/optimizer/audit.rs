@@ -5,8 +5,14 @@ use crate::{BlockId, FunctionId, InstructionId, KirFunction, KirModule, LoopId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LoopCandidateKind {
     LoopSimd,
+    BoundaryPeel,
+    InteriorNormalize,
+    NormalizationUnswitch,
+    WasmInvariantLoad,
+    DecisionTreeVector,
     FullUnroll,
     PartialUnroll,
+    RuntimeScalarUnroll,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -410,8 +416,14 @@ pub fn print_optimization_audit(audit: &KirOptimizationAuditState) -> String {
 const fn loop_kind_name(kind: LoopCandidateKind) -> &'static str {
     match kind {
         LoopCandidateKind::LoopSimd => "loop-simd",
+        LoopCandidateKind::BoundaryPeel => "boundary-peel",
+        LoopCandidateKind::InteriorNormalize => "interior-normalize",
+        LoopCandidateKind::NormalizationUnswitch => "normalization-unswitch",
+        LoopCandidateKind::WasmInvariantLoad => "wasm-invariant-load",
+        LoopCandidateKind::DecisionTreeVector => "decision-tree-vector",
         LoopCandidateKind::FullUnroll => "full-unroll",
         LoopCandidateKind::PartialUnroll => "partial-unroll",
+        LoopCandidateKind::RuntimeScalarUnroll => "runtime-scalar-unroll",
     }
 }
 

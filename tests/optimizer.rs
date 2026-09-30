@@ -40,6 +40,42 @@ mod slp;
 #[path = "optimizer/vectorize.rs"]
 mod vectorize;
 
+#[path = "optimizer/wasm_affine_checker.rs"]
+mod wasm_affine_checker;
+
+#[path = "optimizer/wasm_affine.rs"]
+mod wasm_affine;
+
+#[path = "optimizer/stencil_peel.rs"]
+mod stencil_peel;
+
+#[path = "optimizer/interior_normalize.rs"]
+mod interior_normalize;
+
+#[path = "optimizer/invariant_load.rs"]
+mod invariant_load;
+
+#[path = "optimizer/normalization_unswitch.rs"]
+mod normalization_unswitch;
+
+#[path = "optimizer/polynomial_uf.rs"]
+mod polynomial_uf;
+
+#[path = "optimizer/matmul_uf.rs"]
+mod matmul_uf;
+
+#[path = "optimizer/runtime_unroll.rs"]
+mod runtime_unroll;
+
+#[path = "optimizer/stencil_vector.rs"]
+mod stencil_vector;
+
+#[path = "optimizer/decision_tree.rs"]
+mod decision_tree;
+
+#[path = "optimizer/decision_tree_checker.rs"]
+mod decision_tree_checker;
+
 #[path = "optimizer/vector_alias_predicate.rs"]
 mod vector_alias_predicate;
 
@@ -51,3 +87,6 @@ mod pgo;
 
 #[path = "optimizer/multiversion.rs"]
 mod multiversion;
+
+#[path = "optimizer/modular_affine.rs"]
+mod modular_affine;

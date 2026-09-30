@@ -83,15 +83,33 @@ WebAssembly 提供 `baseline` 和 `simd128` 两种 feature profile；`emit-wat`�
 `emit-kir --consumer wasm` 可通过 `--wasm-features baseline|simd128` 选择，默认 `baseline`。
 两个 Wasm profile 都允许 Bulk Memory；只有 `simd128` 允许 SIMD128。`ck.wasm.target` module
 metadata 使用 schema 2，记录所选 feature 与规范化 profile digest。O3 的 `simd128` 为连续的
-`slice<f64>`、`slice<i32>`、`slice<u32>` map，以及模 2^32 的 `i32`/`u32` 求和、求积归约
-开放经过独立验证的 Loop SIMD。完整向量使用 `f64x2` 或 `i32x4`；两 lane 的 `i32`/`u32`
-输入可通过精确的 8 字节 load 转为 `f64x2`。map 支持 splat、load/store、加、减、乘、
-取负、`f64x2` 除法及纯逐 lane 比较/选择。简单的同一归纳变量 slice 循环可用经过检查的
-Wasm32 运行时别名谓词；发生重叠或地址范围不安全时执行原有标量循环。归约将四个整数 lane
-按模 2^32 折叠后再与标量累加器合并。候选仍需单位步长归纳、独立合法性与成本检查，以及
-原有标量余数循环；unroll factor 为一。WebAssembly SLP、浮点归约、checked arithmetic、
-masked memory 和其他向量形状仍不可用。不支持的源码候选保持标量；不支持的手工 Vector KIR
+`slice<f64>`、`slice<i32>`、`slice<u32>` map、受支持的整数到 `f64` 转换，以及模 2^32 的
+`i32`/`u32` 求和、求积归约生成经过独立验证的 SIMD128。完整向量使用 `f64x2` 或 `i32x4`；
+两 lane 的 `i32`/`u32` 输入可通过精确的 8 字节 load 转为 `f64x2`。支持的 lane 操作包括
+splat、load/store、加、减、乘、取负、`f64x2` 除法及纯逐 lane 比较和选择。
+
+Wasm SIMD 还识别若干范围较窄的源码形态：具有连续、循环不变广播或已证明仿射访问的严格
+`f64x2` map（包括经过测试的嵌套矩阵列循环）；可改写为 lane select 的封闭分段存储树；
+先证明性地拆分零/非零路径的 normalization 循环；以及边界剥离后的九次加载 `3x3` stencil
+内部区域。这些是特定源码形态的识别器，不表示一般矩阵、stencil 或分支都可向量化。仿射
+直接 map 与受支持的矩阵列循环使用 VF2，并尝试 UF1/2/4；分段树使用 VF2，并尝试 UF1 或 UF4。
+成本模型在合法候选中选择。其他通用 map、转换、归约及 stencil 内部循环每次只执行一个向量块。
+浮点 lane 保留严格源码运算顺序和舍入：多项式计算与乘加仍是独立操作，不使用 FMA 或重结合。
+
+别名未知或范围证明不足时，SIMD 快路径可由完整且不陷阱的 Wasm32 谓词守护；条件不满足则执行原有
+标量路径。符合条件的模运算 `i32`/`u32` 求和跨 chunk 传递 `i32x4` 累加器，仅在退出向量循环时
+折叠一次，然后只把原标量初值计入一次，再进入标量尾循环。模运算求积仍逐 chunk 折叠为标量。
+若部分累加值被其他循环状态使用，则两类归约都拒绝该向量化形态。候选仍需所需的归纳形式、独立
+合法性与成本检查，以及原有标量余数循环。WebAssembly SLP、浮点归约、checked arithmetic、
+masked memory 和不受支持的向量形态仍不可用。不支持的源码候选保持标量；不支持的手工 Vector KIR
 由 backend 拒绝。`baseline` 与 O0–O2 在 vector lowering 上保持标量。
+
+O3 `baseline` 另有只生成标量的运行时 UF4 前沿，限于两种窄形态：`u32` 模运算求和，以及
+`input[i] * constant + constant` 形式的严格 `f64` 直接 map；map 还必须有已证明的不别名关系。
+展开体只处理完整的四元素分组，余数交给原标量循环。它不生成 SIMD，也不是通用循环展开。
+另在 O3 下，编译器可组合两个常数仿射的 32 位模整数步骤，同时保留可观察的中间值；
+此变换不用于 checked 溢出或浮点运算。typed WASM emitter 只在验证边参数和 memory
+状态一致后消除无副作用的条件加一三角分支；其他分支仍保持原控制流。
 此外，O3 在任一 Wasm profile 下都可能为符合条件的直接指针 32 位复制和重复字节填充使用
 带 guard 的 Bulk Memory 路径。它要求当前 memory 内的地址范围不回绕，复制还要求源、目标范围
 不相交；条件不满足时保留原标量循环作为 fallback。快路径还要求至少 16 个元素，
@@ -107,14 +125,14 @@ Specialization 是 internal 且受 callee/clone/module 上限约束。它只使�
 与单独 scoped trusted-contract fact；recursive SCC、indirect call、checked/sanitizer mode 以及
 observable effect 变化都拒绝。Clone identity 确定且永不 export。
 
-Loop SIMD 只接受 access、dependence graph、strict operation semantics 与 target profile 全部
-闭合的 canonical single-latch loop。支持直接 load/store map、包含 unary negate/divide 的
+通用 Loop SIMD 前沿只接受 access、dependence graph、strict operation semantics 与 target profile
+全部闭合的 canonical single-latch loop。支持直接 load/store map、包含 unary negate/divide 的
 strict `f64` 算术、受支持的 integer-to-`f64` cast、pure compare/select diamond，以及 unchecked
 modular integer add/multiply reduction。结果为 fixed-width vector body 加保持顺序的 scalar
-epilogue。Alias 未知时可生成一个 total、overflow-safe non-overlap predicate，保护逐字节一致
-的 scalar fallback；更复杂 predicate 保持 scalar。Checked/sanitizer mode、floating/checked
-reduction、scan、gather/scatter、vector call、masked memory、shuffle 及不支持的
-alignment/operation 都保持 scalar。
+epilogue。Alias 未知时可生成一个 total、overflow-safe non-overlap predicate，保护原标量 fallback；
+更复杂 predicate 保持 scalar。Wasm 通用 map、cast 与归约使用 UF1；仿射 map 与分段树的例外及其
+封闭 UF 候选见上文。Checked/sanitizer mode、floating/checked reduction、scan、gather/scatter、
+vector call、masked memory、shuffle 及不支持的 alignment/operation 都保持 scalar。
 
 独立 UF chunk 共用一个已验证的 vector-width stride recurrence；单前驱 vector body 直接使用
 支配它的 MemorySSA version。该紧凑表示让封闭的 x86 `UF <= 4` frontier 能选择四条独立链，

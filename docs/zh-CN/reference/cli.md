@@ -70,7 +70,8 @@ CK diagnostics，关闭时清除 diagnostics。服务端采用完整文档同步
   包括带运行时保护的未知别名循环；`baseline` 与 O0–O2 在 SIMD lowering 上保持标量。O3
   下两个 profile 都允许 WebAssembly Bulk Memory；只有 `simd128` 允许 SIMD128。生成的 module 使用
   `ck.wasm.target` metadata schema 2 声明 0.15 capability contract。
-  也可使用经过检查的标量地址游标，以及有证明支持的结构字段 memarg 偏移。
+  O3 下，两个 profile 都可在独立 proof 检查适用循环后，将其 lowering 为标量 Wasm32 字节地址游标；
+  也可折叠有证明支持的结构字段 memarg 偏移。这些编译期 proof 不提供 checked bounds、指针有效性或别名检查。
   无效值以及不匹配的 command/consumer
   组合会在读取 source 或修改输出前失败。
 - `--cpu baseline|native|multiversion` 用于 build 与 Native `emit-kir`；baseline 为 portable build 默认值，

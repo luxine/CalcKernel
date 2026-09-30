@@ -90,8 +90,10 @@ serving later documents.
   slice maps, integer-to-`f64` casts, and modular integer reductions, including
   guarded unknown-alias loops;
   `baseline` and O0–O2 remain scalar for SIMD lowering.
-  At O3, either profile may also use checked scalar address cursors and
-  proof-backed struct-field memarg offsets. Invalid values or command/consumer
+  At O3, either profile may also lower eligible loops to scalar Wasm32
+  byte-address cursors after independent proof checks, and fold proof-backed
+  struct-field memarg offsets. These compile-time proofs do not implement
+  checked bounds, pointer validity, or alias checks. Invalid values or command/consumer
   combinations fail before source input or output changes.
 - `--cpu baseline|native|multiversion` applies to `build` and Native `emit-kir`; baseline is
   the portable build default. `run` uses the host CPU. Native `emit-kir`

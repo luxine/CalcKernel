@@ -10,20 +10,41 @@ use crate::{
 
 use super::layout::WasmStructLayout;
 
+mod factored;
+mod factored_bundle;
+mod factored_bundle_check;
+mod factored_check;
+
 const MAX_FUNCTION_BLOCKS: usize = 1024;
 const MAX_FUNCTION_INSTRUCTIONS: usize = 65_536;
 const MAX_MEMORY_CURSORS: usize = 128;
 const MAX_PLANNED_ACCESSES: usize = 256;
 const MAX_PLAN_SCAN_WORK: usize = 1_000_000;
 const MAX_PROVENANCE_HOPS: usize = 16;
+const MAX_AFFINE_CURSOR_TERMS: usize = 8;
+const MAX_AFFINE_CURSOR_PARSE_WORK: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct CursorId(pub u32);
 
+impl CursorId {
+    // Ordinary cursors occupy the bounded low range; factored bases use the
+    // high range so both kinds can share the backend's i32-local allocation.
+    pub(super) fn bundle(base: u32) -> Self {
+        Self(u32::MAX - 16 - base)
+    }
+
+    pub(super) fn factored(base: u32) -> Self {
+        Self(u32::MAX - base)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct WasmMemoryPlan {
+    pub factored: factored::FactoredAddressPlan,
     pub cursors: Vec<WasmMemoryCursor>,
     pub access_by_instruction: BTreeMap<InstructionId, CursorId>,
+    pub access_bias_bytes_by_instruction: BTreeMap<InstructionId, u32>,
     pub memarg_offset_by_instruction: BTreeMap<InstructionId, WasmMemargOffset>,
     pub edge_actions: BTreeMap<(BlockId, u8), Vec<WasmMemoryEdgeAction>>,
 }
@@ -46,13 +67,13 @@ pub(super) struct WasmMemoryCursor {
     pub element_bytes: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum WasmMemoryEdgeAction {
     Initialize {
         cursor: CursorId,
         base: CursorOperand,
         induction_arg_index: usize,
-        bias_bytes: u32,
+        index_terms: Box<CursorAffineTerms>,
     },
     Advance {
         cursor: CursorId,
@@ -130,11 +151,16 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
                 invalid_loop = true;
                 break;
             };
-            if resolve_origin(access.index, &shape, &definitions)
-                != Some(CursorOperand::HeaderArgument(induction.argument_index))
-            {
+            let Some(index_expression) = cursor_index_expression(
+                access.index,
+                induction.argument_index,
+                induction.type_node,
+                access.element_bytes,
+                &shape,
+                &definitions,
+            ) else {
                 continue;
-            }
+            };
             if access.index_type != induction.type_node {
                 invalid_loop = true;
                 break;
@@ -153,6 +179,7 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
                 header: shape.header.id,
                 base,
                 induction_argument_index: induction.argument_index,
+                index_terms: index_expression.terms,
                 element_bytes: access.element_bytes,
             };
             let draft = loop_cursors.entry(key).or_insert_with(|| CursorDraft {
@@ -181,7 +208,9 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
             {
                 continue;
             }
-            draft.accesses.push(instruction.id);
+            draft
+                .accesses
+                .push((instruction.id, index_expression.bias_bytes));
             loop_access_count = loop_access_count.saturating_add(1);
             if loop_access_count > MAX_PLANNED_ACCESSES {
                 invalid_loop = true;
@@ -211,8 +240,10 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
     }
     let mut plan = WasmMemoryPlan::default();
     for (index, (key, mut draft)) in cursors.into_iter().enumerate() {
-        draft.accesses.sort_unstable();
-        draft.accesses.dedup();
+        draft
+            .accesses
+            .sort_unstable_by_key(|(instruction, _)| *instruction);
+        draft.accesses.dedup_by_key(|(instruction, _)| *instruction);
         if draft.accesses.is_empty() {
             continue;
         }
@@ -224,7 +255,7 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
             id: cursor,
             element_bytes: key.element_bytes,
         });
-        for instruction in draft.accesses {
+        for (instruction, bias_bytes) in draft.accesses {
             if plan
                 .access_by_instruction
                 .insert(instruction, cursor)
@@ -232,6 +263,8 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
             {
                 return WasmMemoryPlan::default();
             }
+            plan.access_bias_bytes_by_instruction
+                .insert(instruction, bias_bytes);
         }
         plan.edge_actions
             .entry((draft.entry_edge.source, draft.entry_edge.arm))
@@ -240,7 +273,7 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
                 cursor,
                 base: key.base,
                 induction_arg_index: key.induction_argument_index,
-                bias_bytes: 0,
+                index_terms: Box::new(key.index_terms),
             });
         plan.edge_actions
             .entry((draft.backedge.source, draft.backedge.arm))
@@ -270,6 +303,7 @@ pub(super) fn checked_wasm_memory_plan_with_evidence(
             &mut scan_work,
         );
     }
+    plan.factored = factored::checked_factored_addresses(function);
     if independently_validate_plan_with_evidence(function, contracts, layout, &plan) {
         plan
     } else {
@@ -610,6 +644,7 @@ struct CursorKey {
     header: BlockId,
     base: CursorOperand,
     induction_argument_index: usize,
+    index_terms: CursorAffineTerms,
     element_bytes: u32,
 }
 
@@ -618,7 +653,7 @@ struct CursorDraft {
     entry_edge: EdgeKey,
     backedge: EdgeKey,
     delta_bytes: u32,
-    accesses: Vec<InstructionId>,
+    accesses: Vec<(InstructionId, u32)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -844,6 +879,216 @@ struct InductionProof<'a> {
     step: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct CursorAffineTerm {
+    operand: CursorOperand,
+    coefficient_bytes: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub(super) struct CursorAffineTerms {
+    terms: [Option<CursorAffineTerm>; MAX_AFFINE_CURSOR_TERMS],
+    len: u8,
+}
+
+impl CursorAffineTerms {
+    pub(super) fn iter(&self) -> impl Iterator<Item = (CursorOperand, u32)> + '_ {
+        self.terms
+            .iter()
+            .take(usize::from(self.len).min(MAX_AFFINE_CURSOR_TERMS))
+            .filter_map(|term| (*term).map(|term| (term.operand, term.coefficient_bytes)))
+    }
+
+    fn add_scaled(&mut self, other: Self, scale: u32) -> Option<()> {
+        for (operand, term_coefficient_bytes) in other.iter() {
+            let coefficient_bytes = term_coefficient_bytes.wrapping_mul(scale);
+            if coefficient_bytes == 0 {
+                continue;
+            }
+            let existing = self.iter().position(|candidate| candidate.0 == operand);
+            if let Some(index) = existing {
+                let current = self.terms[index].as_mut()?;
+                current.coefficient_bytes =
+                    current.coefficient_bytes.wrapping_add(coefficient_bytes);
+                if current.coefficient_bytes == 0 {
+                    for next in index..usize::from(self.len).saturating_sub(1) {
+                        self.terms[next] = self.terms[next + 1];
+                    }
+                    self.len = self.len.checked_sub(1)?;
+                    self.terms[usize::from(self.len)] = None;
+                }
+                continue;
+            }
+            let len = usize::from(self.len);
+            if len >= MAX_AFFINE_CURSOR_TERMS {
+                return None;
+            }
+            self.terms[len] = Some(CursorAffineTerm {
+                operand,
+                coefficient_bytes,
+            });
+            self.len = self.len.checked_add(1)?;
+        }
+        self.terms[..usize::from(self.len)].sort_unstable();
+        Some(())
+    }
+
+    fn scaled(self, scale: u32) -> Self {
+        let mut scaled = Self::default();
+        // A zero scale cannot exceed the term cap, so the internal invariant
+        // guarantees add_scaled succeeds here.
+        let _ = scaled.add_scaled(self, scale);
+        scaled
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorIndexExpression {
+    terms: CursorAffineTerms,
+    bias_bytes: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ParsedAffineIndex {
+    induction_coefficient: u32,
+    induction_occurrences: u16,
+    terms: CursorAffineTerms,
+    constant: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct CheckerAffineIndex {
+    induction_coefficient: u32,
+    induction_occurrences: u16,
+    terms: CursorAffineTerms,
+    constant: u32,
+}
+
+struct CheckerAffineContext<'context, 'function> {
+    induction_argument_index: usize,
+    induction_type: &'context MirType,
+    header: &'context KirBlock,
+    body: &'context KirBlock,
+    body_entry: &'context KirEdge,
+    backedge: &'context KirEdge,
+    definitions: &'context ValueDefinitions<'function>,
+    remaining_work: usize,
+}
+
+impl CheckerAffineIndex {
+    fn add_scaled(&mut self, other: Self, scale: u32) -> Option<()> {
+        self.induction_coefficient = self
+            .induction_coefficient
+            .wrapping_add(other.induction_coefficient.wrapping_mul(scale));
+        self.induction_occurrences = self
+            .induction_occurrences
+            .saturating_add(other.induction_occurrences);
+        self.constant = self
+            .constant
+            .wrapping_add(other.constant.wrapping_mul(scale));
+        for (operand, coefficient) in other.terms.iter() {
+            let coefficient = coefficient.wrapping_mul(scale);
+            if coefficient == 0 {
+                continue;
+            }
+            let length = usize::from(self.terms.len);
+            let mut found = None;
+            for index in 0..length {
+                if self.terms.terms[index].is_some_and(|term| term.operand == operand) {
+                    found = Some(index);
+                    break;
+                }
+            }
+            if let Some(index) = found {
+                let term = self.terms.terms[index].as_mut()?;
+                term.coefficient_bytes = term.coefficient_bytes.wrapping_add(coefficient);
+                if term.coefficient_bytes == 0 {
+                    for next in index + 1..length {
+                        self.terms.terms[next - 1] = self.terms.terms[next];
+                    }
+                    self.terms.len = self.terms.len.checked_sub(1)?;
+                    self.terms.terms[usize::from(self.terms.len)] = None;
+                }
+            } else {
+                if length >= MAX_AFFINE_CURSOR_TERMS {
+                    return None;
+                }
+                self.terms.terms[length] = Some(CursorAffineTerm {
+                    operand,
+                    coefficient_bytes: coefficient,
+                });
+                self.terms.len = self.terms.len.checked_add(1)?;
+            }
+        }
+        self.terms.terms[..usize::from(self.terms.len)].sort_unstable();
+        Some(())
+    }
+
+    fn scaled(self, scale: u32) -> Self {
+        let mut scaled = Self {
+            induction_coefficient: self.induction_coefficient.wrapping_mul(scale),
+            induction_occurrences: self.induction_occurrences,
+            constant: self.constant.wrapping_mul(scale),
+            ..Self::default()
+        };
+        let _ = scaled.add_scaled(
+            Self {
+                induction_coefficient: 0,
+                induction_occurrences: 0,
+                terms: self.terms,
+                constant: 0,
+            },
+            scale,
+        );
+        scaled
+    }
+
+    fn byte_terms(self, element_bytes: u32) -> CursorAffineTerms {
+        let mut result = CursorAffineTerms::default();
+        for (operand, coefficient) in self.terms.iter() {
+            let coefficient = coefficient.wrapping_mul(element_bytes);
+            if coefficient == 0 {
+                continue;
+            }
+            let index = usize::from(result.len);
+            if index >= MAX_AFFINE_CURSOR_TERMS {
+                return CursorAffineTerms::default();
+            }
+            result.terms[index] = Some(CursorAffineTerm {
+                operand,
+                coefficient_bytes: coefficient,
+            });
+            result.len += 1;
+        }
+        result.terms[..usize::from(result.len)].sort_unstable();
+        result
+    }
+}
+
+impl ParsedAffineIndex {
+    fn add_scaled(&mut self, other: Self, scale: u32) -> Option<()> {
+        self.induction_coefficient = self
+            .induction_coefficient
+            .wrapping_add(other.induction_coefficient.wrapping_mul(scale));
+        self.induction_occurrences = self
+            .induction_occurrences
+            .saturating_add(other.induction_occurrences);
+        self.constant = self
+            .constant
+            .wrapping_add(other.constant.wrapping_mul(scale));
+        self.terms.add_scaled(other.terms, scale)
+    }
+
+    fn scaled(self, scale: u32) -> Self {
+        Self {
+            induction_coefficient: self.induction_coefficient.wrapping_mul(scale),
+            induction_occurrences: self.induction_occurrences,
+            terms: self.terms.scaled(scale),
+            constant: self.constant.wrapping_mul(scale),
+        }
+    }
+}
+
 impl InductionProof<'_> {
     fn delta_bytes(self, element_bytes: u32) -> u32 {
         self.step.wrapping_mul(element_bytes)
@@ -951,6 +1196,162 @@ fn constant_i32(
     }
 }
 
+fn cursor_index_expression(
+    index: ValueId,
+    induction_argument_index: usize,
+    induction_type: &MirType,
+    element_bytes: u32,
+    shape: &SimpleLoop<'_>,
+    definitions: &ValueDefinitions<'_>,
+) -> Option<CursorIndexExpression> {
+    if definitions.scalar_type(index)? != induction_type {
+        return None;
+    }
+    let mut parse_work = MAX_AFFINE_CURSOR_PARSE_WORK;
+    let parsed = parse_affine_index(
+        index,
+        induction_argument_index,
+        induction_type,
+        shape,
+        definitions,
+        &mut parse_work,
+        0,
+    )?;
+    if parsed.induction_coefficient != 1 || parsed.induction_occurrences != 1 {
+        return None;
+    }
+    Some(CursorIndexExpression {
+        terms: parsed.terms.scaled(element_bytes),
+        bias_bytes: parsed.constant.wrapping_mul(element_bytes),
+    })
+}
+
+fn parse_affine_index(
+    value: ValueId,
+    induction_argument_index: usize,
+    induction_type: &MirType,
+    shape: &SimpleLoop<'_>,
+    definitions: &ValueDefinitions<'_>,
+    remaining_work: &mut usize,
+    depth: usize,
+) -> Option<ParsedAffineIndex> {
+    if depth >= MAX_PROVENANCE_HOPS || *remaining_work == 0 {
+        return None;
+    }
+    *remaining_work -= 1;
+    if definitions.scalar_type(value)? != induction_type {
+        return None;
+    }
+    if resolve_origin(value, shape, definitions)
+        == Some(CursorOperand::HeaderArgument(induction_argument_index))
+    {
+        return Some(ParsedAffineIndex {
+            induction_coefficient: 1,
+            induction_occurrences: 1,
+            ..ParsedAffineIndex::default()
+        });
+    }
+    if let Some(constant) = constant_i32(value, induction_type, definitions) {
+        return Some(ParsedAffineIndex {
+            constant: constant.rem_euclid(1_i128 << 32) as u32,
+            ..ParsedAffineIndex::default()
+        });
+    }
+    if let Some(operand) = resolve_origin(value, shape, definitions)
+        && operand != CursorOperand::HeaderArgument(induction_argument_index)
+        && base_is_stable(operand, shape, definitions)
+    {
+        let mut terms = CursorAffineTerms::default();
+        terms.terms[0] = Some(CursorAffineTerm {
+            operand,
+            coefficient_bytes: 1,
+        });
+        terms.len = 1;
+        return Some(ParsedAffineIndex {
+            terms,
+            ..ParsedAffineIndex::default()
+        });
+    }
+
+    let ValueDefinition::Instruction { block, instruction } = definitions.definition(value)? else {
+        return None;
+    };
+    if block != shape.body.id {
+        return None;
+    }
+    if instruction.results.first()?.type_node.as_scalar()? != induction_type {
+        return None;
+    }
+    match instruction.kind {
+        KirInstructionKind::Copy { value } => parse_affine_index(
+            value,
+            induction_argument_index,
+            induction_type,
+            shape,
+            definitions,
+            remaining_work,
+            depth + 1,
+        ),
+        KirInstructionKind::Binary {
+            op: op @ (MirBinaryOp::Add | MirBinaryOp::Sub),
+            left,
+            right,
+            semantics: crate::KirArithmeticSemantics::Modular,
+        } => {
+            let left = parse_affine_index(
+                left,
+                induction_argument_index,
+                induction_type,
+                shape,
+                definitions,
+                remaining_work,
+                depth + 1,
+            )?;
+            let right = parse_affine_index(
+                right,
+                induction_argument_index,
+                induction_type,
+                shape,
+                definitions,
+                remaining_work,
+                depth + 1,
+            )?;
+            let scale = if op == MirBinaryOp::Sub { u32::MAX } else { 1 };
+            let mut combined = left;
+            combined.add_scaled(right, scale)?;
+            Some(combined)
+        }
+        KirInstructionKind::Binary {
+            op: MirBinaryOp::Mul,
+            left,
+            right,
+            semantics: crate::KirArithmeticSemantics::Modular,
+        } => {
+            let (expression, scale) =
+                if let Some(constant) = constant_i32(left, induction_type, definitions) {
+                    (right, constant.rem_euclid(1_i128 << 32) as u32)
+                } else if let Some(constant) = constant_i32(right, induction_type, definitions) {
+                    (left, constant.rem_euclid(1_i128 << 32) as u32)
+                } else {
+                    return None;
+                };
+            Some(
+                parse_affine_index(
+                    expression,
+                    induction_argument_index,
+                    induction_type,
+                    shape,
+                    definitions,
+                    remaining_work,
+                    depth + 1,
+                )?
+                .scaled(scale),
+            )
+        }
+        _ => None,
+    }
+}
+
 fn condition_compares_induction(
     argument_index: usize,
     shape: &SimpleLoop<'_>,
@@ -1036,11 +1437,20 @@ fn indexed_place<'a>(
             }
             (*value, *index, type_node, false)
         }
-        // Slice indexing is intentionally left to the existing structured
-        // loop path. Cursor initialization currently runs on explicit CFG
-        // edges, which would force conditional-backedge loops through the
-        // typed dispatcher and regress their established Wasm shape.
-        KirPlace::SliceIndex { .. } => return None,
+        KirPlace::SliceIndex {
+            slice,
+            index,
+            type_node,
+            ..
+        } => {
+            let MirType::Slice(element) = definitions.scalar_type(*slice)? else {
+                return None;
+            };
+            if element.as_ref() != type_node {
+                return None;
+            }
+            (*slice, *index, type_node, true)
+        }
         _ => return None,
     };
     let element_bytes = primitive_element_bytes(element_type)?;
@@ -1169,6 +1579,7 @@ struct CheckedCursorPath {
     backedge: EdgeKey,
     base: CursorOperand,
     induction_argument_index: usize,
+    index_terms: CursorAffineTerms,
     element_bytes: u32,
     delta_bytes: u32,
 }
@@ -1201,11 +1612,23 @@ fn independently_validate_plan_with_evidence(
     let estimated_scan_work = scan_count.saturating_mul(
         1_usize
             .saturating_add(plan.access_by_instruction.len())
+            .saturating_add(plan.access_bias_bytes_by_instruction.len())
             .saturating_add(plan.memarg_offset_by_instruction.len())
             .saturating_add(plan.cursors.len()),
     );
-    if plan.cursors.len() > MAX_MEMORY_CURSORS
+    if !factored_check::validate(function, &plan.factored)
+        || plan.factored.accesses.keys().any(|id| {
+            plan.access_by_instruction.contains_key(id)
+                || plan.memarg_offset_by_instruction.contains_key(id)
+        })
+        || plan.factored.bundles.accesses.keys().any(|id| {
+            plan.access_by_instruction.contains_key(id)
+                || plan.memarg_offset_by_instruction.contains_key(id)
+                || plan.factored.accesses.contains_key(id)
+        })
+        || plan.cursors.len() > MAX_MEMORY_CURSORS
         || plan.access_by_instruction.len() > MAX_PLANNED_ACCESSES
+        || plan.access_bias_bytes_by_instruction.len() != plan.access_by_instruction.len()
         || plan.memarg_offset_by_instruction.len() > MAX_PLANNED_ACCESSES
         || function.blocks.len() > MAX_FUNCTION_BLOCKS
         || instruction_count > MAX_FUNCTION_INSTRUCTIONS
@@ -1270,10 +1693,14 @@ fn independently_validate_plan_with_evidence(
         let Some(access) = checker_indexed_access(instruction, &definitions) else {
             return false;
         };
-        let Some(path) = checker_rederive_access_path(function, owner, &access, &definitions)
+        let Some((path, expected_bias)) =
+            checker_rederive_access_path(function, owner, &access, &definitions)
         else {
             return false;
         };
+        if plan.access_bias_bytes_by_instruction.get(&instruction_id) != Some(&expected_bias) {
+            return false;
+        }
         if cursors.get(&cursor_id) != Some(&path.element_bytes) {
             return false;
         }
@@ -1306,13 +1733,13 @@ fn independently_validate_plan_with_evidence(
                         cursor: action_cursor,
                         base,
                         induction_arg_index,
-                        bias_bytes,
+                        index_terms,
                     } if *action_cursor == cursor => {
                         init_count += 1;
                         if edge != (path.entry_edge.source, path.entry_edge.arm)
                             || *base != path.base
                             || *induction_arg_index != path.induction_argument_index
-                            || *bias_bytes != 0
+                            || **index_terms != path.index_terms
                         {
                             return false;
                         }
@@ -1352,10 +1779,16 @@ fn independently_validate_plan_with_evidence(
             if checker_indexed_access(instruction, &definitions).is_none() {
                 return false;
             }
-            if checker_indexed_memory_index(instruction).is_some_and(|index| {
-                checker_index_header_argument(function, body, index, &definitions)
-                    == Some(path.induction_argument_index)
-            }) {
+            let dependency = match checker_indexed_memory_index(instruction) {
+                Some(index) => {
+                    match checker_index_header_argument(function, body, index, &definitions) {
+                        Ok(dependency) => dependency,
+                        Err(()) => return false,
+                    }
+                }
+                None => None,
+            };
+            if dependency == Some(path.induction_argument_index) {
                 let Some(mapped) = plan.access_by_instruction.get(&instruction.id) else {
                     return false;
                 };
@@ -1642,39 +2075,95 @@ fn checker_index_header_argument(
     body: &KirBlock,
     index: ValueId,
     definitions: &ValueDefinitions<'_>,
-) -> Option<usize> {
-    let body_index = body.params.iter().position(|param| param.value == index)?;
-    let body_entry_edge = function
-        .blocks
-        .iter()
-        .find_map(|block| match &block.terminator {
-            KirTerminator::Branch {
-                then_edge,
-                else_edge,
-                ..
-            } => {
-                if then_edge.target == body.id {
-                    Some(then_edge)
-                } else if else_edge.target == body.id {
-                    Some(else_edge)
-                } else {
-                    None
-                }
-            }
-            KirTerminator::Jump { edge } if edge.target == body.id => Some(edge),
-            _ => None,
-        })?;
-    let forwarded = *body_entry_edge.args.get(body_index)?;
+) -> Result<Option<usize>, ()> {
+    let KirTerminator::Jump { edge: backedge } = &body.terminator else {
+        return Err(());
+    };
     let header = function
         .blocks
         .iter()
-        .find(|block| block.params.iter().any(|param| param.value == forwarded))?;
-    let argument_index = header
-        .params
-        .iter()
-        .position(|param| param.value == forwarded)?;
-    let scalar_type = definitions.scalar_type(index)?;
-    (definitions.scalar_type(forwarded)? == scalar_type).then_some(argument_index)
+        .find(|block| block.id == backedge.target)
+        .ok_or(())?;
+    let body_entry_edges = outgoing_edges(header)
+        .into_iter()
+        .filter(|edge| edge.edge.target == body.id)
+        .collect::<Vec<_>>();
+    let [body_entry] = body_entry_edges.as_slice() else {
+        return Err(());
+    };
+    let (induction_argument_index, _) =
+        checker_loop_induction(header, body, body_entry.edge, definitions).ok_or(())?;
+    let induction_value = header.params.get(induction_argument_index).ok_or(())?.value;
+    let depends = checker_index_depends_on(
+        function,
+        index,
+        induction_value,
+        body,
+        body_entry.edge,
+        definitions,
+    )?;
+    Ok(depends.then_some(induction_argument_index))
+}
+
+/// A budget failure is distinct from a proof that the index is independent.
+/// Otherwise a long unmapped access could silently leave a partial plan live.
+fn checker_index_depends_on(
+    function: &KirFunction,
+    value: ValueId,
+    target: ValueId,
+    body: &KirBlock,
+    body_entry: &KirEdge,
+    definitions: &ValueDefinitions<'_>,
+) -> Result<bool, ()> {
+    let mut pending = vec![value];
+    let mut visited = BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        if value == target {
+            return Ok(true);
+        }
+        if !visited.insert(value) {
+            continue;
+        }
+        if visited.len() > MAX_AFFINE_CURSOR_PARSE_WORK {
+            return Err(());
+        }
+        match definitions.definition(value) {
+            Some(ValueDefinition::BlockParam { block, index }) if block == body.id => {
+                pending.push(*body_entry.args.get(index).ok_or(())?);
+            }
+            Some(ValueDefinition::BlockParam { block, index }) => {
+                let mut predecessors = 0;
+                for source in &function.blocks {
+                    for edge in outgoing_edges(source) {
+                        if edge.edge.target == block {
+                            pending.push(*edge.edge.args.get(index).ok_or(())?);
+                            predecessors += 1;
+                        }
+                    }
+                }
+                if predecessors == 0 {
+                    return Err(());
+                }
+            }
+            Some(ValueDefinition::Instruction { instruction, .. }) => match &instruction.kind {
+                KirInstructionKind::Copy { value } | KirInstructionKind::Cast { value, .. } => {
+                    pending.push(*value)
+                }
+                KirInstructionKind::Unary { operand, .. } => pending.push(*operand),
+                KirInstructionKind::Binary { left, right, .. }
+                | KirInstructionKind::Compare { left, right, .. } => {
+                    pending.extend([*right, *left]);
+                }
+                KirInstructionKind::ConstInt { .. }
+                | KirInstructionKind::ConstFloat { .. }
+                | KirInstructionKind::ConstBool { .. } => {}
+                _ => return Err(()),
+            },
+            Some(ValueDefinition::FunctionParam) => {}
+            None => return Err(()),
+        }
+    }
+    Ok(false)
 }
 
 fn checker_indexed_access(
@@ -1715,7 +2204,20 @@ fn checker_indexed_access(
             }
             (*value, *index, type_node.clone(), false)
         }
-        KirPlace::SliceIndex { .. } => return None,
+        KirPlace::SliceIndex {
+            slice,
+            index,
+            type_node,
+            ..
+        } => {
+            let MirType::Slice(element) = definitions.scalar_type(*slice)? else {
+                return None;
+            };
+            if element.as_ref() != type_node {
+                return None;
+            }
+            (*slice, *index, type_node.clone(), true)
+        }
         _ => return None,
     };
     let element_bytes = checker_element_width(&element_type)?;
@@ -1755,12 +2257,313 @@ fn checker_element_width(type_node: &MirType) -> Option<u32> {
     }
 }
 
+fn checker_loop_induction(
+    header: &KirBlock,
+    body: &KirBlock,
+    body_entry: &KirEdge,
+    definitions: &ValueDefinitions<'_>,
+) -> Option<(usize, usize)> {
+    let KirTerminator::Jump { edge: backedge } = &body.terminator else {
+        return None;
+    };
+    let KirTerminator::Branch { condition, .. } = header.terminator else {
+        return None;
+    };
+    let ValueDefinition::Instruction {
+        block: compare_block,
+        instruction: compare,
+    } = definitions.definition(condition)?
+    else {
+        return None;
+    };
+    if compare_block != header.id {
+        return None;
+    }
+    let KirInstructionKind::Compare { left, right, .. } = compare.kind else {
+        return None;
+    };
+    let compared_indices = header
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, param)| (left == param.value || right == param.value).then_some(index))
+        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    for header_index in compared_indices {
+        let header_param = &header.params[header_index];
+        let induction_type = header_param.type_node.as_scalar()?;
+        if !matches!(
+            induction_type,
+            MirType::Primitive(MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32)
+        ) {
+            continue;
+        }
+        let body_indices = body
+            .params
+            .iter()
+            .enumerate()
+            .filter_map(|(index, _)| {
+                (body_entry.args.get(index) == Some(&header_param.value)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let [body_index] = body_indices.as_slice() else {
+            continue;
+        };
+        let Some(update_value) = backedge.args.get(header_index).copied() else {
+            continue;
+        };
+        let Some(ValueDefinition::Instruction { block, instruction }) =
+            definitions.definition(update_value)
+        else {
+            continue;
+        };
+        if block != body.id || instruction.results.first()?.type_node.as_scalar()? != induction_type
+        {
+            continue;
+        }
+        let KirInstructionKind::Binary {
+            op,
+            left: update_left,
+            right: update_right,
+            semantics: crate::KirArithmeticSemantics::Modular,
+        } = instruction.kind
+        else {
+            continue;
+        };
+        let body_induction = body.params[*body_index].value;
+        let recurrence = match (
+            op,
+            update_left == body_induction,
+            update_right == body_induction,
+        ) {
+            (MirBinaryOp::Add, true, false) => {
+                checker_integer_constant(update_right, induction_type, definitions).is_some()
+            }
+            (MirBinaryOp::Add, false, true) => {
+                checker_integer_constant(update_left, induction_type, definitions).is_some()
+            }
+            (MirBinaryOp::Sub, true, false) => {
+                checker_integer_constant(update_right, induction_type, definitions).is_some()
+            }
+            _ => false,
+        };
+        if recurrence {
+            candidates.push((header_index, *body_index));
+        }
+    }
+    let [candidate] = candidates.as_slice() else {
+        return None;
+    };
+    Some(*candidate)
+}
+
+fn checker_header_origin(
+    value: ValueId,
+    header: &KirBlock,
+    body: &KirBlock,
+    body_entry: &KirEdge,
+    definitions: &ValueDefinitions<'_>,
+) -> Option<usize> {
+    let mut current = value;
+    let mut visited = BTreeSet::new();
+    for _ in 0..MAX_PROVENANCE_HOPS {
+        if !visited.insert(current) {
+            return None;
+        }
+        if let Some(index) = header
+            .params
+            .iter()
+            .position(|param| param.value == current)
+        {
+            return Some(index);
+        }
+        match definitions.definition(current)? {
+            ValueDefinition::BlockParam { block, index } if block == body.id => {
+                current = *body_entry.args.get(index)?;
+            }
+            ValueDefinition::Instruction { block, instruction } if block == body.id => {
+                let KirInstructionKind::Copy { value } = instruction.kind else {
+                    return None;
+                };
+                current = value;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn checker_loop_invariant_operand(
+    value: ValueId,
+    header: &KirBlock,
+    body: &KirBlock,
+    body_entry: &KirEdge,
+    backedge: &KirEdge,
+    definitions: &ValueDefinitions<'_>,
+) -> Result<Option<CursorOperand>, ()> {
+    let mut current = value;
+    let mut visited = BTreeSet::new();
+    for _ in 0..MAX_PROVENANCE_HOPS {
+        if !visited.insert(current) {
+            return Err(());
+        }
+        if let Some(index) = checker_header_origin(current, header, body, body_entry, definitions) {
+            return Ok(checker_header_argument_is_stable(
+                header, body, body_entry, backedge, index,
+            )
+            .then_some(CursorOperand::HeaderArgument(index)));
+        }
+        if let Some(ValueDefinition::BlockParam { block, index }) = definitions.definition(current)
+            && block == body.id
+        {
+            current = *body_entry.args.get(index).ok_or(())?;
+        }
+        match definitions.definition(current).ok_or(())? {
+            ValueDefinition::FunctionParam => return Ok(Some(CursorOperand::Value(current))),
+            ValueDefinition::BlockParam { block, .. }
+            | ValueDefinition::Instruction { block, .. }
+                if block != header.id && block != body.id =>
+            {
+                return Ok(Some(CursorOperand::Value(current)));
+            }
+            ValueDefinition::Instruction { block, instruction } if block == body.id => {
+                if let KirInstructionKind::Copy { value } = instruction.kind {
+                    current = value;
+                } else {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+    Err(())
+}
+
+fn checker_cursor_index_expression(
+    index: ValueId,
+    element_bytes: u32,
+    mut context: CheckerAffineContext<'_, '_>,
+) -> Option<CursorIndexExpression> {
+    if context.definitions.scalar_type(index)? != context.induction_type {
+        return None;
+    }
+    let parsed = checker_parse_affine_index(index, &mut context, 0)?;
+    if parsed.induction_coefficient != 1 || parsed.induction_occurrences != 1 {
+        return None;
+    }
+    Some(CursorIndexExpression {
+        terms: parsed.byte_terms(element_bytes),
+        bias_bytes: parsed.constant.wrapping_mul(element_bytes),
+    })
+}
+
+fn checker_parse_affine_index(
+    value: ValueId,
+    context: &mut CheckerAffineContext<'_, '_>,
+    depth: usize,
+) -> Option<CheckerAffineIndex> {
+    if depth >= MAX_PROVENANCE_HOPS || context.remaining_work == 0 {
+        return None;
+    }
+    context.remaining_work -= 1;
+    if context.definitions.scalar_type(value)? != context.induction_type {
+        return None;
+    }
+    if checker_header_origin(
+        value,
+        context.header,
+        context.body,
+        context.body_entry,
+        context.definitions,
+    ) == Some(context.induction_argument_index)
+    {
+        return Some(CheckerAffineIndex {
+            induction_coefficient: 1,
+            induction_occurrences: 1,
+            ..CheckerAffineIndex::default()
+        });
+    }
+    if let Some(constant) =
+        checker_integer_constant(value, context.induction_type, context.definitions)
+    {
+        return Some(CheckerAffineIndex {
+            constant: constant.rem_euclid(1_i128 << 32) as u32,
+            ..CheckerAffineIndex::default()
+        });
+    }
+    if let Some(operand) = checker_loop_invariant_operand(
+        value,
+        context.header,
+        context.body,
+        context.body_entry,
+        context.backedge,
+        context.definitions,
+    )
+    .ok()?
+        && operand != CursorOperand::HeaderArgument(context.induction_argument_index)
+    {
+        let mut expression = CheckerAffineIndex::default();
+        expression.terms.terms[0] = Some(CursorAffineTerm {
+            operand,
+            coefficient_bytes: 1,
+        });
+        expression.terms.len = 1;
+        return Some(expression);
+    }
+
+    let ValueDefinition::Instruction { block, instruction } =
+        context.definitions.definition(value)?
+    else {
+        return None;
+    };
+    if block != context.body.id
+        || instruction.results.first()?.type_node.as_scalar()? != context.induction_type
+    {
+        return None;
+    }
+    match instruction.kind {
+        KirInstructionKind::Copy { value } => checker_parse_affine_index(value, context, depth + 1),
+        KirInstructionKind::Binary {
+            op: op @ (MirBinaryOp::Add | MirBinaryOp::Sub),
+            left,
+            right,
+            semantics: crate::KirArithmeticSemantics::Modular,
+        } => {
+            let left = checker_parse_affine_index(left, context, depth + 1)?;
+            let right = checker_parse_affine_index(right, context, depth + 1)?;
+            let mut combined = left;
+            combined.add_scaled(right, if op == MirBinaryOp::Sub { u32::MAX } else { 1 })?;
+            Some(combined)
+        }
+        KirInstructionKind::Binary {
+            op: MirBinaryOp::Mul,
+            left,
+            right,
+            semantics: crate::KirArithmeticSemantics::Modular,
+        } => {
+            let (expression, scale) = if let Some(constant) =
+                checker_integer_constant(left, context.induction_type, context.definitions)
+            {
+                (right, constant.rem_euclid(1_i128 << 32) as u32)
+            } else if let Some(constant) =
+                checker_integer_constant(right, context.induction_type, context.definitions)
+            {
+                (left, constant.rem_euclid(1_i128 << 32) as u32)
+            } else {
+                return None;
+            };
+            Some(checker_parse_affine_index(expression, context, depth + 1)?.scaled(scale))
+        }
+        _ => None,
+    }
+}
+
 fn checker_rederive_access_path(
     function: &KirFunction,
     body: &KirBlock,
     access: &CheckedIndexedAccess,
     definitions: &ValueDefinitions<'_>,
-) -> Option<CheckedCursorPath> {
+) -> Option<(CheckedCursorPath, u32)> {
     let KirTerminator::Jump { edge: backedge } = &body.terminator else {
         return None;
     };
@@ -1832,15 +2635,9 @@ fn checker_rederive_access_path(
         return None;
     }
 
-    let body_induction_index = body
-        .params
-        .iter()
-        .position(|param| param.value == access.index)?;
+    let (induction_argument_index, body_induction_index) =
+        checker_loop_induction(header, body, body_entry.edge, definitions)?;
     let transported_induction = *body_entry.edge.args.get(body_induction_index)?;
-    let induction_argument_index = header
-        .params
-        .iter()
-        .position(|param| param.value == transported_induction)?;
     let induction_type = header.params[induction_argument_index]
         .type_node
         .as_scalar()?;
@@ -1860,6 +2657,20 @@ fn checker_rederive_access_path(
     {
         return None;
     }
+    let index_expression = checker_cursor_index_expression(
+        access.index,
+        access.element_bytes,
+        CheckerAffineContext {
+            induction_argument_index,
+            induction_type,
+            header,
+            body,
+            body_entry: body_entry.edge,
+            backedge,
+            definitions,
+            remaining_work: MAX_AFFINE_CURSOR_PARSE_WORK,
+        },
+    )?;
 
     let update_value = *backedge.args.get(induction_argument_index)?;
     let ValueDefinition::Instruction {
@@ -1956,20 +2767,24 @@ fn checker_rederive_access_path(
         return None;
     }
 
-    Some(CheckedCursorPath {
-        entry_edge: EdgeKey {
-            source: entry.source.id,
-            arm: entry.arm,
+    Some((
+        CheckedCursorPath {
+            entry_edge: EdgeKey {
+                source: entry.source.id,
+                arm: entry.arm,
+            },
+            backedge: EdgeKey {
+                source: body.id,
+                arm: 0,
+            },
+            base: base_operand,
+            induction_argument_index,
+            index_terms: index_expression.terms,
+            element_bytes: access.element_bytes,
+            delta_bytes: delta,
         },
-        backedge: EdgeKey {
-            source: body.id,
-            arm: 0,
-        },
-        base: base_operand,
-        induction_argument_index,
-        element_bytes: access.element_bytes,
-        delta_bytes: delta,
-    })
+        index_expression.bias_bytes,
+    ))
 }
 
 fn checker_integer_constant(
@@ -2139,6 +2954,68 @@ export fn sum_f64(values: ptr<f64>, len: i32) -> f64 {
 }
 "#;
 
+    const COPY_SLICE_WITH_OFFSET: &str = r#"
+export fn copy_slice_with_offset(
+  dst: slice<u32>, src: slice<u32>, start: u32, end: u32, offset: u32
+) -> void {
+  let i: u32 = start;
+  while i < end {
+    dst[i + offset] = src[i + offset];
+    i = i + 1;
+  }
+}
+"#;
+
+    const COPY_SLICE_WITH_NEGATIVE_OFFSET: &str = r#"
+export fn copy_slice_with_negative_offset(
+  dst: slice<u32>, src: slice<u32>, start: u32, end: u32, offset: u32
+) -> void {
+  let i: u32 = start;
+  while i < end {
+    dst[i - offset] = src[i - offset];
+    i = i + 1;
+  }
+}
+"#;
+
+    const COPY_SLICE_WITH_CONSTANT_OFFSET: &str = r#"
+export fn copy_slice_with_constant_offset(
+  dst: slice<u32>, src: slice<u32>, start: u32, end: u32
+) -> void {
+  let i: u32 = start;
+  while i < end {
+    dst[i - 1] = src[i - 1];
+    i = i + 1;
+  }
+}
+"#;
+
+    const COPY_SLICE_WITH_AFFINE_NEIGHBORS: &str = r#"
+export fn copy_slice_with_affine_neighbors(
+  dst: slice<f64>, src: slice<f64>, start: u32, end: u32, row_base: u32, width: u32
+) -> void {
+  let i: u32 = start;
+  while i < end {
+    dst[row_base + i - width - 1] = src[row_base + i - width - 1];
+    dst[row_base + i - width] = src[row_base + i - width];
+    dst[row_base + i - width + 1] = src[row_base + i - width + 1];
+    i = i + 1;
+  }
+}
+"#;
+
+    const COPY_WITH_NON_AFFINE_ACCESS: &str = r#"
+export fn copy_with_non_affine_access(
+  dst: slice<u32>, src: slice<u32>, start: u32, end: u32, scale: u32
+) -> void {
+  let i: u32 = start;
+  while i < end {
+    dst[i] = src[i * scale];
+    i = i + 1;
+  }
+}
+"#;
+
     const ALIGNED_SLOT_LOAD: &str = r#"
 struct Slot {
   head: u32;
@@ -2261,7 +3138,7 @@ export unsafe fn load_aligned(items: ptr<Slot>, index: u32) -> u32 contract {
                 actions
                     .iter()
                     .position(|action| matches!(action, WasmMemoryEdgeAction::Initialize { .. }))
-                    .map(|index| (*edge, index, actions[index]))
+                    .map(|index| (*edge, index, actions[index].clone()))
             })
             .expect("cursor initialization");
         let backedge = plan
@@ -2478,5 +3355,460 @@ export unsafe fn load_aligned(items: ptr<Slot>, index: u32) -> u32 contract {
         let function = optimized_function(SUM_F64);
 
         assert!(checked_wasm_memory_plan(&function).cursors.is_empty());
+    }
+
+    #[test]
+    fn planner_should_build_slice_cursors_for_invariant_offset_indices() {
+        let function = optimized_function(COPY_SLICE_WITH_OFFSET);
+        let plan = checked_wasm_memory_plan(&function);
+
+        assert_eq!(
+            plan.cursors.len(),
+            2,
+            "source and destination slice cursors"
+        );
+        assert_eq!(plan.access_by_instruction.len(), 2, "load and store");
+        assert!(independently_validate_plan(&function, &plan));
+    }
+
+    #[test]
+    fn planner_should_group_modular_affine_neighbor_indices_and_keep_per_access_bias() {
+        let function = optimized_function(COPY_SLICE_WITH_AFFINE_NEIGHBORS);
+        let plan = checked_wasm_memory_plan(&function);
+
+        assert_eq!(plan.cursors.len(), 2, "source and destination row cursors");
+        assert_eq!(
+            plan.access_by_instruction.len(),
+            6,
+            "three loads and stores"
+        );
+        assert_eq!(plan.access_bias_bytes_by_instruction.len(), 6);
+        let mut biases = plan
+            .access_bias_bytes_by_instruction
+            .values()
+            .copied()
+            .collect::<Vec<_>>();
+        biases.sort_unstable();
+        assert_eq!(biases, [0, 0, 8, 8, u32::MAX - 7, u32::MAX - 7]);
+        assert!(independently_validate_plan(&function, &plan));
+
+        let (&instruction, _) = plan
+            .access_bias_bytes_by_instruction
+            .iter()
+            .next()
+            .expect("access-specific bias");
+        let mut mutated = plan;
+        let bias = mutated
+            .access_bias_bytes_by_instruction
+            .get_mut(&instruction)
+            .expect("mapped bias");
+        *bias = (*bias).wrapping_add(8);
+        assert!(!independently_validate_plan(&function, &mutated));
+    }
+
+    #[test]
+    fn planner_should_reject_partial_cursor_plan_when_loop_has_non_affine_index() {
+        let function = optimized_function(COPY_WITH_NON_AFFINE_ACCESS);
+        let plan = checked_wasm_memory_plan(&function);
+
+        assert!(plan.cursors.is_empty());
+        assert!(plan.access_by_instruction.is_empty());
+        assert!(plan.access_bias_bytes_by_instruction.is_empty());
+    }
+
+    #[test]
+    fn independent_checker_should_follow_header_copies_into_unmapped_indices() {
+        for depth in [1, 2, MAX_AFFINE_CURSOR_PARSE_WORK + 1] {
+            let depth_u32 = u32::try_from(depth).expect("bounded test depth");
+            let (mut module, _) = optimized_module_with_contracts(COPY_WITH_NON_AFFINE_ACCESS);
+            let function = &mut module.functions[0];
+            let next_value = function
+                .params
+                .iter()
+                .map(|param| param.value.index())
+                .chain(
+                    function
+                        .blocks
+                        .iter()
+                        .flat_map(|block| block.params.iter().map(|param| param.value.index())),
+                )
+                .chain(function.blocks.iter().flat_map(|block| {
+                    block.instructions.iter().flat_map(|instruction| {
+                        instruction
+                            .results
+                            .iter()
+                            .map(|result| result.value.index())
+                    })
+                }))
+                .max()
+                .expect("function values")
+                + 1;
+            let next_instruction = function
+                .blocks
+                .iter()
+                .flat_map(|block| {
+                    block
+                        .instructions
+                        .iter()
+                        .map(|instruction| instruction.id.index())
+                })
+                .max()
+                .expect("function instructions")
+                + 1;
+            let owner = function
+                .blocks
+                .iter()
+                .position(|block| {
+                    block.instructions.iter().any(|instruction| {
+                        matches!(instruction.kind, KirInstructionKind::Load { .. })
+                    })
+                })
+                .expect("load body");
+            let body_id = function.blocks[owner].id;
+            let KirTerminator::Jump { edge } = &function.blocks[owner].terminator else {
+                panic!("loop latch");
+            };
+            let header_id = edge.target;
+            let header_index = function
+                .blocks
+                .iter()
+                .position(|block| block.id == header_id)
+                .expect("header");
+            let definitions = ValueDefinitions::new(function).expect("valid definitions");
+            let body_entry = outgoing_edges(&function.blocks[header_index])
+                .into_iter()
+                .find(|edge| edge.edge.target == body_id)
+                .expect("body entry");
+            let (header_iv_index, body_iv_index) = checker_loop_induction(
+                &function.blocks[header_index],
+                &function.blocks[owner],
+                body_entry.edge,
+                &definitions,
+            )
+            .expect("original induction");
+            let header_iv = function.blocks[header_index].params[header_iv_index].value;
+            let body_iv = function.blocks[owner].params[body_iv_index].value;
+            let forwarded_iv = ValueId::from_index(next_value + depth_u32);
+            let load = function.blocks[owner]
+                .instructions
+                .iter()
+                .find(|instruction| matches!(instruction.kind, KirInstructionKind::Load { .. }))
+                .expect("load");
+            let load_index = checker_indexed_memory_index(load).expect("non-affine load index");
+            let mut previous = header_iv;
+            for offset in 0..depth {
+                let offset_u32 = u32::try_from(offset).expect("bounded test offset");
+                let value = ValueId::from_index(next_value + offset_u32);
+                function.blocks[header_index]
+                    .instructions
+                    .push(KirInstruction {
+                        id: InstructionId::from_index(next_instruction + offset_u32),
+                        results: vec![crate::KirResult {
+                            value,
+                            type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
+                        }],
+                        kind: KirInstructionKind::Copy { value: previous },
+                        memory: None,
+                        effect: None,
+                    });
+                previous = value;
+            }
+            let mut parameter = function.blocks[owner].params[body_iv_index].clone();
+            parameter.value = forwarded_iv;
+            parameter.slot.push_str("_forwarded");
+            function.blocks[owner].params.push(parameter);
+            let KirTerminator::Branch {
+                then_edge,
+                else_edge,
+                ..
+            } = &mut function.blocks[header_index].terminator
+            else {
+                panic!("header branch");
+            };
+            let entry = if then_edge.target == body_id {
+                then_edge
+            } else {
+                else_edge
+            };
+            entry.args.push(previous);
+            let multiply = function.blocks[owner]
+                .instructions
+                .iter_mut()
+                .find(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .any(|result| result.value == load_index)
+                })
+                .expect("non-affine index multiply");
+            let KirInstructionKind::Binary {
+                op: MirBinaryOp::Mul,
+                left,
+                right,
+                ..
+            } = &mut multiply.kind
+            else {
+                panic!("non-affine multiply");
+            };
+            if *left == body_iv {
+                *left = forwarded_iv;
+            } else {
+                assert_eq!(*right, body_iv);
+                *right = forwarded_iv;
+            }
+
+            let errors = crate::validate_kir_module(&module).errors;
+            assert!(errors.is_empty(), "depth={depth}: {errors:?}");
+            let function = &module.functions[0];
+            // The direct destination IV still admits a cursor candidate, but
+            // the unrepresentable source index depends on the same IV through
+            // header copies and an additional body parameter. The entire plan
+            // must be rejected instead of keeping just the destination cursor.
+            let plan = checked_wasm_memory_plan(function);
+            assert!(
+                plan.cursors.is_empty(),
+                "depth={depth}: accepted partial plan {plan:?}"
+            );
+            let definitions = ValueDefinitions::new(function).expect("valid definitions");
+            let dependency = checker_index_header_argument(
+                function,
+                &function.blocks[owner],
+                load_index,
+                &definitions,
+            );
+            if depth <= 2 {
+                assert_eq!(dependency, Ok(Some(header_iv_index)));
+            } else {
+                assert_eq!(
+                    dependency,
+                    Err(()),
+                    "header copies share the same work budget"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn independent_checker_should_fail_closed_on_deep_unmapped_index() {
+        let (mut module, _) = optimized_module_with_contracts(COPY_WITH_NON_AFFINE_ACCESS);
+        let function = &mut module.functions[0];
+        let mut next_value = function
+            .params
+            .iter()
+            .map(|param| param.value.index())
+            .chain(
+                function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| block.params.iter().map(|param| param.value.index())),
+            )
+            .chain(function.blocks.iter().flat_map(|block| {
+                block.instructions.iter().flat_map(|instruction| {
+                    instruction
+                        .results
+                        .iter()
+                        .map(|result| result.value.index())
+                })
+            }))
+            .max()
+            .expect("function values")
+            + 1;
+        let mut next_instruction = function
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .map(|instruction| instruction.id.index())
+            })
+            .max()
+            .expect("function instructions")
+            + 1;
+        let (owner, position) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(owner, block)| {
+                block
+                    .instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(instruction.kind, KirInstructionKind::Load { .. })
+                    })
+                    .map(|position| (owner, position))
+            })
+            .expect("non-affine load");
+        let mut previous =
+            checker_indexed_memory_index(&function.blocks[owner].instructions[position])
+                .expect("load index");
+        // This remains below the normal function-size limit. A recursive
+        // completeness scan used to overflow the compiler's stack here even
+        // though the affine proposer had already rejected this load.
+        let mut chain = Vec::new();
+        for _ in 0..60_000 {
+            let value = ValueId::from_index(next_value);
+            next_value += 1;
+            chain.push(KirInstruction {
+                id: InstructionId::from_index(next_instruction),
+                results: vec![crate::KirResult {
+                    value,
+                    type_node: MirType::Primitive(MirPrimitiveTypeName::U32).into(),
+                }],
+                kind: KirInstructionKind::Copy { value: previous },
+                memory: None,
+                effect: None,
+            });
+            next_instruction += 1;
+            previous = value;
+        }
+        let KirInstructionKind::Load { place } =
+            &mut function.blocks[owner].instructions[position].kind
+        else {
+            unreachable!();
+        };
+        let KirPlace::SliceIndex { index, .. } = place.as_mut() else {
+            unreachable!();
+        };
+        *index = previous;
+        function.blocks[owner]
+            .instructions
+            .splice(position..position, chain);
+        let errors = crate::validate_kir_module(&module).errors;
+        assert!(errors.is_empty(), "{errors:?}");
+
+        let function = &module.functions[0];
+        let definitions = ValueDefinitions::new(function).expect("valid definitions");
+        let body = &function.blocks[owner];
+        let KirTerminator::Jump { edge: backedge } = &body.terminator else {
+            panic!("loop backedge");
+        };
+        let header = function
+            .blocks
+            .iter()
+            .find(|block| block.id == backedge.target)
+            .expect("header");
+        let body_entry = outgoing_edges(header)
+            .into_iter()
+            .find(|edge| edge.edge.target == body.id)
+            .expect("body entry");
+        assert_eq!(
+            checker_index_header_argument(function, body, previous, &definitions),
+            Err(())
+        );
+        assert_eq!(
+            checker_loop_invariant_operand(
+                previous,
+                header,
+                body,
+                body_entry.edge,
+                backedge,
+                &definitions
+            ),
+            Err(())
+        );
+        let plan = checked_wasm_memory_plan(function);
+        assert!(plan.cursors.is_empty());
+        assert!(plan.access_by_instruction.is_empty());
+        assert!(plan.access_bias_bytes_by_instruction.is_empty());
+    }
+
+    #[test]
+    fn independent_checker_should_reject_mutated_slice_cursor_offset_and_step() {
+        let function = optimized_function(COPY_SLICE_WITH_OFFSET);
+        let plan = checked_wasm_memory_plan(&function);
+        assert_eq!(
+            plan.cursors.len(),
+            2,
+            "source and destination slice cursors"
+        );
+
+        let mut wrong_offset = plan.clone();
+        let initialize = wrong_offset
+            .edge_actions
+            .values_mut()
+            .flatten()
+            .find(|action| matches!(action, WasmMemoryEdgeAction::Initialize { .. }))
+            .expect("slice cursor initialization");
+        let WasmMemoryEdgeAction::Initialize { index_terms, .. } = initialize else {
+            unreachable!();
+        };
+        let Some(term) = index_terms.terms[0].as_mut() else {
+            panic!("dynamic slice offset term");
+        };
+        term.operand = match term.operand {
+            CursorOperand::HeaderArgument(index) => CursorOperand::HeaderArgument(index + 1),
+            CursorOperand::Value(value) => {
+                CursorOperand::Value(ValueId::from_index(value.index().wrapping_add(1)))
+            }
+        };
+        assert!(!independently_validate_plan(&function, &wrong_offset));
+
+        let mut wrong_step = plan;
+        let advance = wrong_step
+            .edge_actions
+            .values_mut()
+            .flatten()
+            .find(|action| matches!(action, WasmMemoryEdgeAction::Advance { .. }))
+            .expect("slice cursor backedge advance");
+        let WasmMemoryEdgeAction::Advance { delta_bytes, .. } = advance else {
+            unreachable!();
+        };
+        *delta_bytes = delta_bytes.wrapping_add(4);
+        assert!(!independently_validate_plan(&function, &wrong_step));
+    }
+
+    #[test]
+    fn independent_checker_should_reject_mutated_dynamic_offset_polarity() {
+        let function = optimized_function(COPY_SLICE_WITH_NEGATIVE_OFFSET);
+        let mut plan = checked_wasm_memory_plan(&function);
+        assert_eq!(
+            plan.cursors.len(),
+            2,
+            "source and destination slice cursors"
+        );
+
+        let initialize = plan
+            .edge_actions
+            .values_mut()
+            .flatten()
+            .find(|action| matches!(action, WasmMemoryEdgeAction::Initialize { .. }))
+            .expect("slice cursor initialization");
+        let WasmMemoryEdgeAction::Initialize { index_terms, .. } = initialize else {
+            unreachable!();
+        };
+        assert_eq!(index_terms.len, 1);
+        let term = index_terms.terms[0].expect("dynamic offset term");
+        assert!(
+            term.coefficient_bytes == u32::MAX - 3,
+            "subtraction must retain its direction"
+        );
+        index_terms.terms[0]
+            .as_mut()
+            .expect("dynamic offset term")
+            .coefficient_bytes = 4;
+
+        assert!(!independently_validate_plan(&function, &plan));
+    }
+
+    #[test]
+    fn independent_checker_should_reject_mutated_constant_offset_bias() {
+        let function = optimized_function(COPY_SLICE_WITH_CONSTANT_OFFSET);
+        let mut plan = checked_wasm_memory_plan(&function);
+        assert_eq!(
+            plan.cursors.len(),
+            2,
+            "source and destination slice cursors"
+        );
+
+        let (_, bias) = plan
+            .access_bias_bytes_by_instruction
+            .iter_mut()
+            .next()
+            .expect("slice access bias");
+        assert_eq!(*bias, u32::MAX - 3);
+        *bias = (*bias).wrapping_add(4);
+
+        assert!(!independently_validate_plan(&function, &plan));
     }
 }

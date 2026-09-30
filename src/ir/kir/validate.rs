@@ -816,11 +816,21 @@ fn validate_version_predicate(
         KirProfileLayout::Known { pointer_width_bits, .. }
             if pointer_width_bits == u16::from(predicate.address_bits)
     );
+    let baseline_total_range_predicate = profile.consumer() == KirConsumer::WebAssembly
+        && profile.wasm_features() == Some(KirWasmFeatures::Baseline)
+        && predicate.conjuncts.iter().all(|conjunct| {
+            matches!(
+                conjunct,
+                KirVersionPredicateConjunct::TripThreshold { .. }
+                    | KirVersionPredicateConjunct::WasmSliceRange { .. }
+            )
+        });
     let consumer_supports_predicate = matches!(
         profile.consumer(),
         KirConsumer::NativeLibrary | KirConsumer::NativeExecutable
     ) || (profile.consumer() == KirConsumer::WebAssembly
-        && profile.wasm_features() == Some(KirWasmFeatures::Simd128));
+        && profile.wasm_features() == Some(KirWasmFeatures::Simd128))
+        || baseline_total_range_predicate;
     if !valid_result
         || instruction.memory.is_some()
         || instruction.effect.is_some()
@@ -837,9 +847,12 @@ fn validate_version_predicate(
         ));
         return;
     }
+    let mut trip_threshold_count = 0_usize;
+    let mut non_trip_count = 0_usize;
     for conjunct in &predicate.conjuncts {
         let valid = match conjunct {
             KirVersionPredicateConjunct::TripThreshold { value, minimum } => {
+                trip_threshold_count = trip_threshold_count.saturating_add(1);
                 *minimum > 0
                     && values.type_of(*value).and_then(KirValueType::as_scalar) == Some(&u32_type)
             }
@@ -851,6 +864,7 @@ fn validate_version_predicate(
                 right_count,
                 right_element_bytes,
             } => {
+                non_trip_count = non_trip_count.saturating_add(1);
                 let slice_bytes = |value: ValueId| {
                     values
                         .type_of(value)
@@ -882,6 +896,39 @@ fn validate_version_predicate(
                         .and_then(KirValueType::as_scalar)
                         == Some(&u32_type)
             }
+            KirVersionPredicateConjunct::WasmSliceRange {
+                slice,
+                start,
+                count,
+                element_bytes,
+            } => {
+                non_trip_count = non_trip_count.saturating_add(1);
+                let slice_element_bytes = values
+                    .type_of(*slice)
+                    .and_then(KirValueType::as_scalar)
+                    .and_then(|type_node| match type_node {
+                        MirType::Slice(element) => match element.as_ref() {
+                            MirType::Primitive(
+                                MirPrimitiveTypeName::I32 | MirPrimitiveTypeName::U32,
+                            ) => Some(4),
+                            MirType::Primitive(
+                                MirPrimitiveTypeName::I64
+                                | MirPrimitiveTypeName::U64
+                                | MirPrimitiveTypeName::F64,
+                            ) => Some(8),
+                            _ => None,
+                        },
+                        _ => None,
+                    });
+                let wasm32 = profile.consumer() == KirConsumer::WebAssembly
+                    && profile.wasm_features().is_some()
+                    && predicate.address_bits == 32;
+                wasm32
+                    && slice_element_bytes == Some(*element_bytes)
+                    && matches!(*element_bytes, 4 | 8)
+                    && values.type_of(*start).and_then(KirValueType::as_scalar) == Some(&u32_type)
+                    && values.type_of(*count).and_then(KirValueType::as_scalar) == Some(&u32_type)
+            }
         };
         if !valid {
             errors.push(error(
@@ -891,6 +938,14 @@ fn validate_version_predicate(
                 Some(instruction.id),
             ));
         }
+    }
+    if trip_threshold_count > 1 || non_trip_count > 3 {
+        errors.push(error(
+            "version predicate supports at most one trip threshold and three non-trip conjuncts",
+            Some(function.id),
+            Some(block.id),
+            Some(instruction.id),
+        ));
     }
 }
 
@@ -2139,6 +2194,16 @@ fn visit_instruction_uses(instruction: &KirInstruction, mut visit: impl FnMut(Va
                         visit(*right);
                         visit(*right_count);
                     }
+                    KirVersionPredicateConjunct::WasmSliceRange {
+                        slice,
+                        start,
+                        count,
+                        ..
+                    } => {
+                        visit(*slice);
+                        visit(*start);
+                        visit(*count);
+                    }
                 }
             }
         }
@@ -2236,6 +2301,12 @@ fn instruction_uses(instruction: &KirInstruction) -> Vec<ValueId> {
                     right_count,
                     ..
                 } => vec![*left, *left_count, *right, *right_count],
+                KirVersionPredicateConjunct::WasmSliceRange {
+                    slice,
+                    start,
+                    count,
+                    ..
+                } => vec![*slice, *start, *count],
             })
             .collect(),
         KirInstructionKind::VectorSplat { scalar, .. } => vec![*scalar],

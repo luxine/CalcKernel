@@ -20,3 +20,24 @@ mod wasm;
 mod wasm_direct;
 #[path = "backend/wasm_memory.rs"]
 mod wasm_memory;
+#[path = "backend/wasm_rotation.rs"]
+mod wasm_rotation;
+
+#[path = "backend/wasm_affine.rs"]
+mod wasm_affine;
+
+#[path = "backend/wasm_piecewise_select.rs"]
+mod wasm_piecewise_select;
+
+#[path = "backend/wasm_decision_tree.rs"]
+mod wasm_decision_tree;
+
+#[path = "backend/wasm_baseline_cursor.rs"]
+mod wasm_baseline_cursor;
+
+#[path = "backend/wasm_factored_address.rs"]
+mod wasm_factored_address;
+#[path = "backend/wasm_guarded_unroll.rs"]
+mod wasm_guarded_unroll;
+#[path = "backend/wasm_runtime_unroll.rs"]
+mod wasm_runtime_unroll;

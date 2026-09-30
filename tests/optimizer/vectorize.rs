@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 
 use calckernel::{
     CandidateDisposition, ContractFactSet, KirAlignmentClass, KirBoundsMode, KirBuildConfig,
-    KirConsumer, KirCostKey, KirLegalCost, KirNativeCpuPolicy, KirOperationAvailability,
-    KirOptimizationLevel, KirOverflowMode, KirProfileOperation, KirSanitizerMode, KirTargetProfile,
-    KirTargetProfileBuilder, KirVerifiedProgramState, KirWasmFeatures, SourceFile, VectorEpilogue,
+    KirConsumer, KirCostKey, KirInstructionKind, KirLegalCost, KirNativeCpuPolicy,
+    KirOperationAvailability, KirOptimizationLevel, KirOverflowMode, KirProfileOperation,
+    KirSanitizerMode, KirTargetProfile, KirTargetProfileBuilder, KirVerifiedProgramState,
+    KirVersionPredicateConjunct, KirWasmFeatures, SourceFile, VectorEpilogue,
     build_kir_module_with_profile, check, check_vectorization_trial_independently,
     discover_vectorization_candidates, import_contract_facts, lower_to_mir,
     prepare_vectorization_trial, print_kir_module, run_kir_multiversion_pass_pipeline,
-    run_kir_pass_pipeline,
+    run_kir_pass_pipeline, validate_kir_module,
 };
 
 #[test]
@@ -64,6 +65,35 @@ fn native_profile_with_cpu_features(
     policy: KirNativeCpuPolicy,
     features: Vec<String>,
 ) -> KirTargetProfile {
+    native_profile_with_cpu_features_missing_u32x4_splat(
+        consumer,
+        maximum_interleave_factor,
+        triple,
+        policy,
+        features,
+        false,
+    )
+}
+
+fn native_profile_without_u32x4_splat() -> KirTargetProfile {
+    native_profile_with_cpu_features_missing_u32x4_splat(
+        KirConsumer::NativeLibrary,
+        1,
+        "aarch64-apple-darwin",
+        KirNativeCpuPolicy::Baseline,
+        vec!["+neon".to_string()],
+        true,
+    )
+}
+
+fn native_profile_with_cpu_features_missing_u32x4_splat(
+    consumer: KirConsumer,
+    maximum_interleave_factor: u8,
+    triple: &str,
+    policy: KirNativeCpuPolicy,
+    features: Vec<String>,
+    missing_u32x4_splat: bool,
+) -> KirTargetProfile {
     let mut builder =
         KirTargetProfileBuilder::native(consumer, triple, 64, true, policy, "generic", features)
             .expect("native profile builder");
@@ -102,6 +132,16 @@ fn native_profile_with_cpu_features(
                     }))
         })
     {
+        if missing_u32x4_splat
+            && key.operation == KirProfileOperation::Splat
+            && key.lane == calckernel::KirLaneType::U32
+            && key.lanes == 4
+        {
+            builder
+                .set_unavailable(key)
+                .expect("unavailable vector splat");
+            continue;
+        }
         let legalized_type = match (key.lane, key.lanes) {
             (calckernel::KirLaneType::F64, 2) => "v2f64",
             (calckernel::KirLaneType::U32, 2) => "v2i32",
@@ -1285,6 +1325,7 @@ export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
   let i: u32 = 0;
   while i < n { b[i] = a[i] + 1; i = i + 1; }
 }
+
 "#;
     let (pre, _) = map_state(source);
     let discovery = discover_vectorization_candidates(&pre);
@@ -1339,6 +1380,84 @@ export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
     );
 }
 
+#[test]
+fn independent_vector_checker_should_fail_closed_on_wasm_slice_range_predicates() {
+    let source = r#"
+export fn map(a: slice<u32>, b: slice<u32>, n: u32) -> void {
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] + 1; i = i + 1; }
+}
+"#;
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let candidate = discover_vectorization_candidates(&pre)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.vf == 4 && candidate.version_predicate.is_some())
+        .expect("unknown-alias Wasm VF4 candidate");
+    let mut prepared = prepare_vectorization_trial(&pre, &candidate).expect("vector trial");
+    let function = prepared
+        .trial
+        .module_mut()
+        .functions
+        .iter_mut()
+        .find(|function| function.id == candidate.function)
+        .expect("candidate function");
+    let preheader = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == candidate.preheader)
+        .expect("candidate preheader");
+    let predicate = preheader
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.kind {
+            KirInstructionKind::VersionPredicate { predicate } => Some(predicate),
+            _ => None,
+        })
+        .expect("emitted version predicate");
+    let alias_index = predicate
+        .conjuncts
+        .iter()
+        .position(|conjunct| {
+            matches!(
+                conjunct,
+                KirVersionPredicateConjunct::AddressIntervalsDisjoint { .. }
+            )
+        })
+        .expect("alias conjunct");
+    let KirVersionPredicateConjunct::AddressIntervalsDisjoint {
+        left,
+        left_count,
+        left_element_bytes,
+        ..
+    } = predicate.conjuncts[alias_index]
+    else {
+        unreachable!();
+    };
+    predicate.conjuncts[alias_index] = KirVersionPredicateConjunct::WasmSliceRange {
+        slice: left,
+        start: left_count,
+        count: left_count,
+        element_bytes: left_element_bytes,
+    };
+
+    assert!(
+        validate_kir_module(prepared.trial.module())
+            .errors
+            .is_empty()
+    );
+    let error = check_vectorization_trial_independently(
+        &pre,
+        &prepared.trial,
+        &prepared.plan,
+        &prepared.charge,
+    )
+    .expect_err("the independent checker must not approve an unsupported predicate");
+    assert!(
+        format!("{error:?}").contains("does not accept Wasm slice-range predicates yet"),
+        "{error:?}"
+    );
+}
 #[test]
 fn vector_differential_total_predicate_and_lane_partition_cover_edges() {
     let trip = calckernel::ValueId::from_index(1);
@@ -1616,6 +1735,62 @@ contract {
 }
 "#;
 
+const WASM_CONST_F64_MAP: &str = r#"
+export unsafe fn map_f64(a: slice<f64>, b: slice<f64>, n: u32) -> void
+contract {
+  requires n <= a.len && n <= b.len;
+  requires noalias(a, b);
+  effects read(a), write(b);
+}
+{
+  let i: u32 = 0;
+  while i < n { b[i] = a[i] * 1.25 + 0.5; i = i + 1; }
+}
+"#;
+
+const WASM_SCALAR_SELECT_ARMS: &str = r#"
+export unsafe fn pick(a: slice<u32>, c: slice<u32>, b: slice<u32>, n: u32) -> void
+contract {
+  requires n <= a.len && n <= c.len && n <= b.len;
+  requires noalias(a, c) && noalias(a, b) && noalias(c, b);
+  effects read(a), read(c), write(b);
+}
+{
+  let i: u32 = 0;
+  while i < n {
+    let left: u32 = a[i];
+    let right: u32 = c[i];
+    let picked: u32 = 0;
+    if left < right { picked = 5; } else { picked = 10; }
+    b[i] = picked;
+    i = i + 1;
+  }
+}
+"#;
+
+const WASM_SLICE_LEN_SUM: &str = r#"
+export fn sum(a: slice<u32>, other: slice<u32>) -> u32 {
+  let i: u32 = 0;
+  let total: u32 = 0;
+  while i < a.len { total = total + a[i]; i = i + 1; }
+  return total;
+}
+"#;
+
+const WASM_CHANGING_SLICE_LEN_SUM: &str = r#"
+export fn sum(a: slice<u32>, other: slice<u32>) -> u32 {
+  let i: u32 = 0;
+  let total: u32 = 0;
+  let current: slice<u32> = a;
+  while i < current.len {
+    total = total + a[i];
+    current = other;
+    i = i + 1;
+  }
+  return total;
+}
+"#;
+
 const WASM_I32_MAP: &str = r#"
 export unsafe fn map_i32(a: slice<i32>, b: slice<i32>, n: u32, factor: i32, bias: i32) -> void
 contract {
@@ -1631,6 +1806,650 @@ contract {
 
 const WASM_RUNTIME_ALIAS_MAP: &str = include_str!("../../examples/wasm/alias_map.ck");
 const WASM_MODULAR_REDUCTIONS: &str = include_str!("../../examples/wasm/reduction.ck");
+
+#[test]
+fn wasm_modular_sum_should_carry_a_vector_and_reduce_once_before_the_scalar_tail() {
+    let source = "export unsafe fn sum(a: slice<u32>, n: u32, seed: u32) -> u32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: u32 = seed; while i < n { total = total + a[i]; i = i + 1; } return total; }";
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let candidate = discover_vectorization_candidates(&pre).candidates.remove(0);
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("sum trial");
+    let function = &prepared.trial.module().functions[0];
+    let body = function
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .unwrap();
+    assert!(
+        body.params.iter().any(|param| matches!(
+            param.type_node,
+            calckernel::KirValueType::FixedVector { lanes: 4, .. }
+        )),
+        "sum must carry a vector accumulator"
+    );
+    assert!(
+        !body.instructions.iter().any(|instruction| matches!(
+            instruction.kind,
+            calckernel::KirInstructionKind::VectorReduce { .. }
+        )),
+        "horizontal fold must not execute each chunk"
+    );
+    let finalizer = function
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_finalize")
+        .expect("once-only finalizer");
+    assert_eq!(
+        finalizer
+            .instructions
+            .iter()
+            .filter(|instruction| matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorReduce { .. }
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn wasm_modular_accumulator_checker_should_reject_wrong_seed_recurrence_and_tail() {
+    use calckernel::{KirInstructionKind as Kind, KirTerminator};
+    let source = "export unsafe fn sum(a: slice<i32>, n: u32, seed: i32) -> i32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: i32 = seed; while i < n { total = total + a[i]; i = i + 1; } return total; }";
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let candidate = discover_vectorization_candidates(&pre).candidates.remove(0);
+    let prepared = prepare_vectorization_trial(&pre, &candidate).expect("sum trial");
+    for mutation in [
+        "nonzero identity",
+        "wrong recurrence",
+        "wrong seed",
+        "wrong tail",
+    ] {
+        let mut forged = prepared.trial.clone();
+        let function = &mut forged.module_mut().functions[0];
+        match mutation {
+            "nonzero identity" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.id == candidate.preheader)
+                    .unwrap();
+                let zero = block
+                    .instructions
+                    .iter()
+                    .find_map(|instruction| match instruction.kind {
+                        Kind::VectorSplat { scalar, .. } => Some(scalar),
+                        _ => None,
+                    })
+                    .unwrap();
+                let instruction = block
+                    .instructions
+                    .iter_mut()
+                    .find(|instruction| {
+                        instruction
+                            .results
+                            .iter()
+                            .any(|result| result.value == zero)
+                    })
+                    .unwrap();
+                let Kind::ConstInt { value } = &mut instruction.kind else {
+                    unreachable!()
+                };
+                *value = "1".to_string();
+            }
+            "wrong recurrence" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.label == "loop_simd_body")
+                    .unwrap();
+                let fresh = block
+                    .instructions
+                    .iter()
+                    .find_map(|instruction| {
+                        matches!(instruction.kind, Kind::VectorLoad { .. })
+                            .then(|| instruction.results[0].value)
+                    })
+                    .unwrap();
+                let KirTerminator::Jump { edge } = &mut block.terminator else {
+                    unreachable!()
+                };
+                *edge.args.last_mut().unwrap() = fresh;
+            }
+            "wrong seed" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.label == "loop_simd_finalize")
+                    .unwrap();
+                let Kind::Binary { left, right, .. } = &mut block.instructions[1].kind else {
+                    unreachable!()
+                };
+                *left = *right;
+            }
+            "wrong tail" => {
+                let block = function
+                    .blocks
+                    .iter_mut()
+                    .find(|block| block.label == "loop_simd_finalize")
+                    .unwrap();
+                let folded = block.instructions[0].results[0].value;
+                let combined = block.instructions[1].results[0].value;
+                let KirTerminator::Jump { edge } = &mut block.terminator else {
+                    unreachable!()
+                };
+                *edge
+                    .args
+                    .iter_mut()
+                    .find(|value| **value == combined)
+                    .unwrap() = folded;
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            check_vectorization_trial_independently(
+                &pre,
+                &forged,
+                &prepared.plan,
+                &prepared.charge
+            )
+            .is_err(),
+            "checker accepted {mutation}"
+        );
+    }
+}
+
+#[test]
+fn wasm_modular_accumulator_must_not_expose_a_partial_sum_inside_the_loop() {
+    let source = "export unsafe fn sum(a: slice<u32>, n: u32) -> u32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: u32 = 7; while i < n { total = total + total * a[i]; i = i + 1; } return total; }";
+    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    assert!(
+        discover_vectorization_candidates(&pre)
+            .candidates
+            .is_empty(),
+        "a lane source depending on the partial sum cannot use a persistent modular-add accumulator"
+    );
+}
+
+const WASM_LAGGED_SUM: &str = r#"
+export unsafe fn lag(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { previous = total; total = total + a[i]; i = i + 1; }
+    return previous + total;
+}
+export unsafe fn lag_copy(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { let snapshot: u32 = total; previous = snapshot; total = total + a[i]; i = i + 1; }
+    return previous + total;
+}
+"#;
+
+const WASM_LAGGED_PRODUCT: &str = r#"
+export unsafe fn lag_product(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { previous = total; total = total * a[i]; i = i + 1; }
+    return previous + total;
+}
+export unsafe fn lag_product_copy(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed; let previous: u32 = 0;
+    while i < n { let snapshot: u32 = total; previous = snapshot; total = total * a[i]; i = i + 1; }
+    return previous + total;
+}
+export unsafe fn product(a: slice<u32>, n: u32, seed: u32) -> u32
+contract { requires n <= a.len; effects read(a); } {
+    let i: u32 = 0; let total: u32 = seed;
+    while i < n { total = total * a[i]; i = i + 1; }
+    return total;
+}
+"#;
+
+#[test]
+fn wasm_modular_product_should_preserve_observed_previous_values_at_runtime() {
+    if !crate::support::command::node_available() {
+        eprintln!("skipping lagged product runtime check: node unavailable");
+        return;
+    }
+    let bytes = [KirOptimizationLevel::O0, KirOptimizationLevel::O3].map(|level| {
+        let (pre, contracts) = wasm_map_state(WASM_LAGGED_PRODUCT, KirWasmFeatures::Simd128);
+        let optimized = run_kir_pass_pipeline(pre.module().clone(), level, contracts.as_ref());
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+        calckernel::emit_wasm_kir_module(
+            optimized.artifact.as_ref().expect("product artifact"),
+            calckernel::EmitWasmOptions {
+                opt_level: if level == KirOptimizationLevel::O0 {
+                    0
+                } else {
+                    3
+                },
+            },
+        )
+        .expect("product WASM")
+    });
+    let script = r#"
+        const assert = require('node:assert/strict');
+        const modules = JSON.parse(process.argv[1]).map(bytes => new WebAssembly.Instance(new WebAssembly.Module(Uint8Array.from(bytes))).exports);
+        for (const wasm of modules) {
+            const data = new Uint32Array(wasm.memory.buffer, 1024, 128);
+            for (const pattern of ['twos', 'wrapping']) {
+                for (let i = 0; i < data.length; i++) data[i] = pattern === 'twos' ? 2 : (Math.imul(i + 1, 0x9e3779b9) | 1) >>> 0;
+                for (const n of [0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128]) {
+                    for (const seed of [0, 3, 0x7fffffff, 0x80000000, 0xffffffff]) {
+                        let total = seed, previous = 0;
+                        for (let i = 0; i < n; i++) { previous = total; total = Math.imul(total, data[i]) >>> 0; }
+                        for (const name of ['lag_product', 'lag_product_copy']) assert.equal(wasm[name](1024, n, n, seed) >>> 0, (previous + total) >>> 0, `${name}, ${pattern}, n=${n}, seed=${seed}`);
+                        assert.equal(wasm.product(1024, n, n, seed) >>> 0, total, `ordinary product, ${pattern}, n=${n}, seed=${seed}`);
+                    }
+                }
+            }
+        }
+    "#;
+    let output = std::process::Command::new("node")
+        .args([
+            "-e",
+            script,
+            &serde_json::to_string(&bytes).expect("module JSON"),
+        ])
+        .output()
+        .expect("node");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn wasm_modular_product_should_reject_lagged_aliases_but_keep_an_unobserved_reduction() {
+    let (pre, _) = wasm_map_state(WASM_LAGGED_PRODUCT, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert_eq!(discovery.candidates.len(), 1, "{discovery:#?}");
+    let candidate = &discovery.candidates[0];
+    let function = pre
+        .module()
+        .functions
+        .iter()
+        .find(|function| function.id == candidate.function)
+        .unwrap();
+    assert_eq!(function.name, "product");
+    let prepared = prepare_vectorization_trial(&pre, candidate).expect("ordinary product trial");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn wasm_modular_accumulator_should_reject_lagged_backedge_aliases() {
+    let (pre, _) = wasm_map_state(WASM_LAGGED_SUM, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery.candidates.is_empty(),
+        "old accumulator escapes through another loop-carried parameter: {discovery:#?}"
+    );
+}
+
+#[test]
+fn wasm_modular_accumulator_lagged_sum_should_match_scalar_results_at_runtime() {
+    if !crate::support::command::node_available() {
+        eprintln!("skipping lagged accumulator runtime check: node unavailable");
+        return;
+    }
+    let bytes = [KirOptimizationLevel::O0, KirOptimizationLevel::O3].map(|level| {
+        let (pre, contracts) = wasm_map_state(WASM_LAGGED_SUM, KirWasmFeatures::Simd128);
+        let optimized = run_kir_pass_pipeline(pre.module().clone(), level, contracts.as_ref());
+        assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+        calckernel::emit_wasm_kir_module(
+            optimized.artifact.as_ref().expect("lagged sum artifact"),
+            calckernel::EmitWasmOptions {
+                opt_level: if level == KirOptimizationLevel::O0 {
+                    0
+                } else {
+                    3
+                },
+            },
+        )
+        .expect("lagged sum WASM")
+    });
+    let script = r#"
+        const assert = require('node:assert/strict');
+        const modules = JSON.parse(process.argv[1]).map(bytes => new WebAssembly.Instance(new WebAssembly.Module(Uint8Array.from(bytes))).exports);
+        for (const wasm of modules) {
+            const data = new Uint32Array(wasm.memory.buffer, 1024, 128);
+            for (const pattern of ['ones', 'wrapping']) {
+                for (let i = 0; i < data.length; i++) data[i] = pattern === 'ones' ? 1 : (Math.imul(i + 1, 0x9e3779b9) ^ 0xffffffff) >>> 0;
+                for (const n of [0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128]) {
+                    for (const seed of [0, 7, 0x7fffffff, 0x80000000, 0xffffffff]) {
+                        let total = seed, previous = 0;
+                        for (let i = 0; i < n; i++) { previous = total; total = (total + data[i]) >>> 0; }
+                        const expected = (previous + total) >>> 0;
+                        for (const name of ['lag', 'lag_copy']) assert.equal(wasm[name](1024, n, n, seed) >>> 0, expected, `${name}, ${pattern}, n=${n}, seed=${seed}`);
+                    }
+                }
+            }
+        }
+    "#;
+    let output = std::process::Command::new("node")
+        .args([
+            "-e",
+            script,
+            &serde_json::to_string(&bytes).expect("module JSON"),
+        ])
+        .output()
+        .expect("node");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn wasm_simd128_slice_len_bound_should_materialize_from_a_stable_descriptor_root() {
+    let (pre, _) = wasm_map_state(WASM_SLICE_LEN_SUM, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    let candidate = discovery
+        .candidates
+        .iter()
+        .find(|candidate| candidate.vf == 4)
+        .unwrap_or_else(|| panic!("expected a u32 reduction candidate: {discovery:#?}"));
+    let prepared = prepare_vectorization_trial(&pre, candidate)
+        .expect("stable slice descriptor length should materialize in the preheader");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+    let mut forged = prepared.trial.clone();
+    let other = forged.module().functions[0].params[1].value;
+    let preheader = forged
+        .module_mut()
+        .functions
+        .iter_mut()
+        .find(|function| function.id == candidate.function)
+        .expect("sum function")
+        .blocks
+        .iter_mut()
+        .find(|block| block.id == candidate.preheader)
+        .expect("versioning preheader");
+    let slice_len = preheader
+        .instructions
+        .iter_mut()
+        .find_map(|instruction| match &mut instruction.kind {
+            calckernel::KirInstructionKind::SliceLen { slice } => Some(slice),
+            _ => None,
+        })
+        .expect("materialized slice length");
+    *slice_len = other;
+    assert!(
+        check_vectorization_trial_independently(&pre, &forged, &prepared.plan, &prepared.charge,)
+            .is_err(),
+        "the checker must reject a preheader SliceLen derived from a different parameter"
+    );
+    assert!(print_kir_module(prepared.trial.module()).contains("vector_reduce"));
+}
+
+#[test]
+fn wasm_simd128_const_float_operands_should_remain_scalar_splat_inputs() {
+    let (pre, _) = wasm_map_state(WASM_CONST_F64_MAP, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    let candidate = discovery
+        .candidates
+        .iter()
+        .find(|candidate| candidate.vf == 2)
+        .unwrap_or_else(|| panic!("expected an f64 candidate: {discovery:#?}"));
+    let prepared = prepare_vectorization_trial(&pre, candidate)
+        .expect("constant f64 values should remain scalar inputs to vector splats");
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+    let text = print_kir_module(prepared.trial.module());
+    assert!(text.contains("vector_splat"), "{text}");
+    assert!(text.contains("vector_multiply.strict"), "{text}");
+    assert!(text.contains("vector_add.strict"), "{text}");
+}
+
+#[test]
+fn wasm_simd128_select_arm_splats_should_be_counted_in_vector_cost() {
+    let (pre, _) = wasm_map_state(WASM_SCALAR_SELECT_ARMS, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    let candidate = discovery
+        .candidates
+        .iter()
+        .find(|candidate| candidate.vf == 4 && candidate.uf == 1)
+        .unwrap_or_else(|| panic!("expected SIMD select candidate: {discovery:#?}"));
+    let prepared = prepare_vectorization_trial(&pre, candidate)
+        .expect("scalar select arms should materialize splats");
+    let vector_splats = prepared.trial.module().functions[0]
+        .blocks
+        .iter()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body")
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorSplat { .. }
+            )
+        })
+        .count();
+    assert_eq!(vector_splats, 2, "both scalar select arms need one splat");
+
+    let profile = &pre.module().profile;
+    let cost = |key: KirCostKey| match profile.operation_availability(&key) {
+        Some(KirOperationAvailability::Legal(legal)) if legal.legalization_parts == 1 => legal.cost,
+        Some(KirOperationAvailability::Unavailable)
+            if key.operation == KirProfileOperation::Branch =>
+        {
+            1
+        }
+        availability => panic!("missing exact profile cost for {key:?}: {availability:?}"),
+    };
+    let lanes = u8::try_from(candidate.vf).expect("vector width fits profile key");
+    let operation_chunk_cost = candidate
+        .operations
+        .iter()
+        .map(|operation| {
+            cost(KirCostKey {
+                operation: operation.operation,
+                lane: operation.lane_type,
+                lanes,
+                semantics: operation.semantics,
+                alignment: operation.alignment,
+            })
+        })
+        .sum::<u32>()
+        .saturating_mul(u32::from(candidate.uf));
+    let memory_chunk_cost = candidate
+        .accesses
+        .iter()
+        .map(|access| {
+            let lane = match access.element_type {
+                calckernel::MirType::Primitive(calckernel::MirPrimitiveTypeName::I32) => {
+                    calckernel::KirLaneType::I32
+                }
+                calckernel::MirType::Primitive(calckernel::MirPrimitiveTypeName::U32) => {
+                    calckernel::KirLaneType::U32
+                }
+                _ => panic!("unexpected select memory type: {:?}", access.element_type),
+            };
+            cost(KirCostKey {
+                operation: if access.kind == calckernel::LoopMemoryAccessKind::Read {
+                    KirProfileOperation::Load
+                } else {
+                    KirProfileOperation::Store
+                },
+                lane,
+                lanes,
+                semantics: calckernel::KirCostSemantics::NotApplicable,
+                alignment: KirAlignmentClass::Bytes(
+                    u16::try_from(access.element_bytes).expect("alignment fits profile key"),
+                ),
+            })
+        })
+        .sum::<u32>()
+        .saturating_mul(u32::from(candidate.uf));
+    let control_cost = cost(KirCostKey {
+        operation: KirProfileOperation::Add,
+        lane: calckernel::KirLaneType::U32,
+        lanes: 1,
+        semantics: calckernel::KirCostSemantics::Modular,
+        alignment: KirAlignmentClass::NotApplicable,
+    }) + cost(KirCostKey {
+        operation: KirProfileOperation::Compare,
+        lane: calckernel::KirLaneType::U32,
+        lanes: 1,
+        semantics: calckernel::KirCostSemantics::NotApplicable,
+        alignment: KirAlignmentClass::NotApplicable,
+    }) + cost(KirCostKey {
+        operation: KirProfileOperation::Branch,
+        lane: calckernel::KirLaneType::U32,
+        lanes: 1,
+        semantics: calckernel::KirCostSemantics::NotApplicable,
+        alignment: KirAlignmentClass::NotApplicable,
+    });
+    let splat_cost = 2 * cost(KirCostKey {
+        operation: KirProfileOperation::Splat,
+        lane: calckernel::KirLaneType::U32,
+        lanes,
+        semantics: calckernel::KirCostSemantics::NotApplicable,
+        alignment: KirAlignmentClass::NotApplicable,
+    });
+    let chunk_cost = operation_chunk_cost
+        .saturating_add(memory_chunk_cost)
+        .saturating_add(control_cost)
+        .saturating_add(splat_cost);
+    let chunks = candidate.minimum_trip / (u32::from(candidate.vf) * u32::from(candidate.uf));
+    assert_eq!(
+        candidate.predicted_cost.transformed_body,
+        chunk_cost.saturating_mul(chunks),
+        "vector cost must include both Select-arm splats"
+    );
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &pre,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        ),
+        Ok(())
+    );
+
+    let mut forged = prepared.trial.clone();
+    let function = forged
+        .module_mut()
+        .functions
+        .iter_mut()
+        .find(|function| function.id == candidate.function)
+        .expect("pick function");
+    let vector_body = function
+        .blocks
+        .iter_mut()
+        .find(|block| block.label == "loop_simd_body")
+        .expect("vector body");
+    let non_splat_vector = vector_body
+        .instructions
+        .iter()
+        .find_map(|instruction| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorLoad { .. }
+            )
+            .then(|| instruction.results.first().map(|result| result.value))
+            .flatten()
+        })
+        .expect("vector load result for forged arm");
+    let select = vector_body
+        .instructions
+        .iter_mut()
+        .find(|instruction| {
+            matches!(
+                instruction.kind,
+                calckernel::KirInstructionKind::VectorSelect { .. }
+            )
+        })
+        .expect("vector select");
+    let calckernel::KirInstructionKind::VectorSelect { when_true, .. } = &mut select.kind else {
+        unreachable!();
+    };
+    *when_true = non_splat_vector;
+    assert!(
+        check_vectorization_trial_independently(&pre, &forged, &prepared.plan, &prepared.charge)
+            .is_err(),
+        "an arbitrary same-typed vector must not masquerade as a scalar-arm splat"
+    );
+}
+
+#[test]
+fn vector_candidate_requires_target_splat_support_for_scalar_select_arms() {
+    let profile = native_profile_without_u32x4_splat();
+    let splat_key = KirCostKey {
+        operation: KirProfileOperation::Splat,
+        lane: calckernel::KirLaneType::U32,
+        lanes: 4,
+        semantics: calckernel::KirCostSemantics::NotApplicable,
+        alignment: KirAlignmentClass::NotApplicable,
+    };
+    assert!(matches!(
+        profile.operation_availability(&splat_key),
+        Some(KirOperationAvailability::Unavailable)
+    ));
+    let (pre, _) = map_state_with_profile(WASM_SCALAR_SELECT_ARMS, profile);
+    let discovery = discover_vectorization_candidates(&pre);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .all(|candidate| candidate.vf != 4),
+        "a target without u32x4 Splat must not receive a VF4 scalar-select candidate: {discovery:#?}"
+    );
+}
+
+#[test]
+fn wasm_simd128_slice_len_bound_with_changing_backedge_descriptor_should_be_rejected() {
+    let (pre, _) = wasm_map_state(WASM_CHANGING_SLICE_LEN_SUM, KirWasmFeatures::Simd128);
+    let discovery = discover_vectorization_candidates(&pre);
+    let candidate = discovery
+        .candidates
+        .iter()
+        .find(|candidate| candidate.vf == 4)
+        .unwrap_or_else(|| {
+            panic!("expected the reducer shape before safety checking: {discovery:#?}")
+        });
+    let error = prepare_vectorization_trial(&pre, candidate)
+        .expect_err("changing slice descriptor must not become a fixed trip bound");
+    assert_eq!(
+        error,
+        "vector slice-length descriptor is not invariant across the loop"
+    );
+}
 
 #[test]
 fn wasm_simd128_should_discover_independently_check_and_accept_f64x2_and_i32x4_maps() {

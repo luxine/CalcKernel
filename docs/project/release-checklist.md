@@ -12,6 +12,7 @@ For a version `X.Y.Z`:
 - [ ] `cargo test --all-features --locked` against the checksum-verified LLVM 22.1.8 release prefix and pinned Clang oracle.
 - [ ] `cargo build --release --features native-toolchain --locked`
 - [ ] Generated and mutation suites pass O0–O3 for C, WebAssembly, and Native supported modes.
+- [ ] For releases with WebAssembly code-generation changes, strict `baseline` and `simd128` correctness/performance evidence identifies the exact candidate source and compiler binary. Compare the release build's module hashes, required feature declarations, and correctness outputs with the accepted development-candidate report; if generated modules differ, rerun and identify the release build's measurements separately. Keep cold-call and module-size evidence separate from hot-call ratios, and label development-candidate measurements as such.
 - [ ] Pre-LLVM fact audit passes on all six hosts and rejects the mutation corpus.
 - [ ] Contract sanitizer ownership tests pass under ASan/UBSan.
 - [ ] `./target/release/ckc --help`, `--version --verbose`, and `licenses` expose complete identity and notice evidence.

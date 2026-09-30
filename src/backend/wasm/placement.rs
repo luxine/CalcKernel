@@ -54,6 +54,7 @@ enum ValueType {
     I32,
     I64,
     F64,
+    V128,
 }
 
 impl ValueType {
@@ -62,6 +63,7 @@ impl ValueType {
             "i32" => Some(Self::I32),
             "i64" => Some(Self::I64),
             "f64" => Some(Self::F64),
+            "v128" => Some(Self::V128),
             _ => None,
         }
     }
@@ -176,6 +178,7 @@ fn optimize_final_function(function: &FinalWasmFunction) -> Option<FinalWasmFunc
                     ValueType::I32 => WasmValueType::I32,
                     ValueType::I64 => WasmValueType::I64,
                     ValueType::F64 => WasmValueType::F64,
+                    ValueType::V128 => WasmValueType::V128,
                 },
             })
         })
@@ -327,15 +330,23 @@ fn classify_final_instruction(instruction: &FinalInstructionKind) -> Option<Inst
         | FinalInstructionKind::MemoryGrow
         | FinalInstructionKind::MemoryCopy
         | FinalInstructionKind::MemoryFill => InstructionKind::Fence,
-        FinalInstructionKind::V128Const(_)
-        | FinalInstructionKind::Lane { .. }
-        | FinalInstructionKind::Shuffle(_) => {
-            return None;
+        FinalInstructionKind::V128Const(_) => InstructionKind::Stack { pops: 0, pushes: 1 },
+        FinalInstructionKind::Lane { opcode, .. } => {
+            let pops = if opcode.wat().ends_with(".replace_lane") {
+                2
+            } else {
+                1
+            };
+            InstructionKind::Stack { pops, pushes: 1 }
         }
+        FinalInstructionKind::Shuffle(_) => InstructionKind::Stack { pops: 2, pushes: 1 },
     })
 }
 
 fn classify_final_simple(opcode: &str) -> Option<InstructionKind> {
+    if let Some((pops, pushes)) = classify_simd_stack_effect(opcode) {
+        return Some(InstructionKind::Stack { pops, pushes });
+    }
     match opcode {
         "drop" => Some(InstructionKind::Stack { pops: 1, pushes: 0 }),
         "i32.eqz" | "i64.eqz" | "f64.neg" | "f64.convert_i32_s" | "f64.convert_i32_u" => {
@@ -355,6 +366,40 @@ fn classify_final_simple(opcode: &str) -> Option<InstructionKind> {
         | "i64.rem_s" | "i64.rem_u" | "unreachable" | "return" => Some(InstructionKind::Fence),
         _ => None,
     }
+}
+
+/// Returns operand-stack arity for every SIMD `SimpleOpcode` emitted by this
+/// backend. All SIMD operations produce one value; some reductions produce a
+/// scalar, which still has the same stack height. Lane immediates are handled
+/// separately because extracts and replacements have different arities.
+fn classify_simd_stack_effect(opcode: &str) -> Option<(u8, u8)> {
+    let (prefix, operation) = opcode.split_once('.')?;
+    if !matches!(
+        prefix,
+        "v128" | "i8x16" | "i16x8" | "i32x4" | "i64x2" | "f32x4" | "f64x2"
+    ) {
+        return None;
+    }
+
+    let arity = match (prefix, operation) {
+        ("v128", "bitselect") => (3, 1),
+        ("v128", "not" | "any_true") => (1, 1),
+        ("v128", "and" | "andnot" | "or" | "xor") => (2, 1),
+        (_, "splat") => (1, 1),
+        (_, "abs" | "neg" | "popcnt" | "all_true" | "bitmask") => (1, 1),
+        ("f32x4", "ceil" | "floor" | "trunc" | "nearest" | "sqrt") => (1, 1),
+        ("f64x2", "sqrt") => (1, 1),
+        ("f64x2", "convert_low_i32x4_s" | "convert_low_i32x4_u") => (1, 1),
+        (_, "swizzle" | "q15mulr_sat_s") => (2, 1),
+        (
+            _,
+            "add" | "sub" | "mul" | "div" | "min" | "max" | "pmin" | "pmax" | "eq" | "ne" | "lt"
+            | "lt_s" | "lt_u" | "gt" | "gt_s" | "gt_u" | "le" | "le_s" | "le_u" | "ge" | "ge_s"
+            | "ge_u",
+        ) => (2, 1),
+        _ => return None,
+    };
+    Some(arity)
 }
 
 fn is_pinned_name(name: &str, declarations: &BTreeMap<String, (ValueType, bool)>) -> bool {
@@ -661,6 +706,7 @@ fn coalesce_disjoint_locals(
                 ValueType::I32 => "i32".to_string(),
                 ValueType::I64 => "i64".to_string(),
                 ValueType::F64 => "f64".to_string(),
+                ValueType::V128 => "v128".to_string(),
             },
             segment: start_segment,
             start,
@@ -796,6 +842,17 @@ mod tests {
         module.functions.remove(0)
     }
 
+    fn validate_wat(module: &FinalWasmModule) {
+        let wasm = wat::parse_str(module.to_wat()).expect("placement output WAT parses");
+        let features = wasmparser::WasmFeatures::MVP
+            | wasmparser::WasmFeatures::MULTI_VALUE
+            | wasmparser::WasmFeatures::BULK_MEMORY
+            | wasmparser::WasmFeatures::SIMD;
+        wasmparser::Validator::new_with_features(features)
+            .validate_all(&wasm)
+            .expect("placement output is well-typed WebAssembly");
+    }
+
     #[test]
     fn stackifies_a_single_use_local_roundtrip() {
         let optimized = optimize(
@@ -822,6 +879,164 @@ mod tests {
             instruction.kind,
             FinalInstructionKind::Simple(SimpleOpcode::I32Add)
         )));
+    }
+
+    #[test]
+    fn places_mixed_scalar_and_vector_locals_across_lane_and_shuffle_ops() {
+        use crate::backend::wasm::final_ir::LaneOpcode;
+
+        let mut original = function(
+            &[
+                ("scalar", WasmValueType::I32),
+                ("vector", WasmValueType::V128),
+            ],
+            vec![
+                instruction(FinalInstructionKind::I32Const(17)),
+                instruction(FinalInstructionKind::LocalSet("scalar".into())),
+                instruction(FinalInstructionKind::V128Const(vec![0; 16])),
+                instruction(FinalInstructionKind::Lane {
+                    opcode: LaneOpcode::I32x4ExtractLane,
+                    lane: 2,
+                }),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::V128Const(vec![1; 16])),
+                instruction(FinalInstructionKind::V128Const(vec![2; 16])),
+                instruction(FinalInstructionKind::Shuffle(std::array::from_fn(|i| {
+                    i as u8
+                }))),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::V128Const(vec![6; 16])),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::V128Not)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::V128Const(vec![11; 16])),
+                instruction(FinalInstructionKind::I32Const(11)),
+                instruction(FinalInstructionKind::Lane {
+                    opcode: LaneOpcode::I32x4ReplaceLane,
+                    lane: 3,
+                }),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::V128Const(vec![7; 16])),
+                instruction(FinalInstructionKind::V128Const(vec![8; 16])),
+                instruction(FinalInstructionKind::V128Const(vec![9; 16])),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::V128Bitselect)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::V128Const(vec![12; 16])),
+                instruction(FinalInstructionKind::V128Const(vec![13; 16])),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::V128And)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::I32Const(10)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::I32x4Splat)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::V128AnyTrue)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::V128Const(vec![3; 16])),
+                instruction(FinalInstructionKind::LocalSet("vector".into())),
+                instruction(FinalInstructionKind::V128Const(vec![4; 16])),
+                instruction(FinalInstructionKind::V128Const(vec![5; 16])),
+                instruction(FinalInstructionKind::Shuffle(std::array::from_fn(|i| {
+                    i as u8
+                }))),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::LocalGet("vector".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::LocalGet("scalar".into())),
+            ],
+        );
+        original.results = vec![WasmValueType::I32];
+        let optimized = optimize(original.clone(), 3);
+
+        assert!(optimized.locals.is_empty());
+        assert!(optimized.body.iter().all(|instruction| !matches!(
+            &instruction.kind,
+            FinalInstructionKind::LocalGet(name) | FinalInstructionKind::LocalSet(name)
+                if name == "scalar" || name == "vector"
+        )));
+        assert!(optimized.body.iter().any(|instruction| matches!(
+            instruction.kind,
+            FinalInstructionKind::Lane {
+                opcode: LaneOpcode::I32x4ExtractLane,
+                lane: 2
+            }
+        )));
+        assert_eq!(
+            optimized
+                .body
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, FinalInstructionKind::Shuffle(_)))
+                .count(),
+            2
+        );
+        assert!(
+            optimized
+                .body
+                .iter()
+                .any(|instruction| matches!(instruction.kind, FinalInstructionKind::I32Const(17)))
+        );
+        assert_eq!(optimized.results, [WasmValueType::I32]);
+        validate_wat(&module(original));
+        validate_wat(&module(optimized.clone()));
+    }
+
+    #[test]
+    fn keeps_loop_spanning_locals_and_edge_copies_materialized() {
+        let mut original = FinalWasmFunction {
+            name: "f".into(),
+            export_name: None,
+            params: vec![FinalLocal {
+                name: "p".into(),
+                ty: WasmValueType::I32,
+            }],
+            results: Vec::new(),
+            locals: ["ordinary", "edge_1_2_0_0"]
+                .into_iter()
+                .map(|name| FinalLocal {
+                    name: name.into(),
+                    ty: WasmValueType::I32,
+                })
+                .collect(),
+            body: vec![
+                instruction(FinalInstructionKind::LocalGet("p".into())),
+                instruction(FinalInstructionKind::LocalSet("edge_1_2_0_0".into())),
+                instruction(FinalInstructionKind::I32Const(17)),
+                instruction(FinalInstructionKind::LocalSet("ordinary".into())),
+                instruction(FinalInstructionKind::Block {
+                    label: Some("exit".into()),
+                    results: Vec::new(),
+                }),
+                instruction(FinalInstructionKind::Loop {
+                    label: Some("loop".into()),
+                    results: Vec::new(),
+                }),
+                instruction(FinalInstructionKind::End),
+                instruction(FinalInstructionKind::End),
+                instruction(FinalInstructionKind::LocalGet("ordinary".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::LocalGet("edge_1_2_0_0".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+            ],
+        };
+        // Include an O3-eligible v128 declaration in this structured function
+        // to verify the new type support keeps control-flow fences intact.
+        original.locals.push(FinalLocal {
+            name: "vector".into(),
+            ty: WasmValueType::V128,
+        });
+
+        let optimized = optimize(original.clone(), 3);
+        assert!(
+            optimized
+                .locals
+                .iter()
+                .any(|local| local.name == "ordinary")
+        );
+        assert!(
+            optimized
+                .locals
+                .iter()
+                .any(|local| local.name == "edge_1_2_0_0")
+        );
+        assert!(optimized.locals.iter().all(|local| local.name != "vector"));
+        assert_eq!(optimized.body, original.body);
+        validate_wat(&module(optimized));
     }
 
     #[test]
@@ -953,6 +1168,61 @@ mod tests {
     }
 
     #[test]
+    fn coalesces_disjoint_v128_locals_only_with_matching_vector_types() {
+        let original = function(
+            &[
+                ("a", WasmValueType::V128),
+                ("b", WasmValueType::V128),
+                ("vector_sink", WasmValueType::V128),
+                ("scalar", WasmValueType::I32),
+                ("scalar_sink", WasmValueType::I32),
+            ],
+            vec![
+                instruction(FinalInstructionKind::V128Const(vec![1; 16])),
+                instruction(FinalInstructionKind::LocalSet("a".into())),
+                instruction(FinalInstructionKind::LocalGet("a".into())),
+                instruction(FinalInstructionKind::LocalGet("a".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::V128And)),
+                instruction(FinalInstructionKind::LocalSet("vector_sink".into())),
+                instruction(FinalInstructionKind::V128Const(vec![2; 16])),
+                instruction(FinalInstructionKind::LocalSet("b".into())),
+                instruction(FinalInstructionKind::LocalGet("b".into())),
+                instruction(FinalInstructionKind::LocalGet("b".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::V128And)),
+                instruction(FinalInstructionKind::LocalSet("vector_sink".into())),
+                instruction(FinalInstructionKind::I32Const(7)),
+                instruction(FinalInstructionKind::LocalSet("scalar".into())),
+                instruction(FinalInstructionKind::LocalGet("scalar".into())),
+                instruction(FinalInstructionKind::LocalGet("scalar".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::I32Add)),
+                instruction(FinalInstructionKind::LocalSet("scalar_sink".into())),
+            ],
+        );
+
+        let optimized = optimize(original.clone(), 3);
+        assert!(
+            optimized
+                .locals
+                .iter()
+                .any(|local| { local.name == "a" && local.ty == WasmValueType::V128 })
+        );
+        assert!(optimized.locals.iter().all(|local| local.name != "b"));
+        assert!(
+            optimized
+                .locals
+                .iter()
+                .any(|local| { local.name == "scalar" && local.ty == WasmValueType::I32 })
+        );
+        assert!(optimized.body.iter().all(|instruction| !matches!(
+            &instruction.kind,
+            FinalInstructionKind::LocalGet(name) | FinalInstructionKind::LocalSet(name)
+                if name == "b"
+        )));
+        validate_wat(&module(original));
+        validate_wat(&module(optimized));
+    }
+
+    #[test]
     fn does_not_coalesce_overlapping_intervals_or_different_types() {
         let optimized = optimize(
             function(
@@ -1047,23 +1317,18 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_for_unknown_and_simd_instructions_or_non_scalar_signature() {
-        for unsupported in [
-            FinalInstructionKind::Simple(SimpleOpcode::I32Clz),
-            FinalInstructionKind::Simple(SimpleOpcode::V128Not),
-        ] {
-            let original = function(
-                &[("v", WasmValueType::I32)],
-                vec![
-                    instruction(FinalInstructionKind::I32Const(3)),
-                    instruction(FinalInstructionKind::LocalSet("v".into())),
-                    instruction(FinalInstructionKind::LocalGet("v".into())),
-                    instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
-                    instruction(unsupported),
-                ],
-            );
-            assert_eq!(optimize(original.clone(), 3), original);
-        }
+    fn falls_back_for_unknown_instruction_or_non_scalar_signature() {
+        let original = function(
+            &[("v", WasmValueType::I32)],
+            vec![
+                instruction(FinalInstructionKind::I32Const(3)),
+                instruction(FinalInstructionKind::LocalSet("v".into())),
+                instruction(FinalInstructionKind::LocalGet("v".into())),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::Drop)),
+                instruction(FinalInstructionKind::Simple(SimpleOpcode::I32Clz)),
+            ],
+        );
+        assert_eq!(optimize(original.clone(), 3), original);
 
         let original = FinalWasmFunction {
             name: "f".into(),

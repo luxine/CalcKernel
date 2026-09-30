@@ -368,6 +368,12 @@ pub enum KirVersionPredicateConjunct {
         right_count: ValueId,
         right_element_bytes: u32,
     },
+    WasmSliceRange {
+        slice: ValueId,
+        start: ValueId,
+        count: ValueId,
+        element_bytes: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

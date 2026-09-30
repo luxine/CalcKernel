@@ -2,7 +2,7 @@
 
 [English](../../guides/getting-started.md)
 
-End user 解压对应 host 的 release archive 后即可运行 self-contained compiler：
+解压对应平台的发布压缩包后，即可使用其中独立运行的 `ckc`。以下命令中的示例文件需另外取得[编译器源码仓库](https://github.com/luxine/CalcKernel/tree/main/examples)；发布包只包含编译器：
 
 ```sh
 ckc --version --verbose

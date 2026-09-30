@@ -31,7 +31,8 @@ compares checked-in CalcKernel, C++, Rust, JavaScript, Java, and NumPy kernels o
 the same deterministic inputs. Its runner verifies output hashes before timing
 and records source hashes, tool versions, flags, sample order, and raw
 measurements. Run it from a fresh compiler checkout using the dependencies
-listed in that benchmark's README.
+listed in that benchmark's README. Those results are not a same-target WebAssembly
+comparison and do not establish Clang/Rust WASM parity.
 
 ## Sampling protocol
 
@@ -217,7 +218,13 @@ older schema-1 baseline; its profile digest and allowed features differ.
 
 CK emission, module compilation,
 instantiation, warm-up, steady kernel calls, and host preparation/readback are
-separate observations. `--emission-samples` repeats compiler emission and keeps
+separate observations. `kernel_ns` is the Node-side invocation phase, not a
+hardware-only instruction counter. In `pricing_one_calls`, it includes the host
+loop, scalar argument loads/stores, and one JS-to-WASM crossing per row; in
+`pricing_batch_call`, it includes one export crossing per workload and the CK
+loop over its rows. `host_preparation_ns` and `readback_ns` are reported
+separately, while `round_end_to_end_ns` includes all three phases on the warmed
+instance. `--emission-samples` repeats compiler emission and keeps
 each raw duration; the compatibility `ck_emission` field is their median. The
 artifact record includes total bytes, section payload bytes, code bytes,
 function count, and local count so direct binary emission can be assessed
@@ -228,8 +235,30 @@ short and long ranges plus overlap and trapping fallbacks; the batch case
 reports logical rows and actual JS-to-Wasm crossings separately from the
 runner's `--batch` repetition count.
 
+The current runner emits and measures CalcKernel WASM only; it does not build
+Clang or Rust WASM oracle channels. Native Clang/Rust gates and historical Native
+reports, including old compiler replays, therefore cannot be cited as evidence
+that CK is at parity with either compiler on WASM. No numeric-kernel Clang/Rust
+WASM parity result is established by this runner. A meaningful comparison must
+use the same algorithm and input domain, precision and strict floating-point
+semantics, valid memory and `noalias` preconditions, SIMD feature envelope,
+runtime, and timer boundary for each implementation. Compare kernel execution,
+host preparation/readback, and process or browser startup as separate quantities;
+do not combine a warm CK kernel sample with a competitor's cold end-to-end time.
+
+`baseline` is the default portable WASM profile and emits no SIMD. The explicit
+`--wasm-features simd128` profile is opt-in and adds only the validated SIMD128
+shapes documented in the [WASM ABI](../abi/wasm.md). It preserves strict `f64`
+evaluation order and rounding; it does not enable Relaxed SIMD, fast math, FMA,
+or reassociation. WASM still has an unchecked memory/overflow ABI: checked bounds
+and overflow modes are rejected. Hosts must supply valid ranges and meet every
+source `noalias` contract. Thus “strict” floating-point behavior does not imply
+checked pointer bounds, and baseline versus simd128 remains an explicitly
+identified profile comparison.
+
 Module compilation is the first compile of each artifact
-in that Node process; it is not a browser cold-start measurement. The per-round
+in that Node process, reported once per artifact; it is not a browser cold-start
+measurement and does not include fetching the module or starting a browser. The per-round
 end-to-end sample covers preparation,
 calls, and readback on an already instantiated module; it excludes module
 compilation, instantiation, and memory growth. Reuse identical options when
@@ -237,13 +266,16 @@ comparing compiler revisions, and keep the full reports; a single local run
 does not establish a portable speedup or a release threshold. The current
 runtime channel is Node/V8, so its results must be labeled accordingly.
 
-One local array-map comparison on Apple M5 Max with Node 24.14.0 used
+One historical local array-map comparison on Apple M5 Max with Node 24.14.0 used
 preallocated `Int32Array`/`Float64Array` inputs and outputs, O3 `simd128` Wasm,
-and the same JavaScript map loops. With JS elapsed time set to 1.0, the measured
-Wasm speedups at 4,096, 16,384, and 65,536 elements were 3.09x, 5.95x, and
-6.01x for `i32`, and 2.22x, 2.79x, and 2.79x for `f64`. These are local hot-kernel
-observations; they exclude compilation, instantiation, and data preparation,
-and do not predict other algorithms, machines, or runtimes.
+and equivalent JavaScript map loops. It compares CK WASM with JavaScript only;
+it is not a Clang/Rust comparison or evidence of general WASM parity. With JS
+elapsed time set to 1.0, the measured Wasm speedups at 4,096, 16,384, and 65,536
+elements were 3.09x, 5.95x, and 6.01x for `i32`, and 2.22x, 2.79x, and 2.79x for
+`f64`. These are local hot-kernel observations; they exclude compilation,
+instantiation, and data preparation, and do not predict other algorithms,
+machines, or runtimes. Keep this historical observation labeled separately from
+current compiler builds and reproducible reports.
 
 PGO and bounded multiversioning shipped in 0.13 and remain subject to these
 gates in 0.15. Offline Auto-Tuning is deferred. The local WebAssembly map

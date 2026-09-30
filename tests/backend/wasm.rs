@@ -1447,6 +1447,46 @@ fn wasm_backend_should_return_internal_slices_as_two_values() {
 }
 
 #[test]
+fn wasm_o0_and_o3_should_preserve_slice_and_struct_field_outputs() {
+    let source = r#"
+      struct Item {
+        price: i64;
+        quantity: i32;
+      }
+
+      fn unused_by_value(item: Item) -> i64 {
+        return item.price;
+      }
+
+      export fn first(values: slice<i32>) -> i32 {
+        return values[0];
+      }
+
+      export fn item_price(items: ptr<Item>, index: i32) -> i64 {
+        return items[index].price;
+      }
+    "#;
+
+    for opt_level in [0, 3] {
+        let wat = emit_wat(source, opt_level);
+        assert!(wat.contains("(func $first (export \"first\")"), "{wat}");
+        assert!(wat.contains("(param $values_data i32)"), "{wat}");
+        assert!(wat.contains("(param $values_len i32)"), "{wat}");
+        assert!(
+            wat.contains("(func $item_price (export \"item_price\")"),
+            "{wat}"
+        );
+        assert!(!wat.contains("$unused_by_value"), "{wat}");
+        assert!(wat.contains("i64.load offset=0 align=8"), "{wat}");
+
+        let wasm = emit_wasm(source, opt_level);
+        wasmparser::Validator::new_with_features(wasm_features(KirWasmFeatures::Baseline))
+            .validate_all(&wasm)
+            .unwrap_or_else(|error| panic!("O{opt_level} binary validation failed: {error}"));
+    }
+}
+
+#[test]
 fn wasm_backend_should_run_slice_index_subslice_and_struct_elements_at_all_levels() {
     if !node_available() {
         return;

@@ -358,7 +358,7 @@ impl KirTargetProfile {
                     KirCpuIdentity::NotApplicable,
                     BTreeSet::from([64, 128]),
                     BTreeSet::from([KirLaneType::F64, KirLaneType::I32, KirLaneType::U32]),
-                    1,
+                    4,
                     costs,
                     None,
                     None,
@@ -948,7 +948,8 @@ fn wasm_simd128_operation_cost(key: &KirCostKey) -> Option<u32> {
         {
             // A Wasm horizontal fold costs four lane extracts, three modular
             // operations to combine them, and one operation with the carried
-            // scalar accumulator.
+            // scalar accumulator. Persistent modular-add loops charge this
+            // fold once at exit and use vector Add for each loop chunk.
             Some(8)
         }
         KirProfileOperation::RuntimePredicate
@@ -1296,10 +1297,10 @@ mod tests {
         let profile = KirTargetProfile::webassembly_with_features(KirWasmFeatures::Simd128);
         assert_eq!(
             profile.digest_hex(),
-            "7126fe09c676898d2fc2d462ab8232d2bd8cde1fb3201aa111b9241b54800f85"
+            "f2be1e83bb838f8434708d4f0bb331dea6c71e7e2445abb9f5e4daf909859b3c"
         );
         assert!(profile.vector_operations_enabled());
-        assert_eq!(profile.maximum_interleave_factor(), 1);
+        assert_eq!(profile.maximum_interleave_factor(), 4);
         assert!(profile.supports_vector_shape(KirLaneType::F64, 2));
         assert!(profile.supports_vector_shape(KirLaneType::I32, 4));
         assert!(profile.supports_vector_shape(KirLaneType::U32, 4));

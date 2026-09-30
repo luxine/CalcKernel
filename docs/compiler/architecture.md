@@ -92,8 +92,8 @@ retained. This lowering creates no new safety facts or proof authority. A
 backend-private final instruction module records the selected control flow,
 ordered locals, typed immediates, and memory operations once. The WAT printer
 and direct binary encoder consume that module; the binary encoder does not
-parse WAT. O3 late placement operates on its typed instructions within the
-existing scalar-only safety envelope. Both sinks start from the same
+parse WAT. O3 late placement handles supported scalar and `v128` stack effects
+on these typed instructions while preserving side-effect and trap order. Both sinks start from the same
 exported-root artifact preparation. The binary
 size policy omits the name section, deduplicates identical signatures, and
 emits one deterministic target-metadata section. There is no separate `-Os` or
