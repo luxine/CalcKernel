@@ -312,7 +312,7 @@ fn stencil_vector_should_materialize_and_independently_verify_ten_memory_groups(
 }
 
 #[test]
-fn stencil_vector_runtime_should_preserve_strict_bits_tails_and_trap_prefixes() {
+fn stencil_vector_runtime_should_preserve_nan_semantics_strict_bits_and_trap_prefixes() {
     if !crate::support::command::node_available() {
         return;
     }
@@ -369,16 +369,59 @@ fn stencil_vector_runtime_should_preserve_strict_bits_tails_and_trap_prefixes() 
                 if(failure==='interior')out=raw.length-8*(width+3);
                 if(failure==='right')out=raw.length-8*(2*width-1);
                 if(failure==='read')input=raw.length-8*(3*width-1);
+                const initial=Buffer.from(raw);
                 let trapped=false;try{w.stencil(input,logical,out,logical,width,height)}catch(e){assert(e instanceof WebAssembly.RuntimeError);trapped=true;}
-                return{trapped,memory:Buffer.from(raw).toString('hex')};
+                return{trapped,initial,bytes:Buffer.from(raw)};
+            }
+            function arithmeticOutputStarts(width,height,out,memoryLength){
+                const starts=new Set();
+                for(let row=start;row<height;row++){
+                    const first=row===0,last=row+1===height,base=Math.imul(row,width)>>>0;
+                    for(let col=0;col<width;col++){
+                        if(first||col===0||last||col+1===width)continue;
+                        const index=(base+col)>>>0,offset=(out+Math.imul(index,8))>>>0;
+                        if(offset+8<=memoryLength)starts.add(offset);
+                    }
+                }
+                return starts;
+            }
+            function compare(actual,expected,details,allowNaN){
+                assert.equal(actual.trapped,expected.trapped,`${details.label}: trap status differs`);
+                assert(actual.initial.equals(expected.initial),`${details.label}: initial memory differs`);
+                if(!allowNaN){assert(actual.bytes.equals(expected.bytes),`${details}: exact memory differs`);return;}
+                const initialView=new DataView(expected.initial.buffer,expected.initial.byteOffset,expected.initial.byteLength);
+                const expectedView=new DataView(expected.bytes.buffer,expected.bytes.byteOffset,expected.bytes.byteLength);
+                const actualView=new DataView(actual.bytes.buffer,actual.bytes.byteOffset,actual.bytes.byteLength);
+                const outputStarts=arithmeticOutputStarts(details.width,details.height,details.out,actual.bytes.length);
+                for(let offset=0;offset<actual.bytes.length;offset+=8){
+                    if(actual.bytes.subarray(offset,offset+8).equals(expected.bytes.subarray(offset,offset+8)))continue;
+                    const expectedBits=expectedView.getBigUint64(offset,true),actualBits=actualView.getBigUint64(offset,true);
+                    const quietNaNOutput=outputStarts.has(offset)
+                        && Number.isFinite(initialView.getFloat64(offset,true))
+                        && Number.isNaN(expectedView.getFloat64(offset,true))
+                        && Number.isNaN(actualView.getFloat64(offset,true))
+                        && (expectedBits&0x0008000000000000n)!==0n
+                        && (actualBits&0x0008000000000000n)!==0n;
+                    assert(quietNaNOutput,`${details.label}: unexpected memory difference at byte ${offset}`);
+                }
             }
             const cases=start<2?Array.from({length:20},(_,width)=>Array.from({length:7},(_,height)=>[width,height])).flat():[5,6,7,8,9,16].map(width=>[width,start+2]);
             for(const [width,height]of cases)for(const logical of[0,256])for(const finite of[false,true]){
-                for(const actual of instances.slice(1)){assert.deepEqual(run(actual,width,height,logical,null,finite),run(instances[0],width,height,logical,null,finite));checks++;}
+                const expected=run(instances[0],width,height,logical,null,finite);
+                for(let variant=1;variant<instances.length;variant++){
+                    const actual=run(instances[variant],width,height,logical,null,finite);
+                    compare(actual,expected,{label:`start=${start} width=${width} height=${height} logical=${logical} finite=${finite} variant=${variant}`,width,height,out:8192},!finite);
+                    checks++;
+                }
             }
             if(start===1)for(const failure of['left','interior','right','read'])for(const width of[7,8,9,16]){
                 const expected=run(instances[0],width,3,256,failure,true);assert(expected.trapped,failure);
-                for(const actual of instances.slice(1)){assert.deepEqual(run(actual,width,3,256,failure,true),expected);checks++;}
+                const out=failure==='left'?expected.initial.length-8*width:failure==='interior'?expected.initial.length-8*(width+3):failure==='right'?expected.initial.length-8*(2*width-1):8192;
+                for(let variant=1;variant<instances.length;variant++){
+                    const actual=run(instances[variant],width,3,256,failure,true);
+                    compare(actual,expected,{label:`start=${start} width=${width} height=3 logical=256 failure=${failure} variant=${variant}`,width,height:3,out},false);
+                    checks++;
+                }
             }
             console.log(JSON.stringify({checks,start}));
         "#;
