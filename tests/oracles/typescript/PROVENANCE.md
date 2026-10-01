@@ -8,14 +8,18 @@ release archives.
 - Source tree: `445743ef4d270ba7a26a5402243ce0bb606fb44b`
 - Declared license: MIT (`package.json`)
 
-The snapshot contains the original `src/`, `package.json`, `pnpm-lock.yaml`,
-`tsconfig.json`, and only the CK example/benchmark fixtures exercised by the
-Rust differential suites. Those files were copied byte-for-byte from the
-detached origin commit. `SOURCE_MANIFEST.sha256` records every included source,
-configuration, lock, and fixture byte sequence.
+The original `src/`, fixtures, and `tsconfig.json` were copied byte-for-byte
+from the detached origin commit. `package.json` and `pnpm-lock.yaml` have since
+received dependency-only security maintenance in reviewed public PR #5
+(`cd5cb14b7362ea6b1de3b0de979ec58e4a8ff242`): Vitest was updated from 3.2.6 to
+4.1.11, with no semantic oracle changes. `SOURCE_MANIFEST.sha256` records every
+included source, configuration, lock, and fixture byte sequence.
 
 The quality job verifies the source manifest, installs the lockfile exactly,
 builds the oracle locally, and then runs the existing live C/WASM/CLI/fixture
 differential gates. Generated `dist/` and dependency directories remain ignored.
-Changing the snapshot requires a reviewed origin commit, refreshed tree identity
-and source manifest, and a full rerun of the differential gates.
+Dependency maintenance requires a reviewed maintenance commit, refreshed
+source manifest, complete diff review, and a full rerun of the differential
+gates. Replacing the source or fixture snapshot requires a reviewed origin
+commit, refreshed source tree identity and source manifest, and a full rerun of
+the differential gates.
