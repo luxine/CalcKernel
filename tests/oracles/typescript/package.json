@@ -49,6 +49,11 @@
   "engines": {
     "node": ">=20"
   },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.28.1"
+    }
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.8.0",
