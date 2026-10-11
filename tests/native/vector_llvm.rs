@@ -484,6 +484,69 @@ fn aarch64_object_contract_requires_packed_integer_add() {
     }
 }
 
+fn has_llvm_fast_math_flags(llvm_ir: &str) -> bool {
+    const FLAGS: [&str; 8] = [
+        "fast", "nnan", "ninf", "nsz", "arcp", "contract", "afn", "reassoc",
+    ];
+    const FP_OPS: [&str; 16] = [
+        "fneg", "fadd", "fsub", "fmul", "fdiv", "frem", "fcmp", "fptrunc", "fpext", "uitofp",
+        "sitofp", "phi", "select", "call", "invoke", "callbr",
+    ];
+    llvm_ir.lines().any(|line| {
+        let instruction = line
+            .split_once(';')
+            .map_or(line, |(instruction, _)| instruction)
+            .trim();
+        if instruction.is_empty() || instruction.starts_with('!') {
+            return false;
+        }
+
+        let instruction = instruction
+            .split_once('=')
+            .map_or(instruction, |(_, instruction)| instruction.trim());
+        let mut tokens = instruction.split_whitespace();
+        while matches!(tokens.clone().next(), Some("tail" | "musttail" | "notail")) {
+            tokens.next();
+        }
+        let Some(opcode) = tokens.next() else {
+            return false;
+        };
+        FP_OPS.contains(&opcode) && tokens.next().is_some_and(|token| FLAGS.contains(&token))
+    })
+}
+
+#[test]
+fn strict_scalar_llvm_contract_rejects_fast_math_flags() {
+    assert!(!has_llvm_fast_math_flags(
+        "%negated = fneg double %value\n%quotient = fdiv double %negated, %divisor\n"
+    ));
+    assert!(!has_llvm_fast_math_flags(
+        "%fast_value = fdiv double %left, %right\nret double %fast_value\n"
+    ));
+    let metadata_and_comment_only = concat!(
+        "%negated = fneg double %value\n",
+        "%quotient = fdiv double %negated, %divisor ; fast nnan ninf nsz arcp contract afn reassoc\n",
+        "!0 = !{!\"no fast math nnan ninf nsz arcp contract afn reassoc\"}\n",
+    );
+    assert!(
+        !has_llvm_fast_math_flags(metadata_and_comment_only),
+        "metadata and comments must not be treated as instruction flags"
+    );
+    for flag in [
+        "fast", "nnan", "ninf", "nsz", "arcp", "contract", "afn", "reassoc",
+    ] {
+        for llvm in [
+            format!("%negated = fneg {flag} double %value\n"),
+            format!("%quotient = fdiv {flag} double %left, %right\n"),
+        ] {
+            assert!(
+                has_llvm_fast_math_flags(&llvm),
+                "failed to recognize LLVM fast-math flag {flag}: {llvm}"
+            );
+        }
+    }
+}
+
 #[test]
 fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host() {
     let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
@@ -506,7 +569,7 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
             bounds_mode: KirBoundsMode::Unchecked,
             sanitizer_mode: KirSanitizerMode::Disabled,
         },
-        profile,
+        profile.clone(),
     )
     .expect("loop SIMD KIR");
     let contracts =
@@ -536,19 +599,39 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
     );
     let accepted = accepted_plans[0];
     let selected_plan = accepted.stable_text();
+    println!(
+        "loop SIMD target profile: target={:?}, cpu={:?}, producer={:?}, consumer={:?}, layout={:?}, digest={}, max_interleave={}",
+        profile.target_identity(),
+        profile.cpu_identity(),
+        profile.producer_identity(),
+        profile.consumer(),
+        profile.layout(),
+        profile.digest_hex(),
+        profile.maximum_interleave_factor(),
+    );
     println!("selected loop SIMD plan: {selected_plan}");
     assert!(
-        accepted.vf > 1,
-        "the accepted loop-vector plan must have a non-scalar VF: {selected_plan}"
+        matches!(accepted.vf, 2 | 4 | 8 | 16)
+            && profile.supports_vector_shape(KirLaneType::I32, accepted.vf),
+        "the accepted VF must be in the closed frontier and legal for the target profile: {selected_plan}"
     );
-    #[cfg(target_arch = "x86_64")]
-    {
-        assert_eq!(
-            (accepted.vf, accepted.uf),
-            (4, 4),
-            "x86 streaming map must retain four independent vector chains"
-        );
-    }
+    assert!(
+        matches!(accepted.uf, 1 | 2 | 4) && accepted.uf <= profile.maximum_interleave_factor(),
+        "the accepted UF must be in the closed frontier and legal for the target profile: {selected_plan}"
+    );
+    assert!(
+        matches!(
+            &accepted.candidate,
+            calckernel::CandidateKey::LoopFrontier {
+                kind: calckernel::LoopCandidateKind::LoopSimd,
+                variant: calckernel::LoopCandidateVariant::Scalar,
+                vf,
+                uf,
+                ..
+            } if *vf == accepted.vf && *uf == accepted.uf
+        ),
+        "the accepted explanation must identify its matching scalar Loop SIMD candidate: {selected_plan}"
+    );
     let kir_text = print_kir_module(result.artifact.as_ref().expect("vector artifact"));
     for spelling in [
         "loop_simd_body",
@@ -766,53 +849,173 @@ fn vector_loop_simd_strict_f64_unary_divide_should_lower_without_reassociation()
             bounds_mode: KirBoundsMode::Unchecked,
             sanitizer_mode: KirSanitizerMode::Disabled,
         },
-        profile,
+        profile.clone(),
     )
     .expect("strict f64 unary/divide SIMD KIR");
     let contracts = import_contract_facts(&kir, &checked.checked_program, 0)
         .expect("strict f64 unary/divide SIMD contracts");
     let result = run_kir_pass_pipeline(kir, KirOptimizationLevel::O3, Some(&contracts));
-    assert!(result.errors.is_empty(), "{:?}", result.errors);
     if cfg!(target_arch = "x86_64") {
+        println!(
+            "strict divide target profile: target={:?}, cpu={:?}, producer={:?}, consumer={:?}, layout={:?}, digest={}, max_interleave={}",
+            profile.target_identity(),
+            profile.cpu_identity(),
+            profile.producer_identity(),
+            profile.consumer(),
+            profile.layout(),
+            profile.digest_hex(),
+            profile.maximum_interleave_factor(),
+        );
+        println!("strict divide pipeline errors: {:#?}", result.errors);
+        println!(
+            "strict divide analysis fallbacks: {:#?}",
+            result.analysis_fallbacks
+        );
+        println!(
+            "strict divide vector explanations: {:#?}",
+            result.vector_explanations
+        );
+        println!(
+            "strict divide optimizer audit attempts: {:#?}",
+            result.audit.attempts()
+        );
+    }
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let artifact = result
+        .artifact
+        .as_ref()
+        .expect("strict f64 unary/divide optimized KIR artifact");
+    let function_id = artifact
+        .functions
+        .iter()
+        .find(|function| function.name == "map_f64_div")
+        .expect("strict f64 unary/divide function")
+        .id;
+    if cfg!(target_arch = "x86_64") {
+        let diagnostics = format!(
+            "fallbacks={:#?}; explanations={:#?}; audit={:#?}",
+            result.analysis_fallbacks,
+            result.vector_explanations,
+            result.audit.attempts()
+        );
         assert_eq!(
             result.stats.vectorized_loops, 0,
             "{:?}",
             result.analysis_fallbacks
         );
-        assert!(result.analysis_fallbacks.iter().any(|fallback| {
-            fallback.pass == "loop-simd"
-                && fallback.reason == "vector-profitability-threshold-not-met"
-        }));
-        let kir = print_kir_module(
-            result
-                .artifact
-                .as_ref()
-                .expect("scalar strict f64 fallback artifact"),
+        let loop_simd_fallbacks = result
+            .analysis_fallbacks
+            .iter()
+            .filter(|fallback| fallback.function == function_id && fallback.pass == "loop-simd")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            loop_simd_fallbacks.len(),
+            1,
+            "expected one same-function Loop SIMD fallback; {diagnostics}"
         );
+        assert_eq!(
+            loop_simd_fallbacks[0].reason, "vector-chunk-benefit-not-met",
+            "strict divide scalar fallback must come from the chunk-benefit cost gate; {diagnostics}"
+        );
+
+        let loop_simd_attempts = result
+            .audit
+            .attempts()
+            .iter()
+            .filter(|attempt| {
+                matches!(
+                    &attempt.key,
+                    calckernel::CandidateKey::LoopFrontier {
+                        function,
+                        kind: calckernel::LoopCandidateKind::LoopSimd,
+                        ..
+                    } if *function == function_id
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !loop_simd_attempts.is_empty(),
+            "expected same-function candidate-keyed Loop SIMD audit attempts; {diagnostics}"
+        );
+        assert!(
+            loop_simd_attempts.iter().all(|attempt| {
+                attempt.disposition != calckernel::CandidateDisposition::Accepted
+            }),
+            "the strict divide fallback must not have an accepted Loop SIMD audit plan: {loop_simd_attempts:#?}"
+        );
+        assert!(
+            loop_simd_attempts.iter().any(|attempt| {
+                attempt.disposition == calckernel::CandidateDisposition::Rejected
+                    && attempt.reason == "insufficient-benefit"
+            }),
+            "expected rejected same-function Loop SIMD candidates classified as insufficient-benefit; {diagnostics}"
+        );
+        assert!(
+            result.vector_explanations.iter().all(|explanation| {
+                explanation.disposition != calckernel::CandidateDisposition::Accepted
+                    || !matches!(
+                        &explanation.candidate,
+                        calckernel::CandidateKey::LoopFrontier {
+                            function,
+                            kind: calckernel::LoopCandidateKind::LoopSimd,
+                            ..
+                        } if *function == function_id
+                    )
+            }),
+            "strict divide scalar KIR unexpectedly has an accepted Loop SIMD explanation; {diagnostics}"
+        );
+
+        let kir = print_kir_module(artifact);
         assert!(!kir.contains("vector_divide"), "{kir}");
-        return;
+    } else {
+        assert_eq!(
+            result.stats.vectorized_loops, 1,
+            "{:?}",
+            result.analysis_fallbacks
+        );
     }
-    assert_eq!(
-        result.stats.vectorized_loops, 1,
-        "{:?}",
-        result.analysis_fallbacks
-    );
     let context = NativeContext::new().expect("context");
-    let llvm = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
+    let verified = lower_native_kir_module(&context, &target, &result, &EmitLlvmOptions::default())
         .expect("lower strict f64 unary/divide vector loop")
         .verify()
-        .expect("verify strict f64 unary/divide vector loop")
-        .to_ir_string()
-        .expect("strict f64 unary/divide LLVM IR");
-    for operation in ["fneg <2 x double>", "fdiv <2 x double>"] {
-        let line = llvm
-            .lines()
-            .find(|line| line.contains(operation))
-            .unwrap_or_else(|| panic!("missing {operation}:\n{llvm}"));
+        .expect("verify strict f64 unary/divide vector loop");
+    let llvm = if cfg!(target_arch = "x86_64") {
+        verified
+            .audit()
+            .expect("audit strict f64 scalar fallback facts")
+            .to_ir_string()
+            .expect("strict f64 audited scalar LLVM IR")
+    } else {
+        verified
+            .to_ir_string()
+            .expect("strict f64 unary/divide LLVM IR")
+    };
+    if cfg!(target_arch = "x86_64") {
+        for operation in ["fneg double", "fdiv double"] {
+            assert!(
+                llvm.lines().any(|line| line.contains(operation)),
+                "scalar strict divide lowering is missing {operation}:\n{llvm}"
+            );
+        }
         assert!(
-            !line.contains(" fast ") && !line.contains("contract"),
-            "{line}"
+            !llvm.contains("fdiv <"),
+            "scalar strict divide lowering unexpectedly contains vector fdiv:\n{llvm}"
         );
+        assert!(
+            !has_llvm_fast_math_flags(&llvm),
+            "scalar strict divide lowering contains a floating-point fast-math flag:\n{llvm}"
+        );
+    } else {
+        for operation in ["fneg <2 x double>", "fdiv <2 x double>"] {
+            let line = llvm
+                .lines()
+                .find(|line| line.contains(operation))
+                .unwrap_or_else(|| panic!("missing {operation}:\n{llvm}"));
+            assert!(
+                !line.contains(" fast ") && !line.contains("contract"),
+                "{line}"
+            );
+        }
     }
 }
 
