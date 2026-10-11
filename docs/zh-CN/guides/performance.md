@@ -8,7 +8,7 @@ module/code size、function/local count、emission 与首次 module compilation 
 Source-shape variants 和应拒绝的 dependence/alias case 补充 timing evidence。
 Analysis 成功和候选收益不等于独立检查后提交的优化。
 
-CalcKernel 0.15 保留 fail-closed performance report schema 8。正式 release 必须具有固定
+CalcKernel 0.16 保留 fail-closed performance report schema 8。正式 release 必须具有固定
 x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
 Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
 hardware/capability manifest、compiler/oracle/source/recipe digest、training/held-out corpus、
@@ -228,6 +228,6 @@ Apple M5 Max 与 Node 24.14.0 上的一次历史本地数组映射比较，使�
 实例化和数据准备，也不能预测其他算法、机器或 runtime。请将这条历史观察与当前编译器版本和可复现
 report 分开标注。
 
-PGO 与受限 multiversioning 已在 0.13 交付，0.15 仍需通过这些原样保留的 gate。离线
+PGO 与受限 multiversioning 已在 0.13 交付，0.16 仍需通过这些原样保留的 gate。离线
 Auto-Tuning 延期。上述本地 WebAssembly map 观察结果与 Native release gate 分开。indirect-call
 promotion、scalable KIR 与 adaptive JIT PGO 仍是未来工作。

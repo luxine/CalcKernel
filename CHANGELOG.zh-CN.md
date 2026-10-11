@@ -2,6 +2,22 @@
 
 这里记录 CalcKernel 面向用户的重要变更。
 
+## 0.16.0 — 通用循环与向量化优化器
+
+0.16.0 扩展了 O3 对符合条件循环形态的优化，同时保持 CalcKernel 的源代码与 ABI 契约。
+不支持的情况继续使用标量路径。
+
+- 共享的 canonical-loop、affine memory-access 与 bounded dependence analysis 能发现比以往
+  固定循环形态更多的向量化候选。支持的 lowering 范围仍有界；这不是任意 affine 或控制流优化。
+- 候选选择综合 exact、proven-bounded、profile-estimated 或 unknown trip 信息、实际标量尾部、
+  目标成本与结构性代码增长。Profile estimate 可以影响收益判断，但不能建立合法性；每个生成的
+  候选都会经过独立检查。
+- 受支持的矩阵列与 normalization 路径复用经过检查的向量化机制。Stencil 合法性使用共享检查器，
+  但源码暴露仍限制在支持的 3x3 interior。其他不支持的访问形态和操作继续使用标量执行。
+- 保持严格浮点顺序、整数行为、checked failure 顺序、runtime guard 和标量回退。源语言语法、CLI、
+  public C/Native/Runtime/WebAssembly ABI、KIR v3 与 WebAssembly metadata schema 2 均未改变。
+  Native cache key 包含更新后的 optimizer identity，因此不同规则生成的旧缓存条目不会复用。
+
 ## 0.15.2 — WebAssembly 性能与正确性更新
 
 本补丁版本优化符合条件的 WebAssembly kernel，同时保持现有语言、CLI、公共 ABI、严格浮点

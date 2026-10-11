@@ -1,4 +1,4 @@
-# CalcKernel 0.15 Fact-Driven Optimizer
+# CalcKernel 0.16 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -78,11 +78,11 @@ CLI 将 opaque independent-check authority 保留到 emission，source-to-object
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。Vector release candidate 使用 cost schema 3、proof schema 2、
+budget 都进入 object/cache identity。0.16.0 development candidate 使用 cost schema 3、proof schema 2、
 budget schema 3；已发布的 0.15.2 使用 1/1/1。Cost identity 覆盖 candidate admission/ranking；proof identity 描述 legality
 evidence，budget identity 描述有界 analysis work。Cost result 不能授权未通过独立 legality check 的
 transformation。有限场景的聚合值使用 `u64` 饱和累加；`u128` 交叉乘法只保护比例比较，不能恢复已封顶的
-聚合值。因此极端情况下该 score 是封顶静态 cost 比例，不是精确百分比或实测 timing。0.15 的 C 与
+聚合值。因此极端情况下该 score 是封顶静态 cost 比例，不是精确百分比或实测 timing。0.16 的 C 与
 WebAssembly `baseline` profile 禁用 Vector KIR。
 WebAssembly 提供 `baseline` 和 `simd128` 两种 feature profile；`emit-wat`、`emit-wasm` 或
 `emit-kir --consumer wasm` 可通过 `--wasm-features baseline|simd128` 选择，默认 `baseline`。
@@ -158,7 +158,7 @@ memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价
 按实际 group/tail 计价并受 target group floor 限制，因此低于 runtime
 threshold 的 exact trip 仍可能合格；runtime candidate 的 threshold 则要求完整 tail 范围都满足同一
 闭合 target-cost policy。共享场景排序、fallback 和 growth charge 见通用循环模型。O3 aggregate
-growth ceiling 与 proposer/checker work budget 覆盖全部 0.15 speculative transform，包括被拒绝的
+growth ceiling 与 proposer/checker work budget 覆盖全部 0.16 speculative transform，包括被拒绝的
 alternative 与 clone。
 
 普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
@@ -270,7 +270,7 @@ Performance gate 在相同算法、safety mode、data、hardware、CPU policy �
 hand-written SIMD oracle，并 replay exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`。Correctness、optimization time、generation
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
-已在 0.13 交付且于 0.15 保留；离线 Auto-Tuning 继续延期。WebAssembly 性能指南中的观察结果来自
+已在 0.13 交付且于 0.16 保留；离线 Auto-Tuning 继续延期。WebAssembly 性能指南中的观察结果来自
 Apple M5 Max 上的本地 Node/V8 map kernel，不代表普遍的 Wasm 加速。indirect calls、scalable KIR
 与 adaptive JIT PGO 仍属未来。阈值不能成为弱化语义或
 使用 contract domain 外输入的理由。

@@ -151,7 +151,8 @@ facility。
 
 ## Identity、budgets 与限制
 
-已发布的 0.15.2 compiler 使用 vector cost/proof/budget identity 1/1/1；当前 candidate 使用 3/2/3，
+已发布的 0.15.2 compiler 使用 vector cost/proof/budget identity 1/1/1；
+0.16.0 development candidate 使用 3/2/3，
 其中 proof identity 相较正式发布版本也发生变化。Cost identity 描述 candidate admission/ranking，proof
 identity 描述 legality evidence，budget identity 描述有界 analysis work。Budget 包含 descriptor-root
 reconstruction；它使用 indexed worklist，并将建索引与每条已访问 edge 的工作计入

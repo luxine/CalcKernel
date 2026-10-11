@@ -1,4 +1,4 @@
-# CalcKernel 0.15 Fact-Driven Optimizer
+# CalcKernel 0.16 Fact-Driven Optimizer
 
 [简体中文](../zh-CN/compiler/optimizer.md)
 
@@ -99,7 +99,7 @@ consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
-The vector release candidate uses cost schema 3, proof schema 2, and budget
+The 0.16.0 development candidate uses cost schema 3, proof schema 2, and budget
 schema 3; published 0.15.2 used 1/1/1. The cost identity covers candidate
 admission/ranking; proof identity covers legality evidence, and the budget
 identity covers bounded analysis work. A cost result cannot authorize a
@@ -107,7 +107,7 @@ transformation that fails the independent legality checks. Finite-scenario
 aggregates saturate in `u64`; `u128` cross-products protect ratio comparisons
 only, so extreme scores are capped static-cost ratios rather than exact
 percentages or measured timings.
-C and WebAssembly `baseline` profiles disable Vector KIR in 0.15.
+C and WebAssembly `baseline` profiles disable Vector KIR in 0.16.
 For WebAssembly, the `--wasm-features baseline|simd128` option selects the
 target profile for WAT/WASM emission or `emit-kir --consumer wasm`, defaulting
 to `baseline`.
@@ -213,7 +213,7 @@ complete tail range meets that condition; exact trips use their actual group and
 tail counts, subject to the target group floor, so an exact trip below the runtime
 threshold can still qualify. See the generalized loop model for the shared
 scenario ranking, fallback and growth charges. The aggregate O3 growth ceiling
-and proposer/checker work budgets apply across all 0.15 speculative transforms,
+and proposer/checker work budgets apply across all 0.16 speculative transforms,
 including rejected alternatives and clones.
 
 Ordinary static O3 may inline a pure helper of at most 32 KIR instructions.
@@ -380,7 +380,7 @@ hand-written SIMD oracles, and replays exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`. Correctness, optimization time,
 generation overhead, artifact size, compiler archive size, and cache behavior
 have separate gates. PGO and bounded multiversioning shipped in 0.13 and remain
-supported in 0.15. Offline Auto-Tuning is still deferred. WebAssembly
+supported in 0.16. Offline Auto-Tuning is still deferred. WebAssembly
 observations in the performance guide cover local Node/V8 map kernels on one
 Apple M5 Max and do not establish a universal Wasm speedup. Indirect calls,
 scalable KIR, and adaptive JIT PGO remain future work.

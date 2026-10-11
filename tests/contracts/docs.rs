@@ -92,12 +92,12 @@ fn durable_docs_should_use_current_contract_wording() {
 }
 
 #[test]
-fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distribution() {
+fn docs_v0_16_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distribution() {
     let required_by_file = [
         (
             "docs/reference/language.md",
             &[
-                "CalcKernel 0.15",
+                "CalcKernel 0.16",
                 "fn main() -> void",
                 "fn main() -> i32",
                 "print_i32",
@@ -131,7 +131,7 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         (
             "docs/reference/mir.md",
             &[
-                "CalcKernel 0.15",
+                "CalcKernel 0.16",
                 "entry",
                 "runtime effect",
                 "print",
@@ -186,6 +186,7 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         (
             "docs/project/compatibility.md",
             &[
+                "0.16.x",
                 "0.15.x",
                 "0.14.x",
                 "0.12.0",
@@ -239,88 +240,100 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
     let current_titles = [
         (
             "docs/reference/language.md",
-            "# CalcKernel 0.15 Language Reference",
+            "# CalcKernel 0.16 Language Reference",
         ),
         (
             "docs/zh-CN/reference/language.md",
-            "# CalcKernel 0.15 语言参考",
+            "# CalcKernel 0.16 语言参考",
         ),
-        ("docs/reference/diagnostics.md", "# CK 0.15 Diagnostics"),
+        ("docs/reference/diagnostics.md", "# CK 0.16 Diagnostics"),
         (
             "docs/zh-CN/reference/diagnostics.md",
-            "# CK 0.15 Diagnostic",
+            "# CK 0.16 Diagnostic",
         ),
-        ("docs/reference/cli.md", "# `ckc` 0.15 CLI Reference"),
-        ("docs/zh-CN/reference/cli.md", "# `ckc` 0.15 CLI 参考"),
+        ("docs/reference/cli.md", "# `ckc` 0.16 CLI Reference"),
+        ("docs/zh-CN/reference/cli.md", "# `ckc` 0.16 CLI 参考"),
         (
             "docs/reference/mir.md",
-            "# CalcKernel 0.15 MIR and KIR Boundary",
+            "# CalcKernel 0.16 MIR and KIR Boundary",
         ),
         (
             "docs/zh-CN/reference/mir.md",
-            "# CalcKernel 0.15 MIR 与 KIR 边界",
+            "# CalcKernel 0.16 MIR 与 KIR 边界",
         ),
         (
             "docs/compiler/architecture.md",
-            "# CalcKernel 0.15 Compiler Architecture",
+            "# CalcKernel 0.16 Compiler Architecture",
         ),
         (
             "docs/zh-CN/compiler/architecture.md",
-            "# CalcKernel 0.15 编译器架构",
+            "# CalcKernel 0.16 编译器架构",
         ),
         (
             "docs/compiler/optimizer.md",
-            "# CalcKernel 0.15 Fact-Driven Optimizer",
+            "# CalcKernel 0.16 Fact-Driven Optimizer",
         ),
         (
             "docs/zh-CN/compiler/optimizer.md",
-            "# CalcKernel 0.15 Fact-Driven Optimizer",
+            "# CalcKernel 0.16 Fact-Driven Optimizer",
         ),
         (
             "docs/guides/getting-started.md",
-            "# Getting Started with CalcKernel 0.15",
+            "# Getting Started with CalcKernel 0.16",
         ),
         (
             "docs/zh-CN/guides/getting-started.md",
-            "# CalcKernel 0.15 入门",
+            "# CalcKernel 0.16 入门",
         ),
-        ("docs/abi/c.md", "# CalcKernel 0.15 C Source ABI"),
-        ("docs/zh-CN/abi/c.md", "# CalcKernel 0.15 C Source ABI"),
+        ("docs/abi/c.md", "# CalcKernel 0.16 C Source ABI"),
+        ("docs/zh-CN/abi/c.md", "# CalcKernel 0.16 C Source ABI"),
         (
             "docs/abi/llvm.md",
-            "# CalcKernel 0.15 Native LLVM and C ABI",
+            "# CalcKernel 0.16 Native LLVM and C ABI",
         ),
         (
             "docs/zh-CN/abi/llvm.md",
-            "# CalcKernel 0.15 Native LLVM 与 C ABI",
+            "# CalcKernel 0.16 Native LLVM 与 C ABI",
         ),
         (
             "docs/abi/modes.md",
-            "# CalcKernel 0.15 Checked C and Native Modes",
+            "# CalcKernel 0.16 Checked C and Native Modes",
         ),
         (
             "docs/zh-CN/abi/modes.md",
-            "# CalcKernel 0.15 C 与 Native Checked Mode",
+            "# CalcKernel 0.16 C 与 Native Checked Mode",
         ),
-        ("docs/abi/wasm.md", "# CalcKernel 0.15 WebAssembly ABI"),
+        ("docs/abi/wasm.md", "# CalcKernel 0.16 WebAssembly ABI"),
         (
             "docs/zh-CN/abi/wasm.md",
-            "# CalcKernel 0.15 WebAssembly ABI",
+            "# CalcKernel 0.16 WebAssembly ABI",
         ),
         (
             "docs/project/release.md",
-            "# Native `ckc` 0.15 Release Policy",
+            "# Native `ckc` 0.16 Release Policy",
         ),
         (
             "docs/zh-CN/project/release.md",
-            "# 原生 `ckc` 0.15 发布策略",
+            "# 原生 `ckc` 0.16 发布策略",
         ),
     ];
     for (path, title) in current_titles {
         assert!(
             read(path).starts_with(title),
-            "{path} must identify the 0.15 contract"
+            "{path} must identify the 0.16 contract"
         );
+    }
+    for (path, title) in [
+        (
+            "docs/project/compatibility.md",
+            "# CalcKernel 0.16 Compatibility Policy",
+        ),
+        (
+            "docs/zh-CN/project/compatibility.md",
+            "# CalcKernel 0.16 兼容策略",
+        ),
+    ] {
+        assert!(read(path).starts_with(title), "{path} must identify 0.16.x");
     }
 
     for path in ["README.md", "README.zh-CN.md"] {
@@ -329,9 +342,14 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
             "{path} must identify stable 0.15.2"
         );
     }
+    assert!(read("README.md").contains("Development version: 0.16.0"));
+    assert!(read("README.md").contains("Latest published stable release: 0.15.2"));
+    assert!(read("README.zh-CN.md").contains("开发版本：0.16.0"));
+    assert!(read("README.zh-CN.md").contains("最新已发布稳定版：0.15.2"));
 
     for path in ["CHANGELOG.md", "CHANGELOG.zh-CN.md"] {
         let text = read(path);
+        assert!(text.contains("## 0.16.0"), "{path} must identify 0.16.0");
         assert!(text.contains("## 0.15.2"), "{path} must identify 0.15.2");
         assert!(
             text.contains("## 0.15.1"),
@@ -352,7 +370,9 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
         "docs/zh-CN/project/compatibility.md",
     ] {
         let text = read(path);
-        for required in ["0.15.x", "0.14.x", "0.13.0", "0.12.0", "0.11.0", "0.10.0"] {
+        for required in [
+            "0.16.x", "0.15.x", "0.14.x", "0.13.0", "0.12.0", "0.11.0", "0.10.0",
+        ] {
             assert!(
                 text.contains(required),
                 "{path} must retain {required} compatibility history"
@@ -392,7 +412,7 @@ fn docs_v0_15_should_preserve_language_cli_kir_optimizer_abi_runtime_and_distrib
 }
 
 #[test]
-fn docs_v0_15_should_describe_only_the_implemented_optimizer_boundary() {
+fn docs_v0_16_should_describe_only_the_implemented_optimizer_boundary() {
     for path in [
         "docs/compiler/architecture.md",
         "docs/zh-CN/compiler/architecture.md",
@@ -424,7 +444,7 @@ fn docs_v0_15_should_describe_only_the_implemented_optimizer_boundary() {
 }
 
 #[test]
-fn docs_v0_15_should_retain_pgo_multiversion_security_and_future_boundaries() {
+fn docs_v0_16_should_retain_pgo_multiversion_security_and_future_boundaries() {
     for path in ["docs/reference/cli.md", "docs/zh-CN/reference/cli.md"] {
         let text = read(path);
         for required in [
@@ -528,7 +548,7 @@ fn docs_v0_14_should_identify_the_real_pgo_fix_and_deferred_tuning() {
 }
 
 #[test]
-fn docs_v0_15_should_define_canonical_slice_and_mode_contracts() {
+fn docs_v0_16_should_define_canonical_slice_and_mode_contracts() {
     let language = read("docs/reference/language.md");
     assert!(language.contains(
         "C and Native support optional `--bounds checked` guards for slice indexing and"

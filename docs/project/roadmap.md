@@ -3,7 +3,7 @@
 [简体中文](../zh-CN/project/roadmap.md)
 
 This document is non-normative and lists only undelivered possibilities. It does
-not override the [0.15 compatibility policy](compatibility.md).
+not override the [0.16 compatibility policy](compatibility.md).
 
 - Revisit search-based offline Auto-Tuning only through a separately reviewed
   future contract. It is not included in retained 0.13 PGO or the ordinary

@@ -4,6 +4,9 @@
 
 对版本 `X.Y.Z`：
 
+当前 `0.16.0` 尚未发布，仍是 release candidate；`0.15.2` 是最新已发布稳定版。尚未实际完成的发布项目
+保持未勾选；准备阶段的检查不能满足或替代下方的精确 SHA CI、release preview、tag、archive 与正式发布项目。
+
 - [ ] `Cargo.toml`、`Cargo.lock`、README 与双语 changelog 都声明 `X.Y.Z`。
 - [ ] Language、diagnostic、CLI、semantic MIR/KIR boundary、optimizer、ABI、compatibility、release docs 与实现一致。
 - [ ] 英文/简体中文文档树镜像，所有 local link 可解析。

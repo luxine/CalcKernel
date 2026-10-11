@@ -1,4 +1,4 @@
-# CalcKernel 0.15 WebAssembly ABI
+# CalcKernel 0.16 WebAssembly ABI
 
 [简体中文](../zh-CN/abi/wasm.md)
 
@@ -57,8 +57,8 @@ required by the slice return ABI, and `BULK_MEMORY`. The `simd128` allowlist
 adds `SIMD128` to that set. The backend rejects `RELAXED_SIMD`, threads,
 Memory64, and every undeclared proposal; profile selection does not relax
 instruction validation. Hosts should read and validate `ck.wasm.target`, then
-confirm runtime support for the named profile and its v0.15 capability set
-before instantiating a module. A host that uses the standard WebAssembly API
+confirm runtime support for the named profile and its v0.15 capability set,
+retained in 0.16, before instantiating a module. A host that uses the standard WebAssembly API
 can compile first, inspect `WebAssembly.Module.customSections`, and perform
 this check before instantiation.
 
@@ -142,5 +142,5 @@ fast path; if the predicate fails, execution takes the original source path,
 which retains its normal WebAssembly trap behavior. The C/Native checked
 status ABI is not part of this ABI.
 
-WebAssembly has no 0.15 runtime printing. A reachable print from an exported
+WebAssembly has no 0.16 runtime printing. A reachable print from an exported
 root is rejected. An internal `main` does not create a WASI or browser entry.

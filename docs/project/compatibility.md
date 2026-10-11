@@ -1,10 +1,12 @@
-# CalcKernel 0.15 Compatibility Policy
+# CalcKernel 0.16 Compatibility Policy
 
 [简体中文](../zh-CN/project/compatibility.md)
 
-This document is the normative compatibility authority for `0.15.x`.
-The published `0.14.x` patch line retains its historical compatibility boundary;
-the migration below describes the 0.15 changes.
+This document is the normative compatibility authority for `0.16.x`. Version
+`0.16.0` is an unpublished development candidate; `0.15.2` remains the latest
+published stable release. The published `0.14.x` and `0.15.x` lines retain their
+historical compatibility boundaries, and the migrations below preserve those
+contracts.
 
 The immutable `v0.15.0` tag records a compiler source snapshot, but its workflow
 did not create an official GitHub Release or publish archives. Version `0.15.1`
@@ -12,11 +14,17 @@ was the first published release in the 0.15 line. Version `0.15.2` carries
 forward the same compatibility contract and adds WebAssembly performance and
 correctness improvements.
 
-Patch releases preserve accepted 0.15.0 source and observable semantics, stable
-diagnostic identifiers/categories, documented CLI names/flags/defaults,
+The 0.15.x patch line preserved accepted 0.15.0 source and observable semantics,
+stable diagnostic identifiers/categories, documented CLI names/flags/defaults,
 stdout/stderr classes, semantic textual MIR, public C/WASM/Native C ABI shapes,
 checked first-error order, runtime diagnostic bytes/statuses, and the six
 release archive names plus checksum sidecars.
+
+Patch releases in the current 0.16.x line preserve accepted 0.16.0 source and
+observable semantics, stable diagnostic identifiers/categories, documented CLI
+names/flags/defaults, stdout/stderr classes, semantic textual MIR, public
+C/WASM/Native C ABI shapes, checked first-error order, runtime diagnostic
+bytes/statuses, and the six release archive names plus checksum sidecars.
 
 Patch releases may reject invalid input, improve diagnostic prose, add opt-in
 commands, fix code generation, and optimize when every promised semantic
@@ -30,6 +38,18 @@ for eligible O3 slice maps. It preserves CK observable semantics and the public
 WASM ABI; `baseline` remains the default profile without SIMD. Hosts choosing
 `simd128` must support that declared feature. Target-profile digests and
 generated module bytes are compiler-owned identities, not stable public bytes.
+
+## 0.15.2 to 0.16.0
+
+- The candidate changes O3 output for eligible loop/vectorization candidates,
+  while preserving `.ck` grammar, observable semantics, strict floating-point
+  order, integer behavior, checked failure order, and scalar fallback. The CLI,
+  semantic MIR, public C/Native/Runtime/WebAssembly ABIs, KIR v3 layout, and
+  `ck.wasm.target` metadata schema 2 remain unchanged.
+- The vector cost/proof/budget identities change from the published 0.15.2
+  compiler's `1/1/1` to `3/2/3`; the proof identity changes as well as cost and
+  budget. These identities are private cache inputs, so cached artifacts made
+  under different optimizer rules are not reused.
 
 ## 0.15.1 to 0.15.2
 

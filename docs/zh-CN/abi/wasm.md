@@ -1,4 +1,4 @@
-# CalcKernel 0.15 WebAssembly ABI
+# CalcKernel 0.16 WebAssembly ABI
 
 [English](../../abi/wasm.md)
 
@@ -42,7 +42,7 @@ JSON，schema 2，键按以下顺序排列：
 `BULK_MEMORY`。`simd128` allowlist 在此基础上增加 `SIMD128`。Backend 拒绝
 `RELAXED_SIMD`、threads、Memory64 以及所有未声明的 proposal；选择 profile 不会放宽
 instruction 验证。Host 应读取并验证 `ck.wasm.target`，再确认 runtime 支持该 profile 及其
-0.15 capability set，然后实例化 module。使用标准 WebAssembly API 的 host 可以先 compile、检查
+在 0.16 中保留的 0.15 capability set，然后实例化 module。使用标准 WebAssembly API 的 host 可以先 compile、检查
 `WebAssembly.Module.customSections`，再于实例化前完成检查。
 
 O3 下，符合条件的直接指针 `i32`/`u32` 复制循环和重复字节填充可能使用带 guard 的
@@ -95,5 +95,5 @@ WASM 只接受 `--overflow unchecked` 与 `--bounds unchecked`；任一 checked 
 不提供 checked 安全 mode，也不插入隐式 checked slice trap。O3 优化谓词可守护专用快路径；谓词失败时执行
 原源码路径，保留其正常 WebAssembly trap 行为。C/Native checked status ABI 不属于本 ABI。
 
-WebAssembly 0.15 没有 runtime print；export root 可达的 print 被拒绝。Internal `main`
+WebAssembly 0.16 没有 runtime print；export root 可达的 print 被拒绝。Internal `main`
 不会创建 WASI 或 browser entry。

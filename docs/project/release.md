@@ -1,9 +1,14 @@
-# Native `ckc` 0.15 Release Policy
+# Native `ckc` 0.16 Release Policy
 
 [简体中文](../zh-CN/project/release.md)
 
 CalcKernel releases the native `ckc` executable, source, and documentation. It
 does not publish a JavaScript wrapper or registry package.
+
+Version `0.16.0` is an unpublished development release candidate; `0.15.2`
+remains the latest published stable release. Candidate preparation does not
+publish a release or replace the exact-main-SHA, publishing-disabled preview,
+annotated-tag, archive, or post-tag verification requirements below.
 
 The immutable public `v0.15.0` tag records a compiler source snapshot, but it
 did not produce an official GitHub Release or compiler archives. Version

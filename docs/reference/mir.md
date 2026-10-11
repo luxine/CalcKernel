@@ -1,4 +1,4 @@
-# CalcKernel 0.15 MIR and KIR Boundary
+# CalcKernel 0.16 MIR and KIR Boundary
 
 [简体中文](../zh-CN/reference/mir.md)
 
@@ -46,7 +46,7 @@ and malformed terminators. All blocks are terminated before backend lowering.
 
 Textual MIR follows source-derived declaration, local, block, instruction,
 operand, and terminator order. It contains no path, time, address, or hash-map
-order. `emit-mir` remains semantic and byte-stable for the 0.15 line regardless
+order. `emit-mir` remains semantic and byte-stable for the 0.16 line regardless
 of `-O`; optimization no longer creates a second MIR product path.
 
 KIR uses scalar SSA, explicit block parameters, region Memory SSA, facts,
@@ -75,6 +75,6 @@ boundary, or source-control-flow path. Current checked uses include supported
 affine maps and matrix columns, closed piecewise trees, and a normalized
 stencil interior; an arbitrary predicate does not authorize a memory access.
 
-The semantic MIR textual format is compatible within `0.15.x`; a breaking grammar or meaning
+The semantic MIR textual format is compatible within `0.16.x`; a breaking grammar or meaning
 change requires a later minor release and migration note under the project
 [compatibility policy](../project/compatibility.md).

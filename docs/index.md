@@ -2,9 +2,10 @@
 
 [简体中文](zh-CN/index.md)
 
-These pages describe the stable 0.15.2 product contract. The `0.15.x`
-compatibility policy is normative; earlier release contracts and migration
-boundaries remain documented where they apply.
+These pages describe the 0.16.0 development-candidate contract. The candidate
+has not been published; 0.15.2 remains the latest published stable release.
+The `0.16.x` compatibility policy is normative for the candidate, while earlier
+release contracts and migration boundaries remain documented where they apply.
 
 ## Language and commands
 
@@ -32,7 +33,7 @@ boundaries remain documented where they apply.
 
 ## Project
 
-- [Compatibility](project/compatibility.md) — normative `0.15.x` authority and
+- [Compatibility](project/compatibility.md) — normative `0.16.x` authority and
   retained 0.14.0/0.13.0/0.12.0/0.11.0/0.10.0 migration boundaries.
 - [Release](project/release.md) and [checklist](project/release-checklist.md)
 - [Conventions](project/conventions.md)

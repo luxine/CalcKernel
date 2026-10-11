@@ -1,9 +1,13 @@
-# 原生 `ckc` 0.15 发布策略
+# 原生 `ckc` 0.16 发布策略
 
 [English](../../project/release.md)
 
 CalcKernel 发布原生 `ckc` executable、source 与 documentation，不发布 JavaScript
 wrapper 或 registry package。
+
+`0.16.0` 是尚未发布的开发候选版本；`0.15.2` 仍是最新已发布稳定版。候选版本准备工作不会
+发布新版本，也不能替代下文要求的精确 main-SHA 检查、关闭发布的 preview、annotated tag、archive
+或 tag 后验证。
 
 不可移动的公开 `v0.15.0` tag 记录了 compiler source snapshot，但没有生成官方 GitHub
 Release 或 compiler archive。`0.15.1` 是 0.15 系列首个正式发布版本。`0.15.2` 定位为

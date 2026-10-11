@@ -2,7 +2,7 @@
 
 [English](../../project/roadmap.md)
 
-本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.15 兼容策略](compatibility.md)。
+本文档非规范，只列出尚未交付的可能工作，不覆盖 [0.16 兼容策略](compatibility.md)。
 
 - 为[循环、内存与向量化](../compiler/generalized-loop-vectorization.md) 增加更多经独立验证的
   多维 footprint、guarded alias case 和纯控制流形态。对未知 dependence/effect 仍应保守处理；未来

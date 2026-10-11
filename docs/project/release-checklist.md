@@ -4,6 +4,11 @@
 
 For a version `X.Y.Z`:
 
+Version `0.16.0` is currently an unpublished release candidate, while `0.15.2`
+is the latest published stable release. Keep any incomplete publication item
+unchecked; preparation checks do not satisfy or replace the exact-SHA CI,
+release preview, tag, archive, and publication items below.
+
 - [ ] `Cargo.toml`, `Cargo.lock`, READMEs, and both changelogs name `X.Y.Z`.
 - [ ] Language, diagnostics, CLI, semantic MIR/KIR boundary, optimizer, ABI, compatibility, and release docs match implementation.
 - [ ] English and Simplified Chinese documentation trees mirror and local links resolve.

@@ -197,8 +197,8 @@ not a general scalar-select or if-conversion facility.
 ## Identity, budgets and limitations
 
 The published 0.15.2 compiler used vector cost/proof/budget identities 1/1/1;
-the current candidate uses 3/2/3, including the proof-identity change from the
-published release. The cost identity covers candidate admission/ranking, the
+the 0.16.0 development candidate uses 3/2/3, including the proof-identity
+change from the published release. The cost identity covers candidate admission/ranking, the
 proof identity covers legality evidence, and the budget identity covers bounded
 analysis work. The budget includes descriptor-root reconstruction, which uses
 an indexed worklist and charges index construction and each visited edge against

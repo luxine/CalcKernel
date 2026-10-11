@@ -9,7 +9,7 @@ first module compilation observations. Source-shape variants and rejected
 dependence/alias cases complement timings. Analysis success and a profitable
 candidate are separate from a committed, independently checked optimization.
 
-CalcKernel 0.15 retains the fail-closed performance report schema 8. A formal release
+CalcKernel 0.16 retains the fail-closed performance report schema 8. A formal release
 requires complete reports from fixed x86-64 and AArch64 workers; a local build
 or release-candidate identity does not sign those gates. Measurements bind the
 candidate SHA, exact 0.12 replay SHA, LLVM/Clang 22.1.8, Rust 1.90.0, hardware
@@ -297,6 +297,6 @@ machines, or runtimes. Keep this historical observation labeled separately from
 current compiler builds and reproducible reports.
 
 PGO and bounded multiversioning shipped in 0.13 and remain subject to these
-gates in 0.15. Offline Auto-Tuning is deferred. The local WebAssembly map
+gates in 0.16. Offline Auto-Tuning is deferred. The local WebAssembly map
 observations above are separate from the native release gates. Indirect-call
 promotion, scalable KIR, and adaptive JIT PGO remain future work.
