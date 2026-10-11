@@ -1,4 +1,4 @@
-# CalcKernel 0.15 WebAssembly ABI
+# CalcKernel 0.16 WebAssembly ABI
 
 [简体中文](../zh-CN/abi/wasm.md)
 
@@ -31,11 +31,11 @@ its SHA-256 digest. `baseline` does not emit SIMD. Both profiles allow Bulk
 Memory instructions. At O3, `simd128` can emit 128-bit SIMD for independently
 verified, contiguous `slice<f64>`, `slice<i32>`, and `slice<u32>` maps,
 supported `i32`/`u32` to `f64` casts, modular integer sum or product
-reductions, and several closed source forms: `f64x2` affine maps (including the
-tested nested matrix column loop), a bounded piecewise store tree, a proven
-normalization fast path, and a nine-load `3x3` stencil interior after boundary
-peeling. These are shape-specific capabilities, not general matrix, stencil,
-or branch vectorization. Full-width operations use `f64x2` and `i32x4`
+reductions, and supported `f64x2` affine/broadcast/output-update loops through
+shared property checks. Bounded pure store trees, invariant branch exposure
+and boundary peeling can expose additional loops. Their narrower exposure
+contracts do not imply arbitrary matrix, stencil or branch restructuring.
+Full-width operations use `f64x2` and `i32x4`
 instructions. Other unsupported SIMD candidates and O0–O2 remain scalar.
 
 Every emitted WAT and binary module carries the `ck.wasm.target` custom
@@ -57,8 +57,8 @@ required by the slice return ABI, and `BULK_MEMORY`. The `simd128` allowlist
 adds `SIMD128` to that set. The backend rejects `RELAXED_SIMD`, threads,
 Memory64, and every undeclared proposal; profile selection does not relax
 instruction validation. Hosts should read and validate `ck.wasm.target`, then
-confirm runtime support for the named profile and its v0.15 capability set
-before instantiating a module. A host that uses the standard WebAssembly API
+confirm runtime support for the named profile and its v0.15 capability set,
+retained in 0.16, before instantiating a module. A host that uses the standard WebAssembly API
 can compile first, inspect `WebAssembly.Module.customSections`, and perform
 this check before instantiation.
 
@@ -81,9 +81,11 @@ four-lane chunk before updating the scalar accumulator. A
 vector loop handles complete chunks and uses the original scalar loop for the
 remainder or a short trip. Supported unknown-alias loops use a nontrapping
 Wasm32 range and disjointness predicate and take the scalar path when it fails.
-O3 affine direct maps and the supported matrix-column loop can use VF2 with
-cost-selected UF1/2/4; closed piecewise trees use VF2 with UF1 or UF4. Generic
-maps, casts, reductions, and the stencil interior use UF1. The compiler emits
+O3 supported strict-f64 affine maps, readonly broadcasts and same-index output
+updates and supported boundary-exposed interiors can use VF2 with cost-selected
+UF1/2/4 through shared property checks;
+closed piecewise trees use VF2 with UF1 or UF4. Other
+maps, casts and reductions use UF1. The compiler emits
 separate multiply and add operations for strict floating-point source
 expressions; it does not contract them to FMA or reassociate them. Each lane
 retains the original scalar evaluation order and rounding; no relaxed SIMD is
@@ -103,7 +105,7 @@ conjunct. The `simd128` profile also permits supported
 predicate, not a checked-memory mode. The independent checker for each supported SIMD plan reconstructs its
 exact scalar access ranges and applicable alias evidence, then verifies the
 required original scalar, boundary, or source-control-flow path. Uses include
-supported affine maps and matrix columns, closed piecewise trees, and the
+supported affine maps and broadcast/output-update loops, closed piecewise trees, and the
 normalized stencil interior; arbitrary hand-built predicates do not authorize
 memory operations.
 
@@ -140,5 +142,5 @@ fast path; if the predicate fails, execution takes the original source path,
 which retains its normal WebAssembly trap behavior. The C/Native checked
 status ABI is not part of this ABI.
 
-WebAssembly has no 0.15 runtime printing. A reachable print from an exported
+WebAssembly has no 0.16 runtime printing. A reachable print from an exported
 root is rejected. An internal `main` does not create a WASI or browser entry.

@@ -2,7 +2,14 @@
 
 [简体中文](../zh-CN/guides/performance.md)
 
-CalcKernel 0.15 retains the fail-closed performance report schema 8. A formal release
+For [loop/vectorization](../compiler/generalized-loop-vectorization.md) changes,
+compare identical source/profile/O0/O3 channels and retain correctness, raw
+samples, binary identity, module/code size, function/local counts, emission and
+first module compilation observations. Source-shape variants and rejected
+dependence/alias cases complement timings. Analysis success and a profitable
+candidate are separate from a committed, independently checked optimization.
+
+CalcKernel 0.16 retains the fail-closed performance report schema 8. A formal release
 requires complete reports from fixed x86-64 and AArch64 workers; a local build
 or release-candidate identity does not sign those gates. Measurements bind the
 candidate SHA, exact 0.12 replay SHA, LLVM/Clang 22.1.8, Rust 1.90.0, hardware
@@ -142,6 +149,7 @@ instruction body is explicitly reported as outside this bounded comparison.
 ## Commands and evidence
 
 Local schema/checker/correctness checks precede expensive stable-worker runs:
+the Python performance and replay tools require Python 3.11 or newer.
 
 The general harness entry point is `cargo bench --bench ckc_perf`; it writes
 `build/perf/latest.summary.json` and `build/perf/latest.summary.md`. Native and
@@ -235,6 +243,17 @@ short and long ranges plus overlap and trapping fallbacks; the batch case
 reports logical rows and actual JS-to-Wasm crossings separately from the
 runner's `--batch` repetition count.
 
+For a release-candidate WASM comparison, use the unchanged repository runner
+with a frozen v0.15.2 compiler binary and a frozen candidate binary. Run at
+least three independent rounds for each `baseline` and `simd128` profile, using
+the same inputs and runner settings (`--samples 20 --warmup 10 --batch 100
+--size 1024`). Retain each round's raw samples and module/compiler identities;
+compare module hashes, total and code-section bytes, function/local counts,
+opcode shape, CLI emission, and first module compilation alongside runtime.
+Do not select a favorable round or discard an unfavorable case. The runner
+measures CalcKernel WASM on its Node/V8 host and cannot establish Native gate
+status, Clang/Rust parity, or portable cross-language performance.
+
 The current runner emits and measures CalcKernel WASM only; it does not build
 Clang or Rust WASM oracle channels. Native Clang/Rust gates and historical Native
 reports, including old compiler replays, therefore cannot be cited as evidence
@@ -278,6 +297,6 @@ machines, or runtimes. Keep this historical observation labeled separately from
 current compiler builds and reproducible reports.
 
 PGO and bounded multiversioning shipped in 0.13 and remain subject to these
-gates in 0.15. Offline Auto-Tuning is deferred. The local WebAssembly map
+gates in 0.16. Offline Auto-Tuning is deferred. The local WebAssembly map
 observations above are separate from the native release gates. Indirect-call
 promotion, scalable KIR, and adaptive JIT PGO remain future work.

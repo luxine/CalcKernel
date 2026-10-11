@@ -133,6 +133,14 @@ mod tests {
         }
     }
 
+    fn current_vector_identity() -> CacheKeyInput {
+        let mut input = vector();
+        input.vector_cost_model_schema = calckernel::KIR_VECTOR_COST_MODEL_SCHEMA;
+        input.vector_proof_schema = calckernel::KIR_VECTOR_PROOF_SCHEMA;
+        input.vector_budget_identity = calckernel::kir_vector_budget_identity().to_string();
+        input
+    }
+
     #[test]
     fn canonical_key_should_have_one_exact_architecture_independent_vector() {
         let input = vector();
@@ -197,5 +205,62 @@ mod tests {
         for (name, mutation) in mutations {
             assert_ne!(cache_key_hex(&mutation), expected, "unchanged {name}");
         }
+    }
+
+    #[test]
+    fn current_vector_identity_should_not_reuse_a_pre_hardening_cost_schema_entry() {
+        let current = current_vector_identity();
+        assert_eq!(current.vector_cost_model_schema, 3);
+        assert_eq!(current.vector_proof_schema, 2);
+        assert_eq!(
+            current.vector_proof_schema,
+            calckernel::KIR_VECTOR_PROOF_SCHEMA
+        );
+        assert!(
+            current
+                .vector_budget_identity
+                .starts_with("vector-budget-schema=3;")
+        );
+        assert_eq!(
+            current.vector_budget_identity,
+            calckernel::kir_vector_budget_identity()
+        );
+
+        let mut stale = current.clone();
+        stale.vector_cost_model_schema = 2;
+
+        // CacheKeyInput's digest is also the cache entry's pathname in the
+        // production cache lookup, so a stale cost-model entry must live at a
+        // different path from the current identity.
+        assert_ne!(cache_key_hex(&current), cache_key_hex(&stale));
+    }
+
+    #[test]
+    fn current_vector_profile_target_proof_and_budget_changes_should_select_new_paths() {
+        let current = current_vector_identity();
+        let current_path = cache_key_hex(&current);
+        assert_eq!(
+            cache_key_hex(&current.clone()),
+            current_path,
+            "unchanged source and configuration should reuse the entry path"
+        );
+
+        let mut changed_profile = current.clone();
+        changed_profile.profile_identity.push_str(";profile-change");
+        assert_ne!(cache_key_hex(&changed_profile), current_path, "profile");
+
+        let mut changed_target = current.clone();
+        changed_target.target_triple.push_str("-different");
+        assert_ne!(cache_key_hex(&changed_target), current_path, "target");
+
+        let mut changed_proof = current.clone();
+        changed_proof.vector_proof_schema = current.vector_proof_schema + 1;
+        assert_ne!(cache_key_hex(&changed_proof), current_path, "proof");
+
+        let mut changed_budget = current.clone();
+        changed_budget
+            .vector_budget_identity
+            .push_str(";budget-change");
+        assert_ne!(cache_key_hex(&changed_budget), current_path, "budget");
     }
 }

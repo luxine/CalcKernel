@@ -1,4 +1,4 @@
-# CalcKernel 0.15 Fact-Driven Optimizer
+# CalcKernel 0.16 Fact-Driven Optimizer
 
 [English](../../compiler/optimizer.md)
 
@@ -78,7 +78,12 @@ CLI 将 opaque independent-check authority 保留到 emission，source-to-object
 Native library 与 Native executable profile 明确 consumer、target、CPU policy、operation
 availability 和 fixed-width 精确 cost。缺失、零值、过期或 target 不匹配的答案会拒绝优化；
 优化器不以 host 常识代替 profile。Profile digest、cost/proof schema identity 与 optimizer
-budget 都进入 object/cache identity。0.15 的 C 与 WebAssembly `baseline` profile 禁用 Vector KIR。
+budget 都进入 object/cache identity。0.16.0 development candidate 使用 cost schema 3、proof schema 2、
+budget schema 3；已发布的 0.15.2 使用 1/1/1。Cost identity 覆盖 candidate admission/ranking；proof identity 描述 legality
+evidence，budget identity 描述有界 analysis work。Cost result 不能授权未通过独立 legality check 的
+transformation。有限场景的聚合值使用 `u64` 饱和累加；`u128` 交叉乘法只保护比例比较，不能恢复已封顶的
+聚合值。因此极端情况下该 score 是封顶静态 cost 比例，不是精确百分比或实测 timing。0.16 的 C 与
+WebAssembly `baseline` profile 禁用 Vector KIR。
 WebAssembly 提供 `baseline` 和 `simd128` 两种 feature profile；`emit-wat`、`emit-wasm` 或
 `emit-kir --consumer wasm` 可通过 `--wasm-features baseline|simd128` 选择，默认 `baseline`。
 两个 Wasm profile 都允许 Bulk Memory；只有 `simd128` 允许 SIMD128。`ck.wasm.target` module
@@ -88,13 +93,20 @@ metadata 使用 schema 2，记录所选 feature 与规范化 profile digest。O3
 两 lane 的 `i32`/`u32` 输入可通过精确的 8 字节 load 转为 `f64x2`。支持的 lane 操作包括
 splat、load/store、加、减、乘、取负、`f64x2` 除法及纯逐 lane 比较和选择。
 
-Wasm SIMD 还识别若干范围较窄的源码形态：具有连续、循环不变广播或已证明仿射访问的严格
-`f64x2` map（包括经过测试的嵌套矩阵列循环）；可改写为 lane select 的封闭分段存储树；
-先证明性地拆分零/非零路径的 normalization 循环；以及边界剥离后的九次加载 `3x3` stencil
-内部区域。这些是特定源码形态的识别器，不表示一般矩阵、stencil 或分支都可向量化。仿射
-直接 map 与受支持的矩阵列循环使用 VF2，并尝试 UF1/2/4；分段树使用 VF2，并尝试 UF1 或 UF4。
-成本模型在合法候选中选择。其他通用 map、转换、归约及 stencil 内部循环每次只执行一个向量块。
-浮点 lane 保留严格源码运算顺序和舍入：多项式计算与乘加仍是独立操作，不使用 FMA 或重结合。
+共享[循环与内存模型](generalized-loop-vectorization.md) 支持具有 contiguous access、
+invariant readonly broadcast 和同 index 输出更新的 strict `f64x2` affine map。
+受支持的 arithmetic DAG 通过 typed operation 与完整地址验证；访问数量、某种乘加公式
+和 source instruction layout 不再承担矩阵合法性规则。Target 的 f64 SIMD128 capability
+提供 VF2；合法 affine candidate 在 cost/growth budget 内考虑 UF1/2/4。只有与每个 write
+独立的稳定 invariant load 才能跨 chunks 共享。
+
+封闭分段存储树仍要求独立验证的 pure control exposure，使用 VF2 与 UF1 或 UF4。
+Invariant 零/非零 branch exposure 可暴露普通 normalization interior，不依赖源变量名称。
+Boundary peeling 暴露受支持的 stencil interior。这些 exposure contract 仍小于任意
+branch、matrix 或 stencil restructuring。边界暴露的 f64 interior 使用同一有界 affine
+interleave 策略。其他 map、cast 与 reduction 在 target/plan contract 要求时保持每次
+一个 vector chunk。浮点 lane 保持源顺序
+和 rounding，乘加保持独立，不使用 FMA 或重关联。
 
 别名未知或范围证明不足时，SIMD 快路径可由完整且不陷阱的 Wasm32 谓词守护；条件不满足则执行原有
 标量路径。符合条件的模运算 `i32`/`u32` 求和跨 chunk 传递 `i32x4` 累加器，仅在退出向量循环时
@@ -142,9 +154,12 @@ backedge advance。
 Unroll 只考虑 factor 2/4，并保持精确 trip partition 与 scalar remainder 语义。SLP 只按 source
 order 打包 isomorphic、independent、adjacent scalar operation，不能发明 shuffle 或 masked
 memory。Loop SIMD、loop SLP 与 unroll 在同一不可变 loop scope 上计价，只有一个 winner
-提交。Vector candidate 在保守 trip threshold 必须比 scalar cost 至少低 20%；已知更短 trip
-保持 scalar。O3 aggregate growth ceiling 与 proposer/checker work budget 覆盖全部 0.15
-speculative transform，包括被拒绝的 alternative 与 clone。
+提交。Vector candidate 在闭合 target-cost policy 下必须比 scalar cost 至少低 20%。Exact trip
+按实际 group/tail 计价并受 target group floor 限制，因此低于 runtime
+threshold 的 exact trip 仍可能合格；runtime candidate 的 threshold 则要求完整 tail 范围都满足同一
+闭合 target-cost policy。共享场景排序、fallback 和 growth charge 见通用循环模型。O3 aggregate
+growth ceiling 与 proposer/checker work budget 覆盖全部 0.16 speculative transform，包括被拒绝的
+alternative 与 clone。
 
 普通静态 O3 可 inline 最多 32 条 KIR instruction 的 pure helper。无 profile 的 multiversion
 lowering 使用紧凑的 8-instruction inline budget，因为 helper body 否则会复制进每个 retained
@@ -255,7 +270,7 @@ Performance gate 在相同算法、safety mode、data、hardware、CPU policy �
 hand-written SIMD oracle，并 replay exact 0.12 commit
 `e1bcea461492a5a2619cdb960ea00dd668847f0a`。Correctness、optimization time、generation
 overhead、artifact/compiler archive size 与 cache 各有独立 gate。PGO 与受限 multiversioning
-已在 0.13 交付且于 0.15 保留；离线 Auto-Tuning 继续延期。WebAssembly 性能指南中的观察结果来自
+已在 0.13 交付且于 0.16 保留；离线 Auto-Tuning 继续延期。WebAssembly 性能指南中的观察结果来自
 Apple M5 Max 上的本地 Node/V8 map kernel，不代表普遍的 Wasm 加速。indirect calls、scalable KIR
 与 adaptive JIT PGO 仍属未来。阈值不能成为弱化语义或
 使用 contract domain 外输入的理由。

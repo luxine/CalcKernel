@@ -70,44 +70,62 @@ pub(crate) fn materialize_vectorization_trial(
     let original_latch = block(&original, candidate.latch)?.clone();
     let original_preheader = block(&original, candidate.preheader)?.clone();
     let wasm_affine = candidate.wasm_affine.as_ref();
+    let dead_affine_scalars = wasm_affine
+        .map(|_| {
+            crate::optimizer::analysis::wasm_affine_dead_scalar_instructions(
+                &original,
+                candidate.body,
+            )
+        })
+        .unwrap_or_default();
     if wasm_affine.is_some()
-        && !crate::optimizer::analysis::wasm_affine_loop_state_is_forwarded(
-            &original,
-            candidate.header,
-            candidate.body,
-            candidate.induction,
-        )
+        && crate::optimizer::analysis::analyze_canonical_loops_for_discovery(&original)
+            .loops
+            .into_iter()
+            .find(|descriptor| descriptor.id == candidate.loop_id)
+            .is_none_or(|descriptor| {
+                descriptor.header != candidate.header
+                    || descriptor.latch != Some(candidate.body)
+                    || !crate::optimizer::analysis::wasm_affine_source_is_closed(
+                        &original,
+                        &descriptor,
+                        candidate.induction,
+                        candidate.induction_update,
+                        wasm_affine.expect("affine option checked"),
+                        &candidate.operations,
+                        &candidate.accesses,
+                    )
+            })
     {
-        return Err("WASM affine loop carries non-induction scalar state".to_string());
+        return Err("WASM affine source dataflow is not closed".to_string());
     }
-    let matmul_interleave = wasm_affine.is_some_and(|affine| {
-        crate::optimizer::analysis::wasm_matmul_interleave_eligible(
-            affine,
-            &candidate.operations,
-            &candidate.accesses,
-            candidate.bound,
-        ) && crate::optimizer::analysis::wasm_matmul_interleave_source_is_closed(
-            &original,
-            candidate.header,
-            candidate.body,
-            candidate.induction,
-            affine,
-            &candidate.operations,
-            &candidate.accesses,
-            candidate.bound,
-        )
-    });
     if let Some(affine) = wasm_affine {
-        let direct_map_interleave = direct_wasm_map_candidate(candidate, affine);
+        let needs_scaled_range_multiply = affine
+            .range_requirements
+            .iter()
+            .any(|range| matches!(range.count, WasmRangeCount::ScaledInvariant { .. }));
+        let scaled_range_multiply_supported = !needs_scaled_range_multiply
+            || matches!(
+                pre_state.module().profile.operation_availability(&crate::KirCostKey {
+                    operation: crate::KirProfileOperation::Multiply,
+                    lane: KirLaneType::U32,
+                    lanes: 1,
+                    semantics: crate::KirCostSemantics::Modular,
+                    alignment: crate::KirAlignmentClass::NotApplicable,
+                }),
+                Some(crate::KirOperationAvailability::Legal(cost))
+                    if cost.legalization_parts == 1
+            );
         if pre_state.module().config.consumer != crate::KirConsumer::WebAssembly
             || pre_state.module().profile.wasm_features() != Some(crate::KirWasmFeatures::Simd128)
+            || !scaled_range_multiply_supported
             || candidate.vf != 2
-            || candidate.uf > 1 && !direct_map_interleave && !matmul_interleave
+            || !matches!(candidate.uf, 1 | 2 | 4)
             || candidate.diamond.is_some()
             || candidate.reduction.is_some()
             || candidate.scalar_blocks.len() != 1
-            || !(affine.range_requirements.len() == 3
-                || direct_map_interleave && affine.range_requirements.len() == 2)
+            || affine.range_requirements.is_empty()
+            || affine.range_requirements.len() > 3
         {
             return Err("unsupported-wasm-affine-materialization-shape".to_string());
         }
@@ -180,7 +198,7 @@ pub(crate) fn materialize_vectorization_trial(
                 ) || affine
                     .range_requirements
                     .iter()
-                    .any(|r| matches!(r.count, WasmRangeCount::ScaledInvariant { scale: 3, .. }))
+                    .any(|r| matches!(r.count, WasmRangeCount::ScaledInvariant { scale, .. } if scale > 0))
                     && matches!(
                         source.kind,
                         KirInstructionKind::Compare { .. }
@@ -511,10 +529,10 @@ pub(crate) fn materialize_vectorization_trial(
                     return Err("vector runtime predicate count is not the loop bound".to_string());
                 }
                 conjuncts.push(KirVersionPredicateConjunct::AddressIntervalsDisjoint {
-                    left: invariant_root_value(&original, *left)?,
+                    left: stable_invariant_root_value(&original, *left)?,
                     left_count: entry_bound,
                     left_element_bytes: *left_element_bytes,
-                    right: invariant_root_value(&original, *right)?,
+                    right: stable_invariant_root_value(&original, *right)?,
                     right_count: entry_bound,
                     right_element_bytes: *right_element_bytes,
                 });
@@ -576,8 +594,8 @@ pub(crate) fn materialize_vectorization_trial(
                         &mut transformed_preheader,
                     )?,
                     WasmRangeCount::ScaledInvariant { value, scale } => {
-                        if scale != 3 {
-                            return Err("unsupported affine invariant count scale".into());
+                        if scale == 0 {
+                            return Err("affine invariant count scale must be positive".into());
                         }
                         let width = materialize_entry_value(
                             &original,
@@ -917,6 +935,9 @@ pub(crate) fn materialize_vectorization_trial(
                     continue;
                 }
             };
+            if dead_affine_scalars.contains(&instruction.id) {
+                continue;
+            }
             if wasm_affine
                 .is_some_and(|affine| affine.scalar_address_setup.contains(&instruction.id))
             {
@@ -1058,12 +1079,12 @@ pub(crate) fn materialize_vectorization_trial(
                         ..
                     }) = affine_access
                     {
-                        if matmul_interleave && unroll_index != 0 {
+                        if candidate.uf > 1 && unroll_index != 0 {
                             let shared = shared_broadcasts
                                 .get(&instruction.id)
                                 .copied()
                                 .ok_or_else(|| {
-                                    "shared matmul broadcast was not materialized by chunk zero"
+                                    "shared affine broadcast was not materialized by chunk zero"
                                         .to_string()
                                 })?;
                             mapped.insert(result, shared);
@@ -1174,7 +1195,7 @@ pub(crate) fn materialize_vectorization_trial(
                             vector: true,
                         };
                         mapped.insert(result, broadcast_value);
-                        if matmul_interleave {
+                        if candidate.uf > 1 {
                             shared_broadcasts.insert(instruction.id, broadcast_value);
                         }
                         broadcast_records.push((
@@ -1232,7 +1253,7 @@ pub(crate) fn materialize_vectorization_trial(
                         )
                     } else {
                         (
-                            invariant_root_value(&original, place_slice(place)?)?,
+                            stable_invariant_root_value(&original, place_slice(place)?)?,
                             resolve_value(&mapped, place_index(place)?).value,
                             entry_bound,
                         )
@@ -1341,7 +1362,7 @@ pub(crate) fn materialize_vectorization_trial(
                         )
                     } else {
                         (
-                            invariant_root_value(&original, place_slice(place)?)?,
+                            stable_invariant_root_value(&original, place_slice(place)?)?,
                             resolve_value(&mapped, place_index(place)?).value,
                             entry_bound,
                         )
@@ -2081,67 +2102,6 @@ pub(crate) fn materialize_vectorization_trial(
     })
 }
 
-fn direct_wasm_map_candidate(
-    candidate: &VectorizationCandidate,
-    affine: &crate::WasmAffineCandidate,
-) -> bool {
-    if !matches!(candidate.uf, 1 | 2 | 4)
-        || affine.accesses.len() != 2
-        || !affine.scalar_address_setup.is_empty()
-        || affine.range_requirements.len() != 2
-        || candidate.accesses.len() != 2
-        || candidate.operations.is_empty()
-        || candidate.operations.iter().any(|operation| {
-            operation.lane_type != KirLaneType::F64
-                || operation.result_lane_type != KirLaneType::F64
-                || operation.semantics != crate::KirCostSemantics::StrictFloat
-                || !matches!(
-                    operation.operation,
-                    crate::KirProfileOperation::Add
-                        | crate::KirProfileOperation::Subtract
-                        | crate::KirProfileOperation::Multiply
-                        | crate::KirProfileOperation::Divide
-                        | crate::KirProfileOperation::Negate
-                )
-        })
-    {
-        return false;
-    }
-    let Some(input) = affine.accesses.iter().find(|access| {
-        access.kind == crate::LoopMemoryAccessKind::Read
-            && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
-    }) else {
-        return false;
-    };
-    let Some(output) = affine.accesses.iter().find(|access| {
-        access.kind == crate::LoopMemoryAccessKind::Write
-            && matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
-    }) else {
-        return false;
-    };
-    input.slice != output.slice
-        && affine
-            .accesses
-            .iter()
-            .all(|access| matches!(access.shape, WasmAffineShape::Contiguous { offset: None }))
-        && candidate.accesses.iter().all(|access| {
-            access.element_bytes == 8
-                && access.element_type == MirType::Primitive(MirPrimitiveTypeName::F64)
-        })
-        && affine.range_requirements.iter().all(|range| {
-            range.element_bytes == 8
-                && range.start.is_none()
-                && range.count == WasmRangeCount::TripBound(candidate.bound)
-                && (range.slice == input.slice || range.slice == output.slice)
-        })
-        && affine
-            .range_requirements
-            .iter()
-            .map(|range| range.slice)
-            .collect::<BTreeSet<_>>()
-            == BTreeSet::from([input.slice, output.slice])
-}
-
 fn schedule_unrolled_vector_body(
     instructions: &mut Vec<KirInstruction>,
     unroll_factor: u8,
@@ -2558,176 +2518,252 @@ fn place_index(place: &crate::KirPlace) -> Result<crate::ValueId, String> {
     }
 }
 
-fn invariant_root_value(
-    function: &crate::KirFunction,
-    value: crate::ValueId,
-) -> Result<crate::ValueId, String> {
-    fn visit(
-        function: &crate::KirFunction,
-        value: crate::ValueId,
-        visiting: &mut BTreeSet<crate::ValueId>,
-    ) -> Result<Option<crate::ValueId>, String> {
-        if function.params.iter().any(|param| param.value == value) {
-            return Ok(Some(value));
-        }
-        if !visiting.insert(value) {
-            return Ok(None);
-        }
-        let mut roots = BTreeSet::new();
-        if let Some((block_id, index)) = function.blocks.iter().find_map(|block| {
-            block
-                .params
-                .iter()
-                .position(|param| param.value == value)
-                .map(|index| (block.id, index))
-        }) {
-            for edge in function.blocks.iter().flat_map(|predecessor| {
-                let mut edges = Vec::new();
-                match &predecessor.terminator {
-                    crate::KirTerminator::Jump { edge } if edge.target == block_id => {
-                        edges.push(edge)
-                    }
-                    crate::KirTerminator::Branch {
-                        then_edge,
-                        else_edge,
-                        ..
-                    } => {
-                        if then_edge.target == block_id {
-                            edges.push(then_edge);
-                        }
-                        if else_edge.target == block_id {
-                            edges.push(else_edge);
-                        }
-                    }
-                    _ => {}
-                }
-                edges
-            }) {
-                let source = *edge
-                    .args
-                    .get(index)
-                    .ok_or_else(|| "vector invariant predecessor edge is incomplete".to_string())?;
-                if let Some(root) = visit(function, source, visiting)? {
-                    roots.insert(root);
-                }
-            }
-        } else if let Some(source) = function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instructions)
-            .find_map(|instruction| match instruction.kind {
-                KirInstructionKind::Copy { value: source }
-                    if instruction
-                        .results
-                        .iter()
-                        .any(|result| result.value == value) =>
-                {
-                    Some(source)
-                }
-                _ => None,
-            })
-            && let Some(root) = visit(function, source, visiting)?
-        {
-            roots.insert(root);
-        }
-        visiting.remove(&value);
-        match roots.len() {
-            0 => Ok(None),
-            1 => Ok(roots.first().copied()),
-            _ => Err("vector slice base has multiple invariant roots".to_string()),
-        }
-    }
-
-    visit(function, value, &mut BTreeSet::new())?
-        .ok_or_else(|| "vector slice base is not a loop-invariant root value".to_string())
-}
-
 fn stable_invariant_root_value(
     function: &crate::KirFunction,
     value: crate::ValueId,
 ) -> Result<crate::ValueId, String> {
-    fn visit(
+    let work_limit = descriptor_root_work_limit(function);
+    stable_invariant_root_value_with_budget(function, value, work_limit).map(|(root, _)| root)
+}
+
+const DESCRIPTOR_ROOT_WORK_PER_UNIT: usize = 16;
+const DESCRIPTOR_ROOT_WORK_BASE: usize = 64;
+const DESCRIPTOR_ROOT_WORK_LIMIT: usize = 8192;
+
+fn descriptor_root_work_limit(function: &crate::KirFunction) -> usize {
+    let units_to_cap = DESCRIPTOR_ROOT_WORK_LIMIT
+        .saturating_sub(DESCRIPTOR_ROOT_WORK_BASE)
+        .div_ceil(DESCRIPTOR_ROOT_WORK_PER_UNIT);
+    let mut units = function
+        .params
+        .len()
+        .saturating_add(function.regions.len())
+        .saturating_add(function.initial_memory.len())
+        .saturating_add(function.vector_regions.len());
+    if units >= units_to_cap {
+        return DESCRIPTOR_ROOT_WORK_LIMIT;
+    }
+    for block in &function.blocks {
+        units = units
+            .saturating_add(1)
+            .saturating_add(block.params.len())
+            .saturating_add(block.memory_params.len())
+            .saturating_add(block.instructions.len());
+        if units >= units_to_cap {
+            return DESCRIPTOR_ROOT_WORK_LIMIT;
+        }
+    }
+    units
+        .saturating_mul(DESCRIPTOR_ROOT_WORK_PER_UNIT)
+        .saturating_add(DESCRIPTOR_ROOT_WORK_BASE)
+        .min(DESCRIPTOR_ROOT_WORK_LIMIT)
+}
+
+#[derive(Debug)]
+enum DescriptorRootDefinition {
+    Parameter,
+    Phi(Vec<crate::ValueId>),
+    Copy(crate::ValueId),
+    Unknown,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DescriptorRootError {
+    NotInvariant,
+    WorkBudgetExhausted,
+}
+
+#[derive(Debug)]
+struct DescriptorRootWork {
+    limit: usize,
+    used: usize,
+}
+
+impl DescriptorRootWork {
+    fn consume(&mut self) -> Result<(), DescriptorRootError> {
+        if self.used >= self.limit {
+            return Err(DescriptorRootError::WorkBudgetExhausted);
+        }
+        self.used += 1;
+        Ok(())
+    }
+}
+
+fn insert_descriptor_root_definition(
+    definitions: &mut BTreeMap<crate::ValueId, DescriptorRootDefinition>,
+    value: crate::ValueId,
+    definition: DescriptorRootDefinition,
+) {
+    match definitions.entry(value) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(definition);
+        }
+        std::collections::btree_map::Entry::Occupied(mut entry) => {
+            entry.insert(DescriptorRootDefinition::Invalid);
+        }
+    }
+}
+
+fn index_descriptor_root_edge(
+    edge: &KirEdge,
+    block_parameters: &BTreeMap<crate::BlockId, Vec<crate::ValueId>>,
+    definitions: &mut BTreeMap<crate::ValueId, DescriptorRootDefinition>,
+    work: &mut DescriptorRootWork,
+) -> Result<(), DescriptorRootError> {
+    work.consume()?;
+    let parameters = block_parameters
+        .get(&edge.target)
+        .ok_or(DescriptorRootError::NotInvariant)?;
+    if parameters.len() != edge.args.len() {
+        return Err(DescriptorRootError::NotInvariant);
+    }
+    for (parameter, source) in parameters.iter().zip(&edge.args) {
+        work.consume()?;
+        match definitions.get_mut(parameter) {
+            Some(DescriptorRootDefinition::Phi(incoming)) => incoming.push(*source),
+            _ => return Err(DescriptorRootError::NotInvariant),
+        }
+    }
+    Ok(())
+}
+
+fn stable_invariant_root_value_with_budget(
+    function: &crate::KirFunction,
+    value: crate::ValueId,
+    work_limit: usize,
+) -> Result<(crate::ValueId, usize), String> {
+    fn lookup(
         function: &crate::KirFunction,
         value: crate::ValueId,
-        visiting: &mut BTreeSet<crate::ValueId>,
-    ) -> Result<Option<crate::ValueId>, ()> {
-        if function.params.iter().any(|param| param.value == value) {
-            return Ok(Some(value));
+        work: &mut DescriptorRootWork,
+    ) -> Result<crate::ValueId, DescriptorRootError> {
+        let mut definitions = BTreeMap::new();
+        let mut block_parameters = BTreeMap::new();
+
+        for parameter in &function.params {
+            work.consume()?;
+            insert_descriptor_root_definition(
+                &mut definitions,
+                parameter.value,
+                DescriptorRootDefinition::Parameter,
+            );
         }
-        if !visiting.insert(value) {
-            return Ok(None);
-        }
-        let result = if let Some((block_id, index)) = function.blocks.iter().find_map(|block| {
-            block
-                .params
-                .iter()
-                .position(|param| param.value == value)
-                .map(|index| (block.id, index))
-        }) {
-            let mut incoming_count = 0_usize;
-            let mut roots = BTreeSet::new();
-            for predecessor in &function.blocks {
-                let edges = match &predecessor.terminator {
-                    crate::KirTerminator::Jump { edge } if edge.target == block_id => {
-                        vec![edge]
-                    }
-                    crate::KirTerminator::Branch {
-                        then_edge,
-                        else_edge,
-                        ..
-                    } => [then_edge, else_edge]
-                        .into_iter()
-                        .filter(|edge| edge.target == block_id)
-                        .collect(),
-                    _ => Vec::new(),
+        for block in &function.blocks {
+            work.consume()?;
+            let mut parameter_values = Vec::new();
+            for parameter in &block.params {
+                work.consume()?;
+                parameter_values.push(parameter.value);
+                insert_descriptor_root_definition(
+                    &mut definitions,
+                    parameter.value,
+                    DescriptorRootDefinition::Phi(Vec::new()),
+                );
+            }
+            if block_parameters
+                .insert(block.id, parameter_values)
+                .is_some()
+            {
+                return Err(DescriptorRootError::NotInvariant);
+            }
+            for instruction in &block.instructions {
+                work.consume()?;
+                let copied_source = match (&instruction.kind, instruction.results.as_slice()) {
+                    (KirInstructionKind::Copy { value: source }, [_]) => Some(*source),
+                    _ => None,
                 };
-                for edge in edges {
-                    incoming_count = incoming_count.saturating_add(1);
-                    let source = *edge.args.get(index).ok_or(())?;
-                    if let Some(root) = visit(function, source, visiting)? {
-                        roots.insert(root);
+                for result in &instruction.results {
+                    work.consume()?;
+                    let definition = copied_source.map_or(
+                        DescriptorRootDefinition::Unknown,
+                        DescriptorRootDefinition::Copy,
+                    );
+                    insert_descriptor_root_definition(&mut definitions, result.value, definition);
+                }
+            }
+        }
+
+        for block in &function.blocks {
+            work.consume()?;
+            match &block.terminator {
+                crate::KirTerminator::Jump { edge } => {
+                    index_descriptor_root_edge(edge, &block_parameters, &mut definitions, work)?;
+                }
+                crate::KirTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                } => {
+                    index_descriptor_root_edge(
+                        then_edge,
+                        &block_parameters,
+                        &mut definitions,
+                        work,
+                    )?;
+                    index_descriptor_root_edge(
+                        else_edge,
+                        &block_parameters,
+                        &mut definitions,
+                        work,
+                    )?;
+                }
+                crate::KirTerminator::Return { .. } => {}
+            }
+        }
+
+        let mut pending = vec![value];
+        let mut visited = BTreeSet::new();
+        let mut roots = BTreeSet::new();
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            work.consume()?;
+            match definitions.get(&current) {
+                Some(DescriptorRootDefinition::Parameter) => {
+                    roots.insert(current);
+                    if roots.len() > 1 {
+                        return Err(DescriptorRootError::NotInvariant);
                     }
                 }
-            }
-            if incoming_count == 0 {
-                Err(())
-            } else {
-                match roots.len() {
-                    0 => Ok(None),
-                    1 => Ok(roots.first().copied()),
-                    _ => Err(()),
+                Some(DescriptorRootDefinition::Copy(source)) => {
+                    work.consume()?;
+                    pending.push(*source);
                 }
-            }
-        } else if let Some(source) = function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instructions)
-            .find_map(|instruction| match instruction.kind {
-                KirInstructionKind::Copy { value: source }
-                    if instruction
-                        .results
-                        .iter()
-                        .any(|result| result.value == value) =>
-                {
-                    Some(source)
+                Some(DescriptorRootDefinition::Phi(incoming)) if !incoming.is_empty() => {
+                    for source in incoming {
+                        work.consume()?;
+                        pending.push(*source);
+                    }
                 }
-                _ => None,
-            })
-        {
-            visit(function, source, visiting)
-        } else {
-            Err(())
-        };
-        visiting.remove(&value);
-        result
+                Some(
+                    DescriptorRootDefinition::Phi(_)
+                    | DescriptorRootDefinition::Unknown
+                    | DescriptorRootDefinition::Invalid,
+                )
+                | None => return Err(DescriptorRootError::NotInvariant),
+            }
+        }
+        roots
+            .into_iter()
+            .next()
+            .ok_or(DescriptorRootError::NotInvariant)
     }
 
-    visit(function, value, &mut BTreeSet::new())
-        .map_err(|()| {
-            "vector slice-length descriptor is not invariant across the loop".to_string()
-        })?
-        .ok_or_else(|| {
-            "vector slice-length descriptor is not invariant across the loop".to_string()
+    let mut work = DescriptorRootWork {
+        limit: work_limit.min(DESCRIPTOR_ROOT_WORK_LIMIT),
+        used: 0,
+    };
+    lookup(function, value, &mut work)
+        .map(|root| (root, work.used))
+        .map_err(|error| match error {
+            DescriptorRootError::NotInvariant => {
+                "vector slice-length descriptor is not invariant across the loop".to_string()
+            }
+            DescriptorRootError::WorkBudgetExhausted => {
+                "vector slice-length descriptor work budget exhausted".to_string()
+            }
         })
 }
 
@@ -3077,6 +3113,7 @@ contract {
   requires noalias(a, out) && noalias(b, out);
   effects read(a), read(b), readwrite(out);
 }
+
 {
   let i: u32 = 0;
   while i < n {
@@ -3474,5 +3511,539 @@ contract {
                 .count(),
             4
         );
+    }
+}
+
+#[cfg(test)]
+mod descriptor_root_tests {
+    use super::*;
+
+    fn value(index: u32) -> crate::ValueId {
+        crate::ValueId::from_index(index)
+    }
+
+    fn edge(target: u32, args: Vec<crate::ValueId>) -> KirEdge {
+        KirEdge {
+            target: crate::BlockId::from_index(target),
+            args,
+            memory_args: Vec::new(),
+        }
+    }
+
+    fn descriptor_type() -> MirType {
+        MirType::Slice(Box::new(MirType::Primitive(MirPrimitiveTypeName::F64)))
+    }
+
+    fn same_root_diamonds(count: u32) -> (crate::KirFunction, crate::ValueId) {
+        let slice = value(0);
+        let condition = value(1);
+        let ty = descriptor_type();
+        let mut blocks = Vec::new();
+        let mut forwarded = slice;
+        for index in 0..count {
+            let base = index * 4;
+            let merged = value(index + 2);
+            blocks.extend([
+                KirBlock {
+                    id: crate::BlockId::from_index(base),
+                    label: format!("diamond_{index}"),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Branch {
+                        condition,
+                        then_edge: edge(base + 1, Vec::new()),
+                        else_edge: edge(base + 2, Vec::new()),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(base + 1),
+                    label: format!("left_{index}"),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Jump {
+                        edge: edge(base + 3, vec![forwarded]),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(base + 2),
+                    label: format!("right_{index}"),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Jump {
+                        edge: edge(base + 3, vec![forwarded]),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(base + 3),
+                    label: format!("merge_{index}"),
+                    params: vec![KirBlockParam {
+                        value: merged,
+                        slot: "forwarded_slice".to_string(),
+                        type_node: KirValueType::Scalar(ty.clone()),
+                    }],
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: if index + 1 == count {
+                        crate::KirTerminator::Return {
+                            value: None,
+                            memory: Vec::new(),
+                            effect_order: 0,
+                        }
+                    } else {
+                        crate::KirTerminator::Jump {
+                            edge: edge(base + 4, Vec::new()),
+                        }
+                    },
+                },
+            ]);
+            forwarded = merged;
+        }
+        (
+            crate::KirFunction {
+                id: crate::FunctionId::from_index(0),
+                name: "same_root_diamonds".to_string(),
+                exported: true,
+                params: vec![
+                    crate::KirParam {
+                        value: slice,
+                        name: "slice".to_string(),
+                        type_node: ty,
+                    },
+                    crate::KirParam {
+                        value: condition,
+                        name: "condition".to_string(),
+                        type_node: MirType::Primitive(MirPrimitiveTypeName::Bool),
+                    },
+                ],
+                return_type: MirType::Void,
+                regions: Vec::new(),
+                initial_memory: Vec::new(),
+                vector_regions: Vec::new(),
+                blocks,
+            },
+            forwarded,
+        )
+    }
+
+    fn function_with_params_and_blocks(
+        params: Vec<crate::KirParam>,
+        blocks: Vec<KirBlock>,
+    ) -> crate::KirFunction {
+        crate::KirFunction {
+            id: crate::FunctionId::from_index(0),
+            name: "descriptor_root_fixture".to_string(),
+            exported: true,
+            params,
+            return_type: MirType::Void,
+            regions: Vec::new(),
+            initial_memory: Vec::new(),
+            vector_regions: Vec::new(),
+            blocks,
+        }
+    }
+
+    fn params_with_two_slices() -> Vec<crate::KirParam> {
+        vec![
+            crate::KirParam {
+                value: value(0),
+                name: "slice_a".to_string(),
+                type_node: descriptor_type(),
+            },
+            crate::KirParam {
+                value: value(1),
+                name: "condition".to_string(),
+                type_node: MirType::Primitive(MirPrimitiveTypeName::Bool),
+            },
+            crate::KirParam {
+                value: value(2),
+                name: "slice_b".to_string(),
+                type_node: descriptor_type(),
+            },
+        ]
+    }
+
+    fn cyclic_phi() -> (crate::KirFunction, crate::ValueId) {
+        let ty = descriptor_type();
+        let function = function_with_params_and_blocks(
+            params_with_two_slices()[..2].to_vec(),
+            vec![
+                KirBlock {
+                    id: crate::BlockId::from_index(0),
+                    label: "entry".to_string(),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Jump {
+                        edge: edge(1, vec![value(0)]),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(1),
+                    label: "header".to_string(),
+                    params: vec![KirBlockParam {
+                        value: value(2),
+                        slot: "slice".to_string(),
+                        type_node: KirValueType::Scalar(ty),
+                    }],
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Branch {
+                        condition: value(1),
+                        then_edge: edge(2, Vec::new()),
+                        else_edge: edge(3, Vec::new()),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(2),
+                    label: "backedge".to_string(),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Jump {
+                        edge: edge(1, vec![value(2)]),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(3),
+                    label: "exit".to_string(),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Return {
+                        value: None,
+                        memory: Vec::new(),
+                        effect_order: 0,
+                    },
+                },
+            ],
+        );
+        (function, value(2))
+    }
+
+    fn ambiguous_phi() -> (crate::KirFunction, crate::ValueId) {
+        let ty = descriptor_type();
+        let function = function_with_params_and_blocks(
+            params_with_two_slices(),
+            vec![
+                KirBlock {
+                    id: crate::BlockId::from_index(0),
+                    label: "branch".to_string(),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Branch {
+                        condition: value(1),
+                        then_edge: edge(1, Vec::new()),
+                        else_edge: edge(2, Vec::new()),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(1),
+                    label: "left".to_string(),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Jump {
+                        edge: edge(3, vec![value(0)]),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(2),
+                    label: "right".to_string(),
+                    params: Vec::new(),
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Jump {
+                        edge: edge(3, vec![value(2)]),
+                    },
+                },
+                KirBlock {
+                    id: crate::BlockId::from_index(3),
+                    label: "merge".to_string(),
+                    params: vec![KirBlockParam {
+                        value: value(3),
+                        slot: "ambiguous_slice".to_string(),
+                        type_node: KirValueType::Scalar(ty),
+                    }],
+                    memory_params: Vec::new(),
+                    instructions: Vec::new(),
+                    terminator: crate::KirTerminator::Return {
+                        value: None,
+                        memory: Vec::new(),
+                        effect_order: 0,
+                    },
+                },
+            ],
+        );
+        (function, value(3))
+    }
+
+    fn copied_descriptor() -> (crate::KirFunction, crate::ValueId) {
+        let ty = descriptor_type();
+        let function = function_with_params_and_blocks(
+            params_with_two_slices()[..2].to_vec(),
+            vec![KirBlock {
+                id: crate::BlockId::from_index(0),
+                label: "entry".to_string(),
+                params: Vec::new(),
+                memory_params: Vec::new(),
+                instructions: vec![KirInstruction {
+                    id: crate::InstructionId::from_index(0),
+                    results: vec![KirResult {
+                        value: value(3),
+                        type_node: KirValueType::Scalar(ty),
+                    }],
+                    kind: KirInstructionKind::Copy { value: value(0) },
+                    memory: None,
+                    effect: None,
+                }],
+                terminator: crate::KirTerminator::Return {
+                    value: None,
+                    memory: Vec::new(),
+                    effect_order: 0,
+                },
+            }],
+        );
+        (function, value(3))
+    }
+
+    fn subslice_descriptor() -> (crate::KirFunction, crate::ValueId) {
+        let ty = descriptor_type();
+        let function = function_with_params_and_blocks(
+            vec![
+                crate::KirParam {
+                    value: value(0),
+                    name: "slice".to_string(),
+                    type_node: ty.clone(),
+                },
+                crate::KirParam {
+                    value: value(1),
+                    name: "start".to_string(),
+                    type_node: MirType::Primitive(MirPrimitiveTypeName::U32),
+                },
+                crate::KirParam {
+                    value: value(2),
+                    name: "end".to_string(),
+                    type_node: MirType::Primitive(MirPrimitiveTypeName::U32),
+                },
+            ],
+            vec![KirBlock {
+                id: crate::BlockId::from_index(0),
+                label: "entry".to_string(),
+                params: Vec::new(),
+                memory_params: Vec::new(),
+                instructions: vec![KirInstruction {
+                    id: crate::InstructionId::from_index(0),
+                    results: vec![KirResult {
+                        value: value(3),
+                        type_node: KirValueType::Scalar(ty),
+                    }],
+                    kind: KirInstructionKind::Subslice {
+                        slice: value(0),
+                        start: value(1),
+                        end: value(2),
+                    },
+                    memory: None,
+                    effect: None,
+                }],
+                terminator: crate::KirTerminator::Return {
+                    value: None,
+                    memory: Vec::new(),
+                    effect_order: 0,
+                },
+            }],
+        );
+        (function, value(3))
+    }
+
+    fn made_slice_descriptor() -> (crate::KirFunction, crate::ValueId) {
+        let element = MirType::Primitive(MirPrimitiveTypeName::F64);
+        let ty = MirType::Slice(Box::new(element.clone()));
+        let function = function_with_params_and_blocks(
+            vec![
+                crate::KirParam {
+                    value: value(0),
+                    name: "data".to_string(),
+                    type_node: MirType::Pointer(Box::new(element)),
+                },
+                crate::KirParam {
+                    value: value(1),
+                    name: "len".to_string(),
+                    type_node: MirType::Primitive(MirPrimitiveTypeName::U32),
+                },
+            ],
+            vec![KirBlock {
+                id: crate::BlockId::from_index(0),
+                label: "entry".to_string(),
+                params: Vec::new(),
+                memory_params: Vec::new(),
+                instructions: vec![KirInstruction {
+                    id: crate::InstructionId::from_index(0),
+                    results: vec![KirResult {
+                        value: value(2),
+                        type_node: KirValueType::Scalar(ty),
+                    }],
+                    kind: KirInstructionKind::MakeSlice {
+                        data: value(0),
+                        len: value(1),
+                    },
+                    memory: None,
+                    effect: None,
+                }],
+                terminator: crate::KirTerminator::Return {
+                    value: None,
+                    memory: Vec::new(),
+                    effect_order: 0,
+                },
+            }],
+        );
+        (function, value(2))
+    }
+
+    fn assert_function_valid(function: &crate::KirFunction) {
+        let module = crate::KirModule {
+            config: crate::KirBuildConfig {
+                consumer: crate::KirConsumer::Inspection,
+                overflow_mode: crate::KirOverflowMode::Unchecked,
+                bounds_mode: crate::KirBoundsMode::Unchecked,
+                sanitizer_mode: crate::KirSanitizerMode::Disabled,
+            },
+            profile: crate::KirTargetProfile::inspection(),
+            entry: None,
+            structs: Vec::new(),
+            functions: vec![function.clone()],
+        };
+        let validation = crate::validate_kir_module(&module);
+        assert!(validation.errors.is_empty(), "{:?}", validation.errors);
+    }
+
+    #[test]
+    fn descriptor_root_should_visit_shared_phi_diamonds_within_linear_work() {
+        let (function, forwarded) = same_root_diamonds(64);
+        assert_function_valid(&function);
+        let (root, work) = stable_invariant_root_value_with_budget(&function, forwarded, 8192)
+            .expect("all branches forward the same function parameter");
+        assert_eq!(root, value(0));
+        assert!(work <= 20 * 64 + 32, "observed work steps: {work}");
+    }
+
+    #[test]
+    fn descriptor_root_should_reject_when_work_budget_is_exhausted() {
+        let (function, forwarded) = same_root_diamonds(2);
+        assert_eq!(
+            stable_invariant_root_value_with_budget(&function, forwarded, 1).unwrap_err(),
+            "vector slice-length descriptor work budget exhausted"
+        );
+    }
+
+    #[test]
+    fn descriptor_root_should_derive_the_schema_budget_from_function_units() {
+        let (function, _) = same_root_diamonds(2);
+        let units = usize::try_from(kir_function_units(&function)).expect("units fit usize");
+        assert_eq!(
+            descriptor_root_work_limit(&function),
+            DESCRIPTOR_ROOT_WORK_PER_UNIT * units + DESCRIPTOR_ROOT_WORK_BASE
+        );
+    }
+
+    #[test]
+    fn descriptor_root_should_report_the_automatic_cap_exhaustion_reason() {
+        let (function, forwarded) = same_root_diamonds(600);
+        assert_eq!(descriptor_root_work_limit(&function), 8192);
+        assert_eq!(
+            stable_invariant_root_value(&function, forwarded).unwrap_err(),
+            "vector slice-length descriptor work budget exhausted"
+        );
+    }
+
+    #[test]
+    fn descriptor_root_should_collapse_a_cyclic_phi_to_its_unique_parameter_root() {
+        let (function, phi) = cyclic_phi();
+        assert_function_valid(&function);
+        let (root, _) = stable_invariant_root_value_with_budget(&function, phi, 8192)
+            .expect("the loop phi forwards the same function parameter");
+        assert_eq!(root, value(0));
+    }
+
+    #[test]
+    fn descriptor_root_should_reject_a_phi_with_two_parameter_roots() {
+        let (function, phi) = ambiguous_phi();
+        assert_function_valid(&function);
+        assert_eq!(
+            stable_invariant_root_value_with_budget(&function, phi, 8192).unwrap_err(),
+            "vector slice-length descriptor is not invariant across the loop"
+        );
+    }
+
+    #[test]
+    fn descriptor_root_should_follow_copy_but_reject_slice_construction_and_subslice() {
+        let (copy_function, copied) = copied_descriptor();
+        assert_function_valid(&copy_function);
+        let (root, _) = stable_invariant_root_value_with_budget(&copy_function, copied, 8192)
+            .expect("a pure Copy preserves the original function parameter");
+        assert_eq!(root, value(0));
+
+        let (subslice_function, subslice) = subslice_descriptor();
+        assert_function_valid(&subslice_function);
+        assert_eq!(
+            stable_invariant_root_value_with_budget(&subslice_function, subslice, 8192)
+                .unwrap_err(),
+            "vector slice-length descriptor is not invariant across the loop"
+        );
+
+        let (make_slice_function, made_slice) = made_slice_descriptor();
+        assert_function_valid(&make_slice_function);
+        assert_eq!(
+            stable_invariant_root_value_with_budget(&make_slice_function, made_slice, 8192)
+                .unwrap_err(),
+            "vector slice-length descriptor is not invariant across the loop"
+        );
+    }
+
+    #[test]
+    fn descriptor_root_should_reject_undefined_and_empty_phi_descriptors() {
+        let (function, _) = same_root_diamonds(1);
+        assert_eq!(
+            stable_invariant_root_value_with_budget(&function, value(99), 8192).unwrap_err(),
+            "vector slice-length descriptor is not invariant across the loop"
+        );
+
+        let empty_phi = function_with_params_and_blocks(
+            Vec::new(),
+            vec![KirBlock {
+                id: crate::BlockId::from_index(0),
+                label: "empty_phi".to_string(),
+                params: vec![KirBlockParam {
+                    value: value(9),
+                    slot: "missing_input".to_string(),
+                    type_node: KirValueType::Scalar(descriptor_type()),
+                }],
+                memory_params: Vec::new(),
+                instructions: Vec::new(),
+                terminator: crate::KirTerminator::Return {
+                    value: None,
+                    memory: Vec::new(),
+                    effect_order: 0,
+                },
+            }],
+        );
+        assert_eq!(
+            stable_invariant_root_value_with_budget(&empty_phi, value(9), 8192).unwrap_err(),
+            "vector slice-length descriptor is not invariant across the loop"
+        );
+    }
+
+    #[test]
+    fn descriptor_root_should_finish_deep_shared_graph_without_recursive_stack_growth() {
+        let (function, forwarded) = same_root_diamonds(256);
+        assert_function_valid(&function);
+        assert_eq!(descriptor_root_work_limit(&function), 8192);
+        let (root, work) = stable_invariant_root_value_with_budget(&function, forwarded, 8192)
+            .expect("the worklist should visit each shared phi once");
+        assert_eq!(root, value(0));
+        assert!(work <= 20 * 256 + 32, "observed work steps: {work}");
     }
 }

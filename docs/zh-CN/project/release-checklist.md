@@ -4,6 +4,9 @@
 
 对版本 `X.Y.Z`：
 
+当前 `0.16.0` 尚未发布，仍是 release candidate；`0.15.2` 是最新已发布稳定版。尚未实际完成的发布项目
+保持未勾选；准备阶段的检查不能满足或替代下方的精确 SHA CI、release preview、tag、archive 与正式发布项目。
+
 - [ ] `Cargo.toml`、`Cargo.lock`、README 与双语 changelog 都声明 `X.Y.Z`。
 - [ ] Language、diagnostic、CLI、semantic MIR/KIR boundary、optimizer、ABI、compatibility、release docs 与实现一致。
 - [ ] 英文/简体中文文档树镜像，所有 local link 可解析。
@@ -13,6 +16,7 @@
 - [ ] `cargo build --release --features native-toolchain --locked`
 - [ ] Generated/mutation suite 在 C、WebAssembly、Native 支持的 O0–O3 mode 下通过。
 - [ ] 对有 WebAssembly codegen 变化的版本，严格 `baseline` 与 `simd128` 正确性/性能证据须标明精确候选源码与编译器二进制。对照已验收开发候选报告，核验正式构建的 module hash、所需 feature 声明与正确性输出；若生成 module 不同，则重测并单独标明正式构建数据。冷调用和模块体积单独于热调用比率报告，并明确标注开发候选实测结果。
+- [ ] 比较 WASM optimizer candidate 时，使用未修改的仓库 runner 和冻结的前后编译器二进制。每个 profile 至少保留三个独立 round，每轮 20 个 sample、10 次 warmup、batch 100、size 1024，并保存 raw samples、module/code hash 与字节数、函数/local 数、opcode shape、emission 和首次 module compilation。产物形态不变时，应单独说明 runtime 波动。
 - [ ] 六 host pre-LLVM fact audit 通过并拒绝 mutation corpus。
 - [ ] Contract sanitizer ownership test 在 ASan/UBSan 下通过。
 - [ ] `./target/release/ckc --help`、`--version --verbose` 与 `licenses` 暴露完整 identity/notice evidence。

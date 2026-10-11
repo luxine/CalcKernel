@@ -324,6 +324,10 @@ fn normalization_unswitch_source_recognizer_should_reject_semantic_mutations() {
         NORMALIZATION.replace("range == 0.0", "range > 0.0"),
         NORMALIZATION.replace("input[j] - minimum", "input[j] - maximum"),
         NORMALIZATION.replace("j < input.len", "j < out.len"),
+        NORMALIZATION.replace(
+            "if range == 0.0 {\n      out[j] = 0.0;",
+            "if range == 0.0 {\n      let ignored: f64 = input[j];\n      out[j] = 0.0;",
+        ),
     ] {
         let state = wasm_state(&invalid, KirOptimizationLevel::O2);
         assert!(
@@ -331,6 +335,72 @@ fn normalization_unswitch_source_recognizer_should_reject_semantic_mutations() {
             "mutated source was accepted:\n{invalid}\n{}",
             print_kir_module(state.module())
         );
+    }
+}
+
+#[test]
+fn normalization_unswitch_should_follow_ssa_roles_after_identifiers_and_declaration_order_change() {
+    let rename_roles = |source: &str| {
+        source
+            .replace("input", "samples")
+            .replace("out", "destination")
+            .replace("minimum", "lower")
+            .replace("maximum", "upper")
+            .replace("range", "span")
+            .replace("j", "cursor")
+    };
+    let reordered = NORMALIZATION.replace(
+        "  let minimum: f64 = input[0];\n  let maximum: f64 = input[0];",
+        "  let maximum: f64 = input[0];\n  let minimum: f64 = input[0];",
+    );
+    let reversed_parameters = NORMALIZATION.replace(
+        "normalize(input: slice<f64>, out: slice<f64>)",
+        "normalize(out: slice<f64>, input: slice<f64>)",
+    );
+    let sources = [
+        rename_roles(NORMALIZATION),
+        rename_roles(&reordered),
+        rename_roles(&reversed_parameters),
+    ];
+
+    for source in sources {
+        let before = wasm_state(&source, KirOptimizationLevel::O2);
+        let candidates = discover_normalization_unswitch_candidates(&before);
+        assert_eq!(
+            candidates.len(),
+            1,
+            "SSA roles should survive source identifier and declaration-order changes:\n{}",
+            print_kir_module(before.module())
+        );
+        let prepared = prepare_normalization_unswitch_trial(&before, &candidates[0])
+            .expect("renamed normalization source should unswitch");
+        check_normalization_unswitch_independently(
+            &before,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .expect("independent checker should reconstruct renamed source roles");
+
+        let vector_candidate = discover_vectorization_candidates(&prepared.trial)
+            .candidates
+            .into_iter()
+            .find(|candidate| {
+                candidate.function == prepared.plan.function
+                    && candidate.header == prepared.plan.fast_header
+                    && candidate.vf == 2
+                    && candidate.uf == 4
+            })
+            .expect("renamed source should expose the same strict f64 SIMD candidate");
+        let vectorized = prepare_vectorization_trial(&prepared.trial, &vector_candidate)
+            .expect("renamed source should materialize the strict f64 SIMD candidate");
+        check_vectorization_trial_independently(
+            &prepared.trial,
+            &vectorized.trial,
+            &vectorized.plan,
+            &vectorized.charge,
+        )
+        .expect("renamed source SIMD transaction should pass independent checking");
     }
 }
 

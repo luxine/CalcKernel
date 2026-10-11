@@ -3,11 +3,15 @@
 [简体中文](../zh-CN/project/roadmap.md)
 
 This document is non-normative and lists only undelivered possibilities. It does
-not override the [0.15 compatibility policy](compatibility.md).
+not override the [0.16 compatibility policy](compatibility.md).
 
 - Revisit search-based offline Auto-Tuning only through a separately reviewed
   future contract. It is not included in retained 0.13 PGO or the ordinary
   0.14/0.15 compiler releases.
+- Broaden [loop, memory and vectorization](../compiler/generalized-loop-vectorization.md)
+  with additional independently verified multidimensional footprints, guarded
+  alias cases, and pure control forms. Keep unsupported dependence and effects
+  conservative; give future tuning a separate contract.
 - Evaluate indirect calls and indirect-call promotion without weakening the
   closed effect, ABI, or profile-mapping contracts.
 - Evaluate scalable KIR vectors separately from retained fixed-width target variants.

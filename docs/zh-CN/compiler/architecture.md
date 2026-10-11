@@ -1,6 +1,16 @@
-# CalcKernel 0.15 编译器架构
+# CalcKernel 0.16 编译器架构
 
 [English](../../compiler/architecture.md)
+
+Loop SIMD 使用共享 canonical-loop 与 affine-memory model、有界 dependence query、
+target-priced candidate 和 transactional vector plan。独立 checker 先重建源属性，
+再验证 trial。[循环、内存与向量化](generalized-loop-vectorization.md) 描述 proof
+boundary、runtime fallback 与支持范围。
+
+Analysis 能描述当前 materializer 尚不能 lowering 的 affine form。Generic WASM f64 materialization
+仍要求精确支持的 induction-plus-offset 或 broadcast projection，并满足 operation/state 形态。
+Stencil checker 复用通用 dependence 与 span 规则，但 footprint exposure 仍是有界的 3x3 producer。
+这一区分让 source-pattern exposure 与 vector legality 保持分离。
 
 公共行为由语言、CLI、MIR、兼容性与 ABI 文档定义；本文说明实现职责。
 

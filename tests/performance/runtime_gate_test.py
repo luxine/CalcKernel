@@ -222,7 +222,7 @@ class GateTests(unittest.TestCase):
             fastMath=False, clangVersion="22.1.8", rustVersion="1.90.0", warmup=3,
             sampleRepetitions=7, samplingProtocol="rotating-twelve-channel-v1",
             channelNames=CHANNELS,
-            targetProfile=dict(digest="d" * 64, costSchema=1, proofSchema=1, budgetSchema=1),
+            targetProfile=dict(digest="d" * 64, costSchema=3, proofSchema=2, budgetSchema=3),
             runtimeReplayV011=replays["v011"], runtimeReplayV010=replays["v010"],
             evidenceDirectory=self.evidence.name, measuredArtifacts=measured, suites=suites,
             vectorSuites=oracle_suites(VECTOR_CASES, False),
@@ -288,6 +288,23 @@ class GateTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.reject(lambda r, f=field, v=value: r.__setitem__(f, v), message)
         self.reject(lambda r: r["targetProfile"].__setitem__("digest", "D" * 64), "profile")
+        for field, invalid_values in [
+            ("costSchema", [2, True, "3"]),
+            ("proofSchema", [1, True, "2"]),
+            ("budgetSchema", [2, True, "3"]),
+        ]:
+            for value in invalid_values:
+                with self.subTest(field=field, value=value):
+                    self.reject(
+                        lambda r, f=field, v=value: r["targetProfile"].__setitem__(f, v),
+                        "schema identities",
+                    )
+        stale_version = gate.CANDIDATE_VERSION
+        with patch.object(gate, "CANDIDATE_VERSION", f"next-{stale_version}"):
+            self.reject(
+                lambda r: r.__setitem__("candidateVersion", stale_version),
+                "candidateVersion",
+            )
         self.reject(lambda r: r["suites"][0]["cases"][0].__setitem__("sampleOrder", order(12, 19)), "order")
         self.reject(lambda r: r["vectorSuites"][0]["cases"][0].__setitem__("candidateSamplesNs", [100] * 19), "20 samples")
         self.reject(lambda r: r["measuredArtifacts"][0].__setitem__("sha256", "f" * 64), "artifact")

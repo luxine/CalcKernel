@@ -1330,7 +1330,7 @@ fn affine_access_must_keep_the_full_scaled_invariant_expression() {
 }
 
 #[test]
-fn affine_access_must_reject_unrepresentable_scaled_loop_expression() {
+fn affine_access_should_preserve_scaled_loop_terms_without_enabling_legacy_vector_groups() {
     let (mut module, _) = build_with_modes(
         r#"
         export fn scaled(input: slice<u32>, factor: u32, n: u32) -> u32 {
@@ -1355,8 +1355,33 @@ fn affine_access_must_reject_unrepresentable_scaled_loop_expression() {
         .find(|loop_| loop_.innermost)
         .expect("loop");
     let accesses = analyze_affine_loop_accesses(function, descriptor, None).expect("accesses");
-    assert!(accesses.accesses.is_empty(), "{accesses:?}");
-    assert_eq!(accesses.rejected_instructions.len(), 1, "{accesses:?}");
+    assert!(accesses.rejected_instructions.is_empty(), "{accesses:?}");
+    assert_eq!(accesses.accesses.len(), 1, "{accesses:?}");
+    let access = &accesses.accesses[0];
+    assert_eq!(access.affine_index.terms().len(), 2, "{access:?}");
+    assert_eq!(
+        access
+            .affine_index
+            .coefficient(ValueId::from_index(1))
+            .to_string(),
+        "3",
+        "{access:?}"
+    );
+    assert_eq!(
+        access
+            .affine_index
+            .coefficient(access.induction)
+            .to_string(),
+        "3",
+        "{access:?}"
+    );
+    assert_eq!(
+        access.affine_index.constant().to_string(),
+        "0",
+        "{access:?}"
+    );
+    assert!(!access.legacy_projection_exact, "{access:?}");
+    assert!(!access.vector_group_eligible, "{access:?}");
 }
 
 #[test]

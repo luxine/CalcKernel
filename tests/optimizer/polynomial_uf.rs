@@ -136,10 +136,104 @@ fn polynomial_direct_map_should_offer_checked_vf2_uf4_candidate() {
 }
 
 #[test]
-fn polynomial_o3_should_choose_uf4_using_existing_scope_cost() {
-    let state = polynomial_state(POLYNOMIAL_SLICE_LENGTH, KirOptimizationLevel::O3);
-    let function = state
-        .module()
+fn polynomial_o3_should_follow_common_unknown_trip_profitability_and_keep_uf4_legal() {
+    let state = polynomial_state(POLYNOMIAL_SLICE_LENGTH, KirOptimizationLevel::O2);
+    let candidates = discover_vectorization_candidates(&state)
+        .candidates
+        .into_iter()
+        .filter(|candidate| candidate.wasm_affine.is_some() && candidate.vf == 2)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.uf)
+            .collect::<Vec<_>>(),
+        [1, 2, 4],
+        "the shared Unknown frontier must contain every supported UF"
+    );
+
+    let uf4 = candidates
+        .iter()
+        .find(|candidate| candidate.uf == 4)
+        .expect("UF4 alternative remains available");
+    let prepared_uf4 =
+        prepare_vectorization_trial(&state, uf4).expect("UF4 remains materializable");
+    assert_eq!((prepared_uf4.plan.vf, prepared_uf4.plan.uf), (2, 4));
+    assert_eq!(
+        prepared_uf4.plan.operations.len(),
+        uf4.operations.len() * usize::from(uf4.uf),
+        "direct UF4 preparation retains every unrolled vector operation"
+    );
+    assert_eq!(
+        prepared_uf4.plan.memory_groups.len(),
+        uf4.accesses.len() * usize::from(uf4.uf),
+        "direct UF4 preparation retains every unrolled memory mapping"
+    );
+    assert!(prepared_uf4.plan.growth.transformed_units > prepared_uf4.plan.growth.original_units);
+    assert!(
+        prepared_uf4.plan.growth.module_after_units > prepared_uf4.plan.growth.module_before_units
+    );
+    assert_eq!(
+        check_vectorization_trial_independently(
+            &state,
+            &prepared_uf4.trial,
+            &prepared_uf4.plan,
+            &prepared_uf4.charge,
+        ),
+        Ok(()),
+        "independent checker still accepts the non-winning UF4 alternative"
+    );
+
+    let minimum_trip = candidates
+        .iter()
+        .map(|candidate| candidate.minimum_trip)
+        .min()
+        .expect("non-empty vector frontier");
+    let maximum_width = candidates
+        .iter()
+        .map(|candidate| u32::from(candidate.vf) * u32::from(candidate.uf))
+        .max()
+        .expect("non-empty vector frontier")
+        .clamp(1, 64);
+    let scenarios = (minimum_trip.saturating_sub(1)
+        ..=minimum_trip.saturating_add(maximum_width - 1))
+        .collect::<Vec<_>>();
+    assert_eq!(scenarios, (9..=17).collect::<Vec<_>>());
+    let expected = super::vectorize::reference_vector_frontier_winner_for_scenarios(
+        &state,
+        &candidates,
+        None,
+        &scenarios,
+    );
+
+    let optimized = run_kir_pass_pipeline(
+        state.module().clone(),
+        KirOptimizationLevel::O3,
+        state.contract_facts(),
+    );
+    assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let accepted = optimized
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == calckernel::CandidateDisposition::Accepted)
+        .expect("accepted polynomial vector winner");
+    assert_eq!(
+        (accepted.vf, accepted.uf),
+        expected,
+        "O3 must select the common Unknown score winner, not a workload-specific UF: {:#?}",
+        optimized.vector_explanations
+    );
+    assert!(
+        accepted
+            .profitability
+            .contains(&format!("trip=unknown;scenarios={}", scenarios.len())),
+        "explain should report the finite common Unknown horizon: {}",
+        accepted.profitability
+    );
+    let function = optimized
+        .artifact
+        .as_ref()
+        .expect("optimized polynomial artifact")
         .functions
         .iter()
         .find(|function| function.name == "ck_bench_polynomial")
@@ -166,14 +260,8 @@ fn polynomial_o3_should_choose_uf4_using_existing_scope_cost() {
             )
         })
         .count();
-    assert_eq!(
-        loads, 4,
-        "O3 should select one contiguous load per UF=4 group"
-    );
-    assert_eq!(
-        stores, 4,
-        "O3 should select one contiguous store per UF=4 group"
-    );
+    assert_eq!(loads, usize::from(accepted.uf));
+    assert_eq!(stores, usize::from(accepted.uf));
 }
 
 #[test]
@@ -594,13 +682,29 @@ fn polynomial_direct_map_without_source_noalias_must_not_use_unguarded_simd() {
     let without_noalias = POLYNOMIAL.replace("  requires noalias(input, output);\n", "");
     let state = polynomial_state(&without_noalias, KirOptimizationLevel::O2);
     let discovery = discover_vectorization_candidates(&state);
-    assert!(
-        discovery.candidates.iter().all(|candidate| {
-            candidate.uf == 1
-                && (candidate.wasm_affine.is_none() || candidate.version_predicate.is_some())
-        }),
-        "missing noalias fact must not authorize an unguarded UF candidate: {discovery:#?}"
-    );
+    assert!(!discovery.candidates.is_empty(), "guarded affine coverage");
+    for candidate in &discovery.candidates {
+        assert!([1, 2, 4].contains(&candidate.uf));
+        assert!(
+            candidate.version_predicate.is_some(),
+            "alias guard is required"
+        );
+        let affine = candidate.wasm_affine.as_ref().expect("guarded affine plan");
+        assert_eq!(affine.range_requirements.len(), 2);
+        let prepared = prepare_vectorization_trial(&state, candidate).expect("guarded trial");
+        assert_eq!(
+            prepared.plan.predicates.len(),
+            4,
+            "trip, two ranges and alias"
+        );
+        check_vectorization_trial_independently(
+            &state,
+            &prepared.trial,
+            &prepared.plan,
+            &prepared.charge,
+        )
+        .expect("every interleave retains independently verified guards");
+    }
 }
 
 #[test]

@@ -987,6 +987,115 @@ fn rejects_all_arm_scalar_pricing_when_root_address_identity_is_not_closed() {
 }
 
 #[test]
+fn rejects_leaf_store_outside_the_canonical_unit_stride_domain() {
+    let (mut state, mut prepared) = checked_trial();
+    let store = prepared
+        .plan
+        .vector
+        .memory_groups
+        .iter()
+        .find(|group| group.access == calckernel::VectorMemoryAccessKind::Write)
+        .and_then(|group| group.scalar_instructions.first())
+        .copied()
+        .expect("tree leaf store");
+    let bound = match prepared.plan.vector.epilogue {
+        calckernel::VectorEpilogue::Scalar { end, .. } => end,
+        _ => panic!("scalar epilogue"),
+    };
+
+    // Keep the source KIR and the preserved scalar fallback identical while
+    // moving one mutually exclusive store to the first out-of-domain index.
+    for module in [state.module_mut(), prepared.trial.module_mut()] {
+        let instruction = module
+            .functions
+            .iter_mut()
+            .find(|function| function.id == prepared.plan.vector.pre_state.function)
+            .into_iter()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.instructions)
+            .find(|instruction| instruction.id == store)
+            .expect("source store");
+        let KirInstructionKind::Store { place, .. } = &mut instruction.kind else {
+            panic!("tree store")
+        };
+        let calckernel::KirPlace::SliceIndex { index, .. } = place.as_mut() else {
+            panic!("slice store")
+        };
+        *index = bound;
+    }
+    prepared.plan.vector.pre_state.kir_digest = state.kir_digest();
+    assert!(validate_kir_module(state.module()).errors.is_empty());
+    assert!(
+        validate_kir_module(prepared.trial.module())
+            .errors
+            .is_empty()
+    );
+
+    let result = check_decision_tree_vector_trial_independently(
+        &state,
+        &prepared.trial,
+        &prepared.plan,
+        &prepared.charge,
+    );
+    assert!(
+        matches!(&result, Err(error) if format!("{error:?}").contains("decision-tree memory access is not the canonical unit-stride source address")),
+        "the shared memory query must reject a leaf outside the source trip domain: {result:?}"
+    );
+}
+
+#[test]
+fn rejects_duplicate_predecessor_into_a_tree_leaf() {
+    let (mut state, mut prepared) = checked_trial();
+    let header = prepared.plan.vector.pre_state.function;
+    let header = discover_wasm_decision_tree_candidates(&state)
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.function == header)
+        .expect("decision tree candidate")
+        .header;
+
+    // A second edge from the loop header makes the root have a duplicate
+    // predecessor. Keep the edge arguments exact so this remains valid KIR.
+    for module in [state.module_mut(), prepared.trial.module_mut()] {
+        let block = module
+            .functions
+            .iter_mut()
+            .find(|function| function.id == prepared.plan.vector.pre_state.function)
+            .into_iter()
+            .flat_map(|function| &mut function.blocks)
+            .find(|block| block.id == header)
+            .expect("source header");
+        let calckernel::KirTerminator::Branch {
+            then_edge,
+            else_edge,
+            ..
+        } = &mut block.terminator
+        else {
+            panic!("loop header branch")
+        };
+        *else_edge = then_edge.clone();
+    }
+    prepared.plan.vector.pre_state.kir_digest = state.kir_digest();
+    assert!(validate_kir_module(state.module()).errors.is_empty());
+    assert!(
+        validate_kir_module(prepared.trial.module())
+            .errors
+            .is_empty()
+    );
+
+    let result = check_decision_tree_vector_trial_independently(
+        &state,
+        &prepared.trial,
+        &prepared.plan,
+        &prepared.charge,
+    );
+    assert!(
+        matches!(&result, Err(error) if format!("{error:?}").contains("external or duplicate entry")),
+        "independent tree exposure must reject a second predecessor: {result:?}"
+    );
+}
+
+#[test]
 fn rejects_trial_export_and_parameter_identity_changes() {
     let (state, prepared) = checked_trial();
     for swap_parameters in [false, true] {

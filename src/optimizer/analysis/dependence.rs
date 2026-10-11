@@ -5,6 +5,9 @@ use crate::{
     KirInstructionKind, MemoryRegionId, MirBinaryOp, MirPrimitiveTypeName, MirType, ValueId,
 };
 
+use super::loop_access::{
+    AffineAnalysisBudget, ForwardingIndex, forwarding_leaves, forwarding_leaves_until,
+};
 use super::{
     AffineMemoryAccess, AliasKind, CanonicalLoopDescriptor, LoopFallbackReason,
     LoopMemoryAccessKind, LoopTripCount, analyze_affine_loop_accesses, analyze_regions,
@@ -15,10 +18,289 @@ use super::{
 pub enum LoopDependenceKind {
     ReadRead,
     Independent,
+    SameIteration,
     ModularReduction,
     Dependent,
     RuntimeGuarded,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DependenceDirection {
+    Raw,
+    War,
+    Waw,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DependenceRelation {
+    Independent,
+    SameIteration,
+    LoopCarried,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryDependence {
+    pub direction: DependenceDirection,
+    pub relation: DependenceRelation,
+    /// Signed `right_iteration - left_iteration` when a fixed distance is known.
+    pub distance: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryDependenceResult {
+    pub dependences: Vec<MemoryDependence>,
+    pub budget_exhausted: bool,
+}
+
+/// Caller-supplied premise for reasoning about source-level modular index arithmetic.
+/// The caller must independently establish each non-wrap fact before supplying it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexWrapProof {
+    Unknown,
+    ProvenNoWrap,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DependenceWrapFacts {
+    pub left: IndexWrapProof,
+    pub right: IndexWrapProof,
+}
+
+impl DependenceWrapFacts {
+    #[must_use]
+    pub const fn from_accesses(left: &AffineMemoryAccess, right: &AffineMemoryAccess) -> Self {
+        Self {
+            left: if left.index_no_wrap {
+                IndexWrapProof::ProvenNoWrap
+            } else {
+                IndexWrapProof::Unknown
+            },
+            right: if right.index_no_wrap {
+                IndexWrapProof::ProvenNoWrap
+            } else {
+                IndexWrapProof::Unknown
+            },
+        }
+    }
+}
+
+/// Bounded work supplied to the pure access-pair query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DependenceQueryBudget {
+    remaining_steps: u32,
+}
+
+impl DependenceQueryBudget {
+    #[must_use]
+    pub const fn with_max_steps(max_steps: u32) -> Self {
+        Self {
+            remaining_steps: max_steps,
+        }
+    }
+
+    fn spend(&mut self) -> bool {
+        if self.remaining_steps == 0 {
+            return false;
+        }
+        self.remaining_steps -= 1;
+        true
+    }
+}
+
+impl Default for DependenceQueryBudget {
+    fn default() -> Self {
+        Self::with_max_steps(128)
+    }
+}
+
+/// Compares two normalized affine accesses using only caller-supplied alias
+/// and wrap premises. It never reconstructs either premise from profile data.
+#[must_use]
+pub fn query_memory_dependence(
+    left: &AffineMemoryAccess,
+    right: &AffineMemoryAccess,
+    alias: AliasKind,
+    wrap_facts: DependenceWrapFacts,
+    mut budget: DependenceQueryBudget,
+) -> MemoryDependenceResult {
+    let Some(direction) = default_direction(left, right) else {
+        return MemoryDependenceResult::default();
+    };
+    if !budget.spend() {
+        return unknown_dependence(direction, true);
+    }
+    if alias == AliasKind::NoAlias {
+        return dependence_result(direction, DependenceRelation::Independent, None);
+    }
+    if alias == AliasKind::MayAlias {
+        return unknown_dependence(direction, false);
+    }
+    if left.base != right.base
+        || left.element_bytes != right.element_bytes
+        || left.induction != right.induction
+        || left.induction_step != right.induction_step
+        || left.affine_index.terms().len() > MAX_DEPENDENCE_TERMS
+        || right.affine_index.terms().len() > MAX_DEPENDENCE_TERMS
+    {
+        return unknown_dependence(
+            direction,
+            left.affine_index.terms().len() > MAX_DEPENDENCE_TERMS
+                || right.affine_index.terms().len() > MAX_DEPENDENCE_TERMS,
+        );
+    }
+
+    let left_coefficient = left.affine_index.coefficient(left.induction);
+    let right_coefficient = right.affine_index.coefficient(right.induction);
+    if left_coefficient != right_coefficient {
+        return unknown_dependence(direction, false);
+    }
+    let mut left_terms = left
+        .affine_index
+        .terms()
+        .iter()
+        .filter(|(value, _)| **value != left.induction);
+    let mut right_terms = right
+        .affine_index
+        .terms()
+        .iter()
+        .filter(|(value, _)| **value != right.induction);
+    loop {
+        if !budget.spend() {
+            return unknown_dependence(direction, true);
+        }
+        match (left_terms.next(), right_terms.next()) {
+            (None, None) => break,
+            (Some((left_value, left_coefficient)), Some((right_value, right_coefficient)))
+                if left_value == right_value && left_coefficient == right_coefficient => {}
+            _ => return unknown_dependence(direction, false),
+        }
+    }
+
+    let wrap_is_proven = matches!(wrap_facts.left, IndexWrapProof::ProvenNoWrap)
+        && matches!(wrap_facts.right, IndexWrapProof::ProvenNoWrap);
+    let displacement = left.affine_index.constant() - right.affine_index.constant();
+    let stride = left_coefficient * &left.induction_step;
+    if stride == 0.into() {
+        if displacement == 0.into() {
+            return dependence_result(direction, DependenceRelation::LoopCarried, Some(1));
+        }
+        return if wrap_is_proven {
+            dependence_result(direction, DependenceRelation::Independent, None)
+        } else {
+            unknown_dependence(direction, false)
+        };
+    }
+    if !wrap_is_proven {
+        return unknown_dependence(direction, false);
+    }
+    let remainder = &displacement % &stride;
+    if remainder != 0.into() {
+        return dependence_result(direction, DependenceRelation::Independent, None);
+    }
+    let distance = displacement / stride;
+    let Some(distance) = distance.to_string().parse::<i64>().ok() else {
+        return unknown_dependence(direction, false);
+    };
+    if distance == 0 {
+        if left.block != right.block {
+            return unknown_dependence(direction, false);
+        }
+        let direction = direction_at_distance(left, right, distance).unwrap_or(direction);
+        dependence_result(direction, DependenceRelation::SameIteration, Some(0))
+    } else {
+        let direction = direction_at_distance(left, right, distance).unwrap_or(direction);
+        dependence_result(direction, DependenceRelation::LoopCarried, Some(distance))
+    }
+}
+
+const MAX_DEPENDENCE_TERMS: usize = 32;
+
+fn default_direction(
+    left: &AffineMemoryAccess,
+    right: &AffineMemoryAccess,
+) -> Option<DependenceDirection> {
+    match (left.kind, right.kind) {
+        (LoopMemoryAccessKind::Read, LoopMemoryAccessKind::Read) => None,
+        (LoopMemoryAccessKind::Write, LoopMemoryAccessKind::Write) => {
+            Some(DependenceDirection::Waw)
+        }
+        _ => {
+            let (first, second) =
+                if left.block == right.block && left.instruction_order > right.instruction_order {
+                    (right.kind, left.kind)
+                } else {
+                    (left.kind, right.kind)
+                };
+            match (first, second) {
+                (LoopMemoryAccessKind::Write, LoopMemoryAccessKind::Read) => {
+                    Some(DependenceDirection::Raw)
+                }
+                (LoopMemoryAccessKind::Read, LoopMemoryAccessKind::Write) => {
+                    Some(DependenceDirection::War)
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
+fn direction_at_distance(
+    left: &AffineMemoryAccess,
+    right: &AffineMemoryAccess,
+    distance: i64,
+) -> Option<DependenceDirection> {
+    if left.kind == LoopMemoryAccessKind::Write && right.kind == LoopMemoryAccessKind::Write {
+        return Some(DependenceDirection::Waw);
+    }
+    let left_precedes_right = if distance == 0 {
+        if left.block != right.block {
+            return None;
+        }
+        left.instruction_order <= right.instruction_order
+    } else {
+        distance > 0
+    };
+    let (first, second) = if left_precedes_right {
+        (left.kind, right.kind)
+    } else {
+        (right.kind, left.kind)
+    };
+    match (first, second) {
+        (LoopMemoryAccessKind::Write, LoopMemoryAccessKind::Read) => Some(DependenceDirection::Raw),
+        (LoopMemoryAccessKind::Read, LoopMemoryAccessKind::Write) => Some(DependenceDirection::War),
+        _ => None,
+    }
+}
+
+fn dependence_result(
+    direction: DependenceDirection,
+    relation: DependenceRelation,
+    distance: Option<i64>,
+) -> MemoryDependenceResult {
+    MemoryDependenceResult {
+        dependences: vec![MemoryDependence {
+            direction,
+            relation,
+            distance,
+        }],
+        budget_exhausted: false,
+    }
+}
+
+fn unknown_dependence(
+    direction: DependenceDirection,
+    budget_exhausted: bool,
+) -> MemoryDependenceResult {
+    MemoryDependenceResult {
+        dependences: vec![MemoryDependence {
+            direction,
+            relation: DependenceRelation::Unknown,
+            distance: None,
+        }],
+        budget_exhausted,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +310,7 @@ pub struct LoopDependencePair {
     pub kind: LoopDependenceKind,
     pub distance: Option<i64>,
     pub predicate: Option<TotalVersionPredicate>,
+    pub relations: Vec<MemoryDependence>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,6 +318,7 @@ pub struct LoopDependenceAnalysis {
     pub pairs: Vec<LoopDependencePair>,
     pub reductions: Vec<LoopReduction>,
     pub all_writes_classified: bool,
+    pub budget_exhausted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,7 +415,13 @@ pub fn analyze_loop_dependences(
     descriptor: &CanonicalLoopDescriptor,
     facts: Option<&FactArena>,
 ) -> Result<LoopDependenceAnalysis, String> {
-    analyze_loop_dependences_for_address_bits(function, descriptor, facts, Some(usize::BITS as u8))
+    analyze_loop_dependences_for_address_bits(
+        function,
+        descriptor,
+        facts,
+        Some(usize::BITS as u8),
+        &BTreeSet::new(),
+    )
 }
 
 fn analyze_loop_dependences_for_address_bits(
@@ -139,62 +429,204 @@ fn analyze_loop_dependences_for_address_bits(
     descriptor: &CanonicalLoopDescriptor,
     facts: Option<&FactArena>,
     address_bits: Option<u8>,
+    no_wrap_accesses: &BTreeSet<InstructionId>,
 ) -> Result<LoopDependenceAnalysis, String> {
     let accesses = analyze_affine_loop_accesses(function, descriptor, facts)?;
     let regions = analyze_regions(function, facts).map_err(|error| error.message)?;
-    let mut pairs = Vec::new();
-    for (left_index, left) in accesses.accesses.iter().enumerate() {
-        for right in accesses.accesses.iter().skip(left_index + 1) {
-            let has_write = left.kind == LoopMemoryAccessKind::Write
-                || right.kind == LoopMemoryAccessKind::Write;
-            let (kind, distance, predicate) = if !has_write {
-                (LoopDependenceKind::ReadRead, None, None)
-            } else if left.region == right.region {
-                same_region_dependence(left, right)
-            } else {
-                match query_alias(&regions, left.region, right.region).kind {
-                    AliasKind::NoAlias => (LoopDependenceKind::Independent, None, None),
-                    AliasKind::MustAlias => same_region_dependence(left, right),
-                    AliasKind::MayAlias => runtime_disambiguation(left, right, address_bits)
-                        .map_or((LoopDependenceKind::Unknown, None, None), |predicate| {
-                            (LoopDependenceKind::RuntimeGuarded, None, Some(predicate))
-                        }),
-                }
-            };
-            pairs.push(LoopDependencePair {
-                left: left.instruction,
-                right: right.instruction,
-                kind,
-                distance,
-                predicate,
-            });
-        }
-    }
-    pairs.sort_by_key(|pair| (pair.left, pair.right));
-    let writes = accesses
+    let units = function
+        .blocks
+        .iter()
+        .fold(function.params.len(), |count, block| {
+            count + block.params.len() + block.instructions.len() + 1
+        });
+    let units = u32::try_from(units).unwrap_or(u32::MAX);
+    let max_pairs = units
+        .saturating_mul(32)
+        .saturating_add(128)
+        .min(MAX_DEPENDENCE_PAIRS);
+    let source_writes = function
+        .blocks
+        .iter()
+        .filter(|block| descriptor.blocks.binary_search(&block.id).is_ok())
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| matches!(instruction.kind, KirInstructionKind::Store { .. }))
+        .map(|instruction| instruction.id)
+        .collect::<BTreeSet<_>>();
+    let access_writes = accesses
         .accesses
         .iter()
         .filter(|access| access.kind == LoopMemoryAccessKind::Write)
         .map(|access| access.instruction)
         .collect::<BTreeSet<_>>();
-    let classified_writes = pairs
+    let mut pairs = Vec::new();
+    let mut classified_self_writes = BTreeSet::new();
+    let mut budget_exhausted = accesses.budget_exhausted;
+    let mut examined_pairs = 0_u32;
+
+    'all_pairs: {
+        for access in accesses
+            .accesses
+            .iter()
+            .filter(|access| access.kind == LoopMemoryAccessKind::Write)
+        {
+            if examined_pairs >= max_pairs {
+                budget_exhausted = true;
+                break 'all_pairs;
+            }
+            examined_pairs += 1;
+            let wrap = wrap_facts_for(access, access, no_wrap_accesses);
+            let result = query_memory_dependence(
+                access,
+                access,
+                AliasKind::MustAlias,
+                wrap,
+                DependenceQueryBudget::default(),
+            );
+            let kind = aggregate_dependence_kind(&result, None);
+            if kind != LoopDependenceKind::Unknown {
+                classified_self_writes.insert(access.instruction);
+            }
+            pairs.push(LoopDependencePair {
+                left: access.instruction,
+                right: access.instruction,
+                kind,
+                distance: result
+                    .dependences
+                    .first()
+                    .and_then(|dependence| dependence.distance),
+                predicate: None,
+                relations: result.dependences,
+            });
+        }
+        for (left_index, left) in accesses.accesses.iter().enumerate() {
+            for right in accesses.accesses.iter().skip(left_index + 1) {
+                if examined_pairs >= max_pairs {
+                    budget_exhausted = true;
+                    break 'all_pairs;
+                }
+                examined_pairs += 1;
+                if left.kind == LoopMemoryAccessKind::Read
+                    && right.kind == LoopMemoryAccessKind::Read
+                {
+                    pairs.push(LoopDependencePair {
+                        left: left.instruction,
+                        right: right.instruction,
+                        kind: LoopDependenceKind::ReadRead,
+                        distance: None,
+                        predicate: None,
+                        relations: Vec::new(),
+                    });
+                    continue;
+                }
+                let alias = if left.region == right.region {
+                    AliasKind::MustAlias
+                } else {
+                    query_alias(&regions, left.region, right.region).kind
+                };
+                let result = query_memory_dependence(
+                    left,
+                    right,
+                    alias,
+                    wrap_facts_for(left, right, no_wrap_accesses),
+                    DependenceQueryBudget::default(),
+                );
+                let mut predicate = None;
+                let mut kind = aggregate_dependence_kind(&result, None);
+                if alias == AliasKind::MayAlias {
+                    predicate = runtime_disambiguation(left, right, address_bits);
+                    if predicate.is_some() {
+                        kind = LoopDependenceKind::RuntimeGuarded;
+                    }
+                }
+                let distance = result
+                    .dependences
+                    .first()
+                    .and_then(|dependence| dependence.distance);
+                pairs.push(LoopDependencePair {
+                    left: left.instruction,
+                    right: right.instruction,
+                    kind,
+                    distance,
+                    predicate,
+                    relations: result.dependences,
+                });
+            }
+        }
+    }
+    pairs.sort_by_key(|pair| (pair.left, pair.right));
+    let pairs_classified = pairs
         .iter()
-        .filter(|pair| {
-            !matches!(
-                pair.kind,
-                LoopDependenceKind::Unknown | LoopDependenceKind::ReadRead
-            )
-        })
-        .flat_map(|pair| [pair.left, pair.right])
-        .filter(|instruction| writes.contains(instruction))
-        .collect::<BTreeSet<_>>();
-    let reductions = find_modular_reductions(function, descriptor);
+        .all(|pair| !matches!(pair.kind, LoopDependenceKind::Unknown));
+    let reductions = if budget_exhausted {
+        Vec::new()
+    } else {
+        match find_modular_reductions(function, descriptor) {
+            Ok(reductions) => reductions,
+            Err(()) => {
+                budget_exhausted = true;
+                Vec::new()
+            }
+        }
+    };
     Ok(LoopDependenceAnalysis {
-        all_writes_classified: writes.is_subset(&classified_writes)
-            || (writes.len() == 1 && accesses.accesses.len() == 1),
+        all_writes_classified: !budget_exhausted
+            && source_writes == access_writes
+            && source_writes == classified_self_writes
+            && (source_writes.is_empty() || accesses.rejected_instructions.is_empty())
+            && pairs_classified,
         pairs,
         reductions,
+        budget_exhausted,
     })
+}
+
+const MAX_DEPENDENCE_PAIRS: u32 = 8192;
+
+fn wrap_facts_for(
+    left: &AffineMemoryAccess,
+    right: &AffineMemoryAccess,
+    no_wrap_accesses: &BTreeSet<InstructionId>,
+) -> DependenceWrapFacts {
+    let mut facts = DependenceWrapFacts::from_accesses(left, right);
+    if no_wrap_accesses.contains(&left.instruction) {
+        facts.left = IndexWrapProof::ProvenNoWrap;
+    }
+    if no_wrap_accesses.contains(&right.instruction) {
+        facts.right = IndexWrapProof::ProvenNoWrap;
+    }
+    facts
+}
+
+fn aggregate_dependence_kind(
+    result: &MemoryDependenceResult,
+    predicate: Option<&TotalVersionPredicate>,
+) -> LoopDependenceKind {
+    if predicate.is_some() {
+        return LoopDependenceKind::RuntimeGuarded;
+    }
+    if result.budget_exhausted
+        || result
+            .dependences
+            .iter()
+            .any(|dependence| dependence.relation == DependenceRelation::Unknown)
+    {
+        return LoopDependenceKind::Unknown;
+    }
+    if result
+        .dependences
+        .iter()
+        .any(|dependence| dependence.relation == DependenceRelation::LoopCarried)
+    {
+        LoopDependenceKind::Dependent
+    } else if result
+        .dependences
+        .iter()
+        .any(|dependence| dependence.relation == DependenceRelation::SameIteration)
+    {
+        LoopDependenceKind::SameIteration
+    } else {
+        LoopDependenceKind::Independent
+    }
 }
 
 pub fn analyze_loop_legality(
@@ -202,7 +634,13 @@ pub fn analyze_loop_legality(
     descriptor: &CanonicalLoopDescriptor,
     facts: Option<&FactArena>,
 ) -> Result<LoopLegalityAnalysis, String> {
-    analyze_loop_legality_for_address_bits(function, descriptor, facts, Some(usize::BITS as u8))
+    analyze_loop_legality_for_address_bits(
+        function,
+        descriptor,
+        facts,
+        Some(usize::BITS as u8),
+        &BTreeSet::new(),
+    )
 }
 
 pub(crate) fn analyze_loop_legality_for_profile(
@@ -219,7 +657,37 @@ pub(crate) fn analyze_loop_legality_for_profile(
             .filter(|bits| matches!(bits, 32 | 64)),
         crate::KirProfileLayout::PortableUnknown => None,
     };
-    analyze_loop_legality_for_address_bits(function, descriptor, facts, address_bits)
+    analyze_loop_legality_for_address_bits(
+        function,
+        descriptor,
+        facts,
+        address_bits,
+        &BTreeSet::new(),
+    )
+}
+
+pub(crate) fn analyze_loop_legality_for_profile_with_index_facts(
+    function: &KirFunction,
+    descriptor: &CanonicalLoopDescriptor,
+    facts: Option<&FactArena>,
+    profile: &crate::KirTargetProfile,
+    no_wrap_accesses: &BTreeSet<InstructionId>,
+) -> Result<LoopLegalityAnalysis, String> {
+    let address_bits = match profile.layout() {
+        crate::KirProfileLayout::Known {
+            pointer_width_bits, ..
+        } => u8::try_from(pointer_width_bits)
+            .ok()
+            .filter(|bits| matches!(bits, 32 | 64)),
+        crate::KirProfileLayout::PortableUnknown => None,
+    };
+    analyze_loop_legality_for_address_bits(
+        function,
+        descriptor,
+        facts,
+        address_bits,
+        no_wrap_accesses,
+    )
 }
 
 fn analyze_loop_legality_for_address_bits(
@@ -227,9 +695,15 @@ fn analyze_loop_legality_for_address_bits(
     descriptor: &CanonicalLoopDescriptor,
     facts: Option<&FactArena>,
     address_bits: Option<u8>,
+    no_wrap_accesses: &BTreeSet<InstructionId>,
 ) -> Result<LoopLegalityAnalysis, String> {
-    let dependences =
-        analyze_loop_dependences_for_address_bits(function, descriptor, facts, address_bits)?;
+    let dependences = analyze_loop_dependences_for_address_bits(
+        function,
+        descriptor,
+        facts,
+        address_bits,
+        no_wrap_accesses,
+    )?;
     let loop_blocks = descriptor.blocks.iter().copied().collect::<BTreeSet<_>>();
     let has_ordered_effect = function
         .blocks
@@ -259,6 +733,9 @@ fn analyze_loop_legality_for_address_bits(
     if has_ordered_effect {
         fallback_reasons.push(LoopFallbackReason::OrderedEffect);
     }
+    if dependences.budget_exhausted {
+        fallback_reasons.push(LoopFallbackReason::BudgetExhausted);
+    }
     if dependences
         .pairs
         .iter()
@@ -286,7 +763,9 @@ fn analyze_loop_legality_for_address_bits(
 fn find_modular_reductions(
     function: &KirFunction,
     descriptor: &CanonicalLoopDescriptor,
-) -> Vec<LoopReduction> {
+) -> Result<Vec<LoopReduction>, ()> {
+    let mut budget = AffineAnalysisBudget::for_function(function);
+    let forwarding_index = ForwardingIndex::new(function, &mut budget).ok_or(())?;
     let (Some(header), Some(latch)) = (
         function
             .blocks
@@ -297,13 +776,16 @@ fn find_modular_reductions(
             .iter()
             .find(|block| Some(block.id) == descriptor.latch),
     ) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let crate::KirTerminator::Jump { edge } = &latch.terminator else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut reductions = Vec::new();
-    for (index, param) in header.params.iter().enumerate() {
+    for (param_index, param) in header.params.iter().enumerate() {
+        if !budget.spend() {
+            return Err(());
+        }
         if descriptor
             .induction
             .as_ref()
@@ -320,17 +802,22 @@ fn find_modular_reductions(
         {
             continue;
         }
-        let Some(backedge) = edge.args.get(index).copied() else {
+        let Some(backedge) = edge.args.get(param_index).copied() else {
             continue;
         };
-        let Some(leaves) = forwarding_leaves(function, backedge) else {
+        let Some(leaves) = forwarding_leaves(&forwarding_index, backedge, &mut budget)? else {
             continue;
         };
         let mut operation = None;
         let mut updates = Vec::new();
-        let valid = leaves.iter().all(|value| {
-            let Some(instruction) = defining_instruction(function, *value) else {
-                return false;
+        let mut valid = true;
+        for value in &leaves {
+            if !budget.spend() {
+                return Err(());
+            }
+            let Some(instruction) = forwarding_index.definition(*value) else {
+                valid = false;
+                break;
             };
             let KirInstructionKind::Binary {
                 op,
@@ -339,19 +826,28 @@ fn find_modular_reductions(
                 semantics: KirArithmeticSemantics::Modular,
             } = instruction.kind
             else {
-                return false;
+                valid = false;
+                break;
+            };
+            let left_is_origin =
+                forwarding_leaves_until(&forwarding_index, left, param.value, &mut budget)?
+                    .is_some_and(|left_leaves| left_leaves == BTreeSet::from([param.value]));
+            let right_is_origin = if left_is_origin {
+                false
+            } else {
+                forwarding_leaves_until(&forwarding_index, right, param.value, &mut budget)?
+                    .is_some_and(|right_leaves| right_leaves == BTreeSet::from([param.value]))
             };
             if !matches!(op, MirBinaryOp::Add | MirBinaryOp::Mul)
-                || !(forwarded_from(function, left, param.value)
-                    || forwarded_from(function, right, param.value))
+                || !(left_is_origin || right_is_origin)
                 || operation.is_some_and(|expected| expected != op)
             {
-                return false;
+                valid = false;
+                break;
             }
             operation = Some(op);
             updates.push(instruction.id);
-            true
-        });
+        }
         if valid && !updates.is_empty() {
             updates.sort_unstable();
             reductions.push(LoopReduction {
@@ -362,138 +858,7 @@ fn find_modular_reductions(
         }
     }
     reductions.sort_by_key(|reduction| reduction.value);
-    reductions
-}
-
-fn forwarding_leaves(function: &KirFunction, value: ValueId) -> Option<BTreeSet<ValueId>> {
-    let mut pending = vec![value];
-    let mut visited = BTreeSet::new();
-    let mut leaves = BTreeSet::new();
-    while let Some(value) = pending.pop() {
-        if !visited.insert(value) {
-            continue;
-        }
-        if let Some((block, index)) = function.blocks.iter().find_map(|block| {
-            block
-                .params
-                .iter()
-                .position(|param| param.value == value)
-                .map(|index| (block.id, index))
-        }) {
-            let incoming = incoming_values(function, block, index);
-            if incoming.is_empty() {
-                return None;
-            }
-            pending.extend(incoming);
-        } else if let Some(crate::KirInstruction {
-            kind: KirInstructionKind::Copy { value },
-            ..
-        }) = defining_instruction(function, value)
-        {
-            pending.push(*value);
-        } else {
-            leaves.insert(value);
-        }
-    }
-    Some(leaves)
-}
-
-fn forwarded_from(function: &KirFunction, value: ValueId, origin: ValueId) -> bool {
-    forwarding_leaves_until(function, value, origin)
-        .is_some_and(|leaves| leaves == BTreeSet::from([origin]))
-}
-
-fn forwarding_leaves_until(
-    function: &KirFunction,
-    value: ValueId,
-    origin: ValueId,
-) -> Option<BTreeSet<ValueId>> {
-    let mut pending = vec![value];
-    let mut visited = BTreeSet::new();
-    let mut leaves = BTreeSet::new();
-    while let Some(value) = pending.pop() {
-        if !visited.insert(value) {
-            continue;
-        }
-        if value == origin {
-            leaves.insert(value);
-        } else if let Some((block, index)) = function.blocks.iter().find_map(|block| {
-            block
-                .params
-                .iter()
-                .position(|param| param.value == value)
-                .map(|index| (block.id, index))
-        }) {
-            let incoming = incoming_values(function, block, index);
-            if incoming.is_empty() {
-                return None;
-            }
-            pending.extend(incoming);
-        } else if let Some(crate::KirInstruction {
-            kind: KirInstructionKind::Copy { value },
-            ..
-        }) = defining_instruction(function, value)
-        {
-            pending.push(*value);
-        } else {
-            leaves.insert(value);
-        }
-    }
-    Some(leaves)
-}
-
-fn incoming_values(function: &KirFunction, target: crate::BlockId, index: usize) -> Vec<ValueId> {
-    function
-        .blocks
-        .iter()
-        .flat_map(|block| match &block.terminator {
-            crate::KirTerminator::Return { .. } => Vec::new(),
-            crate::KirTerminator::Jump { edge } => vec![edge],
-            crate::KirTerminator::Branch {
-                then_edge,
-                else_edge,
-                ..
-            } => vec![then_edge, else_edge],
-        })
-        .filter(|edge| edge.target == target)
-        .filter_map(|edge| edge.args.get(index).copied())
-        .collect()
-}
-
-fn defining_instruction(function: &KirFunction, value: ValueId) -> Option<&crate::KirInstruction> {
-    function
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instructions)
-        .find(|instruction| {
-            instruction
-                .results
-                .iter()
-                .any(|result| result.value == value)
-        })
-}
-
-fn same_region_dependence(
-    left: &AffineMemoryAccess,
-    right: &AffineMemoryAccess,
-) -> (
-    LoopDependenceKind,
-    Option<i64>,
-    Option<TotalVersionPredicate>,
-) {
-    if left.base != right.base
-        || left.coefficient != right.coefficient
-        || left.invariant_offset != right.invariant_offset
-        || left.element_bytes != right.element_bytes
-    {
-        return (LoopDependenceKind::Unknown, None, None);
-    }
-    let distance = (&right.bias - &left.bias).to_string().parse::<i64>().ok();
-    if distance == Some(0) && left.unit_stride && right.unit_stride {
-        (LoopDependenceKind::Independent, distance, None)
-    } else {
-        (LoopDependenceKind::Dependent, distance, None)
-    }
+    Ok(reductions)
 }
 
 fn runtime_disambiguation(
@@ -503,6 +868,10 @@ fn runtime_disambiguation(
 ) -> Option<TotalVersionPredicate> {
     if !left.unit_stride
         || !right.unit_stride
+        || !left.legacy_projection_exact
+        || !right.legacy_projection_exact
+        || !left.index_no_wrap
+        || !right.index_no_wrap
         || !left.slice_base
         || !right.slice_base
         || left.invariant_offset.is_some()

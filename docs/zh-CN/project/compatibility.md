@@ -1,15 +1,20 @@
-# CalcKernel 0.15 兼容策略
+# CalcKernel 0.16 兼容策略
 
 [English](../../project/compatibility.md)
 
-本文是 `0.15.x` 的规范性兼容权威。
-已发布的 `0.14.x` 补丁系列仍遵循其历史兼容性边界；下文的迁移说明列出 0.15 的变更。
+本文是 `0.16.x` 的规范性兼容权威。`0.16.0` 是尚未发布的开发候选版本；`0.15.2` 仍是最新已发布
+稳定版。已发布的 `0.14.x` 与 `0.15.x` 系列继续遵循各自历史兼容性边界；下文的迁移说明保留这些契约。
 
 不可移动的 `v0.15.0` tag 记录了 compiler source snapshot，但其 workflow 未创建官方
 GitHub Release，也未发布 archive。`0.15.1` 是 0.15 系列首个正式发布版本。`0.15.2` 延续相同的
 兼容性契约，并增加 WebAssembly 性能与正确性优化。
 
-Patch release 保持 0.15.0 已接受 source 与 observable semantics、稳定 diagnostic
+0.15.x patch release 保持 0.15.0 已接受 source 与 observable semantics、稳定 diagnostic
+identifier/category、已记录 CLI name/flag/default、stdout/stderr class、semantic textual MIR、
+public C/WASM/Native C ABI shape、checked first-error order、runtime diagnostic byte/status，以及
+六个 release archive name 与 checksum sidecar。
+
+当前 0.16.x patch release 保持 0.16.0 已接受 source 与 observable semantics、稳定 diagnostic
 identifier/category、已记录 CLI name/flag/default、stdout/stderr class、semantic textual MIR、
 public C/WASM/Native C ABI shape、checked first-error order、runtime diagnostic byte/status，以及
 六个 release archive name 与 checksum sidecar。
@@ -23,6 +28,15 @@ collection runtime、measurement 与未记录 compiler interface 不是 public c
 该优化保持 CK 可观察语义和 public WASM ABI；`baseline` 仍是默认的无 SIMD profile。选择
 `simd128` 的 host 必须支持该声明的 feature。Target-profile digest 与生成的模块字节属于
 编译器内部 identity，不承诺逐字节稳定。
+
+## 从 0.15.2 迁移到 0.16.0
+
+- 候选版本会改变符合条件的 loop/vectorization 候选所生成的 O3 输出，同时保持 `.ck` 语法、可观察
+  语义、严格浮点顺序、整数行为、checked failure 顺序与标量回退。CLI、semantic MIR、public
+  C/Native/Runtime/WebAssembly ABI、KIR v3 layout 和 `ck.wasm.target` metadata schema 2 均保持不变。
+- Vector cost/proof/budget identity 从已发布的 0.15.2 compiler 的 `1/1/1` 变为 `3/2/3`；除了
+  cost 与 budget 外，proof identity 也发生变化。这些 identity 是 private cache input，因此不会复用
+  使用不同 optimizer rule 生成的缓存 artifact。
 
 ## 0.15.1 到 0.15.2
 

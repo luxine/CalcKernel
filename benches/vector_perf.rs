@@ -2,7 +2,7 @@ use super::*;
 
 use calckernel::{
     KIR_VECTOR_COST_MODEL_SCHEMA, KIR_VECTOR_PROOF_SCHEMA, KirTargetIdentity, KirTargetProfile,
-    build_kir_module_with_profile,
+    build_kir_module_with_profile, kir_vector_budget_identity,
 };
 
 const ORACLE_MANIFEST: &str = "benches/oracles/manifest.toml";
@@ -27,7 +27,7 @@ const COMPILE_SAMPLES: usize = 15;
 const ORACLE_SAMPLING_PROTOCOL: &str = "interleaved-upper-median-three-channel-v3";
 const ORACLE_MANIFEST_SHA256: &str =
     "e4e8e4e70893a81cb96f8d7e0e5dbc1e5f971236ee88b3d0b2e2c55fdda854b3";
-const CANDIDATE_VERSION: &str = "0.15.2";
+const CANDIDATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(target_os = "linux")]
 struct LinuxCpuAffinityGuard {
@@ -149,6 +149,7 @@ impl LinuxCpuAffinityGuard {
 
 pub(super) struct VectorPerformanceReport {
     pub target_profile_digest: String,
+    pub vector_budget_schema: u32,
     pub rust_version: String,
     pub vector_suites: Vec<OracleSuite>,
     pub domain_suites: Vec<OracleSuite>,
@@ -237,11 +238,8 @@ pub(super) fn measure(
     let profile = target
         .kir_profile(KirConsumer::NativeLibrary)
         .map_err(|error| error.to_string())?;
-    if profile.schema_version() != 1
-        || KIR_VECTOR_COST_MODEL_SCHEMA != 1
-        || KIR_VECTOR_PROOF_SCHEMA != 1
-        || !profile.vector_operations_enabled()
-    {
+    let vector_budget_schema = parse_vector_budget_schema()?;
+    if profile.schema_version() != 1 || !profile.vector_operations_enabled() {
         return Err(
             "baseline Native target profile is not the frozen vector-capable schema".into(),
         );
@@ -358,6 +356,7 @@ pub(super) fn measure(
     }
     Ok(VectorPerformanceReport {
         target_profile_digest: profile.digest_hex(),
+        vector_budget_schema,
         rust_version,
         vector_suites,
         domain_suites,
@@ -365,6 +364,18 @@ pub(super) fn measure(
         sizes,
         compile_times,
     })
+}
+
+fn parse_vector_budget_schema() -> Result<u32, String> {
+    let identity = kir_vector_budget_identity();
+    let schema = identity
+        .split(';')
+        .next()
+        .and_then(|field| field.strip_prefix("vector-budget-schema="))
+        .ok_or_else(|| "vector budget identity has no canonical schema prefix".to_string())?;
+    schema
+        .parse::<u32>()
+        .map_err(|_| "vector budget identity schema is not an unsigned integer".to_string())
 }
 
 fn validate_oracle_manifest(repo_root: &Path) -> Result<(), String> {
@@ -1423,8 +1434,11 @@ impl CompileTimeComparison {
 impl VectorPerformanceReport {
     pub fn target_profile_json(&self) -> String {
         format!(
-            r#"{{"digest":"{}","costSchema":1,"proofSchema":1,"budgetSchema":1}}"#,
-            self.target_profile_digest
+            r#"{{"digest":"{}","costSchema":{},"proofSchema":{},"budgetSchema":{}}}"#,
+            self.target_profile_digest,
+            KIR_VECTOR_COST_MODEL_SCHEMA,
+            KIR_VECTOR_PROOF_SCHEMA,
+            self.vector_budget_schema,
         )
     }
 

@@ -20,6 +20,7 @@ SPEC = importlib.util.spec_from_file_location(
 )
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
+REAL_CHECK_SCHEMA7 = gate.check_schema7
 
 COLLECTOR_SPEC = importlib.util.spec_from_file_location(
     "collector_v013", REPO / "scripts/measure-v013-performance.py"
@@ -287,13 +288,54 @@ class SchemaEightGateTests(unittest.TestCase):
     def test_complete_schema_eight_passes(self):
         self.check()
 
+    def test_embedded_schema_seven_enforces_exact_vector_identities(self):
+        nested = {
+            "schemaVersion": 7,
+            "candidateVersion": gate.CANDIDATE_VERSION,
+            "cpuPolicy": "baseline",
+            "fastMath": False,
+            "clangVersion": "22.1.8",
+            "rustVersion": "1.90.0",
+            "warmup": 3,
+            "sampleRepetitions": 7,
+            "samplingProtocol": "rotating-twelve-channel-v1",
+            "channelNames": gate.CHANNEL_NAMES,
+            "targetProfile": {"digest": "d" * 64, "costSchema": 3,
+                              "proofSchema": 2, "budgetSchema": 3},
+            "runtimeReplayV011": {}, "runtimeReplayV010": {},
+            "evidenceDirectory": "measurement-1-2", "measuredArtifacts": [],
+            "suites": [], "vectorSuites": [], "domainFactSuites": [],
+            "oracleIdentity": {}, "oracleArtifacts": [], "artifactSizeComparisons": [],
+            "compileTimeComparisons": [], "baselineV010": {}, "optimizerComparisons": [],
+        }
+        schema7_path = self.evidence / "results-schema7.json"
+        for field, invalid_values in [
+            ("costSchema", [2, True, "3"]),
+            ("proofSchema", [1, True, "2"]),
+            ("budgetSchema", [2, True, "3"]),
+        ]:
+            for value in invalid_values:
+                with self.subTest(field=field, value=value):
+                    payload = copy.deepcopy(nested)
+                    payload["targetProfile"][field] = value
+                    encoded = json.dumps(payload).encode()
+                    schema7_path.write_bytes(encoded)
+                    report = copy.deepcopy(self.report)
+                    report["cumulativeSchemaSeven"].update(
+                        bytes=len(encoded), sha256=digest(encoded)
+                    )
+                    with patch.object(gate, "check_schema7", REAL_CHECK_SCHEMA7):
+                        with self.assertRaisesRegex(ValueError, "schema identities"):
+                            self.check(report)
+
     def test_collector_accepts_only_the_current_candidate_cli_identity(self):
         self.assertEqual(collector.CANDIDATE_VERSION, gate.CANDIDATE_VERSION)
         cargo = tomllib.loads((REPO / "Cargo.toml").read_text())
         self.assertEqual(cargo["package"]["version"], gate.CANDIDATE_VERSION)
         collector.require_candidate_version(f"ckc {gate.CANDIDATE_VERSION}\n")
-        with self.assertRaisesRegex(ValueError, "0.15.2"):
-            collector.require_candidate_version("ckc 0.15.1\n")
+        stale_version = "0.0.0" if gate.CANDIDATE_VERSION != "0.0.0" else "0.0.1"
+        with self.assertRaisesRegex(ValueError, "must identify ckc"):
+            collector.require_candidate_version(f"ckc {stale_version}\n")
 
     def test_collector_retains_a_self_contained_schema_seven_bundle(self):
         source_root = self.root / "schema-seven-source"

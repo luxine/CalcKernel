@@ -36,6 +36,18 @@ impl AffineForm {
             .unwrap_or_else(|| BigInt::from(0_u8))
     }
 
+    /// Returns the complete, deterministic SSA coefficient map.
+    #[must_use]
+    pub const fn terms(&self) -> &BTreeMap<ValueId, BigInt> {
+        &self.terms
+    }
+
+    /// Returns whether this form is a mathematical integer constant.
+    #[must_use]
+    pub fn is_constant(&self) -> bool {
+        self.terms.is_empty()
+    }
+
     #[must_use]
     pub const fn constant(&self) -> &BigInt {
         &self.constant

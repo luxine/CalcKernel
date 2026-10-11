@@ -2,6 +2,30 @@
 
 All notable user-visible changes to CalcKernel are recorded here.
 
+## 0.16.0 — Generalized Loop and Vectorization Optimizer
+
+The 0.16.0 change set expands O3 optimization for eligible loop shapes while preserving
+CalcKernel's source and ABI contracts. Unsupported patterns keep their scalar
+paths.
+
+- Shared canonical-loop, affine memory-access, and bounded dependence analyses
+  discover vectorization candidates beyond the earlier fixed loop shapes. The
+  supported lowering domain remains bounded; this is not arbitrary affine or
+  control-flow optimization.
+- Candidate selection accounts for exact, proven-bounded, profile-estimated, or
+  unknown trip information, actual scalar tails, target costs, and structural
+  code growth. Profile estimates can affect profitability but do not establish
+  legality. Independent checking validates each materialized candidate.
+- Supported matrix-column and normalization paths reuse checked vector
+  machinery. Stencil legality uses the shared checker while source exposure
+  remains limited to the supported 3x3 interior. Unsupported access patterns
+  and operations retain scalar execution.
+- Strict floating-point order, integer behavior, checked failure order, runtime
+  guards, and scalar fallback remain intact. Source grammar, CLI surface, public
+  C/Native/Runtime/WebAssembly ABIs, KIR v3, and WebAssembly metadata schema 2
+  do not change. Native cache keys include the updated optimizer identities, so
+  entries created under different rules are not reused.
+
 ## 0.15.2 — WebAssembly Performance and Correctness Update
 
 This patch release improves eligible WebAssembly kernels while preserving the

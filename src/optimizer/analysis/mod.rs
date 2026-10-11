@@ -38,8 +38,10 @@ pub use scalar::*;
 pub use slp::*;
 pub use specialization::*;
 pub use unroll::*;
+pub(crate) use vectorize::wasm_affine_dead_scalar_instructions;
+pub(crate) use vectorize::wasm_affine_source_is_closed;
 pub use vectorize::*;
 pub(crate) use vectorize::{
-    wasm_affine_loop_state_is_forwarded, wasm_matmul_interleave_eligible,
-    wasm_matmul_interleave_source_is_closed,
+    MAX_WASM_AFFINE_LIVENESS_INSTRUCTIONS, MAX_WASM_AFFINE_LIVENESS_STEPS,
+    MAX_WASM_AFFINE_LIVENESS_VALUES,
 };

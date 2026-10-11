@@ -70,6 +70,7 @@ pub struct KirVectorOptimizationExplanation {
     pub cost: super::KirCostEstimate,
     pub growth: super::VectorPlanGrowth,
     pub proofs: super::VectorProofRoots,
+    pub profitability: String,
     pub reason: String,
 }
 
@@ -77,7 +78,7 @@ impl KirVectorOptimizationExplanation {
     #[must_use]
     pub fn stable_text(&self) -> String {
         format!(
-            "vector-plan candidate={} disposition={} vf={} uf={} predicates={} cost=scalar:{};transformed:{};predicates:{};epilogue:{};total:{} growth=function:{}->{};module:{}->{} proofs=canonical:{};partition:{};lanes:{};operations:{};fallback:{};target:{};budget:{} reason={}",
+            "vector-plan candidate={} disposition={} vf={} uf={} predicates={} cost=scalar:{};transformed:{};predicates:{};epilogue:{};total:{} growth=function:{}->{};module:{}->{} proofs=canonical:{};partition:{};lanes:{};operations:{};fallback:{};target:{};budget:{} profitability={} reason={}",
             self.candidate.stable_text(),
             self.disposition.stable_name(),
             self.vf,
@@ -99,6 +100,7 @@ impl KirVectorOptimizationExplanation {
             self.proofs.fallback_identity.index(),
             self.proofs.target_legality.index(),
             self.proofs.cost_and_budget.index(),
+            self.profitability,
             self.reason,
         )
     }
@@ -1528,6 +1530,7 @@ fn vector_plan_explanation(
     plan: &super::VectorizationPlan,
     disposition: CandidateDisposition,
     reason: &str,
+    profitability: &str,
 ) -> KirVectorOptimizationExplanation {
     let predicates = plan
         .predicates
@@ -1581,78 +1584,559 @@ fn vector_plan_explanation(
         cost: plan.cost,
         growth: plan.growth,
         proofs: plan.proofs.clone(),
+        profitability: profitability.to_string(),
         reason: reason.to_string(),
     }
 }
 
-fn loop_frontier_scalar_body_cost(
-    candidate: &super::VectorizationCandidate,
-) -> Result<u32, String> {
-    let priced_trip = candidate.minimum_trip.saturating_add(
-        u32::from(candidate.vf)
-            .saturating_mul(u32::from(candidate.uf))
-            .saturating_sub(1),
-    );
-    if priced_trip == 0 || !candidate.predicted_cost.scalar.is_multiple_of(priced_trip) {
-        return Err("loop frontier scalar cost is not a closed iteration cost".to_string());
-    }
-    Ok(candidate.predicted_cost.scalar / priced_trip)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopTripEstimate {
+    Exact { iterations: u32 },
+    ProvenBounded { minimum: u32, maximum: u32 },
+    ProfileEstimated { minimum: u32, maximum: u32 },
+    Unknown,
 }
 
-fn loop_frontier_iterations(
+impl LoopTripEstimate {
+    fn stable_text(self) -> String {
+        match self {
+            Self::Exact { iterations } => format!("exact:{iterations}"),
+            Self::ProvenBounded { minimum, maximum } => {
+                format!("proven-bounded:{minimum}..{maximum}")
+            }
+            Self::ProfileEstimated { minimum, maximum } => {
+                format!("profile-estimated:{minimum}..{maximum}")
+            }
+            Self::Unknown => "unknown".to_string(),
+        }
+    }
+
+    fn endpoints(self) -> Option<(u32, u32)> {
+        match self {
+            Self::ProvenBounded { minimum, maximum }
+            | Self::ProfileEstimated { minimum, maximum } => Some((minimum, maximum)),
+            Self::Exact { .. } | Self::Unknown => None,
+        }
+    }
+
+    fn representative(self, candidates: &[super::VectorizationCandidate]) -> u32 {
+        match self {
+            Self::Exact { iterations } => iterations,
+            Self::ProvenBounded { maximum, .. } | Self::ProfileEstimated { maximum, .. } => maximum,
+            Self::Unknown => candidates
+                .iter()
+                .map(|candidate| candidate.minimum_trip)
+                .min()
+                .unwrap_or(0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LoopCandidateCostBasis {
+    scalar_per_iteration: u64,
+    vector_per_group: u64,
+    predicate: u64,
+    fallback_predicate: u64,
+    epilogue_entry: u64,
+}
+
+#[derive(Debug, Clone)]
+struct VectorCandidateProfitability {
+    candidate_key: super::CandidateKey,
+    target_frontend_penalty: bool,
+    score: (u64, u64),
+    runtime_score: (u64, u64),
+    added_units: u32,
+    expansion_proxy: u32,
+    tail_cost_sum: u64,
+    explanation: String,
+}
+
+fn classify_loop_trip_estimate(
     state: &KirVerifiedProgramState,
     candidate: &super::VectorizationCandidate,
     pgo: Option<&super::CkPgoOptimizerPlan>,
-) -> u32 {
-    let minimum = candidate.minimum_trip;
-    state
+    scalar_analysis_cache: &mut std::collections::BTreeMap<
+        crate::FunctionId,
+        Result<super::ScalarAnalysisResult, super::ScalarDomainError>,
+    >,
+) -> LoopTripEstimate {
+    let function = state
         .module()
         .functions
         .iter()
-        .find(|function| function.id == candidate.function)
-        .map(super::analyze_canonical_loops_for_discovery)
-        .and_then(|analysis| {
-            analysis
-                .loops
-                .into_iter()
-                .find(|descriptor| descriptor.id == candidate.loop_id)
+        .find(|function| function.id == candidate.function);
+    let descriptor = function.and_then(|function| {
+        super::analyze_canonical_loops_for_discovery(function)
+            .loops
+            .into_iter()
+            .find(|descriptor| descriptor.id == candidate.loop_id)
+    });
+    if let Some(super::LoopTripCount::Exact { iterations }) =
+        descriptor.as_ref().map(|descriptor| &descriptor.trip_count)
+        && let Ok(iterations) = u32::try_from(*iterations)
+    {
+        return LoopTripEstimate::Exact { iterations };
+    }
+
+    let proven_bounded = if let (Some(function), Some(descriptor)) = (function, descriptor.as_ref())
+        && let Some(induction) = descriptor.induction.as_ref()
+        && induction.value == candidate.induction
+        && induction.bound == candidate.bound
+        && induction.type_node == super::IntegerType::U32
+        && induction.start == num_bigint::BigInt::from(0)
+        && induction.step == num_bigint::BigInt::from(1)
+        && induction.comparison == crate::MirCompareOp::Lt
+        && let super::LoopTripCount::Runtime { bound, .. } = &descriptor.trip_count
+        && *bound == candidate.bound
+    {
+        let analysis = scalar_analysis_cache.entry(function.id).or_insert_with(|| {
+            super::analyze_scalar_function(function, super::ScalarAnalysisConfig::default())
+        });
+        match analysis {
+            Ok(analysis) if !analysis.exhausted() => analysis
+                .values()
+                .get(&candidate.bound)
+                .filter(|value| {
+                    value.type_node() == super::IntegerType::U32
+                        && !value.is_unknown()
+                        && value.failure() == super::ScalarFailure::None
+                })
+                .and_then(|value| {
+                    let minimum = value.interval().lower().to_string().parse::<u32>().ok()?;
+                    let maximum = value.interval().upper().to_string().parse::<u32>().ok()?;
+                    (minimum <= maximum).then_some((minimum, maximum))
+                }),
+            Ok(_) | Err(_) => None,
+        }
+    } else {
+        None
+    };
+    if let Some((minimum, maximum)) = proven_bounded {
+        return LoopTripEstimate::ProvenBounded { minimum, maximum };
+    }
+
+    let profile_estimate = pgo.and_then(|profile| {
+        let minimum = profile.loop_minimum_trip(candidate.function, candidate.header)?;
+        let maximum = profile.loop_maximum_trip(candidate.function, candidate.header)?;
+        Some(LoopTripEstimate::ProfileEstimated {
+            minimum: minimum.min(maximum),
+            maximum: minimum.max(maximum),
         })
-        .and_then(|descriptor| match descriptor.trip_count {
-            super::LoopTripCount::Exact { iterations } => u32::try_from(iterations).ok(),
-            _ => None,
-        })
-        .unwrap_or(minimum)
-        .max(
-            pgo.and_then(|profile| profile.loop_minimum_trip(candidate.function, candidate.header))
-                .unwrap_or(minimum),
-        )
-        .max(minimum)
+    });
+    profile_estimate.unwrap_or(LoopTripEstimate::Unknown)
 }
 
-fn vector_loop_scope_cost(
-    plan: &super::VectorizationPlan,
+fn loop_profitability_scenarios(
+    estimate: LoopTripEstimate,
+    candidates: &[super::VectorizationCandidate],
+) -> Vec<u32> {
+    match estimate {
+        LoopTripEstimate::Exact { iterations } => vec![iterations],
+        LoopTripEstimate::ProvenBounded { .. } | LoopTripEstimate::ProfileEstimated { .. } => {
+            let (minimum, maximum) = estimate.endpoints().expect("bounded trip estimate");
+            complete_residue_endpoint_scenarios(
+                minimum,
+                maximum,
+                maximum_candidate_width(candidates),
+            )
+        }
+        LoopTripEstimate::Unknown => {
+            let width = maximum_candidate_width(candidates);
+            let minimum_horizon = candidates
+                .iter()
+                .map(|candidate| candidate.minimum_trip)
+                .min()
+                .unwrap_or(0);
+            // Anchor to the first profitable alternative: price its immediately
+            // lower scalar fallback plus one complete widest residue window.
+            // A costly candidate with a higher threshold cannot inflate the
+            // assumed trip horizon for every alternative.
+            let start = minimum_horizon.saturating_sub(1);
+            let end = minimum_horizon.saturating_add(width.saturating_sub(1));
+            (start..=end).collect()
+        }
+    }
+}
+
+fn maximum_candidate_width(candidates: &[super::VectorizationCandidate]) -> u32 {
+    candidates
+        .iter()
+        .map(|candidate| u32::from(candidate.vf).saturating_mul(u32::from(candidate.uf)))
+        .max()
+        .unwrap_or(1)
+        .clamp(1, 64)
+}
+
+fn complete_residue_endpoint_scenarios(minimum: u32, maximum: u32, width: u32) -> Vec<u32> {
+    if minimum >= maximum || maximum.saturating_sub(minimum) < width {
+        return (minimum..=maximum).collect();
+    }
+    let mut scenarios = std::collections::BTreeSet::new();
+    for iterations in minimum..minimum.saturating_add(width) {
+        scenarios.insert(iterations);
+    }
+    for iterations in maximum.saturating_sub(width.saturating_sub(1))..=maximum {
+        scenarios.insert(iterations);
+    }
+    scenarios.into_iter().collect()
+}
+
+fn loop_frontier_profile_cost(
+    profile: &crate::KirTargetProfile,
+    key: crate::KirCostKey,
+    control: bool,
+) -> Result<u32, String> {
+    match profile.operation_availability(&key) {
+        Some(crate::KirOperationAvailability::Legal(cost)) if cost.legalization_parts == 1 => {
+            Ok(cost.cost)
+        }
+        Some(crate::KirOperationAvailability::Unavailable)
+            if control && key.operation == crate::KirProfileOperation::Branch =>
+        {
+            Ok(1)
+        }
+        _ => Err(format!("loop frontier target cost is unavailable: {key:?}")),
+    }
+}
+
+fn loop_frontier_cost_basis(
     candidate: &super::VectorizationCandidate,
-    scalar_body_cost: u32,
-    iterations: u32,
-) -> u64 {
-    let chunk_width = u32::from(plan.vf).saturating_mul(u32::from(plan.uf));
-    let chunks = iterations / chunk_width;
-    let tail = iterations % chunk_width;
-    let priced_chunks = candidate.minimum_trip / chunk_width;
-    let vector_chunk_cost = if priced_chunks == 0 {
-        u32::MAX
-    } else {
-        plan.cost.transformed_body / priced_chunks
+    trip_estimate: LoopTripEstimate,
+    profile: &crate::KirTargetProfile,
+) -> Result<LoopCandidateCostBasis, String> {
+    let chunk_width = u32::from(candidate.vf).saturating_mul(u32::from(candidate.uf));
+    let exact_iterations = match trip_estimate {
+        LoopTripEstimate::Exact { iterations } => Some(iterations),
+        LoopTripEstimate::ProvenBounded { .. }
+        | LoopTripEstimate::ProfileEstimated { .. }
+        | LoopTripEstimate::Unknown => None,
     };
-    let priced_tail = chunk_width.saturating_sub(1);
-    let epilogue_entry_cost = plan
-        .cost
-        .epilogue
-        .saturating_sub(scalar_body_cost.saturating_mul(priced_tail));
-    u64::from(plan.cost.predicates)
-        .saturating_add(u64::from(vector_chunk_cost).saturating_mul(u64::from(chunks)))
-        .saturating_add(u64::from(scalar_body_cost).saturating_mul(u64::from(tail)))
-        .saturating_add(u64::from(epilogue_entry_cost) * u64::from(u8::from(tail != 0)))
+    let priced_iterations = exact_iterations.unwrap_or_else(|| {
+        candidate
+            .minimum_trip
+            .saturating_add(chunk_width.saturating_sub(1))
+    });
+    let priced_groups = exact_iterations
+        .map_or(candidate.minimum_trip / chunk_width, |iterations| {
+            iterations / chunk_width
+        });
+    if priced_iterations == 0
+        || priced_groups == 0
+        || !candidate
+            .predicted_cost
+            .scalar
+            .is_multiple_of(priced_iterations)
+        || !candidate
+            .predicted_cost
+            .transformed_body
+            .is_multiple_of(priced_groups)
+    {
+        return Err("loop frontier cost basis is not a closed iteration cost".to_string());
+    }
+    let branch_key = crate::KirCostKey {
+        operation: crate::KirProfileOperation::Branch,
+        lane: crate::KirLaneType::U32,
+        lanes: 1,
+        semantics: crate::KirCostSemantics::NotApplicable,
+        alignment: crate::KirAlignmentClass::NotApplicable,
+    };
+    let epilogue_entry = match profile.operation_availability(&branch_key) {
+        Some(crate::KirOperationAvailability::Legal(cost)) if cost.legalization_parts == 1 => {
+            u64::from(cost.cost)
+        }
+        Some(crate::KirOperationAvailability::Unavailable) => 1,
+        _ => return Err("loop frontier epilogue cost is unavailable".to_string()),
+    };
+    let persistent_add = profile.wasm_features() == Some(crate::KirWasmFeatures::Simd128)
+        && candidate.vf == 4
+        && candidate.uf == 1
+        && candidate
+            .reduction
+            .as_ref()
+            .is_some_and(|reduction| reduction.operation == crate::KirProfileOperation::ReduceAdd);
+    let vector_only_finalizer = if let Some(reduction) =
+        candidate.reduction.as_ref().filter(|_| persistent_add)
+    {
+        u64::from(loop_frontier_profile_cost(
+            profile,
+            crate::KirCostKey {
+                operation: crate::KirProfileOperation::ReduceAdd,
+                lane: reduction.lane_type,
+                lanes: u8::try_from(candidate.vf)
+                    .map_err(|_| "loop frontier reduction VF exceeds cost schema".to_string())?,
+                semantics: crate::KirCostSemantics::Modular,
+                alignment: crate::KirAlignmentClass::NotApplicable,
+            },
+            false,
+        )?)
+        .saturating_add(u64::from(loop_frontier_profile_cost(
+            profile,
+            crate::KirCostKey {
+                operation: crate::KirProfileOperation::Add,
+                lane: reduction.lane_type,
+                lanes: 1,
+                semantics: crate::KirCostSemantics::Modular,
+                alignment: crate::KirAlignmentClass::NotApplicable,
+            },
+            false,
+        )?))
+        .saturating_add(epilogue_entry)
+    } else {
+        0
+    };
+    let fallback_predicate = u64::from(candidate.predicted_cost.predicates)
+        .checked_sub(vector_only_finalizer)
+        .ok_or_else(|| "loop frontier fallback predicate cost is not closed".to_string())?;
+    Ok(LoopCandidateCostBasis {
+        scalar_per_iteration: u64::from(candidate.predicted_cost.scalar / priced_iterations),
+        vector_per_group: u64::from(candidate.predicted_cost.transformed_body / priced_groups),
+        predicate: u64::from(candidate.predicted_cost.predicates),
+        fallback_predicate,
+        epilogue_entry,
+    })
+}
+
+fn scenario_cost(
+    candidate: &super::VectorizationCandidate,
+    basis: LoopCandidateCostBasis,
+    iterations: u32,
+) -> (u64, u64, u64, u64) {
+    let scalar_baseline = basis
+        .scalar_per_iteration
+        .saturating_mul(u64::from(iterations));
+    if iterations < candidate.minimum_trip {
+        return (
+            scalar_baseline.saturating_add(basis.fallback_predicate),
+            scalar_baseline,
+            0,
+            basis.fallback_predicate,
+        );
+    }
+    let width = u32::from(candidate.vf).saturating_mul(u32::from(candidate.uf));
+    let groups = iterations / width;
+    let tail = iterations % width;
+    let tail_cost = basis
+        .scalar_per_iteration
+        .saturating_mul(u64::from(tail))
+        .saturating_add(basis.epilogue_entry.saturating_mul(u64::from(tail != 0)));
+    let transformed = basis
+        .vector_per_group
+        .saturating_mul(u64::from(groups))
+        .saturating_add(tail_cost)
+        .saturating_add(basis.predicate);
+    (transformed, scalar_baseline, tail_cost, 0)
+}
+
+fn rank_vector_candidate(
+    profile: &crate::KirTargetProfile,
+    candidate: &super::VectorizationCandidate,
+    plan: &super::VectorizationPlan,
+    basis: LoopCandidateCostBasis,
+    scenarios: &[u32],
+    trip_estimate: LoopTripEstimate,
+    representative_iterations: u32,
+) -> VectorCandidateProfitability {
+    let added_units = plan
+        .growth
+        .transformed_units
+        .saturating_sub(plan.growth.original_units);
+    let expansion_proxy = u32::try_from(
+        plan.operations
+            .len()
+            .saturating_add(plan.memory_groups.len())
+            .saturating_add(plan.broadcast_groups.len()),
+    )
+    .unwrap_or(u32::MAX);
+    // Charge one target-control cost unit per four added KIR units and per
+    // four materialized operation/memory/broadcast expansion proxies. This is
+    // a ranking penalty only; it does not affect plan validation.
+    let growth_penalty = u64::from(added_units.div_ceil(4))
+        .saturating_add(u64::from(expansion_proxy.div_ceil(4)))
+        .saturating_mul(basis.epilogue_entry.max(1));
+    let mut runtime_cost_sum = 0_u64;
+    let mut scalar_baseline_sum = 0_u64;
+    let mut tail_cost_sum = 0_u64;
+    let mut fallback_overhead_sum = 0_u64;
+    for iterations in scenarios {
+        let (runtime_cost, scalar_baseline, tail_cost, fallback_overhead) =
+            scenario_cost(candidate, basis, *iterations);
+        let denominator = scalar_baseline.max(1);
+        runtime_cost_sum = runtime_cost_sum.saturating_add(runtime_cost);
+        scalar_baseline_sum = scalar_baseline_sum.saturating_add(denominator);
+        tail_cost_sum = tail_cost_sum.saturating_add(tail_cost);
+        fallback_overhead_sum = fallback_overhead_sum.saturating_add(fallback_overhead);
+    }
+    let runtime_score = (runtime_cost_sum, scalar_baseline_sum.max(1));
+    let score = (
+        runtime_cost_sum.saturating_add(
+            growth_penalty.saturating_mul(u64::try_from(scenarios.len()).unwrap_or(u64::MAX)),
+        ),
+        scalar_baseline_sum.max(1),
+    );
+    let width = u32::from(candidate.vf).saturating_mul(u32::from(candidate.uf));
+    let representative_is_scalar_fallback = representative_iterations < candidate.minimum_trip;
+    let (representative_mode, representative_groups, representative_tail) =
+        if representative_is_scalar_fallback {
+            ("scalar-fallback", 0, 0)
+        } else {
+            (
+                "vector",
+                representative_iterations / width,
+                representative_iterations % width,
+            )
+        };
+    let explanation = format!(
+        "trip={};scenarios={};representative={};mode={};groups={};tail={};scalar/iteration={};vector/group={};tail-cost={};fallback-overhead={};runtime={}/{};score={}/{};growth=+{};expansion={};penalty={}",
+        trip_estimate.stable_text(),
+        scenarios.len(),
+        representative_iterations,
+        representative_mode,
+        representative_groups,
+        representative_tail,
+        basis.scalar_per_iteration,
+        basis.vector_per_group,
+        tail_cost_sum,
+        fallback_overhead_sum,
+        runtime_score.0,
+        runtime_score.1,
+        score.0,
+        score.1,
+        added_units,
+        expansion_proxy,
+        growth_penalty,
+    );
+    VectorCandidateProfitability {
+        candidate_key: candidate.key.clone(),
+        target_frontend_penalty: exceeds_x86_widening_cast_frontend_budget(profile, candidate),
+        score,
+        runtime_score,
+        added_units,
+        expansion_proxy,
+        tail_cost_sum,
+        explanation,
+    }
+}
+
+fn rank_slp_candidate(
+    candidate: &super::SlpCandidate,
+    plan: &super::SlpPlan,
+    scalar_per_iteration: u64,
+    scenarios: &[u32],
+    representative_iterations: u32,
+    growth_unit: u64,
+) -> VectorCandidateProfitability {
+    let transformed_per_iteration = scalar_per_iteration
+        .saturating_sub(u64::from(plan.cost.scalar))
+        .saturating_add(u64::from(plan.cost.total));
+    let added_units = plan
+        .growth
+        .transformed_units
+        .saturating_sub(plan.growth.original_units);
+    let expansion_proxy = u32::try_from(
+        plan.vector_instructions
+            .len()
+            .saturating_add(plan.setup_instructions.len())
+            .saturating_add(plan.extracts.len()),
+    )
+    .unwrap_or(u32::MAX);
+    let growth_penalty = u64::from(added_units.div_ceil(4))
+        .saturating_add(u64::from(expansion_proxy.div_ceil(4)))
+        .saturating_mul(growth_unit.max(1));
+    let mut runtime_cost_sum = 0_u64;
+    let mut scalar_baseline_sum = 0_u64;
+    for iterations in scenarios {
+        runtime_cost_sum = runtime_cost_sum
+            .saturating_add(transformed_per_iteration.saturating_mul(u64::from(*iterations)));
+        scalar_baseline_sum = scalar_baseline_sum.saturating_add(
+            scalar_per_iteration
+                .saturating_mul(u64::from(*iterations))
+                .max(1),
+        );
+    }
+    let runtime_score = (runtime_cost_sum, scalar_baseline_sum.max(1));
+    let score = (
+        runtime_cost_sum.saturating_add(
+            growth_penalty.saturating_mul(u64::try_from(scenarios.len()).unwrap_or(u64::MAX)),
+        ),
+        scalar_baseline_sum.max(1),
+    );
+    VectorCandidateProfitability {
+        candidate_key: candidate.key.clone(),
+        target_frontend_penalty: false,
+        score,
+        runtime_score,
+        added_units,
+        expansion_proxy,
+        tail_cost_sum: 0,
+        explanation: format!(
+            "trip={};scenarios={};representative={};runtime={}/{};score={}/{};growth=+{};expansion={};penalty={}",
+            "shared-loop-scenarios",
+            scenarios.len(),
+            representative_iterations,
+            runtime_score.0,
+            runtime_score.1,
+            score.0,
+            score.1,
+            added_units,
+            expansion_proxy,
+            growth_penalty,
+        ),
+    }
+}
+
+fn ratio_cmp(left: (u64, u64), right: (u64, u64)) -> std::cmp::Ordering {
+    u128::from(left.0)
+        .saturating_mul(u128::from(right.1))
+        .cmp(&u128::from(right.0).saturating_mul(u128::from(left.1)))
+}
+
+fn compare_vector_profitability(
+    left: &VectorCandidateProfitability,
+    right: &VectorCandidateProfitability,
+) -> std::cmp::Ordering {
+    left.target_frontend_penalty
+        .cmp(&right.target_frontend_penalty)
+        .then_with(|| ratio_cmp(left.score, right.score))
+        .then_with(|| ratio_cmp(left.runtime_score, right.runtime_score))
+        .then_with(|| left.added_units.cmp(&right.added_units))
+        .then_with(|| left.expansion_proxy.cmp(&right.expansion_proxy))
+        .then_with(|| left.candidate_key_uf().cmp(&right.candidate_key_uf()))
+        .then_with(|| left.candidate_key_vf().cmp(&right.candidate_key_vf()))
+        .then_with(|| left.candidate_key.cmp(&right.candidate_key))
+}
+
+impl VectorCandidateProfitability {
+    fn nonwinner_reason(&self, winner: &Self) -> &'static str {
+        if ratio_cmp(self.runtime_score, winner.runtime_score).is_le()
+            && ratio_cmp(self.score, winner.score).is_gt()
+        {
+            "code-growth"
+        } else if ratio_cmp(self.runtime_score, winner.runtime_score).is_gt()
+            && self.tail_cost_sum > winner.tail_cost_sum
+            && self.runtime_score.0.saturating_sub(self.tail_cost_sum)
+                <= winner.runtime_score.0.saturating_sub(winner.tail_cost_sum)
+        {
+            "tail-cost"
+        } else {
+            "higher-cost-loop-alternative"
+        }
+    }
+
+    fn candidate_key_uf(&self) -> u8 {
+        match &self.candidate_key {
+            super::CandidateKey::LoopFrontier { uf, .. } => *uf,
+            _ => u8::MAX,
+        }
+    }
+
+    fn candidate_key_vf(&self) -> u16 {
+        match &self.candidate_key {
+            super::CandidateKey::LoopFrontier { vf, .. } => *vf,
+            _ => u16::MAX,
+        }
+    }
 }
 
 fn exceeds_x86_widening_cast_frontend_budget(
@@ -1668,13 +2152,6 @@ fn exceeds_x86_widening_cast_frontend_budget(
                 && operation.lane_type == crate::KirLaneType::U32
                 && operation.result_lane_type == crate::KirLaneType::F64
         })
-}
-
-fn slp_loop_scope_cost(plan: &super::SlpPlan, scalar_body_cost: u32, iterations: u32) -> u64 {
-    let transformed_body = scalar_body_cost
-        .saturating_sub(plan.cost.scalar)
-        .saturating_add(plan.cost.total);
-    u64::from(transformed_body).saturating_mul(u64::from(iterations))
 }
 
 #[derive(Default)]
@@ -2067,6 +2544,7 @@ fn run_loop_simd_frontier(
         return Ok(result);
     }
     let mut processed = std::collections::BTreeSet::new();
+    let mut scalar_analysis_cache = std::collections::BTreeMap::new();
     loop {
         let discovery = discover_vectorization_candidates(state);
         result
@@ -2081,11 +2559,23 @@ fn run_loop_simd_frontier(
                         reason: fallback.reason,
                     }),
             );
+        let cost_failures = discovery.cost_failures;
         let Some(loop_identity) = discovery
             .candidates
             .iter()
             .map(|candidate| (candidate.function, candidate.header))
-            .find(|identity| !processed.contains(identity))
+            .chain(
+                cost_failures
+                    .iter()
+                    .filter_map(|failure| match &failure.key {
+                        super::CandidateKey::LoopFrontier { function, .. } => {
+                            Some((*function, failure.header))
+                        }
+                        _ => None,
+                    }),
+            )
+            .filter(|identity| !processed.contains(identity))
+            .min()
         else {
             break;
         };
@@ -2095,25 +2585,60 @@ fn run_loop_simd_frontier(
             .into_iter()
             .filter(|candidate| (candidate.function, candidate.header) == loop_identity)
             .collect::<Vec<_>>();
-        let profile_scalar_reason = pgo.and_then(|profile| {
-            let below_every_vector_threshold = |maximum: u32| {
-                loop_candidates
-                    .iter()
-                    .all(|candidate| maximum < candidate.minimum_trip)
-            };
-            if profile
-                .loop_maximum_trip(loop_identity.0, loop_identity.1)
-                .is_some_and(below_every_vector_threshold)
-            {
-                return Some("profile-short-trip-retains-scalar");
-            }
-            loop_candidates.first().and_then(|candidate| {
-                profile
-                    .slice_length_maximum(state.module(), candidate.function, candidate.bound)
-                    .filter(|maximum| below_every_vector_threshold(*maximum))
-                    .map(|_| "profile-short-slice-retains-scalar")
+        for failure in cost_failures
+            .into_iter()
+            .filter(|failure| match &failure.key {
+                super::CandidateKey::LoopFrontier { function, .. } => {
+                    (*function, failure.header) == loop_identity
+                }
+                _ => false,
             })
-        });
+        {
+            if !audit.contains_key(&failure.key) {
+                audit.record_noncommitting_attempt(
+                    failure.key.clone(),
+                    CandidateBudgetCharge::single(loop_identity.0, 1, 1),
+                    CandidateDisposition::Rejected,
+                    &failure.reason,
+                )?;
+                result.rejected = result.rejected.saturating_add(1);
+            }
+        }
+        if loop_candidates.is_empty() {
+            continue;
+        }
+        let trip_estimate = classify_loop_trip_estimate(
+            state,
+            &loop_candidates[0],
+            pgo,
+            &mut scalar_analysis_cache,
+        );
+        let profile_scalar_reason = if matches!(
+            trip_estimate,
+            LoopTripEstimate::Exact { .. } | LoopTripEstimate::ProvenBounded { .. }
+        ) {
+            None
+        } else {
+            pgo.and_then(|profile| {
+                let below_every_vector_threshold = |maximum: u32| {
+                    loop_candidates
+                        .iter()
+                        .all(|candidate| maximum < candidate.minimum_trip)
+                };
+                if profile
+                    .loop_maximum_trip(loop_identity.0, loop_identity.1)
+                    .is_some_and(below_every_vector_threshold)
+                {
+                    return Some("profile-short-trip-retains-scalar");
+                }
+                loop_candidates.first().and_then(|candidate| {
+                    profile
+                        .slice_length_maximum(state.module(), candidate.function, candidate.bound)
+                        .filter(|maximum| below_every_vector_threshold(*maximum))
+                        .map(|_| "profile-short-slice-retains-scalar")
+                })
+            })
+        };
         if let Some(profile_scalar_reason) = profile_scalar_reason {
             for candidate in loop_candidates {
                 let charge = CandidateBudgetCharge::single(
@@ -2140,6 +2665,13 @@ fn run_loop_simd_frontier(
             });
             continue;
         }
+        let scenarios = loop_profitability_scenarios(trip_estimate, &loop_candidates);
+        let representative_iterations = trip_estimate.representative(&loop_candidates);
+        let scalar_cost_basis =
+            loop_frontier_cost_basis(&loop_candidates[0], trip_estimate, &state.module().profile)?;
+        let growth_unit = scalar_cost_basis.epilogue_entry;
+        let scalar_body_cost = u32::try_from(scalar_cost_basis.scalar_per_iteration)
+            .map_err(|_| "loop frontier scalar body cost exceeds cost schema".to_string())?;
         let mut vector_alternatives = Vec::new();
         for candidate in loop_candidates {
             let prepared = match kir_passes::materialize_vectorization_trial(state, &candidate) {
@@ -2176,14 +2708,26 @@ fn run_loop_simd_frontier(
                 &prepared.charge,
             ) {
                 Ok(()) => {
-                    let scalar_body_cost = loop_frontier_scalar_body_cost(&candidate)?;
-                    let iterations = loop_frontier_iterations(state, &candidate, pgo);
+                    let basis = loop_frontier_cost_basis(
+                        &candidate,
+                        trip_estimate,
+                        &state.module().profile,
+                    )?;
+                    let rank = rank_vector_candidate(
+                        &state.module().profile,
+                        &candidate,
+                        &prepared.plan,
+                        basis,
+                        &scenarios,
+                        trip_estimate,
+                        representative_iterations,
+                    );
                     vector_alternatives.push((
-                        0,
+                        rank,
                         candidate,
                         prepared,
                         scalar_body_cost,
-                        iterations,
+                        representative_iterations,
                     ));
                 }
                 Err(super::TransactionCheckError::Reject(reason)) => {
@@ -2203,49 +2747,7 @@ fn run_loop_simd_frontier(
                 Err(super::TransactionCheckError::Compiler(error)) => return Err(error),
             }
         }
-        let common_iterations = vector_alternatives
-            .iter()
-            .map(|(_, _, _, _, iterations)| *iterations)
-            .max()
-            .unwrap_or(0);
-        for (scope_cost, candidate, prepared, scalar_body_cost, iterations) in
-            &mut vector_alternatives
-        {
-            *iterations = common_iterations;
-            *scope_cost = vector_loop_scope_cost(
-                &prepared.plan,
-                candidate,
-                *scalar_body_cost,
-                common_iterations,
-            );
-        }
-        vector_alternatives.sort_by(
-            |(left_cost, left_candidate, left, _, _),
-             (right_cost, right_candidate, right, _, _)| {
-                (
-                    exceeds_x86_widening_cast_frontend_budget(
-                        &state.module().profile,
-                        left_candidate,
-                    ),
-                    *left_cost,
-                    left.plan.growth.transformed_units,
-                    left.plan.vf,
-                    left.plan.uf,
-                    &left_candidate.key,
-                )
-                    .cmp(&(
-                        exceeds_x86_widening_cast_frontend_budget(
-                            &state.module().profile,
-                            right_candidate,
-                        ),
-                        *right_cost,
-                        right.plan.growth.transformed_units,
-                        right.plan.vf,
-                        right.plan.uf,
-                        &right_candidate.key,
-                    ))
-            },
-        );
+        vector_alternatives.sort_by(|left, right| compare_vector_profitability(&left.0, &right.0));
         let Some((_, representative, _, scalar_body_cost, iterations)) =
             vector_alternatives.first()
         else {
@@ -2281,11 +2783,17 @@ fn run_loop_simd_frontier(
                 }
             };
             match check_slp_plan_independently(state, &slp.trial, &slp.plan, &slp.charge) {
-                Ok(()) => slp_alternatives.push((
-                    slp_loop_scope_cost(&slp.plan, *scalar_body_cost, *iterations),
-                    slp_candidate,
-                    slp,
-                )),
+                Ok(()) => {
+                    let rank = rank_slp_candidate(
+                        &slp_candidate,
+                        &slp.plan,
+                        u64::from(*scalar_body_cost),
+                        &scenarios,
+                        *iterations,
+                        growth_unit,
+                    );
+                    slp_alternatives.push((rank, slp_candidate, slp));
+                }
                 Err(super::TransactionCheckError::Reject(reason)) => {
                     audit.record_noncommitting_attempt(
                         slp_candidate.key,
@@ -2298,71 +2806,38 @@ fn run_loop_simd_frontier(
                 Err(super::TransactionCheckError::Compiler(error)) => return Err(error),
             }
         }
-        slp_alternatives.sort_by(
-            |(left_cost, left_candidate, left), (right_cost, right_candidate, right)| {
-                (
-                    *left_cost,
-                    left.plan.growth.transformed_units,
-                    1_u8,
-                    left_candidate.lanes,
-                    1_u8,
-                    &left_candidate.key,
-                )
-                    .cmp(&(
-                        *right_cost,
-                        right.plan.growth.transformed_units,
-                        1_u8,
-                        right_candidate.lanes,
-                        1_u8,
-                        &right_candidate.key,
-                    ))
-            },
-        );
-        let (vector_scope_cost, vector_candidate, vector_prepared, _, _) = vector_alternatives
+        slp_alternatives.sort_by(|left, right| compare_vector_profitability(&left.0, &right.0));
+        let (vector_rank, _, _, _, _) = vector_alternatives
             .first()
             .expect("non-empty vector frontier");
-        let slp_wins = slp_alternatives
-            .first()
-            .is_some_and(|(slp_cost, slp_candidate, slp)| {
-                (
-                    *slp_cost,
-                    slp.plan.growth.transformed_units,
-                    1_u8,
-                    slp_candidate.lanes,
-                    1_u8,
-                    &slp_candidate.key,
-                ) < (
-                    *vector_scope_cost,
-                    vector_prepared.plan.growth.transformed_units,
-                    0_u8,
-                    vector_prepared.plan.vf,
-                    vector_prepared.plan.uf,
-                    &vector_candidate.key,
-                )
-            });
+        let slp_wins = slp_alternatives.first().is_some_and(|(slp_rank, _, _)| {
+            compare_vector_profitability(slp_rank, vector_rank).is_lt()
+        });
         if slp_wins {
-            let (_, winner_candidate, winner) = slp_alternatives.remove(0);
-            for (_, nonwinner_candidate, nonwinner) in slp_alternatives {
+            let (winner_rank, winner_candidate, winner) = slp_alternatives.remove(0);
+            for (rank, nonwinner_candidate, nonwinner) in slp_alternatives {
                 audit.record_noncommitting_attempt(
                     nonwinner_candidate.key,
                     nonwinner.charge,
                     CandidateDisposition::NonWinner,
-                    "higher-cost-loop-alternative",
+                    rank.nonwinner_reason(&winner_rank),
                 )?;
                 result.slp_nonwinners = result.slp_nonwinners.saturating_add(1);
             }
-            for (_, candidate, prepared, _, _) in vector_alternatives {
+            for (rank, candidate, prepared, _, _) in vector_alternatives {
+                let reason = rank.nonwinner_reason(&winner_rank);
                 audit.record_noncommitting_attempt(
                     candidate.key.clone(),
                     prepared.charge.clone(),
                     CandidateDisposition::NonWinner,
-                    "higher-cost-loop-alternative",
+                    reason,
                 )?;
                 result.explanations.push(vector_plan_explanation(
                     candidate.key,
                     &prepared.plan,
                     CandidateDisposition::NonWinner,
-                    "higher-cost-loop-alternative",
+                    reason,
+                    &rank.explanation,
                 ));
             }
             let plan = winner.plan.clone();
@@ -2382,6 +2857,7 @@ fn run_loop_simd_frontier(
             );
             match outcome {
                 TransactionOutcome::Committed => {
+                    scalar_analysis_cache.clear();
                     result.changed = true;
                     result.slp_winners = result.slp_winners.saturating_add(1);
                 }
@@ -2401,19 +2877,21 @@ fn run_loop_simd_frontier(
             )?;
             result.slp_nonwinners = result.slp_nonwinners.saturating_add(1);
         }
-        let (_, candidate, prepared, _, _) = vector_alternatives.remove(0);
-        for (_, nonwinner_candidate, nonwinner, _, _) in vector_alternatives {
+        let (winner_rank, candidate, prepared, _, _) = vector_alternatives.remove(0);
+        for (rank, nonwinner_candidate, nonwinner, _, _) in vector_alternatives {
+            let reason = rank.nonwinner_reason(&winner_rank);
             audit.record_noncommitting_attempt(
                 nonwinner_candidate.key.clone(),
                 nonwinner.charge,
                 CandidateDisposition::NonWinner,
-                "higher-cost-loop-alternative",
+                reason,
             )?;
             result.explanations.push(vector_plan_explanation(
                 nonwinner_candidate.key,
                 &nonwinner.plan,
                 CandidateDisposition::NonWinner,
-                "higher-cost-loop-alternative",
+                reason,
+                &rank.explanation,
             ));
         }
         let plan = prepared.plan.clone();
@@ -2434,6 +2912,7 @@ fn run_loop_simd_frontier(
         );
         match outcome {
             TransactionOutcome::Committed => {
+                scalar_analysis_cache.clear();
                 result.changed = true;
                 result.accepted = result.accepted.saturating_add(1);
                 result.scalar_fallbacks = result.scalar_fallbacks.saturating_add(1);
@@ -2442,6 +2921,7 @@ fn run_loop_simd_frontier(
                     &plan,
                     CandidateDisposition::Accepted,
                     "accepted",
+                    &winner_rank.explanation,
                 ));
             }
             TransactionOutcome::Rejected => {
@@ -2451,6 +2931,7 @@ fn run_loop_simd_frontier(
                     &plan,
                     CandidateDisposition::Rejected,
                     "independent-check-rejected",
+                    &winner_rank.explanation,
                 ));
             }
             TransactionOutcome::BudgetExhausted => {
@@ -2460,6 +2941,7 @@ fn run_loop_simd_frontier(
                     &plan,
                     CandidateDisposition::BudgetExhausted,
                     "budget-exhausted",
+                    &winner_rank.explanation,
                 ));
             }
             TransactionOutcome::CompilerError(error) => return Err(error),
