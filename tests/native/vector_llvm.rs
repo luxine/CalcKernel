@@ -430,13 +430,26 @@ fn has_aarch64_packed_i32_add(disassembly: &str) -> bool {
     disassembly.lines().any(|line| {
         let instruction = line.split("//").next().unwrap_or(line).to_ascii_lowercase();
         let tokens: Vec<_> = instruction.split_whitespace().collect();
-        let Some(mnemonic_index) = tokens.iter().position(|token| *token == "add") else {
+        let Some(mnemonic_index) = tokens
+            .iter()
+            .position(|token| matches!(*token, "add" | "add.2s" | "add.4s"))
+        else {
             return false;
+        };
+        let mnemonic_has_lane_suffix = match tokens[mnemonic_index] {
+            "add" => false,
+            "add.2s" | "add.4s" => true,
+            _ => return false,
         };
         let operands_text = tokens[mnemonic_index + 1..].join(" ");
         let operands: Vec<_> = operands_text.split(',').map(str::trim).collect();
         if operands.len() != 3 {
             return false;
+        }
+        if mnemonic_has_lane_suffix {
+            return operands
+                .iter()
+                .all(|operand| aarch64_vector_register(operand));
         }
         let Some(lane_suffix) = aarch64_packed_i32_register_lane(operands[0]) else {
             return false;
@@ -447,13 +460,31 @@ fn has_aarch64_packed_i32_add(disassembly: &str) -> bool {
     })
 }
 
+fn aarch64_vector_register(operand: &str) -> bool {
+    let Some(number) = operand.strip_prefix('v') else {
+        return false;
+    };
+    aarch64_vector_register_number(number).is_some()
+}
+
+fn aarch64_vector_register_number(number: &str) -> Option<u8> {
+    if number.is_empty()
+        || !number.bytes().all(|byte| byte.is_ascii_digit())
+        || (number.len() > 1 && number.starts_with('0'))
+    {
+        return None;
+    }
+    let number = number.parse::<u8>().ok()?;
+    (number < 32).then_some(number)
+}
+
 fn aarch64_packed_i32_register_lane(operand: &str) -> Option<&str> {
     let register = operand.strip_prefix('v')?;
     let (number, lane_suffix) = register.split_once('.')?;
-    let number = number.parse::<u8>().ok()?;
-    if !matches!(lane_suffix, "2s" | "4s") || number >= 32 {
+    if !matches!(lane_suffix, "2s" | "4s") {
         return None;
     }
+    aarch64_vector_register_number(number)?;
     Some(lane_suffix)
 }
 
@@ -462,6 +493,9 @@ fn aarch64_object_contract_requires_packed_integer_add() {
     for disassembly in [
         "0: 0e210c20 add v0.2s, v1.2s, v2.2s",
         "0: 4ea28420 add v0.4s, v1.4s, v2.4s",
+        "28: 0ea08421 add.2s v1, v1, v0",
+        "94: 4ea08421 add.4s v1, v1, v0",
+        "98: 4ea08442 add.4s v2, v2, v0",
     ] {
         assert!(
             has_aarch64_packed_i32_add(disassembly),
@@ -471,11 +505,34 @@ fn aarch64_object_contract_requires_packed_integer_add() {
 
     for disassembly in [
         "0: 8b020020 add x0, x1, x2",
+        "0: 11000908 add w0, w1, w2",
+        "0: 0ea08421 add.2s w0, w1, w2",
         "0: 1e622820 fadd d0, d1, d2",
+        "0: 4e228420 fadd v0.2s, v1.2s, v2.2s",
+        "0: 0ea08421 fadd.2s v0, v1, v2",
+        "0: 0ea08421 addp.2s v0, v1, v2",
         "0: 3dc00020 ldr q0, [x1]",
         "0: 3d800020 str q0, [x1]",
+        "0: 3dc00020 ldr.4s v0, [x1]",
+        "0: 3d800020 str.2s v0, [x1]",
         "0: 0e210c20 add v0.2s, d1, v2.2s",
         "0: 0e210c20 add v0.2s, v1.4s, v2.2s",
+        "0: 4ea08421 add.4s v0, d1, v2",
+        "0: 0ea08421 add.2s v0, v1.4s, v2",
+        "0: 0ea08421 add.2s v0.4s, v1.4s, v2.4s",
+        "0: 0ea08421 add.2s v0.2s, v1.2s, v2.2s",
+        "0: 0ea08421 add.2s v0, v1.2s, v2",
+        "0: 0ea08421 add.2d v0, v1, v2",
+        "0: 0ea08421 add.8s v0, v1, v2",
+        "0: 0e210c20 add v0.8h, v1.8h, v2.8h",
+        "0: 0ea08421 add.2s v32, v1, v2",
+        "0: 0ea08421 add.2s v01, v1, v2",
+        "0: 0e210c20 add v01.2s, v1.2s, v2.2s",
+        "0: 0ea08421 add.2s v0, v1",
+        "0: 0ea08421 add.2s v0, v1, v2, v3",
+        "0: 0ea08421 add.2s v0, v1, v2, #1",
+        "0: 0ea08421 add.2s v+1, v1, v2",
+        "0: 8b020020 add x0, x1, x2 // add.2s v0, v1, v2",
     ] {
         assert!(
             !has_aarch64_packed_i32_add(disassembly),
