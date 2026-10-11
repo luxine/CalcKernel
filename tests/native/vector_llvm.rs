@@ -426,6 +426,64 @@ fn vector_llvm_should_lower_every_closed_family_to_fixed_vector_ir() {
     );
 }
 
+fn has_aarch64_packed_i32_add(disassembly: &str) -> bool {
+    disassembly.lines().any(|line| {
+        let instruction = line.split("//").next().unwrap_or(line).to_ascii_lowercase();
+        let tokens: Vec<_> = instruction.split_whitespace().collect();
+        let Some(mnemonic_index) = tokens.iter().position(|token| *token == "add") else {
+            return false;
+        };
+        let operands_text = tokens[mnemonic_index + 1..].join(" ");
+        let operands: Vec<_> = operands_text.split(',').map(str::trim).collect();
+        if operands.len() != 3 {
+            return false;
+        }
+        let Some(lane_suffix) = aarch64_packed_i32_register_lane(operands[0]) else {
+            return false;
+        };
+        operands[1..]
+            .iter()
+            .all(|operand| aarch64_packed_i32_register_lane(operand) == Some(lane_suffix))
+    })
+}
+
+fn aarch64_packed_i32_register_lane(operand: &str) -> Option<&str> {
+    let register = operand.strip_prefix('v')?;
+    let (number, lane_suffix) = register.split_once('.')?;
+    let number = number.parse::<u8>().ok()?;
+    if !matches!(lane_suffix, "2s" | "4s") || number >= 32 {
+        return None;
+    }
+    Some(lane_suffix)
+}
+
+#[test]
+fn aarch64_object_contract_requires_packed_integer_add() {
+    for disassembly in [
+        "0: 0e210c20 add v0.2s, v1.2s, v2.2s",
+        "0: 4ea28420 add v0.4s, v1.4s, v2.4s",
+    ] {
+        assert!(
+            has_aarch64_packed_i32_add(disassembly),
+            "expected packed integer ADD in {disassembly}"
+        );
+    }
+
+    for disassembly in [
+        "0: 8b020020 add x0, x1, x2",
+        "0: 1e622820 fadd d0, d1, d2",
+        "0: 3dc00020 ldr q0, [x1]",
+        "0: 3d800020 str q0, [x1]",
+        "0: 0e210c20 add v0.2s, d1, v2.2s",
+        "0: 0e210c20 add v0.2s, v1.4s, v2.2s",
+    ] {
+        assert!(
+            !has_aarch64_packed_i32_add(disassembly),
+            "unexpected packed integer ADD in {disassembly}"
+        );
+    }
+}
+
 #[test]
 fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host() {
     let target = NativeTarget::host_with_cpu(NativeCpu::Baseline).expect("baseline target");
@@ -460,15 +518,31 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         "{:?}",
         result.analysis_fallbacks
     );
+    let plan_explanations = result
+        .vector_explanations
+        .iter()
+        .map(|explanation| explanation.stable_text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let accepted_plans = result
+        .vector_explanations
+        .iter()
+        .filter(|explanation| explanation.disposition == calckernel::CandidateDisposition::Accepted)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        accepted_plans.len(),
+        1,
+        "expected exactly one accepted loop-vector plan:\n{plan_explanations}"
+    );
+    let accepted = accepted_plans[0];
+    let selected_plan = accepted.stable_text();
+    println!("selected loop SIMD plan: {selected_plan}");
+    assert!(
+        accepted.vf > 1,
+        "the accepted loop-vector plan must have a non-scalar VF: {selected_plan}"
+    );
     #[cfg(target_arch = "x86_64")]
     {
-        let accepted = result
-            .vector_explanations
-            .iter()
-            .find(|explanation| {
-                explanation.disposition == calckernel::CandidateDisposition::Accepted
-            })
-            .expect("accepted x86 streaming-map vector plan");
         assert_eq!(
             (accepted.vf, accepted.uf),
             (4, 4),
@@ -494,10 +568,14 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
         .verify()
         .expect("verify vector loop");
     let pre_llvm = verified.to_ir_string().expect("pre-optimization LLVM IR");
-    for spelling in ["load <4 x i32>", "add <4 x i32>", "store <4 x i32>"] {
+    for spelling in [
+        format!("load <{} x i32>", accepted.vf),
+        format!("add <{} x i32>", accepted.vf),
+        format!("store <{} x i32>", accepted.vf),
+    ] {
         assert!(
-            pre_llvm.contains(spelling),
-            "missing {spelling}:\n{pre_llvm}"
+            pre_llvm.contains(spelling.as_str()),
+            "missing {spelling} for {selected_plan}:\n{pre_llvm}"
         );
     }
     let optimized = verified
@@ -531,13 +609,16 @@ fn vector_loop_simd_should_survive_kir_llvm_and_object_code_on_the_pinned_host()
     );
     let disassembly = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
     let has_simd = if cfg!(target_arch = "aarch64") {
-        disassembly.contains(".4s") || disassembly.contains(" q")
+        has_aarch64_packed_i32_add(&disassembly)
     } else if cfg!(target_arch = "x86_64") {
         disassembly.contains("xmm") || disassembly.contains("ymm")
     } else {
         true
     };
-    assert!(has_simd, "no host SIMD instruction found:\n{disassembly}");
+    assert!(
+        has_simd,
+        "no host SIMD instruction matching the required object contract for {selected_plan}:\n{disassembly}"
+    );
     fs::remove_dir_all(root).expect("remove vector object directory");
 }
 
