@@ -2,6 +2,12 @@
 
 [English](../../guides/performance.md)
 
+评估[循环与向量化](../compiler/generalized-loop-vectorization.md) 变更时，比较相同
+source/profile/O0/O3 channel，保留 correctness、raw samples、binary identity、
+module/code size、function/local count、emission 与首次 module compilation 数据。
+Source-shape variants 和应拒绝的 dependence/alias case 补充 timing evidence。
+Analysis 成功和候选收益不等于独立检查后提交的优化。
+
 CalcKernel 0.15 保留 fail-closed performance report schema 8。正式 release 必须具有固定
 x86-64 与 AArch64 worker 的完整 report；本地 build 或 release-candidate identity 不能代签。
 Measurement 绑定 candidate SHA、exact 0.12 replay SHA、LLVM/Clang 22.1.8、Rust 1.90.0、
@@ -111,7 +117,8 @@ input/output 工作区并执行固定完整采样顺序。全部 raw row、映�
 
 ## 命令与证据
 
-昂贵的稳定 worker 测量前先运行本地 schema/checker/correctness check：
+昂贵的稳定 worker 测量前先运行本地 schema/checker/correctness check。Python 性能与 replay 工具要求
+Python 3.11 或更新版本：
 
 通用 harness 入口为 `cargo bench --bench ckc_perf`，输出
 `build/perf/latest.summary.json` 与 `build/perf/latest.summary.md`。Native 与 PGO
@@ -198,6 +205,14 @@ export 调用，以及 CK 对多行的循环。`host_preparation_ns` 和 `readba
 以便同时评估直接二进制输出与代码增长。比较新旧编译器时，应交替运行同一源码、profile 名称
 和优化级别，并明确标注 profile schema 的差异。Bulk copy/fill 还需测量短/长区间、重叠和陷阱回退；批处理 case 分别报告逻辑行数、
 实际 JS 到 Wasm 的调用次数与 runner 的 `--batch` 重复次数。
+
+比较 release candidate 的 WASM 时，应使用未修改的仓库 runner，对冻结的 v0.15.2 compiler binary
+和冻结的 candidate binary 分别运行 `baseline`、`simd128` profile。每个 profile 至少运行三个独立
+round，输入和 runner 参数相同（`--samples 20 --warmup 10 --batch 100 --size 1024`）。保留每轮
+raw samples 和 module/compiler identity；除了 runtime，还应比较 module hash、总字节数和 code section
+字节数、函数/local 数、opcode shape、CLI emission 和首次 module compilation。不得只选择有利轮次或
+删除不利 case。该 runner 测量其 Node/V8 宿主上的 CalcKernel WASM，不能证明 Native gate 状态、
+Clang/Rust parity 或可移植的跨语言性能。
 
 模块编译时间是每个产物在该 Node 进程内记录一次的首次编译时间，并非浏览器冷启动测量，
 也不包含获取模块或启动浏览器。每轮端到端样本只涵盖已实例化模块上的准备、调用和读取，不包含模块编译、

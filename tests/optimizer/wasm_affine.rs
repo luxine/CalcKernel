@@ -113,8 +113,18 @@ fn affine_candidates(
 #[test]
 fn wasm_affine_discovery_records_broadcast_contiguous_ranges_and_address_setup() {
     let (state, candidates) = affine_candidates(AFFINE_BROADCAST);
-    assert_eq!(candidates.len(), 1, "{:?}", candidates);
-    let candidate = &candidates[0];
+    assert_eq!(candidates.len(), 3, "unique bounded UF candidates");
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| (candidate.vf, candidate.uf))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([(2, 1), (2, 2), (2, 4)]),
+    );
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.uf == 1)
+        .expect("UF1 candidate");
     assert_eq!((candidate.vf, candidate.uf), (2, 1));
     assert!(candidate.version_predicate.is_none());
 
@@ -231,8 +241,18 @@ fn wasm_affine_discovery_handles_zero_offset_contiguous_sources() {
         )
         .replace("let index: u32 = offset + i;", "let index: u32 = i;");
     let (state, candidates) = affine_candidates(&source);
-    assert_eq!(candidates.len(), 1);
-    let candidate = &candidates[0];
+    assert_eq!(candidates.len(), 3, "unique bounded UF candidates");
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| (candidate.vf, candidate.uf))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([(2, 1), (2, 2), (2, 4)]),
+    );
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.uf == 1)
+        .expect("UF1 candidate");
     let affine = candidate.wasm_affine.as_ref().expect("affine candidate");
     assert!(affine.scalar_address_setup.is_empty());
     for name in ["b", "out"] {
@@ -258,7 +278,7 @@ fn wasm_affine_discovery_handles_zero_offset_contiguous_sources() {
 }
 
 #[test]
-fn wasm_affine_discovery_keeps_the_existing_direct_map_path() {
+fn wasm_affine_discovery_uses_shared_affine_path_for_direct_maps() {
     let source = r#"
 export unsafe fn map(a: slice<f64>, b: slice<f64>, out: slice<f64>, n: u32) -> void
 contract {
@@ -273,15 +293,46 @@ contract {
 "#;
     let state = wasm_state(source);
     let candidates = discover_vectorization_candidates(&state).candidates;
-    assert!(
-        !candidates.is_empty(),
-        "existing direct map path remains available"
-    );
-    assert!(
+    assert_eq!(candidates.len(), 3, "unique bounded UF candidates");
+    assert_eq!(
         candidates
             .iter()
-            .all(|candidate| candidate.wasm_affine.is_none())
+            .map(|candidate| (candidate.vf, candidate.uf))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([(2, 1), (2, 2), (2, 4)]),
     );
+    assert!(
+        candidates.iter().all(
+            |candidate| candidate.wasm_affine.as_ref().is_some_and(|affine| {
+                affine.accesses.iter().all(|access| {
+                    matches!(access.shape, WasmAffineShape::Contiguous { offset: None })
+                }) && affine.range_requirements.len() == 3
+            })
+        )
+    );
+}
+
+#[test]
+fn wasm_affine_discovery_accepts_an_additional_contiguous_input() {
+    let source = AFFINE_BROADCAST.replace("a[column];", "a[column + i];");
+    let (_, candidates) = affine_candidates(&source);
+    assert_eq!(candidates.len(), 3, "unique bounded UF candidates");
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| (candidate.vf, candidate.uf))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([(2, 1), (2, 2), (2, 4)]),
+    );
+    assert!(candidates.iter().all(|candidate| {
+        candidate.wasm_affine.as_ref().is_some_and(|affine| {
+            affine
+                .accesses
+                .iter()
+                .all(|access| matches!(access.shape, WasmAffineShape::Contiguous { .. }))
+                && affine.range_requirements.len() == 3
+        })
+    }));
 }
 
 #[test]
@@ -299,7 +350,6 @@ fn wasm_affine_discovery_requires_noalias_and_matching_output_addresses() {
         AFFINE_BROADCAST.replace("noalias(a, out) && ", ""),
         AFFINE_BROADCAST.replace(" && noalias(b, out)", ""),
         AFFINE_BROADCAST.replace("out[index];", "out[index + 1];"),
-        AFFINE_BROADCAST.replace("a[column];", "a[column + i];"),
         writable_broadcast,
         AFFINE_BROADCAST.replace(
             "previous + scalar * varying",

@@ -11,6 +11,13 @@ command and `schemaVersion: 1`, generation time, host target,
 warm-up/iteration counts, case/task/stage, all samples, minimum, upper median,
 p95, mean, and output units.
 
+The package version and current vector optimizer identities are compiler-candidate
+metadata, not report-format versions. Published CalcKernel 0.15.2 used vector
+cost/proof/budget identities 1/1/1; current candidate evidence uses the Cargo
+package version and identities 3/2/3. This includes a proof-identity change from
+the published release. Historical report schemas and replay identities below
+remain fixed independently of that tuple.
+
 ## Frozen 0.11 compatibility report — schema 6
 
 The replayed 0.11 compiler's historical Native report used `schemaVersion: 6`,
@@ -22,11 +29,14 @@ current 0.12 release gate.
 
 ## Native runtime and optimizer gate — schema 7
 
-`target/ckc-perf/results.json` is a fail-closed `schemaVersion: 7` object for
-candidate `0.12.0`. Unknown, missing, duplicate, malformed, non-finite, unstable,
-or non-positive fields fail. It pins baseline CPU, strict floating semantics,
-Clang 22.1.8, Rust 1.90.0, the canonical Native `KirTargetProfile` digest,
-cost/proof/budget schema 1, actual artifacts, source/recipe/component digests,
+`target/ckc-perf/results.json` is a fail-closed `schemaVersion: 7` report. The
+current candidate version comes from Cargo, and its target profile records vector
+cost schema 3, proof schema 2, and budget schema 3. These optimizer identities
+do not change the report format: schemas 7/8 and the historical 0.12/0.11/0.10
+replay inputs remain fixed. Unknown, missing, duplicate, malformed, non-finite,
+unstable, or non-positive fields fail. The report pins baseline CPU, strict
+floating semantics, Clang 22.1.8, Rust 1.90.0, the canonical Native
+`KirTargetProfile` digest, actual artifacts, source/recipe/component digests,
 and the exact schedules described below.
 
 ### Scalar regression
@@ -99,10 +109,11 @@ failing candidate never authorizes weakening this schema.
 
 ## PGO and multiversion release gate — schema 8
 
-`target/ckc-perf/v0.13-results.json` is the fail-closed `schemaVersion: 8`
-report for candidate `0.13.0`. It embeds the independently checked schema-7
-report above, so schema 8 extends rather than replaces every 0.12 cumulative
-gate. The report binds the exact candidate SHA and compiler bytes; exact 0.12
+`target/ckc-perf/v0.13-results.json` retains its schema-8 report filename. A
+current run takes the candidate version from Cargo; the filename does not pin the
+candidate to 0.13.0. Schema 8 embeds the independently checked schema-7 report
+above, so it extends rather than replaces every 0.12 cumulative gate. The report
+binds the exact candidate SHA and compiler bytes; the exact 0.12
 commit `e1bcea461492a5a2619cdb960ea00dd668847f0a`, compiler, replay manifest, and
 deterministic distribution archive; LLVM/Clang 22.1.8 and its compiler-rt
 profile runtime; Rust 1.90.0; host hardware; and a canonical enhanced-tier

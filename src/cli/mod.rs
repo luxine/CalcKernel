@@ -1,6 +1,9 @@
 mod args;
 #[cfg(feature = "native-toolchain")]
 mod cache;
+#[cfg(all(test, not(feature = "native-toolchain")))]
+#[path = "cache/key.rs"]
+mod cache_key_identity_tests;
 mod commands;
 mod lsp;
 mod output;

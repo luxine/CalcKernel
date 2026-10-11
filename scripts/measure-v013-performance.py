@@ -27,7 +27,18 @@ except ImportError:  # pragma: no cover - release performance workers are Unix
     resource = None
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-CANDIDATE_VERSION = "0.15.2"
+
+
+def cargo_package_version() -> str:
+    manifest = tomllib.loads((REPO / "Cargo.toml").read_text(encoding="utf-8"))
+    package = manifest.get("package")
+    version = package.get("version") if isinstance(package, dict) else None
+    if not isinstance(version, str) or not version:
+        raise ValueError("Cargo.toml package.version must be a nonempty string")
+    return version
+
+
+CANDIDATE_VERSION = cargo_package_version()
 V012_COMMIT = "e1bcea461492a5a2619cdb960ea00dd668847f0a"
 LLVM_VERSION = "22.1.8"
 RUST_VERSION = "1.90.0"

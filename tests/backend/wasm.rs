@@ -19,6 +19,9 @@ use std::{
 
 static NEXT_CFG_WASM_ID: AtomicU64 = AtomicU64::new(0);
 
+#[path = "generalized_loop.rs"]
+mod generalized_loop;
+
 fn emit_wat(source_text: &str, opt_level: u8) -> String {
     let optimized = optimized_module(
         source_text,

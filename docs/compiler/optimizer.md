@@ -99,6 +99,14 @@ consumer, target, CPU policy, operation availability and exact fixed-width
 costs. Missing, zero, stale, or target-mismatched answers reject optimization;
 the optimizer never substitutes host folklore. The profile digest, cost/proof
 schema identities, and optimizer budgets are object-affecting cache inputs.
+The vector release candidate uses cost schema 3, proof schema 2, and budget
+schema 3; published 0.15.2 used 1/1/1. The cost identity covers candidate
+admission/ranking; proof identity covers legality evidence, and the budget
+identity covers bounded analysis work. A cost result cannot authorize a
+transformation that fails the independent legality checks. Finite-scenario
+aggregates saturate in `u64`; `u128` cross-products protect ratio comparisons
+only, so extreme scores are capped static-cost ratios rather than exact
+percentages or measured timings.
 C and WebAssembly `baseline` profiles disable Vector KIR in 0.15.
 For WebAssembly, the `--wasm-features baseline|simd128` option selects the
 target profile for WAT/WASM emission or `emit-kir --consumer wasm`, defaulting
@@ -113,19 +121,25 @@ inputs can convert to `f64x2` with an exact eight-byte load. Supported lane
 operations include splat, load/store, add, subtract, multiply, negate,
 `f64x2` divide, and pure lane comparison and selection.
 
-The Wasm SIMD frontiers also recognize narrower source forms: strict `f64x2`
-affine maps with contiguous, invariant-broadcast, or proven affine accesses
-(including the tested nested matrix column loop); a closed piecewise store
-tree that can be if-converted to lane selects; a normalization loop after a
-proven zero/nonzero unswitch; and the nine-load `3x3` stencil interior after
-boundary peeling. These are shape-specific recognizers, not general matrix,
-stencil, or branch vectorization. Affine direct maps and the supported matrix
-column form use VF2 and consider UF1/2/4; the piecewise tree uses VF2 and
-considers UF1 or UF4. The cost model selects among eligible candidates. Other
-generic maps, casts, reductions, and the stencil interior use one vector chunk
-per loop iteration. Floating-point lanes preserve strict source operation
-order and rounding: polynomial evaluation and multiply-plus-add stay separate
-operations, with no FMA or reassociation.
+The shared [loop and memory model](generalized-loop-vectorization.md) supports
+strict `f64x2` affine maps with contiguous accesses, invariant readonly
+broadcasts and same-index output updates. Supported arithmetic DAGs are checked
+through their typed operations and complete addresses; access count, a particular
+multiply-add formula and source instruction layout are not matrix legality rules.
+The target's f64 SIMD128 capability supplies VF2; legal affine candidates consider
+UF1/2/4 under cost and growth budgets. Stable invariant loads may be shared across
+chunks after proving independence from every write.
+
+Closed piecewise store trees still require independently verified pure control
+exposure and use VF2 with UF1 or UF4. Invariant zero/nonzero branch exposure can
+reveal an ordinary normalization interior without depending on source variable
+names. Boundary peeling reveals the supported stencil interior. These exposure
+contracts remain narrower than arbitrary branch, matrix or stencil restructuring.
+Boundary-exposed f64 interiors share the bounded affine interleave policy. Other
+maps, casts and reductions retain one vector chunk per loop iteration where
+their target/plan contract requires it. Floating
+lanes preserve source operation order and rounding, with separate multiply/add,
+no FMA and no reassociation.
 
 Unknown aliasing or an insufficient range proof can guard a SIMD fast path with
 a total, nontrapping Wasm32 predicate; failure takes the original scalar path.
@@ -194,9 +208,13 @@ remainder semantics. SLP packs only isomorphic, independent, adjacent scalar
 operations in source order; it cannot invent shuffle or masked-memory support.
 Loop SIMD, loop SLP, and unroll are priced over the same immutable loop scope and
 only one winner commits. A vector candidate must beat the scalar cost by at least
-20% at its conservative trip threshold; exact shorter trips stay scalar. The
-aggregate O3 growth ceiling and proposer/checker work budgets apply across all
-0.15 speculative transforms, including rejected alternatives and clones.
+20% under the closed target-cost policy. Runtime candidates use a threshold whose
+complete tail range meets that condition; exact trips use their actual group and
+tail counts, subject to the target group floor, so an exact trip below the runtime
+threshold can still qualify. See the generalized loop model for the shared
+scenario ranking, fallback and growth charges. The aggregate O3 growth ceiling
+and proposer/checker work budgets apply across all 0.15 speculative transforms,
+including rejected alternatives and clones.
 
 Ordinary static O3 may inline a pure helper of at most 32 KIR instructions.
 Unprofiled multiversion lowering uses a compact eight-instruction inline budget

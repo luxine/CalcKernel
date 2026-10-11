@@ -17,7 +17,23 @@ import sys
 import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-CANDIDATE_VERSION = "0.15.2"
+
+
+def cargo_package_version() -> str:
+    manifest = tomllib.loads((REPO / "Cargo.toml").read_text(encoding="utf-8"))
+    package = manifest.get("package")
+    version = package.get("version") if isinstance(package, dict) else None
+    if not isinstance(version, str) or not version:
+        raise ValueError("Cargo.toml package.version must be a nonempty string")
+    return version
+
+
+CANDIDATE_VERSION = cargo_package_version()
+VECTOR_SCHEMA_IDENTITIES = {
+    "costSchema": 3,
+    "proofSchema": 2,
+    "budgetSchema": 3,
+}
 V010_COMMIT = "df816502876fba41676f9ebc190e4fadd18cd5a5"
 V010_COMPILER = f"calckernel 0.10.0 ({V010_COMMIT})"
 V010_MANIFEST_SHA256 = "27c0b995ba51cd799c2bcb89e1df0a4d40538fbf3200e1197f06ecab2ebad4f3"
@@ -1121,8 +1137,12 @@ def check_schema7(report, path: pathlib.Path, baseline_manifest: pathlib.Path):
         fail("sampling protocol or channel order is not pinned")
     exact_keys(report["targetProfile"], {"digest", "costSchema", "proofSchema", "budgetSchema"}, "target profile")
     hash_value(report["targetProfile"]["digest"], "target profile digest")
-    if any(report["targetProfile"][name] != 1 for name in ["costSchema", "proofSchema", "budgetSchema"]):
-        fail("target profile schema identities must be version 1")
+    if any(
+        type(report["targetProfile"][name]) is not int
+        or report["targetProfile"][name] != expected
+        for name, expected in VECTOR_SCHEMA_IDENTITIES.items()
+    ):
+        fail("target profile schema identities must be exact integers 3/2/3")
     manifest, runtime = load_v010(baseline_manifest)
     check_baseline_identity(report, manifest)
     check_replay(report, "runtimeReplayV011", "v011", path)

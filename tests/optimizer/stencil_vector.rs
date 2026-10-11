@@ -342,19 +342,37 @@ fn stencil_vector_runtime_should_preserve_nan_semantics_strict_bits_and_trap_pre
         let production = run_kir_pass_pipeline(module, KirOptimizationLevel::O3, Some(&contracts));
         assert!(production.errors.is_empty(), "{:?}", production.errors);
         let production_module = production.artifact.unwrap();
-        assert_eq!(
-            production_module.functions[0]
-                .blocks
-                .iter()
-                .flat_map(|b| &b.instructions)
-                .filter(|i| matches!(
-                    i.kind,
-                    KirInstructionKind::VectorLoad { .. } | KirInstructionKind::VectorStore { .. }
-                ))
-                .count(),
-            10,
-            "production O3 must execute the SIMD route"
+        let instructions = production_module.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .collect::<Vec<_>>();
+        let vector_stores = instructions
+            .iter()
+            .filter(|i| matches!(i.kind, KirInstructionKind::VectorStore { .. }))
+            .count();
+        let vector_loads = instructions
+            .iter()
+            .filter(|i| matches!(i.kind, KirInstructionKind::VectorLoad { .. }))
+            .count();
+        assert!(
+            [1, 2, 4].contains(&vector_stores),
+            "production O3 must execute a supported interleave"
         );
+        assert_eq!(
+            vector_loads,
+            9 * vector_stores,
+            "each chunk must cover all nine source loads and one store"
+        );
+        assert!(instructions.iter().all(|instruction| {
+            match &instruction.kind {
+                KirInstructionKind::VectorLoad { access, .. }
+                | KirInstructionKind::VectorStore { access, .. } => {
+                    access.lane == KirLaneType::F64 && access.lanes == 2
+                }
+                _ => true,
+            }
+        }));
         let bytes = [pre.module(), prepared.trial.module(), &production_module]
             .map(|m| emit_wasm_kir_module(m, EmitWasmOptions { opt_level: 3 }).unwrap());
         let script = r#"

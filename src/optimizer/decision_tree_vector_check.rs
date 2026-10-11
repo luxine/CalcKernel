@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::vector_verify_common::{
+    CostFallback, target_operation_cost, verify_decision_tree_memory_exposure,
+};
 use super::vectorize_check::{
     checked_loop_bound_is_invariant, forwards_from, stable_invariant_descriptor_root,
 };
@@ -167,6 +170,89 @@ struct Source {
     tree: Node,
     backedge_values: Vec<ScalarState>,
     backedge_memories: Vec<MemoryState>,
+}
+
+/// Proof-only handoff from the independent CFG traversal to shared memory
+/// verification. Its private constructor is called only after the tree,
+/// common latch, per-leaf unit updates, and scalar continuation have passed.
+pub(super) struct VerifiedTreeExposure {
+    function: crate::FunctionId,
+    preheader: BlockId,
+    header: BlockId,
+    root: BlockId,
+    join: BlockId,
+    induction: ValueId,
+    bound: ValueId,
+    root_induction: ValueId,
+    root_load: InstructionId,
+    leaf_stores: Vec<(BlockId, InstructionId)>,
+}
+
+impl VerifiedTreeExposure {
+    #[expect(clippy::too_many_arguments)]
+    fn after_source_checks(
+        function: crate::FunctionId,
+        preheader: BlockId,
+        header: BlockId,
+        root: BlockId,
+        join: BlockId,
+        induction: ValueId,
+        bound: ValueId,
+        root_induction: ValueId,
+        root_load: InstructionId,
+        tree: &Node,
+    ) -> Self {
+        Self {
+            function,
+            preheader,
+            header,
+            root,
+            join,
+            induction,
+            bound,
+            root_induction,
+            root_load,
+            leaf_stores: tree
+                .leaves()
+                .into_iter()
+                .map(|leaf| (leaf.block, leaf.store))
+                .collect(),
+        }
+    }
+
+    pub(super) fn function(&self) -> crate::FunctionId {
+        self.function
+    }
+
+    pub(super) fn loop_parts(
+        &self,
+    ) -> (
+        BlockId,
+        BlockId,
+        BlockId,
+        BlockId,
+        ValueId,
+        ValueId,
+        ValueId,
+    ) {
+        (
+            self.preheader,
+            self.header,
+            self.root,
+            self.join,
+            self.induction,
+            self.bound,
+            self.root_induction,
+        )
+    }
+
+    pub(super) fn root_load(&self) -> InstructionId {
+        self.root_load
+    }
+
+    pub(super) fn leaf_stores(&self) -> &[(BlockId, InstructionId)] {
+        &self.leaf_stores
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,11 +562,10 @@ fn reconstruct_source(
     let mut output_partition = None;
     for leaf in &leaves {
         let store = instruction(original, leaf.store)?;
-        let (slice, index, region, partition) = checked_memory_place(original, store)?;
+        let (slice, _index, region, partition) = checked_memory_place(original, store)?;
         let slice = stable_invariant_descriptor_root(original, slice)
             .ok_or_else(|| error("decision-tree output slice has no stable descriptor origin"))?;
-        if resolved(&builder.aliases, index) != induction
-            || output.is_some_and(|old| old != slice)
+        if output.is_some_and(|old| old != slice)
             || output_region.is_some_and(|old| old != region)
             || output_partition.is_some_and(|old| old != partition)
         {
@@ -493,11 +578,6 @@ fn reconstruct_source(
         output_partition = Some(partition);
     }
     let output = output.ok_or_else(|| error("decision-tree has no output"))?;
-    if !noalias_available(state, original, preheader.id, input, output) {
-        return Err(error(
-            "decision-tree NoAlias evidence is not available at the preheader",
-        ));
-    }
     let mut operations = BTreeSet::new();
     let mut increments = BTreeSet::new();
     for id in builder.members.iter().copied().chain(std::iter::once(join)) {
@@ -554,7 +634,6 @@ fn reconstruct_source(
         output_partition.expect("leaf partition"),
         load.id,
     )?;
-    check_scalar_select_subset(original, root.id, &tree, &builder.members, &increments)?;
     check_scalar_lowering_envelope(
         original,
         preheader.id,
@@ -563,6 +642,29 @@ fn reconstruct_source(
         else_edge.target,
         &builder.members,
     )?;
+    let exposure = VerifiedTreeExposure::after_source_checks(
+        original.id,
+        preheader.id,
+        header.id,
+        root.id,
+        join,
+        induction,
+        bound,
+        root_induction,
+        load.id,
+        &tree,
+    );
+    let memory = verify_decision_tree_memory_exposure(state, original, &exposure)?;
+    if memory.input_slice != input
+        || memory.output_slice != output
+        || memory.input_region != _input_region
+        || memory.input_partition != input_partition
+        || memory.output_region != output_region.expect("leaf region")
+        || memory.output_partition != output_partition.expect("leaf partition")
+    {
+        return Err(error("decision-tree shared memory reconstruction differs"));
+    }
+    check_scalar_select_subset(original, root.id, &tree, &builder.members, &increments)?;
     Ok(Source {
         preheader: preheader.id,
         header: header.id,
@@ -573,10 +675,10 @@ fn reconstruct_source(
         bound,
         root_induction,
         root_load: load.id,
-        input,
-        output,
-        input_partition,
-        output_partition: output_partition.expect("leaf partition"),
+        input: memory.input_slice,
+        output: memory.output_slice,
+        input_partition: memory.input_partition,
+        output_partition: memory.output_partition,
         aliases: builder.aliases,
         memories: builder.memories,
         members: builder.members,
@@ -963,22 +1065,6 @@ fn check_header_work_is_nontrapping(
     Ok(())
 }
 
-fn noalias_available(
-    state: &KirVerifiedProgramState,
-    function: &KirFunction,
-    preheader: BlockId,
-    left: ValueId,
-    right: ValueId,
-) -> bool {
-    let dominators = crate::compute_kir_dominators(function);
-    state.contract_facts().is_some_and(|contracts| contracts.facts().facts().iter().any(|fact| {
-        let available = match &fact.scope { crate::FactScope::FunctionEntry(owner) => *owner == function.id, crate::FactScope::Block { function: owner, block } => *owner == function.id && dominators.dominates(*block, preheader), _ => false };
-        available && fact.generation == state.evidence_generation()
-            && matches!(fact.origin, crate::FactOrigin::TrustedContract { .. })
-            && fact.derivation == crate::FactDerivation::TrustedContractLeaf
-            && matches!(fact.predicate, crate::FactPredicate::Contract(crate::ContractFactPredicate::NoAlias { left: a, right: b }) if (forwards_from(function, left, a) && forwards_from(function, right, b)) || (forwards_from(function, left, b) && forwards_from(function, right, a)))
-    }))
-}
 fn source_operation(
     instruction: &KirInstruction,
 ) -> CheckResult<(crate::KirProfileOperation, crate::KirCostSemantics)> {
@@ -2922,25 +3008,18 @@ fn priced(
     semantics: crate::KirCostSemantics,
     alignment: crate::KirAlignmentClass,
 ) -> CheckResult<u32> {
-    match profile.operation_availability(&crate::KirCostKey {
-        operation,
-        lane,
-        lanes,
-        semantics,
-        alignment,
-    }) {
-        Some(crate::KirOperationAvailability::Legal(cost)) if cost.legalization_parts == 1 => {
-            Ok(cost.cost)
-        }
-        Some(crate::KirOperationAvailability::Unavailable)
-            if operation == crate::KirProfileOperation::Branch && lanes == 1 =>
-        {
-            Ok(1)
-        }
-        _ => Err(TransactionCheckError::reject(
-            "decision-tree-target-operation-unavailable",
-        )),
-    }
+    target_operation_cost(
+        profile,
+        &crate::KirCostKey {
+            operation,
+            lane,
+            lanes,
+            semantics,
+            alignment,
+        },
+        CostFallback::ScalarBranchControl,
+    )
+    .ok_or_else(|| TransactionCheckError::reject("decision-tree-target-operation-unavailable"))
 }
 #[allow(clippy::too_many_arguments)]
 fn check_cost_and_charge(

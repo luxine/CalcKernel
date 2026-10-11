@@ -22,9 +22,9 @@ Caller 负责 allocation、validity、alignment、lifetime、growth 与 alias，
 规范化 KIR target profile，并改变其 SHA-256 digest。`baseline` 不生成 SIMD 指令；两个
 profile 都允许 Bulk Memory 指令。O3 的 `simd128` 可为经过独立验证的连续 `slice<f64>`、
 `slice<i32>`、`slice<u32>` map、受支持的 `i32`/`u32` 到 `f64` 转换、模整数求和/求积归约，
-以及几种封闭源码形态生成 128 位 SIMD：`f64x2` 仿射 map（包括经过测试的嵌套矩阵列循环）、
-受限的分段存储树、经过证明的 normalization 快路径，以及边界剥离后的九次加载 `3x3` stencil
-内部区域。这些是特定形态的能力，不表示一般矩阵、stencil 或分支都可向量化。完整向量使用
+以及通过共享属性检查的 `f64x2` affine/broadcast/output-update loop 生成 128 位 SIMD。
+受限的纯存储树、invariant branch exposure 与 boundary peeling 可以暴露更多循环。
+这些较窄的 exposure contract 不代表任意 matrix、stencil 或 branch restructuring。完整向量使用
 `f64x2` 或 `i32x4` 指令；其他不受支持的 SIMD 候选及 O0–O2 保持标量。
 
 每个 WAT 和 binary module 都带有 `ck.wasm.target` custom section。其 UTF-8 payload 是确定性
@@ -58,8 +58,9 @@ Bulk Memory 快速路径。Guard 会证明完整地址范围位于当前 Wasm me
 一次。模运算求积仍在每个四 lane chunk 后折叠，再更新标量累加器。向量循环只处理完整
 chunk，余数或短 trip 交给原有标量循环。
 未知别名的受支持循环使用不会陷阱的 Wasm32 地址范围与不相交谓词；谓词失败时走标量路径。
-O3 仿射直接 map 与受支持的矩阵列循环使用 VF2，并由成本模型选择 UF1/2/4；封闭分段树使用
-VF2、UF1 或 UF4。通用 map、转换、归约和 stencil 内部循环使用 UF1。严格浮点源码表达式仍发射
+O3 受支持的 strict-f64 affine map、readonly broadcast、同 index 输出更新与边界暴露的
+内部区域通过共享属性检查使用 VF2，并由成本模型选择 UF1/2/4；封闭分段树使用 VF2、
+UF1 或 UF4。其他 map、转换与归约使用 UF1。严格浮点源码表达式仍发射
 独立的乘与加，不会收缩为 FMA 或重结合。每个浮点 lane 保留原标量求值顺序及舍入，不引入
 relaxed SIMD；整数运算按 2^32 取模。不受支持的候选保持标量。源码中的 `noalias` contract 仍由 caller 负责。
 
@@ -71,7 +72,7 @@ relaxed SIMD；整数运算按 2^32 取模。不受支持的候选保持标量�
 `WasmSliceRange` conjunct 构成的窄 total-range 形式，不能包含 alias-disjoint conjunct；`simd128`
 还允许受支持的 `AddressIntervalsDisjoint` conjunct。该内部 total range predicate 是优化谓词，
 不会让一般内存访问进入 checked mode。每种受支持 SIMD plan 的独立 checker 都会重建精确标量访问范围及
-适用的别名证据，并验证所需的原标量、边界或源码控制流路径。当前用途包括受支持的仿射 map/矩阵列、
+适用的别名证据，并验证所需的原标量、边界或源码控制流路径。当前用途包括受支持的仿射 map/broadcast/output update、
 封闭分段树和规范化 stencil 内部区域；任意手工构造的谓词都不能为内存访问授权。
 
 ## 标量地址 lowering

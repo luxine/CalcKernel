@@ -55,8 +55,8 @@ pub struct VectorMemoryGroup {
 pub enum WasmRangeCount {
     TripBound(ValueId),
     Invariant(ValueId),
-    /// The checked stencil route admits exactly 3 * width. The emitted
-    /// multiply is modular; the width guard establishes mathematical scaling.
+    /// A modular count multiply whose exact nonwrapping value must be proved
+    /// from independently reconstructed source relations and range guards.
     ScaledInvariant {
         value: ValueId,
         scale: u32,
@@ -433,8 +433,10 @@ fn validate_cost(cost: KirCostEstimate, minimum_reduction_percent: u32) -> Resul
     {
         return Err("plan cost total does not match its closed decomposition".to_string());
     }
-    let maximum = cost.scalar.saturating_mul(100 - minimum_reduction_percent) / 100;
-    if cost.total > maximum {
+    let retained_percent = 100_u32.saturating_sub(minimum_reduction_percent);
+    if u64::from(cost.total).saturating_mul(100)
+        > u64::from(cost.scalar).saturating_mul(u64::from(retained_percent))
+    {
         return Err("plan cost does not meet the profitability threshold".to_string());
     }
     Ok(())

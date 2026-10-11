@@ -40,6 +40,9 @@ mod slp;
 #[path = "optimizer/vectorize.rs"]
 mod vectorize;
 
+#[path = "optimizer/vector_profitability.rs"]
+mod vector_profitability;
+
 #[path = "optimizer/wasm_affine_checker.rs"]
 mod wasm_affine_checker;
 
@@ -90,3 +93,9 @@ mod multiversion;
 
 #[path = "optimizer/modular_affine.rs"]
 mod modular_affine;
+
+#[path = "optimizer/generalized_vectorization.rs"]
+mod generalized_vectorization;
+
+#[path = "optimizer/guarded_spans.rs"]
+mod guarded_spans;

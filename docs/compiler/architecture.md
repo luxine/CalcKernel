@@ -2,6 +2,19 @@
 
 [简体中文](../zh-CN/compiler/architecture.md)
 
+Loop SIMD uses a shared canonical-loop and affine-memory model, bounded
+dependence queries, target-priced candidates and transactional vector plans.
+The independent checker reconstructs source properties before verifying the
+trial. See [Loop, Memory and Vectorization](generalized-loop-vectorization.md)
+for the proof boundary, runtime fallback and supported domain.
+
+The analysis can describe affine forms that the current materializer cannot
+lower. Generic WASM f64 materialization still requires an exact supported
+induction-plus-offset or broadcast projection and a supported operation/state
+shape. Stencil checking shares the generic dependence and span rules, while
+stencil footprint exposure remains a bounded 3x3 producer. This distinction
+keeps source-pattern exposure separate from vector legality.
+
 Public behavior is defined by the language, CLI, MIR, compatibility, and ABI
 documents. Module names in this document explain implementation ownership.
 

@@ -3,6 +3,7 @@ mod audit;
 mod decision_tree_plan;
 mod decision_tree_vector_check;
 mod facts;
+mod guarded_span_check;
 mod interior_normalize;
 mod invariant_load_check;
 mod kir_passes;
@@ -25,6 +26,7 @@ mod unroll;
 mod unroll_check;
 mod vector_check;
 mod vector_plan;
+mod vector_verify_common;
 mod vectorize;
 mod vectorize_check;
 mod verify;
@@ -34,6 +36,7 @@ pub use audit::*;
 pub use decision_tree_plan::*;
 pub use decision_tree_vector_check::*;
 pub use facts::*;
+pub use guarded_span_check::*;
 pub use interior_normalize::*;
 pub use invariant_load_check::*;
 pub use kir_passes::{
@@ -65,17 +68,17 @@ pub use vectorize_check::*;
 pub use verify::*;
 
 /// Schema of the deterministic vector cost model stored in Native cache keys.
-pub const KIR_VECTOR_COST_MODEL_SCHEMA: u32 = 1;
+pub const KIR_VECTOR_COST_MODEL_SCHEMA: u32 = 3;
 /// Schema of vector transformation proof records stored in Native cache keys.
-pub const KIR_VECTOR_PROOF_SCHEMA: u32 = 1;
+pub const KIR_VECTOR_PROOF_SCHEMA: u32 = 2;
 
 pub(crate) const KIR_INLINE_CALLEE_BUDGET: usize = 32;
 pub(crate) const KIR_MULTIVERSION_INLINE_CALLEE_BUDGET: usize = 8;
 pub(crate) const KIR_PGO_HOT_INLINE_CALLEE_BUDGET: usize = 48;
 
-/// Canonical identity of every fixed 0.12 optimizer budget currently capable
+/// Canonical identity of every fixed optimizer budget currently capable
 /// of changing Native object bytes. New budgets must extend this string.
 #[must_use]
 pub const fn kir_vector_budget_identity() -> &'static str {
-    "vector-budget-schema=1;predicates=4;minimum-cost-reduction-percent=20"
+    "vector-budget-schema=3;predicates=4;minimum-cost-reduction-percent=20;descriptor-root-work=16*units+64,max8192;affine-steps=16*units+64,max8192;affine-depth=128;affine-terms=32;affine-accesses=128;affine-setup=128;dependence-pairs=32*units+128,max8192;dependence-query-steps=128;guarded-span-nodes=512;guarded-span-accesses=128;guarded-span-terms=32;guarded-span-passes=32;guarded-span-attempts=384;dead-scalar-body=128;dead-scalar-values=256;dead-scalar-steps=512"
 }

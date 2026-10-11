@@ -307,6 +307,25 @@ fn vector_plan_mutations_should_reject_profile_lane_cost_and_growth_claims() {
 }
 
 #[test]
+fn vector_plan_profitability_should_compare_large_costs_without_saturating() {
+    let profile = profile();
+    let mut profitable = plan(&profile);
+    profitable.cost = KirCostEstimate::new(4_200_000_000, 3_200_000_000, 2, 0);
+    assert_eq!(
+        validate_vectorization_plan(&profitable, &profile),
+        Ok(()),
+        "3.2B is below the exact 80% threshold for a 4.2B scalar basis"
+    );
+
+    profitable.cost = KirCostEstimate::new(4_200_000_000, 3_400_000_000, 2, 0);
+    assert!(
+        validate_vectorization_plan(&profitable, &profile)
+            .expect_err("cost above the 80% threshold")
+            .contains("profitability threshold")
+    );
+}
+
+#[test]
 fn vector_plan_related_closed_records_should_have_no_open_operation_strings() {
     let profile = profile();
     let pre_state = plan(&profile).pre_state;

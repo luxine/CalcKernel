@@ -167,15 +167,55 @@ fn result_of(instruction: &KirInstruction, ty: &KirValueType) -> Option<ValueId>
         .then(|| instruction.results[0].value)
 }
 
-fn parameter_slot(block: &KirBlock, slot: &str, ty: &KirValueType) -> Option<usize> {
+fn parameter_index(block: &KirBlock, value: ValueId, ty: &KirValueType) -> Option<usize> {
     let mut matches = block
         .params
         .iter()
         .enumerate()
-        .filter(|(_, param)| param.slot == slot && param.type_node == *ty)
+        .filter(|(_, param)| param.value == value && param.type_node == *ty)
         .map(|(index, _)| index);
     let index = matches.next()?;
     matches.next().is_none().then_some(index)
+}
+
+fn edge_parameter_index(
+    edge: &crate::KirEdge,
+    target: &KirBlock,
+    value: ValueId,
+    ty: &KirValueType,
+) -> Option<usize> {
+    if edge.args.len() != target.params.len() {
+        return None;
+    }
+    let mut matches = edge
+        .args
+        .iter()
+        .zip(&target.params)
+        .enumerate()
+        .filter(|(_, (argument, param))| **argument == value && param.type_node == *ty)
+        .map(|(index, _)| index);
+    let index = matches.next()?;
+    matches.next().is_none().then_some(index)
+}
+
+fn f64_slice_type() -> KirValueType {
+    KirValueType::Scalar(MirType::Slice(Box::new(MirType::Primitive(
+        MirPrimitiveTypeName::F64,
+    ))))
+}
+
+fn store_slice_parameter_index(instruction: &KirInstruction, block: &KirBlock) -> Option<usize> {
+    let KirInstructionKind::Store { place, .. } = &instruction.kind else {
+        return None;
+    };
+    let KirPlace::SliceIndex {
+        slice, type_node, ..
+    } = place.as_ref()
+    else {
+        return None;
+    };
+    (*type_node == MirType::Primitive(MirPrimitiveTypeName::F64))
+        .then(|| parameter_index(block, *slice, &f64_slice_type()))?
 }
 
 fn constant_u32(function: &KirFunction, value: ValueId) -> Option<u32> {
@@ -219,29 +259,37 @@ fn recognize_source(
         || !edge_forwards_memory_by_region(preheader, incoming, header)
         || preheader.instructions.len() != 1
         || descriptor.latch.is_none()
+        || incoming
+            .args
+            .iter()
+            .zip(&header.params)
+            .any(|(value, param)| value_type(function, *value) != Some(param.type_node.clone()))
     {
         return None;
     }
 
-    let input_slot = parameter_slot(
-        header,
-        "input",
-        &KirValueType::Scalar(MirType::Slice(Box::new(MirType::Primitive(
-            MirPrimitiveTypeName::F64,
-        )))),
-    )?;
-    let output_slot = parameter_slot(
-        header,
-        "out",
-        &KirValueType::Scalar(MirType::Slice(Box::new(MirType::Primitive(
-            MirPrimitiveTypeName::F64,
-        )))),
-    )?;
-    let minimum_slot = parameter_slot(header, "minimum", &f64_type())?;
-    let range_slot = parameter_slot(header, "range", &f64_type())?;
-    let induction_slot = parameter_slot(header, "j", &u32_type())?;
-    let input = header.params[input_slot].value;
-    let induction = header.params[induction_slot].value;
+    let length = header.instructions.first()?;
+    let KirInstructionKind::SliceLen { slice: input } = &length.kind else {
+        return None;
+    };
+    let input_slot = parameter_index(header, *input, &f64_slice_type())?;
+    let length_value = result_of(length, &u32_type())?;
+    let KirInstructionKind::Compare {
+        op: MirCompareOp::Lt,
+        left: induction,
+        right,
+    } = &header.instructions.get(1)?.kind
+    else {
+        return None;
+    };
+    let induction_slot = parameter_index(header, *induction, &u32_type())?;
+    if header.instructions.len() != 2
+        || *right != length_value
+        || !no_effect(length)
+        || !no_effect(&header.instructions[1])
+    {
+        return None;
+    }
 
     let range_sub = &preheader.instructions[0];
     let range_result = result_of(range_sub, &f64_type())?;
@@ -254,45 +302,31 @@ fn recognize_source(
     else {
         return None;
     };
+    let minimum_slot = edge_parameter_index(incoming, header, *pre_minimum, &f64_type())?;
+    let maximum_slot = parameter_index(preheader, *maximum, &f64_type())?;
+    let pre_minimum_slot = parameter_index(preheader, *pre_minimum, &f64_type())?;
     if preheader
         .params
         .iter()
         .any(|param| param.value == range_result)
+        || !no_effect(range_sub)
+        || maximum_slot == pre_minimum_slot
         || *pre_minimum != incoming.args[minimum_slot]
-        || incoming.args[range_slot] != range_result
         || value_type(function, *maximum) != Some(f64_type())
     {
         return None;
     }
-    if incoming.args[output_slot] != preheader.params.iter().find(|p| p.slot == "out")?.value
+    if parameter_index(preheader, incoming.args[input_slot], &f64_slice_type()).is_none()
         || constant_u32(function, incoming.args[induction_slot]) != Some(0)
-        || preheader.params.iter().find(|p| p.slot == "minimum")?.value != *pre_minimum
-        || preheader.params.iter().find(|p| p.slot == "maximum")?.value != *maximum
     {
-        return None;
-    }
-
-    let KirInstructionKind::SliceLen { slice } = &block(function, descriptor.header)?
-        .instructions
-        .first()?
-        .kind
-    else {
-        return None;
-    };
-    let header = block(function, descriptor.header)?;
-    if header.instructions.len() != 2 || *slice != input {
-        return None;
-    }
-    let len_value = result_of(&header.instructions[0], &u32_type())?;
-    if !no_effect(&header.instructions[0]) {
         return None;
     }
     let loop_condition = result_of(&header.instructions[1], &bool_type())?;
     if header.instructions[1].kind
         != (KirInstructionKind::Compare {
             op: MirCompareOp::Lt,
-            left: induction,
-            right: len_value,
+            left: *induction,
+            right: length_value,
         })
         || !no_effect(&header.instructions[1])
     {
@@ -331,25 +365,13 @@ fn recognize_source(
         return None;
     }
     let arm_condition = result_of(&root.instructions[1], &bool_type())?;
-    if root.instructions[1].kind
-        != (KirInstructionKind::Compare {
-            op: MirCompareOp::Eq,
-            left: root.params.get(range_slot)?.value,
-            right: zero_const,
-        })
-        || !no_effect(&root.instructions[1])
-    {
-        return None;
-    }
     if root.params.len() != header.params.len()
         || root
             .params
             .iter()
             .zip(&header.params)
-            .any(|(actual, expected)| {
-                actual.slot != expected.slot || actual.type_node != expected.type_node
-            })
-        || !edge_forwards_values_by_slot(header, body_edge, root)
+            .any(|(actual, expected)| actual.type_node != expected.type_node)
+        || !edge_forwards_values_positionally(header, body_edge, root)
         || root
             .memory_params
             .iter()
@@ -360,6 +382,30 @@ fn recognize_source(
                 .iter()
                 .map(|p| p.region)
                 .collect::<Vec<_>>()
+    {
+        return None;
+    }
+    let KirInstructionKind::Compare {
+        op: MirCompareOp::Eq,
+        left: compare_left,
+        right: compare_right,
+    } = &root.instructions[1].kind
+    else {
+        return None;
+    };
+    let range_value = if *compare_left == zero_const {
+        *compare_right
+    } else if *compare_right == zero_const {
+        *compare_left
+    } else {
+        return None;
+    };
+    let range_slot = parameter_index(root, range_value, &f64_type())?;
+    if !no_effect(&root.instructions[1])
+        || range_slot >= header.params.len()
+        || header.params[range_slot].type_node != f64_type()
+        || incoming.args[range_slot] != range_result
+        || range_slot == minimum_slot
     {
         return None;
     }
@@ -382,8 +428,8 @@ fn recognize_source(
     }
     let zero = block(function, zero_edge.target)?;
     let false_arm = block(function, false_edge.target)?;
-    if !edge_forwards_values_by_slot(root, zero_edge, zero)
-        || !edge_forwards_values_by_slot(root, false_edge, false_arm)
+    if !edge_forwards_values_positionally(root, zero_edge, zero)
+        || !edge_forwards_values_positionally(root, false_edge, false_arm)
     {
         return None;
     }
@@ -391,6 +437,17 @@ fn recognize_source(
         return None;
     }
     let zero_store = &zero.instructions[0];
+    let output_slot = store_slice_parameter_index(zero_store, zero)?;
+    if output_slot == input_slot || output_slot == induction_slot {
+        return None;
+    }
+    let output_preheader_slot =
+        parameter_index(preheader, incoming.args[output_slot], &f64_slice_type())?;
+    let input_preheader_slot =
+        parameter_index(preheader, incoming.args[input_slot], &f64_slice_type())?;
+    if output_preheader_slot == input_preheader_slot {
+        return None;
+    }
     if !is_exact_store(
         zero_store,
         zero.params.get(output_slot)?.value,
@@ -445,12 +502,14 @@ fn recognize_source(
     else {
         return None;
     };
+    let false_output_slot = store_slice_parameter_index(store, false_arm)?;
     if *load_slice != false_arm.params[input_slot].value
         || *load_index != false_arm.params[induction_slot].value
         || *left != loaded
         || *right != false_arm.params[minimum_slot].value
         || *numerator != difference
         || *denominator != false_arm.params[range_slot].value
+        || false_output_slot != output_slot
         || !is_exact_store(
             store,
             false_arm.params[output_slot].value,
@@ -475,11 +534,11 @@ fn recognize_source(
     {
         return None;
     }
-    if !edge_forwards_values_by_slot(
+    if !edge_forwards_values_positionally(
         false_arm,
         jump_edge(&false_arm.terminator)?,
         block(function, jump_edge(&false_arm.terminator)?.target)?,
-    ) || !edge_forwards_values_by_slot(
+    ) || !edge_forwards_values_positionally(
         zero,
         jump_edge(&zero.terminator)?,
         block(function, jump_edge(&zero.terminator)?.target)?,
@@ -498,7 +557,7 @@ fn recognize_source(
             .params
             .iter()
             .zip(&header.params)
-            .all(|(a, b)| a.slot == b.slot && a.type_node == b.type_node)
+            .all(|(a, b)| a.type_node == b.type_node)
     {
         return None;
     }
@@ -586,7 +645,7 @@ fn jump_edge(terminator: &KirTerminator) -> Option<&crate::KirEdge> {
     }
 }
 
-fn edge_forwards_values_by_slot(
+fn edge_forwards_values_positionally(
     source: &KirBlock,
     edge: &crate::KirEdge,
     target: &KirBlock,
@@ -600,9 +659,7 @@ fn edge_forwards_values_by_slot(
             .zip(&source.params)
             .zip(&target.params)
             .all(|((value, source_param), target_param)| {
-                source_param.slot == target_param.slot
-                    && source_param.type_node == target_param.type_node
-                    && *value == source_param.value
+                source_param.type_node == target_param.type_node && *value == source_param.value
             })
         || !edge_forwards_memory_by_region(source, edge, target)
     {
@@ -1823,22 +1880,42 @@ fn reconstruct_source_for_checker(
         || incoming.memory_args.len() != header.memory_params.len()
         || !edge_forwards_memory_by_region(preheader, incoming, header)
         || preheader.instructions.len() != 1
+        || incoming
+            .args
+            .iter()
+            .zip(&header.params)
+            .any(|(value, param)| value_type(function, *value) != Some(param.type_node.clone()))
     {
         return Err("source range computation or entry state changed".into());
     }
-    let input_ty = KirValueType::Scalar(MirType::Slice(Box::new(MirType::Primitive(
-        MirPrimitiveTypeName::F64,
-    ))));
-    let input_slot =
-        parameter_slot(header, "input", &input_ty).ok_or("source input slot changed")?;
-    let output_slot =
-        parameter_slot(header, "out", &input_ty).ok_or("source output slot changed")?;
-    let minimum_slot =
-        parameter_slot(header, "minimum", &f64_type()).ok_or("source minimum slot changed")?;
-    let range_slot =
-        parameter_slot(header, "range", &f64_type()).ok_or("source range slot changed")?;
-    let induction_slot =
-        parameter_slot(header, "j", &u32_type()).ok_or("source induction slot changed")?;
+    let header_length = header
+        .instructions
+        .first()
+        .ok_or("source output length missing")?;
+    let KirInstructionKind::SliceLen { slice: input } = &header_length.kind else {
+        return Err("source output length must read the input slice".into());
+    };
+    let input_ty = f64_slice_type();
+    let input_slot = parameter_index(header, *input, &input_ty)
+        .ok_or("source input parameter could not be derived from SliceLen")?;
+    let length = result_of(header_length, &u32_type()).ok_or("source output length missing")?;
+    let KirInstructionKind::Compare {
+        op: MirCompareOp::Lt,
+        left: induction,
+        right,
+    } = &header
+        .instructions
+        .get(1)
+        .ok_or("source output condition missing")?
+        .kind
+    else {
+        return Err("source output condition must be strict induction < length".into());
+    };
+    if header.instructions.len() != 2 || *right != length || !no_effect(header_length) {
+        return Err("source output bound is not the invariant input length".into());
+    }
+    let induction_slot = parameter_index(header, *induction, &u32_type())
+        .ok_or("source induction parameter could not be derived from comparison")?;
     let range_result =
         result_of(&preheader.instructions[0], &f64_type()).ok_or("source range result changed")?;
     let KirInstructionKind::Binary {
@@ -1850,39 +1927,26 @@ fn reconstruct_source_for_checker(
     else {
         return Err("source range must remain strict maximum minus minimum".into());
     };
+    let minimum_slot = edge_parameter_index(incoming, header, *minimum, &f64_type())
+        .ok_or("source minimum was not forwarded from the range subtraction")?;
+    let maximum_input = parameter_index(preheader, *maximum, &f64_type())
+        .ok_or("source maximum is not a preheader f64 value")?;
+    let minimum_input = parameter_index(preheader, *minimum, &f64_type())
+        .ok_or("source minimum is not a preheader f64 value")?;
     if !no_effect(&preheader.instructions[0])
-        || incoming.args[range_slot] != range_result
+        || maximum_input == minimum_input
+        || preheader
+            .params
+            .iter()
+            .any(|param| param.value == range_result)
         || incoming.args[minimum_slot] != *minimum
-        || preheader
-            .params
-            .iter()
-            .find(|param| param.slot == "minimum")
-            .map(|p| p.value)
-            != Some(*minimum)
-        || preheader
-            .params
-            .iter()
-            .find(|param| param.slot == "maximum")
-            .map(|p| p.value)
-            != Some(*maximum)
-        || incoming.args[output_slot]
-            != preheader
-                .params
-                .iter()
-                .find(|param| param.slot == "out")
-                .map(|p| p.value)
-                .ok_or("preheader output missing")?
         || constant_u32(function, incoming.args[induction_slot]) != Some(0)
     {
         return Err("source range, minimum, maximum or initial output index changed".into());
     }
-    if header.instructions.len() != 2 {
-        return Err("source output bound contains extra work".into());
-    }
     let input = header.params[input_slot].value;
     let induction = header.params[induction_slot].value;
-    let len =
-        result_of(&header.instructions[0], &u32_type()).ok_or("source output length missing")?;
+    let len = length;
     let loop_condition = result_of(&header.instructions[1], &bool_type())
         .ok_or("source output condition missing")?;
     if header.instructions[0].kind != (KirInstructionKind::SliceLen { slice: input })
@@ -1933,29 +1997,39 @@ fn reconstruct_source_for_checker(
             .params
             .iter()
             .zip(&header.params)
-            .any(|(actual, expected)| {
-                actual.slot != expected.slot || actual.type_node != expected.type_node
-            })
-        || !edge_forwards_values_by_slot(header, body_edge, root)
+            .any(|(actual, expected)| actual.type_node != expected.type_node)
+        || !edge_forwards_values_positionally(header, body_edge, root)
     {
         return Err("source range branch changes header state".into());
     }
     let positive_zero = root.instructions[0].results[0].value;
-    let range_param = root
-        .params
-        .get(range_slot)
-        .ok_or("source range parameter missing")?
-        .value;
+    let KirInstructionKind::Compare {
+        op: MirCompareOp::Eq,
+        left: compare_left,
+        right: compare_right,
+    } = &root.instructions[1].kind
+    else {
+        return Err("source range branch must compare against positive zero".into());
+    };
+    let range_param = if *compare_left == positive_zero {
+        *compare_right
+    } else if *compare_right == positive_zero {
+        *compare_left
+    } else {
+        return Err("source range branch must compare against positive zero".into());
+    };
+    let range_slot = parameter_index(root, range_param, &f64_type())
+        .ok_or("source range parameter could not be derived from equality")?;
+    if range_slot >= header.params.len()
+        || header.params[range_slot].type_node != f64_type()
+        || incoming.args[range_slot] != range_result
+        || range_slot == minimum_slot
+    {
+        return Err("source range branch no longer tests the preheader range".into());
+    }
     let root_condition =
         result_of(&root.instructions[1], &bool_type()).ok_or("source zero predicate missing")?;
-    if root.instructions[1].kind
-        != (KirInstructionKind::Compare {
-            op: MirCompareOp::Eq,
-            left: range_param,
-            right: positive_zero,
-        })
-        || !no_effect(&root.instructions[1])
-    {
+    if !no_effect(&root.instructions[1]) {
         return Err("source branch must preserve exact range == +0 semantics".into());
     }
     let KirTerminator::Branch {
@@ -1977,6 +2051,22 @@ fn reconstruct_source_for_checker(
         || false_arm.instructions.len() != 4
     {
         return Err("source normalization arms gained operations or changed identity".into());
+    }
+    if !edge_forwards_values_positionally(root, zero_edge, zero)
+        || !edge_forwards_values_positionally(root, false_edge, false_arm)
+    {
+        return Err("source normalization arms change carried values".into());
+    }
+    let output_slot = store_slice_parameter_index(&zero.instructions[0], zero)
+        .ok_or("source output parameter could not be derived from zero store")?;
+    if output_slot == input_slot
+        || output_slot == induction_slot
+        || parameter_index(preheader, incoming.args[output_slot], &input_ty).is_none()
+        || parameter_index(preheader, incoming.args[input_slot], &input_ty).is_none()
+        || parameter_index(preheader, incoming.args[output_slot], &input_ty)
+            == parameter_index(preheader, incoming.args[input_slot], &input_ty)
+    {
+        return Err("source input and output roles are not forwarded independently".into());
     }
     if !is_exact_store(
         &zero.instructions[0],
@@ -2012,6 +2102,8 @@ fn reconstruct_source_for_checker(
     else {
         return Err("source false arm input access changed".into());
     };
+    let false_output_slot = store_slice_parameter_index(store, false_arm)
+        .ok_or("source output parameter could not be derived from nonzero store")?;
     if *slice != false_arm.params[input_slot].value
         || *index != false_arm.params[induction_slot].value
         || *type_node != MirType::Primitive(MirPrimitiveTypeName::F64)
@@ -2040,6 +2132,7 @@ fn reconstruct_source_for_checker(
                 right: false_arm.params[range_slot].value,
                 semantics: KirArithmeticSemantics::StrictFloat,
             })
+        || false_output_slot != output_slot
         || !is_exact_store(
             store,
             false_arm.params[output_slot].value,
@@ -2100,12 +2193,12 @@ fn reconstruct_source_for_checker(
     {
         return Err("source output backedge changes bound, range or minimum".into());
     }
-    if !edge_forwards_values_by_slot(root, zero_edge, zero)
-        || !edge_forwards_values_by_slot(root, false_edge, false_arm)
+    if !edge_forwards_values_positionally(root, zero_edge, zero)
+        || !edge_forwards_values_positionally(root, false_edge, false_arm)
         || jump_edge(&zero.terminator)
-            .is_none_or(|edge| !edge_forwards_values_by_slot(zero, edge, latch))
+            .is_none_or(|edge| !edge_forwards_values_positionally(zero, edge, latch))
         || jump_edge(&false_arm.terminator)
-            .is_none_or(|edge| !edge_forwards_values_by_slot(false_arm, edge, latch))
+            .is_none_or(|edge| !edge_forwards_values_positionally(false_arm, edge, latch))
         || !edge_forwards_memory_by_region(latch, backedge, header)
     {
         return Err("source branch arms no longer join the one shared latch".into());

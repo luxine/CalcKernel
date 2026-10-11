@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use calckernel::{
     CandidateDisposition, ContractFactSet, KirAlignmentClass, KirBoundsMode, KirBuildConfig,
-    KirConsumer, KirCostKey, KirInstructionKind, KirLegalCost, KirNativeCpuPolicy,
+    KirConsumer, KirCostKey, KirInstructionKind, KirLaneType, KirLegalCost, KirNativeCpuPolicy,
     KirOperationAvailability, KirOptimizationLevel, KirOverflowMode, KirProfileOperation,
     KirSanitizerMode, KirTargetProfile, KirTargetProfileBuilder, KirVerifiedProgramState,
     KirVersionPredicateConjunct, KirWasmFeatures, SourceFile, VectorEpilogue,
@@ -233,6 +233,184 @@ fn wasm_map_state(
         source,
         KirTargetProfile::webassembly_with_features(features),
     )
+}
+
+#[derive(Debug)]
+struct ReferenceFrontierScore {
+    target_penalty: bool,
+    runtime: u64,
+    score: u64,
+    denominator: u64,
+    added_units: u32,
+    expansion_proxy: u32,
+    vf: u16,
+    uf: u8,
+}
+
+fn reference_vector_frontier_winner(
+    state: &KirVerifiedProgramState,
+    candidates: &[calckernel::VectorizationCandidate],
+    exact_trip: Option<u32>,
+) -> (u16, u8) {
+    let maximum_width = candidates
+        .iter()
+        .map(|candidate| u32::from(candidate.vf) * u32::from(candidate.uf))
+        .max()
+        .expect("non-empty vector frontier")
+        .clamp(1, 64);
+    let scenarios = if let Some(iterations) = exact_trip {
+        vec![iterations]
+    } else {
+        let threshold = candidates
+            .iter()
+            .map(|candidate| candidate.minimum_trip)
+            .min()
+            .expect("non-empty vector frontier");
+        (threshold.saturating_sub(1)..=threshold.saturating_add(maximum_width - 1)).collect()
+    };
+    reference_vector_frontier_winner_for_scenarios(state, candidates, exact_trip, &scenarios)
+}
+
+pub(super) fn reference_vector_frontier_winner_for_scenarios(
+    state: &KirVerifiedProgramState,
+    candidates: &[calckernel::VectorizationCandidate],
+    exact_trip: Option<u32>,
+    scenarios: &[u32],
+) -> (u16, u8) {
+    let branch_key = KirCostKey {
+        operation: KirProfileOperation::Branch,
+        lane: KirLaneType::U32,
+        lanes: 1,
+        semantics: calckernel::KirCostSemantics::NotApplicable,
+        alignment: KirAlignmentClass::NotApplicable,
+    };
+    let branch_unit = match state.module().profile.operation_availability(&branch_key) {
+        Some(KirOperationAvailability::Legal(cost)) => u64::from(cost.cost),
+        Some(KirOperationAvailability::Unavailable) => 1,
+        None => panic!("branch cost is present in the target profile"),
+    }
+    .max(1);
+    let mut scores = candidates
+        .iter()
+        .filter_map(|candidate| {
+            let Ok(prepared) = prepare_vectorization_trial(state, candidate) else {
+                return None;
+            };
+            if check_vectorization_trial_independently(
+                state,
+                &prepared.trial,
+                &prepared.plan,
+                &prepared.charge,
+            )
+            .is_err()
+            {
+                return None;
+            }
+            let width = u32::from(candidate.vf) * u32::from(candidate.uf);
+            let priced_iterations =
+                exact_trip.unwrap_or_else(|| candidate.minimum_trip.saturating_add(width - 1));
+            let priced_groups =
+                exact_trip.map_or(candidate.minimum_trip / width, |trip| trip / width);
+            assert!(priced_iterations > 0 && priced_groups > 0);
+            let scalar_per_iteration =
+                u64::from(candidate.predicted_cost.scalar / priced_iterations);
+            let vector_per_group =
+                u64::from(candidate.predicted_cost.transformed_body / priced_groups);
+            let epilogue_entry = if exact_trip.is_some() {
+                branch_unit
+            } else {
+                u64::from(candidate.predicted_cost.epilogue)
+                    .saturating_sub(scalar_per_iteration.saturating_mul(u64::from(width - 1)))
+            };
+            let mut runtime = 0_u64;
+            let mut denominator = 0_u64;
+            for iterations in scenarios {
+                let scalar = scalar_per_iteration.saturating_mul(u64::from(*iterations));
+                let transformed = if *iterations < candidate.minimum_trip {
+                    scalar.saturating_add(u64::from(candidate.predicted_cost.predicates))
+                } else {
+                    let groups = *iterations / width;
+                    let tail = *iterations % width;
+                    vector_per_group
+                        .saturating_mul(u64::from(groups))
+                        .saturating_add(scalar_per_iteration.saturating_mul(u64::from(tail)))
+                        .saturating_add(epilogue_entry.saturating_mul(u64::from(tail != 0)))
+                        .saturating_add(u64::from(candidate.predicted_cost.predicates))
+                };
+                runtime = runtime.saturating_add(transformed);
+                denominator = denominator.saturating_add(scalar.max(1));
+            }
+            let added_units = prepared
+                .plan
+                .growth
+                .transformed_units
+                .saturating_sub(prepared.plan.growth.original_units);
+            let expansion_proxy = u32::try_from(
+                prepared
+                    .plan
+                    .operations
+                    .len()
+                    .saturating_add(prepared.plan.memory_groups.len())
+                    .saturating_add(prepared.plan.broadcast_groups.len()),
+            )
+            .unwrap_or(u32::MAX);
+            let growth_units = u64::from(added_units.div_ceil(4))
+                .saturating_add(u64::from(expansion_proxy.div_ceil(4)))
+                .saturating_mul(branch_unit);
+            let score = runtime.saturating_add(
+                growth_units.saturating_mul(u64::try_from(scenarios.len()).unwrap_or(u64::MAX)),
+            );
+            let target_penalty = matches!(
+                state.module().profile.target_identity(),
+                calckernel::KirTargetIdentity::Native { triple }
+                    if triple.starts_with("x86_64-")
+            ) && candidate.uf > 2
+                && candidate.operations.iter().any(|operation| {
+                    operation.operation == KirProfileOperation::Cast
+                        && operation.lane_type == KirLaneType::U32
+                        && operation.result_lane_type == KirLaneType::F64
+                });
+            Some(ReferenceFrontierScore {
+                target_penalty,
+                runtime,
+                score,
+                denominator: denominator.max(1),
+                added_units,
+                expansion_proxy,
+                vf: candidate.vf,
+                uf: candidate.uf,
+            })
+        })
+        .collect::<Vec<_>>();
+    scores.sort_by(|left, right| {
+        left.target_penalty
+            .cmp(&right.target_penalty)
+            .then_with(|| {
+                u128::from(left.score)
+                    .saturating_mul(u128::from(right.denominator))
+                    .cmp(&u128::from(right.score).saturating_mul(u128::from(left.denominator)))
+            })
+            .then_with(|| {
+                u128::from(left.runtime)
+                    .saturating_mul(u128::from(right.denominator))
+                    .cmp(&u128::from(right.runtime).saturating_mul(u128::from(left.denominator)))
+            })
+            .then_with(|| left.added_units.cmp(&right.added_units))
+            .then_with(|| left.expansion_proxy.cmp(&right.expansion_proxy))
+            .then_with(|| left.uf.cmp(&right.uf))
+            .then_with(|| left.vf.cmp(&right.vf))
+    });
+    let winner = scores.first().expect("non-empty vector frontier");
+    (winner.vf, winner.uf)
+}
+
+fn accepted_vector_choice(result: &calckernel::KirPassManagerResult) -> (u16, u8) {
+    let accepted = result
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("accepted vector frontier winner");
+    (accepted.vf, accepted.uf)
 }
 
 fn wasm_pure_diamond_source(lane: &str, comparison: &str) -> String {
@@ -577,15 +755,28 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
         1,
         "{vector_attempts:#?}"
     );
+    let unknown_representative = discovery
+        .candidates
+        .iter()
+        .map(|candidate| candidate.minimum_trip)
+        .min()
+        .expect("non-empty unknown-trip frontier");
+    assert!(
+        result.vector_explanations.iter().any(|explanation| {
+            explanation.profitability.contains(&format!(
+                "representative={unknown_representative};mode=scalar-fallback;groups=0;tail=0"
+            ))
+        }),
+        "the minimum-threshold unknown anchor must be identified as scalar fallback for higher-threshold candidates: {:#?}",
+        result.vector_explanations
+    );
+    let expected = reference_vector_frontier_winner(&pre, &discovery.candidates, None);
     assert!(
         vector_attempts.iter().any(|attempt| {
             attempt.disposition == CandidateDisposition::Accepted
-                && matches!(
-                    attempt.key,
-                    calckernel::CandidateKey::LoopFrontier { vf: 4, uf: 4, .. }
-                )
+                && matches!(attempt.key, calckernel::CandidateKey::LoopFrontier { vf, uf, .. } if (vf, uf) == expected)
         }),
-        "frontier did not compare runtime-trip candidates at one common scope: {vector_attempts:#?}"
+        "frontier winner must match the independently recomputed bounded scenario score {expected:?}: {vector_attempts:#?}"
     );
     assert!(
         vector_attempts
@@ -596,18 +787,18 @@ fn loop_simd_should_enumerate_and_materialize_target_bounded_interleave_factors(
 }
 
 #[test]
-fn x86_independent_three_stream_loop_should_select_four_vector_chains() {
+fn x86_independent_three_stream_loop_should_follow_bounded_profitability() {
     let (pre, contracts) = map_state_with_profile(
         INTERLEAVE_ZIP,
         native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
     );
-    let candidate = discover_vectorization_candidates(&pre)
-        .candidates
+    let candidates = discover_vectorization_candidates(&pre).candidates;
+    let candidate = candidates
+        .iter()
         .into_iter()
         .find(|candidate| candidate.vf == 4 && candidate.uf == 4)
         .expect("x86 VF4/UF4 three-stream candidate");
-    let prepared =
-        prepare_vectorization_trial(&pre, &candidate).expect("compact x86 VF4/UF4 trial");
+    let prepared = prepare_vectorization_trial(&pre, candidate).expect("compact x86 VF4/UF4 trial");
     assert!(
         prepared.plan.growth.module_after_units
             <= prepared.plan.growth.module_before_units.saturating_mul(2),
@@ -658,21 +849,23 @@ fn x86_independent_three_stream_loop_should_select_four_vector_chains() {
         .iter()
         .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
         .expect("accepted x86 three-stream vector plan");
+    let expected = reference_vector_frontier_winner(&pre, &candidates, None);
     assert_eq!(
         (accepted.vf, accepted.uf),
-        (4, 4),
-        "x86 independent three-stream loop must amortize control across four chains; explanations={:#?}; audit={:#?}",
+        expected,
+        "x86 independent three-stream loop must match the bounded cost model, without a hard-coded UF: explanations={:#?}; audit={:#?}",
         result.vector_explanations,
         result.audit.attempts()
     );
 }
 
 #[test]
-fn x86_single_map_loop_should_select_four_vector_chains_without_padding_the_module() {
+fn x86_single_map_loop_should_follow_bounded_profitability_without_padding_the_module() {
     let (pre, contracts) = map_state_with_profile(
         MAP,
         native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
     );
+    let candidates = discover_vectorization_candidates(&pre).candidates;
     let result = run_kir_pass_pipeline(
         pre.module().clone(),
         KirOptimizationLevel::O3,
@@ -684,10 +877,11 @@ fn x86_single_map_loop_should_select_four_vector_chains_without_padding_the_modu
         .iter()
         .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
         .expect("accepted x86 map vector plan");
+    let expected = reference_vector_frontier_winner(&pre, &candidates, None);
     assert_eq!(
         (accepted.vf, accepted.uf),
-        (4, 4),
-        "a standalone x86 streaming map must retain four independent chains under the unchanged module-growth ceiling; explanations={:#?}; audit={:#?}",
+        expected,
+        "standalone x86 map winner must match the independent unknown-trip scenario score; explanations={:#?}; audit={:#?}",
         result.vector_explanations,
         result.audit.attempts()
     );
@@ -711,6 +905,37 @@ fn x86_single_map_loop_should_select_four_vector_chains_without_padding_the_modu
     assert!(
         vector_body.params.is_empty(),
         "single-predecessor interleaved vector body retained redundant parameters"
+    );
+}
+
+#[test]
+fn large_exact_x86_map_should_rank_four_chains_when_the_exact_trip_amortizes_tails() {
+    let source = INTERLEAVE_ZIP
+        .replace(", n: u32", "")
+        .replace("i < n", "i < 256");
+    let (pre, contracts) = map_state_with_profile(
+        &source,
+        native_profile_with_triple(KirConsumer::NativeLibrary, 4, "x86_64-unknown-linux-gnu"),
+    );
+    let candidates = discover_vectorization_candidates(&pre).candidates;
+    let expected = reference_vector_frontier_winner(&pre, &candidates, Some(256));
+    assert_eq!(
+        expected,
+        (4, 4),
+        "large exact trip should amortize loop control: {expected:?}"
+    );
+
+    let result = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        accepted_vector_choice(&result),
+        expected,
+        "frontier must honor the exact-trip scenario score: {:#?}",
+        result.vector_explanations
     );
 }
 
@@ -854,7 +1079,15 @@ contract { requires noalias(a, b); effects read(a), write(b); }
         discovery
             .fallbacks
             .iter()
-            .any(|fallback| { fallback.reason == "vector-profitability-threshold-not-met" })
+            .any(|fallback| { fallback.reason == "vector-exact-target-floor-not-met" }),
+        "a short exact trip must fail the target's group floor before materialization: {discovery:#?}"
+    );
+    assert!(
+        discovery
+            .cost_failures
+            .iter()
+            .all(|failure| { failure.reason == "insufficient-benefit" }),
+        "short exact candidates must retain candidate-keyed cost failures: {discovery:#?}"
     );
 }
 
@@ -1810,8 +2043,104 @@ const WASM_MODULAR_REDUCTIONS: &str = include_str!("../../examples/wasm/reductio
 #[test]
 fn wasm_modular_sum_should_carry_a_vector_and_reduce_once_before_the_scalar_tail() {
     let source = "export unsafe fn sum(a: slice<u32>, n: u32, seed: u32) -> u32 contract { requires n <= a.len; effects read(a); } { let i: u32 = 0; let total: u32 = seed; while i < n { total = total + a[i]; i = i + 1; } return total; }";
-    let (pre, _) = wasm_map_state(source, KirWasmFeatures::Simd128);
+    let (pre, contracts) = wasm_map_state(source, KirWasmFeatures::Simd128);
     let candidate = discover_vectorization_candidates(&pre).candidates.remove(0);
+    let reduction = candidate.reduction.as_ref().expect("modular add reduction");
+    let profile = &pre.module().profile;
+    let cost = |operation, lane, lanes, semantics, alignment, control| {
+        let key = KirCostKey {
+            operation,
+            lane,
+            lanes,
+            semantics,
+            alignment,
+        };
+        match profile.operation_availability(&key) {
+            Some(KirOperationAvailability::Legal(cost)) => cost.cost,
+            Some(KirOperationAvailability::Unavailable)
+                if control && operation == KirProfileOperation::Branch =>
+            {
+                1
+            }
+            other => panic!("unexpected operation availability for {key:?}: {other:?}"),
+        }
+    };
+    let expected_predicate_cost = cost(
+        KirProfileOperation::Compare,
+        KirLaneType::U32,
+        1,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        true,
+    )
+    .saturating_add(cost(
+        KirProfileOperation::Branch,
+        KirLaneType::U32,
+        1,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        true,
+    ))
+    .saturating_add(cost(
+        KirProfileOperation::ReduceAdd,
+        reduction.lane_type,
+        4,
+        calckernel::KirCostSemantics::Modular,
+        KirAlignmentClass::NotApplicable,
+        false,
+    ))
+    .saturating_add(cost(
+        KirProfileOperation::Splat,
+        reduction.lane_type,
+        4,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        false,
+    ))
+    .saturating_add(cost(
+        KirProfileOperation::Add,
+        reduction.lane_type,
+        1,
+        calckernel::KirCostSemantics::Modular,
+        KirAlignmentClass::NotApplicable,
+        false,
+    ))
+    .saturating_add(cost(
+        KirProfileOperation::Branch,
+        KirLaneType::U32,
+        1,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        true,
+    ));
+    assert_eq!(
+        candidate.predicted_cost.predicates, expected_predicate_cost,
+        "full vector-path setup must price the preheader splat, one vector fold, seed combine, and finalizer branch"
+    );
+    let expected_fallback_overhead = cost(
+        KirProfileOperation::Compare,
+        KirLaneType::U32,
+        1,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        true,
+    )
+    .saturating_add(cost(
+        KirProfileOperation::Branch,
+        KirLaneType::U32,
+        1,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        true,
+    ))
+    .saturating_add(cost(
+        KirProfileOperation::Splat,
+        reduction.lane_type,
+        4,
+        calckernel::KirCostSemantics::NotApplicable,
+        KirAlignmentClass::NotApplicable,
+        false,
+    ));
     let prepared = prepare_vectorization_trial(&pre, &candidate).expect("sum trial");
     let function = &prepared.trial.module().functions[0];
     let body = function
@@ -1857,6 +2186,24 @@ fn wasm_modular_sum_should_carry_a_vector_and_reduce_once_before_the_scalar_tail
             &prepared.charge
         ),
         Ok(())
+    );
+    let optimized = run_kir_pass_pipeline(
+        pre.module().clone(),
+        KirOptimizationLevel::O3,
+        contracts.as_ref(),
+    );
+    assert!(optimized.errors.is_empty(), "{:?}", optimized.errors);
+    let accepted = optimized
+        .vector_explanations
+        .iter()
+        .find(|explanation| explanation.disposition == CandidateDisposition::Accepted)
+        .expect("persistent reduction frontier winner");
+    assert!(
+        accepted
+            .profitability
+            .contains(&format!("fallback-overhead={expected_fallback_overhead}")),
+        "the scalar fallback pays only its preheader check and accumulator setup, not the vector-only fold/finalizer: {}",
+        accepted.profitability
     );
 }
 

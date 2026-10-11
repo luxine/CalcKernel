@@ -13,6 +13,7 @@ For a version `X.Y.Z`:
 - [ ] `cargo build --release --features native-toolchain --locked`
 - [ ] Generated and mutation suites pass O0–O3 for C, WebAssembly, and Native supported modes.
 - [ ] For releases with WebAssembly code-generation changes, strict `baseline` and `simd128` correctness/performance evidence identifies the exact candidate source and compiler binary. Compare the release build's module hashes, required feature declarations, and correctness outputs with the accepted development-candidate report; if generated modules differ, rerun and identify the release build's measurements separately. Keep cold-call and module-size evidence separate from hot-call ratios, and label development-candidate measurements as such.
+- [ ] For a WASM optimizer candidate comparison, use the unchanged repository runner and frozen before/after compiler binaries. Retain at least three independent rounds per profile with 20 samples, 10 warmups, batch 100, and size 1024, including raw samples, module/code hashes and bytes, function/local counts, opcode shape, emission, and first module compilation. Report runtime variation separately when artifact shape is unchanged.
 - [ ] Pre-LLVM fact audit passes on all six hosts and rejects the mutation corpus.
 - [ ] Contract sanitizer ownership tests pass under ASan/UBSan.
 - [ ] `./target/release/ckc --help`, `--version --verbose`, and `licenses` expose complete identity and notice evidence.
